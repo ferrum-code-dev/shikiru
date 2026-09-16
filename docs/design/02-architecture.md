@@ -4,7 +4,7 @@
 
 ```
  Operator (human)        Operator (tool / AI)                 Agent CLIs (in panes)
-   │ tmux attach            │ shikiru … --json │ shikiru mcp       │ hooks → shikiru hook
+   │ tmux attach            │ shikiru … --json │ shikiru mcp       │ plugin hooks → shikiru hook
    ▼                        ▼                                      │ report → shikiru report
 ┌──────────────────── tmux session "[shikiru] <project>" ──────────┼───────────────┐
 │ window per task: system(shikiru dash) │ leader │ implementer │ shell             │
@@ -51,12 +51,12 @@ config ◄── everything
 | `engine` | Daemon main loop: process commands, reconcile, dispatch tasks into slots, supervise task coroutines | `Engine`, `Reconciler` |
 | `engine.scheduler` | Choose ready tasks by DAG, priority, slots and resource gate | `Scheduler`, `ResourceGate` |
 | `engine.flow` | Per-task step sequence. Each step is a small class that returns an `Outcome` | `TaskFlow`, `TriageStep`, `ImplementStep`, `VerifyStep`, `ReplanStep`, `PlanStep`, `IntegrateStep` |
-| `engine.turns` | Turn protocol: ensure the session is live, compact, inject the prompt, await the signal, validate the report, nudge, recover, switch rungs | `SessionDriver`, `TurnResult`, `SignalInbox` |
+| `engine.turns` | Turn protocol over the normalized `AgentSession`: ensure the session is live, inject `before_turn` lines and the pointer, await signals, validate the report, nudge, recover, switch rungs | `SessionDriver`, `TurnResult` |
 | `engine.integration` | Rebase, conflict hand-off, fast-forward or PR, serialised by an integration lock | `Integrator`, `LocalMerge`, `PullRequest` |
 | `workspace` | Worktrees per task and repo, cache cloning, root mirroring for multi-repo, cleanup, git facts | `WorkspaceManager`, `GitFacts`, `CacheCloner` |
 | `prompts` | Render Jinja2 prompt templates (packaged, overridable in `.shikiru/prompts/`) and JSON schemas for reports | `PromptRenderer` |
-| `agents` | Agent plugin contracts and capabilities, registry, agent-agnostic signal sources (report file, pane activity), hook/report CLI entrypoints, usage calculation, quota polling | `InteractiveAgent`, `SignalSource`, `QuotaProbe`, `HeadlessAgent`, `AgentSignal`, `Telemetry`, `UsageCalculator`, `QuotaMonitor`, `AgentRegistry` |
-| `plugins/agents/claude`, `plugins/agents/codex`, `plugins/agents/tui` | Concrete adapters; `tui` is the config-only generic adapter | `ClaudeAgent`, `CodexAgent`, `GenericTuiAgent` |
+| `agents` | `contracts` (the only module the engine imports), `registry`, `sdk` (building blocks for plugins), `testing` (the contract test kit), `report` CLI | `InteractiveAgent`, `AgentSession`, `HeadlessAgent`, `AgentSignal`, `Usage`, `QuotaWindow`, `AgentRegistry`, `AgentContractSuite` |
+| `plugins/agents/claude`, `plugins/agents/codex` | Agent plugins: launch, signals, usage with their own price tables, quota, failures, headless | `ClaudeAgent`, `CodexAgent` |
 | `helper` | Joshu one-shot calls with schemas | `Helper` |
 | `tmux` | Thin typed wrapper around the `tmux` binary; session, window and layout building; pane protection | `Tmux`, `SessionView`, `LayoutBuilder` |
 | `operator` | Use cases shared by CLI, MCP and dashboard palette: submit, prioritise, pause, cancel, say, peek, resolve, status | `OperatorService` |
@@ -75,6 +75,7 @@ Anti-god-object rules:
 - Nothing except `store` issues SQL.
 - Nothing except `tmux` spawns `tmux`.
 - Nothing except `workspace` and `integration` spawns `git`.
+- Nothing outside `plugins/agents/*` knows any agent CLI, transcript format, model name, price or quota source. An import-linter contract enforces that `engine`, `domain`, `operator`, `dashboard` and `cli` import only `shikiru.agents.contracts`.
 
 ## 3. Project structure
 
@@ -88,7 +89,9 @@ src/shikiru/
   engine/      daemon.py reconcile.py scheduler.py flow.py steps/ turns.py signals.py integration.py
   workspace/   manager.py caches.py git.py
   prompts/     renderer.py templates/*.md.j2
-  agents/      contracts.py registry.py sources.py hook_cli.py report_cli.py usage.py quota.py
+  agents/      contracts.py registry.py report_cli.py
+    sdk/       hooks.py jsonl.py activity.py turn_detection.py reset_time.py prices.py probe.py
+    testing/   contract_suite.py
   helper/      helper.py
   tmux/        client.py session.py layout.py protection.py
   operator/    service.py
@@ -99,9 +102,8 @@ src/shikiru/
   notify/      notifier.py
   telemetry/   resources.py docker.py
   plugins/
-    agents/claude/    adapter.py hooks.py transcript.py quota.py
-    agents/codex/     adapter.py hooks.py rollout.py quota.py
-    agents/tui/       adapter.py
+    agents/claude/    agent.py session.py signals.py usage.py quota.py headless.py options.py prices.toml
+    agents/codex/     agent.py session.py signals.py usage.py quota.py headless.py options.py prices.toml
     dashboard/        project.py strips.py queue.py escalations.py usage.py resources.py docker.py dialogue.py
 tests/
   unit/ integration/ e2e/ fixtures/ (sample-project, fake-agent, recorded transcripts)
@@ -114,9 +116,8 @@ Plugins are discovered through `importlib.metadata.entry_points(group=…)`. Bui
 
 ```toml
 [project.entry-points."shikiru.agents"]
-claude = "shikiru.plugins.agents.claude.adapter:ClaudeAgent"
-codex  = "shikiru.plugins.agents.codex.adapter:CodexAgent"
-tui    = "shikiru.plugins.agents.tui.adapter:GenericTuiAgent"
+claude = "shikiru.plugins.agents.claude.agent:ClaudeAgent"
+codex  = "shikiru.plugins.agents.codex.agent:CodexAgent"
 [project.entry-points."shikiru.widgets"]
 strips = "shikiru.plugins.dashboard.strips:StripsWidget"
 # … project, queue, escalations, usage, resources, docker, dialogue
@@ -135,7 +136,7 @@ A missing or broken plugin is reported by `shikiru doctor` and at `start`. It ne
   engine.lock  logs/engine.log
   worktrees/T-12/<repo-rel-path>/       # per-task mirrors of the project root (03-workflow §6)
   runs/T-12/
-    leader/ hooks.jsonl  current_turn
+    leader/ current_turn  (+ plugin-private files, e.g. hooks.jsonl)
     implementer/ …
     turns/03-implement-i2/ prompt.md  report.json  report.schema.json  facts.md
     escalations/E-3.md

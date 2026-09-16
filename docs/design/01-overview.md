@@ -18,8 +18,8 @@ Operators submit requests, watch progress and intervene. Shikiru decides *when* 
 ## 3. Principles
 
 1. **Engine decides the flow, agents do the work.** Every transition is code in the engine, never a model's choice of what to run next. Agent output only selects one of a fixed set of outcomes, enforced by a schema.
-2. **Signals, not scraping.** Agents signal through capabilities they may or may not have: hooks, session ids, their own transcripts, quota APIs. Agent-agnostic signals are always on: the report file and pane activity (screen stability plus process CPU). Screen text is only read by the Helper, as a fallback. Usage comes from records the agents write themselves, never from user-configurable display surfaces such as the statusline.
-3. **Agents touch files, Shikiru touches the DB.** Agents exchange prompt, report and hook-event files. Only Shikiru processes write SQLite.
+2. **Normalized signals, no agent coupling.** The engine consumes only normalized signals, usage, quota and failure kinds from agent plugins (04-agents §1). How a plugin gets them (hooks, the agent's own transcripts, quota probes, pane activity) is private to the plugin and covered by its contract tests. Plugins use records agents write themselves, never user-configurable display surfaces such as the statusline. Screen text is only read by the Helper, as a fallback.
+3. **Agents touch files, Shikiru touches the DB.** Agents exchange prompt and report files (and plugin-private files such as hook logs). Only Shikiru processes write SQLite.
 4. **Open for new agents and widgets** through entry-point plugins, and closed for modification.
 5. **Escalate only on critical issues.** Holds (quota, resources, pause) clear on their own. The Leader resolves scope questions itself. Everything else is retried, moved up the model ladder or replanned first.
 6. **Project conventions win.** Shikiru adds no coding rules. It refers agents to the request, the plan files and the project's own instructions, and uses the configured skill prefix.
@@ -29,7 +29,7 @@ Operators submit requests, watch progress and intervene. Shikiru decides *when* 
 
 | # | Decision | Alternatives rejected | Reason |
 |---|---|---|---|
-| D1 | **Interactive agent TUIs in tmux panes**, prompts injected by pasting a one-line pointer, completion signalled by hooks plus a report file | Headless runs; agent-driven orchestration (TMUX Swarm) | Operator selection. Operators see and can use the real sessions. Hooks make it reliable. |
+| D1 | **Interactive agent TUIs in tmux panes**, prompts injected by pasting a one-line pointer, completion signalled by the agent plugin (hooks where available) plus a report file | Headless runs; agent-driven orchestration (TMUX Swarm) | Operator selection. Operators see and can use the real sessions. Plugin signals make it reliable. |
 | D2 | **Local integration by default** (rebase, then fast-forward). `integration = "pr"` pushes and opens a PR instead | PR only; leave branch | Operator selection. Matches the current commit-to-main flow and stays safe in parallel |
 | D3 | **TOML** config | YAML, JSON | Operator selection. Supported by the stdlib, Codex uses it, dotted-key overrides |
 | D4 | **Leader decides scope changes** (moves ACs, creates follow-up tasks), the Operator is notified, no escalation | Always escalate | Operator selection. Fewer interruptions |
@@ -42,8 +42,8 @@ Operators submit requests, watch progress and intervene. Shikiru decides *when* 
 | D11 | Every submission is a **request task**. The Leader's triage turns it into `implement`, `plan` or `split` | Separate request types with a parser for the plan files | Plan formats vary. The Leader reads them the way the Operator does today |
 | D12 | **Model ladder per role and complexity**. Moving up happens on failed verifications, unavailability or quota policy. Switching model within the same agent resumes the session. Switching to another agent starts a new session with a handoff | A single model | Mirrors the manual luna→sol switching |
 | D13 | **Resume the real session** after a quota wait, a crash or an engine restart (`claude --resume`, `codex resume`) | A fresh session with a summary | Keeps context. Prior art lost it |
-| D15 | **Capability-based agent contract** with agent-agnostic fallbacks, plus a config-only generic `tui` plugin | Requiring hooks | Any agent CLI works. Hooks only add precision |
-| D16 | **Signature comic-strip TUI**: tasks as 4-panel strips, English first, kanji as decoration | Colour theme only | A recognisable design that also carries real information (06-operator §7) |
+| D15 | **Agents are code plugins** behind a normalized contract (signals, usage, quota, failures), built from a shared SDK and verified by a shared contract test kit | Agents described in config (v4 profiles); engine reading agent transcripts, prices or quota itself | Testable and stable plugins with a small config. The orchestrator is decoupled from every agent (DIP) |
+| D16 | **Signature comic-strip TUI with a semantic visual language**: tasks as 4-panel strips; colour = role and state; a symbol vocabulary; motion that reflects real activity; English first, kanji as decoration | A decorative theme only | Recognisable, and every colour, glyph and animation carries meaning (06-operator §7) |
 | D14 | Plugins live in `src/shikiru/plugins/…` and register through `pyproject` entry points | Top-level `src/plugins` | A wheel needs them inside the package. Third-party plugins use the same entry points |
 
 ## 5. Lessons applied from prior art

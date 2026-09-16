@@ -4,7 +4,7 @@
 
 **Sources**, from lowest to highest precedence, deep-merged:
 1. Packaged `config/defaults.toml`
-2. `~/.config/shikiru/config.toml` (optional user-wide file: agents, models, notify)
+2. `~/.config/shikiru/config.toml` (optional user-wide file: agents, notify)
 3. `<project>/.shikiru/config.toml`
 4. CLI `--set key.path=value` (repeatable, value parsed as TOML), on every command that reads config (`start`, `submit`, `doctor`, …)
 
@@ -59,13 +59,19 @@ prompt_prefix = "/using-agent-skills "
 auth = "subscription"               # subscription | api_key
 api_key_env = "ANTHROPIC_API_KEY"
 
+[agents.claude.options]             # validated by the plugin's own options model (04-agents §2); omit for defaults
+quota_probe_interval = 900
+
 [agents.codex]
 plugin = "codex"
 command = "codex"
 args = ["--approve-for-me"]
 prompt_prefix = "$using-agent-skills "
 auth = "subscription"
+
+[agents.codex.options]
 compact_below_free_pct = 60
+# prices."gpt-5.6-luna" = { input = 0.0, cache_read = 0.0, output = 0.0, context_window = 400000 }  # override packaged prices
 
 [roles.leader]
 ladder = [
@@ -93,19 +99,14 @@ ladder = [
   { agent = "codex", model = "gpt-5.6-mini", effort = "low" },
 ]
 
-[quota]
-probe_interval = 900                # seconds; active QuotaProbe cadence while an agent has live runs (0 = off)
-
-[models."gpt-5.6-luna"]             # packaged defaults exist for built-in models; override when prices change
-context_window = 400000
-input = 0.0                         # USD per 1M tokens
-cache_read = 0.0
-cache_write = 0.0
-output = 0.0
-
 [dashboard]
 refresh_seconds = 2
 style = "comic"                     # comic | plain (06-operator §7)
+symbols = "unicode"                 # unicode | nerd
+animations = "full"                 # full | reduced | off
+
+[dashboard.colors]                  # optional overrides of semantic tokens (06-operator §7.1)
+# "role.leader" = "#a78bfa"
 
 [dashboard.layout]                  # tree: split = "h" (side by side) | "v" (stacked); size = % of parent
 split = "h"
@@ -171,12 +172,13 @@ CREATE TABLE runs (                  -- one agent session per task+role (+ agent
   id INTEGER PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id), role TEXT NOT NULL,
   agent TEXT NOT NULL, model TEXT NOT NULL, effort TEXT,
-  session_id TEXT, transcript_path TEXT, pane_id TEXT,
-  hooks_offset INTEGER NOT NULL DEFAULT 0,
+  session_id TEXT, pane_id TEXT,
+  agent_state TEXT NOT NULL DEFAULT '{}',  -- opaque AgentSession.snapshot()
   status TEXT NOT NULL,              -- starting | live | exited | closed
   input_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-  output_tokens INTEGER NOT NULL DEFAULT 0, context_used_tokens INTEGER,   -- cost and context % derived via models table
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL, cost_basis TEXT, context_used_pct REAL,   -- normalized Usage from the plugin
   started_at TEXT NOT NULL, ended_at TEXT
 );
 CREATE TABLE turns (
@@ -188,7 +190,7 @@ CREATE TABLE turns (
   rebuilt INTEGER NOT NULL DEFAULT 0, nudges INTEGER NOT NULL DEFAULT 0,
   started_at TEXT NOT NULL, ended_at TEXT
 );
-CREATE TABLE quotas (                -- latest QuotaProbe / transcript observation per agent window
+CREATE TABLE quotas (                -- latest InteractiveAgent.quota() per agent window
   agent TEXT NOT NULL, window TEXT NOT NULL, used_pct REAL NOT NULL, resets_at TEXT, observed_at TEXT NOT NULL,
   PRIMARY KEY (agent, window)
 );
@@ -227,7 +229,7 @@ The engine heartbeat is refreshed every 5 s. The CLI and dashboard show `engine:
 ```
 runs/T-12/
   leader/ implementer/            # one dir per role (a switch to another agent adds a suffix, e.g. implementer.2/)
-    hooks.jsonl  current_turn -> ../turns/05-verify-i2
+    current_turn -> ../turns/05-verify-i2   (+ plugin-private files, e.g. hooks.jsonl)
   turns/NN-<step>-i<iteration>/
     prompt.md  report.schema.json  report.json  facts.md (verify)  helper.json (if rebuilt)
   messages/NNN.md                 # `say` messages

@@ -21,7 +21,7 @@ Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`
 ### Task 1: Project scaffold and quality gate
 Refs: 02 §3, 07 §1–2.
 - AC1: `pyproject.toml` (uv, Python ≥ 3.14, `shikiru` script, entry-point groups `shikiru.agents` and `shikiru.widgets`); package tree as in 02 §3 with empty `__init__.py` files only where needed.
-- AC2: ruff (ALL with a documented ignore list), basedpyright strict, vulture, deptry, pytest with the markers `e2e` and `integration`, pytest-timeout, coverage `fail_under = 80`, and a poe `check` task running them in order.
+- AC2: ruff (ALL with a documented ignore list), import-linter contracts (core imports only `shikiru.agents.contracts`; plugins never import the engine), basedpyright strict, vulture, deptry, pytest with the markers `e2e` and `integration`, pytest-timeout, coverage `fail_under = 80`, and a poe `check` task running them in order.
 - AC3: `shikiru --version` works. `tests/integration/test_cli_version.py` passes.
 - AC4: A `SubprocessRunner` with timeouts and typed `CommandFailed` errors, plus a `ShikiruError` hierarchy mapped to exit codes (06 §1).
 
@@ -75,41 +75,37 @@ Refs: 03 §6, 07 §3.
 - AC4: `.git/info/exclude` gets `.shikiru/` idempotently.
 - Tests: integration with real repos (monorepo and multi-repo), an ignored cache dir cloned, facts correct.
 
-### Task 8: Agent contracts, signal sources and hook plumbing
-Refs: 04 §1.
-- AC1: `contracts.py` exactly as in 04 §1 (capabilities, `SignalSource`, `QuotaProbe`, `HeadlessAgent`), with docstrings. `AgentRegistry` loads entry points and reports broken plugins.
-- AC2: Agent-agnostic sources `ReportFileSource` and `PaneSource` (screen hash with digits masked plus process-tree CPU → `Busy`/`Quiescent`; `PaneDied`).
-- AC3: `shikiru hook <role>`: flock append of trimmed JSON, no-op without `SHIKIRU_RUN_DIR`, p95 < 100 ms (measured in a test). `HookFileSource` tails from an offset through an adapter mapping.
-- AC4: `UsageCalculator` (tokens × `models` prices, context %) and `QuotaMonitor` (probe cadence, stores `quotas`).
-- AC5: Fake agent plugin in `tests/fixtures/fake_agent` with `hooks` and `plain` modes and scripted behaviours (07 §3).
-- Tests: integration (fake agent in a private tmux pane: hooks arrive, report written, offsets resume, quiescence detected for the plain mode); unit (usage calculation).
+### Task 8: Agent contracts, SDK and fake plugins
+Refs: 04 §1–1.1, §1.3.
+- AC1: `agents/contracts.py` exactly as in 04 §1 (capabilities, `AgentSession`, `InteractiveAgent`, `HeadlessAgent`, normalized `Usage`, `QuotaWindow`, `FailureKind`, signals, `snapshot`/`restore`, `resume_hint`), with docstrings. `AgentRegistry` loads entry points, validates `[agents.<name>.options]` through each plugin's `options_model`, and reports broken plugins.
+- AC2: SDK building blocks `HookRecorder` + `shikiru hook` (flock, no-op outside Shikiru, p95 < 100 ms), `JsonlTail`, `PaneActivity`, `QuiescentTurnDetector`, `ResetTimeParser`, `PriceTable`, `CachedProbe`.
+- AC3: `PaneHandle` facade over the tmux client for a single pane.
+- AC4: Test-only plugins `fake-hooks` and `fake-plain` built from the SDK, with scripted behaviours (07 §3).
+- Tests: integration for each SDK block on a private tmux socket; unit tests for `ResetTimeParser` and `PriceTable`.
 
-### Task 9: Claude Code adapter
+### Task 9: Agent contract test kit
+Refs: 04 §1.2, 07 §3–4.
+- AC1: `AgentContractSuite` with the 8 checks, capability-aware skipping, a recorded-fixture loader and a live mode used by `doctor --probe`.
+- AC2: `fake-hooks` and `fake-plain` pass the suite (proving the contract and SDK for agents with and without hooks).
+- Tests: the suite itself, run against both fake plugins.
+
+### Task 10: Claude Code plugin
 Refs: 04 §2.
-- AC1: `launch_argv` and `launch_env` for new and resume sessions, `--settings` with hooks only (user settings untouched), auth env handling.
-- AC2: `parse_hook` for every mapped event; `StopFailure` error-kind mapping.
-- AC3: `telemetry` from the transcript (usage deduplicated by `message.id`, context used); `TranscriptSource` failure mapping from `isApiErrorMessage` entries, including `resets <time> (<tz>)` parsing; `ClaudeQuotaProbe` from `rate_limit_event`.
-- AC4: `ask()` headless with a JSON schema.
-- Tests: unit parsers against recorded fixtures (seeded from the verified payloads in 04 §2); integration argv snapshot.
+- AC1: `ClaudeAgent`/`ClaudeSession`: launch and resume argv and env (auth), `--settings` with hooks only, signals from hooks, `snapshot`/`restore`, `before_turn` compaction policy, `resume_hint`, `doctor`.
+- AC2: Usage from the transcript (deduplicated by `message.id`, context %, cost via the packaged `prices.toml` and `cost_basis`); failures from `isApiErrorMessage` entries with `resets_at`.
+- AC3: Quota via the `rate_limit_event` probe through `CachedProbe`; headless `ask()`.
+- Tests: `AgentContractSuite` with recorded fixtures (seeded from the verified payloads) plus a live E2E run.
 
-### Task 10: Codex adapter
+### Task 11: Codex plugin
 Refs: 04 §3.
-- AC1: `launch_argv` and `launch_env` (resume, `-c` hooks, trust, `--add-dir` for the run dir and git common dirs, auth env).
-- AC2: `parse_hook`; rollout discovery when `transcript_path` is null; `TranscriptSource` for the rollout.
-- AC3: `telemetry` from `token_count` records (tokens, context used); `CodexQuotaProbe` from `rate_limits`; `error` events mapped to failures.
-- AC4: `ask()` via `codex exec --output-schema`.
-- Tests: unit parsers against recorded rollout fixtures; integration argv snapshot.
-
-### Task 11: Generic `tui` adapter
-Refs: 04 §1.2–1.3.
-- AC1: `GenericTuiAgent` built purely from config (`command`, `args`, `model_args`, `effort_args`, keys, commands) with no capabilities.
-- AC2: Engine degradation paths from 04 §1.2 (turn end by report plus quiescence, submission by `Busy`, handoff instead of resume, Helper `classify_screen` for failures and dialogs).
-- Tests: integration with the fake agent in `plain` mode through the full turn protocol; E2E E12.
+- AC1: `CodexAgent`/`CodexSession`: launch and resume argv (`-c` hooks, trust, `--add-dir`), env auth, hook signals, rollout discovery, `snapshot`/`restore`, compaction policy, `resume_hint`, `doctor`.
+- AC2: Usage from `token_count` records with prices; failures from `error` events; passive quota from `rate_limits`; headless `ask()`.
+- Tests: `AgentContractSuite` with recorded rollout fixtures plus a live E2E run.
 
 ### Task 12: Doctor and agent probe
 Refs: 04 §5, 06 §1.
-- AC1: `doctor` checks tmux, git, Python, agent binaries and versions, login state, config validity, plugins, CoW support, the DB and `gh`/`docker` availability, as a Rich checklist or `--json`.
-- AC2: `doctor --probe` runs the 5 contract checks per agent in a scratch repo on a private socket and saves recorded fixtures.
+- AC1: `doctor` checks tmux, git, Python, config validity, plugins (each agent plugin's own `doctor()` for binary, version and login), CoW support, the DB and `gh`/`docker` availability, as a Rich checklist or `--json`.
+- AC2: `doctor --probe` runs the live `AgentContractSuite` checks per configured agent in a scratch repo on a private socket and saves recorded fixtures.
 - Tests: integration with the fake agent; E2E E11 with real agents.
 
 ## Phase 3 — Orchestration core (first end-to-end)
@@ -122,9 +118,9 @@ Refs: 03 §2, §4.
 
 ### Task 14: Session driver (turn protocol)
 Refs: 03 §4–5.
-- AC1: `SessionDriver.run_turn` implements steps 1–9 of 03 §4 (ensure session, compact, inject, confirm submission, await signals, nudge, Helper rebuild hook point).
+- AC1: `SessionDriver.run_turn` implements steps 1–9 of 03 §4 over `AgentSession` only (ensure session, `before_turn` lines, inject, confirm submission, await normalized signals, nudge, Helper rebuild hook point).
 - AC2: Launch and resume in the task window pane with the env from 03 §5; `SessionStarted` stored; injected lines recorded.
-- AC3: Telemetry polled every `refresh_seconds` into `runs`/`quotas`; pane titles updated.
+- AC3: `session.usage()` and `agent.quota()` polled every `refresh_seconds` and stored as given into `runs`/`quotas`; `snapshot()` persisted; pane titles and `@shk_*` pane options updated.
 - Tests: integration with fake agent scripts `accept`, `no-report`→nudge→report, `no-report`×3→rebuilt through a stub HeadlessAgent, and slow submission→Enter retry.
 
 ### Task 15: Task flow and steps
@@ -159,7 +155,7 @@ Refs: 06 §1, §4.
 
 ### Task 19: Comic renderables, system pane core and E2E baseline
 Refs: 06 §5.3, §7, 07 §5.
-- AC1: `shikiru.comic` Rich renderables `TaskStrip` (all modes, states, loops, stamps, responsive widths), `SpeechBubble`, `SplashPanel` and `Banner`, used by `show`, `status` and `start`.
+- AC1: `shikiru.comic` semantic colour tokens (dark/light, 256/16 fallback, `NO_COLOR`), the glyph registry (`unicode` and `nerd` sets, width-safety test), and Rich renderables `TaskStrip` (all modes, states, loops, stamps, responsive widths), `SpeechBubble`, `SplashPanel` and `Banner`, used by `show`, `status` and `start`.
 - AC2: `shikiru dash` Textual app with the widget contract, `StateReader` wiring, page composition, and the `strips` and `queue` widgets. `shikiru idle` panel.
 - AC3: E2E E1 (monorepo) and E10 (multi-repo) pass with real Claude and Codex.
 - Tests: Rich render snapshots of strips at 3 widths and every panel state; Textual `run_test` snapshots for the widgets; the E2E scenarios.
@@ -192,8 +188,8 @@ Refs: 03 §9.
 ### Task 24: Operator intervention
 Refs: 03 §10.
 - AC1: `say`, `peek`, `sessions`, `pause [--now]`, `resume`, `retry [--step]`.
-- AC2: Manual intervention detection (hooks: unrecognised prompt; no hooks: `Busy` with no turn in flight), the `intervention` hold scoped to the affected task only, its clearing rules, `✋ operator` flag and `OPERATOR` stamp; palette "Intervene" action.
-- Tests: integration with two parallel fake-agent tasks proving isolation (hold, pause and resume affect only the named task); E2E E2, E8 and E13.
+- AC2: Manual intervention detection (`PROMPT_EVENTS`: unrecognised prompt; otherwise `Activity` with no turn in flight), the `intervention` hold scoped to the affected task only, its clearing rules, `⌨ operator` flag, magenta border and `OPERATOR` stamp; palette "Intervene" action.
+- Tests: integration with two parallel fake-agent tasks proving isolation (hold, pause and resume affect only the named task); E2E E2, E8 and E12.
 
 ### Task 25: Engine restart recovery
 Refs: 03 §8.4.
@@ -204,7 +200,7 @@ Refs: 03 §8.4.
 
 ### Task 26: Dashboard widgets
 Refs: 06 §5.3.
-- AC1: Widgets `project`, `escalations` (splash panels), `usage` (transcript-derived tokens and cost, quota bars with countdown and observation age), `resources` (host and instance process tree), `docker` (task attribution) and `dialogue` (speech-bubble feed), each registered as an entry point and configured through `dashboard.system`.
+- AC1: Widgets `project`, `escalations` (splash panels), `usage` (plugin-reported tokens and cost with `cost_basis` label, quota gauges with countdown and observation age, token sparklines), `resources` (host and instance process tree), `docker` (task attribution) and `dialogue` (speech-bubble feed), each registered as an entry point and configured through `dashboard.system`.
 - Tests: Textual snapshots with seeded state; resources and docker samplers integration-tested (Docker test skipped when unavailable).
 
 ### Task 27: Command palette
@@ -239,14 +235,15 @@ Refs: 06 §2.
 - AC1: Inline Textual wizard with the 7 steps and detected defaults (repos, agents and login, model caches, trackers, skill prefix, caches with CoW check, orchestration). Ends with doctor and offers the probe.
 - Tests: Textual `run_test` walkthrough on a tmp multi-repo project.
 
-### Task 33: Comic design polish and plain mode
-Refs: 06 §7.
-- AC1: Page composition with gutters, header seal, "Next up" thumbnails and margin notes; active-panel animation (screen tone, speed-line edge); kanji only as decorative marks next to English labels; state never conveyed by colour alone.
-- AC2: `style = "plain"` renders the same structure without kanji, speed lines or screen tones, using ASCII-safe boxes.
-- Tests: render snapshots for both styles at 3 widths.
+### Task 33: Dynamic visual language and plain mode
+Refs: 06 §5.1, §7.
+- AC1: Motion system driven by signals: heartbeat shimmer tied to activity rate, ink wipe, stamp slam, loop arrow draw, typewriter bubbles, splash pulse until viewed, rolling counters, sparklines, slide-out to the Done shelf; 12 fps cap; paused when the tmux window isn't visible; `animations = full | reduced | off`.
+- AC2: tmux integration: role and state colours on pane borders through `@shk_color`/`@shk_glyph`; state glyph and colour in the window list; page composition with gutters, header seal, "Next up" thumbnails and margin notes.
+- AC3: `style = "plain"` keeps structure, colour tokens and words without kanji, speed lines or non-ASCII glyphs; no state is conveyed by colour alone.
+- Tests: render snapshots for both styles at 3 widths and both symbol sets; Textual `run_test` with a controlled clock for each animation trigger; integration check of tmux pane options.
 
 ### Task 34: Full E2E suite and release readiness
 Refs: 07 §5.
-- AC1: E3, E4 and E5 pass alongside the earlier scenarios (E1, E2, E6–E13).
+- AC1: E3, E4 and E5 pass alongside the earlier scenarios (E1, E2, E6–E12).
 - AC2: Coverage ≥ 80% on the non-E2E suite. All linters clean. README quick start verified on a fresh machine profile.
 - AC3: `docs/design` matches the implementation (differences fixed in code or docs).

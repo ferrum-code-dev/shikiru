@@ -15,10 +15,10 @@ Tick a task when all its ACs are met and `uv run poe check` is green. Details: [
 ## Phase 2 — Execution substrate
 - [ ] Task 6: tmux client, session and layout
 - [ ] Task 7: Workspace manager
-- [ ] Task 8: Agent contracts, signal sources and hook plumbing
-- [ ] Task 9: Claude Code adapter
-- [ ] Task 10: Codex adapter
-- [ ] Task 11: Generic `tui` adapter
+- [ ] Task 8: Agent contracts, SDK and fake plugins
+- [ ] Task 9: Agent contract test kit
+- [ ] Task 10: Claude Code plugin
+- [ ] Task 11: Codex plugin
 - [ ] Task 12: Doctor and agent probe
 
 ## Phase 3 — Orchestration core (first end-to-end)
@@ -48,5 +48,5 @@ Tick a task when all its ACs are met and `uv run poe check` is green. Details: [
 
 ## Phase 6 — Onboarding and completion
 - [ ] Task 32: Interactive init wizard
-- [ ] Task 33: Comic design polish and plain mode
+- [ ] Task 33: Dynamic visual language and plain mode
 - [ ] Task 34: Full E2E suite and release readiness

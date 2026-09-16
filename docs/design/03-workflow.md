@@ -102,20 +102,20 @@ Residual risks that should not block go to `new_tasks`. The Leader states each a
 1. **Resolve rung**: the task override, else the role ladder for the task complexity at `rung_index`.
 2. **Write the turn dir** `runs/T/turns/NN-<step>-i<iteration>/`: `prompt.md`, `report.schema.json`, `report.kind`. Remove any stale `report.json`. Point `runs/T/<role>/current_turn` at this dir.
 3. **Ensure the session** (§5).
-4. **Compact if needed**: the adapter has `compact_command` and the computed context free % (04-agents §1) is `< rung.compact_below_free_pct` → send the command → await `Compacted` or `TurnEnded` (≤ 10 min).
+4. **Before turn**: inject each line returned by `session.before_turn()` (e.g. a compaction command the plugin decided on) → await `Compacted` or `TurnEnded` (≤ 10 min).
 5. **Inject the pointer**: `load-buffer -b shk-<pane> -` → `paste-buffer -d -p -b shk-<pane> -t <pane>` → sleep `inject_delay_ms` (150) → `send-keys -t <pane> Enter`.
    The pasted line is `{prompt_prefix}Read {abs prompt path} and follow it exactly.`
-6. **Confirm submission**: a `PromptSubmitted` signal with this turn's path (or `Busy` for agents without hooks, 04-agents §1.2) must arrive within 15 s. If not, press `Enter` once more. If it still doesn't arrive, run stall analysis (§8.5).
+6. **Confirm submission**: a `PromptSubmitted` signal with this turn's path (or any `Activity` for plugins without `PROMPT_EVENTS`) must arrive within 15 s. If not, press `Enter` once more. If it still doesn't arrive, run stall analysis (§8.5).
 7. **Await** the first of:
    - `TurnEnded`
    - `TurnFailed`
    - `PaneDied`
    - `Stall`
    - a matching Operator command (`pause --now`, `cancel`, `retry`)
-8. **On `TurnEnded`** (for agents without hooks: synthesised from `ReportSubmitted` plus `Quiescent`, 04-agents §1.2):
+8. **On `TurnEnded`**:
    1. If `report.json` exists and validates → `Completed(report)`.
    2. Otherwise nudge, at most `nudge_limit` (2) times: inject "Your turn ended without a valid report. Submit it with `shikiru report` exactly as described at the end of {prompt path}.", then go back to 7.
-   3. Otherwise the Helper rebuilds the report from `last_assistant_message` and the transcript tail → `Completed(report, rebuilt=true)`, logged.
+   3. Otherwise the Helper rebuilds the report from `TurnEnded.last_message` (or the visible screen) and the git facts → `Completed(report, rebuilt=true)`, logged.
    4. Otherwise escalate (`agent_protocol`).
 9. `TurnFailed`, `PaneDied` and `Stall` are handled in §8.
 
@@ -140,12 +140,12 @@ Prompts are idempotent: "If this work is already done in the workspace, verify i
   respawn-pane -k -t <pane> -c <task root> -e SHIKIRU_PROJECT=… -e SHIKIRU_TASK=T-12 -e SHIKIRU_ROLE=implementer -e SHIKIRU_RUN_DIR=… -e SHIKIRU_TURN_DIR=<current> -e SHIKIRU_SLOT=2 -- <adapter argv>
   ```
 
-  Then wait for `SessionStarted(session_id, transcript_path)` (≤ `launch_timeout` 90 s) and store both on the run.
+  Then wait for `SessionStarted` (≤ `launch_timeout` 90 s). Store `session_id` and the plugin's opaque `snapshot()` on the run, and refresh the snapshot after every signal batch.
 - `SHIKIRU_TURN_DIR` can't change inside a running process. So `shikiru report` resolves the current turn from `$SHIKIRU_RUN_DIR/current_turn`, a symlink the engine updates. The env var is only a fallback.
 - **Resume**: the same argv with `resume_session_id` (`claude --resume <id>`, `codex resume <id>`). Used after a pane death, an engine restart, a quota wait with an exited process, or a same-agent rung change (with the new `--model` and effort).
-- **Agent change** (a rung with a different agent): start a new session. The first prompt is `handoff.md.j2`, which contains the task request, the latest reports, facts and the previous transcript path.
+- **Agent change** (a rung with a different agent): start a new session. The first prompt is `handoff.md.j2`, which contains the task request, the latest reports and facts.
 - Sessions live until the task is terminal. At that point the engine sends the adapter's `exit_command`, or kills the pane after 10 s.
-- The session id, transcript path and resume command are always shown by `shikiru sessions T-12`, so an Operator can reopen the session anywhere.
+- The session id and resume command are always shown by `shikiru sessions T-12`, so an Operator can reopen the session anywhere.
 
 ## 6. Workspaces
 
@@ -198,7 +198,7 @@ Dependents become ready only after their dependency is `done`, i.e. its changes 
 
 ### 8.1 Failure signals
 
-Adapters map hooks and transcripts into `TurnFailed(kind, resets_at?, message)`. Unknown text goes to the Helper, which classifies it into one of these kinds.
+Plugins emit `TurnFailed(kind, resets_at?, message)` with a normalized kind. The Helper classifies `OTHER` messages into one of these kinds when it can.
 
 | Kind | Handling |
 |---|---|
@@ -224,16 +224,15 @@ On start:
 1. Clear stale locks.
 2. Rebuild the tmux session and windows from the DB.
 3. For each `running` or `integrating` task:
-   - If the stored pane is alive and still runs the agent, re-subscribe to `hooks.jsonl` at the stored offset.
-   - Otherwise resume the session.
+   - If the stored pane is alive, re-attach the plugin session with `LaunchSpec.restore = runs.agent_state` (no relaunch).
+   - Otherwise relaunch with resume (or handoff without `RESUME`).
    - Then either consume an existing valid `report.json` or re-inject the current turn's pointer.
    - Integration restarts from §7.1, which is idempotent.
 4. Process pending `commands`.
 
 ### 8.5 Stall
 
-A turn is stalled when no hook event has arrived and the transcript is unchanged for `stall_timeout` (20 min).
-While a tool is running (a `ToolStarted` without its `ToolFinished`), the limit is `tool_timeout` (120 min) instead, so long test tiers aren't flagged.
+A turn is stalled when no `Activity` signal has arrived for `stall_timeout` (20 min). Plugins emit `Activity(tool_running=True)` while a tool runs; in that case the limit is `tool_timeout` (120 min), so long test tiers aren't flagged.
 
 On a stall:
 1. Capture the visible screen (`capture-pane -p -J`).
@@ -244,7 +243,7 @@ On a stall:
    - `error{text}` → `TurnFailed(other)`.
 3. After two stall recoveries in one turn → escalate `agent_stuck`.
 
-An `AttentionNeeded` hook signal (Claude `Notification`, Codex `PermissionRequest`) starts stall analysis immediately.
+An `AttentionNeeded` signal starts stall analysis immediately.
 
 ## 9. Escalation
 
@@ -264,7 +263,7 @@ An `AttentionNeeded` hook signal (Claude `Notification`, Codex `PermissionReques
 - **Headline**: task, step, reason and a one-sentence summary.
 - **What happened**: a timeline of the last events.
 - **What was tried**: retries, rungs, nudges, consults.
-- **Evidence**: latest reports and verdict (full), facts, the last 60 lines of the pane, transcript paths, resume commands.
+- **Evidence**: latest reports and verdict (full), facts, the last 60 lines of the pane, session ids, resume commands.
 - **Question**: from the Leader when present.
 - **Options**: numbered, with consequences and one marked ★ recommended. Leader options come first, then the engine's standard options that apply:
 
@@ -285,7 +284,7 @@ Every agent session is a real interactive session that the Operator can reach at
 
 | Action | Human | Tool / AI (CLI `--json`, MCP) | Engine behaviour |
 |---|---|---|---|
-| Watch | attach, select the task window | `peek T-12 --role leader [--lines N]` → last assistant message, pane screen, telemetry | — |
+| Watch | attach, select the task window | `peek T-12 --role leader [--lines N]` → last assistant message, pane screen, usage | — |
 | Type into a session | click or select the pane and type | `say T-12 --to implementer "…"` | See below |
 | Pause / resume | palette, `pause T-12 [--now]` | same | `pause` stops before the next turn. `--now` also sends the adapter's `interrupt_keys` (`Escape`). |
 | Change model | `rung T-12 <role> a:m:e` | same | Applied at the next turn by resuming the session |
@@ -296,12 +295,12 @@ Every agent session is a real interactive session that the Operator can reach at
 `quota` is the one hold that spans tasks: it is set per agent account, because the account's limit is shared (§8.1).
 
 **Detecting manual intervention.** The engine records every line it injects into a run: pointers, nudges, `continue.md`, `say` pointers and compact commands. The `intervention` hold is set on **that task only** when:
-- **agents with hooks**: a `PromptSubmitted` signal arrives whose prompt matches none of the recorded lines;
-- **agents without hooks**: `Busy` appears in a pane while the task has no turn in flight (between turns or after the report). Input typed during an in-flight turn can't be told apart from the agent's own output, so the Operator should run `pause T-12` first. The palette's "Intervene" action does this automatically.
+- **plugins with `PROMPT_EVENTS`**: a `PromptSubmitted` signal arrives whose prompt matches none of the recorded lines;
+- **plugins without it**: `Activity` appears while the task has no turn in flight (between turns or after the report). Input typed during an in-flight turn can't be told apart from the agent's own output, so the Operator should run `pause T-12` first. The palette's "Intervene" action does this automatically.
 
 While the hold is set:
 - that task's nudges, stall detection and new turns are suspended;
-- its pane titles show `✋ operator`;
+- its pane titles show `⌨ operator` and its pane border turns `role.operator` magenta;
 - its comic strip shows an `OPERATOR` stamp.
 
 The hold clears:

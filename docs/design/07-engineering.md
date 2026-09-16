@@ -15,6 +15,7 @@
 | MCP | `mcp` (official SDK, FastMCP, stdio) |
 | External binaries | tmux ≥ 3.4, git ≥ 2.45, optional `gh`, `docker`, `terminal-notifier`/`notify-send` |
 | Lint / format | ruff (`select = ["ALL"]` with a short, documented ignore list; format) |
+| Architecture rules | import-linter (engine and core import only `shikiru.agents.contracts`; plugins don't import the engine) |
 | Types | basedpyright `strict` |
 | Dead code / deps | vulture (min-confidence 80), deptry |
 | Tests | pytest, pytest-asyncio, pytest-cov (`fail_under = 80`), pytest-timeout |
@@ -31,14 +32,14 @@
 - **Subprocesses**: argv lists only, never `shell=True`. Every call goes through one of `tmux.client`, `workspace.git`, or `SubprocessRunner` (timeouts, decoded output, typed errors).
 - **Errors**: a `ShikiruError` hierarchy with user-facing messages. The CLI maps it to exit codes. No bare `except`.
 - **Commits**: conventional commits. Refactorings go in separate `refactor:` commits.
-- **Quality gate** (`uv run poe check`): `ruff format --check`, `ruff check`, `basedpyright`, `vulture`, `deptry`, `pytest -m "not e2e"` with coverage. It must be green before every commit made by an agent.
+- **Quality gate** (`uv run poe check`): `ruff format --check`, `ruff check`, `lint-imports`, `basedpyright`, `vulture`, `deptry`, `pytest -m "not e2e"` with coverage. It must be green before every commit made by an agent.
 
 ## 3. Test strategy
 
 | Layer | Scope | Real dependencies | Share |
 |---|---|---|---|
-| Unit | `domain/` (transitions, ladder, scheduling, escalation policy, holds), report validators, config merge and overrides, reset-time and telemetry parsing against recorded fixtures | none | small |
-| Integration | store and migrations; workspace (real git repos in tmp, CoW clone); integration merge/conflict/PR (PR through a fake `gh` on PATH); tmux client, layout, protection and window lifecycle on a **private socket**; signal sources (hooks, report file, pane quiescence) and hook/report CLIs; the generic `tui` adapter driving a hook-less fake agent; engine flow with the **fake agent**; CLI commands; MCP tools through an in-memory client; dashboard widgets through Textual `run_test()` snapshots | git, tmux, sqlite, Textual | most |
+| Unit | `domain/` (transitions, ladder, scheduling, escalation policy, holds), report validators, config merge and overrides, agent SDK parsers (reset time, prices) | none | small |
+| Integration | store and migrations; workspace (real git repos in tmp, CoW clone); integration merge/conflict/PR (PR through a fake `gh` on PATH); tmux client, layout, protection and window lifecycle on a **private socket**; agent SDK building blocks (hook recorder, JSONL tail, pane activity, quiescent turn detection); every agent plugin through `AgentContractSuite` with recorded fixtures (the fake agent plugins pass it too); engine flow with the **fake agent**; CLI commands; MCP tools through an in-memory client; dashboard widgets through Textual `run_test()` snapshots | git, tmux, sqlite, Textual | most |
 | E2E | Full `shikiru` with real Claude Code and Codex on a fixture project | everything | scenarios §5 |
 
 **Isolation rules** (lessons from v4):
@@ -48,7 +49,7 @@
 
 **Fake agent** (`tests/fixtures/fake_agent/`):
 - A small line-reading REPL, launched in a real pane like any agent, so pasted pointers arrive on stdin. It is registered as the `fake` agent plugin in the test environment.
-- It runs in two modes, `hooks` (writes real Claude-format hook events) and `plain` (no hooks, for the `tui` path). It reads scripted behaviours from `SHIKIRU_FAKE_SCRIPT`: accept, changes_requested×N, needs_decision, no-report, quota(resets_at), crash, stall, dialog.
+- It ships as two small code plugins, `fake-hooks` (uses `HookRecorder`) and `fake-plain` (uses `PaneActivity` and `QuiescentTurnDetector`, no hooks). Both pass `AgentContractSuite`, which proves the contract and the SDK serve agents with and without hooks. It reads scripted behaviours from `SHIKIRU_FAKE_SCRIPT`: accept, changes_requested×N, needs_decision, no-report, quota(resets_at), crash, stall, dialog.
 - It runs the real `shikiru report`, and edits and commits files.
 - It proves the Open-Closed contract and makes every engine path deterministic.
 
@@ -80,8 +81,7 @@ Each scenario copies the fixture to a tmp dir, runs `shikiru init --yes` with ch
 | E8 | Manual intervention: type into the implementer pane through `send-keys` as an Operator | `intervention` hold set, no nudges, `resume` continues, completes |
 | E9 | `attach --host localhost` (sshd on the CI host) and `ls --host` | Remote listing and attach command construction; the attached client sees the session |
 | E10 | Monorepo vs multi-repo variants of E1 | Topology agnostic: worktree mirroring and per-repo merges |
-| E11 | `doctor --probe` for both agents | Launch, report, resume, telemetry, quota probe, no dialogs |
-| E12 | E1 with the Implementer configured as the generic `tui` plugin running `codex` (hooks unused) | Agent-agnostic path: turn end by report + quiescence, handoff recovery |
-| E13 | Two tasks in parallel; the Operator types into T-1's implementer pane | Only T-1 gets the `intervention` hold. T-2 keeps running and completes. `resume T-1` continues T-1 only |
+| E11 | `doctor --probe` for both agents | Live contract suite: launch, report, resume, usage, quota, no dialogs |
+| E12 | Two tasks in parallel; the Operator types into T-1's implementer pane | Only T-1 gets the `intervention` hold. T-2 keeps running and completes. `resume T-1` continues T-1 only |
 
 Quota exhaustion, overload, stall with dialog, ladder moves and budget escalation can't be triggered on demand with real agents. They are covered by fake-agent integration tests driven by recorded real failure payloads.

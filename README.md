@@ -19,7 +19,7 @@ It escalates to the Operator only when something critical comes up.
 
 ## Highlights
 
-- **Agent-agnostic**: agents are plugins with optional capabilities (hooks, transcripts, quota). Claude Code and Codex CLI are built in, and any other TUI agent works through config alone.
+- **Agent-agnostic**: agents are tested code plugins behind a normalized contract. Claude Code and Codex CLI are built in, and new agents are added as plugins using the agent SDK and the contract test kit.
 - **Real interactive sessions** in tmux panes that Operators can watch and step into, one task at a time.
 - **Parallel tasks**: each task gets its own git worktree and branch, with instant copy-on-write build caches, a dependency graph, priorities and resource-aware scheduling.
 - **Resilient**: model ladders, a wait for quota resets followed by a real session resume, and recovery after crashes or restarts.

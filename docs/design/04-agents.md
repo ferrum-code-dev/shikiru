@@ -2,232 +2,236 @@
 
 ## 1. Contracts (`shikiru.agents.contracts`)
 
-Shikiru must drive **any** interactive agent CLI. Hooks, session ids and transcripts are **optional capabilities**, not requirements.
-The engine's turn protocol (03-workflow §4) depends only on **signals**. Each adapter chooses which **signal sources** produce them. Agent-agnostic sources, which need nothing from the agent, are always available as a fallback.
+**Agents are code plugins**: Python packages registered under the `shikiru.agents` entry point group. Each one is tested against the shared contract test kit (07-engineering §3).
+Supporting a new agent means writing and testing a plugin, **never** describing an agent in configuration. That approach (v4's `profiles/*.toml` with argv and regexes) is rejected.
+
+**Dependency rule (DIP)**: the orchestrator depends only on `shikiru.agents.contracts`, and it knows nothing about any specific agent:
+- not transcripts, hooks or CLIs,
+- not model names, prices or context windows,
+- not how quota is read.
+
+Plugins own all of that and hand the engine **normalized** data: signals, usage, quota, failure kinds.
+Model identifiers in ladders are opaque strings that the engine passes through to the plugin.
 
 ```python
 class Capability(StrEnum):
-    HOOKS = "hooks"             # lifecycle hooks → precise turn/prompt/tool/failure signals
-    SESSION_ID = "session_id"   # session id is known → exact resume
-    TRANSCRIPT = "transcript"   # agent-written transcript → tokens, errors, context
-    QUOTA = "quota"             # subscription quota windows can be read or probed
-    HEADLESS = "headless"       # one-shot schema-constrained calls (Helper)
+    RESUME = "resume"                 # can reopen a session by id (else engine recovers via handoff)
+    PROMPT_EVENTS = "prompt_events"   # emits PromptSubmitted for every submitted prompt (enables precise intervention detection)
+    QUOTA = "quota"                   # can report subscription quota windows
+    HEADLESS = "headless"             # can serve as a Helper rung
 
 @dataclass(frozen=True)
 class Rung:        agent: str; model: str; effort: str | None
 @dataclass(frozen=True)
-class LaunchSpec:  rung: Rung; cwd: Path; run_dir: Path; add_dirs: list[Path]
-                   resume_session_id: str | None; agent_config: AgentConfig; hook_command: str
+class LaunchSpec:  rung: Rung; role: str; cwd: Path; run_dir: Path; add_dirs: list[Path]
+                   resume_session_id: str | None; restore: Mapping[str, Any] | None; env: Mapping[str, str]
 
-type AgentSignal = (SessionStarted | PromptSubmitted | ToolStarted | ToolFinished | TurnEnded | TurnFailed
-                    | Compacted | AttentionNeeded | SessionEnded | ReportSubmitted | Busy | Quiescent | PaneDied)
+type AgentSignal = (SessionStarted | PromptSubmitted | TurnEnded | TurnFailed | Activity
+                    | Compacted | AttentionNeeded | SessionEnded)
 
-class SignalSource(Protocol):
-    """Incrementally produces agent signals for one run; polled by the engine."""
-    def poll(self) -> list[AgentSignal]: ...
+@dataclass(frozen=True)
+class TurnFailed:  kind: FailureKind; message: str; resets_at: datetime | None
+class FailureKind(StrEnum): QUOTA, UNAVAILABLE, CONTEXT, AUTH, OTHER
+
+@dataclass(frozen=True)
+class Usage:       input_tokens: int; output_tokens: int; cache_read_tokens: int; cache_write_tokens: int
+                   cost_usd: float | None; cost_basis: Literal["billed", "api_equivalent", "unknown"]
+                   context_used_pct: float | None
+@dataclass(frozen=True)
+class QuotaWindow: name: str; used_pct: float; resets_at: datetime | None; observed_at: datetime
+
+class AgentSession(Protocol):
+    """One live agent session in a tmux pane, created by an InteractiveAgent for a task role."""
+    session_id: str | None
+    async def signals(self) -> AsyncIterator[AgentSignal]: ...        # normalized, incl. TurnEnded for hook-less agents
+    def before_turn(self) -> list[str]: ...                            # lines to inject first (e.g. "/compact"), may be empty
+    def usage(self) -> Usage: ...                                      # cumulative for this session
+    def interrupt_keys(self) -> list[str]: ...
+    def exit_input(self) -> str: ...
+    def safe_keys(self) -> list[str]: ...
+    def snapshot(self) -> dict[str, Any]: ...                          # opaque plugin state (offsets, transcript path); engine persists it in runs.agent_state and passes it back as LaunchSpec.restore
 
 class InteractiveAgent(Protocol):
-    """An agent CLI that runs as an interactive TUI inside a tmux pane."""
+    """An agent CLI plugin that runs interactive sessions inside tmux panes."""
     name: str
     capabilities: frozenset[Capability]
-    compact_command: str | None
-    interrupt_keys: list[str]
-    exit_command: str
-    safe_keys: list[str]
-    def launch_argv(self, spec: LaunchSpec) -> list[str]: ...
-    def launch_env(self, spec: LaunchSpec) -> dict[str, str | None]: ...
-    def signal_sources(self, run: RunInfo) -> list[SignalSource]: ...   # agent-specific sources only
-    def telemetry(self, run: RunInfo) -> Telemetry | None: ...          # None without TRANSCRIPT
-
-class QuotaProbe(Protocol):
-    """Reads the current subscription quota windows of an agent account."""
-    def probe(self, config: AgentConfig) -> list[QuotaWindow]: ...
+    options_model: type[BaseModel]                                     # validates [agents.<name>.options]
+    def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession: ...
+    def quota(self) -> list[QuotaWindow]: ...                          # [] without QUOTA; plugin decides caching/probing
+    def doctor(self) -> list[CheckResult]: ...                         # binary, version, login
+    def resume_hint(self, session_id: str, cwd: Path) -> str | None: ...  # command an Operator can run to reopen a session
 
 class HeadlessAgent(Protocol):
-    """An agent CLI that answers a single schema-constrained prompt non-interactively."""
+    """An agent plugin that answers one schema-constrained prompt non-interactively."""
     def ask(self, prompt: str, schema: dict, rung: Rung, cwd: Path, timeout_s: int) -> dict: ...
-
-@dataclass(frozen=True)
-class Telemetry:   input_tokens: int; cache_read_tokens: int; cache_write_tokens: int; output_tokens: int
-                   model: str | None; context_used_tokens: int | None
-@dataclass(frozen=True)
-class QuotaWindow: name: str; used_pct: float; resets_at: datetime | None
 ```
 
-Cost and context percentage are **not** read from agents. `UsageCalculator` derives them from `Telemetry` and the config `models` table (05-data §1): prices and context window per model.
+What each side owns:
 
-### 1.1 Signal sources
+| Concern | Orchestrator | Plugin |
+|---|---|---|
+| When to run a turn, what the prompt says, waiting, retries, ladders, escalation | ✔ | |
+| Prompt injection mechanics (paste a pointer line), report file validation | ✔ (generic, the same for every agent) | |
+| Launch argv and env, auth handling, hooks, transcripts, turn-end detection | | ✔ |
+| Mapping native errors to `FailureKind` with `resets_at` | | ✔ |
+| Tokens, cost (its own price table), context %, whether to compact | | ✔ |
+| Quota windows (passive reading or active probing, cadence) | | ✔ |
+| Showing usage and quota, `budget_usd` checks | ✔ (on normalized values) | |
 
-| Source | Kind | Produces | Needs |
-|---|---|---|---|
-| `ReportFileSource` | agnostic, always on | `ReportSubmitted` when a valid `report.json` appears | nothing (the agent runs `shikiru report`) |
-| `PaneSource` | agnostic, always on | `PaneDied` (tmux hook) · `Busy` / `Quiescent` | tmux + `psutil` |
-| `HookFileSource(mapping)` | agent-specific | `SessionStarted`, `PromptSubmitted`, `Tool*`, `TurnEnded`, `TurnFailed`, `AttentionNeeded`, `Compacted` | `HOOKS` |
-| `TranscriptSource(mapping)` | agent-specific | `TurnFailed` from recorded API errors; activity | `TRANSCRIPT` |
+`PaneHandle` is the narrow tmux facade a plugin gets for its own pane: `respawn(argv, env)`, `capture_visible()`, `process_tree()`, `is_alive()`. Plugins never see the session, windows or other tasks.
 
-**`Quiescent` definition**, over a window of `quiet_seconds` (default 20):
-- the visible screen hash is unchanged, with digits masked so clocks and spinners don't count as change, **and**
-- the pane process tree's CPU is below `quiet_cpu_pct` (default 3%).
+### 1.1 Agent SDK (`shikiru.agents.sdk`)
 
-`Busy` fires on the first change after that. These two signals need no regex and no knowledge of the agent.
+These are reusable, tested building blocks that plugins **compose in code**. They are not configuration:
 
-### 1.2 Degradation when a capability is missing
-
-| Missing | Engine fallback |
+| Building block | Purpose |
 |---|---|
-| `HOOKS` | **Turn end** = `ReportSubmitted` followed by `Quiescent`, or `Quiescent` for `no_report_quiet_seconds` (90) without a report → nudge path.<br>**Submission confirmed** = `Busy` within 15 s after the paste.<br>**Failures and dialogs** = `classify_screen` by the Helper once quiescent without a report. |
-| `SESSION_ID` | Recovery (crash, restart, rung change) starts a new session with `handoff.md.j2` instead of resuming |
-| `TRANSCRIPT` | Tokens and cost shown as `n/a`. Stall detection relies on `PaneSource` only |
-| `QUOTA` | No quota bars. A quota stop is recognised by `classify_screen` (with `resets_at` when it is shown on screen) |
-| `HEADLESS` | This agent can't be a Helper rung |
+| `HookRecorder` + `shikiru hook` CLI | Hook commands append trimmed JSON lines to `$SHIKIRU_RUN_DIR/hooks.jsonl` (flock, < 100 ms, a no-op outside Shikiru). `HookRecorder.tail()` yields them incrementally from a stored offset |
+| `JsonlTail` | Incremental reader for agent-written JSONL transcripts, safe with partial lines |
+| `PaneActivity` | Agent-agnostic `Activity` and quiescence detection: screen hash with digits masked, plus pane process-tree CPU below a threshold for N seconds |
+| `QuiescentTurnDetector` | For agents without a turn-end hook: emits `TurnEnded` after the report file plus quiescence, or after a longer quiescence without a report |
+| `ResetTimeParser` | Parses "resets 3:10am (Europe/Warsaw)", ISO timestamps, epoch values and relative durations |
+| `PriceTable` | Loads a plugin's packaged `prices.toml`, merges `options.prices` overrides, and computes `cost_usd` from `Usage` token counts |
+| `CachedProbe` | Rate-limited, cached execution of an active quota probe |
 
-`shikiru hook <role>` reads the hook JSON from stdin and appends one compact line (the payload minus `tool_input`/`tool_response`, with `ts` added) to `$SHIKIRU_RUN_DIR/hooks.jsonl` under `flock`. It exits 0 in under 100 ms. With no `SHIKIRU_RUN_DIR` set, it does nothing.
+A plugin for an agent without hooks is therefore a small class: argv plus `PaneActivity` plus `QuiescentTurnDetector`. Anything that doesn't fit is handled by the plugin's own code and its own tests.
 
-### 1.3 Generic `tui` plugin (configuration-only agents)
+### 1.2 Contract test kit (`shikiru.agents.testing`)
 
-Any other interactive agent CLI works through config alone. It runs with no capabilities, using the agent-agnostic fallbacks:
+`AgentContractSuite` is a pytest class that every plugin subclasses, providing a way to launch its agent. It checks against a real pane on a private tmux socket:
+1. launch → a signal stream starts; `session_id` is set if the plugin declares `RESUME`;
+2. pointer injection → the agent submits a report → `TurnEnded`;
+3. `PromptSubmitted` is emitted if the plugin declares `PROMPT_EVENTS`;
+4. `usage()` returns increasing token counts, and `cost_basis` matches the auth mode;
+5. resume recalls a nonce from the first turn (`RESUME`);
+6. `quota()` returns windows (`QUOTA`);
+7. `ask()` returns schema-valid JSON (`HEADLESS`);
+8. recorded failure fixtures map to the expected `FailureKind` and `resets_at`.
 
-```toml
-[agents.gemini]
-plugin = "tui"
-command = "gemini"
-args = ["--yolo"]
-model_args = ["--model", "{model}"]
-effort_args = []
-prompt_prefix = ""
-compact_command = "/compress"
-exit_command = "/quit"
-interrupt_keys = ["Escape"]
-safe_keys = ["Enter", "Escape", "Down", "1", "2", "y"]
+`shikiru doctor --probe` runs the live parts of the same suite for the configured agents.
+
+### 1.3 Engine behaviour by capability
+
+| Capability absent | Engine behaviour |
+|---|---|
+| `RESUME` | Crash, restart and rung-change recovery start a new session with `handoff.md.j2` |
+| `PROMPT_EVENTS` | Intervention is detected as `Activity` while no turn is in flight; Operators pause before typing (03-workflow §10) |
+| `QUOTA` | No quota bars for that agent. A `TurnFailed(QUOTA)` without `resets_at` is probed by re-injecting `continue.md` every 15 min |
+| `HEADLESS` | The agent can't be a Helper rung (validated at config load) |
+
+## 2. Claude Code plugin (`plugins/agents/claude`) — verified with 2.1.273
+
+Capabilities: `RESUME`, `PROMPT_EVENTS`, `QUOTA` (subscription auth), `HEADLESS`.
+
+**Options** (`ClaudeOptions`):
+
+| Option | Default | Meaning |
+|---|---|---|
+| `quota_probe_interval` | `900` | Seconds between probes while this agent has live sessions (`0` = off) |
+| `compact_below_free_pct` | `0` | `0` = rely on Claude's own auto-compact |
+| `prices` | `{}` | Overrides of the packaged `prices.toml` |
+
+**Launch**:
+
 ```
-
-When the agent has hooks, a transcript or a quota API, a dedicated plugin adds those sources through the entry points. No engine change is needed (Open-Closed Principle).
-
-## 2. Claude Code (`plugins/agents/claude`) — verified with 2.1.273
-
-Capabilities: `HOOKS`, `SESSION_ID`, `TRANSCRIPT`, `QUOTA` (subscription auth only), `HEADLESS`.
-
-**Launch argv**:
-
-```
-claude --session-id <new uuid> | --resume <id>
-       --model <rung.model> --effort <rung.effort>
+claude --session-id <uuid> | --resume <id>
+       --model <m> --effort <e>
        --settings '<json: hooks only>'
-       --add-dir <run_dir> [--add-dir …]
-       <agent_config.args…>            # default: --permission-mode auto
+       --add-dir <run_dir> …
+       <args>                          # default: --permission-mode auto
 ```
 
-- `--settings` only adds hooks, and they merge with user and project hooks.
-- Shikiru never touches the user's statusline or other settings.
-- Hooks registered as `{"type":"command","command":"<hook_command> <role>"}`:
-  - `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`
-  - `Stop`, `StopFailure`, `Notification`
-  - `PostCompact`, `SessionEnd`
+- Env: subscription auth unsets `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`; `api_key` auth sets `ANTHROPIC_API_KEY` from `api_key_env`.
+- `--settings` only adds hooks, which merge with user and project hooks. Nothing else of the user's configuration is touched.
 
-**Hook mapping** (payloads verified):
+**Signals** (hook payloads verified):
 
 | Hook | Signal |
 |---|---|
-| `SessionStart` | `SessionStarted(session_id, transcript_path)` |
+| `SessionStart` | `SessionStarted(session_id)`, and the plugin keeps `transcript_path` |
 | `UserPromptSubmit` | `PromptSubmitted(prompt)` |
-| `PreToolUse` / `PostToolUse` | `ToolStarted` / `ToolFinished` (by `tool_use_id`) |
-| `Stop` | `TurnEnded(last_assistant_message)` |
-| `StopFailure` | `TurnFailed` (kind refined from the transcript) |
+| `PreToolUse` / `PostToolUse` | `Activity` |
+| `Stop` | `TurnEnded(last_message)` |
+| `StopFailure` | `TurnFailed`, with the kind refined from the transcript |
 | `Notification` | `AttentionNeeded` |
 | `PostCompact` | `Compacted` |
 | `SessionEnd` | `SessionEnded` |
 
-**Transcript** (`transcript_path`, the JSONL Claude writes itself, verified):
-- **Tokens**: `type == "assistant"` entries give `message.model` and `message.usage` (`input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens`). They are **deduplicated by `message.id`**, because one message spans several lines.
-- **Context used** = the last message's `input + cache_read + cache_creation` tokens.
-- **Failures**: entries with `isApiErrorMessage: true` carry `apiErrorStatus` and text, e.g. `"You've hit your session limit · resets 3:10am (Europe/Warsaw)"`.
-  - 429 or "limit" text → `quota`, with `resets_at` parsed from `resets <time> (<IANA tz>)` via `zoneinfo`. The next occurrence of that time is used.
-  - 5xx / 529 → `unavailable`
-  - 401 / 403 → `auth`
-  - "prompt is too long" → `context`
-  - anything else → `other`
+**Usage**, from the transcript Claude writes itself (verified):
+- Token counts from `assistant` entries' `message.usage`, deduplicated by `message.id`.
+- `context_used_pct` from the last message's `input + cache_read + cache_creation` tokens ÷ the model's context window in `prices.toml`.
+- `cost_usd` from `PriceTable`. `cost_basis` is `api_equivalent` under subscription auth and `billed` with an API key.
 
-**Quota probe** (`ClaudeQuotaProbe`, verified):
+**Failures**: transcript entries with `isApiErrorMessage: true`, `apiErrorStatus` and text:
+- 429 or "limit" → `QUOTA`, with `resets_at` parsed from e.g. `"You've hit your session limit · resets 3:10am (Europe/Warsaw)"`
+- 5xx / 529 → `UNAVAILABLE`
+- 401 / 403 → `AUTH`
+- "prompt is too long" → `CONTEXT`
+- otherwise → `OTHER`
 
-```
-claude -p "." --output-format stream-json --verbose --model <cheapest rung model> --safe-mode --tools "" --no-session-persistence
-```
+**Quota** (verified): the probe `claude -p "." --output-format stream-json --verbose --model haiku --safe-mode --tools "" --no-session-persistence` → `rate_limit_event.rate_limit_info.unifiedWindows.{five_hour,seven_day}` (`utilization`, `resetsAt`).
+- It runs through `CachedProbe` at `quota_probe_interval`, and immediately after a `QUOTA` failure.
 
-- It reads the first `rate_limit_event.rate_limit_info.unifiedWindows` (`five_hour`/`seven_day`: `utilization`, `resetsAt`).
-- It runs every `quota.probe_interval` (15 min) while the agent has live runs, and immediately after a `quota` failure.
-- Each probe costs one tiny request. It is disabled with `quota.probe_interval = 0` or `auth = "api_key"`.
+**Session keys and commands**:
+- `before_turn` returns `["/compact"]` when `context_used_pct > 100 - compact_below_free_pct`.
+- `exit_input = "/exit"`, `interrupt_keys = ["Escape"]`.
+- `safe_keys = ["Enter", "Escape", "Down", "1", "2"]`.
 
-**Auth**:
-- `subscription` → `launch_env` unsets `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`.
-- `api_key` → sets `ANTHROPIC_API_KEY` from `api_key_env`.
+**Headless**: `claude -p --output-format json --json-schema <schema> --model <m> --effort <e> --safe-mode --tools "" --no-session-persistence` → `structured_output`.
 
-**Keys**:
-- `compact_command = "/compact"`, `exit_command = "/exit"`
-- `interrupt_keys = ["Escape"]`
-- `safe_keys = ["Enter", "Escape", "Down", "1", "2"]`
+**Workspace trust**: a trust dialog for a new worktree dir raises `AttentionNeeded`. The Helper's `classify_screen` answers it using `safe_keys`, and the contract suite checks that no dialog stays open.
 
-**Headless**:
+## 3. Codex plugin (`plugins/agents/codex`) — verified with 0.154.0
 
-```
-claude -p --output-format json --json-schema <schema> --model <m> --effort <e> --safe-mode --tools "" --no-session-persistence
-```
+Capabilities: `RESUME`, `PROMPT_EVENTS`, `QUOTA`, `HEADLESS`.
 
-The result is read from `structured_output`, falling back to `result`.
+**Options** (`CodexOptions`):
 
-**Workspace trust**: a trust dialog for a new worktree dir is one of the dialogs `doctor --probe` checks for. If one shows up at runtime, it raises `AttentionNeeded`, and the Helper's `classify_screen` answers it using `safe_keys`.
+| Option | Default | Meaning |
+|---|---|---|
+| `compact_below_free_pct` | `60` | Compact before a turn when free context is below this |
+| `prices` | `{}` | Overrides of the packaged `prices.toml` |
 
-## 3. Codex CLI (`plugins/agents/codex`) — verified with 0.154.0
-
-Capabilities: `HOOKS`, `SESSION_ID`, `TRANSCRIPT`, `QUOTA`, `HEADLESS`.
-
-**Launch argv**:
+**Launch**:
 
 ```
 codex [resume <id>]
-      -m <rung.model> -c model_reasoning_effort="<effort>"
+      -m <m> -c model_reasoning_effort="<e>"
       --dangerously-bypass-hook-trust
-      -c 'hooks.<Event>=[{hooks=[{type="command",command="<hook_command> <role>"}]}]'   # per event
-      -c 'projects."<task root>".trust_level="trusted"'
-      -C <cwd> --add-dir <run_dir> --add-dir <git common dir of each repo>
-      <agent_config.args…>      # default: --approve-for-me
+      -c 'hooks.<Event>=[{hooks=[{type="command",command="shikiru hook"}]}]'     # per event
+      -c 'projects."<cwd>".trust_level="trusted"'
+      -C <cwd> --add-dir <run_dir> --add-dir <git common dirs>
+      <args>                                 # default: --approve-for-me
 ```
 
-Hook events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `PermissionRequest`, `PostCompact`, `SessionEnd`.
+- Env: subscription auth unsets `OPENAI_API_KEY`/`CODEX_API_KEY`; `api_key` auth sets `CODEX_API_KEY`.
 
-**Hook mapping** (payloads verified):
+**Signals** (hook payloads verified):
 
 | Hook | Signal |
 |---|---|
-| `SessionStart` | `SessionStarted(session_id, transcript_path)`. If `transcript_path` is null, the adapter finds the file `~/.codex/sessions/**/rollout-*-<session_id>.jsonl` |
+| `SessionStart` | `SessionStarted`. If `transcript_path` is null, the rollout file is found via `~/.codex/sessions/**/rollout-*-<id>.jsonl` |
 | `UserPromptSubmit` | `PromptSubmitted` |
-| `PreToolUse` / `PostToolUse` | `Tool*` |
+| `Pre`/`PostToolUse` | `Activity` |
 | `Stop` | `TurnEnded` |
 | `PermissionRequest` | `AttentionNeeded` |
 | `PostCompact` | `Compacted` |
 
-**Transcript** (the rollout JSONL Codex writes itself, verified):
-- **Tokens**: `event_msg` `token_count` records: `info.total_token_usage` (`input_tokens`, `cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`).
-- **Context used**: `info.last_token_usage`, with the model's context window taken from the record when present, else from config `models`.
-- **Quota (passive)**: `rate_limits.primary` / `secondary` (`used_percent`, `window_minutes`, `resets_at`) → `QuotaWindow`s. `CodexQuotaProbe` returns the latest record across recent rollouts.
-- **Failures**: `error` events, mapped the same way as for Claude: usage limit → `quota` (with `resets_at` from the latest `rate_limits`), overloaded or 5xx → `unavailable`, 401 → `auth`, context window exceeded → `context`.
+**Usage**, from the rollout Codex writes itself (verified): `token_count` records.
+- Tokens from `info.total_token_usage`.
+- Context from `info.last_token_usage` ÷ the context window (from the record, or from `prices.toml`).
+- Cost via `PriceTable`.
 
-**Auth**:
-- `subscription` → unset `OPENAI_API_KEY` and `CODEX_API_KEY`.
-- `api_key` → set `CODEX_API_KEY` from `api_key_env`.
+**Failures**: `error` events. Usage limit → `QUOTA`, with `resets_at` from the latest `rate_limits`. Overloaded or 5xx → `UNAVAILABLE`. 401 → `AUTH`. Context window exceeded → `CONTEXT`.
 
-**Keys**:
-- `compact_command = "/compact"`, `exit_command = "/quit"`
-- `interrupt_keys = ["Escape"]`
-- `safe_keys = ["Enter", "Escape", "Down", "1", "2", "y"]`
-- Default `compact_below_free_pct = 60`.
+**Quota** (passive, verified): the latest `rate_limits.primary`/`secondary` (`used_percent`, `window_minutes`, `resets_at`) across recent rollouts.
 
-**Headless**:
+**Session keys and commands**:
+- `before_turn` returns `["/compact"]` below the threshold.
+- `exit_input = "/quit"`, `interrupt_keys = ["Escape"]`.
+- `safe_keys = ["Enter", "Escape", "Down", "1", "2", "y"]`.
 
-```
-codex exec --ephemeral --json --output-schema <file> -m <m> -c model_reasoning_effort="<e>" -s read-only --skip-git-repo-check
-```
-
-The final `agent_message` is parsed.
+**Headless**: `codex exec --ephemeral --json --output-schema <file> -m <m> -c model_reasoning_effort="<e>" -s read-only --skip-git-repo-check` → the final `agent_message`.
 
 ## 4. Helper (Joshu 助手)
 
@@ -235,19 +239,12 @@ The final `agent_message` is parsed.
 
 | Call | Input | Output | Used by |
 |---|---|---|---|
-| `rebuild_report` | report schema, last assistant message (hook) or the last 120 screen lines, transcript tail if available, git facts | report JSON or `{"unrecoverable": reason}` | 03 §4.8 |
-| `classify_failure` | error text (transcript or screen) | `{kind, resets_at?, summary}` | 03 §8.1 |
-| `classify_screen` | visible pane text, `safe_keys` | `{state: working/dialog/question/quota/error, keys?, text?, resets_at?}` | 03 §8.5, and every agent without hooks (§1.2) |
+| `rebuild_report` | report schema, `TurnEnded.last_message` or the last 120 screen lines, git facts | report JSON or `{"unrecoverable": reason}` | 03 §4.8 |
+| `classify_failure` | `TurnFailed(OTHER).message` | `{kind, resets_at?, summary}` | 03 §8.1 |
+| `classify_screen` | visible pane text, `safe_keys` | `{state: working/dialog/question/quota/error, keys?, text?, resets_at?}` | 03 §8.5 |
 
 The Helper never edits files or talks to sessions. The engine acts on what it returns.
 
-## 5. Contract checks (`shikiru doctor --probe`)
+## 5. Contract checks
 
-For each configured agent, in a scratch git repo inside a real tmux pane on a private socket, using the production launch path. Only the checks for the agent's declared capabilities run:
-1. The session starts. `SessionStarted` arrives with an id (`SESSION_ID`), or `Quiescent` arrives (no hooks).
-2. The pointer prompt is injected. The agent runs `shikiru report`. Turn end is detected through the agent's signals.
-3. No approval or trust dialog is left open.
-4. Telemetry parses with tokens > 0 (`TRANSCRIPT`), and the quota probe returns windows (`QUOTA`).
-5. Resume: exit, relaunch with the id, and a second turn recalls the first turn's nonce (`SESSION_ID`).
-
-Recorded hook, transcript and probe samples are saved as regression fixtures (07-engineering §4).
+`shikiru doctor --probe` runs the live checks of `AgentContractSuite` (§1.2) for each configured agent, in a scratch git repo on a private tmux socket. It saves the recorded samples as regression fixtures (07-engineering §4).
