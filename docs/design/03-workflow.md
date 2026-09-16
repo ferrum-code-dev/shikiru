@@ -102,17 +102,17 @@ Residual risks that should not block go to `new_tasks`. The Leader states each a
 1. **Resolve rung**: the task override, else the role ladder for the task complexity at `rung_index`.
 2. **Write the turn dir** `runs/T/turns/NN-<step>-i<iteration>/`: `prompt.md`, `report.schema.json`, `report.kind`. Remove any stale `report.json`. Point `runs/T/<role>/current_turn` at this dir.
 3. **Ensure the session** (§5).
-4. **Compact if needed**: the adapter has `compact_command` and telemetry `context_free_pct < rung.compact_below_free_pct` → send the command → await `Compacted` or `TurnEnded` (≤ 10 min).
+4. **Compact if needed**: the adapter has `compact_command` and the computed context free % (04-agents §1) is `< rung.compact_below_free_pct` → send the command → await `Compacted` or `TurnEnded` (≤ 10 min).
 5. **Inject the pointer**: `load-buffer -b shk-<pane> -` → `paste-buffer -d -p -b shk-<pane> -t <pane>` → sleep `inject_delay_ms` (150) → `send-keys -t <pane> Enter`.
    The pasted line is `{prompt_prefix}Read {abs prompt path} and follow it exactly.`
-6. **Confirm submission**: a `PromptSubmitted` signal with this turn's path must arrive within 15 s. If not, press `Enter` once more. If it still doesn't arrive, run stall analysis (§8.5).
+6. **Confirm submission**: a `PromptSubmitted` signal with this turn's path (or `Busy` for agents without hooks, 04-agents §1.2) must arrive within 15 s. If not, press `Enter` once more. If it still doesn't arrive, run stall analysis (§8.5).
 7. **Await** the first of:
    - `TurnEnded`
    - `TurnFailed`
    - `PaneDied`
    - `Stall`
    - a matching Operator command (`pause --now`, `cancel`, `retry`)
-8. **On `TurnEnded`**:
+8. **On `TurnEnded`** (for agents without hooks: synthesised from `ReportSubmitted` plus `Quiescent`, 04-agents §1.2):
    1. If `report.json` exists and validates → `Completed(report)`.
    2. Otherwise nudge, at most `nudge_limit` (2) times: inject "Your turn ended without a valid report. Submit it with `shikiru report` exactly as described at the end of {prompt path}.", then go back to 7.
    3. Otherwise the Helper rebuilds the report from `last_assistant_message` and the transcript tail → `Completed(report, rebuilt=true)`, logged.
@@ -164,6 +164,7 @@ Prompts are idempotent: "If this work is already done in the workspace, verify i
   - Worktree creation for existing branches is idempotent.
 - **Caches**:
   - For each `repos[].caches` glob that matches an existing ignored path in the main checkout, copy it with copy-on-write: macOS `cp -c -R`, Linux `cp -a --reflink=always`.
+  - **Copy-on-write (CoW)**: a filesystem feature (APFS on macOS; btrfs and XFS on Linux) where a "copy" is only new metadata pointing at the same data blocks. A 5 GB `node_modules` or `target` dir is copied in about a second and uses no extra disk. Only files one side later modifies get their own blocks. Each task gets a warm, fully independent cache, and a build in one worktree can't corrupt another's.
   - If copy-on-write isn't supported, `cache_mode = "clone"` falls back to no copy and logs a warning once. `doctor` reports copy-on-write support.
   - `cache_mode = "symlink"` is available for caches that are safe to share.
 - **Isolation of shared resources**: each task exports `SHIKIRU_SLOT` and `SHIKIRU_TASK`. Projects use them in their own instructions or scripts for ports and Docker Compose project names. Shikiru adds nothing project-specific.
@@ -291,13 +292,21 @@ Every agent session is a real interactive session that the Operator can reach at
 | Redo a step | `retry T-12 [--step verify]` | same | Aborts the current turn and runs the step again |
 | Open elsewhere | `sessions T-12` → `cd <root> && claude --resume <id>` | same | — |
 
-**Detecting manual intervention.** The engine records every line it injects into a run: pointers, nudges, `continue.md`, `say` pointers and compact commands. A `PromptSubmitted` signal whose prompt doesn't match any of them sets the `intervention` hold:
-- Nudges, stall detection and new turns are suspended.
-- The pane title shows `✋ operator`.
+**Scope: always one task.** Every intervention, hold, pause and resume applies to the one task that owns the pane or is named in the command. Other tasks, including those running in parallel on the same agent, are unaffected. Each task has its own `TaskFlow` coroutine, and a hold only blocks that coroutine.
+`quota` is the one hold that spans tasks: it is set per agent account, because the account's limit is shared (§8.1).
+
+**Detecting manual intervention.** The engine records every line it injects into a run: pointers, nudges, `continue.md`, `say` pointers and compact commands. The `intervention` hold is set on **that task only** when:
+- **agents with hooks**: a `PromptSubmitted` signal arrives whose prompt matches none of the recorded lines;
+- **agents without hooks**: `Busy` appears in a pane while the task has no turn in flight (between turns or after the report). Input typed during an in-flight turn can't be told apart from the agent's own output, so the Operator should run `pause T-12` first. The palette's "Intervene" action does this automatically.
+
+While the hold is set:
+- that task's nudges, stall detection and new turns are suspended;
+- its pane titles show `✋ operator`;
+- its comic strip shows an `OPERATOR` stamp.
 
 The hold clears:
 - when a valid `report.json` for the current turn appears and the turn ends (the Operator helped finish it), or
-- on `resume T-12`, which injects `continue.md`.
+- on `resume T-12`, which resumes only T-12 and injects `continue.md` into the pane that was intervened.
 
 `say` writes `runs/T/messages/NNN.md` and injects the pointer `Operator message: read <path> and take it into account.` Both CLIs queue input typed during a busy turn, so `say` works mid-turn and never sets the `intervention` hold.
 

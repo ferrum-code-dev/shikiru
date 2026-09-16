@@ -23,7 +23,7 @@ Exit codes: `0` ok, `1` error, `2` usage, `3` not initialised, `4` engine down, 
 | `submit "<request>" [flags]` | Enqueue a request (05-data §1 flags). Prints `T-n` |
 | `queue` / `tasks [--all]` / `show T-n` | Queue, tasks, task detail (timeline, runs, turns, reports, cost, branches) |
 | `prioritize T-n (--priority N / --top / --bottom / --before T-m)` | Re-prioritise a queued task |
-| `pause T-n [--now]` / `resume T-n` / `cancel T-n` / `retry T-n [--step S]` | Task control |
+| `pause T-n [--now]` / `resume T-n` / `cancel T-n` / `retry T-n [--step S]` | Task control; always scoped to the named task only |
 | `rung T-n <role> <agent:model:effort>` | Model override from the next turn |
 | `say T-n --to leader/implementer "<text>"` | Message an agent session |
 | `peek T-n --role R [--lines N]` | Last assistant message, pane screen, telemetry |
@@ -34,7 +34,7 @@ Exit codes: `0` ok, `1` error, `2` usage, `3` not initialised, `4` engine down, 
 | `doctor [--probe]` | Environment and config checks. `--probe` runs 04-agents §5 |
 | `config show/set` | 05-data §1 |
 | `mcp` | Stdio MCP server (§3) |
-| internal (hidden): `engine`, `dash`, `hook`, `report`, `statusline`, `palette`, `tmux-event`, `idle` | Process entrypoints |
+| internal (hidden): `engine`, `dash`, `hook`, `report`, `palette`, `tmux-event`, `idle` | Process entrypoints |
 
 **Human output**:
 - Rich panels, tables and trees, truecolor with a 256-colour fallback. `NO_COLOR` and non-TTY output are respected.
@@ -101,7 +101,7 @@ Resources: `shikiru://escalations/{id}` (packet markdown) and `shikiru://tasks/{
 **Windows**:
 - Each active task has a window named by `titles.window`, e.g. `T-12 Add retry to parser`.
 - When there are no task windows, a single window named `shikiru` exists.
-- Its leader and implementer panes run `shikiru idle <role>`, a manga-style idle banner `待機中 standing by`, and its shell pane is a normal shell.
+- Its leader and implementer panes run `shikiru idle <role>`, which shows an idle panel (§7.5), and its shell pane is a normal shell.
 
 **Window transitions** (a tmux session must never reach zero windows):
 - First task starts → create the task window, then kill the `shikiru` window.
@@ -112,8 +112,8 @@ Resources: `shikiru://escalations/{id}` (packet markdown) and `shikiru://tasks/{
 2. The engine installs these key bindings idempotently at start. They only change behaviour inside `[shikiru]` sessions:
 
    ```
-   bind-key x if-shell -F '#{m:[[]shikiru[]]*,#{session_name}}' 'display-message "守 protected pane"' 'confirm-before -p "kill-pane #P? (y/n)" kill-pane'
-   bind-key & if-shell -F '#{m:[[]shikiru[]]*,#{session_name}}' 'display-message "守 protected window"' 'confirm-before -p "kill-window #W? (y/n)" kill-window'
+   bind-key x if-shell -F '#{m:[[]shikiru[]]*,#{session_name}}' 'display-message "Protected pane (use shikiru stop --force)"' 'confirm-before -p "kill-pane #P? (y/n)" kill-pane'
+   bind-key & if-shell -F '#{m:[[]shikiru[]]*,#{session_name}}' 'display-message "Protected window (use shikiru stop --force)"' 'confirm-before -p "kill-window #W? (y/n)" kill-window'
    bind-key Space if-shell -F '#{m:[[]shikiru[]]*,#{session_name}}' 'display-popup -E -w 70% -h 60% "shikiru palette"'
    ```
 
@@ -129,7 +129,7 @@ Resources: `shikiru://escalations/{id}` (packet markdown) and `shikiru://tasks/{
 
 - The engine sets titles with `select-pane -T` on every change it observes: rung, iteration, telemetry every `refresh_seconds`, holds.
 - Fields available for templates: `task_id`, `title`, `project`, `role`, `agent`, `model`, `effort`, `iteration`, `max_iterations`, `step`, `status`, `context_free`, `cost`, `tokens_in`, `tokens_out`, `elapsed`, `active`, `queued`, `max_parallel`, `cwd`, `flags`.
-- `flags` is a string of status glyphs: `⏸` paused, `✋` operator, `⌛` quota, `ドン!` escalated, `⚠` stalled.
+- `flags` is a short English status with a glyph: `⏸ paused`, `✋ operator`, `⌛ quota`, `‼ escalated`, `⚠ stalled`.
 
 ### 5.3 System pane (`shikiru dash --task T-n | --idle`)
 
@@ -155,20 +155,20 @@ class WidgetContext:
 | Widget | Content | Source |
 |---|---|---|
 | `project` | Project path, and repos with current branch, ahead/behind of `base` and dirty count; active task branches | `git` via `workspace.git` (cached 10 s) |
-| `tasks` | Active tasks: id, title, status/step, iteration `2/5`, elapsed, cost, holds; the focused task highlighted | DB |
-| `queue` | Queued tasks in dispatch order with priority, dependencies and the reason each is waiting | DB + `Scheduler.explain()` |
-| `escalations` | Open escalations as red cards with the recommended option | DB |
-| `usage` | Tokens in/out and cost per agent since engine start; quota bars per window with reset countdown | DB `runs`, `quotas` |
+| `strips` | Active tasks as comic strips (§7.1): the focused task expanded, split children nested, holds as stamps, cost per task | DB |
+| `queue` | "Next up" thumbnails in dispatch order with priority, dependencies and the reason each is waiting | DB + `Scheduler.explain()` |
+| `escalations` | Open escalations as splash panels (§7.3) | DB |
+| `usage` | Tokens (input, cache, output) and cost per agent since engine start, computed from agent transcripts × the `models` price table ("API-equivalent" under subscription auth); quota bars per window with reset countdown and observation age | DB `runs`, `quotas` |
 | `resources` | Host CPU%, RAM used/total; this instance's CPU% and RSS, summed over the engine plus all tmux pane process trees in the session | `psutil` (sampled every 2 s) |
 | `docker` | Containers: name, CPU%, memory; containers whose compose `working_dir` is inside `.shikiru/worktrees/T-n` are tagged with the task | `docker stats --no-stream --format json` and `docker ps --format json` (every 5 s, hidden if Docker is unavailable) |
-| `events` | Last 20 events | DB |
+| `dialogue` | Dialogue feed (§7.2), last 20 lines | DB events and reports |
 
 The command palette (§5.4) is always available.
 
 ### 5.4 Command palette
 
 - Opened with `Ctrl+P` inside the system pane (Textual command palette) or `prefix + Space` anywhere in a Shikiru session (tmux popup running `shikiru palette`).
-- Actions: submit request (multi-line editor), prioritise, pause/resume, cancel, retry step, change rung, message agent, peek, resolve escalation (a form showing the packet with option radio buttons and answer text), open event log, stop engine.
+- Actions: submit request (multi-line editor), prioritise, pause/resume, intervene (pauses the focused task, then selects its agent pane), cancel, retry step, change rung, message agent, peek, resolve escalation (a form showing the packet with option radio buttons and answer text), open event log, stop engine.
 - Every action calls `OperatorService` and shows the acknowledgement as a toast.
 
 ### 5.5 Attach
@@ -185,12 +185,108 @@ The command palette (§5.4) is always available.
 2. **Desktop** (`notify.desktop`): OSC 777 / OSC 9 through tmux passthrough to the attached terminal; otherwise `terminal-notifier` (macOS) or `notify-send` (Linux) when present.
 3. **`notify.command`**: event JSON on stdin (for Slack, ntfy, email or remote AI Operators).
 
-## 7. Style (`dashboard.style = "manga"`)
+## 7. Signature design: comic strips (`dashboard.style = "comic"`)
 
-- **Palette**: sumi ink `#1b1b1f` background, paper `#f4efe6` text, beni red `#d7263d` for escalations, ai indigo `#264653` for Leader, matcha `#6a994e` for done, kin gold `#e9c46a` for cost and quota.
-- **Role names** in titles: 長 Chō (Leader), 員 In (Implementer), 助手 Joshu (Helper, shown in events), 仕切る (system), 殻 (shell).
-- **Status sound effects**: running `ゴゴゴ`, verifying `ジー`, done `完!`, escalation `ドン!`, quota wait `zzz`.
-- **Panel frames**: heavy box borders like comic panels; escalation cards styled as speech bubbles `「…」` with a jagged top edge.
-- **Banners**: the `start` banner and the idle banner use a big kanji-and-romaji wordmark with speed lines drawn from `╱` rows.
-- **Progress**: iteration bars as screen-tone blocks `▓▒░`.
-- `style = "plain"` swaps glyphs and SFX for ASCII and uses standard colours. Everything else is identical.
+Shikiru is recognisable by **structure, not colours**. The state of the work is drawn as a comic page: every task is a **4-panel strip** (a Japanese *yonkoma*), key moments are **speech bubbles**, and escalations are **splash panels**.
+**English is the primary language** of every label and message. Kanji appear only as small decorative marks, never as the only carrier of meaning.
+
+Everything is built from Rich renderables in `shikiru.comic`, so the CLI (`status`, `show`, `escalations`) and the dashboard draw the same pictures. That is one implementation, not two. Only Unicode box-drawing and block characters are used, so it works in any terminal, inside tmux and over SSH.
+
+### 7.1 Task strip (`TaskStrip`)
+
+```
+┏━ T-12 · Add retry to parser ━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃起 Triage   ┃承 Implement ┃転 Verify    ┃結 Merge    ┃
+┃ ✔ 3m      ┃ ✔ iter 2    ┃ ▓▓▒░ 2/5   ┃  ···      ┃
+┃ Leader    ┃ codex/luna  ┃ opus/high  ┃           ┃
+┗━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━┻━━━━━━━━━━━┛
+  ╰──────── rework ×1 ←──────╯
+```
+
+**Panels** follow the story arc 起承転結 (setup, development, twist, resolution). The kanji is a corner mark; the English stage name is the label.
+
+| Mode | Panels |
+|---|---|
+| implement | Triage · Implement · Verify · Merge (or `PR` in PR mode) |
+| plan | Triage · Plan · Review (skipped, dimmed) · Merge |
+| split | Triage · Split → child ids (e.g. `T-15 T-16 T-17`) · Children (progress `2/3 done`) · Done. Child strips are drawn indented under the parent |
+
+**Panel states**:
+- pending: dotted border `┄` and dim text
+- active: heavy border, an animated screen-tone bar `▓▒░` for iteration, and a subtle speed-line edge `╱`
+- done: `✔` plus duration
+- failed or escalated: red, with a `‼` corner
+
+Each panel's body shows at most 3 short lines: status, `agent/model` of the acting role, elapsed time or iteration `2/5`.
+
+**Loops**:
+- A rework loop is an arrow under the strip from Verify back to Implement, with its count.
+- A consult is a small inset `? asked Leader` in the Implement panel.
+
+**Stamps** are drawn over the active panel: `PAUSED`, `OPERATOR`, `QUOTA · resets 14:10`, `WAITING RESOURCES`, `STALLED`.
+
+**Responsive**:
+- ≥ 60 columns: horizontal strip.
+- 36–59 columns: a 2×2 grid.
+- < 36 columns: a single line `T-12 ▸ Verify 2/5 · opus/high`.
+
+### 7.2 Dialogue feed (`SpeechBubble`)
+
+Key moments are one-line English quotes taken from reports and engine events, attributed to a character:
+
+```
+ 長 Leader: “AC3 lacks a tier-2 test.”                     T-12 · 2m
+ 員 Implementer: “Added the test; all tiers pass.”           T-12 · now
+ 助 Helper: “Answered the trust dialog (Enter).”             T-14 · 5m
+ 仕 Shikiru: “Switched implementer to codex/sol after 2 rejections.”
+```
+
+The sources:
+- verdict `summary` (Leader)
+- report `summary` or `question` (Implementer)
+- Helper actions
+- engine decisions (rung changes, holds, merges)
+
+Bubbles are truncated to the width. Enter opens the full text.
+
+### 7.3 Splash panel (`SplashPanel`)
+
+An open escalation takes over the top of the system pane in every window until it is resolved:
+
+```
+╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+┃ ESCALATION E-3 · T-14 · decision required            ‼ ┃
+┃ “Should rounding follow banker's rules or half-up?”     ┃
+┃ ★ 1 Half-up (matches the UI spec)   2 Banker's   3 Cancel ┃
+┃ [r] resolve   [o] open packet                          ┃
+╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+```
+
+### 7.4 Page composition (system pane)
+
+The system pane is a comic page: panels separated by gutters, arranged top to bottom as the widgets configured in `dashboard.system.widgets`:
+1. **Header panel**: project, engine status, slots `2/2 active`, and the small seal mark `仕切る`.
+2. Splash panels, one per open escalation.
+3. Task strips: the focused task first and expanded, the others compact.
+4. **Next up**: queued tasks as a row of small thumbnail panels with priority and waiting reason.
+5. Dialogue feed.
+6. **Margin notes**: compact panels for usage and quota bars, resources and Docker.
+
+### 7.5 Other surfaces
+
+| Surface | Design |
+|---|---|
+| `shikiru start` | Wordmark `SHIKIRU` in block letters with a speed-line underline, the tagline "runs the show", and a small `仕切る` seal |
+| Idle leader/implementer panes (`shikiru idle`) | An empty comic panel reading "Standing by — no active tasks", with the role name and a decorative role mark (長 or 員) |
+| Pane titles | English role name first, kanji mark as a prefix (05-data `dashboard.titles`) |
+| `show T-n` / `status` | The same strip, dialogue and splash renderables printed once |
+
+**Colour** is restrained, ink on paper:
+- the terminal's default foreground and background;
+- one accent for active panels;
+- red only for escalations and failures;
+- dim for pending.
+
+Meaning never depends on colour alone: every state also has a border style, a glyph or a stamp.
+
+**`style = "plain"`** keeps strips and panels but drops kanji marks, speed lines and screen tones. It uses ASCII-safe box characters for limited fonts.

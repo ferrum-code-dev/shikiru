@@ -10,15 +10,15 @@ Operators submit requests, watch progress and intervene. Shikiru decides *when* 
 | Role | Name | Kind | Responsibility |
 |---|---|---|---|
 | Orchestrator | 仕切る Shikiru | Deterministic engine | Queue, scheduling, workspaces, prompts, turn protocol, loops, integration, recovery, escalation |
-| Leader | 長 Chō | Interactive AI session | Triage, planning, decomposition, verification, answering Implementer questions, scope decisions |
-| Implementer | 員 In | Interactive AI session | Implementation, tests, commits, tracker updates, conflict resolution |
+| Leader | 長 Chō (decorative mark 長) | Interactive AI session | Triage, planning, decomposition, verification, answering Implementer questions, scope decisions |
+| Implementer | 員 In (decorative mark 員) | Interactive AI session | Implementation, tests, commits, tracker updates, conflict resolution |
 | Operator | ユーザ Yūzā | Human / software / AI agent | Submit, prioritise, observe, intervene, resolve escalations |
 | Helper | 助手 Joshu | Headless one-shot small model | Handles cases where an agent's output doesn't match Shikiru's expected formats: rebuilds missing reports, classifies unknown failures and stuck screens |
 
 ## 3. Principles
 
 1. **Engine decides the flow, agents do the work.** Every transition is code in the engine, never a model's choice of what to run next. Agent output only selects one of a fixed set of outcomes, enforced by a schema.
-2. **Signals, not scraping.** Hooks, report files and transcripts are the primary signals. Pane capture is used only as evidence for the Helper when those signals stop.
+2. **Signals, not scraping.** Agents signal through capabilities they may or may not have: hooks, session ids, their own transcripts, quota APIs. Agent-agnostic signals are always on: the report file and pane activity (screen stability plus process CPU). Screen text is only read by the Helper, as a fallback. Usage comes from records the agents write themselves, never from user-configurable display surfaces such as the statusline.
 3. **Agents touch files, Shikiru touches the DB.** Agents exchange prompt, report and hook-event files. Only Shikiru processes write SQLite.
 4. **Open for new agents and widgets** through entry-point plugins, and closed for modification.
 5. **Escalate only on critical issues.** Holds (quota, resources, pause) clear on their own. The Leader resolves scope questions itself. Everything else is retried, moved up the model ladder or replanned first.
@@ -34,7 +34,7 @@ Operators submit requests, watch progress and intervene. Shikiru decides *when* 
 | D3 | **TOML** config | YAML, JSON | Operator selection. Supported by the stdlib, Codex uses it, dotted-key overrides |
 | D4 | **Leader decides scope changes** (moves ACs, creates follow-up tasks), the Operator is notified, no escalation | Always escalate | Operator selection. Fewer interruptions |
 | D5 | Python 3.14, uv, Typer+Rich CLI, Textual dashboard, SQLite (WAL), tmux 3.4+ | Go/Rust; web UI | The suggested stack fits. Textual is the most capable Python TUI |
-| D6 | **One git worktree per task per affected repo** under `.shikiru/worktrees/`, build caches copied as copy-on-write clones (APFS `clonefile`, Linux `reflink`) | In-place branches (no parallelism); full clones (slow, disk-heavy); symlinked caches (shared mutable state) | Isolation with warm caches at almost no disk cost |
+| D6 | **One git worktree per task per affected repo** under `.shikiru/worktrees/`, build caches copied as copy-on-write clones (APFS `clonefile`, Linux `reflink`: the copy appears instantly and shares disk blocks with the original until either side changes a file; 03-workflow §6) | In-place branches (no parallelism); full clones (slow, disk-heavy); symlinked caches (shared mutable state) | Isolation with warm caches at almost no disk cost |
 | D7 | **Leader and Implementer sessions persist for the whole task** (triage → iterations → integration). Each new task starts with clean sessions | A new session per step | Matches the manual copy-paste loop. The agents keep context across review rounds |
 | D8 | **Detached engine daemon** per project (one `flock`), with the tmux session as its view | Engine inside a tmux pane | Closing or rebuilding panes can't kill orchestration |
 | D9 | **SQLite `commands` table as the operator→engine bus** | HTTP/Unix socket API | Everything is local and a DB is needed anyway. Commands submitted while the engine is down are kept and applied on the next start |
@@ -42,6 +42,8 @@ Operators submit requests, watch progress and intervene. Shikiru decides *when* 
 | D11 | Every submission is a **request task**. The Leader's triage turns it into `implement`, `plan` or `split` | Separate request types with a parser for the plan files | Plan formats vary. The Leader reads them the way the Operator does today |
 | D12 | **Model ladder per role and complexity**. Moving up happens on failed verifications, unavailability or quota policy. Switching model within the same agent resumes the session. Switching to another agent starts a new session with a handoff | A single model | Mirrors the manual luna→sol switching |
 | D13 | **Resume the real session** after a quota wait, a crash or an engine restart (`claude --resume`, `codex resume`) | A fresh session with a summary | Keeps context. Prior art lost it |
+| D15 | **Capability-based agent contract** with agent-agnostic fallbacks, plus a config-only generic `tui` plugin | Requiring hooks | Any agent CLI works. Hooks only add precision |
+| D16 | **Signature comic-strip TUI**: tasks as 4-panel strips, English first, kanji as decoration | Colour theme only | A recognisable design that also carries real information (06-operator §7) |
 | D14 | Plugins live in `src/shikiru/plugins/…` and register through `pyproject` entry points | Top-level `src/plugins` | A wheel needs them inside the package. Third-party plugins use the same entry points |
 
 ## 5. Lessons applied from prior art

@@ -4,26 +4,26 @@
 
 Shikiru is a CLI tool that orchestrates AI coding agents for software development.
 Operators give it tasks or goals: humans, other tools, or AI agents. Shikiru queues them and runs a fixed, deterministic pipeline:
-the **Leader** (長 Chō) plans and verifies, and the **Implementer** (員 In) does the work.
+the **Leader** plans and verifies, and the **Implementer** does the work.
 Each task runs on its own branch until the Leader accepts it. Then Shikiru merges it back.
 It escalates to the Operator only when something critical comes up.
 
 ```
-┌ system ─────────────┬ 長 Chō · claude:opus/high · iter 2 ───────┐
-│ 仕切る ferrum         │ (live Claude Code session)                │
-│ ▶ T-12 verifying 2/5 ├ 員 In · codex:gpt-5.6-luna/xhigh ──────────┤
-│ ⏸ T-13 queued        │ (live Codex session)                      │
-│ ドン! E-3 needs you  ├ shell ─────────────────────────────────────┤
-│ cpu 41% ram 18G $4.2 │ $                                         │
-└──────────────────────┴───────────────────────────────────────────┘
+┏━ T-12 · Add retry to parser ━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃起 Triage   ┃承 Implement ┃転 Verify    ┃結 Merge    ┃
+┃ ✔ 3m      ┃ ✔ iter 2    ┃ ▓▓▒░ 2/5   ┃  ···      ┃
+┗━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━┻━━━━━━━━━━━┛
+ 長 Leader: “AC3 lacks a tier-2 test.”
+ 員 Implementer: “Added the test; all tiers pass.”
 ```
 
 ## Highlights
 
-- **Agent-agnostic**: agents are plugins. Claude Code and Codex CLI are built in.
-- **Real interactive sessions** in tmux panes. Shikiru detects turns and limits through agent hooks and session transcripts, not by reading the screen.
-- **Parallel tasks**: each task gets its own git worktree and branch, with copy-on-write build caches, a dependency graph, priorities and resource-aware scheduling.
+- **Agent-agnostic**: agents are plugins with optional capabilities (hooks, transcripts, quota). Claude Code and Codex CLI are built in, and any other TUI agent works through config alone.
+- **Real interactive sessions** in tmux panes that Operators can watch and step into, one task at a time.
+- **Parallel tasks**: each task gets its own git worktree and branch, with instant copy-on-write build caches, a dependency graph, priorities and resource-aware scheduling.
 - **Resilient**: model ladders, a wait for quota resets followed by a real session resume, and recovery after crashes or restarts.
+- **Comic-strip dashboard**: every task is drawn as a 4-panel strip.
 - **Operators everywhere**: TUI dashboard, CLI (`--json`), MCP server, event stream, and local or remote (SSH) attach.
 - **Works with your setup**: your CLAUDE.md/AGENTS.md, skills, plugins, plan and todo files, monorepo or multi-repo.
 

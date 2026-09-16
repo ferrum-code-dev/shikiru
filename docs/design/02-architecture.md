@@ -21,7 +21,7 @@
 | `shikiru engine` | `shikiru start` (detached, `start_new_session`) | Until `shikiru stop` or a crash (the next `start` recovers) | yes (owner of the state) |
 | `shikiru dash` | engine, in every system pane | pane lifetime (respawned) | no (read-only) |
 | `shikiru <cmd>` / `shikiru mcp` | Operator | command / MCP session | `commands` rows only; reads everything |
-| `shikiru hook` / `shikiru report` / `shikiru statusline` | agent CLIs | milliseconds | no (files only) |
+| `shikiru hook` / `shikiru report` | agent CLIs | milliseconds | no (files only) |
 | Helper calls | engine (subprocess) | one call | no |
 
 Single-writer rule: the engine owns every state table. CLI and MCP append `commands` rows and wait for the engine's acknowledgement (§4 of 06-operator). Submissions and reprioritisations made while the engine is down are applied at its next start. The CLI tells the operator about this.
@@ -55,15 +55,16 @@ config ◄── everything
 | `engine.integration` | Rebase, conflict hand-off, fast-forward or PR, serialised by an integration lock | `Integrator`, `LocalMerge`, `PullRequest` |
 | `workspace` | Worktrees per task and repo, cache cloning, root mirroring for multi-repo, cleanup, git facts | `WorkspaceManager`, `GitFacts`, `CacheCloner` |
 | `prompts` | Render Jinja2 prompt templates (packaged, overridable in `.shikiru/prompts/`) and JSON schemas for reports | `PromptRenderer` |
-| `agents` | Agent plugin contracts, registry, shared hook/report CLI entrypoints | `InteractiveAgent`, `HeadlessAgent`, `AgentSignal`, `Telemetry`, `AgentRegistry` |
-| `plugins/agents/claude`, `plugins/agents/codex` | Concrete adapters | `ClaudeAgent`, `CodexAgent` |
+| `agents` | Agent plugin contracts and capabilities, registry, agent-agnostic signal sources (report file, pane activity), hook/report CLI entrypoints, usage calculation, quota polling | `InteractiveAgent`, `SignalSource`, `QuotaProbe`, `HeadlessAgent`, `AgentSignal`, `Telemetry`, `UsageCalculator`, `QuotaMonitor`, `AgentRegistry` |
+| `plugins/agents/claude`, `plugins/agents/codex`, `plugins/agents/tui` | Concrete adapters; `tui` is the config-only generic adapter | `ClaudeAgent`, `CodexAgent`, `GenericTuiAgent` |
 | `helper` | Joshu one-shot calls with schemas | `Helper` |
 | `tmux` | Thin typed wrapper around the `tmux` binary; session, window and layout building; pane protection | `Tmux`, `SessionView`, `LayoutBuilder` |
 | `operator` | Use cases shared by CLI, MCP and dashboard palette: submit, prioritise, pause, cancel, say, peek, resolve, status | `OperatorService` |
 | `cli` | Typer app, Rich rendering, `--json` | command modules |
 | `mcp` | FastMCP stdio server exposing `OperatorService` | `build_server()` |
 | `dashboard` | Textual app, widget contract, palette | `DashboardApp`, `Widget` contract |
-| `plugins/dashboard/*` | Built-in widgets | `ProjectWidget`, `TasksWidget`, … |
+| `plugins/dashboard/*` | Built-in widgets | `ProjectWidget`, `StripsWidget`, … |
+| `comic` | Signature comic-strip renderables (06-operator §7), used by both the CLI and the dashboard | `TaskStrip`, `SplashPanel`, `SpeechBubble`, `Banner` |
 | `notify` | Terminal and OS notifications plus the `notify.command` hook | `Notifier` |
 | `telemetry` | Host, process-tree and Docker sampling | `ResourceSampler`, `DockerSampler` |
 
@@ -87,19 +88,21 @@ src/shikiru/
   engine/      daemon.py reconcile.py scheduler.py flow.py steps/ turns.py signals.py integration.py
   workspace/   manager.py caches.py git.py
   prompts/     renderer.py templates/*.md.j2
-  agents/      contracts.py registry.py hook_cli.py report_cli.py statusline_cli.py
+  agents/      contracts.py registry.py sources.py hook_cli.py report_cli.py usage.py quota.py
   helper/      helper.py
   tmux/        client.py session.py layout.py protection.py
   operator/    service.py
   cli/         app.py project.py tasks.py escalations.py sessions.py internal.py render.py
   mcp/         server.py
-  dashboard/   app.py widget.py palette.py theme.tcss
+  dashboard/   app.py widget.py palette.py page.py theme.tcss
+  comic/       strip.py splash.py bubbles.py banner.py   # Rich renderables shared by CLI and dashboard
   notify/      notifier.py
   telemetry/   resources.py docker.py
   plugins/
-    agents/claude/    adapter.py transcript.py
-    agents/codex/     adapter.py rollout.py
-    dashboard/        project.py tasks.py queue.py escalations.py usage.py resources.py docker.py events.py
+    agents/claude/    adapter.py hooks.py transcript.py quota.py
+    agents/codex/     adapter.py hooks.py rollout.py quota.py
+    agents/tui/       adapter.py
+    dashboard/        project.py strips.py queue.py escalations.py usage.py resources.py docker.py dialogue.py
 tests/
   unit/ integration/ e2e/ fixtures/ (sample-project, fake-agent, recorded transcripts)
 docs/design/  tasks/
@@ -113,9 +116,10 @@ Plugins are discovered through `importlib.metadata.entry_points(group=…)`. Bui
 [project.entry-points."shikiru.agents"]
 claude = "shikiru.plugins.agents.claude.adapter:ClaudeAgent"
 codex  = "shikiru.plugins.agents.codex.adapter:CodexAgent"
+tui    = "shikiru.plugins.agents.tui.adapter:GenericTuiAgent"
 [project.entry-points."shikiru.widgets"]
-tasks = "shikiru.plugins.dashboard.tasks:TasksWidget"
-# … project, queue, escalations, usage, resources, docker, events
+strips = "shikiru.plugins.dashboard.strips:StripsWidget"
+# … project, queue, escalations, usage, resources, docker, dialogue
 ```
 
 The agent contracts are in [04-agents.md §1](04-agents.md). The widget contract is in [06-operator.md §5.3](06-operator.md).
@@ -131,7 +135,7 @@ A missing or broken plugin is reported by `shikiru doctor` and at `start`. It ne
   engine.lock  logs/engine.log
   worktrees/T-12/<repo-rel-path>/       # per-task mirrors of the project root (03-workflow §6)
   runs/T-12/
-    leader/ session.json  hooks.jsonl  statusline.json
+    leader/ hooks.jsonl  current_turn
     implementer/ …
     turns/03-implement-i2/ prompt.md  report.json  report.schema.json  facts.md
     escalations/E-3.md

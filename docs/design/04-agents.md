@@ -2,71 +2,127 @@
 
 ## 1. Contracts (`shikiru.agents.contracts`)
 
-Interface segregation: an interactive session (Leader, Implementer) and a one-shot call (Helper) are separate protocols. A plugin class may implement either one or both.
+Shikiru must drive **any** interactive agent CLI. Hooks, session ids and transcripts are **optional capabilities**, not requirements.
+The engine's turn protocol (03-workflow §4) depends only on **signals**. Each adapter chooses which **signal sources** produce them. Agent-agnostic sources, which need nothing from the agent, are always available as a fallback.
 
 ```python
-@dataclass(frozen=True)
-class Rung:            agent: str; model: str; effort: str | None
-@dataclass(frozen=True)
-class LaunchSpec:      rung: Rung; cwd: Path; run_dir: Path; add_dirs: list[Path]
-                       resume_session_id: str | None; agent_config: AgentConfig
-                       hook_command: str        # absolute "…/shikiru hook"
-                       statusline_command: str  # absolute "…/shikiru statusline"
+class Capability(StrEnum):
+    HOOKS = "hooks"             # lifecycle hooks → precise turn/prompt/tool/failure signals
+    SESSION_ID = "session_id"   # session id is known → exact resume
+    TRANSCRIPT = "transcript"   # agent-written transcript → tokens, errors, context
+    QUOTA = "quota"             # subscription quota windows can be read or probed
+    HEADLESS = "headless"       # one-shot schema-constrained calls (Helper)
 
-type AgentSignal = (SessionStarted | PromptSubmitted | ToolStarted | ToolFinished | TurnEnded
-                    | TurnFailed | Compacted | AttentionNeeded | SessionEnded)
+@dataclass(frozen=True)
+class Rung:        agent: str; model: str; effort: str | None
+@dataclass(frozen=True)
+class LaunchSpec:  rung: Rung; cwd: Path; run_dir: Path; add_dirs: list[Path]
+                   resume_session_id: str | None; agent_config: AgentConfig; hook_command: str
+
+type AgentSignal = (SessionStarted | PromptSubmitted | ToolStarted | ToolFinished | TurnEnded | TurnFailed
+                    | Compacted | AttentionNeeded | SessionEnded | ReportSubmitted | Busy | Quiescent | PaneDied)
+
+class SignalSource(Protocol):
+    """Incrementally produces agent signals for one run; polled by the engine."""
+    def poll(self) -> list[AgentSignal]: ...
 
 class InteractiveAgent(Protocol):
     """An agent CLI that runs as an interactive TUI inside a tmux pane."""
     name: str
-    compact_command: str | None           # e.g. "/compact"
-    interrupt_keys: list[str]             # e.g. ["Escape"]
-    exit_command: str                     # e.g. "/exit"
-    safe_keys: list[str]                  # keys the Helper may choose for dialogs
+    capabilities: frozenset[Capability]
+    compact_command: str | None
+    interrupt_keys: list[str]
+    exit_command: str
+    safe_keys: list[str]
     def launch_argv(self, spec: LaunchSpec) -> list[str]: ...
-    def launch_env(self, spec: LaunchSpec) -> dict[str, str | None]: ...   # None = unset
-    def parse_hook(self, payload: dict) -> AgentSignal | None: ...
-    def telemetry(self, run: RunInfo) -> Telemetry: ...                    # cheap, incremental
-    def classify_failure(self, run: RunInfo, text: str) -> TurnFailed | None: ...
+    def launch_env(self, spec: LaunchSpec) -> dict[str, str | None]: ...
+    def signal_sources(self, run: RunInfo) -> list[SignalSource]: ...   # agent-specific sources only
+    def telemetry(self, run: RunInfo) -> Telemetry | None: ...          # None without TRANSCRIPT
+
+class QuotaProbe(Protocol):
+    """Reads the current subscription quota windows of an agent account."""
+    def probe(self, config: AgentConfig) -> list[QuotaWindow]: ...
 
 class HeadlessAgent(Protocol):
-    """An agent CLI that can answer a single schema-constrained prompt non-interactively."""
-    name: str
+    """An agent CLI that answers a single schema-constrained prompt non-interactively."""
     def ask(self, prompt: str, schema: dict, rung: Rung, cwd: Path, timeout_s: int) -> dict: ...
 
 @dataclass(frozen=True)
-class Telemetry:       input_tokens: int; cached_tokens: int; output_tokens: int
-                       cost_usd: float | None; context_free_pct: float | None
-                       quotas: list[QuotaWindow]; model: str | None
+class Telemetry:   input_tokens: int; cache_read_tokens: int; cache_write_tokens: int; output_tokens: int
+                   model: str | None; context_used_tokens: int | None
 @dataclass(frozen=True)
-class QuotaWindow:     name: str; used_pct: float; resets_at: datetime | None
+class QuotaWindow: name: str; used_pct: float; resets_at: datetime | None
 ```
 
-Shared, agent-independent pieces:
-- **`shikiru hook <role>`**: reads the hook JSON from stdin and appends one compact JSON line (the payload minus `tool_input`/`tool_response`, with `ts` added) to `$SHIKIRU_RUN_DIR/hooks.jsonl` under `flock`. It exits 0 in under 100 ms and never blocks the agent. With no `SHIKIRU_RUN_DIR` set, it does nothing.
-- **`SignalInbox`** (engine): tails `hooks.jsonl` from the stored byte offset every 250 ms and passes each line through `adapter.parse_hook`.
-- **`shikiru statusline`**: stores the stdin JSON in `$SHIKIRU_RUN_DIR/statusline.json`, then runs the user's own statusline command with the same stdin and prints its output. Nothing visible changes for the user.
+Cost and context percentage are **not** read from agents. `UsageCalculator` derives them from `Telemetry` and the config `models` table (05-data §1): prices and context window per model.
 
-Adding an agent means writing a class and registering an entry point. No engine code changes (Open-Closed Principle).
+### 1.1 Signal sources
+
+| Source | Kind | Produces | Needs |
+|---|---|---|---|
+| `ReportFileSource` | agnostic, always on | `ReportSubmitted` when a valid `report.json` appears | nothing (the agent runs `shikiru report`) |
+| `PaneSource` | agnostic, always on | `PaneDied` (tmux hook) · `Busy` / `Quiescent` | tmux + `psutil` |
+| `HookFileSource(mapping)` | agent-specific | `SessionStarted`, `PromptSubmitted`, `Tool*`, `TurnEnded`, `TurnFailed`, `AttentionNeeded`, `Compacted` | `HOOKS` |
+| `TranscriptSource(mapping)` | agent-specific | `TurnFailed` from recorded API errors; activity | `TRANSCRIPT` |
+
+**`Quiescent` definition**, over a window of `quiet_seconds` (default 20):
+- the visible screen hash is unchanged, with digits masked so clocks and spinners don't count as change, **and**
+- the pane process tree's CPU is below `quiet_cpu_pct` (default 3%).
+
+`Busy` fires on the first change after that. These two signals need no regex and no knowledge of the agent.
+
+### 1.2 Degradation when a capability is missing
+
+| Missing | Engine fallback |
+|---|---|
+| `HOOKS` | **Turn end** = `ReportSubmitted` followed by `Quiescent`, or `Quiescent` for `no_report_quiet_seconds` (90) without a report → nudge path.<br>**Submission confirmed** = `Busy` within 15 s after the paste.<br>**Failures and dialogs** = `classify_screen` by the Helper once quiescent without a report. |
+| `SESSION_ID` | Recovery (crash, restart, rung change) starts a new session with `handoff.md.j2` instead of resuming |
+| `TRANSCRIPT` | Tokens and cost shown as `n/a`. Stall detection relies on `PaneSource` only |
+| `QUOTA` | No quota bars. A quota stop is recognised by `classify_screen` (with `resets_at` when it is shown on screen) |
+| `HEADLESS` | This agent can't be a Helper rung |
+
+`shikiru hook <role>` reads the hook JSON from stdin and appends one compact line (the payload minus `tool_input`/`tool_response`, with `ts` added) to `$SHIKIRU_RUN_DIR/hooks.jsonl` under `flock`. It exits 0 in under 100 ms. With no `SHIKIRU_RUN_DIR` set, it does nothing.
+
+### 1.3 Generic `tui` plugin (configuration-only agents)
+
+Any other interactive agent CLI works through config alone. It runs with no capabilities, using the agent-agnostic fallbacks:
+
+```toml
+[agents.gemini]
+plugin = "tui"
+command = "gemini"
+args = ["--yolo"]
+model_args = ["--model", "{model}"]
+effort_args = []
+prompt_prefix = ""
+compact_command = "/compress"
+exit_command = "/quit"
+interrupt_keys = ["Escape"]
+safe_keys = ["Enter", "Escape", "Down", "1", "2", "y"]
+```
+
+When the agent has hooks, a transcript or a quota API, a dedicated plugin adds those sources through the entry points. No engine change is needed (Open-Closed Principle).
 
 ## 2. Claude Code (`plugins/agents/claude`) — verified with 2.1.273
+
+Capabilities: `HOOKS`, `SESSION_ID`, `TRANSCRIPT`, `QUOTA` (subscription auth only), `HEADLESS`.
 
 **Launch argv**:
 
 ```
 claude --session-id <new uuid> | --resume <id>
        --model <rung.model> --effort <rung.effort>
-       --settings '<json: hooks + statusLine>'
+       --settings '<json: hooks only>'
        --add-dir <run_dir> [--add-dir …]
        <agent_config.args…>            # default: --permission-mode auto
 ```
 
-- `--settings` merges with user and project settings, so project hooks such as graphify still run.
-- Hooks registered, each as `{"type":"command","command":"<hook_command> <role>"}`:
+- `--settings` only adds hooks, and they merge with user and project hooks.
+- Shikiru never touches the user's statusline or other settings.
+- Hooks registered as `{"type":"command","command":"<hook_command> <role>"}`:
   - `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`
   - `Stop`, `StopFailure`, `Notification`
-  - `PreCompact`, `PostCompact`, `SessionEnd`
-- `statusLine`: `{"type":"command","command":"<statusline_command>"}`. The original command is read from the effective settings and passed in `SHIKIRU_USER_STATUSLINE`.
+  - `PostCompact`, `SessionEnd`
 
 **Hook mapping** (payloads verified):
 
@@ -74,43 +130,55 @@ claude --session-id <new uuid> | --resume <id>
 |---|---|
 | `SessionStart` | `SessionStarted(session_id, transcript_path)` |
 | `UserPromptSubmit` | `PromptSubmitted(prompt)` |
-| `PreToolUse` / `PostToolUse` | `ToolStarted(tool_use_id)` / `ToolFinished(tool_use_id)` |
+| `PreToolUse` / `PostToolUse` | `ToolStarted` / `ToolFinished` (by `tool_use_id`) |
 | `Stop` | `TurnEnded(last_assistant_message)` |
-| `StopFailure` | `TurnFailed(kind from error)`. Error mapping: rate limit → `quota`, overloaded or server error → `unavailable`, authentication or billing → `auth`, prompt too long → `context`, otherwise `other` |
-| `Notification` | `AttentionNeeded(message)` |
+| `StopFailure` | `TurnFailed` (kind refined from the transcript) |
+| `Notification` | `AttentionNeeded` |
 | `PostCompact` | `Compacted` |
 | `SessionEnd` | `SessionEnded` |
 
-**Telemetry**, all from `statusline.json`:
-- `cost.total_cost_usd`
-- `context_window.remaining_percentage`
-- `rate_limits.five_hour` / `rate_limits.seven_day` (`used_percentage`, `resets_at`) → `QuotaWindow`s
-- `model.id`
+**Transcript** (`transcript_path`, the JSONL Claude writes itself, verified):
+- **Tokens**: `type == "assistant"` entries give `message.model` and `message.usage` (`input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens`). They are **deduplicated by `message.id`**, because one message spans several lines.
+- **Context used** = the last message's `input + cache_read + cache_creation` tokens.
+- **Failures**: entries with `isApiErrorMessage: true` carry `apiErrorStatus` and text, e.g. `"You've hit your session limit · resets 3:10am (Europe/Warsaw)"`.
+  - 429 or "limit" text → `quota`, with `resets_at` parsed from `resets <time> (<IANA tz>)` via `zoneinfo`. The next occurrence of that time is used.
+  - 5xx / 529 → `unavailable`
+  - 401 / 403 → `auth`
+  - "prompt is too long" → `context`
+  - anything else → `other`
 
-Token totals come from summing `message.usage` in the transcript JSONL (tailed incrementally).
-`resets_at` for `quota` failures is the matching rate-limit window's `resets_at`.
+**Quota probe** (`ClaudeQuotaProbe`, verified):
+
+```
+claude -p "." --output-format stream-json --verbose --model <cheapest rung model> --safe-mode --tools "" --no-session-persistence
+```
+
+- It reads the first `rate_limit_event.rate_limit_info.unifiedWindows` (`five_hour`/`seven_day`: `utilization`, `resetsAt`).
+- It runs every `quota.probe_interval` (15 min) while the agent has live runs, and immediately after a `quota` failure.
+- Each probe costs one tiny request. It is disabled with `quota.probe_interval = 0` or `auth = "api_key"`.
 
 **Auth**:
-- `auth = "subscription"` → `launch_env` unsets `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`, so a stray key can't silently bill the API.
-- `auth = "api_key"` → sets `ANTHROPIC_API_KEY` from the `api_key_env` variable.
+- `subscription` → `launch_env` unsets `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`.
+- `api_key` → sets `ANTHROPIC_API_KEY` from `api_key_env`.
 
-**Keys and commands**:
+**Keys**:
 - `compact_command = "/compact"`, `exit_command = "/exit"`
 - `interrupt_keys = ["Escape"]`
 - `safe_keys = ["Enter", "Escape", "Down", "1", "2"]`
-- Compaction default: `compact_below_free_pct = 0`, i.e. rely on Claude's own auto-compact.
 
-**Headless (Helper)**:
+**Headless**:
 
 ```
 claude -p --output-format json --json-schema <schema> --model <m> --effort <e> --safe-mode --tools "" --no-session-persistence
 ```
 
-The Helper reads `structured_output` (falling back to `result`).
+The result is read from `structured_output`, falling back to `result`.
 
 **Workspace trust**: a trust dialog for a new worktree dir is one of the dialogs `doctor --probe` checks for. If one shows up at runtime, it raises `AttentionNeeded`, and the Helper's `classify_screen` answers it using `safe_keys`.
 
 ## 3. Codex CLI (`plugins/agents/codex`) — verified with 0.154.0
+
+Capabilities: `HOOKS`, `SESSION_ID`, `TRANSCRIPT`, `QUOTA`, `HEADLESS`.
 
 **Launch argv**:
 
@@ -124,71 +192,62 @@ codex [resume <id>]
       <agent_config.args…>      # default: --approve-for-me
 ```
 
-- Hook events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `PermissionRequest`, `PostCompact`, `SessionEnd`.
-- Session-flag hooks add to project and user hooks.
-- `--dangerously-bypass-hook-trust` applies only to hooks declared for this invocation and project hooks. Shikiru's own hook commands are fixed.
-- `--add-dir <git common dir>` lets commits work from a worktree.
+Hook events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `PermissionRequest`, `PostCompact`, `SessionEnd`.
 
 **Hook mapping** (payloads verified):
 
 | Hook | Signal |
 |---|---|
-| `SessionStart` | `SessionStarted(session_id, transcript_path)`. `transcript_path` is the rollout file. If it is null, the adapter finds the file `~/.codex/sessions/**/rollout-*-<session_id>.jsonl` |
-| `UserPromptSubmit` | `PromptSubmitted(prompt)` |
-| `Stop` | `TurnEnded(last_assistant_message)` |
+| `SessionStart` | `SessionStarted(session_id, transcript_path)`. If `transcript_path` is null, the adapter finds the file `~/.codex/sessions/**/rollout-*-<session_id>.jsonl` |
+| `UserPromptSubmit` | `PromptSubmitted` |
+| `PreToolUse` / `PostToolUse` | `Tool*` |
+| `Stop` | `TurnEnded` |
 | `PermissionRequest` | `AttentionNeeded` |
 | `PostCompact` | `Compacted` |
 
-Codex has no failure hook. When a `Stop` or a stall arrives, `classify_failure` reads the rollout tail:
-- an `error` event whose code or message says usage limit → `quota`
-- overloaded or server error → `unavailable`
-- 401 / unauthorized → `auth`
-- context window exceeded → `context`
-- anything else → Helper classification
-
-**Telemetry** from the rollout `event_msg` `token_count` records:
-- `info.total_token_usage` gives tokens.
-- `info.model_context_window` together with `last_token_usage` gives `context_free_pct`.
-- `rate_limits.primary` / `secondary` (`used_percent`, `window_minutes`, `resets_at`) → `QuotaWindow`s.
-- `cost_usd` = tokens × `pricing[model]` when that is configured, else `None`.
+**Transcript** (the rollout JSONL Codex writes itself, verified):
+- **Tokens**: `event_msg` `token_count` records: `info.total_token_usage` (`input_tokens`, `cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`).
+- **Context used**: `info.last_token_usage`, with the model's context window taken from the record when present, else from config `models`.
+- **Quota (passive)**: `rate_limits.primary` / `secondary` (`used_percent`, `window_minutes`, `resets_at`) → `QuotaWindow`s. `CodexQuotaProbe` returns the latest record across recent rollouts.
+- **Failures**: `error` events, mapped the same way as for Claude: usage limit → `quota` (with `resets_at` from the latest `rate_limits`), overloaded or 5xx → `unavailable`, 401 → `auth`, context window exceeded → `context`.
 
 **Auth**:
 - `subscription` → unset `OPENAI_API_KEY` and `CODEX_API_KEY`.
 - `api_key` → set `CODEX_API_KEY` from `api_key_env`.
 
-**Keys and commands**:
+**Keys**:
 - `compact_command = "/compact"`, `exit_command = "/quit"`
 - `interrupt_keys = ["Escape"]`
 - `safe_keys = ["Enter", "Escape", "Down", "1", "2", "y"]`
-- Default `compact_below_free_pct = 60`, as in the manual practice.
+- Default `compact_below_free_pct = 60`.
 
-**Headless (Helper)**:
+**Headless**:
 
 ```
 codex exec --ephemeral --json --output-schema <file> -m <m> -c model_reasoning_effort="<e>" -s read-only --skip-git-repo-check
 ```
 
-The Helper parses the final `agent_message`.
+The final `agent_message` is parsed.
 
 ## 4. Helper (Joshu 助手)
 
-`Helper` uses the `roles.helper` ladder through `HeadlessAgent.ask`. It is a small fixed set of calls. Each call has a template in `prompts/templates/helper/` and a pydantic result model:
+`Helper` uses the `roles.helper` ladder through `HeadlessAgent.ask`. Every call has a template and a pydantic result model, and the output is always validated:
 
 | Call | Input | Output | Used by |
 |---|---|---|---|
-| `rebuild_report` | report schema, `last_assistant_message`, transcript tail (≤ 30 k chars), git facts | report JSON or `{"unrecoverable": reason}` | turn protocol §4.8 |
-| `classify_failure` | error text or transcript tail | `{kind, resets_at?, summary}` | §8.1 unknown failures |
-| `classify_screen` | visible pane text, `safe_keys` | `{state: working/dialog/question/error, keys?, text?}` | §8.5 stall |
+| `rebuild_report` | report schema, last assistant message (hook) or the last 120 screen lines, transcript tail if available, git facts | report JSON or `{"unrecoverable": reason}` | 03 §4.8 |
+| `classify_failure` | error text (transcript or screen) | `{kind, resets_at?, summary}` | 03 §8.1 |
+| `classify_screen` | visible pane text, `safe_keys` | `{state: working/dialog/question/quota/error, keys?, text?, resets_at?}` | 03 §8.5, and every agent without hooks (§1.2) |
 
-The Helper output is always validated. An invalid output counts as "unrecoverable". The Helper never edits files or talks to sessions: the engine acts on what it returns.
+The Helper never edits files or talks to sessions. The engine acts on what it returns.
 
 ## 5. Contract checks (`shikiru doctor --probe`)
 
-For each configured agent, the probe runs in a scratch git repo inside a real tmux pane on a private socket, using the production launch path:
-1. The session starts and `SessionStarted` arrives with a session id.
-2. The pointer prompt is injected. The agent runs `shikiru report` with a trivial schema. `TurnEnded` arrives and `report.json` is valid.
-3. No approval or trust dialog appeared: no `AttentionNeeded`, and the screen isn't a dialog.
-4. Telemetry parses (tokens > 0).
-5. Resume: exit, relaunch with `resume_session_id`, and a second turn sees the first turn's nonce.
+For each configured agent, in a scratch git repo inside a real tmux pane on a private socket, using the production launch path. Only the checks for the agent's declared capabilities run:
+1. The session starts. `SessionStarted` arrives with an id (`SESSION_ID`), or `Quiescent` arrives (no hooks).
+2. The pointer prompt is injected. The agent runs `shikiru report`. Turn end is detected through the agent's signals.
+3. No approval or trust dialog is left open.
+4. Telemetry parses with tokens > 0 (`TRANSCRIPT`), and the quota probe returns windows (`QUOTA`).
+5. Resume: exit, relaunch with the id, and a second turn recalls the first turn's nonce (`SESSION_ID`).
 
-The recorded hook and transcript samples are saved to `.shikiru/logs/probe/` and serve as regression fixtures (07-engineering §4).
+Recorded hook, transcript and probe samples are saved as regression fixtures (07-engineering §4).

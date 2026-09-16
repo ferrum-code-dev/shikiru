@@ -4,7 +4,7 @@
 
 **Sources**, from lowest to highest precedence, deep-merged:
 1. Packaged `config/defaults.toml`
-2. `~/.config/shikiru/config.toml` (optional user-wide file: agents, pricing, notify)
+2. `~/.config/shikiru/config.toml` (optional user-wide file: agents, models, notify)
 3. `<project>/.shikiru/config.toml`
 4. CLI `--set key.path=value` (repeatable, value parsed as TOML), on every command that reads config (`start`, `submit`, `doctor`, …)
 
@@ -93,14 +93,19 @@ ladder = [
   { agent = "codex", model = "gpt-5.6-mini", effort = "low" },
 ]
 
-[pricing."gpt-5.6-luna"]            # optional, USD per 1M tokens; enables Codex cost display
-input = 0.0
-cached_input = 0.0
+[quota]
+probe_interval = 900                # seconds; active QuotaProbe cadence while an agent has live runs (0 = off)
+
+[models."gpt-5.6-luna"]             # packaged defaults exist for built-in models; override when prices change
+context_window = 400000
+input = 0.0                         # USD per 1M tokens
+cache_read = 0.0
+cache_write = 0.0
 output = 0.0
 
 [dashboard]
 refresh_seconds = 2
-style = "manga"                     # manga | plain
+style = "comic"                     # comic | plain (06-operator §7)
 
 [dashboard.layout]                  # tree: split = "h" (side by side) | "v" (stacked); size = % of parent
 split = "h"
@@ -110,14 +115,14 @@ panes = [
 ]
 
 [dashboard.system]
-widgets = ["project", "tasks", "queue", "escalations", "usage", "resources", "docker", "events"]
+widgets = ["project", "strips", "escalations", "queue", "dialogue", "usage", "resources", "docker"]
 
 [dashboard.titles]                  # str.format fields: 06-operator §5.2
 window = "{task_id} {title:.24}"
-leader = "長 Chō · {agent}:{model}/{effort} · iter {iteration} · ctx {context_free}% · ${cost:.2f} {flags}"
-implementer = "員 In · {agent}:{model}/{effort} · iter {iteration} · ctx {context_free}% · ${cost:.2f} {flags}"
-system = "仕切る {project} · {active}/{max_parallel} · {queued} queued"
-shell = "殻 shell · {cwd}"
+leader = "長 Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context_free}% · ${cost:.2f} {flags}"
+implementer = "員 Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context_free}% · ${cost:.2f} {flags}"
+system = "Shikiru {project} · {active}/{max_parallel} active · {queued} queued"
+shell = "Shell · {cwd}"
 
 [notify]
 desktop = true                      # OSC 777/9 through tmux passthrough, and terminal-notifier / notify-send when present
@@ -169,8 +174,9 @@ CREATE TABLE runs (                  -- one agent session per task+role (+ agent
   session_id TEXT, transcript_path TEXT, pane_id TEXT,
   hooks_offset INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL,              -- starting | live | exited | closed
-  input_tokens INTEGER NOT NULL DEFAULT 0, cached_tokens INTEGER NOT NULL DEFAULT 0,
-  output_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL, context_free_pct REAL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0, context_used_tokens INTEGER,   -- cost and context % derived via models table
   started_at TEXT NOT NULL, ended_at TEXT
 );
 CREATE TABLE turns (
@@ -182,7 +188,7 @@ CREATE TABLE turns (
   rebuilt INTEGER NOT NULL DEFAULT 0, nudges INTEGER NOT NULL DEFAULT 0,
   started_at TEXT NOT NULL, ended_at TEXT
 );
-CREATE TABLE quotas (
+CREATE TABLE quotas (                -- latest QuotaProbe / transcript observation per agent window
   agent TEXT NOT NULL, window TEXT NOT NULL, used_pct REAL NOT NULL, resets_at TEXT, observed_at TEXT NOT NULL,
   PRIMARY KEY (agent, window)
 );
@@ -221,7 +227,7 @@ The engine heartbeat is refreshed every 5 s. The CLI and dashboard show `engine:
 ```
 runs/T-12/
   leader/ implementer/            # one dir per role (a switch to another agent adds a suffix, e.g. implementer.2/)
-    hooks.jsonl  statusline.json  current_turn -> ../turns/05-verify-i2
+    hooks.jsonl  current_turn -> ../turns/05-verify-i2
   turns/NN-<step>-i<iteration>/
     prompt.md  report.schema.json  report.json  facts.md (verify)  helper.json (if rebuilt)
   messages/NNN.md                 # `say` messages

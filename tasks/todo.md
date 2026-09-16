@@ -15,37 +15,38 @@ Tick a task when all its ACs are met and `uv run poe check` is green. Details: [
 ## Phase 2 — Execution substrate
 - [ ] Task 6: tmux client, session and layout
 - [ ] Task 7: Workspace manager
-- [ ] Task 8: Agent contracts, registry and hook plumbing
+- [ ] Task 8: Agent contracts, signal sources and hook plumbing
 - [ ] Task 9: Claude Code adapter
 - [ ] Task 10: Codex adapter
-- [ ] Task 11: Doctor and agent probe
+- [ ] Task 11: Generic `tui` adapter
+- [ ] Task 12: Doctor and agent probe
 
 ## Phase 3 — Orchestration core (first end-to-end)
-- [ ] Task 12: Prompt renderer and templates
-- [ ] Task 13: Session driver (turn protocol)
-- [ ] Task 14: Task flow and steps
-- [ ] Task 15: Integration (merge and PR)
-- [ ] Task 16: Engine daemon and scheduler
-- [ ] Task 17: Operator service and core CLI
-- [ ] Task 18: System pane core and E2E baseline
+- [ ] Task 13: Prompt renderer and templates
+- [ ] Task 14: Session driver (turn protocol)
+- [ ] Task 15: Task flow and steps
+- [ ] Task 16: Integration (merge and PR)
+- [ ] Task 17: Engine daemon and scheduler
+- [ ] Task 18: Operator service and core CLI
+- [ ] Task 19: Comic renderables, system pane core and E2E baseline
 
 ## Phase 4 — Resilience, escalation, intervention
-- [ ] Task 19: Failure handling and model ladder
-- [ ] Task 20: Helper (Joshu)
-- [ ] Task 21: Stall detection and pane death
-- [ ] Task 22: Escalations
-- [ ] Task 23: Operator intervention
-- [ ] Task 24: Engine restart recovery
+- [ ] Task 20: Failure handling and model ladder
+- [ ] Task 21: Helper (Joshu)
+- [ ] Task 22: Stall detection and pane death
+- [ ] Task 23: Escalations
+- [ ] Task 24: Operator intervention
+- [ ] Task 25: Engine restart recovery
 
 ## Phase 5 — Operator surfaces
-- [ ] Task 25: Dashboard widgets
-- [ ] Task 26: Command palette
-- [ ] Task 27: Notifications
-- [ ] Task 28: Attach and ls (local and remote)
-- [ ] Task 29: MCP server
-- [ ] Task 30: Usage and events surfaces
+- [ ] Task 26: Dashboard widgets
+- [ ] Task 27: Command palette
+- [ ] Task 28: Notifications
+- [ ] Task 29: Attach and ls (local and remote)
+- [ ] Task 30: MCP server
+- [ ] Task 31: Usage and events surfaces
 
 ## Phase 6 — Onboarding and completion
-- [ ] Task 31: Interactive init wizard
-- [ ] Task 32: Manga style and plain mode
-- [ ] Task 33: Full E2E suite and release readiness
+- [ ] Task 32: Interactive init wizard
+- [ ] Task 33: Comic design polish and plain mode
+- [ ] Task 34: Full E2E suite and release readiness

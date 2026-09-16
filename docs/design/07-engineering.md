@@ -38,7 +38,7 @@
 | Layer | Scope | Real dependencies | Share |
 |---|---|---|---|
 | Unit | `domain/` (transitions, ladder, scheduling, escalation policy, holds), report validators, config merge and overrides, reset-time and telemetry parsing against recorded fixtures | none | small |
-| Integration | store and migrations; workspace (real git repos in tmp, CoW clone); integration merge/conflict/PR (PR through a fake `gh` on PATH); tmux client, layout, protection and window lifecycle on a **private socket**; `SignalInbox` and hook/report CLIs; engine flow with the **fake agent**; CLI commands; MCP tools through an in-memory client; dashboard widgets through Textual `run_test()` snapshots | git, tmux, sqlite, Textual | most |
+| Integration | store and migrations; workspace (real git repos in tmp, CoW clone); integration merge/conflict/PR (PR through a fake `gh` on PATH); tmux client, layout, protection and window lifecycle on a **private socket**; signal sources (hooks, report file, pane quiescence) and hook/report CLIs; the generic `tui` adapter driving a hook-less fake agent; engine flow with the **fake agent**; CLI commands; MCP tools through an in-memory client; dashboard widgets through Textual `run_test()` snapshots | git, tmux, sqlite, Textual | most |
 | E2E | Full `shikiru` with real Claude Code and Codex on a fixture project | everything | scenarios §5 |
 
 **Isolation rules** (lessons from v4):
@@ -48,13 +48,13 @@
 
 **Fake agent** (`tests/fixtures/fake_agent/`):
 - A small line-reading REPL, launched in a real pane like any agent, so pasted pointers arrive on stdin. It is registered as the `fake` agent plugin in the test environment.
-- It reads scripted behaviours from `SHIKIRU_FAKE_SCRIPT`: accept, changes_requested×N, needs_decision, no-report, quota(resets_at), crash, stall, dialog.
-- It writes hook events in real Claude payload format, runs the real `shikiru report`, and edits and commits files.
+- It runs in two modes, `hooks` (writes real Claude-format hook events) and `plain` (no hooks, for the `tui` path). It reads scripted behaviours from `SHIKIRU_FAKE_SCRIPT`: accept, changes_requested×N, needs_decision, no-report, quota(resets_at), crash, stall, dialog.
+- It runs the real `shikiru report`, and edits and commits files.
 - It proves the Open-Closed contract and makes every engine path deterministic.
 
 ## 4. Recorded fixtures
 
-- `doctor --probe` and E2E runs save hook payloads, statusline JSON, transcript and rollout tails and Helper responses under `tests/fixtures/recorded/<agent>/<version>/`.
+- `doctor --probe` and E2E runs save hook payloads, transcript and rollout tails, quota probe outputs, screen captures and Helper responses under `tests/fixtures/recorded/<agent>/<version>/`.
 - Parser unit tests run against every recorded version. Upgrading a CLI means recording a new version, not rewriting parsers blindly.
 
 ## 5. E2E scenarios (`pytest -m e2e`, requires `SHIKIRU_E2E=1`, logged-in agents)
@@ -80,6 +80,8 @@ Each scenario copies the fixture to a tmp dir, runs `shikiru init --yes` with ch
 | E8 | Manual intervention: type into the implementer pane through `send-keys` as an Operator | `intervention` hold set, no nudges, `resume` continues, completes |
 | E9 | `attach --host localhost` (sshd on the CI host) and `ls --host` | Remote listing and attach command construction; the attached client sees the session |
 | E10 | Monorepo vs multi-repo variants of E1 | Topology agnostic: worktree mirroring and per-repo merges |
-| E11 | `doctor --probe` for both agents | Launch, report, resume, telemetry, no dialogs |
+| E11 | `doctor --probe` for both agents | Launch, report, resume, telemetry, quota probe, no dialogs |
+| E12 | E1 with the Implementer configured as the generic `tui` plugin running `codex` (hooks unused) | Agent-agnostic path: turn end by report + quiescence, handoff recovery |
+| E13 | Two tasks in parallel; the Operator types into T-1's implementer pane | Only T-1 gets the `intervention` hold. T-2 keeps running and completes. `resume T-1` continues T-1 only |
 
 Quota exhaustion, overload, stall with dialog, ladder moves and budget escalation can't be triggered on demand with real agents. They are covered by fake-agent integration tests driven by recorded real failure payloads.
