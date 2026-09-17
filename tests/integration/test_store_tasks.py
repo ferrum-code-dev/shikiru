@@ -6,6 +6,7 @@ import asyncio
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -21,12 +22,14 @@ from shikiru.store.database import Database, transaction
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 
+if TYPE_CHECKING:
+    from tests.support.store import Connection
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _make_store(tmp_path: Path) -> tuple[TaskStore, CommandQueue, FakeClock]:
-    connection = Database(tmp_path / "state.db").connect()
+def _make_store(connection: Connection) -> tuple[TaskStore, CommandQueue, FakeClock]:
     clock = FakeClock(START)
     return TaskStore(connection, clock), CommandQueue(connection, clock), clock
 
@@ -41,8 +44,8 @@ def _submit(
     return store.insert_from_submit(queued.command)
 
 
-def test_submit_allocates_sequential_task_ids(tmp_path: Path) -> None:
-    _, queue, _ = _make_store(tmp_path)
+def test_submit_allocates_sequential_task_ids(connection: Connection) -> None:
+    _, queue, _ = _make_store(connection)
 
     ids: list[str] = []
     for _ in range(3):
@@ -55,7 +58,7 @@ def test_submit_allocates_sequential_task_ids(tmp_path: Path) -> None:
 
 async def test_concurrent_command_append_allocates_unique_task_ids(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
-    Database(db_path).connect()
+    Database(db_path).connect().close()
     runner = SubprocessRunner()
 
     def argv(count: int) -> list[str]:
@@ -78,8 +81,10 @@ async def test_concurrent_command_append_allocates_unique_task_ids(tmp_path: Pat
     assert len(set(ids)) == 40
 
 
-def test_transition_round_trips_step_status_counters_rungs_and_overrides(tmp_path: Path) -> None:
-    store, queue, clock = _make_store(tmp_path)
+def test_transition_round_trips_step_status_counters_rungs_and_overrides(
+    connection: Connection,
+) -> None:
+    store, queue, clock = _make_store(connection)
     task = _submit(store, queue, "t")
 
     transition = Transition(
@@ -103,8 +108,10 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(tmp_pat
     assert reloaded.started_at == clock.now()
 
 
-def test_apply_transition_sets_finished_at_once_for_a_terminal_status(tmp_path: Path) -> None:
-    store, queue, clock = _make_store(tmp_path)
+def test_apply_transition_sets_finished_at_once_for_a_terminal_status(
+    connection: Connection,
+) -> None:
+    store, queue, clock = _make_store(connection)
     task = _submit(store, queue, "t")
     done = Transition(
         step=None, status=Status.DONE, iteration=0, counters=Counters(), rung_index={}, overrides={}
@@ -122,8 +129,10 @@ def test_apply_transition_sets_finished_at_once_for_a_terminal_status(tmp_path: 
     assert second_reload.finished_at == first_finished_at
 
 
-def test_insert_child_allocates_a_new_task_id_with_parent_and_origin(tmp_path: Path) -> None:
-    store, queue, _ = _make_store(tmp_path)
+def test_insert_child_allocates_a_new_task_id_with_parent_and_origin(
+    connection: Connection,
+) -> None:
+    store, queue, _ = _make_store(connection)
     parent = _submit(store, queue, "parent")
     dep = _submit(store, queue, "dep")
 
@@ -142,8 +151,8 @@ def test_insert_child_allocates_a_new_task_id_with_parent_and_origin(tmp_path: P
     assert child.status is Status.QUEUED
 
 
-def test_scheduling_fields_round_trip(tmp_path: Path) -> None:
-    store, queue, clock = _make_store(tmp_path)
+def test_scheduling_fields_round_trip(connection: Connection) -> None:
+    store, queue, clock = _make_store(connection)
     task = _submit(store, queue, "t")
 
     store.set_holds(task.id, frozenset({Hold.PAUSED}))
@@ -178,8 +187,8 @@ def test_scheduling_fields_round_trip(tmp_path: Path) -> None:
     assert cleared.wait_reason is None
 
 
-def test_list_queued_active_and_all_partition_by_status(tmp_path: Path) -> None:
-    store, queue, _ = _make_store(tmp_path)
+def test_list_queued_active_and_all_partition_by_status(connection: Connection) -> None:
+    store, queue, _ = _make_store(connection)
     queued = _submit(store, queue, "queued")
     running = _submit(store, queue, "running")
     store.apply_transition(
@@ -199,8 +208,10 @@ def test_list_queued_active_and_all_partition_by_status(tmp_path: Path) -> None:
     assert {task.id for task in store.list_all()} == {queued.id, running.id}
 
 
-def test_repoint_dependents_moves_every_dependency_onto_the_new_tasks(tmp_path: Path) -> None:
-    store, queue, _ = _make_store(tmp_path)
+def test_repoint_dependents_moves_every_dependency_onto_the_new_tasks(
+    connection: Connection,
+) -> None:
+    store, queue, _ = _make_store(connection)
 
     old = _submit(store, queue, "old")
     dependent = _submit(store, queue, "dependent", depends_on=[old.id])
@@ -222,8 +233,9 @@ class _Boom(Exception):
     pass
 
 
-def test_transaction_composes_so_a_later_failure_rolls_back_nested_writes(tmp_path: Path) -> None:
-    connection = Database(tmp_path / "state.db").connect()
+def test_transaction_composes_so_a_later_failure_rolls_back_nested_writes(
+    connection: Connection,
+) -> None:
     clock = FakeClock(START)
     store = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)

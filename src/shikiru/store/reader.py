@@ -80,6 +80,10 @@ class StateReader:
         row = self._connection.execute("PRAGMA data_version").fetchone()
         return row[0]
 
+    def close(self) -> None:
+        """Release the read-only connection; the dashboard or operator calls this on shutdown."""
+        self._connection.close()
+
     async def watch(self, on_change: OnChange) -> None:
         """Call `on_change` once after every commit from another connection, until cancelled."""
         last_version = self.data_version()

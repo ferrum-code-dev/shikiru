@@ -10,20 +10,18 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role
 from shikiru.store.commands import CommandQueue
-from shikiru.store.database import Database
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from tests.support.store import Connection
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 RUNG = Rung(agent="codex", model="sol", effort="high")
 
 
-def _make_store(tmp_path: Path) -> tuple[RunStore, str]:
-    connection = Database(tmp_path / "state.db").connect()
+def _make_store(connection: Connection) -> tuple[RunStore, str]:
     clock = FakeClock(START)
     queue = CommandQueue(connection, clock)
     queued = queue.append(Submit(task_id="", title="t", request="r"))
@@ -32,8 +30,8 @@ def _make_store(tmp_path: Path) -> tuple[RunStore, str]:
     return RunStore(connection, clock), task.id
 
 
-def test_get_live_returns_none_until_a_run_is_started(tmp_path: Path) -> None:
-    store, task_id = _make_store(tmp_path)
+def test_get_live_returns_none_until_a_run_is_started(connection: Connection) -> None:
+    store, task_id = _make_store(connection)
 
     assert store.get_live(task_id, Role.IMPLEMENTER) is None
 
@@ -42,8 +40,8 @@ def test_get_live_returns_none_until_a_run_is_started(tmp_path: Path) -> None:
     assert store.get_live(task_id, Role.IMPLEMENTER) == run
 
 
-def test_exit_removes_a_run_from_get_live_but_keeps_it_in_history(tmp_path: Path) -> None:
-    store, task_id = _make_store(tmp_path)
+def test_exit_removes_a_run_from_get_live_but_keeps_it_in_history(connection: Connection) -> None:
+    store, task_id = _make_store(connection)
     run = store.start(task_id, Role.IMPLEMENTER, RUNG)
 
     store.exit(run.id)
@@ -54,8 +52,8 @@ def test_exit_removes_a_run_from_get_live_but_keeps_it_in_history(tmp_path: Path
     assert only_run.ended_at is not None
 
 
-def test_set_session_accepts_a_session_that_cannot_be_resumed(tmp_path: Path) -> None:
-    store, task_id = _make_store(tmp_path)
+def test_set_session_accepts_a_session_that_cannot_be_resumed(connection: Connection) -> None:
+    store, task_id = _make_store(connection)
     run = store.start(task_id, Role.IMPLEMENTER, RUNG)
 
     store.set_session(run.id, None, None)
@@ -66,8 +64,8 @@ def test_set_session_accepts_a_session_that_cannot_be_resumed(tmp_path: Path) ->
     assert reloaded.resume_command is None
 
 
-def test_session_agent_state_message_and_usage_round_trip(tmp_path: Path) -> None:
-    store, task_id = _make_store(tmp_path)
+def test_session_agent_state_message_and_usage_round_trip(connection: Connection) -> None:
+    store, task_id = _make_store(connection)
     run = store.start(task_id, Role.IMPLEMENTER, RUNG)
 
     store.set_session(run.id, "session-1", "codex resume session-1")

@@ -97,6 +97,7 @@ runtime-evaluated-base-classes = [
 "src/shikiru/clock.py" = ["TID251"]
 "src/shikiru/config/loader.py" = ["ANN401"]
 "tests/support/waiting.py" = ["TID251"]
+"tests/support/store.py" = ["TID251"]
 "tests/support/store_reader_process.py" = ["T201"]
 "tests/support/store_submit_process.py" = ["T201"]
 "tests/**" = ["S101", "D", "ANN", "PLR2004"]
@@ -132,6 +133,7 @@ markers = [
   "e2e: real-agent scenarios excluded from the default gate (poe e2e)",
 ]
 addopts = "-n auto --cov=shikiru --cov-report=term-missing --cov-fail-under=80"
+filterwarnings = ["error"]
 testpaths = ["tests"]
 timeout = 60
 

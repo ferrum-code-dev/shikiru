@@ -6,22 +6,20 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import QuotaWindow
-from shikiru.store.database import Database
 from shikiru.store.quotas import QuotaStore
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from tests.support.store import Connection
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _make_store(tmp_path: Path) -> QuotaStore:
-    connection = Database(tmp_path / "state.db").connect()
+def _make_store(connection: Connection) -> QuotaStore:
     return QuotaStore(connection)
 
 
-def test_active_blocks_excludes_expired_blocks_and_other_agents(tmp_path: Path) -> None:
-    store = _make_store(tmp_path)
+def test_active_blocks_excludes_expired_blocks_and_other_agents(connection: Connection) -> None:
+    store = _make_store(connection)
     store.block("claude", START + timedelta(minutes=10), "quota")
     store.block("codex", START - timedelta(minutes=1), "quota")
 
@@ -30,8 +28,8 @@ def test_active_blocks_excludes_expired_blocks_and_other_agents(tmp_path: Path) 
     assert [block.agent for block in active] == ["claude"]
 
 
-def test_clear_block_removes_it(tmp_path: Path) -> None:
-    store = _make_store(tmp_path)
+def test_clear_block_removes_it(connection: Connection) -> None:
+    store = _make_store(connection)
     store.block("claude", START + timedelta(minutes=10), "quota")
 
     store.clear_block("claude")
@@ -39,8 +37,8 @@ def test_clear_block_removes_it(tmp_path: Path) -> None:
     assert store.active_blocks(START) == []
 
 
-def test_block_replaces_an_earlier_block_for_the_same_agent(tmp_path: Path) -> None:
-    store = _make_store(tmp_path)
+def test_block_replaces_an_earlier_block_for_the_same_agent(connection: Connection) -> None:
+    store = _make_store(connection)
     store.block("claude", START + timedelta(minutes=5), "first")
 
     store.block("claude", START + timedelta(minutes=30), "second")
@@ -50,8 +48,8 @@ def test_block_replaces_an_earlier_block_for_the_same_agent(tmp_path: Path) -> N
     assert active.until == START + timedelta(minutes=30)
 
 
-def test_active_blocks_orders_correctly_at_sub_second_precision(tmp_path: Path) -> None:
-    store = _make_store(tmp_path)
+def test_active_blocks_orders_correctly_at_sub_second_precision(connection: Connection) -> None:
+    store = _make_store(connection)
     until = START + timedelta(microseconds=500)
     store.block("claude", until, "quota")
 
@@ -59,8 +57,8 @@ def test_active_blocks_orders_correctly_at_sub_second_precision(tmp_path: Path) 
     assert store.active_blocks(until) == []
 
 
-def test_record_keeps_the_plugin_supplied_observed_at(tmp_path: Path) -> None:
-    store = _make_store(tmp_path)
+def test_record_keeps_the_plugin_supplied_observed_at(connection: Connection) -> None:
+    store = _make_store(connection)
     observed_at = START + timedelta(minutes=3)
     window = QuotaWindow(name="5h", used_pct=42.0, resets_at=None, observed_at=observed_at)
 

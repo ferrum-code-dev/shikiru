@@ -9,19 +9,17 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.escalation import options_for
 from shikiru.domain.tasks import EscalationReason
 from shikiru.store.commands import CommandQueue
-from shikiru.store.database import Database
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from tests.support.store import Connection
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _make_store(tmp_path: Path) -> tuple[EscalationStore, str]:
-    connection = Database(tmp_path / "state.db").connect()
+def _make_store(connection: Connection) -> tuple[EscalationStore, str]:
     clock = FakeClock(START)
     queue = CommandQueue(connection, clock)
     queued = queue.append(Submit(task_id="", title="t", request="r"))
@@ -42,8 +40,8 @@ def _open(store: EscalationStore, task_id: str):
     )
 
 
-def test_open_allocates_sequential_e_n_ids(tmp_path: Path) -> None:
-    store, task_id = _make_store(tmp_path)
+def test_open_allocates_sequential_e_n_ids(connection: Connection) -> None:
+    store, task_id = _make_store(connection)
 
     first = _open(store, task_id)
     second = _open(store, task_id)
@@ -52,8 +50,8 @@ def test_open_allocates_sequential_e_n_ids(tmp_path: Path) -> None:
     assert second.id == "E-2"
 
 
-def test_resolve_moves_an_escalation_out_of_the_open_list(tmp_path: Path) -> None:
-    store, task_id = _make_store(tmp_path)
+def test_resolve_moves_an_escalation_out_of_the_open_list(connection: Connection) -> None:
+    store, task_id = _make_store(connection)
     escalation = _open(store, task_id)
 
     assert [item.id for item in store.list_open()] == [escalation.id]
@@ -67,7 +65,7 @@ def test_resolve_moves_an_escalation_out_of_the_open_list(tmp_path: Path) -> Non
     assert resolved.resolved_at is not None
 
 
-def test_get_of_an_unknown_escalation_is_none(tmp_path: Path) -> None:
-    store, _ = _make_store(tmp_path)
+def test_get_of_an_unknown_escalation_is_none(connection: Connection) -> None:
+    store, _ = _make_store(connection)
 
     assert store.get("E-does-not-exist") is None

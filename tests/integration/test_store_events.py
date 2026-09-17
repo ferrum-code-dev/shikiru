@@ -6,23 +6,21 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
-from shikiru.store.database import Database
 from shikiru.store.events import EventLog
 from tests.support.clock import FakeClock
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from tests.support.store import Connection
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _make_log(tmp_path: Path) -> EventLog:
-    connection = Database(tmp_path / "state.db").connect()
+def _make_log(connection: Connection) -> EventLog:
     return EventLog(connection, FakeClock(START))
 
 
-def test_since_returns_everything_after_the_given_id_in_order(tmp_path: Path) -> None:
-    log = _make_log(tmp_path)
+def test_since_returns_everything_after_the_given_id_in_order(connection: Connection) -> None:
+    log = _make_log(connection)
     first = log.append(EventKind.TASK_QUEUED, message="queued", task_id="T-1")
     log.append(EventKind.TASK_STARTED, message="started", task_id="T-1")
     log.append(EventKind.TASK_QUEUED, message="queued", task_id="T-2")
@@ -31,8 +29,8 @@ def test_since_returns_everything_after_the_given_id_in_order(tmp_path: Path) ->
     assert [event.message for event in log.since(first.id)] == ["started", "queued"]
 
 
-def test_since_filters_by_kinds(tmp_path: Path) -> None:
-    log = _make_log(tmp_path)
+def test_since_filters_by_kinds(connection: Connection) -> None:
+    log = _make_log(connection)
     log.append(EventKind.TASK_QUEUED, message="queued", task_id="T-1")
     log.append(EventKind.TASK_STARTED, message="started", task_id="T-1")
 
@@ -41,8 +39,8 @@ def test_since_filters_by_kinds(tmp_path: Path) -> None:
     assert [event.kind for event in only_started] == [EventKind.TASK_STARTED]
 
 
-def test_since_filters_by_task_id(tmp_path: Path) -> None:
-    log = _make_log(tmp_path)
+def test_since_filters_by_task_id(connection: Connection) -> None:
+    log = _make_log(connection)
     log.append(EventKind.TASK_QUEUED, message="one", task_id="T-1")
     log.append(EventKind.TASK_QUEUED, message="two", task_id="T-2")
 

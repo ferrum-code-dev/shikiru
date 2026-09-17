@@ -29,10 +29,13 @@ async def _wait_for_one_change(reader: StateReader) -> None:
 async def _main(db_path: str, ready_path: str) -> None:
     database = Database(Path(db_path))
     reader = StateReader(database, SystemClock())
-    reader.data_version()
-    await asyncio.to_thread(Path(ready_path).write_text, "ready")
-    await _wait_for_one_change(reader)
-    print("changed")
+    try:
+        reader.data_version()
+        await asyncio.to_thread(Path(ready_path).write_text, "ready")
+        await _wait_for_one_change(reader)
+        print("changed")
+    finally:
+        reader.close()
 
 
 if __name__ == "__main__":
