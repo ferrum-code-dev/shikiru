@@ -12,6 +12,7 @@ import typer
 from pydantic import ValidationError
 
 from shikiru.domain.reports import ReportKind, model_for
+from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -28,8 +29,13 @@ REPORT_EXIT_INVALID = 2
 REPORT_EXIT_NO_CURRENT_TURN = 3
 
 
-class ReportError(Exception):
-    """A `shikiru report` failure, carrying the exit code it maps to (03 §4.3)."""
+class ReportError(ShikiruError):
+    """A `shikiru report` failure, carrying the exit code it maps to (03 §4.3).
+
+    `exit_code` is set per instance rather than per subclass, since 03 §4.3 gives `shikiru
+    report` its own two exit codes (2 invalid, 3 no current turn) that both flow through this
+    one error type instead of one subclass each.
+    """
 
     def __init__(self, exit_code: int, message: str) -> None:
         """Record the process `exit_code` and the human-readable `message` for stderr."""
