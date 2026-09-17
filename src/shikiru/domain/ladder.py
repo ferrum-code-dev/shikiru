@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from shikiru.domain.tasks import Counters, EscalationReason, Role, Task
+from shikiru.domain.tasks import Counters, Role, Task
 
 if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
@@ -29,36 +29,8 @@ def pick_rung(task: Task, role: Role, settings: Settings) -> Rung:
     return ladder[task.rung_index.get(role, 0)]
 
 
-@dataclass(frozen=True)
-class RungAdvance:
-    """The next rung up a role's ladder, and its index for persisting `rung_index`."""
-
-    rung: Rung
-    index: int
-
-
-def next_rung(
-    task: Task, role: Role, settings: Settings, *, different_agent: bool = False
-) -> RungAdvance | None:
-    """Return the next rung up `role`'s ladder above `rung_index[role]`, or `None` when exhausted.
-
-    Move-up always progresses from `rung_index`, ignoring an operator override: an override is
-    a manual pin, not a point on the automatic ladder. With `different_agent=True`, rungs on the
-    current agent are skipped, as recovery needs for a quota exhaustion or a crashed agent.
-    """
-    ladder = _ladder_for(role, task, settings)
-    current_index = task.rung_index.get(role, 0)
-    current_agent = ladder[current_index].agent
-    for index in range(current_index + 1, len(ladder)):
-        candidate = ladder[index]
-        if different_agent and candidate.agent == current_agent:
-            continue
-        return RungAdvance(rung=candidate, index=index)
-    return None
-
-
 def reset_for_rung_change(counters: Counters) -> Counters:
-    """`rejections_on_rung` resets whenever a task's rung changes (03 §1.1)."""
+    """`rejections_on_rung` resets whenever the Implementer's rung changes (03 §1.1)."""
     return counters.model_copy(update={"rejections_on_rung": 0})
 
 
@@ -72,16 +44,42 @@ def reset_for_integration_attempt(counters: Counters) -> Counters:
     return counters.model_copy(update={"conflict_rounds": 0})
 
 
-_RESET_FIELD_BY_REASON: dict[EscalationReason, str] = {
-    EscalationReason.DECISION_REQUIRED: "consults",
-    EscalationReason.ITERATIONS_EXHAUSTED: "rejections_on_rung",
-    EscalationReason.INTEGRATION_CONFLICT: "conflict_rounds",
-}
+@dataclass(frozen=True)
+class RungMove:
+    """The new `rung_index`, `overrides` and `counters` after moving `role` up one rung."""
+
+    rung_index: dict[Role, int]
+    overrides: dict[Role, Rung]
+    counters: Counters
 
 
-def reset_for_resolved_escalation(counters: Counters, reason: EscalationReason) -> Counters:
-    """Reset the counter behind `reason` once its escalation resolves (03 §1.1)."""
-    field = _RESET_FIELD_BY_REASON.get(reason)
-    if field is None:
-        return counters
-    return counters.model_copy(update={field: 0})
+def move_up(
+    task: Task, role: Role, settings: Settings, *, different_agent: bool = False
+) -> RungMove | None:
+    """Advance `role` one rung up its ladder from the rung currently resolved by `pick_rung`.
+
+    Comparing against the resolved rung, not `ladder[rung_index]`, matters because that rung may
+    be an operator override; `different_agent=True` then skips ladder rungs on that override's
+    agent too. Moving up clears `role`'s override: an automatic move replaces a manual pin, since
+    keeping the override would make the move a no-op and could loop recovery on a blocked agent.
+    For the Implementer, `rejections_on_rung` also resets, since it counts rework at one rung.
+
+    Returns `None` once no further rung satisfies `different_agent` above the current one; the
+    caller then keeps the task on its current rung (03 §3, §7).
+    """
+    ladder = _ladder_for(role, task, settings)
+    current_rung = pick_rung(task, role, settings)
+    current_index = task.rung_index.get(role, 0)
+    for index in range(current_index + 1, len(ladder)):
+        candidate = ladder[index]
+        if different_agent and candidate.agent == current_rung.agent:
+            continue
+        rung_index = dict(task.rung_index)
+        rung_index[role] = index
+        overrides = dict(task.overrides)
+        overrides.pop(role, None)
+        counters = (
+            reset_for_rung_change(task.counters) if role is Role.IMPLEMENTER else task.counters
+        )
+        return RungMove(rung_index=rung_index, overrides=overrides, counters=counters)
+    return None
