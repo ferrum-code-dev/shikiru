@@ -52,9 +52,9 @@ Refs: 05 §4, 03 §4.3.
 
 ### Task 5: State store
 Refs: 05 §2.
-- [ ] `Database` (WAL, busy timeout, `user_version` migrations), `001_initial.sql`.
-- [ ] `TaskStore`, `RunStore`, `EscalationStore`, `QuotaStore` (incl. `agent_blocks`), `EventLog`, `CommandQueue` (typed commands; `Submit` allocates the task id from `sequences`).
-- [ ] `StateReader` with `on_change` via `PRAGMA data_version`.
+- [x] `Database` (WAL, busy timeout, `user_version` migrations), `001_initial.sql`.
+- [x] `TaskStore`, `RunStore`, `EscalationStore`, `QuotaStore` (incl. `agent_blocks`), `EventLog`, `CommandQueue` (typed commands; `Submit` allocates the task id from `sequences`).
+- [x] `StateReader` with `on_change` via `PRAGMA data_version`.
 - Tests: integration on a real file, including a writer and a reader in separate processes.
 
 ## Phase 2 — Substrate
