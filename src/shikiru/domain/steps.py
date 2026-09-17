@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from shikiru.domain.ladder import move_up, reset_for_integration_attempt, reset_for_new_iteration
+from shikiru.domain.reports import (
+    ConsultAnswer,
+    ImplementationReport,
+    PlanReport,
+    TriageReport,
+    Verdict,
+)
 from shikiru.domain.tasks import Counters, EscalationReason, Mode, Role, Status, Step, Task
 
 if TYPE_CHECKING:
@@ -16,55 +23,7 @@ if TYPE_CHECKING:
 CONSULT_LIMIT = 3
 CONFLICT_ROUNDS = 2
 
-
-@dataclass(frozen=True)
-class TriageDecision:
-    """The Leader's triage choice."""
-
-    mode: Mode
-
-
-@dataclass(frozen=True)
-class PlanDecision:
-    """The Leader's plan turn; it always moves the task into integration."""
-
-
-@dataclass(frozen=True)
-class ImplementDecision:
-    """The Implementer's report status for one implement turn."""
-
-    status: Literal["completed", "needs_decision", "blocked"]
-
-
-@dataclass(frozen=True)
-class ConsultDecision:
-    """The Leader's answer to a consult turn."""
-
-    decision: Literal["answer", "escalate"]
-
-
-@dataclass(frozen=True)
-class VerifyDecision:
-    """The Leader's verdict on an implement turn."""
-
-    decision: Literal["accept", "changes_requested", "escalate", "supersede"]
-
-
-@dataclass(frozen=True)
-class ConflictVerifyDecision:
-    """The Leader's verdict on a post-rebase `conflicts` turn during integration (03 §6)."""
-
-    decision: Literal["accept", "changes_requested", "escalate"]
-
-
-Outcome = (
-    TriageDecision
-    | PlanDecision
-    | ImplementDecision
-    | ConsultDecision
-    | VerifyDecision
-    | ConflictVerifyDecision
-)
+Outcome = TriageReport | PlanReport | ImplementationReport | ConsultAnswer | Verdict
 
 
 @dataclass(frozen=True)
@@ -119,7 +78,7 @@ def first_step(task: Task) -> Transition:
     raise ValueError(message)
 
 
-def _from_triage(task: Task, outcome: TriageDecision) -> Transition:
+def _from_triage(task: Task, outcome: TriageReport) -> Transition:
     if outcome.mode is Mode.IMPLEMENT:
         return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
     if outcome.mode is Mode.PLAN:
@@ -137,7 +96,7 @@ def _from_plan(task: Task) -> Transition:
     )
 
 
-def _from_implement(task: Task, outcome: ImplementDecision) -> Transition:
+def _from_implement(task: Task, outcome: ImplementationReport) -> Transition:
     if outcome.status == "completed":
         return Transition.stay(task, step=Step.VERIFY)
     if task.counters.consults >= CONSULT_LIMIT:
@@ -146,7 +105,7 @@ def _from_implement(task: Task, outcome: ImplementDecision) -> Transition:
     return dataclasses.replace(Transition.stay(task, step=Step.CONSULT), counters=counters)
 
 
-def _from_consult(task: Task, outcome: ConsultDecision) -> Transition:
+def _from_consult(task: Task, outcome: ConsultAnswer) -> Transition:
     if outcome.decision == "escalate":
         return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
     return Transition.stay(task, step=Step.IMPLEMENT)
@@ -162,11 +121,11 @@ def _changes_requested(task: Task, settings: Settings) -> Transition:
     rung_index = dict(task.rung_index)
     overrides = dict(task.overrides)
     if rejections >= settings.roles.implementer.escalate_after:
-        move = move_up(task, Role.IMPLEMENTER, settings)
+        move = move_up(task, Role.IMPLEMENTER, settings, counters=counters)
         if move is not None:
             rung_index = move.rung_index
             overrides = move.overrides
-            counters = counters.model_copy(update={"rejections_on_rung": 0})
+            counters = move.counters
     return Transition(
         step=Step.IMPLEMENT,
         status=Status.RUNNING,
@@ -188,7 +147,7 @@ def _conflict_round(task: Task) -> Transition:
     return dataclasses.replace(base, status=Status.INTEGRATING)
 
 
-def _from_verify(task: Task, outcome: VerifyDecision, settings: Settings) -> Transition:
+def _from_verify(task: Task, outcome: Verdict, settings: Settings) -> Transition:
     match outcome.decision:
         case "accept":
             base = Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
@@ -204,7 +163,7 @@ def _from_verify(task: Task, outcome: VerifyDecision, settings: Settings) -> Tra
             )
 
 
-def _from_integrate(task: Task, outcome: ConflictVerifyDecision) -> Transition:
+def _from_integrate(task: Task, outcome: Verdict) -> Transition:
     match outcome.decision:
         case "accept":
             return Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
@@ -212,22 +171,25 @@ def _from_integrate(task: Task, outcome: ConflictVerifyDecision) -> Transition:
             return _conflict_round(task)
         case "escalate":
             return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.INTEGRATE)
+        case "supersede":
+            message = "a post-rebase conflicts verify cannot supersede the task (03 §6)"
+            raise ValueError(message)
 
 
 def next_step(task: Task, outcome: Outcome, settings: Settings) -> Transition:
     """Apply `outcome` to `task`'s current step and return the resulting transition."""
     match task.step, outcome:
-        case Step.TRIAGE, TriageDecision():
+        case Step.TRIAGE, TriageReport():
             return _from_triage(task, outcome)
-        case Step.PLAN, PlanDecision():
+        case Step.PLAN, PlanReport():
             return _from_plan(task)
-        case Step.IMPLEMENT, ImplementDecision():
+        case Step.IMPLEMENT, ImplementationReport():
             return _from_implement(task, outcome)
-        case Step.CONSULT, ConsultDecision():
+        case Step.CONSULT, ConsultAnswer():
             return _from_consult(task, outcome)
-        case Step.VERIFY, VerifyDecision():
+        case Step.VERIFY, Verdict():
             return _from_verify(task, outcome, settings)
-        case Step.INTEGRATE, ConflictVerifyDecision():
+        case Step.INTEGRATE, Verdict():
             return _from_integrate(task, outcome)
         case _:
             message = f"no transition for step {task.step!r} with outcome {outcome!r}"

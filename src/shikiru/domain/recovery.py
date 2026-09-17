@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from shikiru.agents.contracts import FailureKind
 from shikiru.domain.tasks import EscalationReason, Role
+
+if TYPE_CHECKING:
+    from shikiru.domain.reports import Report
 
 BACKOFF_SCHEDULE: tuple[timedelta, ...] = (
     timedelta(seconds=30),
@@ -26,7 +29,7 @@ QUOTA_PROBE = timedelta(minutes=15)
 class Completed:
     """A turn that produced a valid report, possibly rebuilt by the Helper."""
 
-    report: object
+    report: Report
     rebuilt: bool = False
 
 

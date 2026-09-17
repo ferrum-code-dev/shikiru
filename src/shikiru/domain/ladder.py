@@ -54,7 +54,12 @@ class RungMove:
 
 
 def move_up(
-    task: Task, role: Role, settings: Settings, *, different_agent: bool = False
+    task: Task,
+    role: Role,
+    settings: Settings,
+    *,
+    counters: Counters | None = None,
+    different_agent: bool = False,
 ) -> RungMove | None:
     """Advance `role` one rung up its ladder from the rung currently resolved by `pick_rung`.
 
@@ -64,9 +69,14 @@ def move_up(
     keeping the override would make the move a no-op and could loop recovery on a blocked agent.
     For the Implementer, `rejections_on_rung` also resets, since it counts rework at one rung.
 
+    `counters` is the baseline to reset from; it defaults to `task.counters`, but a caller that
+    already derived new counters for this transition (e.g. a new iteration's reset) passes them
+    so the move's reset composes with that instead of discarding it.
+
     Returns `None` once no further rung satisfies `different_agent` above the current one; the
     caller then keeps the task on its current rung (03 §3, §7).
     """
+    baseline = task.counters if counters is None else counters
     ladder = _ladder_for(role, task, settings)
     current_rung = pick_rung(task, role, settings)
     current_index = task.rung_index.get(role, 0)
@@ -78,8 +88,6 @@ def move_up(
         rung_index[role] = index
         overrides = dict(task.overrides)
         overrides.pop(role, None)
-        counters = (
-            reset_for_rung_change(task.counters) if role is Role.IMPLEMENTER else task.counters
-        )
-        return RungMove(rung_index=rung_index, overrides=overrides, counters=counters)
+        result_counters = reset_for_rung_change(baseline) if role is Role.IMPLEMENTER else baseline
+        return RungMove(rung_index=rung_index, overrides=overrides, counters=result_counters)
     return None

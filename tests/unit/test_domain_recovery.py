@@ -32,6 +32,7 @@ from shikiru.domain.recovery import (
     decide_stall,
 )
 from shikiru.domain.tasks import EscalationReason, Role
+from tests.support.factories import make_verdict
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -247,4 +248,4 @@ def test_error_classification_behaves_like_an_other_failure() -> None:
 
 def test_decide_rejects_a_completed_result() -> None:
     with pytest.raises(ValueError, match="non-Completed"):
-        decide(Completed(report=object()), TurnCounters(), _policy())
+        decide(Completed(report=make_verdict()), TurnCounters(), _policy())
