@@ -37,11 +37,11 @@ Refs: 05 §1.
 
 ### Task 3: Domain rules
 Refs: 03 §1–3, §7–8, §10; 05 §2.
-- [ ] `Task`, `Status`, `Step`, `Mode`, `Hold`, `Counters`, `EventKind`, command models.
-- [ ] `next_step(task, outcome)` covering every outcome in 03 §2–3, including final round, supersede and split.
-- [ ] `pick_rung(task, role, settings)` and move-up rules; `recovery.decide(result, counters, policy)` for every row of 03 §7; counter resets (03 §1.1).
-- [ ] `activity.is_stalled` and `activity.is_operator_prompt` (03 §4.2, §9).
-- [ ] `scheduling.pick_ready(tasks, gates)` with ordering and `wait_reason`; `escalation.options_for(reason)` per 03 §8.
+- [x] `Task`, `Status`, `Step`, `Mode`, `Hold`, `Counters`, `EventKind`, command models.
+- [x] `next_step(task, outcome)` covering every outcome in 03 §2–3, including final round, supersede and split.
+- [x] `pick_rung(task, role, settings)` and move-up rules; `recovery.decide(result, counters, policy)` for every row of 03 §7; counter resets (03 §1.1).
+- [x] `activity.is_stalled` and `activity.is_operator_prompt` (03 §4.2, §9).
+- [x] `scheduling.pick_ready(tasks, gates)` with ordering and `wait_reason`; `escalation.options_for(reason)` per 03 §8.
 - Tests: table-driven unit tests, one row per documented rule.
 
 ### Task 4: Report models and `shikiru report`
