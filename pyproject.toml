@@ -41,7 +41,7 @@ format-check = "ruff format --check ."
 lint = "ruff check ."
 imports = "lint-imports"
 types = "basedpyright"
-dead-code = "vulture src/shikiru tests --min-confidence 80"
+dead-code = "vulture"
 test = "pytest -m 'not e2e'"
 e2e = "pytest -m e2e --no-cov"
 
@@ -65,12 +65,9 @@ ignore = [
   "D203",   # conflicts with D211 (no blank line before class docstring)
   "D213",   # conflicts with D212 (multi-line docstring summary on first line)
   "COM812", # formatter already governs trailing commas
-  "ANN401", # Any is legitimate for a handful of generic call sites, not banned project-wide
-  "D100",   # module docstrings are optional; package docstrings and public contracts carry the intent
-  "D104",   # package __init__ docstrings are optional
+  "N818",   # CommandFailed is the exact name docs/design/02-architecture.md §2 gives this error
   "PLR0913", # SubprocessRunner.run and similar boundary calls need argv/timeout/cwd/env/input/check
   "ASYNC109", # our injected Clock/timeout parameters are the project's timeout convention, not asyncio.timeout
-  "N818",   # CommandFailed is the exact name docs/design/02-architecture.md §2 gives this error
   "FBT001", # Typer boolean --flag options are idiomatic positional-looking parameters
   "FBT003", # Typer's typer.Option(False, ...) boolean default is idiomatic, not a bare bool call
 ]
@@ -84,10 +81,9 @@ ignore = [
 "asyncio.sleep" = { msg = "Time only via shikiru.clock.Clock" }
 
 [tool.ruff.lint.per-file-ignores]
-"src/shikiru/store/**" = ["S608"]
+"src/shikiru/store/**" = ["TID251"]
 "src/shikiru/process.py" = ["TID251"]
 "src/shikiru/clock.py" = ["TID251"]
-"tests/support/tmux.py" = ["TID251", "S603", "S607"]
 "tests/support/waiting.py" = ["TID251"]
 "tests/**" = ["S101", "D", "ANN", "PLR2004"]
 
@@ -105,7 +101,13 @@ root_package = "shikiru"
 name = "Layered architecture (02 §2); bootstrap is the composition root and sits outside this contract"
 type = "layers"
 layers = [
-  "shikiru.cli",
+  "(shikiru.cli) | (shikiru.mcp) | (shikiru.dashboard) | (shikiru.agents.testing)",
+  "(shikiru.operator)",
+  "(shikiru.engine)",
+  "(shikiru.workspace) | (shikiru.tmux) | (shikiru.prompts) | (shikiru.helper) | (shikiru.ui) | (shikiru.telemetry) | (shikiru.agents.registry)",
+  "(shikiru.store)",
+  "(shikiru.domain)",
+  "(shikiru.config) | (shikiru.agents.contracts) | (shikiru.agents.sdk)",
   "shikiru.process | shikiru.clock",
   "shikiru.errors",
 ]
