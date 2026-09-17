@@ -28,9 +28,10 @@ class FakeClock:
 
     async def sleep(self, seconds: float) -> None:
         deadline = self._now + timedelta(seconds=seconds)
-        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[None] = loop.create_future()
         if deadline <= self._now:
-            future.set_result(None)
+            loop.call_soon(future.set_result, None)
         else:
             self._sleepers.append((deadline, future))
         await future
