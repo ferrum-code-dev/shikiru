@@ -91,22 +91,14 @@ def _parse_set_override(text: str) -> tuple[str, Any]:
     if not separator or not key_path:
         message = f"{_SET_OVERRIDE_SOURCE}: {text!r} is not key.path=value"
         raise ConfigError(message)
-    return key_path, _parse_set_value(key_path, raw_value)
+    return key_path, _parse_set_value(raw_value)
 
 
-def _parse_set_value(key_path: str, raw_value: str) -> Any:
+def _parse_set_value(raw_value: str) -> Any:
     try:
         return tomllib.loads(f"v = {raw_value}")["v"]
     except tomllib.TOMLDecodeError:
-        pass
-    escaped = raw_value.replace("\\", "\\\\").replace('"', '\\"')
-    try:
-        return tomllib.loads(f'v = "{escaped}"')["v"]
-    except tomllib.TOMLDecodeError as error:
-        message = (
-            f"{_SET_OVERRIDE_SOURCE}: {key_path}: {raw_value!r} is not a valid value ({error})"
-        )
-        raise ConfigError(message) from error
+        return raw_value
 
 
 def _format_validation_error(error: ValidationError, sources: dict[str, str]) -> str:
@@ -126,4 +118,4 @@ def _source_for(dotted: str, sources: dict[str, str]) -> str:
         candidate = ".".join(parts[:end])
         if candidate in sources:
             return sources[candidate]
-    return "defaults.toml"
+    return PROJECT_CONFIG_RELATIVE_PATH

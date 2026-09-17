@@ -122,17 +122,6 @@ def test_invalid_value_from_set_override_names_set_and_key_path(tmp_path: Path) 
     assert str(excinfo.value).startswith("--set: orchestration.max_parallel:")
 
 
-def test_set_override_value_that_is_not_even_a_valid_string_is_a_config_error(
-    tmp_path: Path,
-) -> None:
-    project_dir = _project(tmp_path)
-
-    with pytest.raises(ConfigError) as excinfo:
-        load_settings(project_dir, overrides=["project.name=\x01"])
-
-    assert str(excinfo.value).startswith("--set: project.name")
-
-
 def test_invalid_toml_syntax_in_project_file_names_the_file(tmp_path: Path) -> None:
     shikiru_dir = tmp_path / ".shikiru"
     shikiru_dir.mkdir()
@@ -147,3 +136,22 @@ def test_missing_project_file_falls_back_to_defaults_and_still_requires_settings
 ) -> None:
     with pytest.raises(ConfigError):
         load_settings(tmp_path)
+
+
+def test_missing_required_key_is_attributed_to_the_project_config_file(tmp_path: Path) -> None:
+    shikiru_dir = tmp_path / ".shikiru"
+    shikiru_dir.mkdir()
+    (shikiru_dir / "config.toml").write_text(_MINIMAL_PROJECT_CONFIG.replace('name = "demo"\n', ""))
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_settings(tmp_path)
+
+    assert str(excinfo.value).startswith(".shikiru/config.toml: project.name: Field required")
+
+
+def test_set_override_bare_word_that_is_not_valid_toml_stays_a_string(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path)
+
+    settings = load_settings(project_dir, overrides=["project.name=demo-project"])
+
+    assert settings.project.name == "demo-project"
