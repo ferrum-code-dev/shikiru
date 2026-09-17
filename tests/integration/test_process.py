@@ -23,17 +23,32 @@ async def test_run_returns_stdout_and_zero_returncode() -> None:
     assert result.stdout.strip() == "hello"
 
 
-async def test_run_passes_cwd_env_and_input() -> None:
+async def test_run_passes_input_to_stdin() -> None:
+    runner = SubprocessRunner()
+
+    result = await runner.run(["cat"], timeout=5, input_text="from stdin")
+
+    assert result.stdout == "from stdin"
+
+
+async def test_run_executes_in_the_given_cwd(tmp_path: Path) -> None:
+    runner = SubprocessRunner()
+
+    result = await runner.run(["pwd"], timeout=5, cwd=tmp_path)
+
+    assert result.stdout.strip() == str(tmp_path)
+
+
+async def test_run_passes_the_given_env_and_nothing_else() -> None:
     runner = SubprocessRunner()
 
     result = await runner.run(
-        ["cat"],
+        ["sh", "-c", "echo $SHIKIRU_TEST_VAR"],
         timeout=5,
-        input_text="from stdin",
-        env={"PATH": os.environ["PATH"]},
+        env={"SHIKIRU_TEST_VAR": "hello", "PATH": os.environ["PATH"]},
     )
 
-    assert result.stdout == "from stdin"
+    assert result.stdout.strip() == "hello"
 
 
 async def test_check_raises_command_failed_on_non_zero_exit() -> None:

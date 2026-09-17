@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 EXIT_GENERIC_ERROR = 1
 EXIT_USAGE_ERROR = 2
 EXIT_NOT_INITIALISED = 3
@@ -35,18 +40,15 @@ class CommandRejectedError(ShikiruError):
 class ConfigError(ShikiruError):
     """Project or default configuration is missing or invalid."""
 
-    exit_code = EXIT_GENERIC_ERROR
-
 
 class CommandFailed(ShikiruError):
     """A subprocess run through `process.SubprocessRunner` exited non-zero."""
 
-    exit_code = EXIT_GENERIC_ERROR
-
-    def __init__(self, argv: list[str], returncode: int, stderr: str) -> None:
+    def __init__(self, argv: Sequence[str], returncode: int, stderr: str) -> None:
         """Record the failed command's `argv`, exit code and captured stderr."""
-        super().__init__(f"command {argv} exited {returncode}: {stderr}")
-        self.argv = argv
+        argv_tuple = tuple(argv)
+        super().__init__(f"command {argv_tuple} exited {returncode}: {stderr}")
+        self.argv = argv_tuple
         self.returncode = returncode
         self.stderr = stderr
 
@@ -54,10 +56,9 @@ class CommandFailed(ShikiruError):
 class CommandTimeoutError(ShikiruError):
     """A subprocess run through `process.SubprocessRunner` was killed after its timeout elapsed."""
 
-    exit_code = EXIT_GENERIC_ERROR
-
-    def __init__(self, argv: list[str], timeout: float) -> None:
+    def __init__(self, argv: Sequence[str], timeout: float) -> None:
         """Record the timed-out command's `argv` and its `timeout` in seconds."""
-        super().__init__(f"command {argv} timed out after {timeout}s")
-        self.argv = argv
+        argv_tuple = tuple(argv)
+        super().__init__(f"command {argv_tuple} timed out after {timeout}s")
+        self.argv = argv_tuple
         self.timeout = timeout

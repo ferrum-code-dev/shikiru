@@ -3,23 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from shikiru.errors import CommandFailed, CommandTimeoutError
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
-
-_PROCESS_KILL_GRACE_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
 class ProcessResult:
     """The outcome of one process run through `SubprocessRunner`."""
 
-    argv: list[str]
+    argv: tuple[str, ...]
     returncode: int
     stdout: str
     stderr: str
@@ -30,17 +28,18 @@ class SubprocessRunner:
 
     async def run(
         self,
-        argv: list[str],
+        argv: Sequence[str],
         *,
         timeout: float,
         cwd: Path | None = None,
-        env: dict[str, str] | None = None,
+        env: Mapping[str, str] | None = None,
         input_text: str | None = None,
         check: bool = False,
     ) -> ProcessResult:
         """Run `argv` and return its result, honouring `timeout` and killing it on expiry."""
+        argv_tuple = tuple(argv)
         process = await asyncio.create_subprocess_exec(
-            *argv,
+            *argv_tuple,
             cwd=cwd,
             env=env,
             stdin=asyncio.subprocess.PIPE if input_text is not None else None,
@@ -54,20 +53,19 @@ class SubprocessRunner:
             )
         except TimeoutError:
             await self._kill(process)
-            raise CommandTimeoutError(argv, timeout) from None
+            raise CommandTimeoutError(argv_tuple, timeout) from None
 
         result = ProcessResult(
-            argv=argv,
-            returncode=process.returncode or 0,
+            argv=argv_tuple,
+            returncode=cast("int", process.returncode),
             stdout=stdout_bytes.decode(),
             stderr=stderr_bytes.decode(),
         )
         if check and result.returncode != 0:
-            raise CommandFailed(argv, result.returncode, result.stderr)
+            raise CommandFailed(argv_tuple, result.returncode, result.stderr)
         return result
 
     @staticmethod
     async def _kill(process: asyncio.subprocess.Process) -> None:
         process.kill()
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(process.wait(), timeout=_PROCESS_KILL_GRACE_SECONDS)
+        await process.wait()
