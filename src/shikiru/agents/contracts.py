@@ -1,17 +1,26 @@
-"""The agent plugin contract (docs/design/04-agents.md §1). Only `Rung` and `FailureKind` exist."""
+"""The agent plugin contract (docs/design/04-agents.md §1).
+
+Only the types the state store (Task 5) needs ahead of the rest of the contract exist so far:
+`Rung`, `FailureKind`, `Usage` and `QuotaWindow`.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum, auto
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from pydantic import ConfigDict
 
 from shikiru.errors import ConfigError
 
+if TYPE_CHECKING:
+    from datetime import datetime
+
 _RUNG_SEPARATOR = ":"
 _VALID_RUNG_PART_COUNTS = (2, 3)
+
+CostBasis = Literal["billed", "api_equivalent", "unknown"]
 
 
 class FailureKind(StrEnum):
@@ -33,6 +42,29 @@ class Rung:
     agent: str
     model: str
     effort: str | None = None
+
+
+@dataclass(frozen=True)
+class Usage:
+    """A session's cumulative token and cost usage, as `AgentSession.usage()` reports it (04 §1)."""
+
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float | None
+    cost_basis: CostBasis
+    context_used_pct: float | None
+
+
+@dataclass(frozen=True)
+class QuotaWindow:
+    """One quota window an agent plugin's `quota()` reports (04 §1)."""
+
+    name: str
+    used_pct: float
+    resets_at: datetime | None
+    observed_at: datetime
 
 
 def parse_rung(text: str) -> Rung:

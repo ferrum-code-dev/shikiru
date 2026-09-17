@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import Rung
+from shikiru.agents.contracts import Rung, Usage
 from shikiru.domain.commands import Submit
-from shikiru.domain.runs import RunStatus, Usage
+from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
@@ -73,7 +73,18 @@ def test_session_agent_state_message_and_usage_round_trip(tmp_path: Path) -> Non
     store.set_session(run.id, "session-1", "codex resume session-1")
     store.set_agent_state(run.id, {"turns": 2})
     store.set_last_message(run.id, "Working on it")
-    store.record_usage(run.id, Usage(input_tokens=100, output_tokens=50, cost_usd=0.42))
+    store.record_usage(
+        run.id,
+        Usage(
+            input_tokens=100,
+            output_tokens=50,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            cost_usd=0.42,
+            cost_basis="billed",
+            context_used_pct=None,
+        ),
+    )
 
     reloaded = store.get_live(task_id, Role.IMPLEMENTER)
     assert reloaded is not None

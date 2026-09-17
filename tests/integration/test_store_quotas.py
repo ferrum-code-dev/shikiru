@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from shikiru.agents.contracts import QuotaWindow
 from shikiru.store.database import Database
 from shikiru.store.quotas import QuotaStore
-from tests.support.clock import FakeClock
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,7 +17,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 def _make_store(tmp_path: Path) -> QuotaStore:
     connection = Database(tmp_path / "state.db").connect()
-    return QuotaStore(connection, FakeClock(START))
+    return QuotaStore(connection)
 
 
 def test_active_blocks_excludes_expired_blocks_and_other_agents(tmp_path: Path) -> None:
@@ -57,3 +57,14 @@ def test_active_blocks_orders_correctly_at_sub_second_precision(tmp_path: Path) 
 
     assert [block.agent for block in store.active_blocks(START)] == ["claude"]
     assert store.active_blocks(until) == []
+
+
+def test_record_keeps_the_plugin_supplied_observed_at(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    observed_at = START + timedelta(minutes=3)
+    window = QuotaWindow(name="5h", used_pct=42.0, resets_at=None, observed_at=observed_at)
+
+    store.record("claude", window)
+
+    [reloaded] = store.quotas_for("claude")
+    assert reloaded == window

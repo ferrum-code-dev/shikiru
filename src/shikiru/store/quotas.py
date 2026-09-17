@@ -5,24 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from shikiru.agents.contracts import QuotaWindow
 from shikiru.store.database import format_timestamp, parse_required_timestamp, parse_timestamp
 
 if TYPE_CHECKING:
     import sqlite3
     from datetime import datetime
-
-    from shikiru.clock import Clock
-
-
-@dataclass(frozen=True, slots=True)
-class Quota:
-    """One `{agent, window}` quota snapshot (05 §2)."""
-
-    agent: str
-    window: str
-    used_pct: float
-    resets_at: datetime | None
-    observed_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +22,9 @@ class AgentBlock:
     reason: str
 
 
-def _row_to_quota(row: sqlite3.Row) -> Quota:
-    return Quota(
-        agent=row["agent"],
-        window=row["window"],
+def _row_to_quota_window(row: sqlite3.Row) -> QuotaWindow:
+    return QuotaWindow(
+        name=row["window"],
         used_pct=row["used_pct"],
         resets_at=parse_timestamp(row["resets_at"]),
         observed_at=parse_required_timestamp(row["observed_at"]),
@@ -50,13 +37,13 @@ def _row_to_agent_block(row: sqlite3.Row) -> AgentBlock:
     )
 
 
-def fetch_quotas(connection: sqlite3.Connection, agent: str) -> list[Quota]:
+def fetch_quotas(connection: sqlite3.Connection, agent: str) -> list[QuotaWindow]:
     """Read every quota window recorded for `agent`."""
     rows = connection.execute(
         "SELECT agent, window, used_pct, resets_at, observed_at FROM quotas WHERE agent = ?",
         (agent,),
     ).fetchall()
-    return [_row_to_quota(row) for row in rows]
+    return [_row_to_quota_window(row) for row in rows]
 
 
 def fetch_active_agent_blocks(connection: sqlite3.Connection, now: datetime) -> list[AgentBlock]:
@@ -71,13 +58,12 @@ def fetch_active_agent_blocks(connection: sqlite3.Connection, now: datetime) -> 
 class QuotaStore:
     """Persists quota snapshots and agent blocks (03 §7, §9)."""
 
-    def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
-        """Use `connection` (the engine's writer) and `clock` for every write below."""
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """Use `connection` for every write below."""
         self._connection = connection
-        self._clock = clock
 
-    def record(self, agent: str, window: str, used_pct: float, resets_at: datetime | None) -> None:
-        """Upsert `agent`'s `window` quota snapshot, observed now."""
+    def record(self, agent: str, window: QuotaWindow) -> None:
+        """Upsert `agent`'s quota window, keeping the plugin-supplied `observed_at` as-is."""
         self._connection.execute(
             """
             INSERT INTO quotas (agent, window, used_pct, resets_at, observed_at)
@@ -89,14 +75,14 @@ class QuotaStore:
             """,
             (
                 agent,
-                window,
-                used_pct,
-                format_timestamp(resets_at) if resets_at is not None else None,
-                format_timestamp(self._clock.now()),
+                window.name,
+                window.used_pct,
+                format_timestamp(window.resets_at) if window.resets_at is not None else None,
+                format_timestamp(window.observed_at),
             ),
         )
 
-    def quotas_for(self, agent: str) -> list[Quota]:
+    def quotas_for(self, agent: str) -> list[QuotaWindow]:
         """Read every quota window recorded for `agent`."""
         return fetch_quotas(self._connection, agent)
 

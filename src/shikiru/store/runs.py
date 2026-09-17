@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
-from shikiru.domain.runs import Run, RunStatus, Usage
+from shikiru.agents.contracts import Usage
+from shikiru.domain.runs import Run, RunStatus
 from shikiru.domain.tasks import Role
 from shikiru.store.database import (
     dump_json,
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import Rung
     from shikiru.clock import Clock
+
+_DEFAULT_COST_BASIS = "unknown"
 
 _AGENT_STATE_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
@@ -50,7 +53,7 @@ def _row_to_run(row: sqlite3.Row) -> Run:
             cache_read_tokens=row["cache_read_tokens"],
             cache_write_tokens=row["cache_write_tokens"],
             cost_usd=row["cost_usd"],
-            cost_basis=row["cost_basis"],
+            cost_basis=row["cost_basis"] or _DEFAULT_COST_BASIS,
             context_used_pct=row["context_used_pct"],
         ),
         started_at=parse_required_timestamp(row["started_at"]),

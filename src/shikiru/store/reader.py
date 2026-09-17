@@ -15,13 +15,14 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
+    from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.events import Event, EventKind
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Status, Task
     from shikiru.store.database import Database
-    from shikiru.store.quotas import AgentBlock, Quota
+    from shikiru.store.quotas import AgentBlock
 
 DASHBOARD_CHANGE_POLL_SECONDS = 0.5
 
@@ -56,7 +57,7 @@ class StateReader:
         """Read every open escalation, oldest first."""
         return fetch_open_escalations(self._connection)
 
-    def quotas_for(self, agent: str) -> list[Quota]:
+    def quotas_for(self, agent: str) -> list[QuotaWindow]:
         """Read every quota window recorded for `agent`."""
         return fetch_quotas(self._connection, agent)
 

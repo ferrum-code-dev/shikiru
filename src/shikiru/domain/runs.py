@@ -8,7 +8,18 @@ from typing import Any
 
 from pydantic import Field
 
+from shikiru.agents.contracts import Usage
 from shikiru.domain.tasks import DomainModel, Role
+
+NO_USAGE = Usage(
+    input_tokens=0,
+    output_tokens=0,
+    cache_read_tokens=0,
+    cache_write_tokens=0,
+    cost_usd=None,
+    cost_basis="unknown",
+    context_used_pct=None,
+)
 
 
 class RunStatus(StrEnum):
@@ -17,18 +28,6 @@ class RunStatus(StrEnum):
     LIVE = auto()
     EXITED = auto()
     CLOSED = auto()
-
-
-class Usage(DomainModel):
-    """A run's token and cost usage, as last reported by `AgentSession.usage()` (04 §1)."""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
-    cost_usd: float | None = None
-    cost_basis: str | None = None
-    context_used_pct: float | None = None
 
 
 class Run(DomainModel):
@@ -45,6 +44,6 @@ class Run(DomainModel):
     agent_state: dict[str, Any] = Field(default_factory=dict)
     last_message: str | None = None
     status: RunStatus
-    usage: Usage = Field(default_factory=Usage)
+    usage: Usage = NO_USAGE
     started_at: datetime
     ended_at: datetime | None = None
