@@ -16,7 +16,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _make_store(tmp_path: Path) -> QuotaStore:
-    connection = Database(tmp_path / "state.db").open_writer()
+    connection = Database(tmp_path / "state.db").connect()
     return QuotaStore(connection, FakeClock(START))
 
 
@@ -48,3 +48,12 @@ def test_block_replaces_an_earlier_block_for_the_same_agent(tmp_path: Path) -> N
     [active] = store.active_blocks(START)
     assert active.reason == "second"
     assert active.until == START + timedelta(minutes=30)
+
+
+def test_active_blocks_orders_correctly_at_sub_second_precision(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    until = START + timedelta(microseconds=500)
+    store.block("claude", until, "quota")
+
+    assert [block.agent for block in store.active_blocks(START)] == ["claude"]
+    assert store.active_blocks(until) == []

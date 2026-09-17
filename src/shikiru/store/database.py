@@ -98,8 +98,14 @@ def load_json[T](adapter: TypeAdapter[T], text: str) -> T:
 
 
 def format_timestamp(value: datetime) -> str:
-    """Format `value` as the UTC ISO-8601 text every timestamp column stores (05 §2)."""
-    return value.astimezone(UTC).isoformat()
+    """Format `value` as the fixed-width UTC ISO-8601 text every timestamp column stores (05 §2).
+
+    `timespec="microseconds"` always renders the fractional part, so every stored timestamp has
+    the same width and plain string comparison (as `agent_blocks.until > ?` relies on) orders
+    them the same way their instants do; without it, a whole-second value's missing ".ffffff"
+    only sorts correctly by accident.
+    """
+    return value.astimezone(UTC).isoformat(timespec="microseconds")
 
 
 def parse_timestamp(text: str | None) -> datetime | None:
