@@ -95,7 +95,13 @@ class Git:
         return [line for line in result.stdout.splitlines() if line]
 
     async def ignored_paths(self, repo_dir: Path) -> list[Path]:
-        """Return every top-level path git ignores in `repo_dir` (from `status --ignored`)."""
+        """Return every top-level path git ignores in `repo_dir` (from `status --ignored`).
+
+        Not exhaustive: git reports an ignored directory itself but not paths nested inside
+        another ignored directory, so a path ignored only because its parent is ignored will
+        not appear here. This matches the documented cache globs, which target the ignored
+        directory directly (e.g. `node_modules`), not paths beneath it.
+        """
         lines = await self.status_porcelain(repo_dir, include_ignored=True)
         paths: list[Path] = []
         for line in lines:
@@ -117,11 +123,11 @@ class Git:
     async def append_to_exclude(self, repo_dir: Path, line: str) -> None:
         """Append `line` to this repo's shared `info/exclude`, unless it is already there."""
         exclude_path = await self._exclude_path(repo_dir)
-        existing = exclude_path.read_text().splitlines() if exclude_path.exists() else []
-        if line in existing:
+        text = exclude_path.read_text() if exclude_path.exists() else ""
+        if line in text.splitlines():
             return
         with exclude_path.open("a") as handle:
-            if existing and not existing[-1].endswith("\n"):
+            if text and not text.endswith("\n"):
                 handle.write("\n")
             handle.write(f"{line}\n")
 

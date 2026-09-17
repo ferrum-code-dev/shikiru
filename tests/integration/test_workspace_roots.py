@@ -138,6 +138,20 @@ async def test_cleanup_removes_worktree_and_deletes_only_the_merged_branch(
     assert branch_name(_TASK_ID, _TASK_TITLE) in unmerged_branches
 
 
+async def test_append_to_exclude_adds_exactly_one_line_when_the_file_already_ends_in_a_newline(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    await _init_repo_with_commit(project_root)
+    git = Git(SubprocessRunner())
+    exclude_path = project_root / ".git" / "info" / "exclude"
+    exclude_path.write_text("*.log\n")
+
+    await git.append_to_exclude(project_root, EXCLUDE_LINE)
+
+    assert exclude_path.read_text() == f"*.log\n{EXCLUDE_LINE}\n"
+
+
 async def test_cleanup_is_idempotent_and_tolerates_an_already_removed_worktree(
     tmp_path: Path,
 ) -> None:
