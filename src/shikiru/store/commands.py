@@ -50,7 +50,11 @@ class CommandQueue:
     """Appends operator commands and lets the engine dispatch and acknowledge them."""
 
     def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
-        """Use `connection` (the engine's writer) and `clock` for every write below."""
+        """Use `connection` and `clock` for every write below.
+
+        Unlike the other stores, this connection isn't only the engine's: clients (CLI, MCP)
+        append commands and, for `Submit`, allocate the task id here too (principle 3, 01 §3).
+        """
         self._connection = connection
         self._clock = clock
 

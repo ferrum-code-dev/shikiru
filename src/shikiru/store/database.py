@@ -27,14 +27,18 @@ class Database:
         """Point at the SQLite file `path`; no connection is opened until asked for one."""
         self._path = path
 
-    def open_writer(self) -> sqlite3.Connection:
-        """Open the engine's single writer connection and migrate the schema up to date."""
+    def connect(self) -> sqlite3.Connection:
+        """Open a read-write connection and migrate the schema up to date.
+
+        The engine uses this for every state table; clients (CLI, MCP) use it only to append
+        `commands` rows and, for `Submit`, to allocate the task id from `sequences` (01 §3).
+        """
         connection = self._connect(mode="rwc")
         connection.execute("PRAGMA journal_mode = WAL")
         _migrate(connection)
         return connection
 
-    def open_reader(self) -> sqlite3.Connection:
+    def connect_readonly(self) -> sqlite3.Connection:
         """Open a connection SQLite itself refuses to let write."""
         return self._connect(mode="ro")
 

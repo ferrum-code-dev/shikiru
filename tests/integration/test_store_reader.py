@@ -24,7 +24,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 def test_reader_sees_a_task_the_writer_committed(tmp_path: Path) -> None:
     database = Database(tmp_path / "state.db")
-    connection = database.open_writer()
+    connection = database.connect()
     clock = FakeClock(START)
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)

@@ -33,7 +33,7 @@ class StateReader:
 
     def __init__(self, database: Database, clock: Clock) -> None:
         """Open `database`'s read-only connection, polled through `clock` by `watch`."""
-        self._connection = database.open_reader()
+        self._connection = database.connect_readonly()
         self._clock = clock
 
     def get_task(self, task_id: str) -> Task | None:

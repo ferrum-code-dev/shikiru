@@ -17,7 +17,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _make_queue(tmp_path: Path) -> CommandQueue:
-    connection = Database(tmp_path / "state.db").open_writer()
+    connection = Database(tmp_path / "state.db").connect()
     return CommandQueue(connection, FakeClock(START))
 
 

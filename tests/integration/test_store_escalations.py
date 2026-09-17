@@ -21,7 +21,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _make_store(tmp_path: Path) -> tuple[EscalationStore, str]:
-    connection = Database(tmp_path / "state.db").open_writer()
+    connection = Database(tmp_path / "state.db").connect()
     clock = FakeClock(START)
     queue = CommandQueue(connection, clock)
     queued = queue.append(Submit(task_id="", title="t", request="r"))

@@ -17,7 +17,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _make_log(tmp_path: Path) -> EventLog:
-    connection = Database(tmp_path / "state.db").open_writer()
+    connection = Database(tmp_path / "state.db").connect()
     return EventLog(connection, FakeClock(START))
 
 

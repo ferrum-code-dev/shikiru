@@ -24,7 +24,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _make_store(tmp_path: Path) -> tuple[TaskStore, CommandQueue, FakeClock]:
-    connection = Database(tmp_path / "state.db").open_writer()
+    connection = Database(tmp_path / "state.db").connect()
     clock = FakeClock(START)
     return TaskStore(connection, clock), CommandQueue(connection, clock), clock
 
@@ -53,7 +53,7 @@ def test_submit_allocates_sequential_task_ids(tmp_path: Path) -> None:
 
 async def test_concurrent_command_append_allocates_unique_task_ids(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
-    Database(db_path).open_writer()
+    Database(db_path).connect()
     runner = SubprocessRunner()
 
     def argv(count: int) -> list[str]:

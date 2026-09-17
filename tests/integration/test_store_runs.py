@@ -23,7 +23,7 @@ RUNG = Rung(agent="codex", model="sol", effort="high")
 
 
 def _make_store(tmp_path: Path) -> tuple[RunStore, str]:
-    connection = Database(tmp_path / "state.db").open_writer()
+    connection = Database(tmp_path / "state.db").connect()
     clock = FakeClock(START)
     queue = CommandQueue(connection, clock)
     queued = queue.append(Submit(task_id="", title="t", request="r"))
