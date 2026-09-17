@@ -54,6 +54,18 @@ def test_exit_removes_a_run_from_get_live_but_keeps_it_in_history(tmp_path: Path
     assert only_run.ended_at is not None
 
 
+def test_set_session_accepts_a_session_that_cannot_be_resumed(tmp_path: Path) -> None:
+    store, task_id = _make_store(tmp_path)
+    run = store.start(task_id, Role.IMPLEMENTER, RUNG)
+
+    store.set_session(run.id, None, None)
+
+    reloaded = store.get_live(task_id, Role.IMPLEMENTER)
+    assert reloaded is not None
+    assert reloaded.session_id is None
+    assert reloaded.resume_command is None
+
+
 def test_session_agent_state_message_and_usage_round_trip(tmp_path: Path) -> None:
     store, task_id = _make_store(tmp_path)
     run = store.start(task_id, Role.IMPLEMENTER, RUNG)

@@ -120,8 +120,12 @@ class RunStore:
         """Return every run recorded for `task_id`."""
         return fetch_runs_for_task(self._connection, task_id)
 
-    def set_session(self, run_id: int, session_id: str, resume_command: str) -> None:
-        """Record `run_id`'s launched session id and resume command."""
+    def set_session(self, run_id: int, session_id: str | None, resume_command: str | None) -> None:
+        """Record `run_id`'s launched session id and resume command.
+
+        `session_id` is `None` when `SessionStarted` says the session can't be resumed (04 §1),
+        and `resume_command` is `None` when the agent's `resume_command()` returns none.
+        """
         self._connection.execute(
             "UPDATE runs SET session_id = ?, resume_command = ? WHERE id = ?",
             (session_id, resume_command, run_id),
