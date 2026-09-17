@@ -68,9 +68,9 @@ Refs: 06 §5.1–5.3.
 
 ### Task 7: Workspace
 Refs: 03 §5.
-- [ ] `TaskRootBuilder`: monorepo and multi-repo roots, symlinked top-level entries, idempotent worktrees on `shikiru/T-n-<slug>`.
-- [ ] `CacheCloner`: CoW clone of matching ignored paths, a single warning when unsupported.
-- [ ] `GitFacts` (log, diffstat, status, trackers changed, repos ahead of base); `.git/info/exclude`; cleanup.
+- [x] `TaskRootBuilder`: monorepo and multi-repo roots, symlinked top-level entries, idempotent worktrees on `shikiru/T-n-<slug>`.
+- [x] `CacheCloner`: CoW clone of matching ignored paths, a single warning when unsupported.
+- [x] `GitFacts` (log, diffstat, status, trackers changed, repos ahead of base); `.git/info/exclude`; cleanup.
 - Tests: integration with real repos for both topologies.
 
 ### Task 8: Agent contract, registry, SDK
