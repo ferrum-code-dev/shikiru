@@ -67,8 +67,12 @@ class Tmux:
         result = await self._run(*args)
         return result.stdout.strip()
 
-    async def has_session(self, target: str) -> bool:
-        """Return whether a session named exactly `target` exists."""
+    async def target_exists(self, target: str) -> bool:
+        """Return whether `target` (a session or a window, exactly) exists.
+
+        `has-session` reports on either: it errors with "can't find window" for a missing
+        window target just as it does with "can't find session" for a missing session one.
+        """
         result = await self._run("has-session", "-t", target, check=False)
         return result.returncode == 0
 
