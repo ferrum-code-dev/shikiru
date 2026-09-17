@@ -6,6 +6,8 @@ import pytest
 from pydantic import ValidationError
 
 from shikiru.domain.reports import (
+    DEPENDS_ON_PATTERN,
+    TRIAGE_TITLE_MAX_LENGTH,
     ConsultAnswer,
     EscalationRequest,
     ImplementationReport,
@@ -239,3 +241,50 @@ def test_report_examples_round_trip_through_their_model(kind: ReportKind) -> Non
 def test_plan_report_has_no_extra_iff_constraints() -> None:
     new_task = NewTask(**_new_task())
     PlanReport(summary="Planned", commits=[], new_tasks=[new_task], scope_changes=["scope"])
+
+
+def test_triage_schema_exposes_the_title_length_limit() -> None:
+    schema = schema_for(ReportKind.TRIAGE)
+
+    assert schema["properties"]["title"]["maxLength"] == TRIAGE_TITLE_MAX_LENGTH
+
+
+def test_triage_schema_describes_the_subtasks_iff_rule() -> None:
+    schema = schema_for(ReportKind.TRIAGE)
+
+    assert "split" in schema["properties"]["subtasks"]["description"]
+
+
+def test_new_task_schema_exposes_the_depends_on_pattern() -> None:
+    schema = schema_for(ReportKind.TRIAGE)
+    new_task_schema = schema["$defs"]["NewTask"]
+
+    assert new_task_schema["properties"]["depends_on"]["items"]["pattern"] == DEPENDS_ON_PATTERN
+
+
+def test_implementation_schema_describes_the_question_rule() -> None:
+    schema = schema_for(ReportKind.IMPLEMENTATION)
+
+    assert "completed" in schema["properties"]["question"]["description"]
+
+
+def test_consult_schema_describes_the_answer_and_escalation_rules() -> None:
+    schema = schema_for(ReportKind.CONSULT)
+
+    assert "answer" in schema["properties"]["answer"]["description"]
+    assert "escalate" in schema["properties"]["escalation"]["description"]
+
+
+def test_verdict_schema_describes_its_iff_rules() -> None:
+    schema = schema_for(ReportKind.VERDICT)
+
+    assert "changes_requested" in schema["properties"]["issues"]["description"]
+    assert "supersede" in schema["properties"]["new_tasks"]["description"]
+    assert "escalate" in schema["properties"]["escalation"]["description"]
+
+
+def test_escalation_request_schema_describes_the_recommended_option_rule() -> None:
+    schema = schema_for(ReportKind.CONSULT)
+    escalation_schema = schema["$defs"]["EscalationRequest"]
+
+    assert "recommended" in escalation_schema["properties"]["options"]["description"]

@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import re
 from enum import StrEnum, auto
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, StringConstraints, model_validator
 
 from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import DomainModel, Mode
 
 TRIAGE_TITLE_MAX_LENGTH = 60
 
-_DEPENDS_ON_PATTERN = re.compile(r"^(T-\d+|#\d+)$")
+DEPENDS_ON_PATTERN = r"^(T-\d+|#\d+)$"
+
+_TaskReference = Annotated[str, StringConstraints(pattern=DEPENDS_ON_PATTERN)]
 
 
 def _require_iff(*, condition: bool, present: bool, field: str, rule: str) -> None:
@@ -32,15 +33,10 @@ class NewTask(DomainModel):
     title: str
     request: str
     priority: int = 0
-    depends_on: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _depends_on_refers_to_existing_or_sibling_tasks(self) -> Self:
-        invalid = [dep for dep in self.depends_on if not _DEPENDS_ON_PATTERN.match(dep)]
-        if invalid:
-            message = f"depends_on: {invalid!r} must each be an existing 'T-n' or a sibling '#k'"
-            raise ValueError(message)
-        return self
+    depends_on: list[_TaskReference] = Field(
+        default_factory=list,
+        description="Each item is an existing 'T-n' or a sibling '#k' (k-th task of this list).",
+    )
 
 
 class Commit(DomainModel):
@@ -79,7 +75,7 @@ class EscalationRequest(DomainModel):
     """The Leader's escalation packet content: a question and its options (03 §8)."""
 
     question: str
-    options: list[Option]
+    options: list[Option] = Field(description="Exactly one option must have recommended=true.")
 
     @model_validator(mode="after")
     def _exactly_one_recommended_option(self) -> Self:
@@ -93,19 +89,15 @@ class EscalationRequest(DomainModel):
 class TriageReport(DomainModel):
     """The Leader's `triage` report (03 §2)."""
 
-    title: str
+    title: str = Field(max_length=TRIAGE_TITLE_MAX_LENGTH)
     mode: Mode
     complexity: ComplexityName
     acceptance_criteria: list[str]
     references: list[str]
-    subtasks: list[NewTask] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _title_is_at_most_60_characters(self) -> Self:
-        if len(self.title) > TRIAGE_TITLE_MAX_LENGTH:
-            message = f"title: must be at most {TRIAGE_TITLE_MAX_LENGTH} characters"
-            raise ValueError(message)
-        return self
+    subtasks: list[NewTask] = Field(
+        default_factory=list,
+        description="Required and non-empty iff mode is 'split'; otherwise empty.",
+    )
 
     @model_validator(mode="after")
     def _subtasks_required_iff_split(self) -> Self:
@@ -127,7 +119,9 @@ class ImplementationReport(DomainModel):
     tests: list[TestRun]
     trackers_updated: bool
     risks: list[str] = Field(default_factory=list)
-    question: str = ""
+    question: str = Field(
+        default="", description="Required unless status is 'completed'; otherwise empty."
+    )
 
     @model_validator(mode="after")
     def _question_required_unless_completed(self) -> Self:
@@ -150,8 +144,12 @@ class ConsultAnswer(DomainModel):
     """The Leader's answer to a `consult` turn (03 §2)."""
 
     decision: Literal["answer", "escalate"]
-    answer: str = ""
-    escalation: EscalationRequest | None = None
+    answer: str = Field(
+        default="", description="Required and non-empty iff decision is 'answer'; otherwise empty."
+    )
+    escalation: EscalationRequest | None = Field(
+        default=None, description="Required iff decision is 'escalate'; otherwise unset."
+    )
 
     @model_validator(mode="after")
     def _answer_required_iff_decision_is_answer(self) -> Self:
@@ -179,11 +177,19 @@ class Verdict(DomainModel):
 
     decision: Literal["accept", "changes_requested", "escalate", "supersede"]
     summary: str
-    issues: list[Issue] = Field(default_factory=list)
+    issues: list[Issue] = Field(
+        default_factory=list,
+        description="Required and non-empty iff decision is 'changes_requested'; otherwise empty.",
+    )
     residual_risks: list[str] = Field(default_factory=list)
-    new_tasks: list[NewTask] = Field(default_factory=list)
+    new_tasks: list[NewTask] = Field(
+        default_factory=list,
+        description="Required and non-empty iff decision is 'supersede'; otherwise empty.",
+    )
     scope_changes: list[str] = Field(default_factory=list)
-    escalation: EscalationRequest | None = None
+    escalation: EscalationRequest | None = Field(
+        default=None, description="Required iff decision is 'escalate'; otherwise unset."
+    )
 
     @model_validator(mode="after")
     def _issues_non_empty_iff_changes_requested(self) -> Self:
