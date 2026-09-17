@@ -9,7 +9,11 @@ from typing import Literal
 from shikiru.agents.contracts import FailureKind
 from shikiru.domain.tasks import EscalationReason, Role
 
-BACKOFF_SCHEDULE: tuple[float, ...] = (30.0, 120.0, 300.0)
+BACKOFF_SCHEDULE: tuple[timedelta, ...] = (
+    timedelta(seconds=30),
+    timedelta(minutes=2),
+    timedelta(minutes=5),
+)
 MAX_RELAUNCHES_PER_TURN = 2
 MAX_STALL_RECOVERIES_PER_TURN = 2
 CONTEXT_HANDOFFS_PER_TURN = 1
@@ -85,9 +89,9 @@ class WaitForQuota:
 
 @dataclass(frozen=True)
 class Backoff:
-    """Retry the same rung after `delay` seconds."""
+    """Retry the same rung after `delay`."""
 
-    delay: float
+    delay: timedelta
 
 
 @dataclass(frozen=True)
@@ -135,11 +139,6 @@ class Consult:
 
 
 @dataclass(frozen=True)
-class DecisionRequired:
-    """Raise `decision_required` for the Leader's stalled question."""
-
-
-@dataclass(frozen=True)
 class Escalate:
     """Raise an escalation with `reason`."""
 
@@ -157,7 +156,6 @@ Action = (
     | KeepWaiting
     | SendKeys
     | Consult
-    | DecisionRequired
     | Escalate
 )
 
@@ -260,9 +258,12 @@ def decide_stall(
                 return SendKeys(classification.keys)
             return Escalate(EscalationReason.AGENT_STUCK)
         case "question":
-            return Consult() if role is Role.IMPLEMENTER else DecisionRequired()
+            return (
+                Consult()
+                if role is Role.IMPLEMENTER
+                else Escalate(EscalationReason.DECISION_REQUIRED)
+            )
         case "quota":
             return _quota_action(classification.resets_at, policy)
         case "error":
-            other_failure = Failed(kind=FailureKind.OTHER, resets_at=None, message="")
-            return decide(other_failure, counters, policy)
+            return _decide_other(counters)

@@ -13,7 +13,6 @@ from shikiru.domain.recovery import (
     ClassifyScreen,
     Completed,
     Consult,
-    DecisionRequired,
     Escalate,
     Failed,
     Handoff,
@@ -227,7 +226,7 @@ def test_question_classification_escalates_for_the_leader() -> None:
 
     action = decide_stall(classification, Role.LEADER, frozenset(), TurnCounters(), _policy())
 
-    assert action == DecisionRequired()
+    assert action == Escalate(EscalationReason.DECISION_REQUIRED)
 
 
 def test_quota_classification_behaves_like_a_quota_failure() -> None:
