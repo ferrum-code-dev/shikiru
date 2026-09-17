@@ -83,7 +83,7 @@ class SessionView:
         """
         name = session_name(project_name)
         target = exact_target(name)
-        if await self._tmux.has_session(target):
+        if await self._tmux.target_exists(target):
             await self._check_no_collision(target, project_dir)
         else:
             await self._tmux.new_session(
@@ -93,9 +93,9 @@ class SessionView:
                 window_name=HOME_WINDOW_NAME,
                 command=home_command,
             )
-            for option, value in _SESSION_SCOPED_OPTIONS.items():
-                await self._tmux.set_session_option(target, option, value)
             await self._apply_window_options(f"{target}:{HOME_WINDOW_NAME}")
+        for option, value in _SESSION_SCOPED_OPTIONS.items():
+            await self._tmux.set_session_option(target, option, value)
         await self._ensure_home_window(target, project_dir, home_command)
         return target
 
@@ -121,7 +121,7 @@ class SessionView:
         self, target: str, project_dir: Path, home_command: Sequence[str]
     ) -> None:
         window_target = f"{target}:{HOME_WINDOW_NAME}"
-        if await self._tmux.has_session(window_target):
+        if await self._tmux.target_exists(window_target):
             return
         await self._tmux.new_window(
             target, name=HOME_WINDOW_NAME, cwd=project_dir, command=home_command
