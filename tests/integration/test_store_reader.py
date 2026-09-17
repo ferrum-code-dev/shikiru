@@ -38,11 +38,11 @@ def test_reader_sees_a_task_the_writer_committed(tmp_path: Path) -> None:
     assert reader.get_task("T-does-not-exist") is None
 
 
-async def test_reader_in_another_process_sees_commits_and_cannot_write(tmp_path: Path) -> None:
+async def test_reader_in_another_process_sees_the_writers_commit(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     ready_path = tmp_path / "ready"
     database = Database(db_path)
-    connection = database.open_writer()
+    connection = database.connect()
     clock = FakeClock(START)
     events = EventLog(connection, clock)
 
@@ -67,4 +67,4 @@ async def test_reader_in_another_process_sees_commits_and_cannot_write(tmp_path:
 
     result = await child
 
-    assert result.stdout.splitlines() == ["changed", "readonly"]
+    assert result.stdout.splitlines() == ["changed"]

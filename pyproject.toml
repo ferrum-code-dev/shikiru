@@ -97,7 +97,7 @@ runtime-evaluated-base-classes = [
 "src/shikiru/clock.py" = ["TID251"]
 "src/shikiru/config/loader.py" = ["ANN401"]
 "tests/support/waiting.py" = ["TID251"]
-"tests/support/store_reader_process.py" = ["TID251", "T201"]
+"tests/support/store_reader_process.py" = ["T201"]
 "tests/support/store_submit_process.py" = ["T201"]
 "tests/**" = ["S101", "D", "ANN", "PLR2004"]
 
