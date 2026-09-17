@@ -1,0 +1,1 @@
+"""The Shikiru Typer CLI."""
