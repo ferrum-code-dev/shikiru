@@ -1,0 +1,135 @@
+[project]
+name = "shikiru"
+version = "0.1.0"
+description = "Runs coding-agent tasks in tmux panes, orchestrated by an asyncio engine."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+  "typer>=0.15,<0.16",
+]
+
+[project.scripts]
+shikiru = "shikiru.cli.app:app"
+
+[project.entry-points."shikiru.agents"]
+
+[project.entry-points."shikiru.widgets"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shikiru"]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.13,<0.14",
+  "basedpyright>=1.31,<1.32",
+  "import-linter>=2.3,<2.4",
+  "vulture>=2.14,<2.15",
+  "pytest>=8.4,<8.5",
+  "pytest-asyncio>=1.2,<1.3",
+  "pytest-timeout>=2.4,<2.5",
+  "pytest-cov>=6.2,<6.3",
+  "pytest-xdist>=3.8,<3.9",
+  "poethepoet>=0.36,<0.37",
+]
+
+[tool.poe.tasks]
+format-check = "ruff format --check ."
+lint = "ruff check ."
+imports = "lint-imports"
+types = "basedpyright"
+dead-code = "vulture src/shikiru tests --min-confidence 80"
+test = "pytest -m 'not e2e'"
+e2e = "pytest -m e2e --no-cov"
+
+[tool.poe.tasks.fix]
+sequence = [
+  { cmd = "ruff format ." },
+  { cmd = "ruff check --fix ." },
+]
+
+[tool.poe.tasks.check]
+sequence = ["format-check", "lint", "imports", "types", "dead-code", "test"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "D203",   # conflicts with D211 (no blank line before class docstring)
+  "D213",   # conflicts with D212 (multi-line docstring summary on first line)
+  "COM812", # formatter already governs trailing commas
+  "ANN401", # Any is legitimate for a handful of generic call sites, not banned project-wide
+  "D100",   # module docstrings are optional; package docstrings and public contracts carry the intent
+  "D104",   # package __init__ docstrings are optional
+  "PLR0913", # SubprocessRunner.run and similar boundary calls need argv/timeout/cwd/env/input/check
+  "ASYNC109", # our injected Clock/timeout parameters are the project's timeout convention, not asyncio.timeout
+  "N818",   # CommandFailed is the exact name docs/design/02-architecture.md §2 gives this error
+  "FBT001", # Typer boolean --flag options are idiomatic positional-looking parameters
+  "FBT003", # Typer's typer.Option(False, ...) boolean default is idiomatic, not a bare bool call
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"sqlite3" = { msg = "SQL only in shikiru.store; see 02 §2" }
+"subprocess" = { msg = "Subprocesses only via shikiru.process.SubprocessRunner" }
+"asyncio.create_subprocess_exec" = { msg = "Subprocesses only via shikiru.process.SubprocessRunner" }
+"asyncio.create_subprocess_shell" = { msg = "Subprocesses only via shikiru.process.SubprocessRunner" }
+"time.sleep" = { msg = "Time only via shikiru.clock.Clock" }
+"asyncio.sleep" = { msg = "Time only via shikiru.clock.Clock" }
+
+[tool.ruff.lint.per-file-ignores]
+"src/shikiru/store/**" = ["S608"]
+"src/shikiru/process.py" = ["TID251"]
+"src/shikiru/clock.py" = ["TID251"]
+"tests/support/tmux.py" = ["TID251", "S603", "S607"]
+"tests/support/waiting.py" = ["TID251"]
+"tests/**" = ["S101", "D", "ANN", "PLR2004"]
+
+[tool.basedpyright]
+include = ["src", "tests"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.importlinter]
+root_package = "shikiru"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture (02 §2); bootstrap is the composition root and sits outside this contract"
+type = "layers"
+layers = [
+  "shikiru.cli",
+  "shikiru.process | shikiru.clock",
+  "shikiru.errors",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+  "e2e: real-agent scenarios excluded from the default gate (poe e2e)",
+]
+addopts = "-n auto --cov=shikiru --cov-report=term-missing --cov-fail-under=80"
+testpaths = ["tests"]
+timeout = 60
+
+[tool.coverage.run]
+branch = true
+parallel = true
+patch = ["subprocess"]
+source = ["shikiru"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+exclude_also = ["if TYPE_CHECKING:"]
+
+[tool.vulture]
+paths = ["src/shikiru", "tests"]
+min_confidence = 80
