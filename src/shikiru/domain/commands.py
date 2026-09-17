@@ -5,11 +5,11 @@ from __future__ import annotations
 from enum import StrEnum, auto
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import ComplexityName
-from shikiru.domain.tasks import Mode, Role
+from shikiru.domain.tasks import DomainModel, Mode, Role
 
 
 class CommandKind(StrEnum):
@@ -27,13 +27,7 @@ class CommandKind(StrEnum):
     STOP = auto()
 
 
-class CommandModel(BaseModel):
-    """Base for every operator command: unknown keys are rejected, values are immutable."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class Submit(CommandModel):
+class Submit(DomainModel):
     """`submit "<request>" [flags]`: the task id is already allocated from `sequences`."""
 
     kind: Literal[CommandKind.SUBMIT] = CommandKind.SUBMIT
@@ -48,7 +42,7 @@ class Submit(CommandModel):
     implementer: Rung | None = None
 
 
-class Prioritize(CommandModel):
+class Prioritize(DomainModel):
     """`prioritize T-n N`: sets a task's dispatch priority."""
 
     kind: Literal[CommandKind.PRIORITIZE] = CommandKind.PRIORITIZE
@@ -56,7 +50,7 @@ class Prioritize(CommandModel):
     priority: int
 
 
-class Pause(CommandModel):
+class Pause(DomainModel):
     """`pause T-n [--now]`: holds a task; `now` also interrupts and cancels the current step."""
 
     kind: Literal[CommandKind.PAUSE] = CommandKind.PAUSE
@@ -64,28 +58,28 @@ class Pause(CommandModel):
     now: bool = False
 
 
-class Resume(CommandModel):
+class Resume(DomainModel):
     """`resume T-n`: clears the `paused` hold, or injects `continue` when it was `intervention`."""
 
     kind: Literal[CommandKind.RESUME] = CommandKind.RESUME
     task_id: str
 
 
-class Cancel(CommandModel):
+class Cancel(DomainModel):
     """`cancel T-n`: cancels a task and keeps its branch."""
 
     kind: Literal[CommandKind.CANCEL] = CommandKind.CANCEL
     task_id: str
 
 
-class Retry(CommandModel):
+class Retry(DomainModel):
     """`retry T-n`: cancels and re-runs the task's current step."""
 
     kind: Literal[CommandKind.RETRY] = CommandKind.RETRY
     task_id: str
 
 
-class SetRung(CommandModel):
+class SetRung(DomainModel):
     """`rung T-n <role> <agent:model:effort>`: overrides a role's rung from the next turn."""
 
     kind: Literal[CommandKind.SET_RUNG] = CommandKind.SET_RUNG
@@ -94,7 +88,7 @@ class SetRung(CommandModel):
     rung: Rung
 
 
-class Say(CommandModel):
+class Say(DomainModel):
     """`say T-n <role> "<text>"`: injects an operator message into a live session."""
 
     kind: Literal[CommandKind.SAY] = CommandKind.SAY
@@ -112,27 +106,27 @@ class ResolutionKind(StrEnum):
     CANCEL = auto()
 
 
-class AnswerResolution(CommandModel):
+class AnswerResolution(DomainModel):
     """`resolve E-n <answer TEXT>`: runs a consult turn with the Operator's text."""
 
     kind: Literal[ResolutionKind.ANSWER] = ResolutionKind.ANSWER
     text: str
 
 
-class RetryResolution(CommandModel):
+class RetryResolution(DomainModel):
     """`resolve E-n retry [--rung a:m:e]`: re-runs the failed step, optionally on a new rung."""
 
     kind: Literal[ResolutionKind.RETRY] = ResolutionKind.RETRY
     rung: Rung | None = None
 
 
-class AcceptResolution(CommandModel):
+class AcceptResolution(DomainModel):
     """`resolve E-n accept`: integrates the task as-is."""
 
     kind: Literal[ResolutionKind.ACCEPT] = ResolutionKind.ACCEPT
 
 
-class CancelResolution(CommandModel):
+class CancelResolution(DomainModel):
     """`resolve E-n cancel`: cancels the task and keeps its branch."""
 
     kind: Literal[ResolutionKind.CANCEL] = ResolutionKind.CANCEL
@@ -144,7 +138,7 @@ Resolution = Annotated[
 ]
 
 
-class Resolve(CommandModel):
+class Resolve(DomainModel):
     """`resolve E-n <...>`: resolves an open escalation."""
 
     kind: Literal[CommandKind.RESOLVE] = CommandKind.RESOLVE
@@ -152,7 +146,7 @@ class Resolve(CommandModel):
     resolution: Resolution
 
 
-class Stop(CommandModel):
+class Stop(DomainModel):
     """`stop`: stops the engine; panes and their turns keep running."""
 
     kind: Literal[CommandKind.STOP] = CommandKind.STOP
