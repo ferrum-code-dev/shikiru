@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from shikiru.domain.ladder import reset_for_rung_change
+from shikiru.domain.ladder import move_up, reset_for_integration_attempt, reset_for_new_iteration
 from shikiru.domain.tasks import Counters, EscalationReason, Mode, Role, Status, Step, Task
+
+if TYPE_CHECKING:
+    from shikiru.agents.contracts import Rung
+    from shikiru.config.settings import Settings
 
 CONSULT_LIMIT = 3
 CONFLICT_ROUNDS = 2
@@ -14,17 +19,14 @@ CONFLICT_ROUNDS = 2
 
 @dataclass(frozen=True)
 class TriageDecision:
-    """The Leader's triage choice; `subtask_count` matters only when `mode` is `split`."""
+    """The Leader's triage choice."""
 
     mode: Mode
-    subtask_count: int = 0
 
 
 @dataclass(frozen=True)
 class PlanDecision:
-    """The Leader's plan turn; `new_task_count` is how many tasks the plan enqueues."""
-
-    new_task_count: int = 0
+    """The Leader's plan turn; it always moves the task into integration."""
 
 
 @dataclass(frozen=True)
@@ -43,10 +45,9 @@ class ConsultDecision:
 
 @dataclass(frozen=True)
 class VerifyDecision:
-    """The Leader's verdict; `new_task_count` matters only when `decision` is `supersede`."""
+    """The Leader's verdict on an implement turn."""
 
     decision: Literal["accept", "changes_requested", "escalate", "supersede"]
-    new_task_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -68,188 +69,164 @@ Outcome = (
 
 @dataclass(frozen=True)
 class Transition:
-    """The task's new step/status/iteration/counters/rung_index, plus side effects as data."""
+    """The task's new step/status/iteration/counters/rungs, plus side effects as data."""
 
     step: Step | None
     status: Status
     iteration: int
     counters: Counters
     rung_index: dict[Role, int]
+    overrides: dict[Role, Rung]
     status_reason: str | None = None
     escalation_reason: EscalationReason | None = None
-    new_task_count: int = 0
     repoint_dependents: bool = False
+    enqueue_new_tasks: bool = False
 
-
-def _same(task: Task, *, step: Step, status: Status = Status.RUNNING) -> Transition:
-    return Transition(
-        step=step,
-        status=status,
-        iteration=task.iteration,
-        counters=task.counters,
-        rung_index=dict(task.rung_index),
-    )
+    @staticmethod
+    def stay(task: Task, *, step: Step | None, status: Status = Status.RUNNING) -> Transition:
+        """Build a transition that keeps every field of `task` except `step` and `status`."""
+        return Transition(
+            step=step,
+            status=status,
+            iteration=task.iteration,
+            counters=task.counters,
+            rung_index=dict(task.rung_index),
+            overrides=dict(task.overrides),
+        )
 
 
 def _escalate(task: Task, reason: EscalationReason, *, step: Step | None = None) -> Transition:
-    return Transition(
-        step=step if step is not None else task.step,
-        status=Status.ESCALATED,
-        iteration=task.iteration,
-        counters=task.counters,
-        rung_index=dict(task.rung_index),
-        escalation_reason=reason,
+    base = Transition.stay(task, step=step if step is not None else task.step)
+    return dataclasses.replace(base, status=Status.ESCALATED, escalation_reason=reason)
+
+
+def first_step(task: Task) -> Transition:
+    """Compute the transition for a task's very first turn (03 §1.1, §2; submit flags, 05 §1).
+
+    A task with no `mode` starts at `triage`. `submit --mode implement|plan` skips triage
+    straight into that step; `implement` also starts numbering from iteration 1, matching the
+    turn dirs (`NN-<step>-i<iteration>`) and 03 §2's "implement (i = 1)". `--mode split` has no
+    first turn of its own, since `split` only ever happens as a triage outcome (03 §2), so it is
+    rejected here.
+    """
+    if task.mode is None:
+        return Transition.stay(task, step=Step.TRIAGE)
+    if task.mode is Mode.PLAN:
+        return Transition.stay(task, step=Step.PLAN)
+    if task.mode is Mode.IMPLEMENT:
+        return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
+    message = "submit --mode split has no first step; split only happens as a triage outcome"
+    raise ValueError(message)
+
+
+def _from_triage(task: Task, outcome: TriageDecision) -> Transition:
+    if outcome.mode is Mode.IMPLEMENT:
+        return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
+    if outcome.mode is Mode.PLAN:
+        return Transition.stay(task, step=Step.PLAN)
+    base = Transition.stay(task, step=None, status=Status.DONE)
+    return dataclasses.replace(
+        base, status_reason="split", repoint_dependents=True, enqueue_new_tasks=True
     )
 
 
-def _changes_requested(task: Task, *, max_iterations: int, escalate_after: int) -> Transition:
-    if task.iteration >= max_iterations:
+def _from_plan(task: Task) -> Transition:
+    base = Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
+    return dataclasses.replace(
+        base, counters=reset_for_integration_attempt(task.counters), enqueue_new_tasks=True
+    )
+
+
+def _from_implement(task: Task, outcome: ImplementDecision) -> Transition:
+    if outcome.status == "completed":
+        return Transition.stay(task, step=Step.VERIFY)
+    if task.counters.consults >= CONSULT_LIMIT:
+        return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
+    counters = task.counters.model_copy(update={"consults": task.counters.consults + 1})
+    return dataclasses.replace(Transition.stay(task, step=Step.CONSULT), counters=counters)
+
+
+def _from_consult(task: Task, outcome: ConsultDecision) -> Transition:
+    if outcome.decision == "escalate":
+        return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
+    return Transition.stay(task, step=Step.IMPLEMENT)
+
+
+def _changes_requested(task: Task, settings: Settings) -> Transition:
+    if task.iteration >= settings.orchestration.max_iterations:
         return _escalate(task, EscalationReason.ITERATIONS_EXHAUSTED, step=Step.VERIFY)
     rejections = task.counters.rejections_on_rung + 1
-    counters = task.counters.model_copy(update={"rejections_on_rung": rejections, "consults": 0})
+    counters = reset_for_new_iteration(task.counters).model_copy(
+        update={"rejections_on_rung": rejections}
+    )
     rung_index = dict(task.rung_index)
-    if rejections >= escalate_after:
-        rung_index[Role.IMPLEMENTER] = rung_index.get(Role.IMPLEMENTER, 0) + 1
-        counters = reset_for_rung_change(counters)
+    overrides = dict(task.overrides)
+    if rejections >= settings.roles.implementer.escalate_after:
+        move = move_up(task, Role.IMPLEMENTER, settings)
+        if move is not None:
+            rung_index = move.rung_index
+            overrides = move.overrides
+            counters = counters.model_copy(update={"rejections_on_rung": 0})
     return Transition(
         step=Step.IMPLEMENT,
         status=Status.RUNNING,
         iteration=task.iteration + 1,
         counters=counters,
         rung_index=rung_index,
+        overrides=overrides,
     )
 
 
 def _conflict_round(task: Task) -> Transition:
     rounds = task.counters.conflict_rounds + 1
     counters = task.counters.model_copy(update={"conflict_rounds": rounds})
+    base = dataclasses.replace(Transition.stay(task, step=Step.INTEGRATE), counters=counters)
     if rounds >= CONFLICT_ROUNDS:
-        return Transition(
-            step=Step.INTEGRATE,
-            status=Status.ESCALATED,
-            iteration=task.iteration,
-            counters=counters,
-            rung_index=dict(task.rung_index),
-            escalation_reason=EscalationReason.INTEGRATION_CONFLICT,
+        return dataclasses.replace(
+            base, status=Status.ESCALATED, escalation_reason=EscalationReason.INTEGRATION_CONFLICT
         )
-    return Transition(
-        step=Step.INTEGRATE,
-        status=Status.INTEGRATING,
-        iteration=task.iteration,
-        counters=counters,
-        rung_index=dict(task.rung_index),
-    )
+    return dataclasses.replace(base, status=Status.INTEGRATING)
 
 
-def _from_triage(task: Task, outcome: TriageDecision) -> Transition:
-    if outcome.mode is Mode.IMPLEMENT:
-        return _same(task, step=Step.IMPLEMENT)
-    if outcome.mode is Mode.PLAN:
-        return _same(task, step=Step.PLAN)
-    return Transition(
-        step=None,
-        status=Status.DONE,
-        iteration=task.iteration,
-        counters=task.counters,
-        rung_index=dict(task.rung_index),
-        status_reason="split",
-        new_task_count=outcome.subtask_count,
-        repoint_dependents=True,
-    )
-
-
-def _from_plan(task: Task, outcome: PlanDecision) -> Transition:
-    return Transition(
-        step=Step.INTEGRATE,
-        status=Status.INTEGRATING,
-        iteration=task.iteration,
-        counters=task.counters,
-        rung_index=dict(task.rung_index),
-        new_task_count=outcome.new_task_count,
-    )
-
-
-def _from_implement(task: Task, outcome: ImplementDecision) -> Transition:
-    if outcome.status == "completed":
-        return _same(task, step=Step.VERIFY)
-    counters = task.counters.model_copy(update={"consults": task.counters.consults + 1})
-    return Transition(
-        step=Step.CONSULT,
-        status=Status.RUNNING,
-        iteration=task.iteration,
-        counters=counters,
-        rung_index=dict(task.rung_index),
-    )
-
-
-def _from_consult(task: Task, outcome: ConsultDecision) -> Transition:
-    if task.counters.consults > CONSULT_LIMIT or outcome.decision == "escalate":
-        return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
-    return _same(task, step=Step.IMPLEMENT)
-
-
-def _from_verify(
-    task: Task, outcome: VerifyDecision, *, max_iterations: int, escalate_after: int
-) -> Transition:
+def _from_verify(task: Task, outcome: VerifyDecision, settings: Settings) -> Transition:
     match outcome.decision:
         case "accept":
-            return Transition(
-                step=Step.INTEGRATE,
-                status=Status.INTEGRATING,
-                iteration=task.iteration,
-                counters=task.counters,
-                rung_index=dict(task.rung_index),
-            )
+            base = Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
+            return dataclasses.replace(base, counters=reset_for_integration_attempt(task.counters))
         case "changes_requested":
-            return _changes_requested(
-                task, max_iterations=max_iterations, escalate_after=escalate_after
-            )
+            return _changes_requested(task, settings)
         case "escalate":
             return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.VERIFY)
         case "supersede":
-            return Transition(
-                step=None,
-                status=Status.CANCELLED,
-                iteration=task.iteration,
-                counters=task.counters,
-                rung_index=dict(task.rung_index),
-                status_reason="superseded",
-                new_task_count=outcome.new_task_count,
-                repoint_dependents=True,
+            base = Transition.stay(task, step=None, status=Status.CANCELLED)
+            return dataclasses.replace(
+                base, status_reason="superseded", repoint_dependents=True, enqueue_new_tasks=True
             )
 
 
 def _from_integrate(task: Task, outcome: ConflictVerifyDecision) -> Transition:
     match outcome.decision:
         case "accept":
-            return _same(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
+            return Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
         case "changes_requested":
             return _conflict_round(task)
         case "escalate":
             return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.INTEGRATE)
 
 
-def next_step(
-    task: Task, outcome: Outcome, *, max_iterations: int, escalate_after: int
-) -> Transition:
-    """Apply `outcome` to `task`'s current step and return the resulting transition.
-
-    `max_iterations` and `escalate_after` come from `orchestration.max_iterations` and
-    `roles.implementer.escalate_after`; passing them in keeps this function pure.
-    """
+def next_step(task: Task, outcome: Outcome, settings: Settings) -> Transition:
+    """Apply `outcome` to `task`'s current step and return the resulting transition."""
     match task.step, outcome:
         case Step.TRIAGE, TriageDecision():
             return _from_triage(task, outcome)
         case Step.PLAN, PlanDecision():
-            return _from_plan(task, outcome)
+            return _from_plan(task)
         case Step.IMPLEMENT, ImplementDecision():
             return _from_implement(task, outcome)
         case Step.CONSULT, ConsultDecision():
             return _from_consult(task, outcome)
         case Step.VERIFY, VerifyDecision():
-            return _from_verify(
-                task, outcome, max_iterations=max_iterations, escalate_after=escalate_after
-            )
+            return _from_verify(task, outcome, settings)
         case Step.INTEGRATE, ConflictVerifyDecision():
             return _from_integrate(task, outcome)
         case _:
