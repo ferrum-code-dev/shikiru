@@ -82,14 +82,20 @@ ignore = [
 "time.sleep" = { msg = "Time only via shikiru.clock.Clock" }
 "asyncio.sleep" = { msg = "Time only via shikiru.clock.Clock" }
 
+[tool.ruff.lint.flake8-type-checking]
+# pydantic evaluates field annotations at class-definition time, so imports used only as field
+# types on these bases are real runtime imports, not typing-only ones.
+runtime-evaluated-base-classes = [
+  "pydantic.BaseModel",
+  "shikiru.config.settings.ConfigModel",
+  "shikiru.domain.tasks.DomainModel",
+]
+
 [tool.ruff.lint.per-file-ignores]
 "src/shikiru/store/**" = ["TID251"]
 "src/shikiru/process.py" = ["TID251"]
 "src/shikiru/clock.py" = ["TID251"]
 "src/shikiru/config/loader.py" = ["ANN401"]
-"src/shikiru/config/settings.py" = ["TC001"] # Rung is needed at runtime for pydantic validation
-"src/shikiru/domain/tasks.py" = ["TC001", "TC003"] # Rung/ComplexityName/datetime needed at runtime for pydantic
-"src/shikiru/domain/commands.py" = ["TC001"] # Rung/ComplexityName/Mode/Role needed at runtime for pydantic
 "tests/support/waiting.py" = ["TID251"]
 "tests/**" = ["S101", "D", "ANN", "PLR2004"]
 
