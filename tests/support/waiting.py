@@ -15,6 +15,11 @@ class WaitTimeoutError(TimeoutError):
     """A `wait_until` predicate never became true within its timeout."""
 
 
+async def yield_control() -> None:
+    """Let one pass of the event loop run, without waiting for any duration."""
+    await asyncio.sleep(0)
+
+
 async def wait_until(predicate: _Predicate, timeout: float) -> None:
     """Poll `predicate` (sync or async) until it is true, or raise `WaitTimeoutError`."""
     deadline = time.monotonic() + timeout
