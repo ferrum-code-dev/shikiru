@@ -9,7 +9,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 ## Phase 1 — Core model
 - [x] Task 2: Configuration
 - [x] Task 3: Domain rules
-- [ ] Task 4: Report models and `shikiru report`
+- [x] Task 4: Report models and `shikiru report`
 - [ ] Task 5: State store
 
 ## Phase 2 — Substrate

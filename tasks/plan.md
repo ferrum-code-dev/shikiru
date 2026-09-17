@@ -46,8 +46,8 @@ Refs: 03 §1–3, §7–8, §10; 05 §2.
 
 ### Task 4: Report models and `shikiru report`
 Refs: 05 §4, 03 §4.3.
-- [ ] All report models with "required iff" validators; `schema_for(kind)`.
-- [ ] `shikiru report --file F` (`cli/report.py`): resolves `$SHIKIRU_RUN_DIR/$SHIKIRU_ROLE/current_turn`, validates by `report.kind`, atomic write, exit codes 0/2/3.
+- [x] All report models with "required iff" validators; `schema_for(kind)`.
+- [x] `shikiru report --file F` (`cli/report.py`): resolves `$SHIKIRU_RUN_DIR/$SHIKIRU_ROLE/current_turn`, validates by `report.kind`, atomic write, exit codes 0/2/3.
 - Tests: unit for validators; integration for the CLI in a tmp run dir.
 
 ### Task 5: State store
