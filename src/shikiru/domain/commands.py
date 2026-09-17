@@ -12,6 +12,14 @@ from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import DomainModel, Mode, Role
 
 
+class CommandStatus(StrEnum):
+    """The `commands.status` lifecycle (05 §2)."""
+
+    PENDING = auto()
+    DONE = auto()
+    REJECTED = auto()
+
+
 class CommandKind(StrEnum):
     """The `commands.kind` discriminator (05 §2)."""
 

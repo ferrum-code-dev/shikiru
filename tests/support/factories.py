@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from shikiru.agents.contracts import Rung
@@ -47,6 +48,8 @@ HELPER_RUNG = Rung(agent="claude", model="haiku", effort="low")
 MAX_ITERATIONS = 5
 ESCALATE_AFTER = 2
 
+TASK_CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+
 
 def make_task(**overrides: Any) -> Task:
     fields: dict[str, Any] = {
@@ -56,6 +59,7 @@ def make_task(**overrides: Any) -> Task:
         "title": "Add retry to parser",
         "request": "Add retry to parser",
         "status": Status.RUNNING,
+        "created_at": TASK_CREATED_AT,
     }
     fields.update(overrides)
     return Task(**fields)

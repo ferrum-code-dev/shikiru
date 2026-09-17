@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum, auto
 
 from shikiru.domain.commands import ResolutionKind
-from shikiru.domain.tasks import EscalationReason
+from shikiru.domain.tasks import DomainModel, EscalationReason, Step
 
 
 @dataclass(frozen=True)
@@ -49,3 +51,26 @@ _OPTIONS_BY_REASON: dict[EscalationReason, tuple[EscalationOption, ...]] = {
 def options_for(reason: EscalationReason) -> tuple[EscalationOption, ...]:
     """Return the resolution options for `reason`, with exactly one recommended default (03 §8)."""
     return _OPTIONS_BY_REASON[reason]
+
+
+class EscalationStatus(StrEnum):
+    """An escalation's lifecycle (05 §2)."""
+
+    OPEN = auto()
+    RESOLVED = auto()
+
+
+class Escalation(DomainModel):
+    """One raised escalation (03 §8; mirrors the `escalations` table, 05 §2)."""
+
+    id: str
+    task_id: str
+    step: Step | None = None
+    reason: EscalationReason
+    headline: str
+    packet_path: str
+    options: tuple[EscalationOption, ...]
+    status: EscalationStatus
+    resolution: str | None = None
+    created_at: datetime
+    resolved_at: datetime | None = None

@@ -96,6 +96,15 @@ class Counters(DomainModel):
     conflict_rounds: int = 0
 
 
+class RepoState(DomainModel):
+    """One repo's checkout state for a task (03 §1.1, §5; mirrors `tasks.repos`, 05 §2)."""
+
+    path: str
+    base: str
+    base_sha: str
+    branch: str
+
+
 class Task(DomainModel):
     """The task fields the domain rules need (03 §1.1; mirrors the `tasks` table, 05 §2)."""
 
@@ -117,6 +126,13 @@ class Task(DomainModel):
     counters: Counters = Field(default_factory=Counters)
     rung_index: dict[Role, int] = Field(default_factory=dict)
     overrides: dict[Role, Rung] = Field(default_factory=dict)
+    repos: list[RepoState] = Field(default_factory=list)
     slot: int | None = None
+    window_id: str | None = None
+    panes: dict[Role, str] = Field(default_factory=dict)
+    wait_reason: str | None = None
     requeued_at: datetime | None = None
     summary: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None

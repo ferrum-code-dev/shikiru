@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum, auto
+from typing import Any
+
+from pydantic import Field
+
+from shikiru.domain.tasks import DomainModel
 
 
 class EventKind(StrEnum):
@@ -34,3 +40,14 @@ class EventKind(StrEnum):
     PANE_RESTORED = auto()
     ENGINE_STARTED = auto()
     ENGINE_STOPPED = auto()
+
+
+class Event(DomainModel):
+    """One recorded event (mirrors the `events` table, 05 §2)."""
+
+    id: int
+    ts: datetime
+    task_id: str | None = None
+    kind: EventKind
+    message: str
+    data: dict[str, Any] = Field(default_factory=dict)
