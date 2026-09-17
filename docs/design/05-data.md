@@ -2,76 +2,53 @@
 
 ## 1. Configuration
 
-**Sources**, from lowest to highest precedence, deep-merged:
-1. Packaged `config/defaults.toml`
-2. `~/.config/shikiru/config.toml` (optional user-wide file: agents, notify)
-3. `<project>/.shikiru/config.toml`
-4. CLI `--set key.path=value` (repeatable, value parsed as TOML), on every command that reads config (`start`, `submit`, `doctor`, …)
+**Sources**, merged deeply, lowest first:
+1. packaged `config/defaults.toml`
+2. `.shikiru/config.toml`
+3. `--set key.path=value` (value parsed as TOML)
 
-`shikiru config show [--json]` prints the effective config and the source of each key. `shikiru config set key=value` edits the project file with `tomlkit`, which keeps comments.
-Validation uses pydantic models (`extra="forbid"`), so errors name the file and the key path.
+`config show [--json]` prints the merged result. Core keys are validated by pydantic (`extra="forbid"`). Each `[agents.<name>.options]` table is validated by that plugin's factory at `start` and `doctor`.
 
-A complete project file, as written by `shikiru init` with defaults:
+The full reference (this is also what `init` writes):
 
 ```toml
 [project]
-name = "ferrum"                     # tmux session "[shikiru] ferrum"; default = folder name
-trackers = ["tasks/plan.md", "tasks/todo.md"]   # given to Leader/Implementer as the task sources of truth
+name = "ferrum"                                 # tmux session "[shikiru] ferrum"; default: folder name
+trackers = ["tasks/plan.md", "tasks/todo.md"]
 
 [[repos]]
-path = "."                          # relative to project root; "." = monorepo
-base = "main"                       # omit = current branch at task start
-caches = ["node_modules", "**/node_modules", ".venv", "target", "build/.cache"]
-remote = "origin"
+path = "."                                      # "." = monorepo; otherwise relative repo paths
+base = "main"                                   # omit = branch checked out at task start
+caches = ["node_modules", "**/node_modules", ".venv", "target"]
+remote = "origin"                               # used by integration = "pr"
 
 [orchestration]
 max_parallel = 2
 max_iterations = 5
-consult_limit = 3
-integration = "merge"               # merge | pr
-push = false
-keep_branches = false
-cache_mode = "clone"                # clone | symlink | none
-budget_usd = 0                      # 0 = no budget escalation
+integration = "merge"                           # merge | pr
+poll_seconds = 2
 
 [orchestration.resources]
 max_cpu_pct = 85
 min_free_ram_gb = 4
 
-[orchestration.timeouts]            # seconds
+[orchestration.timeouts]                        # seconds
 launch = 90
 stall = 1200
 tool = 7200
 max_quota_wait = 28800
-integration_dirty_wait = 1800
+integration_wait = 1800
 
-[orchestration.review]
-accept_minor_issues = false
-
-[orchestration.on_quota]
-policy = "wait"                     # wait | next
-
-[agents.claude]
-plugin = "claude"                   # entry point name
-command = "claude"
-args = ["--permission-mode", "auto"]
+[agents.claude]                                 # table name = plugin entry point
 prompt_prefix = "/using-agent-skills "
-auth = "subscription"               # subscription | api_key
-api_key_env = "ANTHROPIC_API_KEY"
-
-[agents.claude.options]             # validated by the plugin's own options model (04-agents §2); omit for defaults
-quota_probe_interval = 900
-
-[agents.codex]
-plugin = "codex"
-command = "codex"
-args = ["--approve-for-me"]
-prompt_prefix = "$using-agent-skills "
+[agents.claude.options]                         # plugin-owned (04 §4)
 auth = "subscription"
 
-[agents.codex.options]
+[agents.codex]
+prompt_prefix = "$using-agent-skills "
+[agents.codex.options]                          # plugin-owned (04 §5)
+auth = "subscription"
 compact_below_free_pct = 60
-# prices."gpt-5.6-luna" = { input = 0.0, cache_read = 0.0, output = 0.0, context_window = 400000 }  # override packaged prices
 
 [roles.leader]
 ladder = [
@@ -80,182 +57,161 @@ ladder = [
 ]
 
 [roles.implementer]
-escalate_after = 2                  # rejected verifications on a rung before moving up
+escalate_after = 2
 ladder = [
   { agent = "codex", model = "gpt-5.6-luna", effort = "xhigh" },
   { agent = "codex", model = "gpt-5.6-sol", effort = "high" },
   { agent = "claude", model = "opus", effort = "high" },
 ]
-
-[roles.implementer.complexity.high] # optional per-complexity ladders (low | normal | high)
+[roles.implementer.complexity.high]
 ladder = [
   { agent = "codex", model = "gpt-5.6-sol", effort = "high" },
   { agent = "claude", model = "opus", effort = "xhigh" },
 ]
 
 [roles.helper]
-ladder = [
-  { agent = "claude", model = "haiku", effort = "low" },
-  { agent = "codex", model = "gpt-5.6-mini", effort = "low" },
-]
+ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
 
 [dashboard]
-refresh_seconds = 2
-style = "comic"                     # comic | plain (06-operator §7)
-symbols = "unicode"                 # unicode | nerd
-animations = "full"                 # full | reduced | off
-
-[dashboard.colors]                  # optional overrides of semantic tokens (06-operator §7.1)
-# "role.leader" = "#a78bfa"
-
-[dashboard.layout]                  # tree: split = "h" (side by side) | "v" (stacked); size = % of parent
-split = "h"
-panes = [
+animations = true
+widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
+layout = { split = "h", panes = [
   { pane = "system", size = 30 },
   { split = "v", panes = [ { pane = "leader" }, { pane = "implementer" }, { pane = "shell", size = 20 } ] },
-]
+] }
 
-[dashboard.system]
-widgets = ["project", "strips", "escalations", "queue", "dialogue", "usage", "resources", "docker"]
-
-[dashboard.titles]                  # str.format fields: 06-operator §5.2
+[dashboard.titles]                              # fields: 06 §5.3
 window = "{task_id} {title:.24}"
-leader = "長 Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context_free}% · ${cost:.2f} {flags}"
-implementer = "員 Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context_free}% · ${cost:.2f} {flags}"
-system = "Shikiru {project} · {active}/{max_parallel} active · {queued} queued"
+leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context}% · ${cost:.2f} {flags}"
+implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context}% · ${cost:.2f} {flags}"
+system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
 shell = "Shell · {cwd}"
 
 [notify]
-desktop = true                      # OSC 777/9 through tmux passthrough, and terminal-notifier / notify-send when present
-command = ""                        # optional; receives event JSON on stdin (escalation, task_done, scope_change, quota)
-events = ["escalation", "task_done", "scope_change", "quota"]
+command = ""                                    # optional; event JSON on stdin for escalation and task_done
 ```
 
-Every override flag on `submit` works for that task only:
-- `--mode implement|plan|split`
-- `--complexity`
-- `--priority`
-- `--after T-3` (repeatable)
-- `--repos a,b`
-- `--leader a:m:e` / `--implementer a:m:e`
-- `--budget 20`
+**`submit` flags**, applying to that task only: `--mode implement|plan|split`, `--complexity low|normal|high`, `--priority N`, `--after T-n` (repeatable), `--leader a:m:e`, `--implementer a:m:e`.
+
+**Protocol constants** are named module constants, not configuration:
+
+| Constant | Value |
+|---|---|
+| `INJECT_DELAY` | 150 ms |
+| `SUBMIT_CONFIRM` | 15 s |
+| `BEFORE_TURN_WAIT` | 10 min |
+| `NUDGE_LIMIT` | 2 |
+| `CONSULT_LIMIT` | 3 |
+| `CONFLICT_ROUNDS` | 2 |
+| Relaunches per turn | 2 |
+| Stall recoveries per turn | 2 |
+| Unavailable backoff | 30 s / 2 min / 5 min |
+| `QUOTA_PROBE` | 15 min |
+| `INTEGRATION_RETRY` | 2 min |
+| `PR_POLL` | 5 min |
+| Command poll | 250 ms |
+| Dashboard change poll | 500 ms |
+| Session exit grace | 10 s |
+| Escalation evidence | 60 pane lines |
 
 ## 2. State DB (`.shikiru/state.db`)
 
-- SQLite in WAL mode with `busy_timeout = 5000`.
-- `PRAGMA user_version` drives migrations in `store/migrations/NNN_*.sql`.
-- Readers open short read transactions and detect changes cheaply with `PRAGMA data_version`.
-- All timestamps are UTC ISO-8601 text.
+- SQLite WAL mode, `busy_timeout = 5000`.
+- Migrations tracked by `PRAGMA user_version`.
+- Readers use short read transactions and `PRAGMA data_version` to detect changes.
+- Timestamps are UTC ISO-8601.
 
 ```sql
+CREATE TABLE sequences (name TEXT PRIMARY KEY, value INTEGER NOT NULL);   -- task, escalation, message
+
 CREATE TABLE tasks (
-  id TEXT PRIMARY KEY,               -- T-<n>
-  seq INTEGER UNIQUE NOT NULL,
-  parent_id TEXT REFERENCES tasks(id),
-  origin TEXT NOT NULL,              -- operator | split | leader | replan
+  id TEXT PRIMARY KEY, seq INTEGER UNIQUE NOT NULL,
+  parent_id TEXT REFERENCES tasks(id), origin TEXT NOT NULL,
   title TEXT NOT NULL, request TEXT NOT NULL,
-  mode TEXT NOT NULL,                -- triage | implement | plan | split
-  complexity TEXT NOT NULL DEFAULT 'normal',
-  priority INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL, step TEXT, holds TEXT NOT NULL DEFAULT '[]',   -- JSON array of {kind, until?, reason}
+  mode TEXT, complexity TEXT NOT NULL DEFAULT 'normal', priority INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL, step TEXT, status_reason TEXT,
+  holds TEXT NOT NULL DEFAULT '[]',               -- ["paused","intervention"]
   iteration INTEGER NOT NULL DEFAULT 0,
-  repos TEXT NOT NULL DEFAULT '[]',  -- JSON [{path, base, base_sha, branch}]
-  overrides TEXT NOT NULL DEFAULT '{}', -- JSON {leader?, implementer?, budget_usd?, rung_index{role:n}}
-  slot INTEGER, window_id TEXT, pr_url TEXT,
-  summary TEXT,                      -- final summary for task_done
+  counters TEXT NOT NULL DEFAULT '{}',            -- rejections_on_rung, consults, conflict_rounds
+  rung_index TEXT NOT NULL DEFAULT '{}',          -- {role: n}
+  overrides TEXT NOT NULL DEFAULT '{}',           -- {role: {agent, model, effort}}
+  repos TEXT NOT NULL DEFAULT '[]',               -- [{path, base, base_sha, branch}]
+  slot INTEGER, window_id TEXT, panes TEXT NOT NULL DEFAULT '{}',
+  wait_reason TEXT, requeued_at TEXT, summary TEXT,
   created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT
 );
 CREATE TABLE task_deps (task_id TEXT NOT NULL REFERENCES tasks(id), depends_on TEXT NOT NULL REFERENCES tasks(id),
   PRIMARY KEY (task_id, depends_on));
 
-CREATE TABLE runs (                  -- one agent session per task+role (+ agent switch)
-  id INTEGER PRIMARY KEY,
-  task_id TEXT NOT NULL REFERENCES tasks(id), role TEXT NOT NULL,
+CREATE TABLE runs (                               -- one agent session per task role
+  id INTEGER PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), role TEXT NOT NULL,
   agent TEXT NOT NULL, model TEXT NOT NULL, effort TEXT,
-  session_id TEXT, pane_id TEXT,
-  agent_state TEXT NOT NULL DEFAULT '{}',  -- opaque AgentSession.snapshot()
-  status TEXT NOT NULL,              -- starting | live | exited | closed
-  input_tokens INTEGER NOT NULL DEFAULT 0,
+  session_id TEXT, resume_command TEXT, pane_id TEXT,
+  agent_state TEXT NOT NULL DEFAULT '{}', last_message TEXT,
+  status TEXT NOT NULL,                           -- live | exited | closed
+  input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-  output_tokens INTEGER NOT NULL DEFAULT 0,
-  cost_usd REAL, cost_basis TEXT, context_used_pct REAL,   -- normalized Usage from the plugin
+  cost_usd REAL, cost_basis TEXT, context_used_pct REAL,
   started_at TEXT NOT NULL, ended_at TEXT
 );
-CREATE TABLE turns (
-  id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES runs(id),
-  task_id TEXT NOT NULL, step TEXT NOT NULL, iteration INTEGER NOT NULL,
-  dir TEXT NOT NULL,
-  status TEXT NOT NULL,              -- injected | completed | failed | aborted
-  outcome TEXT,                      -- e.g. accept / changes_requested / completed
-  rebuilt INTEGER NOT NULL DEFAULT 0, nudges INTEGER NOT NULL DEFAULT 0,
-  started_at TEXT NOT NULL, ended_at TEXT
-);
-CREATE TABLE quotas (                -- latest InteractiveAgent.quota() per agent window
-  agent TEXT NOT NULL, window TEXT NOT NULL, used_pct REAL NOT NULL, resets_at TEXT, observed_at TEXT NOT NULL,
-  PRIMARY KEY (agent, window)
-);
+
+CREATE TABLE agent_blocks (agent TEXT PRIMARY KEY, until TEXT NOT NULL, reason TEXT NOT NULL);
+CREATE TABLE quotas (agent TEXT NOT NULL, window TEXT NOT NULL, used_pct REAL NOT NULL, resets_at TEXT,
+  observed_at TEXT NOT NULL, PRIMARY KEY (agent, window));
+
 CREATE TABLE escalations (
-  id TEXT PRIMARY KEY,               -- E-<n>
-  task_id TEXT NOT NULL REFERENCES tasks(id), step TEXT, reason TEXT NOT NULL,
-  headline TEXT NOT NULL, packet_path TEXT NOT NULL,
-  options TEXT NOT NULL,             -- JSON [{key, label, consequences, recommended}]
-  status TEXT NOT NULL,              -- open | resolved
-  resolution TEXT,                   -- JSON {option, text?, rung?, by}
-  created_at TEXT NOT NULL, resolved_at TEXT
+  id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), step TEXT, reason TEXT NOT NULL,
+  headline TEXT NOT NULL, packet_path TEXT NOT NULL, options TEXT NOT NULL,
+  status TEXT NOT NULL,                           -- open | resolved
+  resolution TEXT, created_at TEXT NOT NULL, resolved_at TEXT
 );
-CREATE TABLE events (
-  id INTEGER PRIMARY KEY, ts TEXT NOT NULL, task_id TEXT, kind TEXT NOT NULL, message TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}'
-);
-CREATE TABLE commands (
-  id INTEGER PRIMARY KEY, ts TEXT NOT NULL, name TEXT NOT NULL, args TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',   -- pending | done | rejected
-  result TEXT, handled_at TEXT
-);
-CREATE TABLE engine (id INTEGER PRIMARY KEY CHECK (id = 1), pid INTEGER, started_at TEXT, heartbeat_at TEXT, tmux_session TEXT);
+
+CREATE TABLE events (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, task_id TEXT, kind TEXT NOT NULL,
+  message TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}');
+
+CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',        -- pending | done | rejected
+  result TEXT, handled_at TEXT);
 ```
 
-**Event kinds**:
-- `task_queued`, `task_started`, `step_started`, `turn_injected`, `turn_completed`, `turn_failed`
-- `verdict`, `rung_changed`, `hold_set`, `hold_cleared`, `scope_change`
+**`EventKind`** (in `domain.events`; `events.data` carries typed fields):
+- `task_queued`, `task_started`, `step_started`
+- `turn_started`, `turn_completed` (agent, model, outcome, usage delta), `turn_failed`
+- `nudge`, `helper_action`, `rung_changed`
+- `quota_blocked`, `quota_cleared`
+- `verdict`, `scope_change`
+- `hold_set`, `hold_cleared`, `intervention`, `operator_message`
 - `escalation`, `escalation_resolved`
-- `integration_started`, `task_done`, `task_cancelled`
-- `intervention`, `operator_message`
-- `engine_started`, `engine_stopped`
+- `integration_started`, `pr_opened`
+- `task_done`, `task_cancelled`
+- `pane_restored`, `engine_started`, `engine_stopped`
 
-The engine heartbeat is refreshed every 5 s. The CLI and dashboard show `engine: down` when it is older than 15 s.
+**Commands** are pydantic models in `domain.commands`, stored as `kind` plus a JSON `payload`:
+- `Submit` (carries the task id allocated from `sequences` at insert)
+- `Prioritize`, `Pause`, `Resume`, `Cancel`, `Retry`, `SetRung`, `Say`, `Resolve`, `Stop`
 
 ## 3. Run files
 
-```
-runs/T-12/
-  leader/ implementer/            # one dir per role (a switch to another agent adds a suffix, e.g. implementer.2/)
-    current_turn -> ../turns/05-verify-i2   (+ plugin-private files, e.g. hooks.jsonl)
-  turns/NN-<step>-i<iteration>/
-    prompt.md  report.schema.json  report.json  facts.md (verify)  helper.json (if rebuilt)
-  messages/NNN.md                 # `say` messages
-  escalations/E-3.md
-```
+See 02 §5. `report.kind` names the report model of the turn. `helper.json` exists only for rebuilt reports.
 
-## 4. Report schemas (`domain/reports.py`, pydantic → JSON Schema)
+## 4. Report models (`domain.reports`, pydantic → JSON Schema)
 
 ```python
-class Subtask(BaseModel):     title: str; request: str; priority: int = 0; depends_on: list[int] = []  # indexes within list
-class NewTask(BaseModel):     title: str; request: str; priority: int = 0; depends_on: list[str] = []  # existing T-ids
-class Commit(BaseModel):      repo: str; sha: str; subject: str
-class TestRun(BaseModel):     name: str; result: Literal["passed", "failed", "skipped"]; details: str = ""
-class Issue(BaseModel):       severity: Literal["blocker", "major", "minor"]; description: str; location: str = ""
-class Option(BaseModel):      label: str; consequences: str; recommended: bool = False
-class EscalationRequest(BaseModel): question: str; options: list[Option]
+class Subtask(BaseModel):      title: str; request: str; priority: int = 0; depends_on: list[int] = []   # indexes in list
+class NewTask(BaseModel):      title: str; request: str; priority: int = 0; depends_on: list[str] = []   # T-ids
+class Commit(BaseModel):       repo: str; sha: str; subject: str
+class TestRun(BaseModel):      name: str; result: Literal["passed", "failed", "skipped"]; details: str = ""
+class Issue(BaseModel):        severity: Literal["blocker", "major", "minor"]; description: str; location: str = ""
+class Option(BaseModel):       label: str; consequences: str; recommended: bool = False
+class EscalationRequest(BaseModel): question: str; options: list[Option]      # exactly one recommended
 
 class TriageReport(BaseModel):
-    title: str                                        # ≤ 60 chars
+    title: str                                     # ≤ 60 chars
     mode: Literal["implement", "plan", "split"]
     complexity: Literal["low", "normal", "high"]
-    repos: list[str]                                  # subset of configured repo paths
     acceptance_criteria: list[str]
-    references: list[str]                             # plan anchors / files
-    subtasks: list[Subtask] = []                      # mode == split
-    notes: str = ""
+    references: list[str]
+    subtasks: list[Subtask] = []                   # required iff mode == split
 
 class ImplementationReport(BaseModel):
     status: Literal["completed", "needs_decision", "blocked"]
@@ -264,30 +220,28 @@ class ImplementationReport(BaseModel):
     tests: list[TestRun]
     trackers_updated: bool
     risks: list[str] = []
-    question: str = ""                                # required unless completed
+    question: str = ""                             # required unless completed
 
 class PlanReport(BaseModel):
     summary: str
     commits: list[Commit]
     new_tasks: list[NewTask] = []
+    scope_changes: list[str] = []
     enqueue: bool = False
 
-class Verdict(BaseModel):
-    decision: Literal["accept", "changes_requested", "escalate"]
-    summary: str
-    issues: list[Issue] = []                          # empty when accept (unless accept_minor_issues)
-    residual_risks: list[str] = []
-    new_tasks: list[NewTask] = []
-    scope_changes: list[str] = []
-    answer: str = ""                                  # consult turns
-    escalation: EscalationRequest | None = None       # required when escalate
+class ConsultAnswer(BaseModel):
+    decision: Literal["answer", "escalate"]
+    answer: str = ""                               # required iff answer
+    escalation: EscalationRequest | None = None    # required iff escalate
 
-class ReplanDecision(BaseModel):
-    decision: Literal["decompose", "restate", "escalate"]
-    rationale: str
-    subtasks: list[Subtask] = []
-    restated_request: str = ""
-    escalation: EscalationRequest | None = None
+class Verdict(BaseModel):
+    decision: Literal["accept", "changes_requested", "escalate", "supersede"]
+    summary: str
+    issues: list[Issue] = []                       # required non-empty iff changes_requested; empty iff accept
+    residual_risks: list[str] = []
+    new_tasks: list[NewTask] = []                  # required non-empty iff supersede
+    scope_changes: list[str] = []
+    escalation: EscalationRequest | None = None    # required iff escalate
 ```
 
-Rules that the schema can't express (for example "`question` is required unless `completed`") are pydantic `model_validator`s. `shikiru report` prints their messages on exit code 2.
+Every "required iff" rule is a `model_validator`. `shikiru report` prints the violations and exits with code 2.

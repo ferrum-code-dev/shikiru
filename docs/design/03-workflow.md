@@ -2,324 +2,285 @@
 
 ## 1. Task model
 
-A **task** has these fields:
-- `id` (`T-<n>`), `parent_id`, `origin` (`operator | split | leader | replan`)
-- `title`, `request` (the verbatim Operator or Leader text)
-- `mode` (`triage | implement | plan | split`), `complexity` (`low | normal | high`), `priority` (int, higher runs first)
-- `depends_on[]`, `repos[]`
-- `status`, `step`, `holds[]`, `iteration`, `slot`, `rung overrides`, `window_id`, `budget_usd`, and timestamps
+### 1.1 Fields and state
 
-### 1.1 Status and holds
+| Field | Meaning |
+|---|---|
+| `id` / `seq` | `T-<seq>` |
+| `parent_id`, `origin` | `origin` is `operator`, `split` or `leader` |
+| `title`, `request` | `request` is the verbatim text |
+| `mode` | `implement`, `plan` or `split`. `NULL` until triage, unless `submit --mode` sets it |
+| `complexity` | `low`, `normal` or `high` (default `normal`) |
+| `priority` | Integer; higher runs first |
+| `depends_on` | Task ids |
+| `status` | §1.2 |
+| `step` | `triage`, `plan`, `implement`, `consult`, `verify` or `integrate` |
+| `status_reason` | e.g. `superseded`, `split`, `cancelled by operator` |
+| `holds` | Task-scoped: `paused`, `intervention` |
+| `iteration` | Implement → verify rounds so far |
+| `counters` | Persisted: `rejections_on_rung`, `consults`, `conflict_rounds` |
+| `rung_index` | Per role, persisted. Never decreases |
+| `overrides` | Operator rungs per role |
+| `repos` | `[{path, base, base_sha, branch}]` |
+| `slot`, `window_id`, `panes` | `panes` maps `{role: pane_id}` |
+| `wait_reason` | Written by the scheduler |
+| `requeued_at` | Set when resumed after an escalation; gives precedence |
+| `summary` | Final summary |
+
+Counters that only matter within one turn (nudges, relaunches, stall recoveries) live in memory. A restart re-runs the turn with those counters reset, which is bounded and safe.
+
+### 1.2 Status
 
 ```
 queued ──► running ──► integrating ──► done
-  ▲           │  │          │
-  │           │  └─► waiting (split parent: until all children are terminal)
-  │           ▼
-  └──── escalated ◄─── (any running step or integration)
-any non-terminal ──► cancelled
+   ▲          │             │
+   └──────── escalated ◄────┘            any non-terminal ──► cancelled
 ```
 
-| Status | Holds a slot | Meaning |
-|---|---|---|
-| `queued` | no | Waiting for dependencies, a free slot or the resource gate. Tasks resumed after an escalation are queued with precedence. |
-| `running` | yes | `step` ∈ `triage, plan, implement, consult, verify, replan` |
-| `integrating` | yes (plus the project integration lock) | Rebase, conflict hand-off, merge or PR |
-| `waiting` | no | A split parent, or PR mode with the PR open (a `pr_open` hold, polled) |
-| `escalated` | no | Waiting for a resolution. The worktree, sessions and window stay. |
-| `done`, `cancelled` | no | Terminal. The window closes, the worktree is removed, the run files are kept. |
-
-**Holds** pause a task without changing its status, and they clear on their own:
-
-| Hold | Clears when |
+| Status | Holds a slot |
 |---|---|
-| `paused` | `resume` |
-| `intervention` | §10 |
-| `quota` | the reset time passes |
-| `backoff` | a timer fires |
-| `resources` | the resource gate passes (only at dispatch) |
-| `integration` | the main checkout becomes clean, or a retry timer fires |
-| `pr_open` | the PR is merged |
+| `queued` | no |
+| `running` | yes |
+| `integrating` | yes, except while a PR is open (§6) |
+| `escalated` | no. The worktree, sessions and window stay |
+| `done` | — terminal: window closed, worktrees removed, run files kept |
+| `cancelled` | — terminal: window closed, worktrees removed, run files kept |
 
-`domain.transitions` holds the full transition table as data. `TaskFlow` looks transitions up there and never branches on status ad hoc.
+**Holds**:
+- `paused` and `intervention` are task-scoped (§9).
+- The **quota hold is derived, not stored on tasks**: a task whose next turn needs an agent with a row in `agent_blocks` waits until `until`.
 
 ## 2. Steps
 
-| Step | Agent | Template | Report schema | Next |
-|---|---|---|---|---|
-| prepare | — | — | — | Create worktrees (§6), then triage. If `--mode` is given at submit, go straight to that step. |
-| triage | Leader | `triage.md.j2` | `TriageReport` | `implement` → implement · `plan` → plan · `split` → create children, then `waiting` |
-| plan | Leader | `plan.md.j2` | `PlanReport` | integrate. `new_tasks` are enqueued when `enqueue=true`. |
-| implement | Implementer | `implement.md.j2` (first) / `rework.md.j2` (iteration > 1) | `ImplementationReport` | `completed` → verify · `needs_decision`/`blocked` → consult |
-| consult | Leader | `consult.md.j2` | `Verdict` (with `answer`) | `answer` → implement (same iteration) · `escalate` → escalation |
-| verify | Leader | `verify.md.j2` + engine `facts.md` | `Verdict` | `accept` → integrate · `changes_requested` → implement (iteration+1) · `escalate` → escalation |
-| replan | Leader | `replan.md.j2` | `ReplanDecision` | `decompose` → children + this task `cancelled(superseded)` · `restate` → implement with the new request (once per task) · `escalate` |
-| integrate | Implementer (only on conflicts) | `conflicts.md.j2` | `ImplementationReport` | §7 |
+| Step | Role | Template → report | Outcomes |
+|---|---|---|---|
+| triage | Leader | `triage` → `TriageReport` | `implement` → implement · `plan` → plan · `split` → create child tasks with dependencies; this task becomes `done` (`status_reason = split`) |
+| plan | Leader | `plan` → `PlanReport` | → integrate; `new_tasks` enqueued when `enqueue` |
+| implement | Implementer | `implement` (i = 1) / `rework` → `ImplementationReport` | `completed` → verify · `needs_decision`/`blocked` → consult |
+| consult | Leader | `consult` → `ConsultAnswer` | `answer` → implement (same iteration) · `escalate` → `decision_required`. More than `CONSULT_LIMIT` (3) consults → `decision_required` |
+| verify | Leader | `verify` (+ `facts.md`) → `Verdict` | `accept` → integrate · `changes_requested` → implement (i + 1) · `escalate` → `decision_required` · `supersede` → `new_tasks` enqueued, this task `cancelled` (`superseded`) |
+| integrate | Implementer on conflicts only | `conflicts` → `ImplementationReport` | §6 |
 
-**Triage is read-only**: the prompt forbids file changes, because a `split` parent never integrates. Any tracker edit needed goes into a `plan` task.
-After triage:
-- worktrees of repos not listed in `TriageReport.repos` are removed;
-- a `split` parent releases its worktrees, window and slot, while its sessions end.
+**Final round.** When `iteration == max_iterations`, the verify prompt carries `final_round = true`:
+- The Leader must choose `accept`, `supersede` (decompose into new tasks) or `escalate`.
+- A `changes_requested` in the final round raises `iterations_exhausted`.
 
-Every template starts with the task request, the relevant earlier reports (fenced as quoted data), the tracker file paths from config and the report instructions.
-It never restates project coding rules: the agent's own CLAUDE.md, AGENTS.md and skills apply.
+**Triage** is read-only (the prompt forbids edits). Tracker edits happen in `plan` tasks and in verify turns.
+`submit --mode` skips triage. The title is then the first line of the request, cut to 60 characters.
 
-**Verify facts (`facts.md`)** are computed by the engine and are authoritative over the Implementer's claims. For each repo they contain:
+**Templates.** Every template:
+- includes the request and earlier reports (fenced as quoted data), tracker paths, and the sentence "If this work is already done in the workspace, verify it and report";
+- ends with the fixed report instruction (§4.3);
+- never restates project coding rules.
+
+**Facts** (`facts.md`) are computed by the engine for each repo and outrank the Implementer's claims:
 - `git log --oneline base..HEAD`
 - `git diff --stat base...HEAD`
-- `git status --porcelain` (should be empty)
-- whether each configured `tracker` file changed
+- `git status --porcelain`
+- which trackers changed
 
-**Scope changes (D4).** A `Verdict` or `PlanReport` may carry `new_tasks[]` (each with `title`, `request`, `priority`, `depends_on`) and `scope_changes[]` (descriptions).
-- The Leader edits the tracker files in the task worktree during its turn, following project conventions, and commits.
-- The engine enqueues `new_tasks` with `origin=leader` and logs a `scope_change` event, which triggers a notification.
-- Undo is `shikiru cancel T-n`.
+**Scope changes (D4).** A `Verdict` or `PlanReport` may carry `new_tasks` and `scope_changes`:
+- The Leader updates trackers in the worktree and commits.
+- The engine enqueues the new tasks (`origin = leader`) and emits `scope_change`, which is notified.
+- The Operator undoes a change with `cancel T-n`.
 
 ## 3. Review loop
 
 ```
-iteration = 1
 loop:
-  report = implement(iteration)                      # rework prompt carries previous verdict issues
-  while report.status in {needs_decision, blocked}:  # at most consult_limit (3) per task
-      verdict = consult(report) ; if escalate → ESCALATE
-      report = implement(iteration, answer=verdict.answer)
-  verdict = verify(report, facts)
-  accept             → INTEGRATE
-  escalate           → ESCALATE
-  changes_requested  → rejected_on_rung += 1
-                       if rejected_on_rung ≥ ladder.escalate_after (2): move implementer one rung up (§8.2)
-                       iteration += 1 ; if iteration > max_iterations (5): REPLAN
+  report = implement()
+  while report.status != completed:
+      answer = consult(report)           # escalates on escalate / CONSULT_LIMIT
+      report = implement(answer)
+  verdict = verify(report, facts, final_round = iteration == max_iterations)
+  match verdict.decision:
+      accept            → integrate
+      supersede         → enqueue new_tasks; cancel(superseded)
+      escalate          → raise decision_required
+      changes_requested → if final_round: raise iterations_exhausted
+                          counters.rejections_on_rung += 1
+                          if ≥ roles.implementer.escalate_after: rung_index.implementer += 1; reset counter
+                          iteration += 1
 ```
 
-The Leader accepts only when no issues remain (`review.accept_minor_issues = false`, which matches the "address even minor issues" practice).
-Residual risks that should not block go to `new_tasks`. The Leader states each accepted residual risk in `residual_risks[]`, and these are shown in the task summary.
+The Leader accepts only when no issues remain. Non-blocking residual risks go into `residual_risks` or `new_tasks`.
 
-## 4. Turn protocol
+## 4. Sessions and turns
 
-`SessionDriver.run_turn(task, role, template, schema) → TurnResult` is the only way the engine talks to an agent.
+### 4.1 SessionManager
 
-1. **Resolve rung**: the task override, else the role ladder for the task complexity at `rung_index`.
-2. **Write the turn dir** `runs/T/turns/NN-<step>-i<iteration>/`: `prompt.md`, `report.schema.json`, `report.kind`. Remove any stale `report.json`. Point `runs/T/<role>/current_turn` at this dir.
-3. **Ensure the session** (§5).
-4. **Before turn**: inject each line returned by `session.before_turn()` (e.g. a compaction command the plugin decided on) → await `Compacted` or `TurnEnded` (≤ 10 min).
-5. **Inject the pointer**: `load-buffer -b shk-<pane> -` → `paste-buffer -d -p -b shk-<pane> -t <pane>` → sleep `inject_delay_ms` (150) → `send-keys -t <pane> Enter`.
-   The pasted line is `{prompt_prefix}Read {abs prompt path} and follow it exactly.`
-6. **Confirm submission**: a `PromptSubmitted` signal with this turn's path (or any `Activity` for plugins without `PROMPT_EVENTS`) must arrive within 15 s. If not, press `Enter` once more. If it still doesn't arrive, run stall analysis (§8.5).
-7. **Await** the first of:
-   - `TurnEnded`
-   - `TurnFailed`
-   - `PaneDied`
-   - `Stall`
-   - a matching Operator command (`pause --now`, `cancel`, `retry`)
-8. **On `TurnEnded`**:
-   1. If `report.json` exists and validates → `Completed(report)`.
-   2. Otherwise nudge, at most `nudge_limit` (2) times: inject "Your turn ended without a valid report. Submit it with `shikiru report` exactly as described at the end of {prompt path}.", then go back to 7.
-   3. Otherwise the Helper rebuilds the report from `TurnEnded.last_message` (or the visible screen) and the git facts → `Completed(report, rebuilt=true)`, logged.
-   4. Otherwise escalate (`agent_protocol`).
-9. `TurnFailed`, `PaneDied` and `Stall` are handled in §8.
+`ensure(task, role) → AgentSession`:
 
-**Report submission.** The prompt ends with the same fixed instruction every time:
+| Situation | Action |
+|---|---|
+| Run live and pane alive | Return the monitored session |
+| Engine restarted, pane process alive | `agent.attach(spec, pane, runs.agent_state)` |
+| No live process, `session_id` known | `agent.launch(spec with resume_session_id)` |
+| Rung change, same agent | Send `keys.exit_input`, then launch with resume and the new model |
+| No session yet, or a different agent | `agent.launch(spec)`. If the task already has reports, the first turn is `handoff` (request, latest reports, facts) |
 
-> Write the report JSON matching `report.schema.json` and run `shikiru report --file <file>`. If it exits non-zero, fix the JSON and run it again. Then end your turn.
+- **Launch environment**: `SHIKIRU_PROJECT`, `SHIKIRU_TASK`, `SHIKIRU_ROLE`, `SHIKIRU_RUN_DIR`, `SHIKIRU_SLOT`.
+- **After launch**: wait for `SessionStarted` (`timeouts.launch`), then store `session_id` and `resume_command`.
+- **Task end**: exit sessions with `keys.exit_input`, and kill the pane after 10 s.
+
+### 4.2 SessionMonitor
+
+There is one monitor per live session. It is the **only** consumer of `session.signals()`, and it publishes every signal to subscribers (the current `TurnRunner`) through an asyncio queue.
+
+On every `orchestration.poll_seconds` tick, it:
+- stores `usage()`, `snapshot()` and the last `TurnEnded.last_message` on the run;
+- updates pane titles and decorations;
+- checks `pane.is_alive()` → publishes engine event `PaneDied`;
+- tracks activity. If there is no `Activity` for `timeouts.stall` (or `timeouts.tool` while `tool_running`), it publishes `Stalled(screen)`. `AttentionNeeded` publishes `Stalled` immediately;
+- detects intervention (§9).
+
+### 4.3 TurnRunner
+
+`run(session, TurnSpec) → TurnResult`, where the result is one of:
+- `Completed(report, rebuilt)`
+- `Failed(kind, resets_at, message)`
+- `PaneDied`
+- `Stalled(screen)`
+- `ProtocolError`
+
+1. **Turn dir** `runs/T/turns/NN-<step>-i<iteration>/`: write `prompt.md`, `report.schema.json` and `report.kind`, remove any stale `report.json`, and point `runs/T/<role>/current_turn` at it.
+2. **Before turn**: inject each line from `session.before_turn()` and wait for `Compacted` or `TurnEnded` (≤ `BEFORE_TURN_WAIT`, 10 min).
+3. **Inject the pointer**: tmux `load-buffer` → `paste-buffer -p` → `INJECT_DELAY` (150 ms) → `Enter`. The line is `{prompt_prefix}Read {prompt path} and follow it exactly.`, and it is recorded in the run's injected set.
+4. **Confirm**: a `PromptSubmitted` containing the path within `SUBMIT_CONFIRM` (15 s). Otherwise press `Enter` once more. Otherwise return `Stalled`.
+5. **Await** `TurnEnded`, `TurnFailed`, `PaneDied` or `Stalled`.
+6. **On `TurnEnded`**:
+   - a valid `report.json` → `Completed`;
+   - otherwise nudge, up to `NUDGE_LIMIT` (2) times: inject "Your turn ended without a valid report. Submit it with `shikiru report` as described at the end of {prompt path}.";
+   - otherwise `helper.rebuild_report` → `Completed(rebuilt=true)`, saved as `helper.json`;
+   - otherwise `ProtocolError`.
+
+**The report instruction** ends every prompt:
+
+> Write the report JSON matching `report.schema.json` and run `shikiru report --file <file>`. If it exits non-zero, fix it and run it again. Then end your turn.
 
 `shikiru report` works as follows:
-- It resolves the current turn dir (§5) and reads `report.kind` there (e.g. `Verdict`).
-- It validates the JSON with that pydantic model, including cross-field rules the JSON Schema can't express, and writes `report.json` atomically.
-- Exit codes: `0` ok, `2` invalid (errors on stderr), `3` no active turn.
-- It never touches the DB, so it works inside agent sandboxes. The turn dir is passed to Codex with `--add-dir`.
+- It resolves `$SHIKIRU_RUN_DIR/current_turn` and validates with the pydantic model named in `report.kind`, including cross-field rules.
+- It writes `report.json` atomically.
+- Exit codes: `0` ok, `2` invalid (errors on stderr), `3` no current turn.
 
-Prompts are idempotent: "If this work is already done in the workspace, verify it and report." This makes re-injection after recovery safe.
+**Cancellation**: `pause --now`, `cancel` and `retry` handlers send `keys.interrupt` and cancel the task coroutine. Step state is persisted at step boundaries, and prompts are idempotent, so the step simply re-runs later.
 
-## 5. Sessions and panes
-
-- Each running task has one tmux **window** with the panes `system`, `leader`, `implementer` and `shell` (06-operator §5). Pane ids (`%N`) are stored in the DB.
-- **Launch**:
-
-  ```
-  respawn-pane -k -t <pane> -c <task root> -e SHIKIRU_PROJECT=… -e SHIKIRU_TASK=T-12 -e SHIKIRU_ROLE=implementer -e SHIKIRU_RUN_DIR=… -e SHIKIRU_TURN_DIR=<current> -e SHIKIRU_SLOT=2 -- <adapter argv>
-  ```
-
-  Then wait for `SessionStarted` (≤ `launch_timeout` 90 s). Store `session_id` and the plugin's opaque `snapshot()` on the run, and refresh the snapshot after every signal batch.
-- `SHIKIRU_TURN_DIR` can't change inside a running process. So `shikiru report` resolves the current turn from `$SHIKIRU_RUN_DIR/current_turn`, a symlink the engine updates. The env var is only a fallback.
-- **Resume**: the same argv with `resume_session_id` (`claude --resume <id>`, `codex resume <id>`). Used after a pane death, an engine restart, a quota wait with an exited process, or a same-agent rung change (with the new `--model` and effort).
-- **Agent change** (a rung with a different agent): start a new session. The first prompt is `handoff.md.j2`, which contains the task request, the latest reports and facts.
-- Sessions live until the task is terminal. At that point the engine sends the adapter's `exit_command`, or kills the pane after 10 s.
-- The session id and resume command are always shown by `shikiru sessions T-12`, so an Operator can reopen the session anywhere.
-
-## 6. Workspaces
+## 5. Workspaces
 
 - **Task root** `.shikiru/worktrees/T-12/`:
-  - Monorepo, where the project root is the repo: the root is the worktree.
-  - Multi-repo: each repo's worktree sits at its relative path. Top-level entries that are not repos and not `.shikiru` are symlinked, e.g. the root `CLAUDE.md` and `tasks/`.
-  - Agents start in the task root.
-- **Create** per repo:
+  - Monorepo: the root *is* the worktree.
+  - Multi-repo: each repo's worktree sits at its relative path, and the non-repo top-level entries (e.g. the root `CLAUDE.md`, `tasks/`) are symlinked.
+  - Agents run in the task root.
+- **Worktrees** are created for every configured repo: `git worktree add -b shikiru/T-12-<slug> <path> <base>`. `base` is `repos[].base` or the repo's current branch. Creation is idempotent.
+- **Caches** are copied copy-on-write (`repos[].caches` globs that match ignored paths): macOS `cp -c -R`, Linux `cp -a --reflink=always`. If CoW isn't supported, nothing is copied and one warning is logged.
+  - **Copy-on-write**: the filesystem (APFS; btrfs/XFS) creates only metadata that points at the same data blocks.
+  - A 5 GB `node_modules` or `target` "copies" in about a second and uses no extra disk; only files that one side later modifies get their own blocks.
+  - Every task gets a warm, fully independent cache.
+- **Shared resources**: `SHIKIRU_SLOT` and `SHIKIRU_TASK` let project scripts separate ports and Docker Compose project names.
+- **Git hygiene**: `.shikiru/` is added to each repo's `.git/info/exclude`.
+- **Cleanup** on a terminal status: `git worktree remove --force`, and the branch is deleted once merged.
 
-  ```
-  git -C <repo> worktree add -b shikiru/T-12-<slug> <path> <base>
-  ```
+## 6. Integration
 
-  - `base` = `repos[].base` or the repo's current branch, recorded on the task.
-  - Then `git submodule update --init --recursive` if `.gitmodules` exists.
-  - Worktree creation for existing branches is idempotent.
-- **Caches**:
-  - For each `repos[].caches` glob that matches an existing ignored path in the main checkout, copy it with copy-on-write: macOS `cp -c -R`, Linux `cp -a --reflink=always`.
-  - **Copy-on-write (CoW)**: a filesystem feature (APFS on macOS; btrfs and XFS on Linux) where a "copy" is only new metadata pointing at the same data blocks. A 5 GB `node_modules` or `target` dir is copied in about a second and uses no extra disk. Only files one side later modifies get their own blocks. Each task gets a warm, fully independent cache, and a build in one worktree can't corrupt another's.
-  - If copy-on-write isn't supported, `cache_mode = "clone"` falls back to no copy and logs a warning once. `doctor` reports copy-on-write support.
-  - `cache_mode = "symlink"` is available for caches that are safe to share.
-- **Isolation of shared resources**: each task exports `SHIKIRU_SLOT` and `SHIKIRU_TASK`. Projects use them in their own instructions or scripts for ports and Docker Compose project names. Shikiru adds nothing project-specific.
-- **Git hygiene**: `init` adds `.shikiru/` to `.git/info/exclude` of every repo. Worktrees share it through the common dir.
-- **Cleanup** on terminal status: `git worktree remove --force` for each repo. Delete the branch if it was merged and `keep_branches=false`.
+Integration runs under the project integration lock and only for repos with commits ahead of `base`.
 
-## 7. Integration
+1. **Rebase** each repo.
+   - On conflict: `rebase --abort` → Implementer `conflicts` turn → Leader `verify` turn with post-rebase facts.
+   - At most `CONFLICT_ROUNDS` (2) rounds, then `integration_conflict`.
+2. **Strategy**:
+   - **`LocalMerge`** (`integration = "merge"`):
+     - Pre-check every repo: `merge-base --is-ancestor base branch`, and, if `base` is checked out in the main checkout, no overlap between its dirty paths and the changed paths.
+     - If a check fails: retry every `INTEGRATION_RETRY` (2 min) for up to `timeouts.integration_wait`, then `integration_blocked`.
+     - Then for each repo: `git merge --ff-only` if `base` is checked out, else `git update-ref refs/heads/<base> <new> <old>`.
+   - **`PullRequest`** (`integration = "pr"`):
+     - `git push -u <repos[].remote> <branch>` and `gh pr create`.
+     - The slot is released, `wait_reason = "PR open"`, and `gh pr view --json state` is polled every `PR_POLL` (5 min).
+     - `MERGED` → done. `CLOSED` → `pr_closed`.
+3. **Done**: cleanup, close the window, emit `task_done` (summary, commits, residual risks).
 
-Integration happens under the project **integration lock**, one task at a time.
+Dependents become ready only when their dependencies are `done`.
 
-1. For each repo: `git -C <wt> rebase <base>`.
-   On conflict: `rebase --abort` → Implementer `conflicts` turn (rebase, resolve, rerun the relevant tests, commit, report) → Leader `verify` turn with the post-rebase facts.
-   At most `integration.conflict_rounds` (2) rounds, then escalate `integration_conflict`.
-2. **Pre-check for all repos**, before merging anything:
-   - `merge-base --is-ancestor <base> <branch>` holds.
-   - If the main checkout has `base` checked out, none of its dirty paths overlap the changed paths.
-   If the pre-check fails because of Operator edits in the main checkout: `integration` hold, retry every 2 min for up to `integration.dirty_wait` (30 min), then escalate `integration_blocked`.
-3. **Merge** (`integration = "merge"`):
-   - If the main checkout has `base` checked out: `git -C <repo> merge --ff-only <branch>`.
-   - Otherwise: `git update-ref refs/heads/<base> <branch sha> <old base sha>`.
-   - Then `git push <remote> <base>` if `push = true`.
-4. **PR** (`integration = "pr"`):
-   - `git push -u <remote> <branch>`.
-   - `gh pr create --base <base> --head <branch> --title "<T-12> <title>" --body <summary + verdict + risks>`.
-   - Set the `waiting` status with a `pr_open` hold. Poll `gh pr view --json state` every 5 min: `MERGED` → done, `CLOSED` → escalate.
-5. `done`: cleanup (§6), close the window, emit `task_done` with the summary, commits and residual risks.
+## 7. Recovery
 
-Dependents become ready only after their dependency is `done`, i.e. its changes are on `base`.
+`TaskFlow` passes every non-`Completed` `TurnResult` to the pure `recovery.decide(result, counters, policy) → Action`, then applies the action:
 
-## 8. Resilience
-
-### 8.1 Failure signals
-
-Plugins emit `TurnFailed(kind, resets_at?, message)` with a normalized kind. The Helper classifies `OTHER` messages into one of these kinds when it can.
-
-| Kind | Handling |
+| Result | Action |
 |---|---|
-| `quota` | `on_quota = "wait"` (default): `quota` hold until `resets_at + 60 s`. If `resets_at` is unknown, probe every 15 min by injecting `continue.md`. If the wait would exceed `max_quota_wait` (8 h), or `on_quota = "next"`: move to the next rung whose agent differs. After the wait: inject `continue.md` into the live session, or resume the session if it exited. Other tasks on the same agent stay blocked by the same hold, which is set per agent. |
-| `unavailable` (overloaded, model missing) | Back off 30 s, 2 min, 5 min, then move to the next rung |
-| `context` (overflow) | Compact and retry once, then start a new session on the same rung with a handoff |
-| `auth` | Escalate `agent_auth` immediately |
-| `other` | Retry once, then escalate `agent_error` |
+| `Failed(QUOTA)` | Block the agent in `agent_blocks` until `resets_at + 60 s` (unknown reset: +`QUOTA_PROBE` 15 min, then re-inject `continue`). If the wait exceeds `timeouts.max_quota_wait`: next rung with a different agent; none left → `quota_exhausted` |
+| `Failed(UNAVAILABLE)` | Retry after 30 s, 2 min, 5 min; then next rung; none left → `ladder_exhausted` |
+| `Failed(CONTEXT)` | New session on the same rung with `handoff` (once), then `agent_error` |
+| `Failed(AUTH)` | `agent_auth` |
+| `Failed(OTHER)` | Retry once, then `agent_error` |
+| `PaneDied` | Relaunch with resume (≤ 2 per turn), then next rung, then `agent_crash` |
+| `Stalled(screen)` | `helper.classify_screen`: `working` → keep waiting · `dialog` → send the keys if they are all in `keys.safe` · `question` → consult · `quota` → same as `Failed(QUOTA)` · `error` → same as `Failed(OTHER)`. More than 2 per turn → `agent_stuck` |
+| `ProtocolError` | `agent_protocol` |
 
-### 8.2 Model ladder
+**Rungs**:
+- The resolved rung is `overrides[role]` if set, otherwise the ladder at `rung_index[role]`.
+- The Leader uses `roles.leader.ladder`. The Implementer uses `roles.implementer.complexity.<c>.ladder`, falling back to `roles.implementer.ladder`.
+- Each rung change emits `rung_changed`.
 
-Rungs are `{agent, model, effort}` (05-data §1). Moving up happens on repeated rejections (§3), `unavailable` and the quota policy. Every rung change is an event and appears in the pane title.
-The rung index never moves down within a task. `shikiru rung T-12 implementer codex:gpt-5.6-sol:high` sets an explicit override.
-If no rung is left, escalate `ladder_exhausted`.
+**Engine restart (`Reconciler`)**:
+1. Rebuild the tmux session and windows from the DB (`LayoutGuard`).
+2. For each `running` or `integrating` task, ensure sessions (§4.1), then re-run the current step. The step's turn is idempotent: an existing valid `report.json` is consumed without re-injecting.
+3. Pending `commands` are processed by the normal loop.
 
-### 8.3 Pane death
+## 8. Escalation
 
-Relaunch with resume, at most 2 times per turn. After that, move to the next rung. If that fails too, escalate `agent_crash` with the dead pane's output kept, since `remain-on-exit` is on.
+| Reason | Raised when | Options (★ = recommended default) |
+|---|---|---|
+| `decision_required` | The Leader escalates (product decision, conflicting requirements, missing access), or the consult limit is exceeded | answer ★, cancel |
+| `iterations_exhausted` | Final round still `changes_requested` | answer ★ (one more final round with guidance), accept, cancel |
+| `integration_conflict` | Conflict rounds exhausted | retry ★, cancel |
+| `integration_blocked` | Main checkout blocked beyond `integration_wait` | retry ★, cancel |
+| `pr_closed` | PR closed unmerged | retry ★ (new PR), cancel |
+| `agent_auth` / `agent_error` / `agent_crash` / `agent_stuck` / `agent_protocol` | §7 | retry [--rung] ★, cancel |
+| `ladder_exhausted` / `quota_exhausted` | §7 | retry [--rung] ★, cancel |
+| `dependency_cancelled` | A dependency was cancelled | retry ★ (drop the dependency), cancel |
 
-### 8.4 Engine restart (`Reconciler`)
+**Packet** (`runs/T/escalations/E-n.md`, path stored in the DB):
+- headline (task, step, reason, one sentence)
+- timeline of recent events
+- what was tried
+- evidence: latest reports and verdict, facts, last 60 pane lines, session ids and resume commands
+- the Leader's question
+- applicable options with consequences and exactly one ★
 
-On start:
-1. Clear stale locks.
-2. Rebuild the tmux session and windows from the DB.
-3. For each `running` or `integrating` task:
-   - If the stored pane is alive, re-attach the plugin session with `LaunchSpec.restore = runs.agent_state` (no relaunch).
-   - Otherwise relaunch with resume (or handoff without `RESUME`).
-   - Then either consume an existing valid `report.json` or re-inject the current turn's pointer.
-   - Integration restarts from §7.1, which is idempotent.
-4. Process pending `commands`.
+**Resolution**: `resolve E-n <answer TEXT | retry [--rung a:m:e] | accept | cancel>`.
+- `answer` runs a consult turn with the text, then continues from the recorded step.
+- `retry` re-runs the failed step.
+- `accept` integrates.
+- `cancel` cancels the task and keeps the branch.
 
-### 8.5 Stall
+Resolved tasks are re-queued with `requeued_at`. Raising an escalation frees the slot and notifies.
 
-A turn is stalled when no `Activity` signal has arrived for `stall_timeout` (20 min). Plugins emit `Activity(tool_running=True)` while a tool runs; in that case the limit is `tool_timeout` (120 min), so long test tiers aren't flagged.
+## 9. Operator access and intervention
 
-On a stall:
-1. Capture the visible screen (`capture-pane -p -J`).
-2. The Helper classifies it into one of:
-   - `working` → extend the timer.
-   - `dialog{keys}` → send the keys, but only from the adapter's `safe_keys`.
-   - `question{text}` → treat as `TurnEnded` with `needs_decision`, which leads to a consult.
-   - `error{text}` → `TurnFailed(other)`.
-3. After two stall recoveries in one turn → escalate `agent_stuck`.
-
-An `AttentionNeeded` signal starts stall analysis immediately.
-
-## 9. Escalation
-
-**Escalations are raised only in these cases**:
-
-| Reason | Trigger |
-|---|---|
-| `decision_required` | Leader `Verdict`/`ReplanDecision` `escalate` (product decision, conflicting requirements, missing access or credentials) |
-| `iterations_exhausted` | `replan` decides `escalate` |
-| `integration_conflict`, `integration_blocked`, `pr_closed` | §7 |
-| `agent_auth`, `agent_error`, `agent_crash`, `agent_stuck`, `agent_protocol`, `ladder_exhausted` | §4, §8 |
-| `quota_exhausted` | The quota wait exceeds `max_quota_wait` and no other agent rung exists |
-| `budget_exceeded` | The task cost exceeds `budget_usd` (optional) |
-| `dependency_cancelled` | A dependency was cancelled |
-
-**Packet** `runs/T/escalations/E-3.md`, which also goes in DB `escalations.packet`, contains:
-- **Headline**: task, step, reason and a one-sentence summary.
-- **What happened**: a timeline of the last events.
-- **What was tried**: retries, rungs, nudges, consults.
-- **Evidence**: latest reports and verdict (full), facts, the last 60 lines of the pane, session ids, resume commands.
-- **Question**: from the Leader when present.
-- **Options**: numbered, with consequences and one marked ★ recommended. Leader options come first, then the engine's standard options that apply:
-
-| Option | Effect |
-|---|---|
-| `answer <text>` | Consult turn for the Leader with the text. The flow continues from the recorded step. |
-| `retry [--rung a:m:e]` | Re-run the failed step (optionally on another rung) |
-| `accept` | Override the verdict and integrate |
-| `leave` | Mark `done` without integrating. The branch is kept. |
-| `cancel` | Cancel the task. The branch is kept. |
-
-**Resolution**: `shikiru resolve E-3 <option> [text]` (CLI, MCP or palette). The engine re-queues the task with precedence, or finishes it.
-Raising an escalation frees the slot, sends a notification (06-operator §6) and turns the pane borders of the task window red.
-
-## 10. Operator access and intervention
-
-Every agent session is a real interactive session that the Operator can reach at any time:
+Every action is scoped to **one task**. Other tasks, including parallel ones on the same agent, are unaffected, because each task runs in its own coroutine. The only cross-task effect is an agent quota block (§7), because quota belongs to the account.
 
 | Action | Human | Tool / AI (CLI `--json`, MCP) | Engine behaviour |
 |---|---|---|---|
-| Watch | attach, select the task window | `peek T-12 --role leader [--lines N]` → last assistant message, pane screen, usage | — |
-| Type into a session | click or select the pane and type | `say T-12 --to implementer "…"` | See below |
-| Pause / resume | palette, `pause T-12 [--now]` | same | `pause` stops before the next turn. `--now` also sends the adapter's `interrupt_keys` (`Escape`). |
-| Change model | `rung T-12 <role> a:m:e` | same | Applied at the next turn by resuming the session |
-| Redo a step | `retry T-12 [--step verify]` | same | Aborts the current turn and runs the step again |
-| Open elsewhere | `sessions T-12` → `cd <root> && claude --resume <id>` | same | — |
+| Watch | attach, select the window | `peek T --role R` | Last message, pane screen, usage (from the DB and `capture-pane`) |
+| Type into a session | select the pane and type | `say T --to R "…"` | See below |
+| Pause / resume | palette, `pause T [--now]` | same | `pause` stops before the next turn; `--now` interrupts and cancels the current step |
+| Change model | `rung T R a:m:e` | same | Applied at the next turn (§4.1) |
+| Redo current step | `retry T` | same | Cancels and re-runs the current step |
+| Open elsewhere | `show T` lists `resume_command` | same | — |
 
-**Scope: always one task.** Every intervention, hold, pause and resume applies to the one task that owns the pane or is named in the command. Other tasks, including those running in parallel on the same agent, are unaffected. Each task has its own `TaskFlow` coroutine, and a hold only blocks that coroutine.
-`quota` is the one hold that spans tasks: it is set per agent account, because the account's limit is shared (§8.1).
+**Manual intervention.** A `PromptSubmitted` whose text isn't in the run's injected set sets the `intervention` hold on **that task**.
+- **While set**: no nudges, stall handling or new turns. The pane border turns operator magenta and the title shows `⌨ operator`.
+- **Cleared** when the current turn ends with a valid report (the Operator helped finish it), or on `resume T`, which injects `continue` into that pane.
 
-**Detecting manual intervention.** The engine records every line it injects into a run: pointers, nudges, `continue.md`, `say` pointers and compact commands. The `intervention` hold is set on **that task only** when:
-- **plugins with `PROMPT_EVENTS`**: a `PromptSubmitted` signal arrives whose prompt matches none of the recorded lines;
-- **plugins without it**: `Activity` appears while the task has no turn in flight (between turns or after the report). Input typed during an in-flight turn can't be told apart from the agent's own output, so the Operator should run `pause T-12` first. The palette's "Intervene" action does this automatically.
+**`say`** writes `runs/T/messages/NNN.md` and injects `Operator message: read <path> and take it into account.` Agent TUIs queue input while busy, so `say` works mid-turn and never sets `intervention`.
 
-While the hold is set:
-- that task's nudges, stall detection and new turns are suspended;
-- its pane titles show `⌨ operator` and its pane border turns `role.operator` magenta;
-- its comic strip shows an `OPERATOR` stamp.
+## 10. Scheduling
 
-The hold clears:
-- when a valid `report.json` for the current turn appears and the turn ends (the Operator helped finish it), or
-- on `resume T-12`, which resumes only T-12 and injects `continue.md` into the pane that was intervened.
+The `Scheduler` runs on every state change and every `orchestration.poll_seconds`.
 
-`say` writes `runs/T/messages/NNN.md` and injects the pointer `Operator message: read <path> and take it into account.` Both CLIs queue input typed during a busy turn, so `say` works mid-turn and never sets the `intervention` hold.
-
-## 11. Scheduling
-
-The `Scheduler` runs on every state change and at least every 5 s.
-
-1. **Ready set**: `queued` tasks with no `paused` hold whose dependencies are all `done`. A task with a `cancelled` dependency is escalated `dependency_cancelled` instead.
-2. **Order**: tasks resumed from an escalation first, then `priority` descending, then `seq` ascending.
-3. **Dispatch**: fill free slots (`max_parallel` minus the number of `running`/`integrating` tasks) in that order. Stop at the first task that fails a gate, so priority order is kept.
-   - **Resource gate**: host CPU averaged over 30 s `< max_cpu_pct` and available RAM `≥ min_free_ram_gb`. On failure, set a `resources` hold, visible in the queue widget, and retry on the next tick.
-   - **Quota gate**: the task's first Leader rung agent is not under a `quota` hold. Starting it would only park it in a slot.
-4. `Scheduler.explain(task)` returns the blocking reason (dependency, slot, resources, quota, paused) for `queue`, `show` and the dashboard.
-
-Slots are numbered. A task takes the lowest free number and keeps it until it leaves `running`/`integrating`. The slot number is exported as `SHIKIRU_SLOT`.
-
-Rebase-and-merge keeps each task's own commits instead of cloning repositories, and worktrees share one object store. That covers the requirement for a separate branch per task with build caches kept (see D6).
+1. **Ready**: `queued`, not `paused`, all dependencies `done`. A cancelled dependency raises `dependency_cancelled`.
+2. **Order**: `requeued_at` set first, then `priority` descending, then `seq`.
+3. **Dispatch** in order until a gate fails; the task stops there and its reason is written to `wait_reason`. Gates:
+   - **slot**: a free slot exists;
+   - **resources**: `ResourceSampler` 30 s CPU average `< resources.max_cpu_pct` and available RAM `≥ resources.min_free_ram_gb`;
+   - **quota**: neither the Leader's nor the Implementer's resolved agent is blocked.
+4. **On dispatch**: assign the lowest free slot, create the task window (`LayoutGuard`) and start the `TaskFlow` coroutine.

@@ -4,84 +4,97 @@
 
 | Concern | Choice |
 |---|---|
-| Runtime | Python 3.14 (`asyncio.TaskGroup`, `type` aliases, PEP 649 annotations), packaged with **uv** (`uv tool install shikiru`) |
-| CLI | Typer + Rich |
-| TUI | Textual (dashboard, palette, inline wizard and pickers) |
-| Models / validation | pydantic v2 |
-| Config | `tomllib` (read), `tomlkit` (edit) |
-| Templates | Jinja2 (`StrictUndefined`, autoescape off) |
-| DB | stdlib `sqlite3` via `asyncio.to_thread` in the engine; SQL migrations |
-| System metrics | psutil |
-| MCP | `mcp` (official SDK, FastMCP, stdio) |
-| External binaries | tmux ≥ 3.4, git ≥ 2.45, optional `gh`, `docker`, `terminal-notifier`/`notify-send` |
-| Lint / format | ruff (`select = ["ALL"]` with a short, documented ignore list; format) |
-| Architecture rules | import-linter (engine and core import only `shikiru.agents.contracts`; plugins don't import the engine) |
-| Types | basedpyright `strict` |
-| Dead code / deps | vulture (min-confidence 80), deptry |
-| Tests | pytest, pytest-asyncio, pytest-cov (`fail_under = 80`), pytest-timeout |
+| Runtime | Python 3.14, uv (`uv tool install shikiru`) |
+| CLI / TUI | Typer + Rich / Textual (pinned minor versions) |
+| Validation | pydantic v2 |
+| Config | `tomllib` |
+| Templates | Jinja2 with `StrictUndefined` |
+| DB | stdlib `sqlite3` in `store`, called via `asyncio.to_thread` from the engine |
+| Metrics | psutil |
+| MCP | official `mcp` SDK (FastMCP, stdio) |
+| External | tmux ≥ 3.4, git ≥ 2.45; optional `gh`, `docker` |
+| Quality | ruff (format + `select = ["ALL"]` with a short documented ignore list, `banned-api` rules from 02 §2), basedpyright `strict`, import-linter (02 §2 layers), vulture |
+| Tests | pytest, pytest-asyncio, pytest-timeout, coverage (`fail_under = 80`, `patch = ["subprocess"]`, `parallel = true`) |
 
 ## 2. Conventions
 
-- **SOLID**: one responsibility per module, following the component table in 02-architecture §2.
-  - Extension goes through protocols and entry points.
-  - Constructors take their dependencies (no globals or singletons). The only composition root is `engine/daemon.py::build_engine()` or `cli/app.py::build_service()`.
-- **No god objects**: a class over ~200 lines or with more than 7 public methods gets split. Steps, adapters and widgets stay small.
-- **No agent- or environment-specific literals** in the core: model names, flags, paths, keys and timeouts live in `defaults.toml` or in adapters.
-- **No comments.** Clear names instead. Docstrings only on public contracts (`contracts.py`, `DashboardWidget`, `OperatorService`, report models) and on their implementations.
-- **Pure domain**: `domain/` has no I/O and is unit-tested.
-- **Subprocesses**: argv lists only, never `shell=True`. Every call goes through one of `tmux.client`, `workspace.git`, or `SubprocessRunner` (timeouts, decoded output, typed errors).
-- **Errors**: a `ShikiruError` hierarchy with user-facing messages. The CLI maps it to exit codes. No bare `except`.
-- **Commits**: conventional commits. Refactorings go in separate `refactor:` commits.
-- **Quality gate** (`uv run poe check`): `ruff format --check`, `ruff check`, `lint-imports`, `basedpyright`, `vulture`, `deptry`, `pytest -m "not e2e"` with coverage. It must be green before every commit made by an agent.
+1. **SOLID**:
+   - one reason to change per class (if its description needs "and", split it);
+   - extend through protocols and entry points;
+   - constructor injection only;
+   - `bootstrap.py` is the single composition root.
+2. **KISS/YAGNI**:
+   - no speculative options, layers or generic frameworks;
+   - functions over classes when there is no state;
+   - one way to do each thing.
+3. **Pure core**: `domain` has no I/O. Decisions (transitions, rungs, recovery, scheduling, escalation options) are pure functions.
+4. **Boundaries**:
+   - SQL only in `store`;
+   - subprocesses only via `process.SubprocessRunner`;
+   - time only via `clock.Clock`;
+   - agent specifics only in `plugins/agents/*`;
+   - all enforced by lint.
+5. **Values**: operator tunables go in `defaults.toml` (05 §1). Protocol constants are named module constants. No other literals.
+6. **Async**: the engine is asyncio. Blocking work goes through `asyncio.to_thread` or async subprocesses.
+7. **Errors**: a `ShikiruError` hierarchy with user-facing messages. The CLI maps errors to exit codes. No bare `except`, no silent fallbacks.
+8. **No comments**: names explain. Docstrings only on public contracts (`agents.contracts`, `DashboardWidget`, operator services, report and command models) and their implementations.
+9. **Commits**: conventional commits, one logical change each. Refactorings go in separate `refactor:` commits.
+10. **Gates**:
+    - `uv run poe check` (format, lint, imports, types, dead code, non-E2E tests with coverage) must pass before every commit.
+    - `uv run poe e2e` runs real-agent scenarios.
 
-## 3. Test strategy
+## 3. Tests
 
-| Layer | Scope | Real dependencies | Share |
-|---|---|---|---|
-| Unit | `domain/` (transitions, ladder, scheduling, escalation policy, holds), report validators, config merge and overrides, agent SDK parsers (reset time, prices) | none | small |
-| Integration | store and migrations; workspace (real git repos in tmp, CoW clone); integration merge/conflict/PR (PR through a fake `gh` on PATH); tmux client, layout, protection and window lifecycle on a **private socket**; agent SDK building blocks (hook recorder, JSONL tail, pane activity, quiescent turn detection); every agent plugin through `AgentContractSuite` with recorded fixtures (the fake agent plugins pass it too); engine flow with the **fake agent**; CLI commands; MCP tools through an in-memory client; dashboard widgets through Textual `run_test()` snapshots | git, tmux, sqlite, Textual | most |
-| E2E | Full `shikiru` with real Claude Code and Codex on a fixture project | everything | scenarios §5 |
+| Layer | What | How |
+|---|---|---|
+| Unit | `domain` rules (transitions, `pick_rung`, `recovery.decide`, `pick_ready`, escalation options), report and command model validators, config merge, SDK parsers (`ResetTimeParser`, `PriceTable`), glyph width safety | Table-driven, no I/O |
+| Integration | Everything else, against real SQLite, git, tmux and Textual, with the fake agent: store; workspace; tmux client, layout, guard and decorations; session manager, monitor and turn runner; task flow paths; integration strategies (`gh` faked on PATH); engine and handlers; reconciler; operator services; CLI; MCP (in-memory client); widgets (Textual `run_test`); plugin offline contract checks | Behaviour assertions on observable outcomes: DB rows, events, git history, files, tmux state |
+| E2E | Real Claude Code and Codex | §5 |
 
-**Isolation rules** (lessons from v4):
-- Tests never touch the Operator's tmux server. `SHIKIRU_TMUX_SOCKET` (test-only env var, read by `tmux.client`) points at `tmux -L shikiru-test-<uuid>`, which is killed in teardown.
-- Tests never touch the real `~/.claude` or `~/.codex` state, except E2E, which uses real agents by design.
-- Every test has a timeout (default 60 s, E2E 60 min). No wall-clock sleeps: wait on conditions with deadlines.
+**Test infrastructure** (`tests/support/`):
+- **`tmux_server` fixture**: `tmux -L shikiru-test-<uuid> -f /dev/null` with a fixed `-x 200 -y 50`, `default-shell /bin/sh` and a clean env. Killed in teardown, unique per xdist worker.
+- **`wait_until(predicate, timeout)`**: the only way to wait. No sleeps.
+- **`FakeClock`**: injected into the engine, so timeouts, backoffs, quota waits and PR polls run instantly.
+- **Fake agent plugin** (`tests/fixtures/fake_agent/`): a line-reading REPL in a real pane that emits hook lines through `HookRecorder`.
+  - It is scripted by `SHIKIRU_FAKE_SCRIPT` to: accept, changes_requested×N, needs_decision, no report, fail(kind, resets_at), crash, stall, dialog.
+  - It runs the real `shikiru report` and commits files.
+  - It passes `AgentContractSuite`.
+- **In-process engine**: flow tests run `build_engine()` inside the test process, so coverage is measured directly. The subprocess patch covers `shikiru hook`/`report`/CLI.
 
-**Fake agent** (`tests/fixtures/fake_agent/`):
-- A small line-reading REPL, launched in a real pane like any agent, so pasted pointers arrive on stdin. It is registered as the `fake` agent plugin in the test environment.
-- It ships as two small code plugins, `fake-hooks` (uses `HookRecorder`) and `fake-plain` (uses `PaneActivity` and `QuiescentTurnDetector`, no hooks). Both pass `AgentContractSuite`, which proves the contract and the SDK serve agents with and without hooks. It reads scripted behaviours from `SHIKIRU_FAKE_SCRIPT`: accept, changes_requested×N, needs_decision, no-report, quota(resets_at), crash, stall, dialog.
-- It runs the real `shikiru report`, and edits and commits files.
-- It proves the Open-Closed contract and makes every engine path deterministic.
+**Meaningful tests, no snapshot spam**:
+- Assert behaviour and properties: rendered width ≤ available columns; every state shows a word or glyph under `NO_COLOR`; a packet has all sections and exactly one ★; a template contains the request and the report instruction, and `StrictUndefined` raises on missing fields.
+- Golden snapshots are limited to one strip per mode at two widths.
+- No tests of private functions or mocks of our own classes: fake only process boundaries (agents, `gh`).
+- Each test name states the behaviour (`test_rejected_twice_moves_implementer_up_one_rung`).
 
-## 4. Recorded fixtures
+## 4. Agent samples
 
-- `doctor --probe` and E2E runs save hook payloads, transcript and rollout tails, quota probe outputs, screen captures and Helper responses under `tests/fixtures/recorded/<agent>/<version>/`.
-- Parser unit tests run against every recorded version. Upgrading a CLI means recording a new version, not rewriting parsers blindly.
+Plugin offline checks use real agent files committed under `tests/fixtures/agents/<agent>/`: hook payloads, transcript and rollout excerpts, error entries, quota probe output. They are captured once from real runs. When an agent CLI changes format, add new samples next to the old ones.
 
-## 5. E2E scenarios (`pytest -m e2e`, requires `SHIKIRU_E2E=1`, logged-in agents)
+## 5. E2E scenarios (`poe e2e`, `SHIKIRU_E2E=1`)
 
 **Fixture project** `tests/fixtures/sample-project`:
-- A tiny Python package `calc` with pytest.
-- `CLAUDE.md` and `AGENTS.md` telling agents to run tests, commit, and tick items in `tasks/todo.md`.
-- `tasks/plan.md` with Phases A–B and 5 small tasks with ACs.
-- A copied `node_modules`-like cache dir to prove CoW cloning.
-- A second repo variant for multi-repo.
+- a tiny Python package with pytest;
+- `CLAUDE.md`/`AGENTS.md` telling agents to test, commit and tick `tasks/todo.md`;
+- `tasks/plan.md` with small tasks. Phase B's todo items are **adjacent lines**, so parallel tasks force a rebase conflict.
+- A multi-repo variant.
 
-Each scenario copies the fixture to a tmp dir, runs `shikiru init --yes` with cheap rungs (`--set` to low-cost models), `start`, and asserts on observable outcomes only: git history, tracker files, `shikiru show --json`, events, the tmux session state.
+**Runs**:
+- Each scenario copies the fixture, runs `init --yes --set` with the cheapest rungs, `start`, and asserts only observable outcomes.
+- Each scenario has a 30-minute timeout and one automatic rerun.
+- `poe e2e` writes `tests/e2e/results/<date>.json` (scenario, pass/fail, cost).
+- A plan AC that names an E2E scenario is ticked only with a passing results file committed.
 
 | # | Scenario | Proves |
 |---|---|---|
-| E1 | `submit "Implement task A1 from tasks/plan.md"` → done | Triage → implement → verify → merge. Commit on `main`, A1 ticked in todo.md, window closed, `shikiru` window restored, cost and tokens recorded for both agents |
-| E2 | Task whose AC requires an edge case the Implementer is told (via `say`) to skip at first | `changes_requested` loop ≥ 2 iterations; `say` message delivered; final accept |
-| E3 | `submit "Implement all tasks in phase B"` with `max_parallel = 2` | Split → children with dependencies; two task windows in parallel; dependency order respected; rebase conflict in todo.md resolved by the Implementer; all merged |
-| E4 | `submit "Plan tasks for adding a power operation"` | Plan mode: plan.md updated and merged; `new_tasks` enqueued when asked |
-| E5 | Request with a deliberate product ambiguity ("choose rounding mode per product decision") | `decision_required` escalation packet complete; an AI Operator resolves it through `shikiru mcp` (`wait_for_events` → `resolve_escalation`); task completes |
-| E6 | Kill the engine mid-implement (`SIGKILL`), then `start` | Reconcile: same session id resumed, turn completes, no duplicate commits |
-| E7 | Kill the implementer pane process mid-turn | Pane death → resume with the same session id → completes |
-| E8 | Manual intervention: type into the implementer pane through `send-keys` as an Operator | `intervention` hold set, no nudges, `resume` continues, completes |
-| E9 | `attach --host localhost` (sshd on the CI host) and `ls --host` | Remote listing and attach command construction; the attached client sees the session |
-| E10 | Monorepo vs multi-repo variants of E1 | Topology agnostic: worktree mirroring and per-repo merges |
-| E11 | `doctor --probe` for both agents | Live contract suite: launch, report, resume, usage, quota, no dialogs |
-| E12 | Two tasks in parallel; the Operator types into T-1's implementer pane | Only T-1 gets the `intervention` hold. T-2 keeps running and completes. `resume T-1` continues T-1 only |
+| E1 | `submit "Implement task A1 from tasks/plan.md"`, run for monorepo and multi-repo | Triage → implement → verify → merge; commit on `base`; A1 ticked; window closed; usage recorded for both agents; topology agnostic |
+| E2 | A task whose AC needs an edge case, plus `say` to the Implementer mid-turn | ≥ 1 changes_requested loop, the message delivered, final accept |
+| E3 | `submit "Implement all tasks in phase B"` with `max_parallel = 2` | Split → dependent children; two task windows at once; the conflict in todo.md resolved; all merged |
+| E4 | An ambiguous request ("rounding mode is a product decision") | `decision_required` packet; an AI Operator resolves it via `shikiru mcp` (`wait_for_events` → `resolve_escalation`); task done |
+| E5 | `SIGKILL` the engine after the implement `turn_started` event, then `start` | Session attached or resumed with the same id; turn completes; no duplicate commits |
+| E6 | Two parallel tasks; the Operator types into T-1's implementer pane | Only T-1 gets `intervention`; T-2 completes; `resume T-1` completes T-1 |
 
-Quota exhaustion, overload, stall with dialog, ladder moves and budget escalation can't be triggered on demand with real agents. They are covered by fake-agent integration tests driven by recorded real failure payloads.
+**Covered by integration tests with the fake agent instead**:
+- quota wait and resume, unavailable backoff, ladder moves;
+- pane death, stall with dialog, report rebuild;
+- PR strategy, plan mode, remote attach argv, pane restoration.

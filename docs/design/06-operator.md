@@ -1,357 +1,242 @@
 # 06 · Operator Interfaces
 
-All interfaces call the same `OperatorService` use cases. CLI, MCP and the dashboard palette are thin adapters over it.
+## 1. Operator layer
 
-## 1. CLI
+CLI, MCP and the dashboard palette are thin adapters over three small services:
 
-Global options:
-- `--project PATH|NAME` (default: the nearest ancestor with `.shikiru/`). A NAME is resolved through the `SHIKIRU_PROJECT_DIR` environment of the running `[shikiru] NAME` session.
-- `--json` (machine output, no colour, and no spinner on stdout)
-- `--set k=v`
-- `-q`
+| Service | Responsibility |
+|---|---|
+| `OperatorQueries` | Read-only views over `StateReader`: status, tasks, task detail, escalations (with packet), peek (DB + `capture-pane`) |
+| `OperatorCommands` | `send(command) -> Ack`. Inserts the typed command row; if the engine is up, waits up to 10 s for `done`/`rejected`; if it's down, returns `queued` ("applies when the engine starts") |
+| `EventFeed` | `read(since, kinds, task)` and `wait(since, kinds, task, timeout)` over `events` |
 
-Exit codes: `0` ok, `1` error, `2` usage, `3` not initialised, `4` engine down, when the command needs the engine.
+## 2. CLI
+
+- **Global options**: `--project PATH` (default: nearest ancestor with `.shikiru/`), `--json`, `--set k=v`.
+- **Exit codes**: `0` ok, `1` error, `2` usage, `3` not initialised, `4` command rejected.
 
 | Command | Purpose |
 |---|---|
-| `init [--yes]` | Wizard (§2). `--yes` accepts all detected defaults |
-| `start [--attach]` | Start the engine daemon and the tmux session. Report config errors. `--attach` attaches afterwards |
-| `stop [--force]` | Stop the engine gracefully (current turns keep running in panes and are reconciled on the next start). `--force` also kills the tmux session |
-| `attach [--host H] [--project P]` | §5.5 |
-| `ls [--host H]` | List Shikiru sessions: name, project path, engine state, active and queued counts |
-| `status` | Engine, slots, active tasks, holds, open escalations, quotas |
-| `submit "<request>" [flags]` | Enqueue a request (05-data §1 flags). Prints `T-n` |
-| `queue` / `tasks [--all]` / `show T-n` | Queue, tasks, task detail (timeline, runs, turns, reports, cost, branches) |
-| `prioritize T-n (--priority N / --top / --bottom / --before T-m)` | Re-prioritise a queued task |
-| `pause T-n [--now]` / `resume T-n` / `cancel T-n` / `retry T-n [--step S]` | Task control; always scoped to the named task only |
+| `init [--yes]` | Wizard (§3); `--yes` writes the detected defaults |
+| `start [--attach]` | Validate config and plugins, start the engine, ensure the session. On a running engine it only ensures the session. A name collision with another project fails with a hint to set `project.name` |
+| `stop [--kill-session]` | Stop the engine; turns keep running in panes and are reconciled on the next start |
+| `ls [--host H]` / `attach [--host H] [--project NAME]` | §5.6 |
+| `status` | Engine up/down, slots, active tasks and holds, open escalations, usage and quota per agent |
+| `submit "<request>" [flags]` | Prints the `T-n` id (05 §1 flags) |
+| `tasks [--all]` | Active and queued tasks in dispatch order with `wait_reason`; `--all` adds finished ones |
+| `show T-n` | Strip, timeline, reports and verdicts, usage, branches, session ids and resume commands |
+| `prioritize T-n N` | Set priority |
+| `pause T-n [--now]`, `resume T-n`, `cancel T-n`, `retry T-n` | Task control (03 §9) |
 | `rung T-n <role> <agent:model:effort>` | Model override from the next turn |
-| `say T-n --to leader/implementer "<text>"` | Message an agent session |
-| `peek T-n --role R [--lines N]` | Last assistant message, pane screen, usage |
-| `sessions T-n` | Session ids and resume commands (from each plugin's `resume_hint`) |
-| `escalations [--all]` / `resolve E-n <option> [text] [--rung a:m:e]` | Escalations |
+| `say T-n <role> "<text>"`, `peek T-n <role>` | Session access |
+| `escalations [--all]`, `resolve E-n <answer TEXT/retry [--rung R]/accept/cancel>` | Escalations |
 | `events [--follow] [--since ID] [--task T-n]` | Event stream (NDJSON with `--json`) |
-| `usage` | Tokens, cost and quotas by agent, role and task |
-| `doctor [--probe]` | Environment and config checks. `--probe` runs 04-agents §5 |
-| `config show/set` | 05-data §1 |
-| `mcp` | Stdio MCP server (§3) |
-| internal (hidden): `engine`, `dash`, `hook`, `report`, `palette`, `tmux-event`, `idle` | Process entrypoints |
+| `doctor [--probe]` | Environment, config and plugin checks; `--probe` runs live contract checks 1–2 |
+| `config show` | Merged config |
+| `mcp` | Stdio MCP server |
+| hidden: `engine`, `dash`, `palette`, `hook`, `report` | Process entrypoints |
 
-**Human output**:
-- Rich panels, tables and trees, truecolor with a 256-colour fallback. `NO_COLOR` and non-TTY output are respected.
-- OSC 8 hyperlinks for files and PR URLs.
-- `rich.status` spinners and progress for long steps (init discovery, start, doctor probes).
-- Commands that change state wait for the engine's acknowledgement (§4) and show the result.
+**Output**:
+- Human output uses the `ui` renderables and tokens (§6): panels, tables, strips.
+- Spinners show on long operations.
+- OSC 8 links for paths.
+- `NO_COLOR` and non-TTY output switch to monochrome.
+- `--json` prints pydantic models.
 
-## 2. `shikiru init` wizard
+## 3. `init` wizard
 
-The wizard is a Textual app in inline mode (`App.run(inline=True)`). Every step is prefilled with a detected default.
+`dashboard/wizard.py` is an inline Textual app. It shares `detectors.py` with `init --yes`:
+1. **Repos**: cwd is a git work tree → `path="."`; otherwise scan subfolders (depth ≤ 4) for `.git`. `base` = the current branch.
+2. **Agents**: installed plugins whose `doctor()` passes. Choose ladders for leader, implementer and helper.
+3. **Trackers**: glob `tasks/*.md`, `**/plan*.md`, `**/todo*.md`.
+4. **Prompt prefix per agent** (suggested when a `using-*` skill is found).
+5. **Caches**: existing ignored dirs among common cache names, plus a CoW support check.
+6. **Parallelism and integration mode.**
+7. **Finish**: write `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor`.
 
-1. **Repos**: if cwd is a git work tree → monorepo `path="."`. Otherwise scan subfolders (depth ≤ 4, skipping ignored and heavy dirs) for `.git`. Multi-select. Record the current branch of each as `base`.
-2. **Agents**: detect `claude` and `codex` on PATH, with version and login state (`claude auth status`, `codex login status`). Choose ladders for leader, implementer and helper. Model lists come from agent caches (`~/.codex/models_cache.json`) plus aliases.
-3. **Trackers**: glob `tasks/*.md`, `docs/**/plan*.md`, `**/todo*.md` → pick.
-4. **Skills prefix**: detect installed skills that match `using-*` in `~/.claude/skills`, plugins and `~/.codex/skills` → suggest the per-agent `prompt_prefix` (empty allowed).
-5. **Caches**: list existing ignored dirs among the known cache names → select. Check copy-on-write support.
-6. **Orchestration**: `max_parallel` (default `min(2, cpu/4)`), integration mode.
-7. **Write** `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor` (without probe) and offer `doctor --probe`.
+## 4. MCP (`shikiru mcp`)
 
-## 3. MCP server (`shikiru mcp`)
+- **Transport**: stdio via FastMCP.
+- **Remote use**: `{"command": "ssh", "args": ["host", "shikiru", "mcp", "--project", "/path"]}`.
+- **Tools** map 1:1 to the operator services:
 
-- Stdio transport (official `mcp` SDK, `FastMCP`). The project comes from `--project` or cwd.
-- Remote use: `ssh host shikiru mcp --project ferrum`. For a remote host, the Operator's agent config is: `{"command": "ssh", "args": ["host", "shikiru", "mcp", "--project", "ferrum"]}`.
-
-Tools map 1:1 to `OperatorService`, with typed pydantic inputs and outputs:
-
-| Tool | Notes |
+| Group | Tools |
 |---|---|
-| `status`, `list_tasks`, `get_task`, `list_escalations`, `get_escalation` (full packet), `usage` | read |
-| `submit_task`, `prioritize_task`, `pause_task`, `resume_task`, `cancel_task`, `retry_task`, `set_rung` | write |
-| `send_message`, `peek_session`, `list_sessions` | session access and intervention |
-| `resolve_escalation` | write |
-| `wait_for_events(since_id, kinds?, task_id?, timeout_s ≤ 300)` | long-poll. Lets an AI Operator block until an escalation or completion arrives |
-
-Resources: `shikiru://escalations/{id}` (packet markdown) and `shikiru://tasks/{id}/summary`.
-
-## 4. Command acknowledgement
-
-1. `OperatorService` inserts a `commands` row.
-2. If the engine is up, it polls for `status != pending` for up to 10 s, showing a spinner. The engine checks commands every 250 ms.
-3. `rejected` returns the engine's reason, e.g. "T-5 is not queued".
-4. If the engine is down:
-   - Queue-only commands (`submit`, `prioritize`, `cancel` of queued tasks) are applied directly by the service against the DB, which is safe because no engine is writing, and it says so.
-   - Other commands fail with exit code 4.
+| Queries | `status`, `list_tasks`, `get_task`, `list_escalations`, `get_escalation`, `peek_session` |
+| Commands | `submit_task`, `prioritize_task`, `pause_task`, `resume_task`, `cancel_task`, `retry_task`, `set_rung`, `send_message`, `resolve_escalation` |
+| Events | `wait_for_events(since_id, kinds?, task_id?, timeout_s ≤ 300)` |
 
 ## 5. Dashboard
 
 ### 5.1 tmux session
 
-**Name**:
-- `[shikiru] <project.name>`, with `.` and `:` replaced by `_` (tmux forbids them).
-- Always targeted exactly as `-t '=[shikiru] name'`.
-- The session environment stores `SHIKIRU_PROJECT_DIR` so that `ls` and `attach` can find the project.
-- **Name collision**: if a session with the same name already exists for a different `SHIKIRU_PROJECT_DIR`, `start` fails and suggests setting `project.name`. This lets many instances run side by side.
+- **Name**: `[shikiru] <project.name>`, with `.` and `:` replaced by `_`, always targeted as `=[shikiru] name`. The session env stores `SHIKIRU_PROJECT_DIR`.
+- **Options**:
+  - `remain-on-exit on`, `renumber-windows on`
+  - `allow-rename off`, `automatic-rename off`, `allow-set-title off`
+  - `pane-border-status top`, `pane-border-lines heavy`, `mouse on`
+- **Windows**:
+  - The permanent home window `shikiru` has `shikiru dash --home` and a shell.
+  - Each active task has its own window, named by `titles.window`, built from `dashboard.layout`. It is created at dispatch and closed at a terminal status.
 
-**Session options** set by the engine:
-- `remain-on-exit on`, `renumber-windows on`, `allow-rename off`, `automatic-rename off`
-- `pane-border-status top`, `pane-border-lines heavy`, `pane-border-format " #[fg=#{@shk_color}]#{@shk_glyph} #{pane_title} "` (per-pane `@shk_*` options, §7.1)
-- `window-status-format` / `window-status-current-format` use the `@shk_state_glyph` and `@shk_state_color` window options
-- `allow-set-title off`: agents can't overwrite titles.
-- `allow-passthrough on`: notifications.
-- `mouse on`, `status-style` from the theme
-- Session hook `pane-died` → `run-shell -b "shikiru tmux-event pane-died #{pane_id}"`
+### 5.2 Layout and protection (`LayoutGuard`)
 
-**Windows**:
-- Each active task has a window named by `titles.window`, e.g. `T-12 Add retry to parser`.
-- When there are no task windows, a single window named `shikiru` exists.
-- Its leader and implementer panes run `shikiru idle <role>`, which shows an idle panel (§7.6), and its shell pane is a normal shell.
+- **Build**: the layout tree is built with `split-window -h|-v -l <size>%`. `{role: pane_id}` is stored in `tasks.panes`.
+- **Guard**: every `poll_seconds`, the guard compares each task window with the DB.
+  - A missing pane (killed) is recreated in the layout.
+  - A dead `system` or `shell` pane is respawned.
+  - A dead agent pane is left to recovery (03 §7).
+  - Each restoration emits `pane_restored`.
 
-**Window transitions** (a tmux session must never reach zero windows):
-- First task starts → create the task window, then kill the `shikiru` window.
-- Last task ends → create the `shikiru` window, then kill the task window.
+  There are no global key-binding overrides, so closing a pane has no lasting effect.
+- **Palette key**: one conditional binding. `prefix + Space` opens `shikiru palette` in a popup inside `[shikiru]` sessions and keeps its default (`next-layout`) elsewhere.
 
-**Pane protection**:
-1. `remain-on-exit` together with the `pane-died` hook. The engine respawns `system` and `shell` immediately and handles agent panes through 03-workflow §8.3.
-2. The engine installs these key bindings idempotently at start. They only change behaviour inside `[shikiru]` sessions:
+### 5.3 Titles and decorations
 
-   ```
-   bind-key x if-shell -F '#{m:[[]shikiru[]]*,#{session_name}}' 'display-message "Protected pane (use shikiru stop --force)"' 'confirm-before -p "kill-pane #P? (y/n)" kill-pane'
-   bind-key & if-shell -F '#{m:[[]shikiru[]]*,#{session_name}}' 'display-message "Protected window (use shikiru stop --force)"' 'confirm-before -p "kill-window #W? (y/n)" kill-window'
-   bind-key Space if-shell -F '#{m:[[]shikiru[]]*,#{session_name}}' 'display-popup -E -w 70% -h 60% "shikiru palette"'
-   ```
+- **Titles** use the `dashboard.titles` templates. Fields:
+  - `task_id`, `title`, `project`, `role`, `glyph`, `agent`, `model`, `effort`
+  - `iteration`, `step`, `status`
+  - `context`, `cost`
+  - `active`, `queued`, `max_parallel`, `cwd`
+  - `flags`: `⏸︎ paused`, `⌨ operator`, `⧗ quota`, `‼ escalated`, `⚠︎ stalled`
+- **Decorations** follow §6.1:
+  - Pane options `@shk_color` and `@shk_glyph` feed `pane-border-format " #[fg=#{@shk_color}]#{@shk_glyph} #{pane_title} "`.
+  - Window options `@shk_state_color` and `@shk_state_glyph` feed the window-status formats.
+  - `SessionMonitor` updates them on change.
 
-3. `shikiru stop --force` is the only supported way to close the session.
+### 5.4 System pane and widgets
 
-**Layout**:
-- `LayoutBuilder` walks the `dashboard.layout` tree. The first pane of each split is the existing pane. Then it runs `split-window -h|-v -l <size>% -t <pane>` for siblings.
-- It returns `{role: pane_id}`, which is stored in `tasks.window_id` and `runs.pane_id`.
-- Unknown pane names in the config are rejected by validation.
-- The fixed pane roles are `system`, `leader`, `implementer` and `shell`. Omitting `shell` is allowed.
-
-### 5.2 Titles
-
-- The engine sets titles with `select-pane -T` on every change it observes: rung, iteration, usage every `refresh_seconds`, holds.
-- Fields available for templates: `task_id`, `title`, `project`, `role`, `agent`, `model`, `effort`, `iteration`, `max_iterations`, `step`, `status`, `context_free`, `cost`, `tokens_in`, `tokens_out`, `elapsed`, `active`, `queued`, `max_parallel`, `cwd`, `flags`.
-- `flags` is a short English status with its §7.1 glyph: `⏸︎ paused`, `⌨ operator`, `⧗ quota`, `‼ escalated`, `⚠︎ stalled`. Border colour follows the same state.
-
-### 5.3 System pane (`shikiru dash --task T-n | --idle`)
-
-A Textual app. Widgets come from `dashboard.system.widgets`, in order, each in a collapsible titled panel. The widget contract:
+`shikiru dash --home | --task T-n` is a Textual app that stacks the `dashboard.widgets` panels in configured order.
 
 ```python
 class DashboardWidget(Protocol):
-    """A dashboard panel plugin, registered under the `shikiru.widgets` entry point group."""
+    """A system-pane panel plugin (entry point group `shikiru.widgets`)."""
     name: str
-    title: str
-    refresh_seconds: float | None                 # None = refresh on state change only
-    def create(self, ctx: WidgetContext) -> textual.widget.Widget: ...
+    def create(self, context: WidgetContext) -> textual.widget.Widget: ...
 
 @dataclass(frozen=True)
-class WidgetContext:
-    project: ProjectInfo; state: StateReader; settings: Settings
-    options: dict[str, Any]                        # [dashboard.widgets.<name>] table
-    focus_task: str | None
+class WidgetContext:  state: StateReader; project_dir: Path; focus_task: str | None
 ```
 
-`StateReader` provides read-only queries, and `on_change` fires when `PRAGMA data_version` changes (polled every 500 ms).
+Widgets refresh when `StateReader.on_change` fires. Samplers such as resources and docker have their own interval.
 
-| Widget | Content | Source |
+| Widget | Content |
+|---|---|
+| `header` | Project, engine up/down, slots `2/2`, and repos with branch, ahead/behind `base` and dirty count (git data cached 10 s) |
+| `escalations` | Splash panel per open escalation (§6.4); `r` resolves through the palette form, `o` opens the packet |
+| `strips` | Active tasks as strips (§6.2); the focused task expanded; children grouped under `parent_id` |
+| `queue` | Queued tasks in dispatch order: priority, dependencies, `wait_reason` |
+| `dialogue` | Last 20 speech bubbles (§6.3); `enter` shows the full text |
+| `usage` | Per agent: tokens, cost with an "API-equivalent" label when applicable, quota gauges with reset countdown and observation age |
+| `resources` | Host CPU%/RAM, and this instance's CPU%/RSS (engine plus the process trees of all panes), sampled every 2 s |
+| `docker` | Containers with CPU% and memory (`docker stats --no-stream --format json` every 5 s); hidden when Docker is unavailable |
+
+### 5.5 Palette
+
+- `PaletteApp` offers: submit, prioritise, pause/resume, intervene (pause + select the agent pane), cancel, retry, change rung, message agent, peek, resolve escalation (a form with the packet and options), stop engine.
+- It opens as a tmux popup (`prefix + Space`), and `Ctrl+P` in `dash` pushes the same screen.
+- Every action calls `OperatorCommands` and shows the `Ack`.
+
+### 5.6 Attach
+
+- **`ls`**: `tmux list-sessions` filtered by the `[shikiru] ` prefix, plus each session's `SHIKIRU_PROJECT_DIR` and engine state.
+- **`attach`**: exactly one match, or `--project NAME` → `os.execvp("tmux", ["tmux", "attach", "-t", "=[shikiru] NAME"])` (`switch-client` when inside tmux). Otherwise an inline selectable list.
+- **Remote** (`--host H`): `ssh H shikiru ls --json` → select → `os.execvp("ssh", ["ssh", "-t", H, shlex.join(["tmux", "attach", "-t", "=[shikiru] NAME"])])`.
+
+### 5.7 Notifications
+
+`Notifier`, on `escalation` and `task_done`:
+- runs `tmux display-message` in the session;
+- runs `notify.command`, when set, with the event JSON on stdin (for Slack, ntfy or a remote AI Operator).
+
+## 6. Visual design: comic strips with a semantic visual language
+
+Shikiru's look comes from **structure and meaning**:
+- tasks are 4-panel comic strips (*yonkoma*);
+- key moments are speech bubbles;
+- escalations are splash panels.
+
+Every colour, glyph and movement answers one of three questions: *who acts*, *what state*, *how alive*. English carries all meaning; kanji are decorative marks. Everything lives in `ui` and is shared by CLI and dashboard.
+
+### 6.1 Tokens and glyphs
+
+**Colours**: one palette, rendered on the app's own dark background. Truecolor, with 256/16 fallback; `NO_COLOR` switches to monochrome with bold, dim and reverse.
+
+| Token | Colour | Meaning |
 |---|---|---|
-| `project` | Project path, and repos with current branch, ahead/behind of `base` and dirty count; active task branches | `git` via `workspace.git` (cached 10 s) |
-| `strips` | Active tasks as comic strips (§7.2): the focused task expanded, split children nested, holds as stamps, cost per task | DB |
-| `queue` | "Next up" thumbnails in dispatch order with priority, dependencies and the reason each is waiting | DB + `Scheduler.explain()` |
-| `escalations` | Open escalations as splash panels (§7.4) | DB |
-| `usage` | Tokens (input, cache, output) and cost per agent since engine start, as reported by each plugin's normalized `Usage` (labelled "API-equivalent" when `cost_basis` says so); quota bars per window with reset countdown and observation age | DB `runs`, `quotas` (engine stores plugin values) |
-| `resources` | Host CPU%, RAM used/total; this instance's CPU% and RSS, summed over the engine plus all tmux pane process trees in the session | `psutil` (sampled every 2 s) |
-| `docker` | Containers: name, CPU%, memory; containers whose compose `working_dir` is inside `.shikiru/worktrees/T-n` are tagged with the task | `docker stats --no-stream --format json` and `docker ps --format json` (every 5 s, hidden if Docker is unavailable) |
-| `dialogue` | Dialogue feed (§7.3), last 20 lines | DB events and reports |
+| `leader` | violet `#a78bfa` | The Leader acts |
+| `implementer` | cyan `#22d3ee` | The Implementer acts |
+| `helper` | sand `#e0b872` | The Helper acts |
+| `operator` | magenta `#f472b6` | Operator input or intervention |
+| `engine` | silver `#cbd5e1` | Engine decisions |
+| `success` | green `#4ade80` | Accepted, merged, done |
+| `rework` | orange `#fb923c` | Changes requested, retries |
+| `hold` | yellow `#facc15` | Paused, quota, waiting |
+| `alert` | red `#f87171` | Escalation, failure |
+| `idle` | grey `#64748b` | Pending, queued |
 
-The command palette (§5.4) is always available.
+Gauges (context, quota, CPU, RAM) are green below 70%, yellow below 90%, red above.
 
-### 5.4 Command palette
+**Glyphs**: one set, registered in `ui.glyphs`. A unit test rejects wide, ambiguous-width or emoji-presentation characters.
 
-- Opened with `Ctrl+P` inside the system pane (Textual command palette) or `prefix + Space` anywhere in a Shikiru session (tmux popup running `shikiru palette`).
-- Actions: submit request (multi-line editor), prioritise, pause/resume, intervene (pauses the focused task, then selects its agent pane), cancel, retry step, change rung, message agent, peek, resolve escalation (a form showing the packet with option radio buttons and answer text), open event log, stop engine.
-- Every action calls `OperatorService` and shows the acknowledgement as a toast.
+| Meaning | Glyphs |
+|---|---|
+| Stages: triage, plan, implement, verify, merge, PR | `⌕ ≡ ⚒ ⚖︎ ⑂ ⇪` |
+| Roles: leader, implementer, helper, operator, engine | `◆ ▲ ✦ ⌨ ⚙︎` |
+| States: done, rework, consult, paused, quota, stalled, escalated, blocked by dependency | `✔ ↺ ? ⏸︎ ⧗ ⚠︎ ‼ ⊘` |
+| Context gauge | `○ ◔ ◑ ◕ ●` |
+| Spinner | `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` |
 
-### 5.5 Attach
+State is never shown by colour alone: each state has a glyph and a word.
 
-- **Local**: `attach` lists `tmux list-sessions -F '#{session_name}\t#{session_windows}\t#{session_attached}'` filtered by the `[shikiru] ` prefix. If there is exactly one match, or `--project` is given, it attaches directly. Otherwise it shows an inline Textual selectable list.
-- **Attach itself**: `os.execvp("tmux", ["tmux", "attach", "-t", "=[shikiru] name"])`, or `switch-client` when already inside tmux.
-- **Remote**: `ssh <host> shikiru ls --json` → list → `os.execvp("ssh", ["ssh", "-t", host, shlex.join(["tmux", "attach", "-t", "=[shikiru] name"])])`. The remote command is shell-quoted because ssh joins its arguments. The host is anything `ssh` accepts (aliases from `~/.ssh/config`).
-- No timeout wraps an attach.
-
-## 6. Notifications
-
-`Notifier` handles the `notify.events` kinds:
-1. **tmux**: `display-message` to clients of the session, plus a red status-bar flag for escalations.
-2. **Desktop** (`notify.desktop`): OSC 777 / OSC 9 through tmux passthrough to the attached terminal; otherwise `terminal-notifier` (macOS) or `notify-send` (Linux) when present.
-3. **`notify.command`**: event JSON on stdin (for Slack, ntfy, email or remote AI Operators).
-
-## 7. Signature design: comic strips (`dashboard.style = "comic"`)
-
-Shikiru is recognisable by **structure, not colours**. The state of the work is drawn as a comic page: every task is a **4-panel strip** (a Japanese *yonkoma*), key moments are **speech bubbles**, and escalations are **splash panels**.
-**English is the primary language** of every label and message. Kanji appear only as small decorative marks, never as the only carrier of meaning.
-
-Everything is built from Rich renderables in `shikiru.comic`, so the CLI (`status`, `show`, `escalations`) and the dashboard draw the same pictures. That is one implementation, not two. Only Unicode box-drawing and block characters are used, so it works in any terminal, inside tmux and over SSH.
-
-### 7.1 Visual language
-
-The visual language is a **system with meaning**. Every colour, symbol and movement answers one of three questions: *who is acting*, *what state is this in*, *how alive is it right now*. The comic strip is the structure; this language fills it.
-
-#### Colour (semantic tokens)
-
-Truecolor, with automatic fallback to 256 and 16 colours. The tokens are defined in `theme.tcss` / `comic.theme` and can be overridden in `[dashboard.colors]`.
-
-| Token | Default (dark / light) | Meaning, used consistently everywhere |
-|---|---|---|
-| `role.leader` | violet `#a78bfa` / `#6d28d9` | The Leader acts: its strip panels, its pane border, its speech bubbles |
-| `role.implementer` | cyan `#22d3ee` / `#0e7490` | The Implementer acts |
-| `role.helper` | amber-sand `#e0b872` / `#92400e` | The Helper acts |
-| `role.operator` | magenta `#f472b6` / `#be185d` | Operator input, intervention, messages |
-| `role.shikiru` | silver `#cbd5e1` / `#334155` | Engine decisions |
-| `state.active` | the acting role's colour, pulsing | Work in progress |
-| `state.success` | green `#4ade80` / `#15803d` | Accepted, merged, done |
-| `state.rework` | orange `#fb923c` / `#c2410c` | Changes requested, retries |
-| `state.hold` | yellow `#facc15` / `#a16207` | Paused, quota, resources, integration wait |
-| `state.alert` | red `#f87171` / `#b91c1c` | Escalation, failure, crash |
-| `state.idle` | grey `#64748b` / `#94a3b8` | Pending, queued, inactive |
-
-**Gauges use a continuous scale** (context used, quota used, CPU, RAM, budget): green → yellow at 70% → red at 90%, interpolated in OKLCH so the steps look even.
-
-**The same colours drive tmux**:
-- **Pane borders**: each agent pane carries `@shk_color` and `@shk_glyph` pane options, and `pane-border-format` renders `#[fg=#{@shk_color}]`. The pane border lights up in the role colour while that role acts, turns yellow on a hold, turns red on an escalation, and dims when idle. This is verified on tmux 3.7.
-- **Window list**: each task window's status-bar entry shows its current state glyph in the state colour, e.g. `1 ⚒ T-12` cyan and `2 ‼ T-14` red. This comes from the `@shk_state` window options.
-
-**Accessibility**: colour never carries meaning alone. Each state also has a glyph, a border style and a word. `NO_COLOR` gives monochrome with bold, dim and reverse styles.
-
-#### Symbols (glyph vocabulary)
-
-A single registry `comic.glyphs` maps meanings to glyphs. Two sets exist:
-- `unicode` (default): works with any font;
-- `nerd`: Nerd Font icons, chosen in the init wizard from a live preview.
-
-A unit test rejects any `unicode` glyph that is double-width, ambiguous-width or emoji-presentation (the check that excludes `☰`), so alignment never breaks.
-
-| Meaning | `unicode` | `nerd` |
-|---|---|---|
-| Triage / Plan / Implement / Verify / Merge / PR | `⌕` `≡` `⚒` `⚖︎` `⑂` `⇪` | magnify, list, hammer-wrench, scale-balance, source-merge, source-pull |
-| Leader / Implementer / Helper / Operator / Shikiru | `◆` `▲` `✦` `⌨` `⚙︎` | crown, hammer, lifebuoy, keyboard, cog |
-| Running / done / rework / consult | spinner `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` / `✔` / `↺` / `?` | spinner / check / refresh / help |
-| Paused / quota wait / resources / operator / stalled / escalated | `⏸︎` `⧗` `▥` `⌨` `⚠︎` `‼` | pause, timer-sand, memory, keyboard, alert, alert-octagon |
-| Dependency / blocked by | `⤷` / `⊘` | arrow-down-right, cancel |
-| Context gauge | `○ ◔ ◑ ◕ ●` (0/25/50/75/100%) | circle-slice-1..8 |
-| Tokens / cost / time | `⇅` `$` `◷` | swap-vertical, currency-usd, clock |
-
-#### Motion (dynamic TUI)
-
-Motion is **driven by real signals**, so it can be read at a glance:
-
-| Motion | Trigger | Meaning |
-|---|---|---|
-| **Heartbeat**: the active panel's border shimmers in the role colour | `Activity` signals | Pulse speed follows activity: tool calls per minute. Fast = busy, slow = thinking, frozen and yellow = stalled |
-| **Ink wipe**: the next panel fills left to right (300 ms) | step transition | The task moved forward |
-| **Stamp slam**: a scaled stamp `ACCEPTED` / `REWORK` / `MERGED` appears, then settles into a glyph | verdicts, merge | The outcome of a turn |
-| **Loop arrow draw**: the rework arrow draws itself from Verify back to Implement | `changes_requested` | The task is looping; the count increments |
-| **Typewriter bubbles**: new dialogue lines type in (≤ 400 ms) | report and verdict summaries, engine decisions | A new message arrived |
-| **Splash pulse**: speed lines alternate red and dim at 1 Hz until the escalation has been viewed | new escalation | Needs attention; pulsing stops once seen |
-| **Rolling counters**: cost, tokens and elapsed time roll to their new value; quota countdown ticks | usage updates | Live spend and time |
-| **Sparklines** `▁▂▃▄▅▆▇█`: last 30 min of tokens/min per agent, and CPU/RAM | usage and resource samples | Trends, not just current values |
-| **Slide out**: a finished strip collapses into a one-line "Done" shelf entry | `task_done` | Completed work leaves the stage |
-
-- **Frame rate**: capped at 12 fps.
-- **Visibility**: animations pause when the tmux window isn't visible (`#{window_active}` and `#{session_attached}` polled at 1 Hz), so hidden dashboards cost no CPU.
-- **Setting**: `dashboard.animations = "full" | "reduced" | "off"`. `reduced` keeps state changes and counters but no shimmer or pulses; `off` renders static frames. `TEXTUAL_ANIMATIONS` is respected.
-
-### 7.2 Task strip (`TaskStrip`)
+### 6.2 Task strip (`ui.TaskStrip`)
 
 ```
-┏━ T-12 · Add retry to parser ━━━━━━━━━━━━━━━━━━━━━━━━┓
+┏━ T-12 · Add retry to parser ━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃起 ⌕ Triage ┃承 ⚒ Implement┃転 ⚖︎ Verify  ┃結 ⑂ Merge  ┃
-┃ ✔ 3m      ┃ ✔ ↺×1 41m   ┃ ⠹ ◆ 2/5    ┃  ···      ┃
-┃ ◆ opus    ┃ ▲ codex/luna┃ ◑ ctx $1.84┃           ┃
-┗━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━┻━━━━━━━━━━━┛
-  ╰──────── rework ×1 ←──────╯
+┃ ✔ 3m      ┃ ✔ ↺1 41m    ┃ ⠹ ◆ 2/5    ┃  ·        ┃
+┃ ◆ opus    ┃ ▲ codex/luna┃ ◑ $1.84    ┃           ┃
+┗━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━┻━━━━━━━━━━━┛
 ```
 
-**Panels** follow the story arc 起承転結 (setup, development, twist, resolution). The kanji is a corner mark; the English stage name is the label.
+- **Panels by mode**:
+  - implement: Triage · Implement · Verify · Merge (or PR)
+  - plan: Triage · Plan · — · Merge
+  - split parents are shown as a finished strip with child ids.
+- **Panel state**:
+  - pending: dim, dotted border
+  - active: heavy border in the acting role's colour, spinner, role glyph, iteration
+  - done: green `✔` and duration
+  - rework: orange `↺n`
+  - escalated or failed: red `‼`
+- **Stamps** drawn over the active panel, in the hold colour: `PAUSED`, `OPERATOR`, `QUOTA · resets 14:10`, `STALLED`.
+- **Widths**: ≥ 60 columns gives the full strip; narrower gives one line, `T-12 ⚖︎ Verify 2/5 ◆ opus ⠹`.
 
-| Mode | Panels |
+### 6.3 Speech bubbles (`ui.SpeechBubble`)
+
+`◆ Leader: “AC3 lacks a tier-2 test.”   T-12 · 2m` is one line in the speaker's colour.
+
+**Sources**:
+- verdict summaries (Leader);
+- report summaries and questions (Implementer);
+- `helper_action` events (Helper);
+- `rung_changed`, `quota_blocked`, `scope_change`, `task_done` events (engine).
+
+### 6.4 Splash panel (`ui.SplashPanel`)
+
+- A red panel framed by `╱` speed lines.
+- It holds the headline, the Leader's question, and numbered options with ★.
+- It is shown at the top of the system pane in every window while the escalation is open.
+
+### 6.5 Motion (`dashboard.animations = true`)
+
+Motion is driven by real signals, so the dashboard shows how alive the system is:
+
+| Motion | Meaning |
 |---|---|
-| implement | Triage · Implement · Verify · Merge (or `PR` in PR mode) |
-| plan | Triage · Plan · Review (skipped, dimmed) · Merge |
-| split | Triage · Split → child ids (e.g. `T-15 T-16 T-17`) · Children (progress `2/3 done`) · Done. Child strips are drawn indented under the parent |
+| Active panel spinner runs only while `Activity` arrived in the last 10 s; otherwise it freezes, and after the stall timeout the panel turns `hold` with `⚠︎` | Working vs idle vs stalled |
+| Stamp flash (400 ms reverse video) when a verdict or merge lands | A turn outcome just happened |
+| Escalation border pulses red/dim at 1 Hz while open | Needs attention |
+| Elapsed time, quota countdowns and cost tick live | Live time and spend |
 
-**Panel states** (§7.1 tokens):
-- pending: dotted border `┄`, `state.idle`, stage glyph only
-- active: heavy border in the acting role colour with the heartbeat shimmer, spinner, role glyph, iteration gauge `▓▒░`
-- done: `state.success` border, `✔` plus duration
-- rework: `state.rework` with `↺ ×n`
-- hold: `state.hold` stamp
-- escalated or failed: `state.alert`, `‼` corner, splash pulse
-
-Each panel's body shows at most 3 short lines: status, `agent/model` of the acting role, elapsed time or iteration `2/5`.
-
-**Loops**:
-- A rework loop is an arrow under the strip from Verify back to Implement, with its count.
-- A consult is a small inset `? asked Leader` in the Implement panel.
-
-**Stamps** are drawn over the active panel: `PAUSED`, `OPERATOR`, `QUOTA · resets 14:10`, `WAITING RESOURCES`, `STALLED`.
-
-**Responsive**:
-- ≥ 60 columns: horizontal strip.
-- 36–59 columns: a 2×2 grid.
-- < 36 columns: a single line `T-12 ▸ Verify 2/5 · opus/high`.
-
-### 7.3 Dialogue feed (`SpeechBubble`)
-
-Key moments are one-line English quotes taken from reports and engine events, attributed to a character:
-
-```
- 長 Leader: “AC3 lacks a tier-2 test.”                     T-12 · 2m
- 員 Implementer: “Added the test; all tiers pass.”           T-12 · now
- 助 Helper: “Answered the trust dialog (Enter).”             T-14 · 5m
- 仕 Shikiru: “Switched implementer to codex/sol after 2 rejections.”
-```
-
-The sources:
-- verdict `summary` (Leader)
-- report `summary` or `question` (Implementer)
-- Helper actions
-- engine decisions (rung changes, holds, merges)
-
-Bubbles are truncated to the width. Enter opens the full text.
-
-### 7.4 Splash panel (`SplashPanel`)
-
-An open escalation takes over the top of the system pane in every window until it is resolved:
-
-```
-╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
-┃ ESCALATION E-3 · T-14 · decision required            ‼ ┃
-┃ “Should rounding follow banker's rules or half-up?”     ┃
-┃ ★ 1 Half-up (matches the UI spec)   2 Banker's   3 Cancel ┃
-┃ [r] resolve   [o] open packet                          ┃
-╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
-```
-
-### 7.5 Page composition (system pane)
-
-The system pane is a comic page: panels separated by gutters, arranged top to bottom as the widgets configured in `dashboard.system.widgets`:
-1. **Header panel**: project, engine status, slots `2/2 active`, and the small seal mark `仕切る`.
-2. Splash panels, one per open escalation.
-3. Task strips: the focused task first and expanded, the others compact.
-4. **Next up**: queued tasks as a row of small thumbnail panels with priority and waiting reason.
-5. Dialogue feed.
-6. **Margin notes**: compact panels for usage and quota bars, resources and Docker.
-
-### 7.6 Other surfaces
-
-| Surface | Design |
-|---|---|
-| `shikiru start` | Wordmark `SHIKIRU` in block letters with a speed-line underline, the tagline "runs the show", and a small `仕切る` seal |
-| Idle leader/implementer panes (`shikiru idle`) | An empty comic panel reading "Standing by — no active tasks", with the role name and a decorative role mark (長 or 員) |
-| Pane titles | English role name first, kanji mark as a prefix (05-data `dashboard.titles`) |
-| `show T-n` / `status` | The same strip, dialogue and splash renderables printed once |
-
-Colours, glyphs and motion follow §7.1 on every surface: Rich output in the CLI uses the same tokens and glyphs, without animation.
-
-**`style = "plain"`** keeps strips, panels, colour tokens and word labels but drops kanji marks, speed lines, screen tones and non-ASCII glyphs. It uses ASCII-safe box characters for limited fonts, and forces `animations = "reduced"`.
+Motion comes from a pure `frame(state, now)` function with an injected clock, capped at 4 Hz. Setting `animations = false` renders static frames.

@@ -1,52 +1,49 @@
 # Shikiru Progress
 
-Tick a task when all its ACs are met and `uv run poe check` is green. Details: [plan.md](plan.md).
+Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 
 
 ## Phase 0 — Foundation
-- [ ] Task 1: Project scaffold and quality gate
+- [ ] Task 1: Scaffold, quality gate, test support
 
-## Phase 1 — Domain and persistence
-- [ ] Task 2: Configuration models and loader
-- [ ] Task 3: Domain model and transitions
-- [ ] Task 4: Report models
+## Phase 1 — Core model
+- [ ] Task 2: Configuration
+- [ ] Task 3: Domain rules
+- [ ] Task 4: Report models and `shikiru report`
 - [ ] Task 5: State store
 
-## Phase 2 — Execution substrate
-- [ ] Task 6: tmux client, session and layout
-- [ ] Task 7: Workspace manager
-- [ ] Task 8: Agent contracts, SDK and fake plugins
-- [ ] Task 9: Agent contract test kit
-- [ ] Task 10: Claude Code plugin
-- [ ] Task 11: Codex plugin
-- [ ] Task 12: Doctor and agent probe
+## Phase 2 — Substrate
+- [ ] Task 6: tmux
+- [ ] Task 7: Workspace
+- [ ] Task 8: Agent contract, registry, SDK
+- [ ] Task 9: Fake agent and contract test kit
+- [ ] Task 10: Prompts and Helper
+- [ ] Task 11: UI core and dashboard shell
 
-## Phase 3 — Orchestration core (first end-to-end)
-- [ ] Task 13: Prompt renderer and templates
-- [ ] Task 14: Session driver (turn protocol)
-- [ ] Task 15: Task flow and steps
-- [ ] Task 16: Integration (merge and PR)
-- [ ] Task 17: Engine daemon and scheduler
-- [ ] Task 18: Operator service and core CLI
-- [ ] Task 19: Comic renderables, system pane core and E2E baseline
+## Phase 3 — Pipeline on the fake agent
+- [ ] Task 12: Session manager and monitor
+- [ ] Task 13: Turn runner
+- [ ] Task 14: Task flow
+- [ ] Task 15: Recovery and escalation raising
+- [ ] Task 16: Integration (local merge)
+- [ ] Task 17: Engine daemon, scheduler, handlers
+- [ ] Task 18: Operator services and CLI
 
-## Phase 4 — Resilience, escalation, intervention
-- [ ] Task 20: Failure handling and model ladder
-- [ ] Task 21: Helper (Joshu)
-- [ ] Task 22: Stall detection and pane death
-- [ ] Task 23: Escalations
-- [ ] Task 24: Operator intervention
-- [ ] Task 25: Engine restart recovery
+## Phase 4 — Real agents
+- [ ] Task 19: Claude Code plugin
+- [ ] Task 20: Codex plugin
+- [ ] Task 21: Doctor and first real E2E
 
-## Phase 5 — Operator surfaces
-- [ ] Task 26: Dashboard widgets
-- [ ] Task 27: Command palette
-- [ ] Task 28: Notifications
-- [ ] Task 29: Attach and ls (local and remote)
-- [ ] Task 30: MCP server
-- [ ] Task 31: Usage and events surfaces
+## Phase 5 — Resilience and operator completeness
+- [ ] Task 22: Engine restart recovery
+- [ ] Task 23: Pull request integration
+- [ ] Task 24: MCP server
+- [ ] Task 25: Parallel and intervention E2E
 
-## Phase 6 — Onboarding and completion
-- [ ] Task 32: Interactive init wizard
-- [ ] Task 33: Dynamic visual language and plain mode
-- [ ] Task 34: Full E2E suite and release readiness
+## Phase 6 — Operator surfaces and onboarding
+- [ ] Task 26: Remaining widgets and renderables
+- [ ] Task 27: Palette
+- [ ] Task 28: Motion
+- [ ] Task 29: Sessions list and attach
+- [ ] Task 30: Init wizard
+- [ ] Task 31: Release readiness
