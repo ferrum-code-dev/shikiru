@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.process import ProcessResult, SubprocessRunner
+
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import AsyncIterator
 
 _SESSION_NAME = "test"
 _SESSION_WIDTH = "200"
 _SESSION_HEIGHT = "50"
 _DEFAULT_SHELL = "/bin/sh"
 _TMUX_INHERITED_ENV_VARS = ("TMUX", "TMUX_PANE")
+_TMUX_COMMAND_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,14 +28,14 @@ class TmuxServer:
 
     socket_name: str
     env: dict[str, str]
+    runner: SubprocessRunner = field(default_factory=SubprocessRunner)
 
-    def run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    async def run(self, *args: str, check: bool = True) -> ProcessResult:
         """Run a tmux command scoped to this server's socket."""
-        return subprocess.run(
+        return await self.runner.run(
             ["tmux", "-L", self.socket_name, *args],
+            timeout=_TMUX_COMMAND_TIMEOUT_SECONDS,
             env=self.env,
-            capture_output=True,
-            text=True,
             check=check,
         )
 
@@ -43,12 +45,12 @@ def _clean_env() -> dict[str, str]:
 
 
 @pytest.fixture
-def tmux_server() -> Iterator[TmuxServer]:
+async def tmux_server() -> AsyncIterator[TmuxServer]:
     """Start a private, isolated tmux server and kill only that server on teardown."""
     socket_name = f"shikiru-test-{uuid.uuid4().hex}"
     env = _clean_env()
     server = TmuxServer(socket_name, env)
-    server.run(
+    await server.run(
         "-f",
         "/dev/null",
         "set-option",
@@ -68,4 +70,4 @@ def tmux_server() -> Iterator[TmuxServer]:
     try:
         yield server
     finally:
-        server.run("kill-server", check=False)
+        await server.run("kill-server", check=False)
