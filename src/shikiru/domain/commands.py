@@ -1,0 +1,164 @@
+"""Operator command models, discriminated by `kind` for storage (docs/design/05-data.md §2)."""
+
+from __future__ import annotations
+
+from enum import StrEnum, auto
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from shikiru.agents.contracts import Rung
+from shikiru.config.settings import ComplexityName
+from shikiru.domain.tasks import Mode, Role
+
+
+class CommandKind(StrEnum):
+    """The `commands.kind` discriminator (05 §2)."""
+
+    SUBMIT = auto()
+    PRIORITIZE = auto()
+    PAUSE = auto()
+    RESUME = auto()
+    CANCEL = auto()
+    RETRY = auto()
+    SET_RUNG = auto()
+    SAY = auto()
+    RESOLVE = auto()
+    STOP = auto()
+
+
+class CommandModel(BaseModel):
+    """Base for every operator command: unknown keys are rejected, values are immutable."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class Submit(CommandModel):
+    """`submit "<request>" [flags]`: the task id is already allocated from `sequences`."""
+
+    kind: Literal[CommandKind.SUBMIT] = CommandKind.SUBMIT
+    task_id: str
+    title: str
+    request: str
+    mode: Mode | None = None
+    complexity: ComplexityName = "normal"
+    priority: int = 0
+    depends_on: list[str] = Field(default_factory=list)
+    leader: Rung | None = None
+    implementer: Rung | None = None
+
+
+class Prioritize(CommandModel):
+    """`prioritize T-n N`: sets a task's dispatch priority."""
+
+    kind: Literal[CommandKind.PRIORITIZE] = CommandKind.PRIORITIZE
+    task_id: str
+    priority: int
+
+
+class Pause(CommandModel):
+    """`pause T-n [--now]`: holds a task; `now` also interrupts and cancels the current step."""
+
+    kind: Literal[CommandKind.PAUSE] = CommandKind.PAUSE
+    task_id: str
+    now: bool = False
+
+
+class Resume(CommandModel):
+    """`resume T-n`: clears the `paused` hold, or injects `continue` when it was `intervention`."""
+
+    kind: Literal[CommandKind.RESUME] = CommandKind.RESUME
+    task_id: str
+
+
+class Cancel(CommandModel):
+    """`cancel T-n`: cancels a task and keeps its branch."""
+
+    kind: Literal[CommandKind.CANCEL] = CommandKind.CANCEL
+    task_id: str
+
+
+class Retry(CommandModel):
+    """`retry T-n`: cancels and re-runs the task's current step."""
+
+    kind: Literal[CommandKind.RETRY] = CommandKind.RETRY
+    task_id: str
+
+
+class SetRung(CommandModel):
+    """`rung T-n <role> <agent:model:effort>`: overrides a role's rung from the next turn."""
+
+    kind: Literal[CommandKind.SET_RUNG] = CommandKind.SET_RUNG
+    task_id: str
+    role: Role
+    rung: Rung
+
+
+class Say(CommandModel):
+    """`say T-n <role> "<text>"`: injects an operator message into a live session."""
+
+    kind: Literal[CommandKind.SAY] = CommandKind.SAY
+    task_id: str
+    role: Role
+    text: str
+
+
+class ResolutionKind(StrEnum):
+    """The `resolve` answer's discriminator."""
+
+    ANSWER = auto()
+    RETRY = auto()
+    ACCEPT = auto()
+    CANCEL = auto()
+
+
+class AnswerResolution(CommandModel):
+    """`resolve E-n <answer TEXT>`: runs a consult turn with the Operator's text."""
+
+    kind: Literal[ResolutionKind.ANSWER] = ResolutionKind.ANSWER
+    text: str
+
+
+class RetryResolution(CommandModel):
+    """`resolve E-n retry [--rung a:m:e]`: re-runs the failed step, optionally on a new rung."""
+
+    kind: Literal[ResolutionKind.RETRY] = ResolutionKind.RETRY
+    rung: Rung | None = None
+
+
+class AcceptResolution(CommandModel):
+    """`resolve E-n accept`: integrates the task as-is."""
+
+    kind: Literal[ResolutionKind.ACCEPT] = ResolutionKind.ACCEPT
+
+
+class CancelResolution(CommandModel):
+    """`resolve E-n cancel`: cancels the task and keeps its branch."""
+
+    kind: Literal[ResolutionKind.CANCEL] = ResolutionKind.CANCEL
+
+
+Resolution = Annotated[
+    AnswerResolution | RetryResolution | AcceptResolution | CancelResolution,
+    Field(discriminator="kind"),
+]
+
+
+class Resolve(CommandModel):
+    """`resolve E-n <...>`: resolves an open escalation."""
+
+    kind: Literal[CommandKind.RESOLVE] = CommandKind.RESOLVE
+    escalation_id: str
+    resolution: Resolution
+
+
+class Stop(CommandModel):
+    """`stop`: stops the engine; panes and their turns keep running."""
+
+    kind: Literal[CommandKind.STOP] = CommandKind.STOP
+
+
+Command = Annotated[
+    Submit | Prioritize | Pause | Resume | Cancel | Retry | SetRung | Say | Resolve | Stop,
+    Field(discriminator="kind"),
+]
