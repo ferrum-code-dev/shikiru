@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from shikiru.errors import CommandFailed, CommandTimeoutError
 
@@ -48,12 +48,15 @@ class SubprocessRunner:
         )
         input_bytes = input_text.encode() if input_text is not None else None
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(input_bytes), timeout=timeout
-            )
-        except TimeoutError:
-            await self._kill(process)
-            raise CommandTimeoutError(argv_tuple, timeout) from None
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    process.communicate(input_bytes), timeout=timeout
+                )
+            except TimeoutError:
+                await self._kill(process)
+                raise CommandTimeoutError(argv_tuple, timeout) from None
+        finally:
+            self._close_transport(process)
 
         result = ProcessResult(
             argv=argv_tuple,
@@ -69,3 +72,11 @@ class SubprocessRunner:
     async def _kill(process: asyncio.subprocess.Process) -> None:
         process.kill()
         await process.wait()
+
+    @staticmethod
+    def _close_transport(process: asyncio.subprocess.Process) -> None:
+        transport = cast(
+            "Any",
+            process._transport,  # noqa: SLF001  # pyright: ignore[reportAttributeAccessIssue]
+        )
+        transport.close()
