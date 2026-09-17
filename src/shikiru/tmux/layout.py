@@ -45,12 +45,14 @@ class LayoutBuilder:
         remaining_fraction = 1.0
         current_pane_id = pane_id
         for child, fraction in zip(node.panes[:-1], fractions[:-1], strict=True):
-            split_pct = round(fraction / remaining_fraction * _FULL_PERCENT)
-            new_pane_id = await self._tmux.split_window(
-                current_pane_id, axis=node.split, size_pct=split_pct
+            rest_fraction = remaining_fraction - fraction
+            rest_pct = round(rest_fraction / remaining_fraction * _FULL_PERCENT)
+            rest_pane_id = await self._tmux.split_window(
+                current_pane_id, axis=node.split, size_pct=rest_pct
             )
-            await self._place(new_pane_id, child, panes)
-            remaining_fraction -= fraction
+            await self._place(current_pane_id, child, panes)
+            current_pane_id = rest_pane_id
+            remaining_fraction = rest_fraction
         await self._place(current_pane_id, node.panes[-1], panes)
 
 

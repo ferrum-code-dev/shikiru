@@ -79,6 +79,27 @@ async def test_build_respects_configured_and_equal_share_sizes(tmux_server: Tmux
     )
 
 
+async def test_build_places_panes_in_configured_order(tmux_server: TmuxServer) -> None:
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
+    base_pane = await _new_window(tmux)
+
+    panes = await LayoutBuilder(tmux).build(base_pane, _TREE)
+
+    positions = {
+        role: (
+            int(await tmux.display(pane_id, "#{pane_left}")),
+            int(await tmux.display(pane_id, "#{pane_top}")),
+        )
+        for role, pane_id in panes.items()
+    }
+
+    assert positions["system"][0] < positions["leader"][0]
+    assert positions["system"][0] < positions["implementer"][0]
+    assert positions["system"][0] < positions["shell"][0]
+    assert positions["leader"][0] == positions["implementer"][0] == positions["shell"][0]
+    assert positions["leader"][1] < positions["implementer"][1] < positions["shell"][1]
+
+
 async def test_build_rejects_duplicate_leaf_pane_names(tmux_server: TmuxServer) -> None:
     tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
     base_pane = await _new_window(tmux)
