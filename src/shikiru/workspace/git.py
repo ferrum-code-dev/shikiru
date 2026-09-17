@@ -73,9 +73,18 @@ class Git:
         return [line for line in result.stdout.splitlines() if line]
 
     async def diff_stat(self, repo_dir: Path, commit_range: str) -> str:
-        """Return `git diff --stat` for `commit_range`, verbatim."""
+        """Return `git diff --stat` for `commit_range`, verbatim.
+
+        This output is display-formatted for humans: long paths are elided to `...` and
+        renames are shown as `old => new`. Never parse paths out of it; use `diff_name_only`.
+        """
         result = await self._run(repo_dir, "diff", "--stat", commit_range)
         return result.stdout
+
+    async def diff_name_only(self, repo_dir: Path, commit_range: str) -> list[str]:
+        """Return the full, unformatted path of every file changed in `commit_range`."""
+        result = await self._run(repo_dir, "diff", "--name-only", commit_range)
+        return [line for line in result.stdout.splitlines() if line]
 
     async def status_porcelain(self, repo_dir: Path, *, include_ignored: bool = False) -> list[str]:
         """Return one `git status --porcelain` line per entry, optionally including ignored ones."""

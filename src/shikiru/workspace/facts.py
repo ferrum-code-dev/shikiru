@@ -12,19 +12,6 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import RepoState
     from shikiru.workspace.git import Git
 
-_STAT_SEPARATOR = "|"
-
-
-def _paths_from_diff_stat(diff_stat: str) -> list[str]:
-    paths: list[str] = []
-    for line in diff_stat.splitlines():
-        if _STAT_SEPARATOR not in line:
-            continue
-        path = line.split(_STAT_SEPARATOR, 1)[0].strip()
-        if path:
-            paths.append(path)
-    return paths
-
 
 def _tracker_relative_to_repo(tracker: str, repo_path: str) -> str | None:
     if repo_path == ".":
@@ -77,7 +64,7 @@ class GitFacts:
         commits = await self._git.log_oneline(repo_dir, commit_range)
         diff_stat = await self._git.diff_stat(repo_dir, diff_range)
         status = await self._git.status_porcelain(repo_dir)
-        changed_paths = set(_paths_from_diff_stat(diff_stat))
+        changed_paths = set(await self._git.diff_name_only(repo_dir, diff_range))
         changed_trackers = tuple(
             tracker
             for tracker in trackers
