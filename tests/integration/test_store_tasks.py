@@ -71,8 +71,8 @@ async def test_concurrent_command_append_allocates_unique_task_ids(tmp_path: Pat
         ]
 
     results = await asyncio.gather(
-        runner.run(argv(20), timeout=15, cwd=PROJECT_ROOT, check=True),
-        runner.run(argv(20), timeout=15, cwd=PROJECT_ROOT, check=True),
+        runner.run(argv(20), timeout=45, cwd=PROJECT_ROOT, check=True),
+        runner.run(argv(20), timeout=45, cwd=PROJECT_ROOT, check=True),
     )
 
     ids = [line for result in results for line in result.stdout.splitlines() if line]

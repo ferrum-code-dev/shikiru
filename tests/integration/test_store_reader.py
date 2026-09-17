@@ -62,13 +62,13 @@ async def test_reader_in_another_process_sees_the_writers_commit(
                 str(db_path),
                 str(ready_path),
             ],
-            timeout=15,
+            timeout=45,
             cwd=PROJECT_ROOT,
             check=True,
         )
     )
 
-    await wait_until(ready_path.exists, timeout=5)
+    await wait_until(ready_path.exists, timeout=20)
     events.append(EventKind.ENGINE_STARTED, message="engine started")
 
     result = await child

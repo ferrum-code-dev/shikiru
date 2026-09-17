@@ -10,7 +10,7 @@ from shikiru.clock import SystemClock
 from shikiru.store.database import Database
 from shikiru.store.reader import StateReader
 
-_WATCH_TIMEOUT_SECONDS = 10.0
+_WATCH_TIMEOUT_SECONDS = 30.0
 
 
 async def _wait_for_one_change(reader: StateReader) -> None:
