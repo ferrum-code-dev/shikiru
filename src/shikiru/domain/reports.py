@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum, auto
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -14,6 +14,16 @@ from shikiru.domain.tasks import DomainModel, Mode
 TRIAGE_TITLE_MAX_LENGTH = 60
 
 _DEPENDS_ON_PATTERN = re.compile(r"^(T-\d+|#\d+)$")
+
+
+def _require_iff(*, condition: bool, present: bool, field: str, rule: str) -> None:
+    """Enforce one "required iff `rule`" field, raising a message naming `field` and `rule`."""
+    if condition and not present:
+        message = f"{field}: required when {rule}"
+        raise ValueError(message)
+    if not condition and present:
+        message = f"{field}: must be empty unless {rule}"
+        raise ValueError(message)
 
 
 class NewTask(DomainModel):
@@ -99,12 +109,12 @@ class TriageReport(DomainModel):
 
     @model_validator(mode="after")
     def _subtasks_required_iff_split(self) -> Self:
-        if self.mode is Mode.SPLIT and not self.subtasks:
-            message = "subtasks: required and non-empty when mode is 'split'"
-            raise ValueError(message)
-        if self.mode is not Mode.SPLIT and self.subtasks:
-            message = "subtasks: must be empty unless mode is 'split'"
-            raise ValueError(message)
+        _require_iff(
+            condition=self.mode is Mode.SPLIT,
+            present=bool(self.subtasks),
+            field="subtasks",
+            rule="mode is 'split'",
+        )
         return self
 
 
@@ -145,22 +155,22 @@ class ConsultAnswer(DomainModel):
 
     @model_validator(mode="after")
     def _answer_required_iff_decision_is_answer(self) -> Self:
-        if self.decision == "answer" and not self.answer:
-            message = "answer: required when decision is 'answer'"
-            raise ValueError(message)
-        if self.decision != "answer" and self.answer:
-            message = "answer: must be empty unless decision is 'answer'"
-            raise ValueError(message)
+        _require_iff(
+            condition=self.decision == "answer",
+            present=bool(self.answer),
+            field="answer",
+            rule="decision is 'answer'",
+        )
         return self
 
     @model_validator(mode="after")
     def _escalation_required_iff_decision_is_escalate(self) -> Self:
-        if self.decision == "escalate" and self.escalation is None:
-            message = "escalation: required when decision is 'escalate'"
-            raise ValueError(message)
-        if self.decision != "escalate" and self.escalation is not None:
-            message = "escalation: must be unset unless decision is 'escalate'"
-            raise ValueError(message)
+        _require_iff(
+            condition=self.decision == "escalate",
+            present=self.escalation is not None,
+            field="escalation",
+            rule="decision is 'escalate'",
+        )
         return self
 
 
@@ -177,32 +187,32 @@ class Verdict(DomainModel):
 
     @model_validator(mode="after")
     def _issues_non_empty_iff_changes_requested(self) -> Self:
-        if self.decision == "changes_requested" and not self.issues:
-            message = "issues: required and non-empty when decision is 'changes_requested'"
-            raise ValueError(message)
-        if self.decision != "changes_requested" and self.issues:
-            message = "issues: must be empty unless decision is 'changes_requested'"
-            raise ValueError(message)
+        _require_iff(
+            condition=self.decision == "changes_requested",
+            present=bool(self.issues),
+            field="issues",
+            rule="decision is 'changes_requested'",
+        )
         return self
 
     @model_validator(mode="after")
     def _new_tasks_non_empty_iff_supersede(self) -> Self:
-        if self.decision == "supersede" and not self.new_tasks:
-            message = "new_tasks: required and non-empty when decision is 'supersede'"
-            raise ValueError(message)
-        if self.decision != "supersede" and self.new_tasks:
-            message = "new_tasks: must be empty unless decision is 'supersede'"
-            raise ValueError(message)
+        _require_iff(
+            condition=self.decision == "supersede",
+            present=bool(self.new_tasks),
+            field="new_tasks",
+            rule="decision is 'supersede'",
+        )
         return self
 
     @model_validator(mode="after")
     def _escalation_required_iff_decision_is_escalate(self) -> Self:
-        if self.decision == "escalate" and self.escalation is None:
-            message = "escalation: required when decision is 'escalate'"
-            raise ValueError(message)
-        if self.decision != "escalate" and self.escalation is not None:
-            message = "escalation: must be unset unless decision is 'escalate'"
-            raise ValueError(message)
+        _require_iff(
+            condition=self.decision == "escalate",
+            present=self.escalation is not None,
+            field="escalation",
+            rule="decision is 'escalate'",
+        )
         return self
 
 
@@ -232,6 +242,6 @@ def model_for(kind: ReportKind) -> type[Report]:
     return _MODELS_BY_KIND[kind]
 
 
-def schema_for(kind: ReportKind) -> dict[str, object]:
+def schema_for(kind: ReportKind) -> dict[str, Any]:
     """Return the JSON Schema for `kind`'s report model, written as `report.schema.json`."""
     return model_for(kind).model_json_schema()
