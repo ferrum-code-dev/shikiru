@@ -4,7 +4,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 
 
 ## Phase 0 — Foundation
-- [ ] Task 1: Scaffold, quality gate, test support
+- [x] Task 1: Scaffold, quality gate, test support
 
 ## Phase 1 — Core model
 - [ ] Task 2: Configuration
