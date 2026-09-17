@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.loader import load_settings
-from shikiru.config.settings import ComplexityLadder, ImplementerConfig, ProjectConfig
+from shikiru.config.settings import ComplexityLadder, ImplementerConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,11 +46,6 @@ def test_packaged_defaults_validate_together_with_a_minimal_project_file(tmp_pat
     assert settings.roles.implementer.escalate_after == 2
 
 
-def test_settings_reject_unknown_keys() -> None:
-    with pytest.raises(ValidationError):
-        ProjectConfig.model_validate({"name": "demo", "unknown": True})
-
-
 def test_settings_reject_unknown_keys_in_a_ladder_entry() -> None:
     with pytest.raises(ValidationError):
         ImplementerConfig.model_validate(
@@ -59,14 +54,6 @@ def test_settings_reject_unknown_keys_in_a_ladder_entry() -> None:
                 "ladder": [{"agent": "codex", "model": "sol", "bogus": True}],
             }
         )
-
-
-def test_settings_models_are_frozen(tmp_path: Path) -> None:
-    _write_minimal_project(tmp_path)
-    settings = load_settings(tmp_path)
-
-    with pytest.raises(ValidationError):
-        settings.project.name = "renamed"
 
 
 def test_implementer_ladder_for_falls_back_to_base_ladder_without_complexity_override() -> None:

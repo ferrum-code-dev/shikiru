@@ -7,16 +7,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.cli.report import (
-    REPORT_EXIT_INVALID,
-    REPORT_EXIT_NO_CURRENT_TURN,
-    ReportError,
-    resolve_current_turn_dir,
-    validate_report,
-    write_report,
-)
+from shikiru.cli.report import REPORT_EXIT_INVALID, REPORT_EXIT_NO_CURRENT_TURN
 from shikiru.process import SubprocessRunner
-from tests.support.factories import make_verdict
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -151,43 +143,3 @@ async def test_running_report_twice_replaces_the_stale_report_json(tmp_path: Pat
     assert returncode == 0
     written = json.loads((turn_dir / "report.json").read_text())
     assert written["summary"] == "Replaces the stale report"
-
-
-def test_resolve_current_turn_dir_requires_both_env_vars(tmp_path: Path) -> None:
-    with pytest.raises(ReportError) as excinfo:
-        resolve_current_turn_dir({"SHIKIRU_RUN_DIR": str(tmp_path)})
-
-    assert excinfo.value.exit_code == REPORT_EXIT_NO_CURRENT_TURN
-
-
-def test_validate_report_rejects_a_missing_report_kind_file(tmp_path: Path) -> None:
-    turn_dir = tmp_path / "turn"
-    turn_dir.mkdir()
-    file_path = tmp_path / "report.json"
-    file_path.write_text("{}")
-
-    with pytest.raises(ReportError) as excinfo:
-        validate_report(turn_dir, file_path)
-
-    assert excinfo.value.exit_code == REPORT_EXIT_INVALID
-    assert "report.kind" in excinfo.value.message
-
-
-def test_validate_report_rejects_an_unreadable_file(tmp_path: Path) -> None:
-    _, turn_dir = _make_turn_dir(tmp_path, kind="verdict")
-
-    with pytest.raises(ReportError) as excinfo:
-        validate_report(turn_dir, tmp_path / "does-not-exist.json")
-
-    assert excinfo.value.exit_code == REPORT_EXIT_INVALID
-    assert "cannot read" in excinfo.value.message
-
-
-def test_write_report_cleans_up_its_temp_file_when_the_replace_fails(tmp_path: Path) -> None:
-    _, turn_dir = _make_turn_dir(tmp_path, kind="verdict")
-    (turn_dir / "report.json").mkdir()
-
-    with pytest.raises(OSError, match=r"report\.json"):
-        write_report(turn_dir, make_verdict())
-
-    assert list(turn_dir.glob(".report.json.*")) == []

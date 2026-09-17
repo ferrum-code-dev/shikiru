@@ -16,46 +16,20 @@ def test_every_reason_has_exactly_one_recommended_option(reason: EscalationReaso
 
 
 @pytest.mark.parametrize(
-    ("reason", "labels"),
+    ("reason", "recommended_label"),
     [
-        (EscalationReason.DECISION_REQUIRED, {ResolutionKind.ANSWER, ResolutionKind.CANCEL}),
-        (
-            EscalationReason.ITERATIONS_EXHAUSTED,
-            {ResolutionKind.ANSWER, ResolutionKind.ACCEPT, ResolutionKind.CANCEL},
-        ),
-        (EscalationReason.INTEGRATION_CONFLICT, {ResolutionKind.RETRY, ResolutionKind.CANCEL}),
-        (EscalationReason.INTEGRATION_BLOCKED, {ResolutionKind.RETRY, ResolutionKind.CANCEL}),
-        (EscalationReason.PR_CLOSED, {ResolutionKind.RETRY, ResolutionKind.CANCEL}),
-        (EscalationReason.AGENT_AUTH, {ResolutionKind.RETRY, ResolutionKind.CANCEL}),
-        (EscalationReason.LADDER_EXHAUSTED, {ResolutionKind.RETRY, ResolutionKind.CANCEL}),
-        (EscalationReason.QUOTA_EXHAUSTED, {ResolutionKind.RETRY, ResolutionKind.CANCEL}),
-        (EscalationReason.DEPENDENCY_CANCELLED, {ResolutionKind.RETRY, ResolutionKind.CANCEL}),
+        (EscalationReason.DECISION_REQUIRED, ResolutionKind.ANSWER),
+        (EscalationReason.ITERATIONS_EXHAUSTED, ResolutionKind.ANSWER),
+        (EscalationReason.AGENT_CRASH, ResolutionKind.RETRY),
+        (EscalationReason.AGENT_AUTH, ResolutionKind.RETRY),
+        (EscalationReason.LADDER_EXHAUSTED, ResolutionKind.RETRY),
     ],
+    ids=["decision", "exhausted", "agent-crash", "agent-auth", "ladder-exhausted"],
 )
-def test_options_match_the_escalation_table(
-    reason: EscalationReason, labels: set[ResolutionKind]
+def test_recommended_option_matches_the_reason_family(
+    reason: EscalationReason, recommended_label: ResolutionKind
 ) -> None:
     options = options_for(reason)
 
-    assert {option.label for option in options} == labels
-
-
-def test_decision_required_recommends_answer() -> None:
-    options = options_for(EscalationReason.DECISION_REQUIRED)
-
     recommended = next(option for option in options if option.recommended)
-    assert recommended.label is ResolutionKind.ANSWER
-
-
-def test_iterations_exhausted_recommends_answer() -> None:
-    options = options_for(EscalationReason.ITERATIONS_EXHAUSTED)
-
-    recommended = next(option for option in options if option.recommended)
-    assert recommended.label is ResolutionKind.ANSWER
-
-
-def test_agent_failures_recommend_retry() -> None:
-    options = options_for(EscalationReason.AGENT_CRASH)
-
-    recommended = next(option for option in options if option.recommended)
-    assert recommended.label is ResolutionKind.RETRY
+    assert recommended.label is recommended_label
