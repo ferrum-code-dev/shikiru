@@ -115,17 +115,16 @@ def _changes_requested(task: Task, settings: Settings) -> Transition:
     if task.iteration >= settings.orchestration.max_iterations:
         return _escalate(task, EscalationReason.ITERATIONS_EXHAUSTED, step=Step.VERIFY)
     rejections = task.counters.rejections_on_rung + 1
-    counters = reset_for_new_iteration(task.counters).model_copy(
-        update={"rejections_on_rung": rejections}
-    )
     rung_index = dict(task.rung_index)
     overrides = dict(task.overrides)
+    counters = task.counters.model_copy(update={"rejections_on_rung": rejections})
     if rejections >= settings.roles.implementer.escalate_after:
-        move = move_up(task, Role.IMPLEMENTER, settings, counters=counters)
+        move = move_up(task, Role.IMPLEMENTER, settings)
         if move is not None:
             rung_index = move.rung_index
             overrides = move.overrides
             counters = move.counters
+    counters = reset_for_new_iteration(counters)
     return Transition(
         step=Step.IMPLEMENT,
         status=Status.RUNNING,
