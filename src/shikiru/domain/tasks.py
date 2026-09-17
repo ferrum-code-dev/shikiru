@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum, auto
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import ComplexityName
 
-TaskOrigin = Literal["operator", "split", "leader"]
+
+class TaskOrigin(StrEnum):
+    """Where a task came from (03 §1.1)."""
+
+    OPERATOR = auto()
+    SPLIT = auto()
+    LEADER = auto()
 
 
 class Status(StrEnum):
