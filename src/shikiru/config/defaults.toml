@@ -1,0 +1,37 @@
+[orchestration]
+max_parallel = 2
+max_iterations = 5
+integration = "merge"
+poll_seconds = 2
+
+[orchestration.resources]
+max_cpu_pct = 85
+min_free_ram_gb = 4
+
+[orchestration.timeouts]
+launch = 90
+stall = 1200
+tool = 7200
+max_quota_wait = 28800
+integration_wait = 1800
+
+[dashboard]
+animations = true
+widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
+
+[dashboard.layout]
+split = "h"
+panes = [
+  { pane = "system", size = 30 },
+  { split = "v", panes = [ { pane = "leader" }, { pane = "implementer" }, { pane = "shell", size = 20 } ] },
+]
+
+[dashboard.titles]
+window = "{task_id} {title:.24}"
+leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context}% · ${cost:.2f} {flags}"
+implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context}% · ${cost:.2f} {flags}"
+system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
+shell = "Shell · {cwd}"
+
+[notify]
+command = ""

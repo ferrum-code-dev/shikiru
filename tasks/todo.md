@@ -7,7 +7,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 1: Scaffold, quality gate, test support
 
 ## Phase 1 — Core model
-- [ ] Task 2: Configuration
+- [x] Task 2: Configuration
 - [ ] Task 3: Domain rules
 - [ ] Task 4: Report models and `shikiru report`
 - [ ] Task 5: State store

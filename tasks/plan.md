@@ -30,9 +30,9 @@ Refs: 02 §2–3, 07 §1–3.
 
 ### Task 2: Configuration
 Refs: 05 §1.
-- [ ] `Settings` models for every core key (`extra="forbid"`), `agents.<name>.options` untyped; packaged `defaults.toml`.
-- [ ] Merge defaults < project < `--set` (TOML-parsed values); errors name the file and key path.
-- [ ] `Rung` parsing `agent:model:effort`; implementer ladder resolution by complexity with fallback.
+- [x] `Settings` models for every core key (`extra="forbid"`), `agents.<name>.options` untyped; packaged `defaults.toml`.
+- [x] Merge defaults < project < `--set` (TOML-parsed values); errors name the file and key path.
+- [x] `Rung` parsing `agent:model:effort`; implementer ladder resolution by complexity with fallback.
 - Tests: unit for merge, overrides and ladder resolution.
 
 ### Task 3: Domain rules

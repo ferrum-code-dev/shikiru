@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pytest
+
+from shikiru.config.loader import load_settings
+from shikiru.errors import ConfigError
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+_MINIMAL_PROJECT_CONFIG = """
+[project]
+name = "demo"
+
+[roles.leader]
+ladder = [ { agent = "claude", model = "opus", effort = "high" } ]
+
+[roles.implementer]
+ladder = [ { agent = "codex", model = "sol", effort = "high" } ]
+
+[roles.helper]
+ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
+"""
+
+
+def _project(tmp_path: Path, extra: str = "") -> Path:
+    shikiru_dir = tmp_path / ".shikiru"
+    shikiru_dir.mkdir()
+    (shikiru_dir / "config.toml").write_text(_MINIMAL_PROJECT_CONFIG + extra)
+    return tmp_path
+
+
+def test_project_file_overrides_packaged_defaults(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path, "\n[orchestration]\nmax_parallel = 4\n")
+
+    settings = load_settings(project_dir)
+
+    assert settings.orchestration.max_parallel == 4
+    assert settings.orchestration.max_iterations == 5
+
+
+def test_deep_merge_keeps_sibling_keys_from_lower_sources(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path, "\n[orchestration.resources]\nmax_cpu_pct = 50\n")
+
+    settings = load_settings(project_dir)
+
+    assert settings.orchestration.resources.max_cpu_pct == 50
+    assert settings.orchestration.resources.min_free_ram_gb == 4
+
+
+def test_deep_merge_replaces_arrays_instead_of_concatenating(tmp_path: Path) -> None:
+    project_dir = _project(
+        tmp_path,
+        '\n[dashboard]\nwidgets = ["header"]\n',
+    )
+
+    settings = load_settings(project_dir)
+
+    assert settings.dashboard.widgets == ["header"]
+
+
+def test_set_override_wins_over_project_file(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path, "\n[orchestration]\nmax_parallel = 4\n")
+
+    settings = load_settings(project_dir, overrides=["orchestration.max_parallel=7"])
+
+    assert settings.orchestration.max_parallel == 7
+
+
+def test_set_override_parses_int(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path)
+
+    settings = load_settings(project_dir, overrides=["orchestration.max_parallel=3"])
+
+    assert settings.orchestration.max_parallel == 3
+    assert isinstance(settings.orchestration.max_parallel, int)
+
+
+def test_set_override_parses_list(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path)
+
+    settings = load_settings(project_dir, overrides=['project.trackers=["a.md"]'])
+
+    assert settings.project.trackers == ["a.md"]
+
+
+def test_set_override_bare_word_is_taken_as_a_string(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path)
+
+    settings = load_settings(project_dir, overrides=["orchestration.integration=merge"])
+
+    assert settings.orchestration.integration == "merge"
+
+
+def test_set_override_without_equals_sign_is_a_config_error(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path)
+
+    with pytest.raises(ConfigError, match="--set"):
+        load_settings(project_dir, overrides=["orchestration.max_parallel"])
+
+
+def test_invalid_value_in_project_file_names_file_and_key_path(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path, '\n[orchestration]\nmax_parallel = "three"\n')
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_settings(project_dir)
+
+    assert str(excinfo.value) == (
+        ".shikiru/config.toml: orchestration.max_parallel: "
+        "Input should be a valid integer, unable to parse string as an integer"
+    )
+
+
+def test_invalid_value_from_set_override_names_set_and_key_path(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path)
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_settings(project_dir, overrides=["orchestration.max_parallel=[1,2]"])
+
+    assert str(excinfo.value).startswith("--set: orchestration.max_parallel:")
+
+
+def test_set_override_value_that_is_not_even_a_valid_string_is_a_config_error(
+    tmp_path: Path,
+) -> None:
+    project_dir = _project(tmp_path)
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_settings(project_dir, overrides=["project.name=\x01"])
+
+    assert str(excinfo.value).startswith("--set: project.name")
+
+
+def test_invalid_toml_syntax_in_project_file_names_the_file(tmp_path: Path) -> None:
+    shikiru_dir = tmp_path / ".shikiru"
+    shikiru_dir.mkdir()
+    (shikiru_dir / "config.toml").write_text("[project\nname = 'demo'\n")
+
+    with pytest.raises(ConfigError, match=r"^\.shikiru/config\.toml: "):
+        load_settings(tmp_path)
+
+
+def test_missing_project_file_falls_back_to_defaults_and_still_requires_settings(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ConfigError):
+        load_settings(tmp_path)
