@@ -87,6 +87,7 @@ ignore = [
 "src/shikiru/process.py" = ["TID251"]
 "src/shikiru/clock.py" = ["TID251"]
 "src/shikiru/config/loader.py" = ["ANN401"]
+"src/shikiru/config/settings.py" = ["TC001"] # Rung is needed at runtime for pydantic validation
 "tests/support/waiting.py" = ["TID251"]
 "tests/**" = ["S101", "D", "ANN", "PLR2004"]
 
@@ -110,7 +111,7 @@ layers = [
   "(shikiru.workspace) | (shikiru.tmux) | (shikiru.prompts) | (shikiru.helper) | (shikiru.ui) | (shikiru.telemetry) | (shikiru.agents.registry)",
   "(shikiru.store)",
   "(shikiru.domain)",
-  "(shikiru.config) | (shikiru.agents.contracts) | (shikiru.agents.sdk)",
+  "(shikiru.config) : (shikiru.agents.contracts) : (shikiru.agents.sdk)",
   "shikiru.process | shikiru.clock",
   "shikiru.errors",
 ]

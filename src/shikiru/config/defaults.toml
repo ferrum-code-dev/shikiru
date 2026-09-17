@@ -15,6 +15,9 @@ tool = 7200
 max_quota_wait = 28800
 integration_wait = 1800
 
+[roles.implementer]
+escalate_after = 2
+
 [dashboard]
 animations = true
 widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]

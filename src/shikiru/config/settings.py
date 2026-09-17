@@ -6,9 +6,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from shikiru.agents.contracts import Rung
+
 ComplexityName = Literal["low", "normal", "high"]
 IntegrationStrategy = Literal["merge", "pr"]
 LayoutSplitAxis = Literal["h", "v"]
+PaneName = Literal["system", "leader", "implementer", "shell"]
 
 
 class ConfigModel(BaseModel):
@@ -68,64 +71,42 @@ class AgentConfig(ConfigModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
-class RungSpec(ConfigModel):
-    """A `{agent, model, effort}` ladder entry as it appears in TOML."""
-
-    agent: str
-    model: str
-    effort: str | None = None
-
-
 class ComplexityLadder(ConfigModel):
     """One `[roles.implementer.complexity.<name>]` table."""
 
-    ladder: list[RungSpec]
+    ladder: list[Rung]
 
 
-class ComplexityLadders(ConfigModel):
-    """`[roles.implementer.complexity]`: per-complexity ladder overrides, all optional."""
+class RoleConfig(ConfigModel):
+    """A role's base ladder: `[roles.leader]` and `[roles.helper]`."""
 
-    low: ComplexityLadder | None = None
-    normal: ComplexityLadder | None = None
-    high: ComplexityLadder | None = None
-
-    def for_complexity(self, complexity: ComplexityName) -> ComplexityLadder | None:
-        """Return the configured ladder override for `complexity`, if any."""
-        return getattr(self, complexity)
+    ladder: list[Rung]
 
 
-class LeaderConfig(ConfigModel):
-    """`[roles.leader]`."""
+class ImplementerConfig(RoleConfig):
+    """`[roles.implementer]`: a base ladder plus escalation and per-complexity overrides."""
 
-    ladder: list[RungSpec]
+    escalate_after: int
+    complexity: dict[ComplexityName, ComplexityLadder] = Field(default_factory=dict)
 
-
-class ImplementerConfig(ConfigModel):
-    """`[roles.implementer]`."""
-
-    ladder: list[RungSpec]
-    escalate_after: int = 2
-    complexity: ComplexityLadders = Field(default_factory=ComplexityLadders)
-
-
-class HelperConfig(ConfigModel):
-    """`[roles.helper]`."""
-
-    ladder: list[RungSpec]
+    def ladder_for(self, complexity: ComplexityName) -> list[Rung]:
+        """Resolve the ladder for `complexity`, falling back to the base ladder."""
+        override = self.complexity.get(complexity)
+        return override.ladder if override is not None else self.ladder
 
 
 class RolesConfig(ConfigModel):
     """`[roles]`."""
 
-    leader: LeaderConfig
+    leader: RoleConfig
     implementer: ImplementerConfig
-    helper: HelperConfig
+    helper: RoleConfig
 
 
 class PaneLeaf(ConfigModel):
     """A dashboard layout leaf naming the pane it holds."""
 
-    pane: str
+    pane: PaneName
     size: int | None = None
 
 
@@ -133,7 +114,7 @@ class LayoutSplit(ConfigModel):
     """A dashboard layout split holding nested panes or further splits."""
 
     split: LayoutSplitAxis
-    panes: list[LayoutSplit | PaneLeaf]
+    panes: list[LayoutNode]
 
 
 LayoutNode = LayoutSplit | PaneLeaf
@@ -161,7 +142,7 @@ class DashboardConfig(ConfigModel):
 class NotifyConfig(ConfigModel):
     """`[notify]`."""
 
-    command: str = ""
+    command: str
 
 
 class Settings(ConfigModel):
@@ -173,12 +154,4 @@ class Settings(ConfigModel):
     agents: dict[str, AgentConfig] = Field(default_factory=dict)
     roles: RolesConfig
     dashboard: DashboardConfig
-    notify: NotifyConfig = Field(default_factory=NotifyConfig)
-
-
-def implementer_ladder(
-    implementer: ImplementerConfig, complexity: ComplexityName
-) -> list[RungSpec]:
-    """Resolve the implementer's ladder for `complexity`, falling back to its base ladder."""
-    override = implementer.complexity.for_complexity(complexity)
-    return override.ladder if override is not None else implementer.ladder
+    notify: NotifyConfig
