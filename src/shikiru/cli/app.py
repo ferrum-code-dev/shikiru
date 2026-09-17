@@ -6,9 +6,12 @@ from importlib.metadata import version
 
 import typer
 
+from shikiru.cli.report import report_command
+
 PACKAGE_NAME = "shikiru"
 
 app = typer.Typer(name=PACKAGE_NAME, no_args_is_help=True)
+app.command(name="report", hidden=True)(report_command)
 
 
 def _print_version(*, show: bool) -> None:
