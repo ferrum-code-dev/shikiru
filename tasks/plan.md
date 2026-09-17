@@ -61,9 +61,9 @@ Refs: 05 §2.
 
 ### Task 6: tmux
 Refs: 06 §5.1–5.3.
-- [ ] `Tmux` client (argv, exact `=` targets, socket override for tests).
-- [ ] `SessionView`: name rules and collision check, session options, home window, task window create/close.
-- [ ] `LayoutBuilder` from the layout tree → `{role: pane_id}`; `TmuxPane` implementing `PaneHandle` plus `paste_line` and `send_keys`; `PaneDecorator` (`@shk_*` pane and window options, border and status formats, titles from templates); conditional `prefix + Space` binding.
+- [x] `Tmux` client (argv, exact `=` targets, socket override for tests).
+- [x] `SessionView`: name rules and collision check, session options, home window, task window create/close.
+- [x] `LayoutBuilder` from the layout tree → `{role: pane_id}`; `TmuxPane` implementing `PaneHandle` plus `paste_line` and `send_keys`; `PaneDecorator` (`@shk_*` pane and window options, border and status formats, titles from templates); conditional `prefix + Space` binding.
 - Tests: integration on `tmux_server`: geometry, paste reaches `cat`, decorations render, binding keeps its default outside Shikiru sessions.
 
 ### Task 7: Workspace

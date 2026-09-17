@@ -1,21 +1,23 @@
 """The agent plugin contract (docs/design/04-agents.md §1).
 
-Only the types the state store (Task 5) needs ahead of the rest of the contract exist so far:
-`Rung`, `FailureKind`, `Usage` and `QuotaWindow`.
+Only the types earlier tasks need ahead of the rest of the contract exist so far:
+`Rung`, `FailureKind`, `Usage`, `QuotaWindow` and `PaneHandle`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
 
 from pydantic import ConfigDict
 
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from datetime import datetime
+    from pathlib import Path
 
 _RUNG_SEPARATOR = ":"
 _VALID_RUNG_PART_COUNTS = (2, 3)
@@ -65,6 +67,22 @@ class QuotaWindow:
     used_pct: float
     resets_at: datetime | None
     observed_at: datetime
+
+
+class PaneHandle(Protocol):
+    """The single tmux pane an agent session lives in (04 §1)."""
+
+    async def respawn(self, argv: Sequence[str], env: Mapping[str, str | None], cwd: Path) -> None:
+        """Restart the pane's process with `argv`, `env` and `cwd`."""
+        ...
+
+    async def capture_visible(self) -> str:
+        """Return the pane's currently visible text."""
+        ...
+
+    async def is_alive(self) -> bool:
+        """Return whether the pane's process is still running."""
+        ...
 
 
 def parse_rung(text: str) -> Rung:

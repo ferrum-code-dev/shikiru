@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -39,6 +40,11 @@ class TmuxServer:
             check=check,
         )
 
+    async def socket_path(self) -> Path:
+        """Return this server's socket file path."""
+        result = await self.run("display-message", "-p", "#{socket_path}")
+        return Path(result.stdout.strip())
+
 
 def _clean_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key not in _TMUX_INHERITED_ENV_VARS}
@@ -70,4 +76,6 @@ async def tmux_server() -> AsyncIterator[TmuxServer]:
     try:
         yield server
     finally:
+        socket_path = await server.socket_path()
         await server.run("kill-server", check=False)
+        socket_path.unlink(missing_ok=True)

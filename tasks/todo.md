@@ -13,7 +13,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 5: State store
 
 ## Phase 2 — Substrate
-- [ ] Task 6: tmux
+- [x] Task 6: tmux
 - [ ] Task 7: Workspace
 - [ ] Task 8: Agent contract, registry, SDK
 - [ ] Task 9: Fake agent and contract test kit
