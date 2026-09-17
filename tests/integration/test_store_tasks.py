@@ -7,6 +7,8 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from shikiru.agents.contracts import Rung
 from shikiru.domain.commands import Submit
 from shikiru.domain.reports import NewTask
@@ -15,7 +17,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Counters, Hold, RepoState, Role, Status, Step, Task, TaskOrigin
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
-from shikiru.store.database import Database
+from shikiru.store.database import Database, transaction
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 
@@ -214,3 +216,36 @@ def test_repoint_dependents_moves_every_dependency_onto_the_new_tasks(tmp_path: 
     assert reloaded_unrelated is not None
     assert set(reloaded_dependent.depends_on) == {new_a.id, new_b.id}
     assert reloaded_unrelated.depends_on == []
+
+
+class _Boom(Exception):
+    pass
+
+
+def test_transaction_composes_so_a_later_failure_rolls_back_nested_writes(tmp_path: Path) -> None:
+    connection = Database(tmp_path / "state.db").connect()
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    queue = CommandQueue(connection, clock)
+    old = _submit(store, queue, "old")
+    dependent = _submit(store, queue, "dependent", depends_on=[old.id])
+    children_before = len(store.list_all())
+
+    def insert_child_and_repoint_then_fail() -> None:
+        with transaction(connection):
+            child = store.insert_child(
+                NewTask(title="child", request="child"),
+                depends_on=[],
+                parent_id=old.id,
+                origin=TaskOrigin.LEADER,
+            )
+            store.repoint_dependents(old.id, [child.id])
+            raise _Boom
+
+    with pytest.raises(_Boom):
+        insert_child_and_repoint_then_fail()
+
+    assert len(store.list_all()) == children_before
+    reloaded_dependent = store.get(dependent.id)
+    assert reloaded_dependent is not None
+    assert reloaded_dependent.depends_on == [old.id]
