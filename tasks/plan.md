@@ -39,14 +39,15 @@ Refs: 05 §1.
 Refs: 03 §1–3, §7–8, §10; 05 §2.
 - [ ] `Task`, `Status`, `Step`, `Mode`, `Hold`, `Counters`, `EventKind`, command models.
 - [ ] `next_step(task, outcome)` covering every outcome in 03 §2–3, including final round, supersede and split.
-- [ ] `pick_rung(task, role, settings)` and move-up rules; `recovery.decide(result, counters, policy)` for every row of 03 §7.
+- [ ] `pick_rung(task, role, settings)` and move-up rules; `recovery.decide(result, counters, policy)` for every row of 03 §7; counter resets (03 §1.1).
+- [ ] `activity.is_stalled` and `activity.is_operator_prompt` (03 §4.2, §9).
 - [ ] `scheduling.pick_ready(tasks, gates)` with ordering and `wait_reason`; `escalation.options_for(reason)` per 03 §8.
 - Tests: table-driven unit tests, one row per documented rule.
 
 ### Task 4: Report models and `shikiru report`
 Refs: 05 §4, 03 §4.3.
 - [ ] All report models with "required iff" validators; `schema_for(kind)`.
-- [ ] `shikiru report --file F`: resolves `$SHIKIRU_RUN_DIR/current_turn`, validates by `report.kind`, atomic write, exit codes 0/2/3.
+- [ ] `shikiru report --file F` (`cli/report.py`): resolves `$SHIKIRU_RUN_DIR/$SHIKIRU_ROLE/current_turn`, validates by `report.kind`, atomic write, exit codes 0/2/3.
 - Tests: unit for validators; integration for the CLI in a tmp run dir.
 
 ### Task 5: State store
@@ -62,7 +63,7 @@ Refs: 05 §2.
 Refs: 06 §5.1–5.3.
 - [ ] `Tmux` client (argv, exact `=` targets, socket override for tests).
 - [ ] `SessionView`: name rules and collision check, session options, home window, task window create/close.
-- [ ] `LayoutBuilder` from the layout tree → `{role: pane_id}`; `TmuxPane` implementing `PaneHandle` plus `paste_line` and `send_keys`; decorations (`@shk_*` pane and window options, border and status formats); conditional `prefix + Space` binding.
+- [ ] `LayoutBuilder` from the layout tree → `{role: pane_id}`; `TmuxPane` implementing `PaneHandle` plus `paste_line` and `send_keys`; `PaneDecorator` (`@shk_*` pane and window options, border and status formats, titles from templates); conditional `prefix + Space` binding.
 - Tests: integration on `tmux_server`: geometry, paste reaches `cat`, decorations render, binding keeps its default outside Shikiru sessions.
 
 ### Task 7: Workspace
@@ -75,14 +76,14 @@ Refs: 03 §5.
 ### Task 8: Agent contract, registry, SDK
 Refs: 04 §1–2.
 - [ ] `agents/contracts.py` exactly per 04 §1 with docstrings.
-- [ ] `AgentRegistry`: loads `AgentFactory` entry points, reports missing or broken plugins and option errors by name.
+- [ ] `AgentRegistry`: loads `AgentFactory` entry points (and factories registered by `bootstrap`), reports missing or broken plugins and option errors by name.
 - [ ] SDK: `HookRecorder` + `shikiru hook` (flock, no-op outside Shikiru), `JsonlTail`, `ResetTimeParser`, `PriceTable`.
 - Tests: unit for `ResetTimeParser` and `PriceTable`; integration for hook append/tail with concurrent writers.
 
 ### Task 9: Fake agent and contract test kit
 Refs: 04 §3, 07 §3.
 - [ ] `AgentContractSuite` with offline and live checks.
-- [ ] Fake agent plugin (scripted REPL using `HookRecorder`, headless `ask` via script) passing the suite on `tmux_server`.
+- [ ] Fake agent as a test-only package `tests/fake_agent` (uv dev dependency, own `shikiru.agents` entry point): scripted REPL using `HookRecorder`, headless `ask` via script; passes the suite on `tmux_server`.
 
 ### Task 10: Prompts and Helper
 Refs: 03 §2, §4.3; 04 §6.
@@ -93,7 +94,7 @@ Refs: 03 §2, §4.3; 04 §6.
 ### Task 11: UI core and dashboard shell
 Refs: 06 §5.4, §6.1–6.2.
 - [ ] `ui.tokens`, `ui.glyphs` (width-safety unit test), `ui.TaskStrip` (modes, panel states, stamps, two widths, `NO_COLOR`).
-- [ ] `DashboardApp` (`dash --home | --task`), `DashboardWidget` contract, widgets `header`, `strips`, `queue`.
+- [ ] `DashboardApp` (`dash --home | --task`), `DashboardWidget` contract with `WidgetContext` services, widgets `header`, `strips`, `queue`.
 - Tests: property tests for strips; two goldens per mode; Textual `run_test` for widgets over a seeded DB.
 
 ## Phase 3 — Pipeline on the fake agent
@@ -101,7 +102,7 @@ Refs: 06 §5.4, §6.1–6.2.
 ### Task 12: Session manager and monitor
 Refs: 03 §4.1–4.2, §9.
 - [ ] `SessionManager.ensure` for every row of 03 §4.1; `resume_command` stored; exit on task end.
-- [ ] `SessionMonitor`: single consumer, fan-out queue, usage/snapshot/last message persisted, pane death, stall and attention detection, intervention detection with the `intervention` hold, decorations updated.
+- [ ] `SessionMonitor`: single consumer, fan-out queue (with `PaneDecorator` subscribed), usage/snapshot/last message persisted, pane death, stall and attention via `domain.activity`, intervention hold via `domain.activity`; launch timeout → `Stalled`.
 - Tests: integration with fake agent scripts (resume, attach after restart, rung change, crash, stall, typed prompt → hold on that task only).
 
 ### Task 13: Turn runner
@@ -111,33 +112,34 @@ Refs: 03 §4.3.
 
 ### Task 14: Task flow
 Refs: 03 §2–3.
-- [ ] Step functions triage, plan, implement, consult, verify with `next_step`; final round; supersede; split into children (parent `done`); plan with `new_tasks`/`enqueue`; `scope_change` events; persisted counters and `rung_index`.
-- Tests: integration flows: implement-accept; changes_requested → accept; needs_decision → consult → accept; consult limit; final round → `iterations_exhausted`; split with dependencies; plan enqueue; supersede.
+- [ ] Step functions triage, plan, implement, consult, verify with `next_step`; final round; supersede and split with dependents repointed; plan with `new_tasks`; `scope_change` events; `turn_completed` with summary and question; persisted counters and `rung_index`.
+- [ ] `EscalationRaiser`: packet with all sections and exactly one ★ option; `escalated` status.
+- Tests: integration flows ending at step `integrate` or an escalation: implement-accept; changes_requested → accept; needs_decision → consult → accept; consult limit; final round → `iterations_exhausted`; split with dependents; plan with new tasks; supersede; packet property test.
 
-### Task 15: Recovery and escalation raising
-Refs: 03 §7–8.
-- [ ] `TaskFlow` applies `recovery.decide` actions: agent quota blocks, backoff, next rung (same-agent resume, other-agent handoff), relaunch, context handoff, stall → `classify_screen` actions.
-- [ ] `EscalationRaiser`: packet with all sections and exactly one ★ option; slot released; `escalated` status.
-- Tests: integration with fake failures for each 03 §7 row using `FakeClock`; packet property test.
+### Task 15: Recovery
+Refs: 03 §7.
+- [ ] `TaskFlow` applies `recovery.decide` actions: agent quota blocks with `continue` after the block, backoff, next rung (same-agent resume, other-agent handoff), relaunch, context handoff, stall → `classify_screen` actions (Leader question → `decision_required`).
+- Tests: integration with fake failures for each 03 §7 row using `FakeClock`.
 
 ### Task 16: Integration (local merge)
 Refs: 03 §6.
-- [ ] Integration lock; rebase of repos ahead of base; conflict turn → verify turn; `CONFLICT_ROUNDS`.
+- [ ] Integration lock; rebase of repos ahead of base; conflict turn → verify turn with the loop rules of 03 §6; `CONFLICT_ROUNDS`.
 - [ ] `LocalMerge`: pre-check, ff-only or `update-ref`, dirty-overlap retry and `integration_blocked`; cleanup; `task_done` with summary.
 - Tests: integration with real repos: clean ff, forced conflict resolved by the fake agent, dirty main checkout wait then success, multi-repo pre-check failure.
 
 ### Task 17: Engine daemon, scheduler, handlers
 Refs: 02 §1–2, 03 §9–10, 05 §2.
 - [ ] `Engine`: flock liveness, command loop, supervision of task coroutines, `engine.log`.
-- [ ] `Scheduler`: ready set, slot/resources/quota gates, `wait_reason`, dispatch creating the task window; `dependency_cancelled`.
+- [ ] `Scheduler`: ready set, slot (previous slot preferred, slot released on escalation)/resources/quota gates, `wait_reason`, dispatch creating the task window; `dependency_cancelled`.
+- [ ] `ResourceSampler` (host and instance process tree) and `QuotaPoller`.
 - [ ] Handlers for every command model (`Submit` … `Stop`), including cancellation semantics (03 §4.3) and resolution options (03 §8).
 - [ ] `LayoutGuard` restoring killed or dead panes; `Notifier` (tmux message and `notify.command`).
-- Tests: integration with the in-process engine: priority order, parallelism, dependencies, resource and quota gates with fake samplers, each handler, resolution options, pane restoration.
+- Tests: integration with the in-process engine: priority order, parallelism, dependencies, resource gate via configured thresholds (0% / 100%), quota gate via `agent_blocks` rows, each handler, resolution options with counter resets, pane restoration, quota polling with the fake agent.
 
 ### Task 18: Operator services and CLI
 Refs: 06 §1–2.
 - [ ] `OperatorQueries`, `OperatorCommands` (ack or queued), `EventFeed`.
-- [ ] All CLI commands from 06 §2 except `ls`/`attach`/`mcp`, with Rich output via `ui` and `--json`; `init --yes` with `dashboard/detectors.py`; `start`/`stop` spawning the detached engine.
+- [ ] All CLI commands from 06 §2 except `ls`/`attach`/`mcp`/`doctor`, with Rich output via `ui` and `--json`; `init --yes` with `operator/detectors.py`; `start`/`stop` spawning the detached engine.
 - [ ] End-to-end with the fake agent through real processes: `init --yes` → `start` → `submit` → task `done`, commit on `base`, task window closed.
 - Tests: integration CLI tests (human and JSON) plus the fake end-to-end.
 
@@ -184,7 +186,7 @@ Refs: 07 §5.
 
 ### Task 26: Remaining widgets and renderables
 Refs: 06 §5.4, §6.3–6.4.
-- [ ] `ui.SpeechBubble`, `ui.SplashPanel`, `ui.Gauge`; widgets `escalations`, `dialogue`, `usage`, `resources`, `docker` (hidden without Docker); `ResourceSampler`, `DockerSampler`.
+- [ ] `ui.SpeechBubble`, `ui.SplashPanel`, `ui.Gauge`; widgets `escalations`, `dialogue`, `usage`, `resources`, `docker` (hidden without Docker); `DockerSampler`.
 - Tests: Textual `run_test` behaviour over seeded state; samplers against real psutil and Docker (skipped when absent).
 
 ### Task 27: Palette
@@ -204,7 +206,7 @@ Refs: 06 §5.6.
 
 ### Task 30: Init wizard
 Refs: 06 §3.
-- [ ] Inline Textual wizard over `detectors.py` with the 7 steps; writes config, excludes `.shikiru/`, runs doctor.
+- [ ] Inline Textual wizard over `operator/detectors.py` with the 7 steps; writes config, excludes `.shikiru/`, runs doctor.
 - Tests: Textual `run_test` walkthrough on tmp mono- and multi-repo projects.
 
 ### Task 31: Release readiness

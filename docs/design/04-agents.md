@@ -94,7 +94,7 @@ Small, tested building blocks for plugins:
 
 | Block | Purpose |
 |---|---|
-| `HookRecorder` + `shikiru hook` | The hook command appends one trimmed JSON line to `$SHIKIRU_RUN_DIR/<role>/hooks.jsonl` under `flock`. It does nothing outside Shikiru. `HookRecorder.tail(offset)` yields entries |
+| `HookRecorder` + `shikiru hook` | The hook command appends one trimmed JSON line to `$SHIKIRU_RUN_DIR/$SHIKIRU_ROLE/hooks.jsonl` under `flock`. It does nothing outside Shikiru. `HookRecorder.tail(offset)` yields entries |
 | `JsonlTail` | Incremental reader for agent-written JSONL, safe with partial lines |
 | `ResetTimeParser` | "resets 3:10am (Europe/Warsaw)", ISO, epoch, relative durations → `datetime` |
 | `PriceTable` | Packaged `prices.toml` (per model: input, cache read/write, output per 1M tokens, context window) → `cost_usd`, `context_used_pct` |
@@ -209,6 +209,7 @@ Rollout `error` events → `TurnFailed`:
 - overloaded or 5xx → `UNAVAILABLE`
 - 401 → `AUTH`
 - context exceeded → `CONTEXT`
+- else → `OTHER`
 
 **Usage** comes from rollout `token_count` records (verified):
 - `total_token_usage` for token counts.

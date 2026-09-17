@@ -113,6 +113,15 @@ command = ""                                    # optional; event JSON on stdin 
 | Dashboard change poll | 500 ms |
 | Session exit grace | 10 s |
 | Escalation evidence | 60 pane lines |
+| Command ack wait | 10 s |
+| `QUOTA_MARGIN` | 60 s |
+| `QUOTA_POLL` | 60 s |
+| `CPU_WINDOW` | 30 s |
+| Git data cache (header) | 10 s |
+| Resource / Docker sampling | 2 s / 5 s |
+| Dialogue length | 20 lines |
+| MCP `wait_for_events` max timeout | 300 s |
+| Dashboard motion cap | 4 Hz |
 
 ## 2. State DB (`.shikiru/state.db`)
 
@@ -146,7 +155,7 @@ CREATE TABLE task_deps (task_id TEXT NOT NULL REFERENCES tasks(id), depends_on T
 CREATE TABLE runs (                               -- one agent session per task role
   id INTEGER PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), role TEXT NOT NULL,
   agent TEXT NOT NULL, model TEXT NOT NULL, effort TEXT,
-  session_id TEXT, resume_command TEXT, pane_id TEXT,
+  session_id TEXT, resume_command TEXT,
   agent_state TEXT NOT NULL DEFAULT '{}', last_message TEXT,
   status TEXT NOT NULL,                           -- live | exited | closed
   input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -176,7 +185,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 
 **`EventKind`** (in `domain.events`; `events.data` carries typed fields):
 - `task_queued`, `task_started`, `step_started`
-- `turn_started`, `turn_completed` (agent, model, outcome, usage delta), `turn_failed`
+- `turn_started`, `turn_completed` (agent, model, outcome, summary, question, usage delta), `turn_failed`
 - `nudge`, `helper_action`, `rung_changed`
 - `quota_blocked`, `quota_cleared`
 - `verdict`, `scope_change`
@@ -197,8 +206,8 @@ See 02 §5. `report.kind` names the report model of the turn. `helper.json` exis
 ## 4. Report models (`domain.reports`, pydantic → JSON Schema)
 
 ```python
-class Subtask(BaseModel):      title: str; request: str; priority: int = 0; depends_on: list[int] = []   # indexes in list
-class NewTask(BaseModel):      title: str; request: str; priority: int = 0; depends_on: list[str] = []   # T-ids
+class NewTask(BaseModel):      title: str; request: str; priority: int = 0
+                               depends_on: list[str] = []   # existing "T-n" or "#k" = k-th task of the same list
 class Commit(BaseModel):       repo: str; sha: str; subject: str
 class TestRun(BaseModel):      name: str; result: Literal["passed", "failed", "skipped"]; details: str = ""
 class Issue(BaseModel):        severity: Literal["blocker", "major", "minor"]; description: str; location: str = ""
@@ -211,7 +220,7 @@ class TriageReport(BaseModel):
     complexity: Literal["low", "normal", "high"]
     acceptance_criteria: list[str]
     references: list[str]
-    subtasks: list[Subtask] = []                   # required iff mode == split
+    subtasks: list[NewTask] = []                   # required iff mode == split
 
 class ImplementationReport(BaseModel):
     status: Literal["completed", "needs_decision", "blocked"]
@@ -227,7 +236,6 @@ class PlanReport(BaseModel):
     commits: list[Commit]
     new_tasks: list[NewTask] = []
     scope_changes: list[str] = []
-    enqueue: bool = False
 
 class ConsultAnswer(BaseModel):
     decision: Literal["answer", "escalate"]

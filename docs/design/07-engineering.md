@@ -55,7 +55,7 @@
 - **`tmux_server` fixture**: `tmux -L shikiru-test-<uuid> -f /dev/null` with a fixed `-x 200 -y 50`, `default-shell /bin/sh` and a clean env. Killed in teardown, unique per xdist worker.
 - **`wait_until(predicate, timeout)`**: the only way to wait. No sleeps.
 - **`FakeClock`**: injected into the engine, so timeouts, backoffs, quota waits and PR polls run instantly.
-- **Fake agent plugin** (`tests/fixtures/fake_agent/`): a line-reading REPL in a real pane that emits hook lines through `HookRecorder`.
+- **Fake agent plugin** (`tests/fake_agent/`, a test-only package with its own entry point): a line-reading REPL in a real pane that emits hook lines through `HookRecorder`.
   - It is scripted by `SHIKIRU_FAKE_SCRIPT` to: accept, changes_requested×N, needs_decision, no report, fail(kind, resets_at), crash, stall, dialog.
   - It runs the real `shikiru report` and commits files.
   - It passes `AgentContractSuite`.

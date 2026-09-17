@@ -29,9 +29,9 @@ CLI, MCP and the dashboard palette are thin adapters over three small services:
 | `pause T-n [--now]`, `resume T-n`, `cancel T-n`, `retry T-n` | Task control (03 §9) |
 | `rung T-n <role> <agent:model:effort>` | Model override from the next turn |
 | `say T-n <role> "<text>"`, `peek T-n <role>` | Session access |
-| `escalations [--all]`, `resolve E-n <answer TEXT/retry [--rung R]/accept/cancel>` | Escalations |
+| `escalations [--all]`, `resolve E-n <answer TEXT/retry [--rung a:m:e]/accept/cancel>` | Escalations; `--rung` applies to the role that failed (stored on the escalation's step) |
 | `events [--follow] [--since ID] [--task T-n]` | Event stream (NDJSON with `--json`) |
-| `doctor [--probe]` | Environment, config and plugin checks; `--probe` runs live contract checks 1–2 |
+| `doctor [--probe]` | Environment, config and plugin checks; `--probe` runs live contract checks 1–2 (04 §3) |
 | `config show` | Merged config |
 | `mcp` | Stdio MCP server |
 | hidden: `engine`, `dash`, `palette`, `hook`, `report` | Process entrypoints |
@@ -45,7 +45,7 @@ CLI, MCP and the dashboard palette are thin adapters over three small services:
 
 ## 3. `init` wizard
 
-`dashboard/wizard.py` is an inline Textual app. It shares `detectors.py` with `init --yes`:
+`dashboard/wizard.py` is an inline Textual app. It shares `operator/detectors.py` with `init --yes`:
 1. **Repos**: cwd is a git work tree → `path="."`; otherwise scan subfolders (depth ≤ 4) for `.git`. `base` = the current branch.
 2. **Agents**: installed plugins whose `doctor()` passes. Choose ladders for leader, implementer and helper.
 3. **Trackers**: glob `tasks/*.md`, `**/plan*.md`, `**/todo*.md`.
@@ -116,6 +116,7 @@ class DashboardWidget(Protocol):
 
 @dataclass(frozen=True)
 class WidgetContext:  state: StateReader; project_dir: Path; focus_task: str | None
+                      services: WidgetServices    # protocols supplied by bootstrap: repo_status(), resources(), containers(), open_palette(action)
 ```
 
 Widgets refresh when `StateReader.on_change` fires. Samplers such as resources and docker have their own interval.

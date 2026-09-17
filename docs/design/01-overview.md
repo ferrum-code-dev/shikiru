@@ -21,7 +21,7 @@ English names come first everywhere. Kanji marks are decoration only.
 
 1. **The engine decides the flow; agents do the work.** Every transition is code. Agent output only picks one of a fixed set of schema-validated outcomes.
 2. **No agent coupling.** The engine sees only normalized signals, usage, quota and failure kinds, all through `shikiru.agents.contracts`. How an agent produces them is private to its plugin.
-3. **Single writer.** Only the engine writes state. CLI, MCP and dashboard read state and append `commands`. Agents only touch files.
+3. **Single writer.** Only the engine writes state. CLI, MCP and dashboard read state and append `commands`; the one exception is atomically incrementing the `sequences` row to allocate a task id on submit. Agents only touch files.
 4. **Escalate only on critical issues.** Retries, model ladders, quota waits and Leader decisions come first.
 5. **Project conventions win.** Shikiru adds no coding rules. It points agents at the request, the trackers and the project's own instructions and skills.
 6. **KISS/YAGNI.** Build only what a requirement needs. One way to do each thing. Tunables live in config only when an operator really needs them.
@@ -84,5 +84,5 @@ English names come first everywhere. Kanji marks are decoration only.
 | Run | One agent session bound to a task and role. It survives resumes and same-agent model changes |
 | Rung | `{agent, model, effort}` entry of a ladder |
 | Slot | Parallel lane `1..max_parallel`, exported as `SHIKIRU_SLOT` |
-| Hold | Task pause that clears automatically or on `resume`: `paused`, `intervention`, `quota` |
+| Hold | Task pause: `paused` and `intervention` are stored on the task and cleared by `resume` (or a finished turn); the quota wait is derived from the agent's block and clears automatically |
 | Escalation | Critical issue that needs an Operator decision: `E-<n>` |
