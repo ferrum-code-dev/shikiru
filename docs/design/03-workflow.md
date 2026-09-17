@@ -248,7 +248,7 @@ Dependents become ready only when their dependencies are `done`.
 - the Leader's question
 - applicable options with consequences and exactly one ★
 
-**Resolution**: `resolve E-n <answer TEXT | retry [--rung a:m:e] | accept | cancel>`.
+**Resolution**: one of `answer TEXT`, `retry [rung]`, `accept`, `cancel`, through the palette (06 §5.5) or `resolve_escalation` (06 §4).
 - `answer` runs a consult turn (the Leader receives the Operator's text), then continues with implement at the same iteration; for `iterations_exhausted` the next verify is again a final round.
 - `retry` re-runs the failed step.
 - `accept` integrates.
@@ -260,18 +260,18 @@ Resolved tasks are re-queued with `requeued_at`. Raising an escalation frees the
 
 Every action is scoped to **one task**. Other tasks, including parallel ones on the same agent, are unaffected, because each task runs in its own coroutine. The only cross-task effect is an agent quota block (§7), because quota belongs to the account.
 
-| Action | Human | Tool / AI (CLI `--json`, MCP) | Engine behaviour |
+| Action | Human | Tool / AI (MCP) | Engine behaviour |
 |---|---|---|---|
-| Watch | attach, select the window | `peek T R` | Last message, pane screen, usage (from the DB and `capture-pane`) |
-| Type into a session | select the pane and type | `say T R "…"` | See below |
-| Pause / resume | palette, `pause T [--now]` | same | `pause` stops before the next turn; `--now` interrupts and cancels the current step |
-| Change model | `rung T R a:m:e` | same | Applied at the next turn (§4.1) |
-| Redo current step | `retry T` | same | Cancels and re-runs the current step |
-| Open elsewhere | `show T` lists `resume_command` | same | — |
+| Watch | attach, select the window | `peek_session` | Last message, pane screen, usage (from the DB and `capture-pane`) |
+| Type into a session | select the pane and type | `send_message` | See below |
+| Pause / resume | palette | `pause_task` (`now`), `resume_task` | `pause` stops before the next turn; `now` interrupts and cancels the current step |
+| Change model | palette | `set_rung` | Applied at the next turn (§4.1) |
+| Redo current step | palette | `retry_task` | Cancels and re-runs the current step |
+| Open elsewhere | `status T-n` lists `resume_command` | `get_task` | — |
 
 **Manual intervention.** `domain.activity.is_operator_prompt(text, run_dir, pending_lines)` is true when the prompt contains no path under the task's run dir (every pointer, nudge, `continue`, handoff and `say` injection does) and isn't a `before_turn` line currently being injected. It needs no persisted state. A true result sets the `intervention` hold on **that task**.
 - **While set**: no nudges, stall handling or new turns. The pane border turns operator magenta and the title shows `⌨ operator`.
-- **Cleared** when the current turn ends with a valid report (the Operator helped finish it), or on `resume T`, which injects `continue` into that pane.
+- **Cleared** when the current turn ends with a valid report (the Operator helped finish it), or on resume, which injects `continue` into that pane.
 
 **`say`** writes `runs/T/messages/NNN.md` and injects `Operator message: read <path> and take it into account.` Agent TUIs queue input while busy, so `say` works mid-turn and never sets `intervention`.
 

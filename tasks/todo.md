@@ -27,7 +27,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [ ] Task 15: Recovery
 - [ ] Task 16: Integration (local merge)
 - [ ] Task 17: Engine daemon, scheduler, handlers
-- [ ] Task 18: Operator services and CLI
+- [ ] Task 18: Operator services, CLI and MCP
 
 ## Phase 4 — Real agents
 - [ ] Task 19: Claude Code plugin
@@ -37,13 +37,12 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 ## Phase 5 — Resilience and operator completeness
 - [ ] Task 22: Engine restart recovery
 - [ ] Task 23: Pull request integration
-- [ ] Task 24: MCP server
-- [ ] Task 25: Parallel and intervention E2E
+- [ ] Task 24: Parallel, escalation and intervention E2E
 
 ## Phase 6 — Operator surfaces and onboarding
-- [ ] Task 26: Remaining widgets and renderables
-- [ ] Task 27: Palette
-- [ ] Task 28: Motion
-- [ ] Task 29: Sessions list and attach
-- [ ] Task 30: Init wizard
-- [ ] Task 31: Release readiness
+- [ ] Task 25: Remaining widgets and renderables
+- [ ] Task 26: Palette
+- [ ] Task 27: Motion
+- [ ] Task 28: Sessions list and attach
+- [ ] Task 29: Init wizard
+- [ ] Task 30: Release readiness

@@ -7,7 +7,7 @@
 2. `.shikiru/config.toml`
 3. `--set key.path=value` (value parsed as TOML)
 
-`config show [--json]` prints the merged result. Core keys are validated by pydantic (`extra="forbid"`). Each `[agents.<name>.options]` table is validated by that plugin's factory at `start` and `doctor`.
+`doctor --json` prints the merged result. Core keys are validated by pydantic (`extra="forbid"`). Each `[agents.<name>.options]` table is validated by that plugin's factory at `start` and `doctor`.
 
 The full reference (this is also what `init` writes):
 

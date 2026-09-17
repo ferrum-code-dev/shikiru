@@ -115,7 +115,7 @@ src/shikiru/
   engine/       daemon.py scheduler.py flow.py sessions.py monitor.py turns.py integration.py escalations.py reconcile.py layout_guard.py quota_poller.py notifier.py
     handlers/   tasks.py sessions.py escalations.py engine.py
   operator/     queries.py commands.py events.py detectors.py
-  cli/          app.py project.py tasks.py escalations.py sessions.py diagnostics.py report.py render.py
+  cli/          app.py project.py sessions.py tasks.py diagnostics.py report.py render.py
   mcp/          server.py
   dashboard/    app.py contract.py palette.py wizard.py
   plugins/

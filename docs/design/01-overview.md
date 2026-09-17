@@ -39,7 +39,7 @@ English names come first everywhere. Kanji marks are decoration only.
 | D7 | Leader and Implementer sessions last for the whole task; each new task starts clean | Session per step | Keeps review context, like the manual loop |
 | D8 | Detached engine daemon per project; the tmux session is only its view | Engine inside a pane | Pane or terminal loss can't kill orchestration |
 | D9 | SQLite `commands` table as the operator→engine bus | Socket/HTTP API | Local, persistent, and works while the engine is down |
-| D10 | Remote access over SSH (`attach --host`, `ssh host shikiru mcp`) | Network server | No ports, no auth code |
+| D10 | Remote access over SSH (`ls --host`, `attach --host`, `ssh host shikiru mcp`) | Network server | No ports, no auth code |
 | D11 | Every submission is a task that the Leader triages into `implement`, `plan` or `split` | Parsing plan files | Plan formats vary |
 | D12 | Ladders: the Leader has one base ladder; the Implementer has ladders per complexity. Moving up resumes the session when the agent stays the same | Single model | Mirrors manual model switching |
 | D13 | Real session resume after quota, crash or restart | Fresh session with a summary | Keeps context |
@@ -48,6 +48,7 @@ English names come first everywhere. Kanji marks are decoration only.
 | D16 | Recovery decisions are a pure function `decide(failure, counters, policy) → Action` | Recovery logic spread across the runner | Unit-testable and keeps the runner small |
 | D17 | A permanent home window `shikiru` plus one window per active task | Swapping windows so the count never reaches zero | Simpler, and still meets the "one window remains" rule |
 | D18 | Comic-strip TUI with a small semantic visual language: role and state colours, meaningful glyphs, motion driven by signals | Decorative theme; large animation catalogue | Distinctive and informative, at bounded cost |
+| D19 | The CLI carries only entry points and `submit`/`status`; every other operator action is reached through the palette or MCP | A CLI verb per operator action (v4) | One action, one adapter. The CLI stays small enough to remember |
 
 ## 5. Lessons from prior art
 
@@ -72,6 +73,7 @@ English names come first everywhere. Kanji marks are decoration only.
   - speculative hardening
   - docs pinned by tests
   - ~150 config keys
+  - a CLI verb per operator action, duplicating the dashboard and MCP
   - tests touching the operator's tmux server
 
 ## 6. Glossary

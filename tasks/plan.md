@@ -136,12 +136,13 @@ Refs: 02 §1–2, 03 §9–10, 05 §2.
 - [ ] `LayoutGuard` restoring killed or dead panes; `Notifier` (tmux message and `notify.command`).
 - Tests: integration with the in-process engine: priority order, parallelism, dependencies, resource gate via configured thresholds (0% / 100%), quota gate via `agent_blocks` rows, each handler, resolution options with counter resets, pane restoration, quota polling with the fake agent.
 
-### Task 18: Operator services and CLI
-Refs: 06 §1–2.
+### Task 18: Operator services, CLI and MCP
+Refs: 06 §1–2, §4.
 - [ ] `OperatorQueries`, `OperatorCommands` (ack or queued), `EventFeed`.
-- [ ] All CLI commands from 06 §2 except `ls`/`attach`/`mcp`/`doctor`, with Rich output via `ui` and `--json`; `init --yes` with `operator/detectors.py`; `start`/`stop` spawning the detached engine.
+- [ ] `init --yes` (with `operator/detectors.py`), `start`, `stop`, `submit`, `status [T-n] [--watch]`, with Rich output via `ui` and `--json`; `start`/`stop` spawn and stop the detached engine. No other command: the rest of 06 §2 is `ls`/`attach` (Task 28) and `doctor` (Task 21).
+- [ ] FastMCP stdio server with every tool, typed inputs and outputs, `wait_for_events` long poll. Mutating operator actions ship here, not as CLI verbs, so they are reachable before the palette exists.
 - [ ] End-to-end with the fake agent through real processes: `init --yes` → `start` → `submit` → task `done`, commit on `base`, task window closed.
-- Tests: integration CLI tests (human and JSON) plus the fake end-to-end.
+- Tests: integration CLI tests (human and JSON), MCP through an in-memory client, plus the fake end-to-end.
 
 ## Phase 4 — Real agents
 
@@ -173,43 +174,39 @@ Refs: 03 §6.
 - [ ] `PullRequest` strategy: push, `gh pr create`, slot release with `wait_reason`, polling, merged → done, closed → `pr_closed`.
 - Tests: integration with `gh` faked on PATH.
 
-### Task 24: MCP server
-Refs: 06 §4.
-- [ ] FastMCP stdio server with every tool, typed inputs and outputs, `wait_for_events` long poll.
-- [ ] Integration test through an in-memory MCP client; E2E E4 passes.
-
-### Task 25: Parallel and intervention E2E
+### Task 24: Parallel, escalation and intervention E2E
 Refs: 07 §5.
-- [ ] E2E E3 and E6 pass.
+- [ ] E2E E3, E4 and E6 pass.
 
 ## Phase 6 — Operator surfaces and onboarding
 
-### Task 26: Remaining widgets and renderables
+### Task 25: Remaining widgets and renderables
 Refs: 06 §5.4, §6.3–6.4.
 - [ ] `ui.SpeechBubble`, `ui.SplashPanel`, `ui.Gauge`; widgets `escalations`, `dialogue`, `usage`, `resources`, `docker` (hidden without Docker); `DockerSampler`.
 - Tests: Textual `run_test` behaviour over seeded state; samplers against real psutil and Docker (skipped when absent).
 
-### Task 27: Palette
+### Task 26: Palette
 Refs: 06 §5.5.
 - [ ] `PaletteApp` with every action including the escalation resolution form and intervene; tmux popup and `Ctrl+P` in `dash`.
 - Tests: Textual `run_test` for submit, prioritize, resolve, intervene.
 
-### Task 28: Motion
+### Task 27: Motion
 Refs: 06 §6.5.
 - [ ] `frame(state, now)` for spinner/freeze/stall, stamp flash, escalation pulse, ticking counters; 4 Hz cap; `animations = false`.
 - Tests: unit tests of `frame` with `FakeClock`.
 
-### Task 29: Sessions list and attach
+### Task 28: Sessions list and attach
 Refs: 06 §5.6.
-- [ ] `ls [--host]`, `attach [--host] [--project]` with the inline picker, `switch-client` inside tmux, quoted SSH command.
-- Tests: integration on `tmux_server`; SSH argv construction.
+- [ ] `SessionLister` rows: session, project dir, engine state, running/queued/escalated counts, read without writing to the other project.
+- [ ] `ls [--host H]` (human and `--json`) and `attach [NAME] [--host H]` with the inline picker, `switch-client` inside tmux, quoted SSH command.
+- Tests: integration on `tmux_server` with two projects; SSH argv construction.
 
-### Task 30: Init wizard
+### Task 29: Init wizard
 Refs: 06 §3.
 - [ ] Inline Textual wizard over `operator/detectors.py` with the 7 steps; writes config, excludes `.shikiru/`, runs doctor.
 - Tests: Textual `run_test` walkthrough on tmp mono- and multi-repo projects.
 
-### Task 31: Release readiness
+### Task 30: Release readiness
 - [ ] All E2E scenarios pass in one `poe e2e` run; coverage ≥ 80%; `poe check` clean.
 - [ ] Scripted clean-environment check: fresh `HOME`, `uv tool install .`, README quick start.
 - [ ] Walk every section of `docs/design`; code and docs agree, and each difference is fixed in one or the other.

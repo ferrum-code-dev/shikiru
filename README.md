@@ -24,7 +24,7 @@ It escalates to the Operator only when something critical comes up.
 - **Parallel tasks**: each task gets its own git worktree and branch, with instant copy-on-write build caches, a dependency graph, priorities and resource-aware scheduling.
 - **Resilient**: model ladders, a wait for quota resets followed by a real session resume, and recovery after crashes or restarts.
 - **Comic-strip dashboard**: every task is drawn as a 4-panel strip.
-- **Operators everywhere**: TUI dashboard, CLI (`--json`), MCP server, event stream, and local or remote (SSH) attach.
+- **Operators everywhere**: a dashboard with a command palette for humans, an MCP server for AI Operators, a small CLI (`--json`) for scripts, and `ls`/`attach` across machines over SSH.
 - **Works with your setup**: your CLAUDE.md/AGENTS.md, skills, plugins, plan and todo files, monorepo or multi-repo.
 
 ## Quick start
@@ -36,6 +36,13 @@ shikiru init            # wizard: repos, agents, plan files, caches
 shikiru start           # launches the engine and the tmux session "[shikiru] my-product"
 shikiru submit "Implement task 20 from Phase 2 in tasks/plan.md"
 shikiru attach
+```
+
+From anywhere else:
+
+```sh
+shikiru ls --host devbox         # every project on that machine and how it is doing
+shikiru attach --host devbox     # pick one and drop into its session
 ```
 
 ## Documentation

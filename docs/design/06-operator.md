@@ -15,24 +15,18 @@ CLI, MCP and the dashboard palette are thin adapters over three small services:
 - **Global options**: `--project PATH` (default: nearest ancestor with `.shikiru/`), `--json`, `--set k=v`.
 - **Exit codes**: `0` ok, `1` error, `2` usage, `3` not initialised, `4` command rejected.
 
+The CLI gets an Operator into a project, in and out of its session, and back out again. It is not a second copy of the operator surface: **every mutating action except `submit` lives in the dashboard palette (§5.5) for humans and in MCP (§4) for AI Operators and scripts.** One action, one adapter.
+
 | Command | Purpose |
 |---|---|
 | `init [--yes]` | Wizard (§3); `--yes` writes the detected defaults |
 | `start [--attach]` | Validate config and plugins, start the engine, ensure the session. On a running engine it only ensures the session. A name collision with another project fails with a hint to set `project.name` |
 | `stop [--kill-session]` | Stop the engine; turns keep running in panes and are reconciled on the next start |
-| `ls [--host H]` / `attach [--host H] [--project NAME]` | §5.6 |
-| `status` | Engine up/down, slots, active tasks and holds, open escalations, usage and quota per agent |
+| `ls [--host H]` | Every Shikiru project on this host, or on `H` (§5.6): name, directory, engine state, running and queued counts, open escalations |
+| `attach [NAME] [--host H]` | Attach to a session; with no `NAME` and more than one match, the picker (§5.6) |
 | `submit "<request>" [flags]` | Prints the `T-n` id (05 §1 flags) |
-| `tasks [--all]` | Active and queued tasks in dispatch order with `wait_reason`; `--all` adds finished ones |
-| `show T-n` | Strip, timeline, reports and verdicts, usage, branches, session ids and resume commands |
-| `prioritize T-n N` | Set priority |
-| `pause T-n [--now]`, `resume T-n`, `cancel T-n`, `retry T-n` | Task control (03 §9) |
-| `rung T-n <role> <agent:model:effort>` | Model override from the next turn |
-| `say T-n <role> "<text>"`, `peek T-n <role>` | Session access |
-| `escalations [--all]`, `resolve E-n <answer TEXT/retry [--rung a:m:e]/accept/cancel>` | Escalations; `--rung` applies to the role that failed (stored on the escalation's step) |
-| `events [--follow] [--since ID] [--task T-n]` | Event stream (NDJSON with `--json`) |
+| `status [T-n] [--watch]` | Without an id: engine, slots, active tasks with `wait_reason`, queue, open escalations, usage and quota per agent. With one: that task's strip, timeline, reports and verdicts, branches and sessions. `--watch` redraws on `StateReader.on_change` |
 | `doctor [--probe]` | Environment, config and plugin checks; `--probe` runs live contract checks 1–2 (04 §3) |
-| `config show` | Merged config |
 | `mcp` | Stdio MCP server |
 | hidden: `engine`, `dash`, `palette`, `hook`, `report` | Process entrypoints |
 
@@ -138,11 +132,13 @@ Widgets refresh when `StateReader.on_change` fires. Samplers such as resources a
 - It opens as a tmux popup (`prefix + Space`), and `Ctrl+P` in `dash` pushes the same screen.
 - Every action calls `OperatorCommands` and shows the `Ack`.
 
-### 5.6 Attach
+### 5.6 `ls` and `attach`
 
-- **`ls`**: `tmux list-sessions` filtered by the `[shikiru] ` prefix, plus each session's `SHIKIRU_PROJECT_DIR` and engine state.
-- **`attach`**: exactly one match, or `--project NAME` → `os.execvp("tmux", ["tmux", "attach", "-t", "=[shikiru] NAME"])` (`switch-client` when inside tmux). Otherwise an inline selectable list.
-- **Remote** (`--host H`): `ssh H shikiru ls --json` → select → `os.execvp("ssh", ["ssh", "-t", H, shlex.join(["tmux", "attach", "-t", "=[shikiru] NAME"])])`.
+`SessionLister` returns one row per project, for the local host or for `H`; `ls` prints the rows, `attach` picks one from them.
+
+- **Rows**: `tmux list-sessions` filtered by the `[shikiru] ` prefix, each session's `SHIKIRU_PROJECT_DIR`, and, from that project's DB, the engine state and the running, queued and escalated counts. `ls` is a read of other projects' progress, so it never writes to them.
+- **`attach`**: exactly one row, or a matching `NAME` → `os.execvp("tmux", ["tmux", "attach", "-t", "=[shikiru] NAME"])` (`switch-client` when inside tmux). Otherwise an inline selectable list of the same rows.
+- **Remote** (`--host H`, on both): `ssh H shikiru ls --json` gives the rows; `attach` then runs `os.execvp("ssh", ["ssh", "-t", H, shlex.join(["tmux", "attach", "-t", "=[shikiru] NAME"])])`. `--host` needs nothing installed locally but `ssh`, and nothing remote but `shikiru`.
 
 ### 5.7 Notifications
 
