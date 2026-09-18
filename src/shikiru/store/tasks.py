@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 
 from shikiru.agents.contracts import Rung
 from shikiru.domain.tasks import (
+    ACTIVE_STATUSES,
     Counters,
     Hold,
     Mode,
@@ -41,8 +42,6 @@ if TYPE_CHECKING:
 
 TASK_ID_PREFIX = "T-"
 TASK_SEQUENCE = "task"
-
-_ACTIVE_STATUSES = (Status.RUNNING, Status.INTEGRATING, Status.ESCALATED)
 
 _HOLDS_ADAPTER: TypeAdapter[frozenset[Hold]] = TypeAdapter(frozenset[Hold])
 _COUNTERS_ADAPTER: TypeAdapter[Counters] = TypeAdapter(Counters)
@@ -256,7 +255,7 @@ class TaskStore:
 
     def list_active(self) -> list[Task]:
         """Read every task holding a slot: `running`, `integrating` or `escalated`."""
-        return fetch_tasks(self._connection, statuses=_ACTIVE_STATUSES)
+        return fetch_tasks(self._connection, statuses=ACTIVE_STATUSES)
 
     def list_all(self) -> list[Task]:
         """Read every task, the universe `domain.scheduling.pick_ready` needs for dep lookups."""

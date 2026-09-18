@@ -13,7 +13,16 @@ from shikiru.domain.steps import (
     first_step,
     next_step,
 )
-from shikiru.domain.tasks import Counters, EscalationReason, Mode, Role, Status, Step, Task
+from shikiru.domain.tasks import (
+    Counters,
+    EscalationReason,
+    Mode,
+    Role,
+    Status,
+    StatusReason,
+    Step,
+    Task,
+)
 from shikiru.errors import UsageError
 from tests.support.factories import (
     ESCALATE_AFTER,
@@ -93,7 +102,7 @@ def test_triage_split_closes_the_task_and_enqueues_children() -> None:
 
     assert transition.step is None
     assert transition.status is Status.DONE
-    assert transition.status_reason == "split"
+    assert transition.status_reason == StatusReason.SPLIT.value
     assert transition.enqueue_new_tasks is True
     assert transition.repoint_dependents is True
 
@@ -291,7 +300,7 @@ def test_verify_supersede_cancels_and_enqueues_new_tasks() -> None:
     transition = _next(task, make_verdict(decision="supersede"))
 
     assert transition.status is Status.CANCELLED
-    assert transition.status_reason == "superseded"
+    assert transition.status_reason == StatusReason.SUPERSEDED.value
     assert transition.enqueue_new_tasks is True
     assert transition.repoint_dependents is True
 

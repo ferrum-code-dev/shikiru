@@ -14,7 +14,16 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
 )
-from shikiru.domain.tasks import Counters, EscalationReason, Mode, Role, Status, Step, Task
+from shikiru.domain.tasks import (
+    Counters,
+    EscalationReason,
+    Mode,
+    Role,
+    Status,
+    StatusReason,
+    Step,
+    Task,
+)
 from shikiru.errors import UsageError
 
 if TYPE_CHECKING:
@@ -96,7 +105,10 @@ def _from_triage(task: Task, outcome: TriageReport) -> Transition:
         return Transition.stay(task, step=Step.PLAN)
     base = Transition.stay(task, step=None, status=Status.DONE)
     return dataclasses.replace(
-        base, status_reason="split", repoint_dependents=True, enqueue_new_tasks=True
+        base,
+        status_reason=StatusReason.SPLIT.value,
+        repoint_dependents=True,
+        enqueue_new_tasks=True,
     )
 
 
@@ -178,7 +190,10 @@ def _from_verify(task: Task, outcome: Verdict, settings: Settings) -> Transition
         case "supersede":
             base = Transition.stay(task, step=None, status=Status.CANCELLED)
             return dataclasses.replace(
-                base, status_reason="superseded", repoint_dependents=True, enqueue_new_tasks=True
+                base,
+                status_reason=StatusReason.SUPERSEDED.value,
+                repoint_dependents=True,
+                enqueue_new_tasks=True,
             )
 
 
