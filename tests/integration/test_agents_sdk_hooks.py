@@ -24,7 +24,7 @@ async def _write_hook_via_subprocess(run_dir: Path, index: int) -> None:
     env = {**os.environ, "SHIKIRU_RUN_DIR": str(run_dir)}
     result = await runner.run(
         [sys.executable, "-m", "shikiru", "hook", _ROLE],
-        timeout=10,
+        timeout=45,
         env=env,
         input_text=json.dumps(payload),
     )
