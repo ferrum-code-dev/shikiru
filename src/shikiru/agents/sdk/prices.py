@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, ClassVar
+
+from pydantic import ConfigDict, Field, TypeAdapter, ValidationError
 
 from shikiru.errors import ConfigError
 
@@ -20,25 +22,16 @@ _PERCENT = 100
 class ModelPrices:
     """One model's USD price per 1M tokens, by kind, plus its context window in tokens."""
 
-    input_per_million: float
-    cache_read_per_million: float
-    cache_write_per_million: float
-    output_per_million: float
-    context_window: int
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    input_per_million: Annotated[float, Field(alias="input", strict=True)]
+    cache_read_per_million: Annotated[float, Field(alias="cache_read", strict=True)]
+    cache_write_per_million: Annotated[float, Field(alias="cache_write", strict=True)]
+    output_per_million: Annotated[float, Field(alias="output", strict=True)]
+    context_window: Annotated[int, Field(gt=0, strict=True)]
 
 
-def _model_prices_from_table(model: str, table: Mapping[str, Any]) -> ModelPrices:
-    try:
-        return ModelPrices(
-            input_per_million=table["input"],
-            cache_read_per_million=table["cache_read"],
-            cache_write_per_million=table["cache_write"],
-            output_per_million=table["output"],
-            context_window=table["context_window"],
-        )
-    except KeyError as error:
-        message = f"{model!r} price entry is missing {error}"
-        raise ConfigError(message) from error
+_MODEL_PRICES_BY_NAME = TypeAdapter(dict[str, ModelPrices])
 
 
 class PriceTable:
@@ -52,7 +45,11 @@ class PriceTable:
     def from_toml(cls, path: Path) -> PriceTable:
         """Load a `prices.toml` file: one `[<model>]` table per model."""
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-        prices = {model: _model_prices_from_table(model, table) for model, table in data.items()}
+        try:
+            prices = _MODEL_PRICES_BY_NAME.validate_python(data)
+        except ValidationError as error:
+            message = f"{path} has invalid price entries: {error}"
+            raise ConfigError(message) from error
         return cls(prices)
 
     def cost_usd(

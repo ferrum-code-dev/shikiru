@@ -77,3 +77,38 @@ def test_unknown_model_raises_naming_it(table: PriceTable) -> None:
             cache_read_tokens=0,
             cache_write_tokens=0,
         )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            '[opus]\ninput = "15.0"\ncache_read = 1.5\ncache_write = 18.75\n'
+            "output = 75.0\ncontext_window = 200000\n",
+            id="string-price",
+        ),
+        pytest.param(
+            "[opus]\ninput = 15.0\ncache_read = 1.5\ncache_write = 18.75\n"
+            "output = 75.0\ncontext_window = -1\n",
+            id="negative-context-window",
+        ),
+        pytest.param(
+            "[opus]\ninput = 15.0\ncache_read = 1.5\ncache_write = 18.75\n"
+            "output = 75.0\ncontext_window = 200000.5\n",
+            id="fractional-context-window",
+        ),
+        pytest.param(
+            "[opus]\ninput = 15.0\ncache_read = 1.5\ncache_write = 18.75\n"
+            "output = 75.0\ncontext_window = 200000\nbogus = 1\n",
+            id="unknown-key",
+        ),
+    ],
+)
+def test_from_toml_rejects_a_malformed_price_entry_naming_the_file(
+    tmp_path: Path, body: str
+) -> None:
+    path = tmp_path / "prices.toml"
+    path.write_text(body, encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=str(path)):
+        PriceTable.from_toml(path)
