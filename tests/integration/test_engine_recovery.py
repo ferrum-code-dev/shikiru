@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
-from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, PROMPT_FILENAME
+from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, FACTS_FILENAME, PROMPT_FILENAME
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
 from shikiru.store.quotas import QuotaStore
 from shikiru.workspace.roots import run_dir
@@ -36,8 +36,8 @@ async def _drive(task: asyncio.Task[None], clock: FakeClock) -> None:
     await task
 
 
-def _short_stall(settings: Settings) -> Settings:
-    timeouts = settings.orchestration.timeouts.model_copy(update={"stall": 30})
+def _short_stall(settings: Settings, *, seconds: int = 30) -> Settings:
+    timeouts = settings.orchestration.timeouts.model_copy(update={"stall": seconds})
     orchestration = settings.orchestration.model_copy(update={"timeouts": timeouts})
     return settings.model_copy(update={"orchestration": orchestration})
 
@@ -109,6 +109,26 @@ async def test_quota_failure_blocks_then_continues_the_same_turn(
         run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER
     )
     assert implementer_run.usage.input_tokens == 120
+
+
+async def test_initial_fresh_turn_does_not_collect_handoff_facts(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = flow_settings()
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[{"kind": "accept"}],
+        mode=Mode.PLAN,
+    )
+
+    await _drive(flow_task, clock)
+
+    current_turn = role_dir(run_dir(engine_env.project_root, task_id), Role.LEADER.value)
+    assert not (current_turn / CURRENT_TURN_LINK_NAME / FACTS_FILENAME).exists()
 
 
 async def test_unavailable_failure_uses_the_first_backoff_then_retries(
@@ -394,3 +414,76 @@ async def test_leader_question_stall_escalates_as_decision_required(
     assert final.status is Status.ESCALATED
     escalation = build_flow(engine_env, settings, clock=clock).escalations.list_open()
     assert escalation[0].reason is EscalationReason.DECISION_REQUIRED
+
+
+async def test_working_stalls_rearm_until_agent_stuck(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _short_stall(
+        flow_settings().model_copy(
+            update={
+                "agents": {
+                    "fake": AgentConfig(
+                        options={"asks": [{"state": "working"}, {"state": "working"}]}
+                    )
+                }
+            }
+        )
+    )
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        script=[{"kind": "stall"}],
+        clock=clock,
+        mode=Mode.PLAN,
+    )
+
+    await _drive(flow_task, clock)
+
+    final = engine_env.tasks.get(task_id)
+    assert final is not None
+    assert final.status is Status.ESCALATED
+    escalation = build_flow(engine_env, settings, clock=clock).escalations.list_open()
+    assert escalation[0].reason is EscalationReason.AGENT_STUCK
+    events = build_flow(engine_env, settings, clock=clock).events.since(0, task_id=task_id)
+    helper_events = [event for event in events if event.kind is EventKind.HELPER_ACTION]
+    assert len(helper_events) == 2
+
+
+async def test_implementer_question_stall_consults_then_returns_to_implement(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _short_stall(
+        flow_settings().model_copy(
+            update={
+                "agents": {
+                    "fake": AgentConfig(options={"asks": [{"state": "question", "text": "choose"}]})
+                }
+            }
+        ),
+        seconds=120,
+    )
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        script=[{"kind": "dialog", "message": "question"}],
+        clock=clock,
+    )
+
+    await _drive(flow_task, clock)
+
+    final = engine_env.tasks.get(task_id)
+    assert final is not None
+    assert final.step is Step.INTEGRATE
+    assert final.status is Status.INTEGRATING
+    runs = engine_env.runs.for_task(task_id)
+    assert len([run for run in runs if run.role is Role.IMPLEMENTER]) == 1
+    leader_run = next(run for run in runs if run.role is Role.LEADER)
+    assert leader_run.usage.input_tokens >= 240
+    events = build_flow(engine_env, settings, clock=clock).events.since(0, task_id=task_id)
+    helper_events = [event for event in events if event.kind is EventKind.HELPER_ACTION]
+    assert helper_events[0].data["state"] == "question"

@@ -142,6 +142,11 @@ class SessionMonitor:
         """Stop fanning signals out to `queue`."""
         self._subscribers.remove(queue)
 
+    def rearm_stall_detection(self) -> None:
+        """Start a fresh stall deadline from the clock's current time."""
+        self._last_activity = self._clock.now()
+        self._stalled = False
+
     async def run(self) -> None:
         """Consume `session.signals()` and tick until the pane dies or the session ends."""
         consume = asyncio.ensure_future(self._consume_signals())

@@ -314,6 +314,10 @@ class SessionManager:
         """Return `task_id`'s `role` session's `InjectedLines`, for its `TurnRunner` (03 §9)."""
         return self._live[(task_id, role)].injected_lines
 
+    def rearm_stall_detection(self, task_id: str, role: Role) -> None:
+        """Restart the current session's stall deadline after a working-screen classification."""
+        self._live[(task_id, role)].monitor.rearm_stall_detection()
+
     async def shutdown(self) -> None:
         """Cancel every live session's monitor and decorator, touching no pane or agent.
 

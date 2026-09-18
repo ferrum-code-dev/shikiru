@@ -225,7 +225,7 @@ class _TurnPlan:
     facts: str
 
 
-@dataclass(frozen=True)
+@dataclass
 class _TurnExecution:
     result: TurnResult
     task_id: str
@@ -237,6 +237,7 @@ class _TurnExecution:
     helper: Helper
     prompt_path: Path
     injected: InjectedLines
+    closed: bool = False
 
 
 class TaskFlow:
@@ -296,39 +297,44 @@ class TaskFlow:
     async def _run_step(
         self, task: Task, step: Step, counters: TurnCounters
     ) -> tuple[Task, TurnCounters, bool]:
-        execution = await self._run_turn(task, step)
-        while True:
-            result = execution.result
-            if not isinstance(result, Completed):
-                task, counters, should_return, continued = await self._recover(
-                    task, step, execution, counters
-                )
-                if should_return:
-                    return task, counters, True
-                if continued is not None:
-                    execution = continued
-                else:
-                    recovery_step = task.step
-                    if recovery_step is None:
-                        message = f"{task.id} recovery left the task with no step"
+        execution: _TurnExecution | None = None
+        try:
+            execution = await self._run_turn(task, step)
+            while True:
+                result = execution.result
+                if not isinstance(result, Completed):
+                    task, counters, should_return, continued = await self._recover(
+                        task, step, execution, counters
+                    )
+                    if should_return:
+                        return task, counters, True
+                    if continued is not None:
+                        execution = continued
+                    else:
+                        recovery_step = task.step
+                        if recovery_step is None:
+                            message = f"{task.id} recovery left the task with no step"
+                            raise ShikiruError(message)
+                        step = recovery_step
+                        execution = await self._run_turn(task, step)
+                    continue
+                await self._close_execution(execution)
+                clear_intervention(self._tasks, self._events, task.id)
+                outcome = result.report
+                transition = next_step(task, outcome, self._settings)
+                escalated = transition.status is Status.ESCALATED
+                escalation_step, reason = transition.step, transition.escalation_reason
+                task = await self._apply(task, transition, outcome)
+                if escalated:
+                    if reason is None:
+                        message = f"{task.id} escalated with no escalation_reason on its transition"
                         raise ShikiruError(message)
-                    step = recovery_step
-                    execution = await self._run_turn(task, step)
-                continue
-            await self._close_execution(execution)
-            clear_intervention(self._tasks, self._events, task.id)
-            outcome = result.report
-            transition = next_step(task, outcome, self._settings)
-            escalated = transition.status is Status.ESCALATED
-            escalation_step, reason = transition.step, transition.escalation_reason
-            task = await self._apply(task, transition, outcome)
-            if escalated:
-                if reason is None:
-                    message = f"{task.id} escalated with no escalation_reason on its transition"
-                    raise ShikiruError(message)
-                await self._raise_escalation(task, escalation_step, reason, outcome)
-                return task, TurnCounters(), True
-            return task, TurnCounters(), False
+                    await self._raise_escalation(task, escalation_step, reason, outcome)
+                    return task, TurnCounters(), True
+                return task, TurnCounters(), False
+        finally:
+            if execution is not None:
+                await self._close_execution(execution)
 
     async def _recover(
         self, task: Task, step: Step, execution: _TurnExecution, counters: TurnCounters
@@ -470,6 +476,7 @@ class TaskFlow:
             message = f"{task.id} recovery classification was not resolved"
             raise ShikiruError(message)
         if isinstance(action, KeepWaiting):
+            self._sessions.rearm_stall_detection(task.id, role)
             await self._clock.sleep(self._settings.orchestration.poll_seconds)
             return await self._resume_execution(execution), False, counters
         if isinstance(action, SendKeys):
@@ -703,31 +710,35 @@ class TaskFlow:
         )
         pane = self._pane_factory(task.panes[role])
         queue = self._sessions.subscribe(task.id, role)
-        helper = Helper(self._agent_pool.get(helper_rung.agent))
-        injected = self._sessions.injected_lines(task.id, role)
-        result = await self._turns.run(
-            session,
-            pane,
-            queue,
-            run_dir=task_run_dir,
-            role=role,
-            spec=spec,
-            helper=helper,
-            injected=injected,
-        )
-        turn_dir = (role_dir(task_run_dir, role.value) / CURRENT_TURN_LINK_NAME).resolve()
-        return _TurnExecution(
-            result=result,
-            task_id=task.id,
-            role=role,
-            pane=pane,
-            signals=queue,
-            turn_dir=turn_dir,
-            spec=spec,
-            helper=helper,
-            prompt_path=turn_dir / PROMPT_FILENAME,
-            injected=injected,
-        )
+        try:
+            helper = Helper(self._agent_pool.get(helper_rung.agent))
+            injected = self._sessions.injected_lines(task.id, role)
+            result = await self._turns.run(
+                session,
+                pane,
+                queue,
+                run_dir=task_run_dir,
+                role=role,
+                spec=spec,
+                helper=helper,
+                injected=injected,
+            )
+            turn_dir = (role_dir(task_run_dir, role.value) / CURRENT_TURN_LINK_NAME).resolve()
+            return _TurnExecution(
+                result=result,
+                task_id=task.id,
+                role=role,
+                pane=pane,
+                signals=queue,
+                turn_dir=turn_dir,
+                spec=spec,
+                helper=helper,
+                prompt_path=turn_dir / PROMPT_FILENAME,
+                injected=injected,
+            )
+        except BaseException:
+            self._sessions.unsubscribe(task.id, role, queue)
+            raise
 
     async def _resume_execution(self, execution: _TurnExecution) -> _TurnExecution:
         result = await self._turns.resume(
@@ -742,7 +753,10 @@ class TaskFlow:
         return dataclasses.replace(execution, result=result)
 
     async def _close_execution(self, execution: _TurnExecution) -> None:
+        if execution.closed:
+            return
         self._sessions.unsubscribe(execution.task_id, execution.role, execution.signals)
+        execution.closed = True
 
     async def _plan_turn(
         self, task: Task, step: Step, history: list[tuple[str, Report]], *, fresh: bool
@@ -756,9 +770,10 @@ class TaskFlow:
         }
         if template is PromptName.CONSULT:
             context["question"] = self._recovery_questions.pop(task.id, _latest_question(history))
-        needs_facts = template is PromptName.VERIFY or fresh or force_handoff
+        handoff = (fresh and bool(history)) or force_handoff
+        needs_facts = template is PromptName.VERIFY or handoff
         facts_text = await self._facts_text(task) if needs_facts else ""
-        if (fresh and history) or force_handoff:
+        if handoff:
             template = PromptName.HANDOFF
         self._force_handoff.discard(task.id)
         if needs_facts:
