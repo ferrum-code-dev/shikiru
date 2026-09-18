@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+from pydantic import ValidationError
+
 from shikiru.agents.contracts import Rung
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import ComplexityLadder, ImplementerConfig
 from tests.support.config import write_minimal_project
+from tests.support.factories import DEFAULT_AGENTS, make_settings
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,3 +41,27 @@ def test_implementer_ladder_for_uses_complexity_override_when_configured() -> No
 
     assert implementer.ladder_for("high") == [high_rung]
     assert implementer.ladder_for("normal") == [base_rung]
+
+
+_GHOST_RUNG = Rung(agent="ghost", model="m", effort=None)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"leader_ladder": [_GHOST_RUNG]}, id="leader"),
+        pytest.param({"implementer_ladder": [_GHOST_RUNG]}, id="implementer"),
+        pytest.param(
+            {
+                "implementer_complexity": {
+                    "high": ComplexityLadder(ladder=[_GHOST_RUNG]),
+                },
+            },
+            id="implementer-complexity-override",
+        ),
+        pytest.param({"helper_ladder": [_GHOST_RUNG]}, id="helper"),
+    ],
+)
+def test_settings_rejects_a_ladder_agent_with_no_agents_table(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="ghost"):
+        make_settings(**kwargs)

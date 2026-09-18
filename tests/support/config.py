@@ -11,6 +11,10 @@ MINIMAL_PROJECT_CONFIG = """
 [project]
 name = "demo"
 
+[agents.claude]
+
+[agents.codex]
+
 [roles.leader]
 ladder = [ { agent = "claude", model = "opus", effort = "high" } ]
 

@@ -7,6 +7,7 @@ from typing import Any
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import (
+    AgentConfig,
     ComplexityLadder,
     ComplexityName,
     DashboardConfig,
@@ -45,6 +46,8 @@ IMPLEMENTER_RUNGS = [
 ]
 HELPER_RUNG = Rung(agent="claude", model="haiku", effort="low")
 
+DEFAULT_AGENTS = {"claude": AgentConfig(), "codex": AgentConfig()}
+
 MAX_ITERATIONS = 5
 ESCALATE_AFTER = 2
 
@@ -73,9 +76,11 @@ def make_settings(
     implementer_ladder: list[Rung] | None = None,
     implementer_complexity: dict[ComplexityName, ComplexityLadder] | None = None,
     helper_ladder: list[Rung] | None = None,
+    agents: dict[str, AgentConfig] | None = None,
 ) -> Settings:
     return Settings(
         project=ProjectConfig(name="demo"),
+        agents=DEFAULT_AGENTS if agents is None else agents,
         orchestration=OrchestrationConfig(
             max_parallel=2,
             max_iterations=max_iterations,
