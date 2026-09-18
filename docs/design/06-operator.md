@@ -65,10 +65,10 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 ### 5.1 tmux session
 
 - **Name**: `[shikiru] <project.name>`, with `.` and `:` replaced by `_`, always targeted as `=[shikiru] name`. The session env stores `SHIKIRU_PROJECT_DIR`.
-- **Options**:
-  - `remain-on-exit on`, `renumber-windows on`
-  - `allow-rename off`, `automatic-rename off`, `allow-set-title off`
-  - `pane-border-status top`, `pane-border-lines heavy`, `mouse on`
+- **Options**, set at the scope tmux gives each one:
+  - *Session*: `renumber-windows on`, `mouse on`. Applied on every `start`, not only when the session is created.
+  - *Window*, applied to each window as it is created (the home window and every task window): `remain-on-exit on`, `allow-rename off`, `automatic-rename off`, `allow-set-title off`, `pane-border-status top`, `pane-border-lines heavy`.
+  - A window option set at session scope reaches only the session's current window, so `remain-on-exit` in particular must be set per window: without it a dead agent pane disappears instead of staying for recovery (03 §7).
 - **Windows**:
   - The permanent home window `shikiru` has `shikiru dash --home` and a shell.
   - Each active task has its own window, named by `titles.window`, built from `dashboard.layout`. It is created at dispatch and closed at a terminal status.
