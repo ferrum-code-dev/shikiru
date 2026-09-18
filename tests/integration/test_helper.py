@@ -104,6 +104,7 @@ async def test_rebuild_report_rejects_an_invalid_answer(tmp_path: Path) -> None:
     )
 
     assert isinstance(result, Unrecoverable)
+    assert "mode" in result.unrecoverable
 
 
 async def test_rebuild_report_passes_through_an_explicit_unrecoverable_answer(
@@ -142,6 +143,38 @@ async def test_classify_screen_rejects_an_invalid_answer(tmp_path: Path) -> None
     )
 
     assert isinstance(result, Unrecoverable)
+
+
+@pytest.mark.parametrize(
+    ("dialog_keys", "safe_keys", "expect_unrecoverable"),
+    [
+        (["Enter"], ["Enter", "Escape"], False),
+        ([], ["Enter"], True),
+        (["Enter", "y"], ["Enter"], True),
+    ],
+    ids=["subset-of-safe-keys", "empty-keys", "key-outside-safe-keys"],
+)
+async def test_classify_screen_enforces_dialog_keys_against_safe_keys(
+    tmp_path: Path,
+    dialog_keys: list[str],
+    safe_keys: list[str],
+    expect_unrecoverable: bool,
+) -> None:
+    helper = Helper(_agent([{"state": "dialog", "keys": dialog_keys}]))
+
+    result = await helper.classify_screen(
+        "Overwrite? (y/n)",
+        safe_keys,
+        model="haiku",
+        effort="low",
+        cwd=tmp_path,
+        timeout=_TIMEOUT,
+    )
+
+    assert isinstance(result, Unrecoverable) is expect_unrecoverable
+    if not expect_unrecoverable:
+        assert isinstance(result, ScreenClassification)
+        assert result.keys == dialog_keys
 
 
 def test_construction_rejects_an_agent_with_no_headless_support() -> None:

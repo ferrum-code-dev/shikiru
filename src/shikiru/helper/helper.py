@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ValidationError
 
+from shikiru.domain.fencing import fence
 from shikiru.domain.reports import ReportKind, model_for, schema_for
 from shikiru.errors import ConfigError
-from shikiru.helper.models import ScreenClassification, Unrecoverable
+from shikiru.helper.models import ScreenClassification, ScreenState, Unrecoverable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -23,25 +24,29 @@ _REBUILD_PROMPT = (
     "turn from its last message (or the visible screen, if the message is empty) and the "
     "facts below. If you cannot determine the report with confidence, respond instead with "
     '{{"unrecoverable": "<reason>"}}.\n\n'
-    "## Last message or screen\n\n```text\n{last_message}\n```\n\n"
-    "## Facts\n\n```text\n{facts}\n```\n"
+    "## Last message or screen\n\n{last_message}\n\n"
+    "## Facts\n\n{facts}\n"
 )
 
 _CLASSIFY_PROMPT = (
     "An agent session has stalled. Classify its visible screen as one of `working` (it is "
     "still doing something), `dialog` (a prompt only these keys can answer: {safe_keys}), "
     "`question` (it is asking the operator something), `quota` (a usage limit) or `error` "
-    "(anything else blocking progress). Include `keys` for `dialog`, `text` for `question` "
-    "or `error`, and `resets_at` for `quota` when known. If you cannot classify it with "
-    'confidence, respond instead with {{"unrecoverable": "<reason>"}}.\n\n'
-    "## Screen\n\n```text\n{screen}\n```\n"
+    "(anything else blocking progress). For `dialog`, `keys` must be a non-empty subset of "
+    "the safe keys above. Include `text` for `question` or `error`, and `resets_at` for "
+    "`quota` when known. If you cannot classify it with confidence, respond instead with "
+    '{{"unrecoverable": "<reason>"}}.\n\n'
+    "## Screen\n\n{screen}\n"
 )
-
-_ResultT = TypeVar("_ResultT", bound=BaseModel)
 
 
 class Helper:
-    """Calls the helper rung's `HeadlessAgent`, validating every answer with pydantic (04 §6)."""
+    """Calls the helper rung's `HeadlessAgent`, validating every answer with pydantic (04 §6).
+
+    The caller resolves the helper rung (`domain.ladder.pick_rung` with `Role.HELPER`) into
+    `model`/`effort`, and the call `timeout`; `Helper` itself only talks to the agent it is
+    given.
+    """
 
     def __init__(self, agent: InteractiveAgent) -> None:
         """Hold `agent`'s `HeadlessAgent`, raising `ConfigError` when it has none (04 §6)."""
@@ -64,7 +69,11 @@ class Helper:
     ) -> Report | Unrecoverable:
         """Reconstruct the missing report of `kind` from `last_message` and `facts` (04 §6)."""
         schema = {"oneOf": [schema_for(kind), Unrecoverable.model_json_schema()]}
-        prompt = _REBUILD_PROMPT.format(kind=kind.value, last_message=last_message, facts=facts)
+        prompt = _REBUILD_PROMPT.format(
+            kind=kind.value,
+            last_message=fence(last_message, "text"),
+            facts=fence(facts, "text"),
+        )
         raw = await self._headless.ask(prompt, schema, model, effort, cwd, timeout)
         return self._validate(raw, model_for(kind))
 
@@ -78,21 +87,51 @@ class Helper:
         cwd: Path,
         timeout: timedelta,
     ) -> ScreenClassification | Unrecoverable:
-        """Classify a stalled `screen`, telling the agent which keys count as `safe` (04 §6)."""
+        """Classify a stalled `screen`, telling the agent which keys count as `safe` (04 §6).
+
+        A `dialog` result whose `keys` are empty or include anything outside `safe_keys`
+        comes back `Unrecoverable`: the engine applies `keys` to the pane verbatim, so the
+        Helper may not choose keys the caller didn't offer.
+        """
         classification_schema = ScreenClassification.model_json_schema()
         schema = {"oneOf": [classification_schema, Unrecoverable.model_json_schema()]}
-        prompt = _CLASSIFY_PROMPT.format(screen=screen, safe_keys=", ".join(safe_keys))
+        prompt = _CLASSIFY_PROMPT.format(
+            screen=fence(screen, "text"), safe_keys=", ".join(safe_keys)
+        )
         raw = await self._headless.ask(prompt, schema, model, effort, cwd, timeout)
-        return self._validate(raw, ScreenClassification)
+        result = self._validate(raw, ScreenClassification)
+        if isinstance(result, ScreenClassification):
+            return self._enforce_safe_keys(result, safe_keys)
+        return result
 
     @staticmethod
-    def _validate(raw: Mapping[str, object], model: type[_ResultT]) -> _ResultT | Unrecoverable:
+    def _enforce_safe_keys(
+        classification: ScreenClassification, safe_keys: Sequence[str]
+    ) -> ScreenClassification | Unrecoverable:
+        if classification.state is not ScreenState.DIALOG:
+            return classification
+        allowed = set(safe_keys)
+        if classification.keys and set(classification.keys) <= allowed:
+            return classification
+        reason = (
+            f"dialog keys {classification.keys!r} are not a non-empty subset of the safe "
+            f"keys {tuple(safe_keys)!r}"
+        )
+        return Unrecoverable(unrecoverable=reason)
+
+    @staticmethod
+    def _validate[ResultT: BaseModel](
+        raw: Mapping[str, object], model: type[ResultT]
+    ) -> ResultT | Unrecoverable:
         try:
             return model.model_validate(raw)
-        except ValidationError:
-            pass
-        try:
-            return Unrecoverable.model_validate(raw)
-        except ValidationError:
-            reason = f"invalid helper output for {model.__name__}: {raw!r}"
-            return Unrecoverable(unrecoverable=reason)
+        except ValidationError as model_error:
+            try:
+                return Unrecoverable.model_validate(raw)
+            except ValidationError as unrecoverable_error:
+                reason = (
+                    f"invalid helper output for {model.__name__}: {raw!r}; "
+                    f"{model.__name__} errors: {model_error}; "
+                    f"unrecoverable errors: {unrecoverable_error}"
+                )
+                return Unrecoverable(unrecoverable=reason)
