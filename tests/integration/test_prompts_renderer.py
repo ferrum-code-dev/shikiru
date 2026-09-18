@@ -5,20 +5,25 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from jinja2 import UndefinedError
 
+from shikiru.domain.fencing import fence
 from shikiru.prompts.renderer import REPORT_INSTRUCTION, PromptName, PromptRenderer
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 _REQUEST = "Add retries to the flaky parser"
-_FENCED_REPORT = '```json\n{"status": "completed"}\n```'
+_REPORT_JSON = '{"status": "completed"}'
+_BACKTICK_LADEN_REPORT_JSON = [
+    '{"note": "closes a ``` fence early"}',
+    '{"note": "closes a ```` fence early"}',
+]
 
 
-def _full_context(name: PromptName) -> dict[str, Any]:
+def _full_context(name: PromptName, *, report_json: str = _REPORT_JSON) -> dict[str, Any]:
     context: dict[str, Any] = {
         "request": _REQUEST,
         "trackers": ["tasks/plan.md", "tasks/todo.md"],
-        "reports": [{"label": "Implementation", "json": '{"status": "completed"}'}],
+        "reports": [{"label": "Implementation", "json": report_json}],
     }
     if name is PromptName.CONSULT:
         context["question"] = "Which retry library should I use?"
@@ -31,7 +36,7 @@ def _full_context(name: PromptName) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("name", list(PromptName))
-def test_every_template_includes_the_request_and_the_report_instruction(
+def test_every_template_includes_the_request_and_ends_with_the_report_instruction(
     tmp_path: Path, name: PromptName
 ) -> None:
     renderer = PromptRenderer(tmp_path)
@@ -39,7 +44,7 @@ def test_every_template_includes_the_request_and_the_report_instruction(
     rendered = renderer.render(name, _full_context(name))
 
     assert _REQUEST in rendered
-    assert REPORT_INSTRUCTION in rendered
+    assert rendered.rstrip().endswith(REPORT_INSTRUCTION)
 
 
 @pytest.mark.parametrize("name", list(PromptName))
@@ -48,7 +53,20 @@ def test_every_template_fences_earlier_reports(tmp_path: Path, name: PromptName)
 
     rendered = renderer.render(name, _full_context(name))
 
-    assert _FENCED_REPORT in rendered
+    assert fence(_REPORT_JSON, "json") in rendered
+
+
+@pytest.mark.parametrize("report_json", _BACKTICK_LADEN_REPORT_JSON)
+@pytest.mark.parametrize("name", list(PromptName))
+def test_every_template_keeps_backtick_laden_content_inside_one_fence(
+    tmp_path: Path, name: PromptName, report_json: str
+) -> None:
+    renderer = PromptRenderer(tmp_path)
+
+    rendered = renderer.render(name, _full_context(name, report_json=report_json))
+
+    assert fence(report_json, "json") in rendered
+    assert rendered.rstrip().endswith(REPORT_INSTRUCTION)
 
 
 @pytest.mark.parametrize("name", list(PromptName))

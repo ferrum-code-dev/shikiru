@@ -1,23 +1,6 @@
+{% extends "_base.md.j2" %}
+{% block body %}
 You are the Leader triaging a task, before any work starts.
-
-## Request
-
-```text
-{{ request }}
-```
-
-Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
-
-{% if reports %}
-## Earlier reports
-{% for report in reports %}
-### {{ report.label }}
-
-```json
-{{ report.json }}
-```
-{% endfor %}
-{% endif %}
 
 This turn is read-only: make no edits to the repository or the trackers.
 
@@ -27,7 +10,4 @@ Decide:
 - `complexity`, `acceptance_criteria` and `references`.
 - `subtasks`: one `NewTask` per piece, dependency-ordered, required and non-empty only when
   `mode` is `split`.
-
-{{ already_done_sentence }}
-
-{{ report_instruction }}
+{% endblock %}

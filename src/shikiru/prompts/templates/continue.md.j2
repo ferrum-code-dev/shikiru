@@ -1,24 +1,4 @@
+{% extends "_base.md.j2" %}
+{% block body %}
 Continue this task's current turn; nothing about it has changed.
-
-## Request
-
-```text
-{{ request }}
-```
-
-Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
-
-{% if reports %}
-## Earlier reports
-{% for report in reports %}
-### {{ report.label }}
-
-```json
-{{ report.json }}
-```
-{% endfor %}
-{% endif %}
-
-{{ already_done_sentence }}
-
-{{ report_instruction }}
+{% endblock %}

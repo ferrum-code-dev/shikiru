@@ -1,0 +1,12 @@
+{% import "_macros.md.j2" as macros %}
+{{ macros.request_section(request) }}
+
+{{ macros.trackers_line(trackers) }}
+
+{{ macros.reports_section(reports) }}
+
+{% block body %}{% endblock %}
+
+{{ already_done_sentence }}
+
+{{ report_instruction }}

@@ -14,6 +14,8 @@ from jinja2 import (
     StrictUndefined,
 )
 
+from shikiru.domain.fencing import fence
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
@@ -61,6 +63,7 @@ class PromptRenderer:
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        self._env.filters["fenced"] = fence
 
     def render(self, name: PromptName, context: Mapping[str, object]) -> str:
         """Render `name`'s template against `context`, raising on any undefined variable."""

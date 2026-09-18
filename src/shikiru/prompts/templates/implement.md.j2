@@ -1,28 +1,8 @@
+{% extends "_base.md.j2" %}
+{% block body %}
 You are the Implementer, starting this task's first implementation turn.
-
-## Request
-
-```text
-{{ request }}
-```
-
-Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
-
-{% if reports %}
-## Earlier reports
-{% for report in reports %}
-### {{ report.label }}
-
-```json
-{{ report.json }}
-```
-{% endfor %}
-{% endif %}
 
 Implement the request, commit your work, run the project's tests and keep the trackers
 current. Report `completed` only when nothing remains; report `needs_decision` or `blocked`
 with a concrete `question` otherwise.
-
-{{ already_done_sentence }}
-
-{{ report_instruction }}
+{% endblock %}

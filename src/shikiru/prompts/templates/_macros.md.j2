@@ -1,0 +1,26 @@
+{% macro request_section(request) -%}
+## Request
+
+{{ request | fenced("text") }}
+{%- endmacro %}
+
+{% macro trackers_line(trackers) -%}
+Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
+{%- endmacro %}
+
+{% macro reports_section(reports) -%}
+{% if reports %}
+## Earlier reports
+{% for report in reports %}
+### {{ report.label }}
+
+{{ report.json | fenced("json") }}
+{% endfor %}
+{% endif -%}
+{%- endmacro %}
+
+{% macro facts_section(facts) -%}
+## Facts
+
+{{ facts | fenced("text") }}
+{%- endmacro %}
