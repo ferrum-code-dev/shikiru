@@ -152,6 +152,26 @@ layers = [
   "shikiru.errors",
 ]
 
+[[tool.importlinter.contracts]]
+name = "Widget plugins (02 §2): plugins.widgets imports only dashboard.contract, ui and store.reader"
+type = "forbidden"
+source_modules = ["shikiru.plugins.widgets"]
+forbidden_modules = [
+  "shikiru.config.loader",
+  "shikiru.store.database",
+  "shikiru.store.tasks",
+  "shikiru.store.commands",
+  "shikiru.store.escalations",
+  "shikiru.store.events",
+  "shikiru.store.quotas",
+  "shikiru.store.runs",
+  "shikiru.engine",
+  "shikiru.tmux",
+  "shikiru.workspace",
+  "shikiru.process",
+]
+allow_indirect_imports = "True"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = [
