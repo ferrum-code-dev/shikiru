@@ -174,7 +174,7 @@ Every colour, glyph and movement answers one of three questions: *who acts*, *wh
 
 Gauges (context, quota, CPU, RAM) are green below 70%, yellow below 90%, red above.
 
-**Glyphs**: one set, registered in `ui.glyphs`. A unit test rejects wide, ambiguous-width or emoji-presentation characters.
+**Glyphs**: one set, registered in `ui.glyphs`. A unit test rejects wide and emoji-presentation characters. Ambiguous-width characters are allowed and drawn one cell wide, as Textual assumes; terminals set to CJK ambiguous-wide are unsupported. Glyphs that have an emoji variant carry U+FE0E (`⚖︎ ⚙︎ ⏸︎ ⚠︎`).
 
 | Meaning | Glyphs |
 |---|---|
