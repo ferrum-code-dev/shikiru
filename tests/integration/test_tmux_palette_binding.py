@@ -2,37 +2,37 @@
 
 from __future__ import annotations
 
+import shlex
 from typing import TYPE_CHECKING
 
 from shikiru.tmux.client import Tmux
-from shikiru.tmux.session import SHIKIRU_SESSION_PATTERN
+from shikiru.tmux.session import SHIKIRU_SESSION_PATTERN, bind_palette_key
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from tests.support.tmux import TmuxServer
 
+_PALETTE_COMMAND = ("shikiru", "palette")
 
-async def test_shikiru_session_pattern_matches_only_shikiru_sessions_not_the_binding_itself(
-    tmux_server: TmuxServer, tmp_path: Path
+
+async def _bound_space_tokens(tmux_server: TmuxServer) -> list[str]:
+    result = await tmux_server.run("list-keys", "-T", "prefix")
+    lines = [line for line in result.stdout.splitlines() if " Space " in line]
+    assert len(lines) == 1
+    return shlex.split(lines[0])
+
+
+async def test_bind_palette_key_dispatches_on_the_shikiru_session_pattern_else_next_layout(
+    tmux_server: TmuxServer,
 ) -> None:
-    """The `if-shell -F` pattern the binding dispatches on (06 §5.2), not the bound key itself.
-
-    Exercising the actual key press requires an attached client, which the private
-    `tmux_server` doesn't have; this pins the pattern the binding relies on instead.
+    """Binding prefix+Space runs `if-shell -F` against the `[shikiru]` session match, falling
+    back to tmux's own `next-layout` (06 §5.2) rather than overriding the key everywhere.
     """
     tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
-    await tmux.new_session(
-        "[shikiru] demo", cwd=tmp_path, env={}, window_name="a", command=("sh", "-c", "sleep 300")
-    )
-    await tmux.new_session(
-        "notshikiru", cwd=tmp_path, env={}, window_name="a", command=("sh", "-c", "sleep 300")
-    )
 
-    inside = await tmux.display("=[shikiru] demo:", SHIKIRU_SESSION_PATTERN)
-    outside = await tmux.display("=test:", SHIKIRU_SESSION_PATTERN)
-    not_a_prefix_match = await tmux.display("=notshikiru:", SHIKIRU_SESSION_PATTERN)
+    await bind_palette_key(tmux, _PALETTE_COMMAND)
 
-    assert inside == "1"
-    assert outside == "0"
-    assert not_a_prefix_match == "0"
+    tokens = await _bound_space_tokens(tmux_server)
+    if_shell_index = tokens.index("if-shell")
+    assert tokens[if_shell_index + 1] == "-F"
+    assert tokens[if_shell_index + 2] == SHIKIRU_SESSION_PATTERN
+    assert tokens[-1] == "next-layout"
