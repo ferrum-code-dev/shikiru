@@ -10,10 +10,11 @@ from fake_agent.agent import create
 
 from shikiru.agents.contracts import AgentContext, CheckResult, SessionKeys
 from shikiru.clock import SystemClock
+from shikiru.domain.recovery import ScreenClassification, ScreenState
 from shikiru.domain.reports import ReportKind, TriageReport
 from shikiru.errors import ConfigError
 from shikiru.helper.helper import Helper
-from shikiru.helper.models import ScreenClassification, ScreenState, Unrecoverable
+from shikiru.helper.models import Unrecoverable
 from shikiru.process import SubprocessRunner
 
 if TYPE_CHECKING:
@@ -145,36 +146,20 @@ async def test_classify_screen_rejects_an_invalid_answer(tmp_path: Path) -> None
     assert isinstance(result, Unrecoverable)
 
 
-@pytest.mark.parametrize(
-    ("dialog_keys", "safe_keys", "expect_unrecoverable"),
-    [
-        (["Enter"], ["Enter", "Escape"], False),
-        ([], ["Enter"], True),
-        (["Enter", "y"], ["Enter"], True),
-    ],
-    ids=["subset-of-safe-keys", "empty-keys", "key-outside-safe-keys"],
-)
-async def test_classify_screen_enforces_dialog_keys_against_safe_keys(
-    tmp_path: Path,
-    dialog_keys: list[str],
-    safe_keys: list[str],
-    expect_unrecoverable: bool,
-) -> None:
-    helper = Helper(_agent([{"state": "dialog", "keys": dialog_keys}]))
+async def test_classify_screen_passes_dialog_keys_through_uninterpreted(tmp_path: Path) -> None:
+    helper = Helper(_agent([{"state": "dialog", "keys": ["Enter", "y"]}]))
 
     result = await helper.classify_screen(
         "Overwrite? (y/n)",
-        safe_keys,
+        ["Enter"],
         model="haiku",
         effort="low",
         cwd=tmp_path,
         timeout=_TIMEOUT,
     )
 
-    assert isinstance(result, Unrecoverable) is expect_unrecoverable
-    if not expect_unrecoverable:
-        assert isinstance(result, ScreenClassification)
-        assert result.keys == dialog_keys
+    assert isinstance(result, ScreenClassification)
+    assert result.keys == ["Enter", "y"]
 
 
 def test_construction_rejects_an_agent_with_no_headless_support() -> None:

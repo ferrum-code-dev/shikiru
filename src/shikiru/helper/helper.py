@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ValidationError
 
 from shikiru.domain.fencing import fence
+from shikiru.domain.recovery import ScreenClassification
 from shikiru.domain.reports import ReportKind, model_for, schema_for
 from shikiru.errors import ConfigError
-from shikiru.helper.models import ScreenClassification, ScreenState, Unrecoverable
+from shikiru.helper.models import Unrecoverable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -89,9 +90,9 @@ class Helper:
     ) -> ScreenClassification | Unrecoverable:
         """Classify a stalled `screen`, telling the agent which keys count as `safe` (04 §6).
 
-        A `dialog` result whose `keys` are empty or include anything outside `safe_keys`
-        comes back `Unrecoverable`: the engine applies `keys` to the pane verbatim, so the
-        Helper may not choose keys the caller didn't offer.
+        Whether a `dialog`'s `keys` are safe to send is a recovery decision, not the
+        Helper's: `domain.recovery.decide_stall` is the one place that checks them against
+        `safe_keys`.
         """
         classification_schema = ScreenClassification.model_json_schema()
         schema = {"oneOf": [classification_schema, Unrecoverable.model_json_schema()]}
@@ -99,25 +100,7 @@ class Helper:
             screen=fence(screen, "text"), safe_keys=", ".join(safe_keys)
         )
         raw = await self._headless.ask(prompt, schema, model, effort, cwd, timeout)
-        result = self._validate(raw, ScreenClassification)
-        if isinstance(result, ScreenClassification):
-            return self._enforce_safe_keys(result, safe_keys)
-        return result
-
-    @staticmethod
-    def _enforce_safe_keys(
-        classification: ScreenClassification, safe_keys: Sequence[str]
-    ) -> ScreenClassification | Unrecoverable:
-        if classification.state is not ScreenState.DIALOG:
-            return classification
-        allowed = set(safe_keys)
-        if classification.keys and set(classification.keys) <= allowed:
-            return classification
-        reason = (
-            f"dialog keys {classification.keys!r} are not a non-empty subset of the safe "
-            f"keys {tuple(safe_keys)!r}"
-        )
-        return Unrecoverable(unrecoverable=reason)
+        return self._validate(raw, ScreenClassification)
 
     @staticmethod
     def _validate[ResultT: BaseModel](

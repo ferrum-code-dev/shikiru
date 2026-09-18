@@ -24,6 +24,7 @@ from shikiru.domain.recovery import (
     Relaunch,
     RetryTurn,
     ScreenClassification,
+    ScreenState,
     SendKeys,
     Stalled,
     TurnCounters,
@@ -187,35 +188,36 @@ def test_protocol_error_raises_agent_protocol() -> None:
 
 
 def test_working_classification_keeps_waiting() -> None:
-    classification = ScreenClassification(category="working")
+    classification = ScreenClassification(state=ScreenState.WORKING)
 
     action = decide_stall(classification, Role.IMPLEMENTER, frozenset(), TurnCounters(), _policy())
 
     assert action == KeepWaiting()
 
 
-def test_dialog_classification_sends_keys_that_are_all_safe() -> None:
-    classification = ScreenClassification(category="dialog", keys=("Enter",))
+@pytest.mark.parametrize(
+    ("keys", "safe_keys", "action"),
+    [
+        (["Enter"], {"Enter", "Escape"}, SendKeys(("Enter",))),
+        ([], {"Enter"}, Escalate(EscalationReason.AGENT_STUCK)),
+        (["Enter", "y"], {"Enter"}, Escalate(EscalationReason.AGENT_STUCK)),
+    ],
+    ids=["subset-of-safe-keys", "empty-keys", "key-outside-safe-keys"],
+)
+def test_dialog_classification_sends_keys_only_when_all_are_safe(
+    keys: list[str], safe_keys: set[str], action: object
+) -> None:
+    classification = ScreenClassification(state=ScreenState.DIALOG, keys=keys)
 
-    action = decide_stall(
-        classification, Role.IMPLEMENTER, frozenset({"Enter", "Escape"}), TurnCounters(), _policy()
+    result = decide_stall(
+        classification, Role.IMPLEMENTER, frozenset(safe_keys), TurnCounters(), _policy()
     )
 
-    assert action == SendKeys(("Enter",))
-
-
-def test_dialog_classification_with_an_unsafe_key_gets_stuck() -> None:
-    classification = ScreenClassification(category="dialog", keys=("rm -rf /",))
-
-    action = decide_stall(
-        classification, Role.IMPLEMENTER, frozenset({"Enter"}), TurnCounters(), _policy()
-    )
-
-    assert action == Escalate(EscalationReason.AGENT_STUCK)
+    assert result == action
 
 
 def test_question_classification_consults_for_the_implementer() -> None:
-    classification = ScreenClassification(category="question")
+    classification = ScreenClassification(state=ScreenState.QUESTION)
 
     action = decide_stall(classification, Role.IMPLEMENTER, frozenset(), TurnCounters(), _policy())
 
@@ -223,7 +225,7 @@ def test_question_classification_consults_for_the_implementer() -> None:
 
 
 def test_question_classification_escalates_for_the_leader() -> None:
-    classification = ScreenClassification(category="question")
+    classification = ScreenClassification(state=ScreenState.QUESTION)
 
     action = decide_stall(classification, Role.LEADER, frozenset(), TurnCounters(), _policy())
 
@@ -231,7 +233,7 @@ def test_question_classification_escalates_for_the_leader() -> None:
 
 
 def test_quota_classification_behaves_like_a_quota_failure() -> None:
-    classification = ScreenClassification(category="quota", resets_at=None)
+    classification = ScreenClassification(state=ScreenState.QUOTA, resets_at=None)
 
     action = decide_stall(classification, Role.LEADER, frozenset(), TurnCounters(), _policy())
 
@@ -239,7 +241,7 @@ def test_quota_classification_behaves_like_a_quota_failure() -> None:
 
 
 def test_error_classification_behaves_like_an_other_failure() -> None:
-    classification = ScreenClassification(category="error")
+    classification = ScreenClassification(state=ScreenState.ERROR)
 
     action = decide_stall(classification, Role.LEADER, frozenset(), TurnCounters(), _policy())
 

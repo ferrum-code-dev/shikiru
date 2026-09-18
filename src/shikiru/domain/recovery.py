@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Literal
+from enum import StrEnum, auto
+from typing import TYPE_CHECKING
+
+from pydantic import Field
 
 from shikiru.agents.contracts import FailureKind
-from shikiru.domain.tasks import EscalationReason, Role
+from shikiru.domain.tasks import DomainModel, EscalationReason, Role
 
 if TYPE_CHECKING:
     from shikiru.domain.reports import Report
@@ -163,12 +166,22 @@ Action = (
 )
 
 
-@dataclass(frozen=True)
-class ScreenClassification:
-    """The Helper's classification of a stalled screen (03 §7)."""
+class ScreenState(StrEnum):
+    """What a stalled screen shows, as `Helper.classify_screen` names it (04 §6, 03 §7)."""
 
-    category: Literal["working", "dialog", "question", "quota", "error"]
-    keys: tuple[str, ...] = ()
+    WORKING = auto()
+    DIALOG = auto()
+    QUESTION = auto()
+    QUOTA = auto()
+    ERROR = auto()
+
+
+class ScreenClassification(DomainModel):
+    """The Helper's classification of a stalled agent screen (04 §6, 03 §7)."""
+
+    state: ScreenState
+    keys: list[str] = Field(default_factory=list)
+    text: str = ""
     resets_at: datetime | None = None
 
 
@@ -253,20 +266,20 @@ def decide_stall(
     policy: RecoveryPolicy,
 ) -> Action:
     """Map a classified stalled screen to the action recovery should take (03 §7)."""
-    match classification.category:
-        case "working":
+    match classification.state:
+        case ScreenState.WORKING:
             return KeepWaiting()
-        case "dialog":
+        case ScreenState.DIALOG:
             if classification.keys and set(classification.keys) <= keys_safe:
-                return SendKeys(classification.keys)
+                return SendKeys(tuple(classification.keys))
             return Escalate(EscalationReason.AGENT_STUCK)
-        case "question":
+        case ScreenState.QUESTION:
             return (
                 Consult()
                 if role is Role.IMPLEMENTER
                 else Escalate(EscalationReason.DECISION_REQUIRED)
             )
-        case "quota":
+        case ScreenState.QUOTA:
             return _quota_action(classification.resets_at, policy)
-        case "error":
+        case ScreenState.ERROR:
             return _decide_other(counters)
