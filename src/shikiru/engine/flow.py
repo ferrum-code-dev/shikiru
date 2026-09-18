@@ -52,6 +52,10 @@ if TYPE_CHECKING:
     from shikiru.workspace.facts import GitFacts
 
 
+ESCALATION_PANE_TAIL_LINES = 60
+"""Lines of pane scrollback captured as escalation evidence (03 §8)."""
+
+
 class RecoveryNotImplementedError(ShikiruError):
     """A turn ended without a valid report; recovering from that is Task 15's job (03 §7)."""
 
@@ -59,7 +63,10 @@ class RecoveryNotImplementedError(ShikiruError):
 def clear_intervention(tasks: TaskStore, events: EventLog, task_id: str) -> None:
     """Clear `task_id`'s intervention hold: on a valid report, or an operator resume (03 §9)."""
     task = tasks.get(task_id)
-    if task is None or Hold.INTERVENTION not in task.holds:
+    if task is None:
+        message = f"{task_id} has no task row; clear_intervention needs a running task"
+        raise ShikiruError(message)
+    if Hold.INTERVENTION not in task.holds:
         return
     tasks.set_holds(task_id, task.holds - {Hold.INTERVENTION})
     events.append(
@@ -236,8 +243,16 @@ class TaskFlow:
             question=question,
             attempted=attempted,
             reports=_history_context(history),
-            facts="",
+            facts=await self._facts_text(task),
+            pane_tail=await self._pane_tail(task, step),
         )
+
+    async def _pane_tail(self, task: Task, step: Step | None) -> str:
+        pane_id = task.panes.get(ACTING_ROLE[step]) if step is not None else None
+        if pane_id is None:
+            return ""
+        pane = self._pane_factory(pane_id)
+        return await pane.capture_tail(ESCALATION_PANE_TAIL_LINES)
 
     async def _run_turn(self, task: Task, step: Step) -> TurnResult:
         role = ACTING_ROLE[step]

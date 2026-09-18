@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.agents.contracts import Rung
 from shikiru.clock import SystemClock
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import EscalationReason, Step
+from shikiru.domain.tasks import EscalationReason, Role, Step
 from shikiru.engine.escalations import EscalationRaiser, PacketContext, render_packet
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
@@ -33,7 +34,8 @@ def _context_for(reason: EscalationReason) -> PacketContext:
         timeline=["2026-01-01T00:00:00+00:00 turn_completed: implemented"],
         attempted="Implement and verify cycled once.",
         reports="**verify**\n\n{}",
-        facts="(no repos configured)",
+        facts="### .\n\n#### Commits\n\nabc123 do the thing",
+        pane_tail="$ shikiru report --file report.json\nturn ended",
         sessions="- leader: fake session `abc` — resume abc",
         question="What should happen next?",
         options=options_for(reason),
@@ -44,7 +46,9 @@ def _context_for(reason: EscalationReason) -> PacketContext:
 def test_every_reason_renders_a_packet_with_every_section_and_exactly_one_star(
     reason: EscalationReason,
 ) -> None:
-    packet = render_packet(_context_for(reason))
+    context = _context_for(reason)
+
+    packet = render_packet(context)
 
     headings = (
         "# T-1",
@@ -56,6 +60,10 @@ def test_every_reason_renders_a_packet_with_every_section_and_exactly_one_star(
     )
     for heading in headings:
         assert heading in packet
+    evidence = (context.reports, context.facts, context.pane_tail, context.sessions)
+    for section in evidence:
+        assert section
+        assert section in packet
     assert packet.count(_STAR) == 1
 
 
@@ -68,6 +76,8 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     escalations_store = EscalationStore(connection, clock)
     raiser = EscalationRaiser(escalations_store, events, runs, tmp_path)
     task = seed_task(connection, clock, title="Add retries")
+    run = runs.start(task.id, Role.LEADER, Rung(agent="claude", model="opus"))
+    runs.set_session(run.id, "sess-123", "claude --resume sess-123")
 
     escalation = await raiser.raise_escalation(
         task,
@@ -76,7 +86,8 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
         question="Should I accept this as-is?",
         attempted="Implement and verify cycled to the iteration limit.",
         reports=[{"label": "01-verify-i1", "json": '{"decision": "changes_requested"}'}],
-        facts="",
+        facts="### .\n\n#### Commits\n\nabc123 do the thing",
+        pane_tail="$ shikiru report --file report.json\nturn ended",
     )
 
     assert escalation.status is EscalationStatus.OPEN
@@ -87,5 +98,9 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     packet_text = await asyncio.to_thread(Path(escalation.packet_path).read_text)
     assert "Should I accept this as-is?" in packet_text
     assert "changes_requested" in packet_text
+    assert "abc123 do the thing" in packet_text
+    assert "turn ended" in packet_text
+    assert "sess-123" in packet_text
+    assert "claude --resume sess-123" in packet_text
     raised_events = events.since(0, kinds=[EventKind.ESCALATION], task_id=task.id)
     assert len(raised_events) == 1

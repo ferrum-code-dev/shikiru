@@ -68,6 +68,7 @@ class PacketContext:
     attempted: str
     reports: str
     facts: str
+    pane_tail: str
     sessions: str
     question: str
     options: tuple[EscalationOption, ...]
@@ -101,6 +102,7 @@ def render_packet(context: PacketContext) -> str:
         f"## Evidence\n\n"
         f"### Reports\n\n{context.reports or '(none)'}\n\n"
         f"### Facts\n\n{context.facts or '(none)'}\n\n"
+        f"### Recent pane output\n\n{context.pane_tail or '(none)'}\n\n"
         f"### Sessions\n\n{context.sessions or '(none)'}\n\n"
         f"## Question\n\n{context.question}\n\n"
         f"## Options\n\n{_options_section(context.options)}\n"
@@ -133,6 +135,7 @@ class EscalationRaiser:
         attempted: str,
         reports: Sequence[dict[str, str]],
         facts: str,
+        pane_tail: str,
     ) -> Escalation:
         """Build the packet for `task`, write it, and open its `Escalation` row (03 §8)."""
         options = options_for(reason)
@@ -145,6 +148,7 @@ class EscalationRaiser:
             attempted=attempted,
             reports=self._reports_evidence(reports),
             facts=facts,
+            pane_tail=pane_tail,
             sessions=self._sessions_evidence(task.id),
             question=question,
             options=options,

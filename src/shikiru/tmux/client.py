@@ -191,9 +191,12 @@ class Tmux:
         args += [_END_OF_OPTIONS, *argv]
         await self._run(*args)
 
-    async def capture_pane(self, target: str) -> str:
-        """Return the visible text of pane `target`."""
-        result = await self._run("capture-pane", "-p", "-t", target)
+    async def capture_pane(self, target: str, *, tail_lines: int | None = None) -> str:
+        """Return pane `target`'s text: currently visible, or its last `tail_lines` lines."""
+        args = ["capture-pane", "-p", "-t", target]
+        if tail_lines is not None:
+            args += ["-S", f"-{tail_lines}"]
+        result = await self._run(*args)
         return result.stdout
 
     async def is_pane_dead(self, target: str) -> bool:

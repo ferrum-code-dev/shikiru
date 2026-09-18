@@ -33,6 +33,10 @@ class TmuxPane:
         """Return this pane's currently visible text."""
         return await self._tmux.capture_pane(self._pane_id)
 
+    async def capture_tail(self, lines: int) -> str:
+        """Return this pane's last `lines` lines, including scrollback (03 §8's evidence)."""
+        return await self._tmux.capture_pane(self._pane_id, tail_lines=lines)
+
     async def is_alive(self) -> bool:
         """Return whether this pane's process is still running.
 
