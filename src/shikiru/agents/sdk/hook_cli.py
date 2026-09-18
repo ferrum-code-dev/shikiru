@@ -7,10 +7,8 @@ import os
 import sys
 from pathlib import Path
 
+from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR
 from shikiru.agents.sdk.hooks import HookRecorder
-
-RUN_DIR_ENV_VAR = "SHIKIRU_RUN_DIR"
-ROLE_ENV_VAR = "SHIKIRU_ROLE"
 
 
 def hook_command() -> None:

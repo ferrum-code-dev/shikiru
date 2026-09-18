@@ -28,6 +28,9 @@ if TYPE_CHECKING:
 _RUNG_SEPARATOR = ":"
 _VALID_RUNG_PART_COUNTS = (2, 3)
 
+RUN_DIR_ENV_VAR = "SHIKIRU_RUN_DIR"
+ROLE_ENV_VAR = "SHIKIRU_ROLE"
+
 CostBasis = Literal["billed", "api_equivalent", "unknown"]
 
 

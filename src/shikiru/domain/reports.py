@@ -12,6 +12,11 @@ from shikiru.domain.tasks import DomainModel, Mode
 
 TRIAGE_TITLE_MAX_LENGTH = 60
 
+CURRENT_TURN_LINK_NAME = "current_turn"
+REPORT_KIND_FILENAME = "report.kind"
+REPORT_SCHEMA_FILENAME = "report.schema.json"
+REPORT_FILENAME = "report.json"
+
 DEPENDS_ON_PATTERN = r"^(T-\d+|#\d+)$"
 
 _TaskReference = Annotated[str, StringConstraints(pattern=DEPENDS_ON_PATTERN)]

@@ -11,19 +11,20 @@ from typing import TYPE_CHECKING
 import typer
 from pydantic import ValidationError
 
-from shikiru.domain.reports import ReportKind, model_for
+from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR
+from shikiru.domain.reports import (
+    CURRENT_TURN_LINK_NAME,
+    REPORT_FILENAME,
+    REPORT_KIND_FILENAME,
+    ReportKind,
+    model_for,
+)
 from shikiru.errors import EXIT_NOT_INITIALISED, EXIT_USAGE_ERROR, ShikiruError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from pydantic import BaseModel
-
-RUN_DIR_ENV_VAR = "SHIKIRU_RUN_DIR"
-ROLE_ENV_VAR = "SHIKIRU_ROLE"
-CURRENT_TURN_LINK_NAME = "current_turn"
-REPORT_KIND_FILENAME = "report.kind"
-REPORT_FILENAME = "report.json"
 
 
 class ReportError(ShikiruError):
