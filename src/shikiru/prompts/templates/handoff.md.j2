@@ -1,0 +1,33 @@
+You are picking up this task in a fresh session. Read the earlier reports and facts below to
+catch up before doing anything else.
+
+## Request
+
+```text
+{{ request }}
+```
+
+Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
+
+{% if reports %}
+## Earlier reports
+{% for report in reports %}
+### {{ report.label }}
+
+```json
+{{ report.json }}
+```
+{% endfor %}
+{% endif %}
+
+## Facts
+
+```text
+{{ facts }}
+```
+
+Continue the task from here.
+
+{{ already_done_sentence }}
+
+{{ report_instruction }}

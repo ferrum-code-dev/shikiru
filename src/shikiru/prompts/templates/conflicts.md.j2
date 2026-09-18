@@ -1,0 +1,34 @@
+You are the Implementer resolving a rebase conflict during integration of this task.
+
+## Request
+
+```text
+{{ request }}
+```
+
+Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
+
+{% if reports %}
+## Earlier reports
+{% for report in reports %}
+### {{ report.label }}
+
+```json
+{{ report.json }}
+```
+{% endfor %}
+{% endif %}
+
+## Facts
+
+```text
+{{ facts }}
+```
+
+Resolve the conflict, keeping the intent of both sides, then commit. Report `completed` only
+when the rebase can proceed cleanly; report `needs_decision` or `blocked` with a concrete
+`question` otherwise.
+
+{{ already_done_sentence }}
+
+{{ report_instruction }}

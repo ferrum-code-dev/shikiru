@@ -87,8 +87,8 @@ Refs: 04 §3, 07 §3.
 
 ### Task 10: Prompts and Helper
 Refs: 03 §2, §4.3; 04 §6.
-- [ ] `PromptRenderer` with packaged templates `triage`, `plan`, `implement`, `rework`, `consult`, `verify`, `conflicts`, `continue`, `handoff`; `.shikiru/prompts/` overrides.
-- [ ] `Helper.rebuild_report` and `Helper.classify_screen` over `headless()` with validated results.
+- [x] `PromptRenderer` with packaged templates `triage`, `plan`, `implement`, `rework`, `consult`, `verify`, `conflicts`, `continue`, `handoff`; `.shikiru/prompts/` overrides.
+- [x] `Helper.rebuild_report` and `Helper.classify_screen` over `headless()` with validated results.
 - Tests: property tests (request and report instruction present, fenced reports, `StrictUndefined` raises); Helper against the fake agent's headless script.
 
 ### Task 11: UI core and dashboard shell

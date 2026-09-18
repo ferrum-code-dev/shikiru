@@ -1,0 +1,37 @@
+You are the Leader verifying the Implementer's work on this task.
+
+## Request
+
+```text
+{{ request }}
+```
+
+Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
+
+{% if reports %}
+## Earlier reports
+{% for report in reports %}
+### {{ report.label }}
+
+```json
+{{ report.json }}
+```
+{% endfor %}
+{% endif %}
+
+## Facts
+
+```text
+{{ facts }}
+```
+
+The facts above outrank the Implementer's claims. Accept only when no issues remain;
+non-blocking residual risks go into `residual_risks` or `new_tasks`, not `issues`.
+{% if final_round %}
+This is the final round: choose `accept`, `supersede` (decompose into `new_tasks`) or
+`escalate`. `changes_requested` is not available this round.
+{% endif %}
+
+{{ already_done_sentence }}
+
+{{ report_instruction }}
