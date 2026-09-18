@@ -6,6 +6,7 @@ import re
 from typing import TYPE_CHECKING
 
 from shikiru.domain.tasks import RepoState
+from shikiru.workspace.repo_paths import is_monorepo_path, repo_dir
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -18,7 +19,6 @@ SHIKIRU_DIR_NAME = ".shikiru"
 WORKTREES_DIR_NAME = "worktrees"
 BRANCH_PREFIX = "shikiru/"
 EXCLUDE_LINE = f"/{SHIKIRU_DIR_NAME}/"
-_MONOREPO_PATH = "."
 
 _SLUG_MAX_LENGTH = 40
 _NON_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
@@ -40,7 +40,7 @@ def branch_name(task_id: str, title: str) -> str:
 
 
 def _is_monorepo(repos: Sequence[RepoConfig]) -> bool:
-    return len(repos) == 1 and repos[0].path == _MONOREPO_PATH
+    return len(repos) == 1 and is_monorepo_path(repos[0].path)
 
 
 class TaskRootBuilder:
@@ -99,14 +99,10 @@ class TaskRootBuilder:
         return RepoState(path=repo.path, base=base, base_sha=base_sha, branch=branch)
 
     def _repo_dir(self, repo_path: str) -> Path:
-        if repo_path == _MONOREPO_PATH:
-            return self._project_root
-        return self._project_root / repo_path
+        return repo_dir(self._project_root, repo_path)
 
     def _worktree_path(self, root: Path, repo_path: str) -> Path:
-        if repo_path == _MONOREPO_PATH:
-            return root
-        return root / repo_path
+        return repo_dir(root, repo_path)
 
     def _symlink_shared_entries(self, root: Path, repos: Sequence[RepoConfig]) -> None:
         repo_top_level = {repo.path.split("/", 1)[0] for repo in repos}

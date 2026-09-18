@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from shikiru.workspace.repo_paths import is_monorepo_path, repo_dir
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
@@ -14,7 +16,7 @@ if TYPE_CHECKING:
 
 
 def _tracker_relative_to_repo(tracker: str, repo_path: str) -> str | None:
-    if repo_path == ".":
+    if is_monorepo_path(repo_path):
         return tracker
     prefix = f"{repo_path.rstrip('/')}/"
     if tracker.startswith(prefix):
@@ -58,13 +60,13 @@ class GitFacts:
     async def _collect_one(
         self, task_root: Path, repo: RepoState, trackers: Sequence[str]
     ) -> RepoFacts:
-        repo_dir = task_root if repo.path == "." else task_root / repo.path
+        repo_path = repo_dir(task_root, repo.path)
         commit_range = f"{repo.base}..HEAD"
         diff_range = f"{repo.base}...HEAD"
-        commits = await self._git.log_oneline(repo_dir, commit_range)
-        diff_stat = await self._git.diff_stat(repo_dir, diff_range)
-        status = await self._git.status_porcelain(repo_dir)
-        changed_paths = set(await self._git.diff_name_only(repo_dir, diff_range))
+        commits = await self._git.log_oneline(repo_path, commit_range)
+        diff_stat = await self._git.diff_stat(repo_path, diff_range)
+        status = await self._git.status_porcelain(repo_path)
+        changed_paths = set(await self._git.diff_name_only(repo_path, diff_range))
         changed_trackers = tuple(
             tracker
             for tracker in trackers
