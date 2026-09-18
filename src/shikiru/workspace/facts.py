@@ -43,6 +43,30 @@ class WorkspaceFacts:
     repos: tuple[RepoFacts, ...] = field(default_factory=tuple)
 
 
+def _render_repo(repo: RepoFacts) -> str:
+    lines = [f"## {repo.path}" if repo.path else "## (repo)"]
+    lines.append("### Commits (base..HEAD)")
+    lines.append("\n".join(repo.commits) if repo.commits else "(none)")
+    lines.append("### Diff stat (base...HEAD)")
+    lines.append(repo.diff_stat or "(none)")
+    lines.append("### git status --porcelain")
+    lines.append("\n".join(repo.status) if repo.status else "(clean)")
+    lines.append("### Changed trackers")
+    lines.append(", ".join(repo.changed_trackers) if repo.changed_trackers else "(none)")
+    return "\n\n".join(lines)
+
+
+def render_facts(facts: WorkspaceFacts) -> str:
+    """Render `facts` as the markdown text a `verify`/`conflicts`/`handoff` prompt embeds (03 §2).
+
+    These facts outrank the Implementer's claims, so they carry no interpretation, only the
+    raw `git` output `GitFacts.collect` gathered for each repo.
+    """
+    if not facts.repos:
+        return "(no repos configured)"
+    return "\n\n".join(_render_repo(repo) for repo in facts.repos)
+
+
 class GitFacts:
     """Computes `RepoFacts` for every repo of a task, from real git state."""
 

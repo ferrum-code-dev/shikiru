@@ -14,6 +14,7 @@ stall = 1200
 tool = 7200
 max_quota_wait = 28800
 integration_wait = 1800
+helper = 300
 
 [roles.implementer]
 escalate_after = 2

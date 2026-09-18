@@ -347,6 +347,15 @@ class TaskStore:
         """Record `task_id`'s final summary."""
         self._connection.execute("UPDATE tasks SET summary = ? WHERE id = ?", (summary, task_id))
 
+    def set_depends_on(self, task_id: str, depends_on: Sequence[str]) -> None:
+        """Replace `task_id`'s dependency set (03 §2's `NewTask` `#k` sibling references)."""
+        with transaction(self._connection):
+            self._connection.execute("DELETE FROM task_deps WHERE task_id = ?", (task_id,))
+            self._connection.executemany(
+                "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)",
+                [(task_id, dep) for dep in depends_on],
+            )
+
     def repoint_dependents(self, old_task_id: str, new_task_ids: Sequence[str]) -> None:
         """Repoint every dependency on `old_task_id` onto each of `new_task_ids` (03 §2, §6)."""
         with transaction(self._connection):

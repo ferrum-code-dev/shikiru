@@ -13,10 +13,37 @@ class _StepModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class NewTaskSpec(_StepModel):
+    """One `NewTask` a scripted `split`, `supersede` or `accept` (plan) step enqueues."""
+
+    title: str
+    request: str
+    depends_on: list[str] = Field(default_factory=list)
+
+
 class AcceptStep(_StepModel):
-    """Submit a successful report for whatever `report.kind` the current turn dir names."""
+    """Submit a successful report for whatever `report.kind` the current turn dir names.
+
+    `new_tasks` only takes effect for a `plan` report (03 §2's "fill `new_tasks` only when the
+    request asks to execute the plan"); it is ignored for every other report kind.
+    """
 
     kind: Literal["accept"] = "accept"
+    new_tasks: list[NewTaskSpec] = Field(default_factory=list)
+
+
+class SplitStep(_StepModel):
+    """Submit a `split` triage report with `subtasks`; only valid for `report.kind == triage`."""
+
+    kind: Literal["split"] = "split"
+    subtasks: list[NewTaskSpec]
+
+
+class SupersedeStep(_StepModel):
+    """Submit a `supersede` verdict with `new_tasks`; only valid for `report.kind == verdict`."""
+
+    kind: Literal["supersede"] = "supersede"
+    new_tasks: list[NewTaskSpec]
 
 
 class ChangesRequestedStep(_StepModel):
@@ -74,6 +101,8 @@ type TurnStep = (
     | CrashStep
     | StallStep
     | DialogStep
+    | SplitStep
+    | SupersedeStep
 )
 
 _STEPS_ADAPTER: TypeAdapter[list[Annotated[TurnStep, Field(discriminator="kind")]]] = TypeAdapter(

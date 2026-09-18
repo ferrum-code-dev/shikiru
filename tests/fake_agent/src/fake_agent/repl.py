@@ -22,9 +22,12 @@ from fake_agent.script import (
     DialogStep,
     FailStep,
     NeedsDecisionStep,
+    NewTaskSpec,
     NoReportStep,
     Script,
+    SplitStep,
     StallStep,
+    SupersedeStep,
     TurnStep,
 )
 from fake_agent.signals import (
@@ -46,6 +49,7 @@ from shikiru.domain.reports import (
     ConsultAnswer,
     ImplementationReport,
     Issue,
+    NewTask,
     PlanReport,
     Report,
     ReportKind,
@@ -56,6 +60,17 @@ from shikiru.domain.tasks import Mode
 from shikiru.process import SubprocessRunner
 
 SCRIPT_ENV_VAR = "SHIKIRU_FAKE_SCRIPT"
+
+
+def role_script_env_var(role: str) -> str:
+    """The env var scripting `role`'s own REPL.
+
+    Two roles sharing one tmux server each advance their own `Script` independently, so
+    scripting them through the single `SHIKIRU_FAKE_SCRIPT` list would have them race through
+    the same list in lockstep instead.
+    """
+    return f"{SCRIPT_ENV_VAR}_{role.upper()}"
+
 
 STATE_DIRNAME = "fake_state"
 FAKE_CHANGE_FILENAME = "fake-agent-changes.txt"
@@ -152,7 +167,23 @@ def _unsupported(kind: ReportKind, step: TurnStep) -> NoReturn:
     raise ValueError(message)
 
 
+def _new_tasks(specs: list[NewTaskSpec]) -> list[NewTask]:
+    return [
+        NewTask(title=spec.title, request=spec.request, depends_on=spec.depends_on)
+        for spec in specs
+    ]
+
+
 def _triage_report(step: TurnStep, prompt_text: str) -> Report:
+    if isinstance(step, SplitStep):
+        return TriageReport(
+            title="fake triage",
+            mode=Mode.SPLIT,
+            complexity="normal",
+            acceptance_criteria=[prompt_text],
+            references=[],
+            subtasks=_new_tasks(step.subtasks),
+        )
     if not isinstance(step, AcceptStep):
         _unsupported(ReportKind.TRIAGE, step)
     return TriageReport(
@@ -167,7 +198,9 @@ def _triage_report(step: TurnStep, prompt_text: str) -> Report:
 def _plan_report(step: TurnStep, prompt_text: str, commits: list[Commit]) -> Report:
     if not isinstance(step, AcceptStep):
         _unsupported(ReportKind.PLAN, step)
-    return PlanReport(summary=f"planned: {prompt_text}", commits=commits)
+    return PlanReport(
+        summary=f"planned: {prompt_text}", commits=commits, new_tasks=_new_tasks(step.new_tasks)
+    )
 
 
 def _consult_report(step: TurnStep, prompt_text: str) -> Report:
@@ -184,6 +217,12 @@ def _verdict_report(step: TurnStep, prompt_text: str) -> Report:
             decision="changes_requested",
             summary=f"issues found: {prompt_text}",
             issues=[Issue(severity="major", description=f"issue: {prompt_text}")],
+        )
+    if isinstance(step, SupersedeStep):
+        return Verdict(
+            decision="supersede",
+            summary=f"superseded: {prompt_text}",
+            new_tasks=_new_tasks(step.new_tasks),
         )
     _unsupported(ReportKind.VERDICT, step)
 
@@ -303,9 +342,13 @@ async def _handle_line(ctx: ReplContext, script: Script, prompt_text: str) -> bo
     return await _apply_step(ctx, step, prompt_text)
 
 
+def _script_raw_for(role: str) -> str | None:
+    return os.environ.get(role_script_env_var(role)) or os.environ.get(SCRIPT_ENV_VAR)
+
+
 async def _run() -> None:
     ctx = _build_context()
-    script = Script.from_env(os.environ.get(SCRIPT_ENV_VAR))
+    script = Script.from_env(_script_raw_for(ctx.role))
     ctx.recorder.record(session_started_payload(ctx.session_id))
     loop = asyncio.get_running_loop()
     while True:

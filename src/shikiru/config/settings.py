@@ -51,6 +51,7 @@ class TimeoutsConfig(ConfigModel):
     tool: int
     max_quota_wait: int
     integration_wait: int
+    helper: int
 
 
 class OrchestrationConfig(ConfigModel):

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from fake_agent.agent import create as create_fake_agent
-from fake_agent.repl import SCRIPT_ENV_VAR
+from fake_agent.repl import SCRIPT_ENV_VAR, role_script_env_var
 
 from shikiru.agents.contracts import Rung
 from shikiru.agents.registry import AgentRegistry
@@ -80,6 +80,21 @@ async def new_agent_pane(tmux: Tmux, cwd: Path) -> str:
 async def set_script(tmux_server: TmuxServer, steps: list[dict[str, object]]) -> None:
     """Set `SHIKIRU_FAKE_SCRIPT` for every fake agent pane on `tmux_server`'s server."""
     await tmux_server.run("set-environment", "-g", SCRIPT_ENV_VAR, json.dumps(steps))
+
+
+async def set_role_script(
+    tmux_server: TmuxServer, role: Role, steps: list[dict[str, object]]
+) -> None:
+    """Script only `role`'s fake agent panes, leaving every other role on its own script.
+
+    Two roles run in the same tmux server for a `TaskFlow` test, each with its own REPL process
+    and `Script` index; setting the shared `SHIKIRU_FAKE_SCRIPT` would have them race through
+    the same list in lockstep, so a role that needs a specific sequence gets its own variable
+    instead (`fake_agent.repl.role_script_env_var`).
+    """
+    await tmux_server.run(
+        "set-environment", "-g", role_script_env_var(role.value), json.dumps(steps)
+    )
 
 
 async def create_running_task(

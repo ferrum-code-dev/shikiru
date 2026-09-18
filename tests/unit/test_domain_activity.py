@@ -10,7 +10,7 @@ from shikiru.domain.activity import is_operator_prompt, is_stalled
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _TIMEOUTS = TimeoutsConfig(
-    launch=90, stall=1200, tool=7200, max_quota_wait=28800, integration_wait=1800
+    launch=90, stall=1200, tool=7200, max_quota_wait=28800, integration_wait=1800, helper=300
 )
 
 
