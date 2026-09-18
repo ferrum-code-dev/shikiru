@@ -7,11 +7,14 @@ import pytest
 
 from shikiru.errors import CommandFailed, CommandTimeoutError
 from shikiru.process import SubprocessRunner
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = pytest.mark.asyncio
+
+_PID_FILE_WAIT_TIMEOUT = 5.0
 
 
 async def test_run_returns_stdout_and_zero_returncode() -> None:
@@ -79,6 +82,7 @@ async def test_timeout_raises_and_kills_the_process(tmp_path: Path) -> None:
             timeout=0.2,
         )
 
+    await wait_until(pid_file.exists, _PID_FILE_WAIT_TIMEOUT)
     pid = int(pid_file.read_text().strip())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)

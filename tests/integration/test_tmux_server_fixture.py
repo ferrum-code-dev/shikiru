@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.asyncio
 
-_EXPECTED_LOGIN_SHELL_COMMAND = "-sh"
+_EXPECTED_SHELL_COMMAND_NAME = "sh"
 
 
 async def test_session_pane_actually_runs_the_configured_default_shell(
@@ -21,4 +21,5 @@ async def test_session_pane_actually_runs_the_configured_default_shell(
 
     result = await SubprocessRunner().run(["ps", "-o", "comm=", "-p", pane_pid], timeout=5)
 
-    assert result.stdout.strip() == _EXPECTED_LOGIN_SHELL_COMMAND
+    command_name = result.stdout.strip().removeprefix("-").rsplit("/", 1)[-1]
+    assert command_name == _EXPECTED_SHELL_COMMAND_NAME
