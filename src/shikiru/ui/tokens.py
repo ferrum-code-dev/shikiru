@@ -18,6 +18,12 @@ HOLD_COLOR = "#facc15"
 ALERT_COLOR = "#f87171"
 IDLE_COLOR = "#64748b"
 
+STYLE_DIM = "dim"
+STYLE_BOLD = "bold"
+STYLE_REVERSE = "reverse"
+"""Attributes paired with every panel colour (06 §6.1): under `NO_COLOR`, Rich keeps the
+attribute and drops the colour, giving the required monochrome bold/dim/reverse."""
+
 GAUGE_WARN_THRESHOLD_PCT = 70
 GAUGE_ALERT_THRESHOLD_PCT = 90
 GAUGE_OK_COLOR = SUCCESS_COLOR

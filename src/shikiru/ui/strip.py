@@ -8,7 +8,7 @@ from enum import StrEnum, auto
 from rich.cells import cell_len
 from rich.text import Text
 
-from shikiru.domain.tasks import Mode
+from shikiru.domain.tasks import Mode, Role
 from shikiru.ui.glyphs import (
     GLYPH_DONE,
     GLYPH_ESCALATED,
@@ -18,6 +18,8 @@ from shikiru.ui.glyphs import (
     GLYPH_QUOTA,
     GLYPH_REWORK,
     GLYPH_STALLED,
+    PANEL_KANJI,
+    ROLE_GLYPHS,
     STAGE_IMPLEMENT,
     STAGE_MERGE,
     STAGE_PLAN,
@@ -25,7 +27,17 @@ from shikiru.ui.glyphs import (
     STAGE_TRIAGE,
     STAGE_VERIFY,
 )
-from shikiru.ui.tokens import ALERT_COLOR, HOLD_COLOR, IDLE_COLOR, SUCCESS_COLOR
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    ENGINE_COLOR,
+    IDLE_COLOR,
+    REWORK_COLOR,
+    ROLE_COLORS,
+    STYLE_BOLD,
+    STYLE_DIM,
+    STYLE_REVERSE,
+    SUCCESS_COLOR,
+)
 
 STRIP_WIDE_MIN_COLUMNS = 60
 
@@ -55,19 +67,11 @@ _STATE_GLYPHS: dict[PanelState, str] = {
     PanelState.REWORK: GLYPH_REWORK,
     PanelState.ESCALATED: GLYPH_ESCALATED,
 }
-_STATE_WORDS: dict[PanelState, str] = {
-    PanelState.PENDING: "pending",
-    PanelState.ACTIVE: "active",
-    PanelState.DONE: "done",
-    PanelState.REWORK: "rework",
-    PanelState.ESCALATED: "escalated",
-}
-_STATE_COLORS: dict[PanelState, str] = {
-    PanelState.PENDING: IDLE_COLOR,
-    PanelState.ACTIVE: SUCCESS_COLOR,
-    PanelState.DONE: SUCCESS_COLOR,
-    PanelState.REWORK: HOLD_COLOR,
-    PanelState.ESCALATED: ALERT_COLOR,
+_STATE_STYLES: dict[PanelState, str] = {
+    PanelState.PENDING: f"{STYLE_DIM} {IDLE_COLOR}",
+    PanelState.DONE: f"{STYLE_BOLD} {SUCCESS_COLOR}",
+    PanelState.REWORK: f"{STYLE_BOLD} {REWORK_COLOR}",
+    PanelState.ESCALATED: f"{STYLE_REVERSE} {ALERT_COLOR}",
 }
 _STAMP_GLYPHS: dict[StampKind, str] = {
     StampKind.PAUSED: GLYPH_PAUSED,
@@ -82,8 +86,17 @@ _STAMP_WORDS: dict[StampKind, str] = {
     StampKind.STALLED: "STALLED",
 }
 
+_NARROW_SEPARATOR = " "
 _HEADER_SEPARATOR = " · "
-_COLUMN_SEPARATOR = "|"
+
+_BORDER_TOP_LEFT = "┏"
+_BORDER_TOP_RIGHT = "┓"
+_BORDER_BOTTOM_LEFT = "┗"
+_BORDER_BOTTOM_RIGHT = "┛"
+_BORDER_BOTTOM_JOIN = "┻"
+_BORDER_HORIZONTAL = "━"
+_BORDER_VERTICAL = "┃"
+_TOP_BORDER_PREFIX = f"{_BORDER_TOP_LEFT}{_BORDER_HORIZONTAL} "
 
 _MODE_PANEL_LABELS: dict[Mode, tuple[tuple[str, str], ...]] = {
     Mode.IMPLEMENT: (
@@ -111,7 +124,12 @@ def panel_specs_for_mode(mode: Mode, *, pull_request: bool = False) -> tuple[tup
 
 @dataclass(frozen=True)
 class PanelView:
-    """One panel of a task strip (06 §6.2)."""
+    """One panel of a task strip (06 §6.2).
+
+    `role` is the acting role, shown as the panel colour while `state` is `ACTIVE`; other
+    states carry a fixed colour regardless of role. `rework_count` annotates a panel that
+    reached its current state after one or more rejected iterations (e.g. `✔ ↺1 41m`).
+    """
 
     label: str
     state: PanelState
@@ -119,6 +137,8 @@ class PanelView:
     detail: str = ""
     role_line: str = ""
     spinner_frame: str = ""
+    role: Role | None = None
+    rework_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -153,18 +173,32 @@ def _fit(text: str, width: int) -> str:
     return truncated.plain
 
 
-def _state_cell(panel: PanelView) -> str:
-    glyph = (
-        panel.spinner_frame or "○"
-        if panel.state is PanelState.ACTIVE
-        else _STATE_GLYPHS[panel.state]
-    )
-    prefix = f"{glyph} {_STATE_WORDS[panel.state]}"
-    return f"{prefix} {panel.detail}".rstrip() if panel.detail else prefix
+def _panel_style(panel: PanelView) -> str:
+    if panel.state is PanelState.ACTIVE:
+        color = ROLE_COLORS[panel.role] if panel.role is not None else ENGINE_COLOR
+        return f"{STYLE_BOLD} {color}"
+    return _STATE_STYLES[panel.state]
 
 
-def _label_cell(panel: PanelView) -> str:
-    return f"{panel.stage_glyph} {panel.label}".strip()
+def _narrow_glyph(panel: PanelView) -> str:
+    if panel.state is PanelState.ACTIVE:
+        return panel.spinner_frame or GLYPH_PENDING
+    return _STATE_GLYPHS[panel.state]
+
+
+def _header_cell(index: int, panel: PanelView) -> str:
+    pieces = (PANEL_KANJI[index], panel.stage_glyph, panel.label)
+    return " ".join(piece for piece in pieces if piece)
+
+
+def _body_cell(panel: PanelView) -> str:
+    if panel.state is PanelState.ACTIVE:
+        role_glyph = ROLE_GLYPHS[panel.role] if panel.role is not None else ""
+        pieces = (panel.spinner_frame or GLYPH_PENDING, role_glyph, panel.detail)
+    else:
+        rework = f"{GLYPH_REWORK}{panel.rework_count}" if panel.rework_count else ""
+        pieces = (_STATE_GLYPHS[panel.state], rework, panel.detail)
+    return " ".join(piece for piece in pieces if piece)
 
 
 def _active_or_last(panels: tuple[PanelView, ...]) -> PanelView:
@@ -175,6 +209,33 @@ def _active_or_last(panels: tuple[PanelView, ...]) -> PanelView:
         if panel.state is not PanelState.PENDING:
             return panel
     return panels[0]
+
+
+def _active_index(panels: tuple[PanelView, ...]) -> int | None:
+    for index, panel in enumerate(panels):
+        if panel.state is PanelState.ACTIVE:
+            return index
+    return None
+
+
+def _column_widths(width: int, count: int) -> list[int]:
+    available = width - (count + 1)
+    base = available // count
+    widths = [base] * count
+    widths[-1] += available - base * count
+    return widths
+
+
+def _top_border(header: str, width: int) -> str:
+    fixed = cell_len(_TOP_BORDER_PREFIX) + 1 + cell_len(_BORDER_TOP_RIGHT)
+    header = _fit(header, max(width - fixed, 0)).rstrip()
+    fill = width - cell_len(_TOP_BORDER_PREFIX) - cell_len(header) - 1 - cell_len(_BORDER_TOP_RIGHT)
+    return f"{_TOP_BORDER_PREFIX}{header} {_BORDER_HORIZONTAL * max(fill, 0)}{_BORDER_TOP_RIGHT}"
+
+
+def _bottom_border(widths: list[int]) -> str:
+    segments = (_BORDER_HORIZONTAL * column for column in widths)
+    return f"{_BORDER_BOTTOM_LEFT}{_BORDER_BOTTOM_JOIN.join(segments)}{_BORDER_BOTTOM_RIGHT}"
 
 
 class TaskStrip:
@@ -192,15 +253,12 @@ class TaskStrip:
             return self._render_wide(width)
         return self._render_narrow(width)
 
-    def _header(self) -> str:
-        header = f"{self._data.task_id} · {self._data.title}"
-        if self._data.stamp is not None:
-            header = f"{header}{_HEADER_SEPARATOR}{self._data.stamp.render()}"
-        return header
+    def _header_text(self) -> str:
+        return f"{self._data.task_id}{_HEADER_SEPARATOR}{self._data.title}"
 
     def _render_split(self, width: int) -> Text:
         children = ", ".join(self._data.split_children)
-        line = f"{self._data.task_id} · {self._data.title} → split → {children}"
+        line = f"{self._data.task_id}{_HEADER_SEPARATOR}{self._data.title} → split → {children}"
         return Text(_fit(line, width) if width >= STRIP_WIDE_MIN_COLUMNS else line[:width])
 
     def _render_narrow(self, width: int) -> Text:
@@ -209,10 +267,11 @@ class TaskStrip:
             self._data.task_id,
             panel.stage_glyph,
             panel.label,
-            _state_cell(panel),
+            panel.detail,
             panel.role_line,
+            _narrow_glyph(panel),
         ]
-        line = " ".join(piece for piece in pieces if piece)
+        line = _NARROW_SEPARATOR.join(piece for piece in pieces if piece)
         if self._data.stamp is not None:
             line = f"{line}{_HEADER_SEPARATOR}{self._data.stamp.render()}"
         text = Text(line)
@@ -222,30 +281,32 @@ class TaskStrip:
 
     def _render_wide(self, width: int) -> Text:
         panels = self._data.panels
-        count = len(panels)
-        available = width - (count - 1)
-        base_width = available // count
-        widths = [base_width] * count
-        widths[-1] += available - base_width * count
+        widths = _column_widths(width, len(panels))
 
-        header = Text(_fit(self._header(), width), style="bold")
-        label_cells = [
-            _fit(_label_cell(panel), column) for panel, column in zip(panels, widths, strict=True)
+        header_cells = [
+            _fit(_header_cell(index, panel), column)
+            for index, (panel, column) in enumerate(zip(panels, widths, strict=True))
         ]
-        state_cells = [
-            _fit(_state_cell(panel), column) for panel, column in zip(panels, widths, strict=True)
+        body_cells = [
+            _fit(_body_cell(panel), column) for panel, column in zip(panels, widths, strict=True)
         ]
         role_cells = [
             _fit(panel.role_line, column) for panel, column in zip(panels, widths, strict=True)
         ]
 
-        body = Text()
-        body.append(header)
-        for row in (label_cells, state_cells, role_cells):
+        stamp_index = _active_index(panels) if self._data.stamp is not None else None
+        if stamp_index is not None and self._data.stamp is not None:
+            body_cells[stamp_index] = _fit(self._data.stamp.render(), widths[stamp_index])
+            role_cells[stamp_index] = _fit("", widths[stamp_index])
+
+        body = Text(_top_border(self._header_text(), width), style=STYLE_BOLD)
+        for row in (header_cells, body_cells, role_cells):
             body.append("\n")
+            body.append(_BORDER_VERTICAL)
             for index, cell in enumerate(row):
-                if index:
-                    body.append(_COLUMN_SEPARATOR)
-                style = _STATE_COLORS[panels[index].state] if row is state_cells else None
+                style = _panel_style(panels[index]) if row is body_cells else None
                 body.append(cell, style=style)
+                body.append(_BORDER_VERTICAL)
+        body.append("\n")
+        body.append(_bottom_border(widths))
         return body

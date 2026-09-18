@@ -61,6 +61,7 @@ def _panel_view(
         detail=detail,
         role_line=role_line,
         spinner_frame=spinner_frame,
+        role=role if state is PanelState.ACTIVE else None,
     )
 
 

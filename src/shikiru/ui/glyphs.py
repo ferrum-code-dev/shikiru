@@ -42,6 +42,10 @@ def is_single_cell(glyph: str) -> bool:
     return cells == 1
 
 
+PANEL_KANJI = ("起", "承", "転", "結")
+"""Decorative kanji for the strip's four panel positions (06 §6.2): ki-shō-ten-ketsu. Kanji
+are decorative marks, not state glyphs, so they are wide and excluded from `ALL_GLYPHS`."""
+
 STAGE_TRIAGE = "⌕"
 STAGE_PLAN = "≡"
 STAGE_IMPLEMENT = "⚒"
