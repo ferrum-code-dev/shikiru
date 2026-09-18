@@ -112,9 +112,9 @@ Refs: 03 §4.3.
 
 ### Task 14: Task flow
 Refs: 03 §2–3.
-- [ ] Step functions triage, plan, implement, consult, verify with `next_step`; final round; supersede and split with dependents repointed; plan with `new_tasks`; `scope_change` events; `turn_completed` with summary and question; persisted counters and `rung_index`.
-- [ ] `EscalationRaiser`: packet with all sections and exactly one ★ option; `escalated` status.
-- [ ] Titles and window decorations (03 §4.2, 06 §5.3): pane titles and window titles from `dashboard.titles`, and window `@shk_state_color`/`@shk_state_glyph`, updated on change of step, iteration, status or holds.
+- [x] Step functions triage, plan, implement, consult, verify with `next_step`; final round; supersede and split with dependents repointed; plan with `new_tasks`; `scope_change` events; `turn_completed` with summary and question; persisted counters and `rung_index`.
+- [x] `EscalationRaiser`: packet with all sections and exactly one ★ option; `escalated` status.
+- [x] Titles and window decorations (03 §4.2, 06 §5.3): pane titles and window titles from `dashboard.titles`, and window `@shk_state_color`/`@shk_state_glyph`, updated on change of step, iteration, status or holds.
 - Tests: integration flows ending at step `integrate` or an escalation: implement-accept; changes_requested → accept; needs_decision → consult → accept; consult limit; final round → `iterations_exhausted`; split with dependents; plan with new tasks; supersede; packet property test; titles and window state read back from `tmux_server`.
 
 ### Task 15: Recovery

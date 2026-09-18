@@ -23,7 +23,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 ## Phase 3 — Pipeline on the fake agent
 - [x] Task 12: Session manager and monitor
 - [x] Task 13: Turn runner
-- [ ] Task 14: Task flow
+- [x] Task 14: Task flow
 - [ ] Task 15: Recovery
 - [ ] Task 16: Integration (local merge)
 - [ ] Task 17: Engine daemon, scheduler, handlers
