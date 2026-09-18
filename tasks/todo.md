@@ -18,7 +18,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 8: Agent contract, registry, SDK
 - [x] Task 9: Fake agent and contract test kit
 - [x] Task 10: Prompts and Helper
-- [ ] Task 11: UI core and dashboard shell
+- [x] Task 11: UI core and dashboard shell
 
 ## Phase 3 — Pipeline on the fake agent
 - [ ] Task 12: Session manager and monitor

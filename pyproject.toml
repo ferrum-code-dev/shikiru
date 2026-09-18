@@ -8,6 +8,7 @@ dependencies = [
   "typer>=0.27,<0.28",
   "pydantic>=2.13,<2.14",
   "jinja2>=3.1,<3.2",
+  "textual>=6.3,<6.4",
 ]
 
 [project.scripts]
@@ -16,6 +17,9 @@ shikiru = "shikiru.cli.app:app"
 [project.entry-points."shikiru.agents"]
 
 [project.entry-points."shikiru.widgets"]
+header = "shikiru.plugins.widgets.header:HeaderWidget"
+strips = "shikiru.plugins.widgets.strips:StripsWidget"
+queue = "shikiru.plugins.widgets.queue:QueueWidget"
 
 [build-system]
 requires = ["hatchling"]

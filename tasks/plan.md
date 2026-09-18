@@ -93,8 +93,8 @@ Refs: 03 §2, §4.3; 04 §6.
 
 ### Task 11: UI core and dashboard shell
 Refs: 06 §5.4, §6.1–6.2.
-- [ ] `ui.tokens`, `ui.glyphs` (width-safety unit test), `ui.TaskStrip` (modes, panel states, stamps, two widths, `NO_COLOR`).
-- [ ] `DashboardApp` (`dash --home | --task`), `DashboardWidget` contract with `WidgetContext` services, widgets `header`, `strips`, `queue`.
+- [x] `ui.tokens`, `ui.glyphs` (width-safety unit test), `ui.TaskStrip` (modes, panel states, stamps, two widths, `NO_COLOR`).
+- [x] `DashboardApp` (`dash --home | --task`), `DashboardWidget` contract with `WidgetContext` services, widgets `header`, `strips`, `queue`.
 - Tests: property tests for strips; two goldens per mode; Textual `run_test` for widgets over a seeded DB.
 
 ## Phase 3 — Pipeline on the fake agent
