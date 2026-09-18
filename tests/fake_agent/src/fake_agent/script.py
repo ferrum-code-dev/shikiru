@@ -113,17 +113,17 @@ _STEPS_ADAPTER: TypeAdapter[list[Annotated[TurnStep, Field(discriminator="kind")
 class Script:
     """The ordered list of `TurnStep`s a REPL consumes one per turn, then defaults forever."""
 
-    def __init__(self, steps: list[TurnStep]) -> None:
+    def __init__(self, steps: list[TurnStep], *, start_index: int = 0) -> None:
         """Hold `steps`, consumed from the start by `next_step()`."""
         self._steps = steps
-        self._index = 0
+        self._index = start_index
 
     @classmethod
-    def from_env(cls, raw: str | None) -> Script:
+    def from_env(cls, raw: str | None, *, start_index: int = 0) -> Script:
         """Parse `SHIKIRU_FAKE_SCRIPT`'s raw value, or build an empty (always-`accept`) script."""
         if not raw:
-            return cls([])
-        return cls(_STEPS_ADAPTER.validate_json(raw))
+            return cls([], start_index=start_index)
+        return cls(_STEPS_ADAPTER.validate_json(raw), start_index=start_index)
 
     def next_step(self) -> TurnStep:
         """Return the next scripted step, or `accept` once the script is exhausted."""
@@ -132,3 +132,8 @@ class Script:
         step = self._steps[self._index]
         self._index += 1
         return step
+
+    @property
+    def index(self) -> int:
+        """Return the next script index to consume."""
+        return self._index

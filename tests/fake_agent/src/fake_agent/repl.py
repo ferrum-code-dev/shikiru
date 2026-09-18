@@ -95,6 +95,7 @@ class ReplContext:
     runner: SubprocessRunner
     cwd: Path
     state_path: Path
+    script_path: Path
 
 
 def _require_env(name: str) -> str:
@@ -120,6 +121,7 @@ def _build_context() -> ReplContext:
         runner=SubprocessRunner(),
         cwd=Path.cwd(),
         state_path=state_dir / f"{session_id}.json",
+        script_path=state_dir / "script-index.json",
     )
 
 
@@ -138,6 +140,16 @@ def _remember_prompt(state_path: Path, prompt_text: str) -> None:
 def _first_remembered_prompt(state_path: Path) -> str:
     prompts = _load_prompts(state_path)
     return prompts[0] if prompts else ""
+
+
+def _script_index(script_path: Path) -> int:
+    if not script_path.is_file():
+        return 0
+    return json.loads(script_path.read_text())["index"]
+
+
+def _save_script_index(script_path: Path, index: int) -> None:
+    script_path.write_text(json.dumps({"index": index}))
 
 
 def _append_change(marker: Path, prompt_text: str) -> None:
@@ -339,6 +351,7 @@ async def _handle_line(ctx: ReplContext, script: Script, prompt_text: str) -> bo
         return True
     _remember_prompt(ctx.state_path, prompt_text)
     step = script.next_step()
+    _save_script_index(ctx.script_path, script.index)
     return await _apply_step(ctx, step, prompt_text)
 
 
@@ -348,7 +361,7 @@ def _script_raw_for(role: str) -> str | None:
 
 async def _run() -> None:
     ctx = _build_context()
-    script = Script.from_env(_script_raw_for(ctx.role))
+    script = Script.from_env(_script_raw_for(ctx.role), start_index=_script_index(ctx.script_path))
     ctx.recorder.record(session_started_payload(ctx.session_id))
     loop = asyncio.get_running_loop()
     while True:

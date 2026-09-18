@@ -123,6 +123,23 @@ class SessionManager:
             )
         return await self._relaunch(task, role, pane, rung, resume_session_id=None)
 
+    async def handoff(self, task: Task, role: Role) -> AgentSession:
+        """Start a fresh session for `task`'s `role` on its current rung (03 §7)."""
+        pane = self._pane(task, role)
+        tracked = self._live.get((task.id, role))
+        if tracked is not None:
+            with suppress(CommandFailed):
+                await pane.paste_line(self._agent_pool.get(tracked.rung.agent).keys.exit_input)
+            await self._await_pane_deaths([pane])
+            await self._forget(task.id, role)
+        return await self._relaunch(
+            task,
+            role,
+            pane,
+            pick_rung(task, role, self._settings),
+            resume_session_id=None,
+        )
+
     async def exit_task(self, task: Task) -> None:
         """Exit every live session `task` still holds, then kill any pane still alive.
 

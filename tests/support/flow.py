@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from shikiru.clock import SystemClock
+from shikiru.clock import Clock, SystemClock
 from shikiru.config.settings import AgentConfig, RepoConfig
 from shikiru.domain.commands import Submit
 from shikiru.domain.tasks import Role
@@ -19,6 +19,7 @@ from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
+from shikiru.store.quotas import QuotaStore
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
 from shikiru.workspace.roots import TaskRootBuilder
@@ -94,16 +95,17 @@ class FlowEnv:
     titles: TaskTitles
 
 
-def build_flow(env: EngineEnv, settings: Settings) -> FlowEnv:
+def build_flow(env: EngineEnv, settings: Settings, *, clock: Clock | None = None) -> FlowEnv:
     """Build a `TaskFlow` for `settings`, with its own `SessionManager` (leader + implementer
     both need the fake agent, unlike `engine_env`'s default single-role manager).
     """
-    sessions = env.build_manager(settings)
-    events = EventLog(env.connection, SystemClock())
-    escalations_store = EscalationStore(env.connection, SystemClock())
+    flow_clock = clock if clock is not None else SystemClock()
+    sessions = env.build_manager(settings, clock=flow_clock)
+    events = EventLog(env.connection, flow_clock)
+    escalations_store = EscalationStore(env.connection, flow_clock)
     escalations = EscalationRaiser(escalations_store, events, env.runs, env.project_root)
     titles = TaskTitles(build_decorator(env.tmux), env.runs, settings)
-    turns = TurnRunner(PromptRenderer(env.project_root), SystemClock())
+    turns = TurnRunner(PromptRenderer(env.project_root), flow_clock)
     git_facts = GitFacts(Git(SubprocessRunner()))
     agent_pool = AgentPool(build_registry().create, SubprocessRunner(), settings, SystemClock())
     flow = TaskFlow(
@@ -118,5 +120,7 @@ def build_flow(env: EngineEnv, settings: Settings) -> FlowEnv:
         agent_pool=agent_pool,
         pane_factory=env.pane,
         project_root=env.project_root,
+        quota=QuotaStore(env.connection),
+        clock=flow_clock,
     )
     return FlowEnv(flow=flow, env=env, events=events, escalations=escalations_store, titles=titles)

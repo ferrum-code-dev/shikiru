@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
 
 FAKE_AGENT_NAME = "fake"
+FAKE_AGENT_ALIAS = "fake2"
 FAKE_RUNG = Rung(agent=FAKE_AGENT_NAME, model="fake-1", effort=None)
 
 _SESSION_NAME = "test"
@@ -53,6 +54,7 @@ def build_registry() -> AgentRegistry:
     """An `AgentRegistry` with the `fake` agent registered directly (no entry point needed)."""
     registry = AgentRegistry()
     registry.register(FAKE_AGENT_NAME, create_fake_agent)
+    registry.register(FAKE_AGENT_ALIAS, create_fake_agent)
     return registry
 
 

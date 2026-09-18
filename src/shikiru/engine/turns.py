@@ -164,6 +164,30 @@ class TurnRunner:
             injected=injected,
         )
 
+    async def resume(
+        self,
+        pane: TmuxPane,
+        signals: asyncio.Queue[MonitorSignal],
+        *,
+        turn_dir: Path,
+        spec: TurnSpec,
+        helper: Helper,
+        prompt_path: Path,
+        injected: InjectedLines,
+    ) -> TurnResult:
+        """Continue an existing turn after recovery input, without creating a new turn dir."""
+        outcome = await self._await_outcome(signals)
+        return await self._resolve(
+            outcome,
+            pane,
+            signals,
+            turn_dir=turn_dir,
+            spec=spec,
+            helper=helper,
+            prompt_path=prompt_path,
+            injected=injected,
+        )
+
     def _prepare_turn_dir(self, run_dir: Path, role: Role, spec: TurnSpec) -> Path:
         turns_root = run_dir / TURNS_DIR_NAME
         turns_root.mkdir(parents=True, exist_ok=True)

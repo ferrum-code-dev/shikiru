@@ -54,4 +54,5 @@ class FakeClock:
         for sleeper in due:
             self._sleepers.remove(sleeper)
             _, future = sleeper
-            future.set_result(None)
+            if not future.done():
+                future.set_result(None)

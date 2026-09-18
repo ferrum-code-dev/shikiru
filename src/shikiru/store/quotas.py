@@ -55,6 +55,14 @@ def fetch_active_agent_blocks(connection: sqlite3.Connection, now: datetime) -> 
     return [_row_to_agent_block(row) for row in rows]
 
 
+def fetch_agent_block(connection: sqlite3.Connection, agent: str) -> AgentBlock | None:
+    """Read an agent's block, including one whose deadline has passed."""
+    row = connection.execute(
+        "SELECT agent, until, reason FROM agent_blocks WHERE agent = ?", (agent,)
+    ).fetchone()
+    return _row_to_agent_block(row) if row is not None else None
+
+
 class QuotaStore:
     """Persists quota snapshots and agent blocks (03 §7, §9)."""
 
@@ -101,3 +109,7 @@ class QuotaStore:
     def active_blocks(self, now: datetime) -> list[AgentBlock]:
         """Read every agent block still in effect at `now`."""
         return fetch_active_agent_blocks(self._connection, now)
+
+    def block_for(self, agent: str) -> AgentBlock | None:
+        """Read `agent`'s current block, whether or not it is still active."""
+        return fetch_agent_block(self._connection, agent)

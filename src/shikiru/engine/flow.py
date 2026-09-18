@@ -9,14 +9,44 @@ stops the moment a task's step becomes `integrate` or its status leaves `running
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from shikiru.agents.contracts import FailureKind, PromptSubmitted, role_dir
 from shikiru.domain.events import EventKind
-from shikiru.domain.ladder import pick_rung
-from shikiru.domain.recovery import Completed, TurnResult
+from shikiru.domain.ladder import move_up, pick_rung
+from shikiru.domain.recovery import (
+    Action,
+    Backoff,
+    ClassifyScreen,
+    Completed,
+    Consult,
+    Escalate,
+    Failed,
+    Handoff,
+    KeepWaiting,
+    NextRung,
+    PaneDied,
+    ProtocolError,
+    RecoveryPolicy,
+    Relaunch,
+    RetryTurn,
+    ScreenClassification,
+    ScreenState,
+    SendKeys,
+    Stalled,
+    TurnCounters,
+    TurnResult,
+    WaitForQuota,
+    decide,
+    decide_stall,
+    quota_block_until,
+)
 from shikiru.domain.reports import (
+    CURRENT_TURN_LINK_NAME,
+    PROMPT_FILENAME,
     ConsultAnswer,
     ImplementationReport,
     PlanReport,
@@ -24,29 +54,34 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
 )
-from shikiru.domain.steps import ACTING_ROLE, first_step, next_step
+from shikiru.domain.steps import ACTING_ROLE, Transition, first_step, next_step
 from shikiru.domain.tasks import EscalationReason, Hold, Role, Status, Step, TaskOrigin
 from shikiru.engine.turns import TURNS_DIR_NAME, TurnSpec, read_turn_report
 from shikiru.errors import ShikiruError
 from shikiru.helper.helper import Helper
+from shikiru.helper.models import Unrecoverable
 from shikiru.prompts.renderer import PromptName
 from shikiru.workspace.facts import render_facts
 from shikiru.workspace.roots import run_dir, task_root
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
+    from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.reports import NewTask, Report
-    from shikiru.domain.steps import Outcome, Transition
+    from shikiru.domain.steps import Outcome
     from shikiru.domain.tasks import Task
     from shikiru.engine.agents import AgentPool
     from shikiru.engine.escalations import EscalationRaiser
+    from shikiru.engine.monitor import InjectedLines, MonitorSignal
     from shikiru.engine.sessions import SessionManager
     from shikiru.engine.titles import TaskTitles
     from shikiru.engine.turns import TurnRunner
     from shikiru.store.events import EventLog
+    from shikiru.store.quotas import QuotaStore
     from shikiru.store.tasks import TaskStore
     from shikiru.tmux.pane import TmuxPane
     from shikiru.workspace.facts import GitFacts
@@ -55,9 +90,7 @@ if TYPE_CHECKING:
 ESCALATION_PANE_TAIL_LINES = 60
 """Lines of pane scrollback captured as escalation evidence (03 §8)."""
 
-
-class RecoveryNotImplementedError(ShikiruError):
-    """A turn ended without a valid report; recovering from that is Task 15's job (03 §7)."""
+CONTINUE_INPUT = "continue"
 
 
 def clear_intervention(tasks: TaskStore, events: EventLog, task_id: str) -> None:
@@ -150,19 +183,38 @@ def _resolve_ref(ref: str, sibling_ids: list[str]) -> str:
     return sibling_ids[int(ref[1:]) - 1] if ref.startswith("#") else ref
 
 
-def _escalation_narrative(reason: EscalationReason, outcome: Outcome) -> tuple[str, str]:
+def _escalation_narrative(
+    reason: EscalationReason,
+    outcome: Outcome | None,
+    result: TurnResult | None = None,
+) -> tuple[str, str]:
+    question = "An Operator decision is needed to continue."
+    attempted = "Automatic recovery has no option left"
     if reason is EscalationReason.ITERATIONS_EXHAUSTED:
-        return (
-            "The final round still requested changes; choose accept, supersede or cancel.",
-            "Implement and verify cycled to the configured iteration limit.",
-        )
-    if isinstance(outcome, ConsultAnswer) and outcome.escalation is not None:
-        return outcome.escalation.question, "The Leader escalated during a consult turn."
-    if isinstance(outcome, Verdict) and outcome.escalation is not None:
-        return outcome.escalation.question, "The Leader escalated during verification."
-    if isinstance(outcome, ImplementationReport):
-        return outcome.question, "The Implementer's question exceeded the consult limit."
-    return "An Operator decision is needed to continue.", "Automatic recovery has no option left"
+        question = "The final round still requested changes; choose accept, supersede or cancel."
+        attempted = "Implement and verify cycled to the configured iteration limit."
+    elif isinstance(outcome, ConsultAnswer) and outcome.escalation is not None:
+        question = outcome.escalation.question
+        attempted = "The Leader escalated during a consult turn."
+    elif isinstance(outcome, Verdict) and outcome.escalation is not None:
+        question = outcome.escalation.question
+        attempted = "The Leader escalated during verification."
+    elif isinstance(outcome, ImplementationReport):
+        question = outcome.question
+        attempted = "The Implementer's question exceeded the consult limit."
+    elif isinstance(result, Failed):
+        question = result.message
+        attempted = f"The agent reported a {result.kind.value} failure."
+    elif isinstance(result, Stalled):
+        question = "The agent's screen stopped progressing."
+        attempted = "Automatic stall recovery was exhausted."
+    elif isinstance(result, ProtocolError):
+        question = "The agent did not produce a valid report."
+        attempted = "The Helper could not rebuild it."
+    elif result is not None:
+        question = "The agent session could not continue."
+        attempted = f"Recovery ended with {type(result).__name__}."
+    return question, attempted
 
 
 @dataclass(frozen=True)
@@ -171,6 +223,20 @@ class _TurnPlan:
     kind: ReportKind
     context: dict[str, object]
     facts: str
+
+
+@dataclass(frozen=True)
+class _TurnExecution:
+    result: TurnResult
+    task_id: str
+    role: Role
+    pane: TmuxPane
+    signals: asyncio.Queue[MonitorSignal]
+    turn_dir: Path
+    spec: TurnSpec
+    helper: Helper
+    prompt_path: Path
+    injected: InjectedLines
 
 
 class TaskFlow:
@@ -190,8 +256,10 @@ class TaskFlow:
         agent_pool: AgentPool,
         pane_factory: Callable[[str], TmuxPane],
         project_root: Path,
+        quota: QuotaStore,
+        clock: Clock,
     ) -> None:
-        """Wire every collaborator a step turn needs: sessions, turns, facts, titles, escalation."""
+        """Wire every collaborator a step turn and its recovery actions need."""
         self._tasks = tasks
         self._events = events
         self._sessions = sessions
@@ -203,21 +271,51 @@ class TaskFlow:
         self._agent_pool = agent_pool
         self._pane_factory = pane_factory
         self._project_root = project_root
+        self._quota = quota
+        self._clock = clock
+        self._recovery_questions: dict[str, str] = {}
+        self._force_handoff: set[str] = set()
 
     async def run(self, task_id: str) -> None:
         """Run `task_id` from its current step (or its first) until `integrate` or an escalation."""
         task = self._require_task(task_id)
         if task.step is None:
             task = await self._apply(task, first_step(task), None)
+        recovery_counters = TurnCounters()
         while task.status is Status.RUNNING:
             step = task.step
             if step is None:
                 message = f"{task.id} is running with no step set"
                 raise ShikiruError(message)
-            result = await self._run_turn(task, step)
+            task, recovery_counters, should_return = await self._run_step(
+                task, step, recovery_counters
+            )
+            if should_return:
+                return
+
+    async def _run_step(
+        self, task: Task, step: Step, counters: TurnCounters
+    ) -> tuple[Task, TurnCounters, bool]:
+        execution = await self._run_turn(task, step)
+        while True:
+            result = execution.result
             if not isinstance(result, Completed):
-                message = f"{task.id} step {step.value} ended without a report: {result!r}"
-                raise RecoveryNotImplementedError(message)
+                task, counters, should_return, continued = await self._recover(
+                    task, step, execution, counters
+                )
+                if should_return:
+                    return task, counters, True
+                if continued is not None:
+                    execution = continued
+                else:
+                    recovery_step = task.step
+                    if recovery_step is None:
+                        message = f"{task.id} recovery left the task with no step"
+                        raise ShikiruError(message)
+                    step = recovery_step
+                    execution = await self._run_turn(task, step)
+                continue
+            await self._close_execution(execution)
             clear_intervention(self._tasks, self._events, task.id)
             outcome = result.report
             transition = next_step(task, outcome, self._settings)
@@ -229,12 +327,339 @@ class TaskFlow:
                     message = f"{task.id} escalated with no escalation_reason on its transition"
                     raise ShikiruError(message)
                 await self._raise_escalation(task, escalation_step, reason, outcome)
-                return
+                return task, TurnCounters(), True
+            return task, TurnCounters(), False
+
+    async def _recover(
+        self, task: Task, step: Step, execution: _TurnExecution, counters: TurnCounters
+    ) -> tuple[Task, TurnCounters, bool, _TurnExecution | None]:
+        result = execution.result
+        self._emit_turn_failed(task, step, result)
+        role = ACTING_ROLE[step]
+        policy = self._recovery_policy(task, role)
+        action = decide(result, counters, policy)
+        if isinstance(action, ClassifyScreen):
+            classification = await self._classify_screen(task, role, result)
+            counters = dataclasses.replace(counters, stall_recoveries=counters.stall_recoveries + 1)
+            if isinstance(classification, Unrecoverable):
+                action = Escalate(EscalationReason.AGENT_STUCK)
+            else:
+                self._emit_helper_action(task, classification)
+                policy = self._recovery_policy(task, role)
+                action = decide_stall(
+                    classification,
+                    role,
+                    frozenset(
+                        self._agent_pool.get(pick_rung(task, role, self._settings).agent).keys.safe
+                    ),
+                    counters,
+                    policy,
+                )
+                if isinstance(action, Consult):
+                    self._recovery_questions[task.id] = classification.text
+                if classification.state is ScreenState.QUOTA:
+                    self._block_quota(task, role, classification.resets_at)
+        elif isinstance(result, Failed) and result.kind is FailureKind.QUOTA:
+            self._block_quota(task, role, result.resets_at)
+        updated, should_return, counters = await self._apply_recovery(
+            task,
+            step,
+            role,
+            execution=execution,
+            result=result,
+            counters=counters,
+            action=action,
+        )
+        continued = updated if isinstance(updated, _TurnExecution) else None
+        next_task = self._require_task(task.id) if isinstance(updated, _TurnExecution) else updated
+        return next_task, counters, should_return, continued
+
+    def _recovery_policy(self, task: Task, role: Role) -> RecoveryPolicy:
+        current = move_up(task, role, self._settings)
+        different = move_up(task, role, self._settings, different_agent=True)
+        return RecoveryPolicy(
+            now=self._clock.now(),
+            max_quota_wait=timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait),
+            has_next_rung=current is not None,
+            has_next_rung_different_agent=different is not None,
+        )
+
+    async def _apply_recovery(
+        self,
+        task: Task,
+        step: Step,
+        role: Role,
+        *,
+        execution: _TurnExecution,
+        result: TurnResult,
+        counters: TurnCounters,
+        action: Action,
+    ) -> tuple[Task | _TurnExecution, bool, TurnCounters]:
+        updated = task
+        next_counters = counters
+        if isinstance(action, WaitForQuota):
+            await self._wait_for_quota(task, role, action.until)
+            updated = await self._resume_execution(execution)
+        elif isinstance(action, Backoff):
+            await self._close_execution(execution)
+            await self._clock.sleep(action.delay.total_seconds())
+            updated = self._require_task(task.id)
+            next_counters = dataclasses.replace(
+                counters, unavailable_retries=counters.unavailable_retries + 1
+            )
+        elif isinstance(action, RetryTurn):
+            await self._close_execution(execution)
+            next_counters = dataclasses.replace(counters, other_retries=counters.other_retries + 1)
+        elif isinstance(action, Relaunch):
+            await self._close_execution(execution)
+            await self._sessions.ensure(task, role)
+            updated = self._require_task(task.id)
+            next_counters = dataclasses.replace(counters, relaunches=counters.relaunches + 1)
+        elif isinstance(action, Handoff):
+            await self._close_execution(execution)
+            self._force_handoff.add(task.id)
+            await self._sessions.handoff(task, role)
+            updated = self._require_task(task.id)
+            next_counters = dataclasses.replace(
+                counters, context_handoffs=counters.context_handoffs + 1
+            )
+        elif isinstance(action, NextRung):
+            await self._close_execution(execution)
+            return await self._apply_next_rung(task, step, role, result, action)
+        else:
+            if not isinstance(action, KeepWaiting | SendKeys):
+                await self._close_execution(execution)
+            return await self._apply_recovery_secondary(
+                task,
+                step,
+                role,
+                execution=execution,
+                result=result,
+                counters=counters,
+                action=action,
+            )
+        return updated, False, next_counters
+
+    async def _apply_next_rung(
+        self, task: Task, step: Step, role: Role, result: TurnResult, action: NextRung
+    ) -> tuple[Task | _TurnExecution, bool, TurnCounters]:
+        if action.different_agent:
+            self._force_handoff.add(task.id)
+        updated = await self._move_rung(task, step, role, action.different_agent, result)
+        if updated is not None:
+            return updated, False, TurnCounters()
+        reason = (
+            EscalationReason.QUOTA_EXHAUSTED
+            if action.different_agent
+            else EscalationReason.LADDER_EXHAUSTED
+        )
+        return await self._raise_recovery_escalation(task, step, reason, result)
+
+    async def _apply_recovery_secondary(
+        self,
+        task: Task,
+        step: Step,
+        role: Role,
+        *,
+        execution: _TurnExecution,
+        result: TurnResult,
+        counters: TurnCounters,
+        action: Action,
+    ) -> tuple[Task | _TurnExecution, bool, TurnCounters]:
+        if isinstance(action, ClassifyScreen):
+            message = f"{task.id} recovery classification was not resolved"
+            raise ShikiruError(message)
+        if isinstance(action, KeepWaiting):
+            await self._clock.sleep(self._settings.orchestration.poll_seconds)
+            return await self._resume_execution(execution), False, counters
+        if isinstance(action, SendKeys):
+            pane_id = task.panes.get(role)
+            if pane_id is None:
+                message = f"{task.id} has no pane assigned for {role.value} recovery"
+                raise ShikiruError(message)
+            await self._pane_factory(pane_id).send_keys(*action.keys)
+            return await self._resume_execution(execution), False, counters
+        if isinstance(action, Consult):
+            self._recovery_questions.setdefault(task.id, "")
+            base = Transition.stay(task, step=Step.CONSULT, status=task.status)
+            self._tasks.apply_transition(task.id, base)
+            updated = self._require_task(task.id)
+            await self._titles.refresh(updated)
+            return updated, False, counters
+        if isinstance(action, Escalate):
+            return await self._raise_recovery_escalation(task, step, action.reason, result)
+        message = f"unsupported recovery action {action!r}"
+        raise ShikiruError(message)
+
+    async def _raise_recovery_escalation(
+        self, task: Task, step: Step, reason: EscalationReason, result: TurnResult
+    ) -> tuple[Task, bool, TurnCounters]:
+        transition = dataclasses.replace(
+            Transition.stay(task, step=step, status=Status.ESCALATED),
+            escalation_reason=reason,
+        )
+        self._tasks.apply_transition(task.id, transition)
+        updated = self._require_task(task.id)
+        await self._titles.refresh(updated)
+        await self._raise_escalation(updated, step, reason, None, result=result)
+        return updated, True, TurnCounters()
+
+    async def _move_rung(
+        self,
+        task: Task,
+        step: Step,
+        role: Role,
+        different_agent: bool,
+        result: TurnResult,
+    ) -> Task | None:
+        move = move_up(task, role, self._settings, different_agent=different_agent)
+        if move is None:
+            return None
+        old_rung = pick_rung(task, role, self._settings)
+        transition = dataclasses.replace(
+            Transition.stay(task, step=step, status=task.status),
+            counters=move.counters,
+            rung_index=move.rung_index,
+            overrides=move.overrides,
+        )
+        self._tasks.apply_transition(task.id, transition)
+        updated = self._require_task(task.id)
+        new_rung = pick_rung(updated, role, self._settings)
+        self._events.append(
+            EventKind.RUNG_CHANGED,
+            task_id=task.id,
+            message=f"{task.id} {role.value} moved from {old_rung.model} to {new_rung.model}",
+            data={
+                "role": role.value,
+                "from": old_rung.model,
+                "to": new_rung.model,
+                "different_agent": different_agent,
+                "result": type(result).__name__,
+            },
+        )
+        await self._titles.refresh(updated)
+        return updated
+
+    def _block_quota(self, task: Task, role: Role, resets_at: datetime | None) -> None:
+        agent = pick_rung(task, role, self._settings).agent
+        until = quota_block_until(resets_at, self._clock.now())
+        self._quota.block(agent, until, "quota")
+        self._events.append(
+            EventKind.QUOTA_BLOCKED,
+            task_id=task.id,
+            message=f"{agent} quota blocked until {until.isoformat()}",
+            data={"agent": agent, "until": until.isoformat(), "reason": "quota"},
+        )
+
+    async def _wait_for_quota(self, task: Task, role: Role, until: datetime) -> None:
+        agent = pick_rung(task, role, self._settings).agent
+        deadline = until
+        while True:
+            remaining = (deadline - self._clock.now()).total_seconds()
+            if remaining > 0:
+                await self._clock.sleep(remaining)
+            current = self._quota.block_for(agent)
+            now = self._clock.now()
+            if current is not None and current.until > now:
+                deadline = current.until
+                continue
+            self._quota.clear_block(agent)
+            self._events.append(
+                EventKind.QUOTA_CLEARED,
+                task_id=task.id,
+                message=f"{agent} quota block cleared",
+                data={"agent": agent},
+            )
+            await self._send_injected_line(task, role, CONTINUE_INPUT)
+            return
+
+    async def _send_injected_line(self, task: Task, role: Role, line: str) -> None:
+        pane_id = task.panes.get(role)
+        if pane_id is None:
+            message = f"{task.id} has no pane assigned for injected recovery input"
+            raise ShikiruError(message)
+        queue = self._sessions.subscribe(task.id, role)
+        injected = self._sessions.injected_lines(task.id, role)
+        injected.add(line)
+        try:
+            await self._pane_factory(pane_id).paste_line(line)
+            while True:
+                signal = await queue.get()
+                if isinstance(signal, PromptSubmitted) and line in signal.text:
+                    return
+                if isinstance(signal, (PaneDied, Stalled)):
+                    return
+        finally:
+            injected.discard(line)
+            self._sessions.unsubscribe(task.id, role, queue)
+
+    async def _classify_screen(
+        self, task: Task, role: Role, result: TurnResult
+    ) -> ScreenClassification | Unrecoverable:
+        if not isinstance(result, Stalled):
+            message = f"{task.id} received a non-stalled result for screen classification"
+            raise ShikiruError(message)
+        helper_rung = pick_rung(task, Role.HELPER, self._settings)
+        helper = Helper(self._agent_pool.get(helper_rung.agent))
+        keys = self._agent_pool.get(pick_rung(task, role, self._settings).agent).keys.safe
+        try:
+            return await helper.classify_screen(
+                result.screen,
+                keys,
+                model=helper_rung.model,
+                effort=helper_rung.effort,
+                cwd=task_root(self._project_root, task.id),
+                timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
+            )
+        except (LookupError, ShikiruError) as error:
+            return Unrecoverable(unrecoverable=str(error))
+
+    def _emit_helper_action(self, task: Task, classification: ScreenClassification) -> None:
+        self._events.append(
+            EventKind.HELPER_ACTION,
+            task_id=task.id,
+            message=f"screen classified as {classification.state.value}",
+            data={
+                "state": classification.state.value,
+                "keys": classification.keys,
+                "text": classification.text,
+                "resets_at": (
+                    classification.resets_at.isoformat()
+                    if classification.resets_at is not None
+                    else None
+                ),
+            },
+        )
+
+    def _emit_turn_failed(self, task: Task, step: Step, result: TurnResult) -> None:
+        if isinstance(result, Failed):
+            message = result.message
+            data = {"kind": result.kind.value, "resets_at": result.resets_at}
+        elif isinstance(result, Stalled):
+            message = "agent stalled"
+            data = {"screen": result.screen}
+        elif isinstance(result, ProtocolError):
+            message = "agent protocol error"
+            data = {}
+        else:
+            message = type(result).__name__
+            data = {}
+        data.update({"step": step.value, "result": type(result).__name__})
+        self._events.append(EventKind.TURN_FAILED, task_id=task.id, message=message, data=data)
 
     async def _raise_escalation(
-        self, task: Task, step: Step | None, reason: EscalationReason, outcome: Outcome
+        self,
+        task: Task,
+        step: Step | None,
+        reason: EscalationReason,
+        outcome: Outcome | None,
+        *,
+        result: TurnResult | None = None,
     ) -> None:
-        question, attempted = _escalation_narrative(reason, outcome)
+        question = self._recovery_questions.pop(task.id, None)
+        narrative_question, attempted = _escalation_narrative(reason, outcome, result)
+        if question is None:
+            question = narrative_question
         history = load_history(run_dir(self._project_root, task.id))
         await self._escalations.raise_escalation(
             task,
@@ -254,13 +679,13 @@ class TaskFlow:
         pane = self._pane_factory(pane_id)
         return await pane.capture_tail(ESCALATION_PANE_TAIL_LINES)
 
-    async def _run_turn(self, task: Task, step: Step) -> TurnResult:
+    async def _run_turn(self, task: Task, step: Step) -> _TurnExecution:
         role = ACTING_ROLE[step]
         session = await self._sessions.ensure(task, role)
         fresh = self._sessions.launched_fresh(task.id, role)
         task_run_dir = run_dir(self._project_root, task.id)
         history = load_history(task_run_dir)
-        plan = await self._plan_turn(task, step, history, fresh=fresh and bool(history))
+        plan = await self._plan_turn(task, step, history, fresh=fresh)
         rung = pick_rung(task, role, self._settings)
         helper_rung = pick_rung(task, Role.HELPER, self._settings)
         spec = TurnSpec(
@@ -279,35 +704,63 @@ class TaskFlow:
         pane = self._pane_factory(task.panes[role])
         queue = self._sessions.subscribe(task.id, role)
         helper = Helper(self._agent_pool.get(helper_rung.agent))
-        try:
-            return await self._turns.run(
-                session,
-                pane,
-                queue,
-                run_dir=task_run_dir,
-                role=role,
-                spec=spec,
-                helper=helper,
-                injected=self._sessions.injected_lines(task.id, role),
-            )
-        finally:
-            self._sessions.unsubscribe(task.id, role, queue)
+        injected = self._sessions.injected_lines(task.id, role)
+        result = await self._turns.run(
+            session,
+            pane,
+            queue,
+            run_dir=task_run_dir,
+            role=role,
+            spec=spec,
+            helper=helper,
+            injected=injected,
+        )
+        turn_dir = (role_dir(task_run_dir, role.value) / CURRENT_TURN_LINK_NAME).resolve()
+        return _TurnExecution(
+            result=result,
+            task_id=task.id,
+            role=role,
+            pane=pane,
+            signals=queue,
+            turn_dir=turn_dir,
+            spec=spec,
+            helper=helper,
+            prompt_path=turn_dir / PROMPT_FILENAME,
+            injected=injected,
+        )
+
+    async def _resume_execution(self, execution: _TurnExecution) -> _TurnExecution:
+        result = await self._turns.resume(
+            execution.pane,
+            execution.signals,
+            turn_dir=execution.turn_dir,
+            spec=execution.spec,
+            helper=execution.helper,
+            prompt_path=execution.prompt_path,
+            injected=execution.injected,
+        )
+        return dataclasses.replace(execution, result=result)
+
+    async def _close_execution(self, execution: _TurnExecution) -> None:
+        self._sessions.unsubscribe(execution.task_id, execution.role, execution.signals)
 
     async def _plan_turn(
         self, task: Task, step: Step, history: list[tuple[str, Report]], *, fresh: bool
     ) -> _TurnPlan:
         template, kind = _template_for_step(step, task.iteration)
+        force_handoff = task.id in self._force_handoff
         context: dict[str, object] = {
             "request": task.request,
             "trackers": list(self._settings.project.trackers),
             "reports": _history_context(history),
         }
         if template is PromptName.CONSULT:
-            context["question"] = _latest_question(history)
-        needs_facts = template is PromptName.VERIFY or fresh
+            context["question"] = self._recovery_questions.pop(task.id, _latest_question(history))
+        needs_facts = template is PromptName.VERIFY or fresh or force_handoff
         facts_text = await self._facts_text(task) if needs_facts else ""
-        if fresh:
+        if (fresh and history) or force_handoff:
             template = PromptName.HANDOFF
+        self._force_handoff.discard(task.id)
         if needs_facts:
             context["facts"] = facts_text
         if template is PromptName.VERIFY:

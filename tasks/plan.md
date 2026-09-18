@@ -119,8 +119,8 @@ Refs: 03 §2–3.
 
 ### Task 15: Recovery
 Refs: 03 §7.
-- [ ] `TaskFlow` applies `recovery.decide` actions: agent quota blocks with `continue` after the block, backoff, next rung (same-agent resume, other-agent handoff), relaunch, context handoff, stall → `classify_screen` actions (Leader question → `decision_required`).
-- Tests: integration with fake failures for each 03 §7 row using `FakeClock`.
+- [x] `TaskFlow` applies `recovery.decide` actions: agent quota blocks with `continue` after the block, backoff, next rung (same-agent resume, other-agent handoff), relaunch, context handoff, stall → `classify_screen` actions (Leader question → `decision_required`).
+- [x] Tests: integration with fake failures for each 03 §7 row using `FakeClock`.
 
 ### Task 16: Integration (local merge)
 Refs: 03 §6.

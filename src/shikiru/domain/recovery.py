@@ -185,8 +185,13 @@ class ScreenClassification(DomainModel):
     resets_at: datetime | None = None
 
 
+def quota_block_until(resets_at: datetime | None, now: datetime) -> datetime:
+    """Return the agent-block deadline for a quota failure (03 §7)."""
+    return (resets_at + QUOTA_MARGIN) if resets_at is not None else (now + QUOTA_PROBE)
+
+
 def _quota_action(resets_at: datetime | None, policy: RecoveryPolicy) -> Action:
-    until = (resets_at + QUOTA_MARGIN) if resets_at is not None else (policy.now + QUOTA_PROBE)
+    until = quota_block_until(resets_at, policy.now)
     if until - policy.now > policy.max_quota_wait:
         if policy.has_next_rung_different_agent:
             return NextRung(different_agent=True)
