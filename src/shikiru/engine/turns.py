@@ -28,6 +28,7 @@ from shikiru.domain.reports import (
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
     REPORT_SCHEMA_FILENAME,
+    ReportKind,
     model_for,
     schema_for,
 )
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import AgentSession
     from shikiru.clock import Clock
     from shikiru.domain.recovery import TurnResult
-    from shikiru.domain.reports import Report, ReportKind
+    from shikiru.domain.reports import Report
     from shikiru.domain.tasks import Role, Step
     from shikiru.engine.monitor import InjectedLines, MonitorSignal
     from shikiru.helper.helper import Helper
@@ -86,18 +87,34 @@ class TurnSpec:
     helper_timeout: timedelta
 
 
-def _load_report(turn_dir: Path, kind: ReportKind) -> Report | None:
-    report_path = turn_dir / REPORT_FILENAME
-    if not report_path.is_file():
+def read_turn_report(turn_dir: Path) -> Report | None:
+    """Read `turn_dir`'s report: `report.json`, or a Helper `helper.json` rebuild (03 §4.3).
+
+    `None` covers both "no report was ever submitted" and "the file is present but invalid or
+    doesn't match `report.kind`" — a caller with a live turn treats either as "not done yet, so
+    nudge"; a caller loading past history treats either as "this turn produced nothing usable",
+    so it's dropped from the history the same way.
+    """
+    kind_path = turn_dir / REPORT_KIND_FILENAME
+    if not kind_path.is_file():
         return None
     try:
-        data = json.loads(report_path.read_text())
-    except OSError, json.JSONDecodeError:
+        kind = ReportKind(kind_path.read_text().strip())
+    except ValueError:
         return None
-    try:
-        return model_for(kind).model_validate(data)
-    except ValidationError:
-        return None
+    for filename in (REPORT_FILENAME, HELPER_REPORT_FILENAME):
+        report_path = turn_dir / filename
+        if not report_path.is_file():
+            continue
+        try:
+            data = json.loads(report_path.read_text())
+        except OSError, json.JSONDecodeError:
+            return None
+        try:
+            return model_for(kind).model_validate(data)
+        except ValidationError:
+            return None
+    return None
 
 
 def _terminal_result(signal: TurnFailed | PaneDied | Stalled) -> TurnResult:
@@ -255,7 +272,7 @@ class TurnRunner:
                 continue
             if isinstance(current, TurnFailed | PaneDied | Stalled):
                 return _terminal_result(current)
-            report = _load_report(turn_dir, spec.kind)
+            report = read_turn_report(turn_dir)
             if report is not None:
                 return Completed(report=report)
             if nudges >= NUDGE_LIMIT:

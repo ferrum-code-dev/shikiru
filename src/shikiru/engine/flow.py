@@ -9,7 +9,6 @@ stops the moment a task's step becomes `integrate` or its status leaves `running
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -18,20 +17,16 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.recovery import Completed, TurnResult
 from shikiru.domain.reports import (
-    HELPER_REPORT_FILENAME,
-    REPORT_FILENAME,
-    REPORT_KIND_FILENAME,
     ConsultAnswer,
     ImplementationReport,
     PlanReport,
     ReportKind,
     TriageReport,
     Verdict,
-    model_for,
 )
 from shikiru.domain.steps import ACTING_ROLE, first_step, next_step
 from shikiru.domain.tasks import EscalationReason, Hold, Role, Status, Step, TaskOrigin
-from shikiru.engine.turns import TURNS_DIR_NAME, TurnSpec
+from shikiru.engine.turns import TURNS_DIR_NAME, TurnSpec, read_turn_report
 from shikiru.errors import ShikiruError
 from shikiru.helper.helper import Helper
 from shikiru.prompts.renderer import PromptName
@@ -98,23 +93,16 @@ def _turn_dirs(task_run_dir: Path) -> list[Path]:
     return sorted((entry for entry in turns_root.iterdir() if entry.is_dir()), key=lambda p: p.name)
 
 
-def _report_from_dir(turn_dir: Path) -> Report | None:
-    kind_path = turn_dir / REPORT_KIND_FILENAME
-    if not kind_path.is_file():
-        return None
-    report_kind = ReportKind(kind_path.read_text().strip())
-    for filename in (REPORT_FILENAME, HELPER_REPORT_FILENAME):
-        report_path = turn_dir / filename
-        if report_path.is_file():
-            return model_for(report_kind).model_validate(json.loads(report_path.read_text()))
-    return None
-
-
 def load_history(task_run_dir: Path) -> list[tuple[str, Report]]:
-    """Load every completed turn's report under `task_run_dir`, oldest first (03 §2's "reports")."""
+    """Load every completed turn's report under `task_run_dir`, oldest first (03 §2's "reports").
+
+    Shares `engine.turns.read_turn_report`'s "invalid means missing" reading: a turn whose
+    `report.json`/`helper.json` doesn't parse or validate is dropped from the history the same
+    way a live turn would treat it as "not done yet".
+    """
     history: list[tuple[str, Report]] = []
     for turn_dir in _turn_dirs(task_run_dir):
-        report = _report_from_dir(turn_dir)
+        report = read_turn_report(turn_dir)
         if report is not None:
             history.append((turn_dir.name, report))
     return history
