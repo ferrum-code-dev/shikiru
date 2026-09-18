@@ -5,19 +5,21 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if TYPE_CHECKING:
     from shikiru.clock import Clock
 
 _EPOCH_SECONDS_PATTERN = re.compile(r"^\d+(\.\d+)?$")
 _CLOCK_TIME_PATTERN = re.compile(
-    r"resets\s+(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<meridiem>am|pm)\s*\((?P<zone>[^)]+)\)",
+    r"resets\s+(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>am|pm)\s*\((?P<zone>[^)]+)\)",
     re.IGNORECASE,
 )
+_RELATIVE_DURATION_COMPONENT = r"(?P<amount>\d+)\s*(?P<unit>second|minute|hour|day)s?"
 _RELATIVE_DURATION_PATTERN = re.compile(
-    r"in\s+(?P<amount>\d+)\s*(?P<unit>second|minute|hour|day)s?", re.IGNORECASE
+    rf"in\s+(?P<components>(?:{_RELATIVE_DURATION_COMPONENT}\s*)+)", re.IGNORECASE
 )
+_RELATIVE_DURATION_COMPONENT_PATTERN = re.compile(_RELATIVE_DURATION_COMPONENT, re.IGNORECASE)
 _SECONDS_PER_UNIT = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
 _HOURS_PER_MERIDIEM = 12
 
@@ -55,19 +57,26 @@ class ResetTimeParser:
         match = _RELATIVE_DURATION_PATTERN.search(text)
         if match is None:
             return None
-        amount = int(match.group("amount"))
-        seconds = amount * _SECONDS_PER_UNIT[match.group("unit").lower()]
+        seconds = sum(
+            int(component.group("amount")) * _SECONDS_PER_UNIT[component.group("unit").lower()]
+            for component in _RELATIVE_DURATION_COMPONENT_PATTERN.finditer(
+                match.group("components")
+            )
+        )
         return self._clock.now() + timedelta(seconds=seconds)
 
     def _parse_clock_time(self, text: str) -> datetime | None:
         match = _CLOCK_TIME_PATTERN.search(text)
         if match is None:
             return None
-        zone = ZoneInfo(match.group("zone"))
+        try:
+            zone = ZoneInfo(match.group("zone"))
+        except ZoneInfoNotFoundError, ValueError:
+            return None
         hour = int(match.group("hour")) % _HOURS_PER_MERIDIEM
         if match.group("meridiem").lower() == "pm":
             hour += _HOURS_PER_MERIDIEM
-        minute = int(match.group("minute"))
+        minute = int(match.group("minute") or 0)
         now_in_zone = self._clock.now().astimezone(zone)
         candidate = now_in_zone.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if candidate <= now_in_zone:

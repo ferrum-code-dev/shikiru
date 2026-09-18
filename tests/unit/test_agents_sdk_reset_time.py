@@ -49,6 +49,20 @@ def _clock_time_already_passed_expected(now: datetime) -> datetime:
     return today + timedelta(days=1)
 
 
+def _clock_time_without_minutes_expected(now: datetime) -> datetime:
+    return now.astimezone(_WARSAW).replace(hour=3, minute=0, second=0, microsecond=0) + timedelta(
+        days=1
+    )
+
+
+def _in_2_hours_30_minutes_expected(now: datetime) -> datetime:
+    return now + timedelta(hours=2, minutes=30)
+
+
+def _in_1_day_3_hours_expected(now: datetime) -> datetime:
+    return now + timedelta(days=1, hours=3)
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -58,11 +72,14 @@ def _clock_time_already_passed_expected(now: datetime) -> datetime:
         ("in 3 hours", _in_3_hours_expected),
         ("in 45 minutes", _in_45_minutes_expected),
         ("in 2 days", _in_2_days_expected),
+        ("in 2 hours 30 minutes", _in_2_hours_30_minutes_expected),
+        ("in 1 day 3 hours", _in_1_day_3_hours_expected),
         (
             "You've hit your session limit · resets 8:00pm (Europe/Warsaw)",
             _clock_time_not_yet_passed_expected,
         ),
         ("resets 3:10am (Europe/Warsaw)", _clock_time_already_passed_expected),
+        ("resets 3am (Europe/Warsaw)", _clock_time_without_minutes_expected),
     ],
 )
 def test_parse_recognises_every_supported_format(
@@ -77,7 +94,7 @@ def test_parse_recognises_every_supported_format(
 
 @pytest.mark.parametrize(
     "text",
-    ["", "quota exceeded", "resets soon", "tomorrow"],
+    ["", "quota exceeded", "resets soon", "tomorrow", "resets 3:10am (Mars/Colony)"],
 )
 def test_parse_returns_none_for_unrecognised_text(text: str) -> None:
     parser = ResetTimeParser(FakeClock(_NOW))
