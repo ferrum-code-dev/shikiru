@@ -75,9 +75,9 @@ Refs: 03 §5.
 
 ### Task 8: Agent contract, registry, SDK
 Refs: 04 §1–2.
-- [ ] `agents/contracts.py` exactly per 04 §1 with docstrings.
-- [ ] `AgentRegistry`: loads `AgentFactory` entry points (and factories registered by `bootstrap`), reports missing or broken plugins and option errors by name.
-- [ ] SDK: `HookRecorder` + `shikiru hook` (flock, no-op outside Shikiru), `JsonlTail`, `ResetTimeParser`, `PriceTable`.
+- [x] `agents/contracts.py` exactly per 04 §1 with docstrings.
+- [x] `AgentRegistry`: loads `AgentFactory` entry points (and factories registered by `bootstrap`), reports missing or broken plugins and option errors by name.
+- [x] SDK: `HookRecorder` + `shikiru hook` (flock, no-op outside Shikiru), `JsonlTail`, `ResetTimeParser`, `PriceTable`.
 - Tests: unit for `ResetTimeParser` and `PriceTable`; integration for hook append/tail with concurrent writers.
 
 ### Task 9: Fake agent and contract test kit

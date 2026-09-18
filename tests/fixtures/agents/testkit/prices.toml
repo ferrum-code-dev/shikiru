@@ -1,0 +1,6 @@
+[opus]
+input = 15.0
+cache_read = 1.5
+cache_write = 18.75
+output = 75.0
+context_window = 200000
