@@ -80,7 +80,7 @@ def _build_helper(settings: Settings) -> Helper:
     return Helper(pool.get(FAKE_AGENT_NAME))
 
 
-def _spec(*, cwd: Path, iteration: int = 1) -> TurnSpec:
+def _spec(*, cwd: Path, iteration: int = 1, facts: str = "") -> TurnSpec:
     return TurnSpec(
         step=Step.CONSULT,
         iteration=iteration,
@@ -93,7 +93,7 @@ def _spec(*, cwd: Path, iteration: int = 1) -> TurnSpec:
             "question": "Which retry library should I use?",
         },
         prompt_prefix="",
-        facts="",
+        facts=facts,
         cwd=cwd,
         helper_model="fake-helper",
         helper_effort=None,
@@ -132,6 +132,70 @@ async def test_a_turn_that_is_accepted_immediately_completes_with_its_report(
     assert result.rebuilt is False
     assert isinstance(result.report, ConsultAnswer)
     assert result.report.decision == "answer"
+
+
+async def test_a_turn_with_facts_writes_facts_md_next_to_the_prompt(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = _settings_with_asks([])
+    manager = engine_env.build_manager(settings)
+    task = await engine_env.build_task()
+    await set_script(tmux_server, [{"kind": "accept"}])
+    session = await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    pane = engine_env.pane(task.panes[Role.IMPLEMENTER])
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
+    helper = _build_helper(settings)
+    task_run_dir = run_dir(engine_env.project_root, task.id)
+
+    await asyncio.wait_for(
+        runner.run(
+            session,
+            pane,
+            queue,
+            run_dir=task_run_dir,
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id), facts="git log: none"),
+            helper=helper,
+            injected=manager.injected_lines(task.id, Role.IMPLEMENTER),
+        ),
+        timeout=_SIGNAL_TIMEOUT,
+    )
+
+    facts_path = task_run_dir / "turns" / "01-consult-i1" / "facts.md"
+    assert facts_path.read_text() == "git log: none"
+
+
+async def test_a_turn_without_facts_writes_no_facts_md(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = _settings_with_asks([])
+    manager = engine_env.build_manager(settings)
+    task = await engine_env.build_task()
+    await set_script(tmux_server, [{"kind": "accept"}])
+    session = await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    pane = engine_env.pane(task.panes[Role.IMPLEMENTER])
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
+    helper = _build_helper(settings)
+    task_run_dir = run_dir(engine_env.project_root, task.id)
+
+    await asyncio.wait_for(
+        runner.run(
+            session,
+            pane,
+            queue,
+            run_dir=task_run_dir,
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+            injected=manager.injected_lines(task.id, Role.IMPLEMENTER),
+        ),
+        timeout=_SIGNAL_TIMEOUT,
+    )
+
+    facts_path = task_run_dir / "turns" / "01-consult-i1" / "facts.md"
+    assert not facts_path.exists()
 
 
 async def test_a_turn_ended_without_a_report_is_nudged_then_completes(

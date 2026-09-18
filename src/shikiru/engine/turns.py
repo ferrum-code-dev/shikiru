@@ -23,6 +23,7 @@ from shikiru.agents.contracts import Compacted, PromptSubmitted, TurnEnded, Turn
 from shikiru.domain.recovery import Completed, Failed, PaneDied, ProtocolError, Stalled
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
+    FACTS_FILENAME,
     HELPER_REPORT_FILENAME,
     PROMPT_FILENAME,
     REPORT_FILENAME,
@@ -174,6 +175,8 @@ class TurnRunner:
         (turn_dir / PROMPT_FILENAME).write_text(self._renderer.render(spec.template, spec.context))
         (turn_dir / REPORT_SCHEMA_FILENAME).write_text(json.dumps(schema_for(spec.kind), indent=2))
         (turn_dir / REPORT_KIND_FILENAME).write_text(spec.kind.value)
+        if spec.facts:
+            (turn_dir / FACTS_FILENAME).write_text(spec.facts)
         self._point_current_turn(run_dir, role, turn_dir)
         return turn_dir
 
