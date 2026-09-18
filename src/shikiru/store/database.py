@@ -118,6 +118,17 @@ def parse_required_timestamp(text: str) -> datetime:
     return datetime.fromisoformat(text)
 
 
+def require_after_insert[T](value: T | None, message: str) -> T:
+    """Unwrap `value`, or raise `RuntimeError(message)` if it's `None`.
+
+    Guards the two ways a same-transaction insert-then-read can't come back empty in practice:
+    sqlite refusing a rowid, or an immediate re-fetch by that rowid finding no row.
+    """
+    if value is None:
+        raise RuntimeError(message)
+    return value
+
+
 def _migration_files() -> list[tuple[int, str]]:
     package = resources.files(_MIGRATIONS_PACKAGE)
     migrations: list[tuple[int, str]] = []

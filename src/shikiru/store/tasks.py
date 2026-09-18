@@ -25,6 +25,7 @@ from shikiru.store.database import (
     next_sequence,
     parse_required_timestamp,
     parse_timestamp,
+    require_after_insert,
     transaction,
 )
 
@@ -243,10 +244,7 @@ class TaskStore:
 
     def _fetch_or_raise(self, task_id: str) -> Task:
         task = fetch_task(self._connection, task_id)
-        if task is None:
-            message = f"task {task_id} vanished immediately after insert"
-            raise RuntimeError(message)
-        return task
+        return require_after_insert(task, f"task {task_id} vanished immediately after insert")
 
     def get(self, task_id: str) -> Task | None:
         """Read one task by id, or `None` if it doesn't exist."""

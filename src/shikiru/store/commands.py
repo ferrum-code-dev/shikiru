@@ -14,6 +14,7 @@ from shikiru.store.database import (
     load_json,
     next_sequence,
     parse_timestamp,
+    require_after_insert,
     transaction,
 )
 from shikiru.store.tasks import TASK_ID_PREFIX, TASK_SEQUENCE
@@ -70,9 +71,9 @@ class CommandQueue:
                 (ts, command.kind.value, dump_json(_COMMAND_ADAPTER, command)),
             )
             command_id = cursor.lastrowid
-        if command_id is None:
-            message = "sqlite did not allocate a rowid for the new command"
-            raise RuntimeError(message)
+        command_id = require_after_insert(
+            command_id, "sqlite did not allocate a rowid for the new command"
+        )
         return QueuedCommand(id=command_id, command=command)
 
     def pending(self) -> list[QueuedCommand]:

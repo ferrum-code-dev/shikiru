@@ -15,6 +15,7 @@ from shikiru.store.database import (
     next_sequence,
     parse_required_timestamp,
     parse_timestamp,
+    require_after_insert,
     transaction,
 )
 
@@ -110,10 +111,9 @@ class EscalationStore:
                 ),
             )
         escalation = fetch_escalation(self._connection, escalation_id)
-        if escalation is None:
-            message = f"escalation {escalation_id} vanished immediately after insert"
-            raise RuntimeError(message)
-        return escalation
+        return require_after_insert(
+            escalation, f"escalation {escalation_id} vanished immediately after insert"
+        )
 
     def get(self, escalation_id: str) -> Escalation | None:
         """Read one escalation by id, or `None` if it doesn't exist."""

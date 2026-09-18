@@ -12,6 +12,7 @@ from shikiru.store.database import (
     format_timestamp,
     load_json,
     parse_required_timestamp,
+    require_after_insert,
 )
 
 if TYPE_CHECKING:
@@ -88,10 +89,9 @@ class EventLog:
                 dump_json(_DATA_ADAPTER, event_data),
             ),
         )
-        event_id = cursor.lastrowid
-        if event_id is None:
-            message_text = "sqlite did not allocate a rowid for the new event"
-            raise RuntimeError(message_text)
+        event_id = require_after_insert(
+            cursor.lastrowid, "sqlite did not allocate a rowid for the new event"
+        )
         return Event(
             id=event_id, ts=ts, task_id=task_id, kind=kind, message=message, data=event_data
         )
