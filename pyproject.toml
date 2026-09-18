@@ -64,6 +64,13 @@ src = ["src"]
 select = ["ALL"]
 ignore = [
   "CPY001", # AGENTS.md: no comments in code; no per-file copyright headers wanted
+  "D100",   # AGENTS.md 07 §2.8: docstrings belong on public contracts, not on everything;
+  "D101",   # requiring one everywhere turned them into the comments the conventions ban.
+  "D102",   # The D2xx/D4xx rules stay on, so the docstrings we do write remain well-formed.
+  "D103",
+  "D104",
+  "D105",
+  "D107",
   "D203",   # conflicts with D211 (no blank line before class docstring)
   "D213",   # conflicts with D212 (multi-line docstring summary on first line)
   "COM812", # formatter already governs trailing commas
