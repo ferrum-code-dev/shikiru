@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fake_agent.headless import FakeHeadlessAgent
 from fake_agent.session import FakeSession
-from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, CheckResult, SessionKeys
+from shikiru.agents.contracts import CheckResult, SessionKeys
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
@@ -106,8 +106,6 @@ class FakeAgent:
 
     async def _spawn(self, spec: LaunchSpec, pane: PaneHandle, session_id: str) -> None:
         env: dict[str, str | None] = dict(spec.env)
-        env[RUN_DIR_ENV_VAR] = str(spec.run_dir)
-        env[ROLE_ENV_VAR] = spec.role
         env[SESSION_ID_ENV_VAR] = session_id
         await pane.respawn([REPL_COMMAND], env=env, cwd=spec.cwd)
 

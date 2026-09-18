@@ -30,6 +30,9 @@ _VALID_RUNG_PART_COUNTS = (2, 3)
 
 RUN_DIR_ENV_VAR = "SHIKIRU_RUN_DIR"
 ROLE_ENV_VAR = "SHIKIRU_ROLE"
+PROJECT_ENV_VAR = "SHIKIRU_PROJECT"
+TASK_ENV_VAR = "SHIKIRU_TASK"
+SLOT_ENV_VAR = "SHIKIRU_SLOT"
 
 CostBasis = Literal["billed", "api_equivalent", "unknown"]
 
@@ -164,7 +167,12 @@ class CheckResult:
 
 @dataclass(frozen=True)
 class LaunchSpec:
-    """Everything an `InteractiveAgent` needs to launch or attach a session (04 §1)."""
+    """Everything an `InteractiveAgent` needs to launch or attach a session (04 §1).
+
+    `env` already carries the full launch environment (03 §4.1): `RUN_DIR_ENV_VAR`,
+    `ROLE_ENV_VAR`, `PROJECT_ENV_VAR`, `TASK_ENV_VAR` and `SLOT_ENV_VAR`. A plugin's
+    `respawn()` call passes it straight through; it is the one source for these variables.
+    """
 
     rung: Rung
     role: str

@@ -19,6 +19,7 @@ from tests.support.engine import (
     build_task_roots,
     build_tmux,
     create_running_task,
+    fake_agent_settings,
     new_agent_pane,
 )
 from tests.support.factories import make_settings
@@ -70,7 +71,7 @@ async def test_ensure_relaunches_with_resume_after_pane_death(
 ) -> None:
     tmux = build_tmux(tmux_server)
     task_roots = build_task_roots(SubprocessRunner(), tmp_path)
-    settings = make_settings(implementer_ladder=[FAKE_RUNG])
+    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
     tasks, runs = build_stores(connection, SystemClock())
     manager = build_session_manager(
         tmux=tmux,
@@ -83,19 +84,24 @@ async def test_ensure_relaunches_with_resume_after_pane_death(
     task = await _build_task(tmux, connection, tmp_path, task_roots)
     await _set_script(tmux_server, [{"kind": "crash"}])
 
-    await manager.ensure(task, Role.IMPLEMENTER)
-    first_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
-    assert first_session_id is not None
+    try:
+        await manager.ensure(task, Role.IMPLEMENTER)
+        first_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
+        assert first_session_id is not None
+        assert manager.launched_fresh(task.id, Role.IMPLEMENTER)
 
-    pane_id = task.panes[Role.IMPLEMENTER]
-    pane = TmuxPane(tmux, pane_id, SystemClock())
-    await pane.paste_line("go")
-    await wait_until(lambda: tmux.is_pane_dead(pane_id), timeout=_WAIT_TIMEOUT)
+        pane_id = task.panes[Role.IMPLEMENTER]
+        pane = TmuxPane(tmux, pane_id, SystemClock())
+        await pane.paste_line("go")
+        await wait_until(lambda: tmux.is_pane_dead(pane_id), timeout=_WAIT_TIMEOUT)
 
-    await manager.ensure(task, Role.IMPLEMENTER)
-    second_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
-    assert second_session_id == first_session_id
-    assert len(runs.for_task(task.id)) == 2
+        await manager.ensure(task, Role.IMPLEMENTER)
+        second_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
+        assert second_session_id == first_session_id
+        assert len(runs.for_task(task.id)) == 2
+        assert not manager.launched_fresh(task.id, Role.IMPLEMENTER)
+    finally:
+        await manager.shutdown()
 
 
 async def test_ensure_attaches_after_engine_restart(
@@ -103,7 +109,7 @@ async def test_ensure_attaches_after_engine_restart(
 ) -> None:
     tmux = build_tmux(tmux_server)
     task_roots = build_task_roots(SubprocessRunner(), tmp_path)
-    settings = make_settings(implementer_ladder=[FAKE_RUNG])
+    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
     tasks, runs = build_stores(connection, SystemClock())
     first_manager = build_session_manager(
         tmux=tmux,
@@ -115,11 +121,14 @@ async def test_ensure_attaches_after_engine_restart(
     )
     task = await _build_task(tmux, connection, tmp_path, task_roots)
 
-    await first_manager.ensure(task, Role.IMPLEMENTER)
-    started_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
-    await wait_until(
-        lambda: _has_agent_state(runs, task.id, Role.IMPLEMENTER), timeout=_WAIT_TIMEOUT
-    )
+    try:
+        await first_manager.ensure(task, Role.IMPLEMENTER)
+        started_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
+        await wait_until(
+            lambda: _has_agent_state(runs, task.id, Role.IMPLEMENTER), timeout=_WAIT_TIMEOUT
+        )
+    finally:
+        await first_manager.shutdown()
 
     second_manager = build_session_manager(
         tmux=tmux,
@@ -129,11 +138,15 @@ async def test_ensure_attaches_after_engine_restart(
         settings=settings,
         clock=SystemClock(),
     )
-    await second_manager.ensure(task, Role.IMPLEMENTER)
+    try:
+        await second_manager.ensure(task, Role.IMPLEMENTER)
 
-    runs_for_task = runs.for_task(task.id)
-    assert len(runs_for_task) == 1
-    assert runs_for_task[0].session_id == started_session_id
+        runs_for_task = runs.for_task(task.id)
+        assert len(runs_for_task) == 1
+        assert runs_for_task[0].session_id == started_session_id
+        assert not second_manager.launched_fresh(task.id, Role.IMPLEMENTER)
+    finally:
+        await second_manager.shutdown()
 
 
 async def test_ensure_relaunches_with_resume_on_rung_change(
@@ -141,7 +154,9 @@ async def test_ensure_relaunches_with_resume_on_rung_change(
 ) -> None:
     tmux = build_tmux(tmux_server)
     task_roots = build_task_roots(SubprocessRunner(), tmp_path)
-    settings = make_settings(implementer_ladder=[FAKE_RUNG, FAKE_RUNG_2])
+    settings = make_settings(
+        implementer_ladder=[FAKE_RUNG, FAKE_RUNG_2], agents=fake_agent_settings()
+    )
     tasks, runs = build_stores(connection, SystemClock())
     manager = build_session_manager(
         tmux=tmux,
@@ -153,24 +168,30 @@ async def test_ensure_relaunches_with_resume_on_rung_change(
     )
     task = await _build_task(tmux, connection, tmp_path, task_roots)
 
-    await manager.ensure(task, Role.IMPLEMENTER)
-    first_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
+    try:
+        await manager.ensure(task, Role.IMPLEMENTER)
+        first_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
 
-    rung_index = dict(task.rung_index)
-    rung_index[Role.IMPLEMENTER] = 1
-    transition = dataclasses.replace(Transition.stay(task, step=task.step), rung_index=rung_index)
-    tasks.apply_transition(task.id, transition)
-    task = tasks.get(task.id)
-    assert task is not None
+        rung_index = dict(task.rung_index)
+        rung_index[Role.IMPLEMENTER] = 1
+        transition = dataclasses.replace(
+            Transition.stay(task, step=task.step), rung_index=rung_index
+        )
+        tasks.apply_transition(task.id, transition)
+        task = tasks.get(task.id)
+        assert task is not None
 
-    await manager.ensure(task, Role.IMPLEMENTER)
-    second_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
-    assert second_session_id == first_session_id
+        await manager.ensure(task, Role.IMPLEMENTER)
+        second_session_id = _live_run(runs, task.id, Role.IMPLEMENTER).session_id
+        assert second_session_id == first_session_id
+        assert not manager.launched_fresh(task.id, Role.IMPLEMENTER)
 
-    runs_for_task = runs.for_task(task.id)
-    assert len(runs_for_task) == 2
-    assert runs_for_task[0].model == FAKE_RUNG_2.model
-    assert runs_for_task[1].model == FAKE_RUNG.model
+        runs_for_task = runs.for_task(task.id)
+        assert len(runs_for_task) == 2
+        assert runs_for_task[0].model == FAKE_RUNG_2.model
+        assert runs_for_task[1].model == FAKE_RUNG.model
+    finally:
+        await manager.shutdown()
 
 
 async def test_exit_task_sends_exit_input_and_closes_the_run(
@@ -178,7 +199,7 @@ async def test_exit_task_sends_exit_input_and_closes_the_run(
 ) -> None:
     tmux = build_tmux(tmux_server)
     task_roots = build_task_roots(SubprocessRunner(), tmp_path)
-    settings = make_settings(implementer_ladder=[FAKE_RUNG])
+    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
     tasks, runs = build_stores(connection, SystemClock())
     manager = build_session_manager(
         tmux=tmux,

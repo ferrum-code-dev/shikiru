@@ -10,9 +10,11 @@ from fake_agent.agent import create as create_fake_agent
 
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import SystemClock
+from shikiru.config.settings import AgentConfig
 from shikiru.domain.commands import Submit
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
+from shikiru.engine.agents import AgentPool
 from shikiru.engine.sessions import SessionManager
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
@@ -20,6 +22,7 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.decorator import PaneDecorator
+from shikiru.tmux.pane import TmuxPane
 from shikiru.workspace.git import Git
 from shikiru.workspace.roots import TaskRootBuilder
 
@@ -39,6 +42,11 @@ def build_registry() -> AgentRegistry:
     registry = AgentRegistry()
     registry.register(FAKE_AGENT_NAME, create_fake_agent)
     return registry
+
+
+def fake_agent_settings() -> dict[str, AgentConfig]:
+    """The `[agents.fake]` table every `AgentPool.get("fake")` call needs to find."""
+    return {FAKE_AGENT_NAME: AgentConfig()}
 
 
 def build_task_roots(runner: SubprocessRunner, project_root: Path) -> TaskRootBuilder:
@@ -126,12 +134,16 @@ def build_session_manager(
     real-time paste delay with it.
     """
     runner = SubprocessRunner()
-    return SessionManager(
+    resolved_pane_clock = pane_clock if pane_clock is not None else SystemClock()
+    agent_pool = AgentPool(
         build_registry(),
         runner,
-        agent_clock=agent_clock if agent_clock is not None else SystemClock(),
-        tmux=tmux,
-        pane_clock=pane_clock if pane_clock is not None else SystemClock(),
+        settings,
+        agent_clock if agent_clock is not None else SystemClock(),
+    )
+    return SessionManager(
+        agent_pool,
+        lambda pane_id: TmuxPane(tmux, pane_id, resolved_pane_clock),
         tasks=tasks,
         runs=runs,
         task_roots=build_task_roots(runner, project_root),

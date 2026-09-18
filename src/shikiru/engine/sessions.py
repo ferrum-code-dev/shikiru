@@ -12,38 +12,43 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import AgentContext, LaunchSpec, SessionStarted
-from shikiru.config.settings import AgentConfig
+from shikiru.agents.contracts import (
+    PROJECT_ENV_VAR,
+    ROLE_ENV_VAR,
+    RUN_DIR_ENV_VAR,
+    SLOT_ENV_VAR,
+    TASK_ENV_VAR,
+    LaunchSpec,
+    SessionStarted,
+)
 from shikiru.domain.ladder import pick_rung
-from shikiru.engine.monitor import PaneDied, SessionMonitor, Stalled, decorate_pane
+from shikiru.engine.decorations import decorate_pane
+from shikiru.engine.monitor import PaneDied, SessionMonitor, Stalled
 from shikiru.errors import CommandFailed, ShikiruError
-from shikiru.tmux.pane import TmuxPane
 from shikiru.workspace.roots import run_dir
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from shikiru.agents.contracts import AgentSession, InteractiveAgent, Rung
-    from shikiru.agents.registry import AgentRegistry
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Role, Task
+    from shikiru.engine.agents import AgentPool
     from shikiru.engine.monitor import MonitorSignal
-    from shikiru.process import SubprocessRunner
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
-    from shikiru.tmux.client import Tmux
     from shikiru.tmux.decorator import PaneDecorator
+    from shikiru.tmux.pane import TmuxPane
     from shikiru.workspace.roots import TaskRootBuilder
 
-PROJECT_ENV_VAR = "SHIKIRU_PROJECT"
-TASK_ENV_VAR = "SHIKIRU_TASK"
-SLOT_ENV_VAR = "SHIKIRU_SLOT"
-
 EXIT_KILL_DELAY_SECONDS = 10
+_EXIT_POLL_INTERVAL_SECONDS = 1
 
 
 class SessionLaunchFailedError(ShikiruError):
@@ -56,6 +61,7 @@ class _LiveSession:
     session_id: str | None
     session: AgentSession
     run_id: int
+    fresh: bool
     monitor: SessionMonitor
     monitor_task: asyncio.Task[None]
     decorate_task: asyncio.Task[None]
@@ -66,12 +72,9 @@ class SessionManager:
 
     def __init__(
         self,
-        registry: AgentRegistry,
-        runner: SubprocessRunner,
+        agent_pool: AgentPool,
+        pane_factory: Callable[[str], TmuxPane],
         *,
-        agent_clock: Clock,
-        tmux: Tmux,
-        pane_clock: Clock,
         tasks: TaskStore,
         runs: RunStore,
         task_roots: TaskRootBuilder,
@@ -80,18 +83,9 @@ class SessionManager:
         clock: Clock,
         decorator: PaneDecorator,
     ) -> None:
-        """Build sessions through `registry`/`runner`/`agent_clock`, monitor with `clock`.
-
-        `pane_clock` times pane injection (`TmuxPane`'s real-time paste delay); `clock` times
-        this manager's own polling and timeouts. In production both are the same `SystemClock`;
-        tests may split them so the fake agent's own real-time hook polling isn't frozen by a
-        `FakeClock` driving deterministic stall/launch-timeout assertions.
-        """
-        self._registry = registry
-        self._runner = runner
-        self._agent_clock = agent_clock
-        self._tmux = tmux
-        self._pane_clock = pane_clock
+        """Resolve agents through `agent_pool`, panes through `pane_factory`, time with `clock`."""
+        self._agent_pool = agent_pool
+        self._pane_factory = pane_factory
         self._tasks = tasks
         self._runs = runs
         self._task_roots = task_roots
@@ -99,7 +93,6 @@ class SessionManager:
         self._settings = settings
         self._clock = clock
         self._decorator = decorator
-        self._agents: dict[str, InteractiveAgent] = {}
         self._live: dict[tuple[str, Role], _LiveSession] = {}
 
     async def ensure(self, task: Task, role: Role) -> AgentSession:
@@ -114,7 +107,7 @@ class SessionManager:
                 return tracked.session
             if pane_alive and tracked.rung.agent == rung.agent:
                 resume_session_id = tracked.session_id
-                await pane.paste_line(self._agent(rung.agent).keys.exit_input)
+                await pane.paste_line(self._agent_pool.get(rung.agent).keys.exit_input)
                 await self._forget(task.id, role)
                 return await self._relaunch(
                     task, role, pane, rung, resume_session_id=resume_session_id
@@ -131,23 +124,38 @@ class SessionManager:
         return await self._relaunch(task, role, pane, rung, resume_session_id=None)
 
     async def exit_task(self, task: Task) -> None:
-        """Exit every live session `task` still holds, then kill its panes (03 §4.1 task end)."""
+        """Exit every live session `task` still holds, then kill any pane still alive.
+
+        03 §4.1: sessions get `keys.exit_input` and a chance to exit gracefully; a pane still
+        alive once `EXIT_KILL_DELAY_SECONDS` have passed is killed outright. Polling for death
+        instead of always sleeping the full delay means the common case (every agent exits
+        promptly) doesn't pay for the worst case.
+        """
         for key in [key for key in self._live if key[0] == task.id]:
             live = self._live[key]
             pane = self._pane(task, key[1])
             with suppress(CommandFailed):
-                await pane.paste_line(self._agent(live.rung.agent).keys.exit_input)
+                await pane.paste_line(self._agent_pool.get(live.rung.agent).keys.exit_input)
             self._runs.close(live.run_id)
             await self._forget(*key)
-        await self._clock.sleep(EXIT_KILL_DELAY_SECONDS)
-        for pane_id in task.panes.values():
-            if not await self._tmux.is_pane_dead(pane_id):
-                await self._tmux.kill_pane(pane_id)
+        survivors = await self._await_pane_deaths(list(task.panes.values()))
+        for pane_id in survivors:
+            await self._pane_factory(pane_id).kill()
+
+    async def _await_pane_deaths(self, pane_ids: list[str]) -> list[str]:
+        deadline = self._clock.now() + timedelta(seconds=EXIT_KILL_DELAY_SECONDS)
+        survivors = pane_ids
+        while survivors:
+            survivors = [pid for pid in survivors if await self._pane_factory(pid).is_alive()]
+            if not survivors or self._clock.now() >= deadline:
+                return survivors
+            await self._clock.sleep(_EXIT_POLL_INTERVAL_SECONDS)
+        return survivors
 
     async def _attach(
         self, task: Task, role: Role, pane: TmuxPane, rung: Rung, run: Run
     ) -> AgentSession:
-        agent = self._agent(rung.agent)
+        agent = self._agent_pool.get(rung.agent)
         spec = self._build_spec(task, role, rung, resume_session_id=run.session_id)
         session = await agent.attach(spec, pane, run.agent_state)
         return await self._start_monitoring(
@@ -160,6 +168,7 @@ class SessionManager:
             session_id=run.session_id,
             session=session,
             expects_started=False,
+            fresh=False,
         )
 
     async def _relaunch(
@@ -175,7 +184,7 @@ class SessionManager:
         if live_run is not None:
             self._runs.exit(live_run.id)
         run = self._runs.start(task.id, role, rung)
-        agent = self._agent(rung.agent)
+        agent = self._agent_pool.get(rung.agent)
         spec = self._build_spec(task, role, rung, resume_session_id=resume_session_id)
         session = await agent.launch(spec, pane)
         return await self._start_monitoring(
@@ -188,6 +197,7 @@ class SessionManager:
             session_id=None,
             session=session,
             expects_started=True,
+            fresh=resume_session_id is None,
         )
 
     async def _start_monitoring(
@@ -202,6 +212,7 @@ class SessionManager:
         session_id: str | None,
         session: AgentSession,
         expects_started: bool,
+        fresh: bool,
     ) -> AgentSession:
         monitor = SessionMonitor(
             session,
@@ -243,11 +254,21 @@ class SessionManager:
             session_id=session_id,
             session=session,
             run_id=run_id,
+            fresh=fresh,
             monitor=monitor,
             monitor_task=monitor_task,
             decorate_task=decorate_task,
         )
         return session
+
+    def launched_fresh(self, task_id: str, role: Role) -> bool:
+        """Return whether `task_id`'s `role` session was just launched with no prior session.
+
+        03 §4.1's last row: when true, the caller's first turn should be a `handoff` if the
+        task already has earlier reports. Resuming, attaching or an unchanged live session are
+        all `False`: only a launch with no `resume_session_id` is fresh.
+        """
+        return self._live[(task_id, role)].fresh
 
     def subscribe(self, task_id: str, role: Role) -> asyncio.Queue[MonitorSignal]:
         """Subscribe to `task_id`'s `role` session's fan-out (the only way to read its signals)."""
@@ -256,6 +277,15 @@ class SessionManager:
     def unsubscribe(self, task_id: str, role: Role, queue: asyncio.Queue[MonitorSignal]) -> None:
         """Stop `queue` from receiving `task_id`'s `role` session's signals."""
         self._live[(task_id, role)].monitor.unsubscribe(queue)
+
+    async def shutdown(self) -> None:
+        """Cancel every live session's monitor and decorator, touching no pane or agent.
+
+        For engine shutdown: once the process is stopping, nothing needs to keep polling a
+        session that is about to disappear anyway.
+        """
+        for key in list(self._live):
+            await self._forget(*key)
 
     @staticmethod
     async def _await_started(queue: asyncio.Queue[MonitorSignal]) -> str | None:
@@ -278,33 +308,26 @@ class SessionManager:
             with suppress(asyncio.CancelledError):
                 await task
 
-    def _agent(self, name: str) -> InteractiveAgent:
-        cached = self._agents.get(name)
-        if cached is not None:
-            return cached
-        config = self._settings.agents.get(name, AgentConfig())
-        context = AgentContext(options=config.options, runner=self._runner, clock=self._agent_clock)
-        agent = self._registry.create(name, context)
-        self._agents[name] = agent
-        return agent
-
     def _pane(self, task: Task, role: Role) -> TmuxPane:
         pane_id = task.panes.get(role)
         if pane_id is None:
             message = f"{task.id} has no pane assigned for {role.value}"
             raise ShikiruError(message)
-        return TmuxPane(self._tmux, pane_id, self._pane_clock)
+        return self._pane_factory(pane_id)
 
     def _build_spec(
         self, task: Task, role: Role, rung: Rung, *, resume_session_id: str | None
     ) -> LaunchSpec:
+        task_run_dir = run_dir(self._project_root, task.id)
         return LaunchSpec(
             rung=rung,
             role=role.value,
             cwd=self._task_roots.task_root(task.id),
-            run_dir=run_dir(self._project_root, task.id),
+            run_dir=task_run_dir,
             add_dirs=(),
             env={
+                RUN_DIR_ENV_VAR: str(task_run_dir),
+                ROLE_ENV_VAR: role.value,
                 PROJECT_ENV_VAR: self._settings.project.name,
                 TASK_ENV_VAR: task.id,
                 SLOT_ENV_VAR: str(self._require_slot(task)),

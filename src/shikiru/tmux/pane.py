@@ -51,3 +51,7 @@ class TmuxPane:
     async def send_keys(self, *keys: str) -> None:
         """Send `keys` to this pane, e.g. an interrupt or exit sequence."""
         await self._tmux.send_keys(self._pane_id, *keys)
+
+    async def kill(self) -> None:
+        """Kill this pane outright (03 §4.1 task end, after the exit grace period)."""
+        await self._tmux.kill_pane(self._pane_id)

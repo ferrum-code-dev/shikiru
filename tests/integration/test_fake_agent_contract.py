@@ -89,13 +89,14 @@ class TestFakeAgentContract(AgentContractSuite):
     def build_spec(self, tmp_path: Path, *, resume_session_id: str | None) -> LaunchSpec:
         repo = tmp_path / "repo"
         repo.mkdir(parents=True, exist_ok=True)
+        run_dir = tmp_path / "run"
         return LaunchSpec(
             rung=Rung(agent="fake", model=_MODEL, effort=None),
             role=_ROLE,
             cwd=repo,
-            run_dir=tmp_path / "run",
+            run_dir=run_dir,
             add_dirs=(),
-            env={},
+            env={RUN_DIR_ENV_VAR: str(run_dir), ROLE_ENV_VAR: _ROLE},
             resume_session_id=resume_session_id,
         )
 
