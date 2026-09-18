@@ -56,9 +56,9 @@ def build_registry() -> AgentRegistry:
     return registry
 
 
-def fake_agent_settings() -> dict[str, AgentConfig]:
-    """The `[agents.fake]` table every `AgentPool.get("fake")` call needs to find."""
-    return {FAKE_AGENT_NAME: AgentConfig()}
+def fake_engine_settings() -> Settings:
+    """Settings whose implementer ladder is the fake agent, with every ladder agent configured."""
+    return make_settings(implementer_ladder=[FAKE_RUNG], agents={FAKE_AGENT_NAME: AgentConfig()})
 
 
 def build_tmux(tmux_server: TmuxServer) -> Tmux:
@@ -261,7 +261,7 @@ async def engine_env(
     """
     tmux = build_tmux(tmux_server)
     tasks, runs = build_stores(connection, SystemClock())
-    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
+    settings = fake_engine_settings()
     manager = build_session_manager(
         tmux=tmux,
         tasks=tasks,

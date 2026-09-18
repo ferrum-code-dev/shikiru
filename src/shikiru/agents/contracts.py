@@ -34,6 +34,12 @@ PROJECT_ENV_VAR = "SHIKIRU_PROJECT"
 TASK_ENV_VAR = "SHIKIRU_TASK"
 SLOT_ENV_VAR = "SHIKIRU_SLOT"
 
+
+def role_dir(run_dir: Path, role: str) -> Path:
+    """Return `role`'s directory under `run_dir`, where its per-role files live (02 §5)."""
+    return run_dir / role
+
+
 CostBasis = Literal["billed", "api_equivalent", "unknown"]
 
 

@@ -46,6 +46,8 @@ IMPLEMENTER_RUNGS = [
 ]
 HELPER_RUNG = Rung(agent="claude", model="haiku", effort="low")
 
+DEFAULT_AGENTS = {"claude": AgentConfig(), "codex": AgentConfig()}
+
 MAX_ITERATIONS = 5
 ESCALATE_AFTER = 2
 
@@ -78,7 +80,7 @@ def make_settings(
 ) -> Settings:
     return Settings(
         project=ProjectConfig(name="demo"),
-        agents=agents or {},
+        agents={**DEFAULT_AGENTS, **(agents or {})},
         orchestration=OrchestrationConfig(
             max_parallel=2,
             max_iterations=max_iterations,

@@ -36,7 +36,7 @@ from fake_agent.signals import (
     turn_failed_payload,
     turn_tokens,
 )
-from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR
+from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir
 from shikiru.agents.sdk.hooks import HookRecorder
 from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
 from shikiru.cli.report import resolve_current_turn_dir
@@ -94,14 +94,14 @@ def _build_context() -> ReplContext:
     run_dir = Path(_require_env(RUN_DIR_ENV_VAR))
     role = _require_env(ROLE_ENV_VAR)
     session_id = _require_env(SESSION_ID_ENV_VAR)
-    role_dir = run_dir / role
-    state_dir = role_dir / STATE_DIRNAME
+    role_path = role_dir(run_dir, role)
+    state_dir = role_path / STATE_DIRNAME
     state_dir.mkdir(parents=True, exist_ok=True)
     return ReplContext(
         run_dir=run_dir,
         role=role,
         session_id=session_id,
-        recorder=HookRecorder(role_dir),
+        recorder=HookRecorder(role_path),
         runner=SubprocessRunner(),
         cwd=Path.cwd(),
         state_path=state_dir / f"{session_id}.json",
@@ -247,7 +247,8 @@ async def _submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text:
         else None
     )
     report = _build_report(kind, step, prompt_text, commit)
-    report_path = await asyncio.to_thread(_write_report_file, ctx.run_dir / ctx.role, report)
+    role_path = role_dir(ctx.run_dir, ctx.role)
+    report_path = await asyncio.to_thread(_write_report_file, role_path, report)
     try:
         await ctx.runner.run(
             ["shikiru", "report", "--file", str(report_path)],

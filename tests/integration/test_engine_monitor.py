@@ -11,8 +11,8 @@ from shikiru.domain.runs import NO_USAGE
 from shikiru.domain.tasks import Hold, Role
 from shikiru.engine.monitor import Stalled
 from tests.support.clock import FakeClock
-from tests.support.engine import FAKE_RUNG, fake_agent_settings, make_monitor, set_script
-from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.engine import FAKE_RUNG, fake_engine_settings, make_monitor, set_script
+from tests.support.factories import TASK_CREATED_AT
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -98,7 +98,7 @@ async def test_stall_is_published_after_the_configured_timeout(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
+    settings = fake_engine_settings()
     manager = engine_env.build_manager(settings, clock=clock)
     task = await engine_env.build_task()
     await set_script(tmux_server, [{"kind": "stall"}])
@@ -123,7 +123,7 @@ async def test_launch_timeout_publishes_stalled(engine_env: EngineEnv) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     task = await engine_env.build_task()
     run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
+    settings = fake_engine_settings()
     monitor = make_monitor(
         _SilentSession(),
         _AlwaysAlivePane(),
@@ -153,7 +153,7 @@ async def test_stall_is_published_once_per_episode(engine_env: EngineEnv) -> Non
     clock = FakeClock(TASK_CREATED_AT)
     task = await engine_env.build_task()
     run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
+    settings = fake_engine_settings()
     session = _ScriptedSession()
     monitor = make_monitor(
         session,
@@ -200,7 +200,7 @@ async def test_tick_persists_facts_only_on_change(
     clock = FakeClock(TASK_CREATED_AT)
     task = await engine_env.build_task()
     run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
+    settings = fake_engine_settings()
     session = _ScriptedSession()
     monitor = make_monitor(
         session,

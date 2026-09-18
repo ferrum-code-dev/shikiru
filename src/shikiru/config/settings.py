@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from shikiru.agents.contracts import Rung
 
@@ -155,3 +155,18 @@ class Settings(ConfigModel):
     roles: RolesConfig
     dashboard: DashboardConfig
     notify: NotifyConfig
+
+    @model_validator(mode="after")
+    def _every_ladder_agent_has_a_table(self) -> Settings:
+        """Fail fast, naming every ladder agent with no `[agents.<name>]` table."""
+        wanted = {rung.agent for rung in self.roles.leader.ladder}
+        wanted.update(rung.agent for rung in self.roles.implementer.ladder)
+        for override in self.roles.implementer.complexity.values():
+            wanted.update(rung.agent for rung in override.ladder)
+        wanted.update(rung.agent for rung in self.roles.helper.ladder)
+        missing = sorted(wanted - self.agents.keys())
+        if missing:
+            names = ", ".join(missing)
+            message = f"no [agents.<name>] table for: {names}"
+            raise ValueError(message)
+        return self

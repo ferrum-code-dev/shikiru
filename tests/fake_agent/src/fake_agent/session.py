@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from fake_agent.signals import signal_from_entry, usage_from_entries
-from shikiru.agents.sdk.hooks import HOOKS_FILENAME
-from shikiru.agents.sdk.jsonl import JsonlTail
+from shikiru.agents.contracts import role_dir
+from shikiru.agents.sdk.hooks import HookRecorder
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Mapping
@@ -43,7 +43,7 @@ class FakeSession:
         model: str,
     ) -> None:
         """Tail `run_dir/role/hooks.jsonl` from `start_offset`, polled by `clock`."""
-        self._hooks_path = run_dir / role / HOOKS_FILENAME
+        self._recorder = HookRecorder(role_dir(run_dir, role))
         self._session_id = session_id
         self._offset = start_offset
         self._clock = clock
@@ -53,10 +53,9 @@ class FakeSession:
 
     async def signals(self) -> AsyncGenerator[AgentSignal]:
         """Yield every hook entry appended since this session's start, for its one reader."""
-        tail = JsonlTail(self._hooks_path)
         while True:
             advanced = False
-            for entry in tail.read_from(self._offset):
+            for entry in self._recorder.tail(self._offset):
                 self._offset = entry.offset
                 advanced = True
                 yield signal_from_entry(entry.value, self._reset_time)
@@ -69,7 +68,7 @@ class FakeSession:
 
     async def usage(self) -> Usage:
         """Recompute this session id's cumulative usage from the whole hooks file."""
-        entries = [entry.value for entry in JsonlTail(self._hooks_path).read_from(0)]
+        entries = [entry.value for entry in self._recorder.tail(0)]
         return usage_from_entries(
             entries, session_id=self._session_id, model=self._model, prices=self._prices
         )

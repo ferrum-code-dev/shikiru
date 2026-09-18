@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from importlib.metadata import entry_points
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from textual.app import App
 
+from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, WidgetContext
 from shikiru.errors import ConfigError
 
@@ -20,22 +20,19 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import DashboardWidget, WidgetServices
     from shikiru.store.reader import StateReader
 
+_WIDGET_PLUGIN_KIND = "dashboard widget plugin"
+
 
 class WidgetPluginError(ConfigError):
     """A configured dashboard widget name has no matching, loadable entry point."""
 
 
 def _load_widget(name: str) -> DashboardWidget:
-    matches = [ep for ep in entry_points(group=WIDGET_ENTRY_POINT_GROUP) if ep.name == name]
-    if not matches:
-        message = f"no dashboard widget plugin named {name!r} is registered"
-        raise WidgetPluginError(message)
-    try:
-        widget_class = matches[0].load()
-        return widget_class()
-    except Exception as error:
-        message = f"dashboard widget plugin {name!r} failed to load: {error}"
-        raise WidgetPluginError(message) from error
+    loaded = load_unique_entry_point(
+        WIDGET_ENTRY_POINT_GROUP, name, WidgetPluginError, _WIDGET_PLUGIN_KIND
+    )
+    widget_class = cast("type[DashboardWidget]", loaded)
+    return widget_class()
 
 
 class DashboardApp(App[None]):

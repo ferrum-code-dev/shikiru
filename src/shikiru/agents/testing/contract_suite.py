@@ -44,6 +44,7 @@ from shikiru.agents.contracts import (
     SessionEnded,
     SessionStarted,
     TurnEnded,
+    role_dir,
 )
 from shikiru.agents.testing.resume import RESUME_NONCE_PROMPT, RESUME_RECALL_PROMPT
 from shikiru.clock import SystemClock
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import (
         AgentFactory,
+        AgentSession,
         AgentSignal,
         InteractiveAgent,
         LaunchSpec,
@@ -81,14 +83,23 @@ _GIT_INIT_TIMEOUT_SECONDS = 10.0
 _SIGNAL_TIMEOUT_SECONDS = 15.0
 HEADLESS_ASK_TIMEOUT = timedelta(seconds=15)
 
+_REMAIN_ON_EXIT_OPTION = "remain-on-exit"
+_REMAIN_ON_EXIT_VALUE = "on"
+_FALLBACK_SESSION_NAME = "test"
+
 _TURNS_DIRNAME = "turns"
 _TURN_NAME = "01-turn"
 
 
 class TmuxSocket(Protocol):
-    """What the live checks need from a private tmux server (structurally, `tmux_server`)."""
+    """What the live checks need from a private tmux server (structurally, `tmux_server`).
+
+    `session` is the name of the session scratch windows are created in; `_make_pane`
+    falls back to `_FALLBACK_SESSION_NAME` for a double that doesn't (yet) provide it.
+    """
 
     socket_name: str
+    session: str
     runner: SubprocessRunner
 
 
@@ -167,16 +178,16 @@ def _prepare_turn(run_dir: Path, role: str, kind: ReportKind) -> None:
     (turn_dir / REPORT_KIND_FILENAME).write_text(kind.value)
     (turn_dir / REPORT_SCHEMA_FILENAME).write_text(json.dumps(schema_for(kind)))
     (turn_dir / REPORT_FILENAME).unlink(missing_ok=True)
-    role_dir = run_dir / role
-    role_dir.mkdir(parents=True, exist_ok=True)
-    link = role_dir / CURRENT_TURN_LINK_NAME
+    role_path = role_dir(run_dir, role)
+    role_path.mkdir(parents=True, exist_ok=True)
+    link = role_path / CURRENT_TURN_LINK_NAME
     link.unlink(missing_ok=True)
     link.symlink_to(turn_dir)
 
 
-def _place_sample_files(role_dir: Path, files: Mapping[str, Path]) -> None:
+def _place_sample_files(role_path: Path, files: Mapping[str, Path]) -> None:
     for relative_path, source_path in files.items():
-        destination = role_dir / relative_path
+        destination = role_path / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(source_path.read_bytes())
 
@@ -184,7 +195,9 @@ def _place_sample_files(role_dir: Path, files: Mapping[str, Path]) -> None:
 async def _make_pane(tmux_server: TmuxSocket, cwd: Path) -> TmuxPane:
     tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
     window_name = f"{_SCRATCH_WINDOW_PREFIX}{uuid.uuid4().hex[:8]}"
-    pane_id = await tmux.new_window("test", name=window_name, cwd=cwd)
+    session = getattr(tmux_server, "session", _FALLBACK_SESSION_NAME)
+    pane_id = await tmux.new_window(session, name=window_name, cwd=cwd)
+    await tmux.set_window_option(pane_id, _REMAIN_ON_EXIT_OPTION, _REMAIN_ON_EXIT_VALUE)
     return TmuxPane(tmux, pane_id, SystemClock())
 
 
@@ -285,7 +298,7 @@ class AgentContractSuite:
         spec = self.build_spec(tmp_path, resume_session_id=case.session_id)
         pane = RecordingPaneHandle()
         session = await agent.launch(spec, pane)
-        await asyncio.to_thread(_place_sample_files, spec.run_dir / spec.role, case.files)
+        await asyncio.to_thread(_place_sample_files, role_dir(spec.run_dir, spec.role), case.files)
         signals = session.signals()
         collected: list[AgentSignal] = []
         while len(collected) < len(case.expected_signals):
@@ -316,25 +329,31 @@ class AgentContractSuite:
             await agent.launch(case.spec, pane)
             _expect(pane.last_respawn() == case.expected, case.name)
 
+    async def _launch_live(
+        self, tmux_server: TmuxSocket, tmp_path: Path, *, prepare_turn: bool
+    ) -> tuple[InteractiveAgent, LaunchSpec, TmuxPane, AgentSession]:
+        self._require_live()
+        agent = self._build_agent()
+        spec = self.build_spec(tmp_path, resume_session_id=None)
+        await _init_scratch_repo(SubprocessRunner(), spec.cwd)
+        if prepare_turn:
+            _prepare_turn(spec.run_dir, spec.role, self.live_report_kind())
+        pane = await _make_pane(tmux_server, spec.cwd)
+        session = await agent.launch(spec, pane)
+        return agent, spec, pane, session
+
     async def test_live_launch_starts_session(
         self, tmux_server: TmuxSocket, tmp_path: Path
     ) -> None:
-        self._require_live()
-        agent = self._build_agent()
-        spec = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(SubprocessRunner(), spec.cwd)
-        pane = await _make_pane(tmux_server, spec.cwd)
-        session = await agent.launch(spec, pane)
+        _agent, _spec, _pane, session = await self._launch_live(
+            tmux_server, tmp_path, prepare_turn=False
+        )
         await _next_signal(session.signals(), SessionStarted)
 
     async def test_live_turn_completes(self, tmux_server: TmuxSocket, tmp_path: Path) -> None:
-        self._require_live()
-        agent = self._build_agent()
-        spec = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(SubprocessRunner(), spec.cwd)
-        _prepare_turn(spec.run_dir, spec.role, self.live_report_kind())
-        pane = await _make_pane(tmux_server, spec.cwd)
-        session = await agent.launch(spec, pane)
+        _agent, _spec, pane, session = await self._launch_live(
+            tmux_server, tmp_path, prepare_turn=True
+        )
         signals = session.signals()
         await _next_signal(signals, SessionStarted)
         await pane.paste_line("do the thing")
@@ -342,13 +361,9 @@ class AgentContractSuite:
         await _next_signal(signals, TurnEnded)
 
     async def test_live_usage_reports_tokens(self, tmux_server: TmuxSocket, tmp_path: Path) -> None:
-        self._require_live()
-        agent = self._build_agent()
-        spec = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(SubprocessRunner(), spec.cwd)
-        _prepare_turn(spec.run_dir, spec.role, self.live_report_kind())
-        pane = await _make_pane(tmux_server, spec.cwd)
-        session = await agent.launch(spec, pane)
+        _agent, _spec, pane, session = await self._launch_live(
+            tmux_server, tmp_path, prepare_turn=True
+        )
         signals = session.signals()
         await _next_signal(signals, SessionStarted)
         await pane.paste_line("do the thing")
@@ -359,13 +374,9 @@ class AgentContractSuite:
     async def test_live_resume_recalls_context(
         self, tmux_server: TmuxSocket, tmp_path: Path
     ) -> None:
-        self._require_live()
-        agent = self._build_agent()
-        spec = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(SubprocessRunner(), spec.cwd)
-        _prepare_turn(spec.run_dir, spec.role, self.live_report_kind())
-        pane = await _make_pane(tmux_server, spec.cwd)
-        session = await agent.launch(spec, pane)
+        agent, _spec, pane, session = await self._launch_live(
+            tmux_server, tmp_path, prepare_turn=True
+        )
         signals = session.signals()
         started = await _next_signal(signals, SessionStarted)
         if started.session_id is None:
@@ -386,13 +397,9 @@ class AgentContractSuite:
     async def test_live_attach_does_not_replay_signals(
         self, tmux_server: TmuxSocket, tmp_path: Path
     ) -> None:
-        self._require_live()
-        agent = self._build_agent()
-        spec = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(SubprocessRunner(), spec.cwd)
-        _prepare_turn(spec.run_dir, spec.role, self.live_report_kind())
-        pane = await _make_pane(tmux_server, spec.cwd)
-        session = await agent.launch(spec, pane)
+        agent, spec, pane, session = await self._launch_live(
+            tmux_server, tmp_path, prepare_turn=True
+        )
         signals = session.signals()
         await _next_signal(signals, SessionStarted)
         await pane.paste_line("first turn")

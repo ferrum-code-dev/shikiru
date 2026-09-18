@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fake_agent.headless import FakeHeadlessAgent
 from fake_agent.session import FakeSession
-from shikiru.agents.contracts import CheckResult, SessionKeys
+from shikiru.agents.contracts import CheckResult, SessionKeys, role_dir
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
@@ -55,7 +55,7 @@ class FakeOptions(BaseModel):
 
 
 def _hooks_file_size(run_dir: Path, role: str) -> int:
-    path = run_dir / role / HOOKS_FILENAME
+    path = role_dir(run_dir, role) / HOOKS_FILENAME
     return path.stat().st_size if path.is_file() else 0
 
 

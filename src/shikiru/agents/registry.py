@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from importlib.metadata import entry_points
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from shikiru.errors import ConfigError
 
@@ -17,6 +17,34 @@ AGENT_ENTRY_POINT_GROUP = "shikiru.agents"
 
 class AgentPluginError(ConfigError):
     """A named agent plugin is missing, failed to load, or rejected its options."""
+
+
+def _distribution_name(entry_point: EntryPoint) -> str:
+    return entry_point.dist.name if entry_point.dist is not None else "unknown"
+
+
+def load_unique_entry_point(
+    group: str, name: str, error_type: type[ConfigError], kind: str
+) -> object:
+    """Load the sole `name` entry point of `group`, raising `error_type` under `kind`'s label.
+
+    Raises when no entry point named `name` exists, when more than one distribution
+    registers it (naming every distribution instead of silently picking the first), or
+    when loading it raises.
+    """
+    matches = [entry_point for entry_point in entry_points(group=group) if entry_point.name == name]
+    if not matches:
+        message = f"no {kind} named {name!r} is registered or installed"
+        raise error_type(message)
+    if len(matches) > 1:
+        distributions = ", ".join(_distribution_name(match) for match in matches)
+        message = f"{kind} {name!r} is registered by more than one distribution: {distributions}"
+        raise error_type(message)
+    try:
+        return matches[0].load()
+    except Exception as error:
+        message = f"{kind} {name!r} failed to load: {error}"
+        raise error_type(message) from error
 
 
 class AgentRegistry:
@@ -42,23 +70,7 @@ class AgentRegistry:
             raise AgentPluginError(message) from error
 
     def _load_entry_point(self, name: str) -> AgentFactory:
-        matches = [ep for ep in entry_points(group=AGENT_ENTRY_POINT_GROUP) if ep.name == name]
-        if not matches:
-            message = f"no agent plugin named {name!r} is registered or installed"
-            raise AgentPluginError(message)
-        if len(matches) > 1:
-            distributions = ", ".join(self._distribution_name(match) for match in matches)
-            message = (
-                f"agent plugin {name!r} is registered by more than one distribution: "
-                f"{distributions}"
-            )
-            raise AgentPluginError(message)
-        try:
-            return matches[0].load()
-        except Exception as error:
-            message = f"agent plugin {name!r} failed to load: {error}"
-            raise AgentPluginError(message) from error
-
-    @staticmethod
-    def _distribution_name(entry_point: EntryPoint) -> str:
-        return entry_point.dist.name if entry_point.dist is not None else "unknown"
+        loaded = load_unique_entry_point(
+            AGENT_ENTRY_POINT_GROUP, name, AgentPluginError, "agent plugin"
+        )
+        return cast("AgentFactory", loaded)
