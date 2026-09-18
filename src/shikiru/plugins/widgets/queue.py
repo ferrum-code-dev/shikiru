@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from textual.widgets import Static
 
+from shikiru.domain.scheduling import dispatch_sort_key
 from shikiru.domain.tasks import Status, Task
 
 if TYPE_CHECKING:
@@ -15,10 +16,6 @@ if TYPE_CHECKING:
 
 _NO_WAIT_REASON = "-"
 _NO_DEPENDENCIES = "-"
-
-
-def _dispatch_order_key(task: Task) -> tuple[bool, int, int]:
-    return (task.requeued_at is None, -task.priority, task.seq)
 
 
 def _queue_line(task: Task) -> str:
@@ -43,7 +40,7 @@ class QueuePanel(Static):
     async def _refresh(self) -> None:
         queued = sorted(
             self._widget_context.state.list_tasks(statuses=(Status.QUEUED,)),
-            key=_dispatch_order_key,
+            key=dispatch_sort_key,
         )
         lines = [_queue_line(task) for task in queued]
         self.update("\n".join(lines) if lines else "queue empty")

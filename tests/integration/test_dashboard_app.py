@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.clock import SystemClock
+from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.domain.commands import Submit
 from shikiru.store.commands import CommandQueue
@@ -50,6 +51,7 @@ async def test_dashboard_app_composes_configured_widgets_in_order(
             project_dir=project_dir,
             focus_task=None,
             services=_StubServices(),
+            settings=load_settings(project_dir),
             widget_names=["header", "queue"],
         )
         async with app.run_test() as pilot:
@@ -72,6 +74,7 @@ async def test_dashboard_app_rejects_an_unregistered_widget_name(
             project_dir=project_dir,
             focus_task=None,
             services=_StubServices(),
+            settings=load_settings(project_dir),
             widget_names=["no-such-widget"],
         )
         with pytest.raises(WidgetPluginError):

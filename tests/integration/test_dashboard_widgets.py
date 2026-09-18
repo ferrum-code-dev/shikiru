@@ -4,9 +4,12 @@ import dataclasses
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+from rich.cells import cell_len
+from rich.text import Text
 from textual.app import App, ComposeResult
 
 from shikiru.clock import SystemClock
+from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import RepoStatus, WidgetContext
 from shikiru.domain.commands import Submit
 from shikiru.domain.reports import NewTask
@@ -32,7 +35,12 @@ if TYPE_CHECKING:
     from shikiru.store.database import Database
     from tests.support.store import Connection
 
+
 START = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _plain(content: object) -> str:
+    return content.plain if isinstance(content, Text) else str(content)
 
 
 class _StubServices:
@@ -55,7 +63,9 @@ class _WidgetHostApp(App[None]):
         yield self._widget
 
 
-def _submit_task(connection: Connection, clock: FakeClock, *, mode: Mode = Mode.IMPLEMENT) -> str:
+def _submit_task(
+    connection: Connection, clock: FakeClock, *, mode: Mode | None = Mode.IMPLEMENT
+) -> str:
     queue = CommandQueue(connection, clock)
     queued = queue.append(Submit(task_id="", title="Add retry", request="Add retry", mode=mode))
     assert isinstance(queued.command, Submit)
@@ -73,6 +83,7 @@ def _context(
         project_dir=project_dir,
         focus_task=None,
         services=services or _StubServices(),
+        settings=load_settings(project_dir),
     )
 
 
@@ -133,9 +144,72 @@ async def test_strips_shows_the_active_task_at_its_current_step(
         widget = cast("StripsPanel", StripsWidget().create(context))
         async with _WidgetHostApp(widget).run_test() as pilot:
             await pilot.pause()
-            text = cast("str", widget.content)
+            text = _plain(widget.content)
             assert task_id in text
             assert "Implement" in text
+    finally:
+        reader.close()
+
+
+async def test_strips_shows_only_a_triage_panel_before_the_mode_is_decided(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id = _submit_task(connection, clock, mode=None)
+
+    reader = StateReader(database, SystemClock())
+    try:
+        context = _context(reader, project_dir)
+        widget = cast("StripsPanel", StripsWidget().create(context))
+        async with _WidgetHostApp(widget).run_test() as pilot:
+            await pilot.pause()
+            text = _plain(widget.content)
+            assert task_id in text
+            assert "Triage" in text
+            assert "Implement" not in text
+            assert "Merge" not in text
+    finally:
+        reader.close()
+
+
+async def test_strips_carries_style_information_into_the_rendered_content(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    _submit_task(connection, clock)
+
+    reader = StateReader(database, SystemClock())
+    try:
+        context = _context(reader, project_dir)
+        widget = cast("StripsPanel", StripsWidget().create(context))
+        async with _WidgetHostApp(widget).run_test() as pilot:
+            await pilot.pause()
+            content = widget.content
+            assert isinstance(content, Text)
+            assert content.spans
+    finally:
+        reader.close()
+
+
+async def test_strips_renders_the_narrow_form_in_a_narrow_pane(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    _submit_task(connection, clock)
+
+    reader = StateReader(database, SystemClock())
+    try:
+        context = _context(reader, project_dir)
+        widget = cast("StripsPanel", StripsWidget().create(context))
+        async with _WidgetHostApp(widget).run_test(size=(30, 24)) as pilot:
+            await pilot.pause()
+            text = _plain(widget.content)
+            assert "|" not in text
+            for line in text.splitlines():
+                assert cell_len(line) <= 30
     finally:
         reader.close()
 
@@ -167,7 +241,7 @@ async def test_strips_shows_a_split_parent_as_a_finished_strip_with_its_children
         widget = cast("StripsPanel", StripsWidget().create(context))
         async with _WidgetHostApp(widget).run_test() as pilot:
             await pilot.pause()
-            text = cast("str", widget.content)
+            text = _plain(widget.content)
             assert parent_id in text
             assert child.id in text
     finally:
@@ -188,7 +262,7 @@ async def test_strips_shows_a_paused_stamp_for_a_held_task(
         widget = cast("StripsPanel", StripsWidget().create(context))
         async with _WidgetHostApp(widget).run_test() as pilot:
             await pilot.pause()
-            assert "PAUSED" in cast("str", widget.content)
+            assert "PAUSED" in _plain(widget.content)
     finally:
         reader.close()
 
