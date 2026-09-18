@@ -83,7 +83,12 @@ class EscalationReason(StrEnum):
 
 
 class DomainModel(BaseModel):
-    """Base for domain models: unknown keys are rejected, values are immutable."""
+    """Base for domain models: unknown keys are rejected, fields can't be reassigned.
+
+    `frozen=True` only blocks assigning a new value to a field; a mutable field's own `list` or
+    `dict` can still be mutated in place, which is why callers that need to change one (e.g.
+    `Transition.stay`) copy it first rather than relying on the model to be deeply immutable.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
