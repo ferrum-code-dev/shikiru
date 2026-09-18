@@ -13,13 +13,14 @@ from shikiru.store.reader import StateReader
 _WATCH_TIMEOUT_SECONDS = 30.0
 
 
-async def _wait_for_one_change(reader: StateReader) -> None:
+async def _wait_for_one_change(reader: StateReader, ready_path: Path) -> None:
     changed = asyncio.Event()
 
     async def on_change() -> None:
         changed.set()
 
     watcher = asyncio.ensure_future(reader.watch(on_change))
+    asyncio.get_running_loop().call_soon(ready_path.write_text, "ready")
     try:
         await asyncio.wait_for(changed.wait(), timeout=_WATCH_TIMEOUT_SECONDS)
     finally:
@@ -30,9 +31,7 @@ async def _main(db_path: str, ready_path: str) -> None:
     database = Database(Path(db_path))
     reader = StateReader(database, SystemClock())
     try:
-        reader.data_version()
-        await asyncio.to_thread(Path(ready_path).write_text, "ready")
-        await _wait_for_one_change(reader)
+        await _wait_for_one_change(reader, Path(ready_path))
         print("changed")
     finally:
         reader.close()
