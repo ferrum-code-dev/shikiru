@@ -184,7 +184,7 @@ Gauges (context, quota, CPU, RAM) are green below 70%, yellow below 90%, red abo
 | Context gauge | `○ ◔ ◑ ◕ ●` |
 | Spinner | `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` |
 
-State is never shown by colour alone: each state has a glyph and a word.
+State is never shown by colour alone: each state has a glyph, and a word wherever there is room. The wide strip shows both; the narrow strip (§6.2) shows the glyph alone.
 
 ### 6.2 Task strip (`ui.TaskStrip`)
 
