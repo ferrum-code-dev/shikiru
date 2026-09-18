@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
+    from importlib.metadata import EntryPoint
+
     from shikiru.agents.contracts import AgentContext, AgentFactory, InteractiveAgent
 
 AGENT_ENTRY_POINT_GROUP = "shikiru.agents"
@@ -44,8 +46,19 @@ class AgentRegistry:
         if not matches:
             message = f"no agent plugin named {name!r} is registered or installed"
             raise AgentPluginError(message)
+        if len(matches) > 1:
+            distributions = ", ".join(self._distribution_name(match) for match in matches)
+            message = (
+                f"agent plugin {name!r} is registered by more than one distribution: "
+                f"{distributions}"
+            )
+            raise AgentPluginError(message)
         try:
             return matches[0].load()
         except Exception as error:
             message = f"agent plugin {name!r} failed to load: {error}"
             raise AgentPluginError(message) from error
+
+    @staticmethod
+    def _distribution_name(entry_point: EntryPoint) -> str:
+        return entry_point.dist.name if entry_point.dist is not None else "unknown"
