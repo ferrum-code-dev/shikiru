@@ -1,4 +1,9 @@
-"""`AgentPool`: builds and caches one `InteractiveAgent` per name (04 §1-2)."""
+"""`AgentPool`: builds and caches one `InteractiveAgent` per name (04 §1-2).
+
+Builds through an injected `create` callable rather than an `AgentRegistry` directly, so the
+engine imports only `agents.contracts` (`AGENTS.md`'s boundary rule): callers pass
+`AgentRegistry.create` bound, but the engine itself never imports `agents.registry`.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +13,9 @@ from shikiru.agents.contracts import AgentContext
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from shikiru.agents.contracts import InteractiveAgent
-    from shikiru.agents.registry import AgentRegistry
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.process import SubprocessRunner
@@ -19,10 +25,14 @@ class AgentPool:
     """Resolves a rung's agent name to its `InteractiveAgent`, built once and cached."""
 
     def __init__(
-        self, registry: AgentRegistry, runner: SubprocessRunner, settings: Settings, clock: Clock
+        self,
+        create: Callable[[str, AgentContext], InteractiveAgent],
+        runner: SubprocessRunner,
+        settings: Settings,
+        clock: Clock,
     ) -> None:
-        """Build agents through `registry`/`runner`, from `settings.agents`, timed by `clock`."""
-        self._registry = registry
+        """Build agents by calling `create(name, context)`, timed by `clock`."""
+        self._create = create
         self._runner = runner
         self._settings = settings
         self._clock = clock
@@ -42,6 +52,6 @@ class AgentPool:
             message = f"agent {name!r} is used by a rung but has no [agents.{name}] table"
             raise ConfigError(message)
         context = AgentContext(options=config.options, runner=self._runner, clock=self._clock)
-        agent = self._registry.create(name, context)
+        agent = self._create(name, context)
         self._agents[name] = agent
         return agent

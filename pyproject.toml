@@ -153,6 +153,16 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Engine boundary (AGENTS.md): shikiru.engine imports only shikiru.agents.contracts"
+type = "forbidden"
+source_modules = ["shikiru.engine"]
+forbidden_modules = [
+  "shikiru.agents.registry",
+  "shikiru.agents.sdk",
+  "shikiru.agents.testing",
+]
+
+[[tool.importlinter.contracts]]
 name = "Widget plugins (02 §2): plugins.widgets imports only dashboard.contract, ui and store.reader"
 type = "forbidden"
 source_modules = ["shikiru.plugins.widgets"]
