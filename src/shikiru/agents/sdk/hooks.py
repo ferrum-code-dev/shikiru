@@ -18,7 +18,7 @@ HOOKS_FILENAME = "hooks.jsonl"
 
 
 class HookRecorder:
-    """Appends trimmed JSON lines to one role's `hooks.jsonl`, serialised with `flock`."""
+    """Appends compact JSON lines to one role's `hooks.jsonl`, serialised with `flock`."""
 
     def __init__(self, role_dir: Path) -> None:
         """Record hooks for the role whose files live under `role_dir`."""

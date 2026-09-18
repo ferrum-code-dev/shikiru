@@ -21,9 +21,9 @@ _WRITER_COUNT = 20
 async def _write_hook_via_subprocess(run_dir: Path, index: int) -> None:
     runner = SubprocessRunner()
     payload = {"index": index, "hook_event_name": "PreToolUse"}
-    env = {**os.environ, "SHIKIRU_RUN_DIR": str(run_dir)}
+    env = {**os.environ, "SHIKIRU_RUN_DIR": str(run_dir), "SHIKIRU_ROLE": _ROLE}
     result = await runner.run(
-        [sys.executable, "-m", "shikiru", "hook", _ROLE],
+        [sys.executable, "-m", "shikiru", "hook"],
         timeout=45,
         env=env,
         input_text=json.dumps(payload),

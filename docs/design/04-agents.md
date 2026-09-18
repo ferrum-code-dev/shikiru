@@ -94,7 +94,7 @@ Small, tested building blocks for plugins:
 
 | Block | Purpose |
 |---|---|
-| `HookRecorder` + `shikiru hook` | The hook command appends one trimmed JSON line to `$SHIKIRU_RUN_DIR/$SHIKIRU_ROLE/hooks.jsonl` under `flock`. It does nothing outside Shikiru. `HookRecorder.tail(offset)` yields entries |
+| `HookRecorder` + `shikiru hook` | The hook command appends its payload as one compact JSON line to `$SHIKIRU_RUN_DIR/$SHIKIRU_ROLE/hooks.jsonl` under `flock`, taking both from the launch environment (03 §4). It does nothing when they are unset, i.e. outside Shikiru. `HookRecorder.tail(offset)` yields entries |
 | `JsonlTail` | Incremental reader for agent-written JSONL, safe with partial lines |
 | `ResetTimeParser` | "resets 3:10am (Europe/Warsaw)", ISO, epoch, relative durations → `datetime` |
 | `PriceTable` | Packaged `prices.toml` (per model: input, cache read/write, output per 1M tokens, context window) → `cost_usd`, `context_used_pct` |
@@ -136,7 +136,7 @@ claude (--session-id <uuid> | --resume <id>) --model <m> --effort <e>
        --settings '<json: hooks only>' --add-dir <run_dir> <args>
 ```
 
-- Hooks run `shikiru hook <role>` for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `Notification`, `PostCompact`, `SessionEnd`.
+- Hooks run `shikiru hook` for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `Notification`, `PostCompact`, `SessionEnd`.
 - The hooks merge with user and project hooks. Nothing else in the user's settings is touched.
 
 **Signals**, from hooks (payloads verified):
@@ -189,7 +189,7 @@ claude (--session-id <uuid> | --resume <id>) --model <m> --effort <e>
 
 ```
 codex [resume <id>] -m <m> -c model_reasoning_effort="<e>" --dangerously-bypass-hook-trust
-      -c 'hooks.<Event>=[{hooks=[{type="command",command="shikiru hook <role>"}]}]'   # per event
+      -c 'hooks.<Event>=[{hooks=[{type="command",command="shikiru hook"}]}]'   # per event
       -c 'projects."<cwd>".trust_level="trusted"' -C <cwd> --add-dir <run_dir> --add-dir <git common dirs> <args>
 ```
 
