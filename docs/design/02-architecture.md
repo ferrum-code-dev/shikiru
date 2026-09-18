@@ -4,17 +4,17 @@
 
 ```
  Operator (human)           Operator (tool / AI)                      Agent CLIs (in panes)
-   │ tmux attach               │ shikiru … --json │ shikiru mcp            │ plugin hooks → shikiru hook
-   ▼                           ▼                                           │ shikiru report
+   │ tmux attach               │ shikiru … --json │ shikiru mcp             │ plugin hooks → shikiru hook
+   ▼                           ▼                                            │ shikiru report
 ┌──────────────── tmux session "[shikiru] <project>" ───────────────────────┼──────────┐
 │ window "shikiru": dash --home │ shell                                     │          │
 │ window per task:  dash --task │ leader │ implementer │ shell              │          │
-└──────────────▲───────────────────────────────▲────────────────────────────┼──────────┘
+└──────────────▲────────────────────────────────▲───────────────────────────┼──────────┘
                │ read state, append commands    │ tmux                      │ files (.shikiru/runs)
-          ┌────┴───────┐                   ┌────┴───────────────────────────▼──┐
+          ┌────┴───────┐                  ┌─────┴───────────────────────────▼───┐
           │ state.db   │◀─── state ───────│ engine daemon (asyncio, 1/project)  │
           │ SQLite WAL │──── commands ───▶│                                     │
-          └────────────┘                   └────────────────────────────────────┘
+          └────────────┘                  └─────────────────────────────────────┘
 ```
 
 | Process | Started by | Writes |

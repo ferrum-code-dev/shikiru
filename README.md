@@ -11,8 +11,8 @@ It escalates to the Operator only when something critical comes up.
 ```
 ┏━ T-12 · Add retry to parser ━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃起 Triage   ┃承 Implement ┃転 Verify    ┃結 Merge    ┃
-┃ ✔ 3m      ┃ ✔ iter 2    ┃ ▓▓▒░ 2/5   ┃  ···      ┃
-┗━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━┻━━━━━━━━━━━┛
+┃ ✔ 3m       ┃ ✔ iter 2    ┃ ▓▓▒░ 2/5    ┃  ···       ┃
+┗━━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━┛
  長 Leader: “AC3 lacks a tier-2 test.”
  員 Implementer: “Added the test; all tiers pass.”
 ```

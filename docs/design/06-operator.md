@@ -191,9 +191,9 @@ State is never shown by colour alone: each state has a glyph and a word.
 ```
 ┏━ T-12 · Add retry to parser ━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃起 ⌕ Triage ┃承 ⚒ Implement┃転 ⚖︎ Verify  ┃結 ⑂ Merge  ┃
-┃ ✔ 3m      ┃ ✔ ↺1 41m    ┃ ⠹ ◆ 2/5    ┃  ·        ┃
-┃ ◆ opus    ┃ ▲ codex/luna┃ ◑ $1.84    ┃           ┃
-┗━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━┻━━━━━━━━━━━┛
+┃ ✔ 3m       ┃ ✔ ↺1 41m     ┃ ⠹ ◆ 2/5     ┃  ·         ┃
+┃ ◆ opus     ┃ ▲ codex/luna ┃ ◑ $1.84     ┃            ┃
+┗━━━━━━━━━━━━┻━━━━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━┛
 ```
 
 - **Panels by mode**:
