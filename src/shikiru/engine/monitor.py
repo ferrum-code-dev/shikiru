@@ -1,11 +1,12 @@
 """`SessionMonitor`: the sole consumer of `AgentSession.signals()` (03 §4.2, §9).
 
 It fans every signal out to subscriber queues (`subscribe()`), so nothing else ever reads
-`session.signals()` directly; `PaneDecorator` is one such subscriber (`decorate_pane`, per
-06 §5.3). Alongside the agent's own `AgentSignal`s, the fan-out also carries three signals the
-monitor derives itself: `PaneDied` (pane process gone), `Stalled` (no activity within the
-configured timeout, or a launch that never reached `SessionStarted`) and `InterventionSet` (a
-typed prompt just set the intervention hold).
+`session.signals()` directly. Alongside the agent's own `AgentSignal`s, the fan-out also
+carries three signals the monitor derives itself: `PaneDied` (pane process gone), `Stalled`
+(no activity within the configured timeout, or a launch that never reached `SessionStarted`)
+and `InterventionSet` (a typed prompt just set the intervention hold). `engine.decorations`
+subscribes to the same fan-out (06 §5.3); the monitor itself knows nothing about colours or
+glyphs.
 """
 
 from __future__ import annotations
@@ -28,21 +29,18 @@ from shikiru.agents.contracts import (
 )
 from shikiru.domain.activity import is_operator_prompt, is_stalled
 from shikiru.domain.tasks import Hold
-from shikiru.ui.glyphs import GLYPH_OPERATOR, GLYPH_STALLED, ROLE_GLYPHS
-from shikiru.ui.tokens import HOLD_COLOR, ROLE_COLORS
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection
+    from collections.abc import Callable, Collection, Mapping
     from datetime import datetime
     from pathlib import Path
+    from typing import Any
 
-    from shikiru.agents.contracts import AgentSession, AgentSignal, PaneHandle
+    from shikiru.agents.contracts import AgentSession, AgentSignal, PaneHandle, Usage
     from shikiru.clock import Clock
     from shikiru.config.settings import TimeoutsConfig
-    from shikiru.domain.tasks import Role
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
-    from shikiru.tmux.decorator import PaneDecorator
 
 
 @dataclass(frozen=True)
@@ -113,7 +111,11 @@ class SessionMonitor:
         self._last_activity: datetime = clock.now()
         self._tool_running = False
         self._started = False
+        self._stalled = False
         self._last_message: str | None = None
+        self._persisted_usage: Usage | None = None
+        self._persisted_snapshot: Mapping[str, Any] | None = None
+        self._persisted_message: str | None = None
 
     def subscribe(self) -> asyncio.Queue[MonitorSignal]:
         """Register a new subscriber queue and return it."""
@@ -148,6 +150,16 @@ class SessionMonitor:
         for queue in self._subscribers:
             queue.put_nowait(signal)
 
+    def _publish_stalled(self, screen: str) -> None:
+        if self._stalled:
+            return
+        self._stalled = True
+        self._publish(Stalled(screen=screen))
+
+    def _mark_activity(self, now: datetime) -> None:
+        self._last_activity = now
+        self._stalled = False
+
     async def _consume_signals(self) -> None:
         async for signal in self._session.signals():
             self._publish(signal)
@@ -158,24 +170,24 @@ class SessionMonitor:
         match signal:
             case SessionStarted():
                 self._started = True
-                self._last_activity = now
+                self._mark_activity(now)
             case Activity(tool_running=tool_running):
                 self._tool_running = tool_running
-                self._last_activity = now
+                self._mark_activity(now)
             case PromptSubmitted(text=text):
-                self._last_activity = now
+                self._mark_activity(now)
                 self._handle_prompt_submitted(text)
             case TurnEnded(last_message=last_message):
-                self._last_activity = now
+                self._mark_activity(now)
                 self._tool_running = False
                 self._last_message = last_message
             case TurnFailed():
-                self._last_activity = now
+                self._mark_activity(now)
                 self._tool_running = False
             case Compacted():
-                self._last_activity = now
+                self._mark_activity(now)
             case AttentionNeeded(message=message):
-                self._publish(Stalled(screen=message))
+                self._publish_stalled(message)
             case SessionEnded():
                 return _STOP
         return None
@@ -195,49 +207,30 @@ class SessionMonitor:
                 return
             now = self._clock.now()
             if self._expects_started and not self._started and now >= launch_deadline:
-                self._publish(Stalled(screen=await self._pane.capture_visible()))
+                self._publish_stalled(await self._pane.capture_visible())
                 continue
-            self._runs.record_usage(self._run_id, await self._session.usage())
-            self._runs.set_agent_state(self._run_id, dict(self._session.snapshot()))
-            if self._last_message is not None:
-                self._runs.set_last_message(self._run_id, self._last_message)
+            await self._persist_facts()
             if is_stalled(self._last_activity, self._tool_running, now, self._timeouts):
-                self._publish(Stalled(screen=await self._pane.capture_visible()))
+                self._publish_stalled(await self._pane.capture_visible())
+
+    async def _persist_facts(self) -> None:
+        usage = await self._session.usage()
+        if usage != self._persisted_usage:
+            self._runs.record_usage(self._run_id, usage)
+            self._persisted_usage = usage
+        snapshot = dict(self._session.snapshot())
+        if snapshot != self._persisted_snapshot:
+            self._runs.set_agent_state(self._run_id, snapshot)
+            self._persisted_snapshot = snapshot
+        if self._last_message is not None and self._last_message != self._persisted_message:
+            self._runs.set_last_message(self._run_id, self._last_message)
+            self._persisted_message = self._last_message
 
     def _set_intervention(self) -> None:
         task = self._tasks.get(self._task_id)
-        if task is None or Hold.INTERVENTION in task.holds:
+        if task is None:
+            message = f"{self._task_id} has a live session but no task row"
+            raise RuntimeError(message)
+        if Hold.INTERVENTION in task.holds:
             return
         self._tasks.set_holds(self._task_id, task.holds | {Hold.INTERVENTION})
-
-
-def _pane_decoration(signal: MonitorSignal, role: Role) -> tuple[str, str] | None:
-    if isinstance(signal, Stalled):
-        return HOLD_COLOR, GLYPH_STALLED
-    if isinstance(signal, InterventionSet):
-        return HOLD_COLOR, GLYPH_OPERATOR
-    if isinstance(signal, PaneDied):
-        return None
-    return ROLE_COLORS[role], ROLE_GLYPHS[role]
-
-
-async def decorate_pane(
-    subscription: asyncio.Queue[MonitorSignal],
-    *,
-    pane_target: str,
-    role: Role,
-    decorator: PaneDecorator,
-) -> None:
-    """Keep pane `pane_target`'s `@shk_color`/`@shk_glyph` in sync with `subscription` (06 §5.3).
-
-    Stops decorating once the pane has died: nothing further is worth drawing on it until
-    `SessionManager` recreates it.
-    """
-    await decorator.set_pane_state(pane_target, color=ROLE_COLORS[role], glyph=ROLE_GLYPHS[role])
-    while True:
-        signal = await subscription.get()
-        decoration = _pane_decoration(signal, role)
-        if decoration is None:
-            return
-        color, glyph = decoration
-        await decorator.set_pane_state(pane_target, color=color, glyph=glyph)
