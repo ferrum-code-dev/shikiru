@@ -76,17 +76,20 @@ class Tmux:
         result = await self._run("has-session", "-t", target, check=False)
         return result.returncode == 0
 
-    async def list_sessions(self, fmt: str) -> list[str]:
-        """List every session on this server, one formatted line per session."""
-        result = await self._run("list-sessions", "-F", fmt)
-        return result.stdout.splitlines()
-
     async def show_session_environment(self, target: str, name: str) -> str | None:
-        """Read session environment variable `name`, or `None` if it isn't set."""
+        """Read session environment variable `name`, or `None` if unset or removed.
+
+        `show-environment` exits 0 and prints `-<name>` (no `=`) for a variable that was
+        *removed* from the session (e.g. via `set-environment -r`), so a missing separator
+        means unset just as much as a non-zero exit does.
+        """
         result = await self._run("show-environment", "-t", target, name, check=False)
         if result.returncode != 0:
             return None
-        return result.stdout.strip().split("=", 1)[1]
+        _, separator, value = result.stdout.strip().partition("=")
+        if not separator:
+            return None
+        return value
 
     async def set_session_option(self, target: str, name: str, value: str) -> None:
         """Set session option `name` on `target`.
@@ -193,11 +196,6 @@ class Tmux:
         """Return whether pane `target`'s process has exited (kept alive by `remain-on-exit`)."""
         result = await self.display(target, FORMAT_PANE_DEAD)
         return result == "1"
-
-    async def list_panes(self, target: str, fmt: str) -> list[str]:
-        """List every pane of window `target`, one formatted line per pane."""
-        result = await self._run("list-panes", "-t", target, "-F", fmt)
-        return result.stdout.splitlines()
 
     async def list_windows(self, target: str, fmt: str) -> list[str]:
         """List every window of session `target`, one formatted line per window."""

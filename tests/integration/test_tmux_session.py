@@ -37,6 +37,17 @@ async def test_ensure_creates_the_session_with_the_project_env_var(
     assert await _tmux(tmux_server).target_exists(f"{target}:{HOME_WINDOW_NAME}")
 
 
+async def test_show_session_environment_reads_a_removed_variable_as_unset(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    view = SessionView(_tmux(tmux_server))
+    target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+
+    await tmux_server.run("set-environment", "-t", target, "-r", PROJECT_DIR_ENV_VAR)
+
+    assert await _tmux(tmux_server).show_session_environment(target, PROJECT_DIR_ENV_VAR) is None
+
+
 async def test_ensure_is_idempotent(tmux_server: TmuxServer, tmp_path: Path) -> None:
     view = SessionView(_tmux(tmux_server))
 
