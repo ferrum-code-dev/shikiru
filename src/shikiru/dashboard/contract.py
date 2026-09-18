@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
     from textual.widget import Widget
 
+    from shikiru.config.settings import Settings
     from shikiru.store.reader import StateReader
 
 WIDGET_ENTRY_POINT_GROUP = "shikiru.widgets"
@@ -53,6 +54,7 @@ class WidgetContext:
     project_dir: Path
     focus_task: str | None
     services: WidgetServices
+    settings: Settings
 
 
 class DashboardWidget(Protocol):

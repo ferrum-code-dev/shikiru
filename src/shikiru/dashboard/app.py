@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from textual.app import ComposeResult
 
+    from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import DashboardWidget, WidgetServices
     from shikiru.store.reader import StateReader
 
@@ -47,6 +48,7 @@ class DashboardApp(App[None]):
         project_dir: Path,
         focus_task: str | None,
         services: WidgetServices,
+        settings: Settings,
         widget_names: Sequence[str],
     ) -> None:
         """Build the system pane for `focus_task` (`None` means the home window)."""
@@ -55,6 +57,7 @@ class DashboardApp(App[None]):
         self._project_dir = project_dir
         self._focus_task = focus_task
         self._services = services
+        self._settings = settings
         self._widget_names = tuple(widget_names)
 
     def compose(self) -> ComposeResult:
@@ -64,6 +67,7 @@ class DashboardApp(App[None]):
             project_dir=self._project_dir,
             focus_task=self._focus_task,
             services=self._services,
+            settings=self._settings,
         )
         for name in self._widget_names:
             yield _load_widget(name).create(context)

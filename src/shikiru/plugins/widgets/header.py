@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from textual.widgets import Static
 
-from shikiru.config.loader import load_settings
 from shikiru.domain.tasks import Status
 
 if TYPE_CHECKING:
@@ -27,10 +26,9 @@ class HeaderPanel(Static):
     """Shows the project name, engine state, active slots and every repo's checkout state."""
 
     def __init__(self, context: WidgetContext) -> None:
-        """Load `context.project_dir`'s settings once; only task state and git data refresh."""
+        """Hold `context`; nothing here does I/O until `on_mount`."""
         super().__init__()
         self._widget_context = context
-        self._settings = load_settings(context.project_dir)
 
     async def on_mount(self) -> None:
         """Render the current state, then refresh on every `StateReader.watch` change."""
@@ -38,13 +36,12 @@ class HeaderPanel(Static):
         self.run_worker(self._widget_context.state.watch(self._refresh), exclusive=True)
 
     async def _refresh(self) -> None:
+        settings = self._widget_context.settings
         active = len(self._widget_context.state.list_tasks(statuses=_ACTIVE_STATUSES))
-        max_parallel = self._settings.orchestration.max_parallel
+        max_parallel = settings.orchestration.max_parallel
         engine_state = "up" if self._widget_context.services.engine_up() else "down"
         repo_statuses = await self._widget_context.services.repo_status()
-        summary = (
-            f"{self._settings.project.name} · engine {engine_state} · slots {active}/{max_parallel}"
-        )
+        summary = f"{settings.project.name} · engine {engine_state} · slots {active}/{max_parallel}"
         lines = [summary, *(_repo_line(status) for status in repo_statuses)]
         self.update("\n".join(lines))
 
