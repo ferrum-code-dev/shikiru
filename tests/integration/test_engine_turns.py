@@ -13,6 +13,7 @@ from shikiru.domain.recovery import Completed, Stalled
 from shikiru.domain.reports import ConsultAnswer, ReportKind
 from shikiru.domain.tasks import Hold, Role, Step
 from shikiru.engine.agents import AgentPool
+from shikiru.engine.monitor import InjectedLines
 from shikiru.engine.turns import TurnRunner, TurnSpec
 from shikiru.helper.helper import Helper
 from shikiru.process import SubprocessRunner
@@ -122,6 +123,7 @@ async def test_a_turn_that_is_accepted_immediately_completes_with_its_report(
             role=Role.IMPLEMENTER,
             spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
             helper=helper,
+            injected=manager.injected_lines(task.id, Role.IMPLEMENTER),
         ),
         timeout=_SIGNAL_TIMEOUT,
     )
@@ -154,6 +156,7 @@ async def test_a_turn_ended_without_a_report_is_nudged_then_completes(
             role=Role.IMPLEMENTER,
             spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
             helper=helper,
+            injected=manager.injected_lines(task.id, Role.IMPLEMENTER),
         ),
         timeout=_SIGNAL_TIMEOUT,
     )
@@ -188,6 +191,7 @@ async def test_three_reportless_turns_are_rebuilt_by_the_helper(
             role=Role.IMPLEMENTER,
             spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
             helper=helper,
+            injected=manager.injected_lines(task.id, Role.IMPLEMENTER),
         ),
         timeout=_SIGNAL_TIMEOUT,
     )
@@ -218,6 +222,7 @@ async def test_an_unconfirmed_pointer_retries_once_then_stalls(engine_env: Engin
             role=Role.IMPLEMENTER,
             spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
             helper=helper,
+            injected=InjectedLines(),
         )
     )
     try:
@@ -244,7 +249,6 @@ async def test_a_before_turn_line_is_not_flagged_as_an_operator_prompt(
     queue = manager.subscribe(task.id, Role.IMPLEMENTER)
     pane = engine_env.pane(task.panes[Role.IMPLEMENTER])
     runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
-    manager.set_pending_lines(task.id, Role.IMPLEMENTER, runner.pending_lines)
     helper = _build_helper(settings)
 
     result = await asyncio.wait_for(
@@ -256,6 +260,7 @@ async def test_a_before_turn_line_is_not_flagged_as_an_operator_prompt(
             role=Role.IMPLEMENTER,
             spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
             helper=helper,
+            injected=manager.injected_lines(task.id, Role.IMPLEMENTER),
         ),
         timeout=_SIGNAL_TIMEOUT,
     )
@@ -264,3 +269,28 @@ async def test_a_before_turn_line_is_not_flagged_as_an_operator_prompt(
     current = engine_env.tasks.get(task.id)
     assert current is not None
     assert Hold.INTERVENTION not in current.holds
+
+
+async def test_injected_lines_are_isolated_per_session(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = _settings_with_asks([])
+    manager = engine_env.build_manager(settings)
+    task_a = await engine_env.build_task(title="a")
+    task_b = await engine_env.build_task(title="b")
+    await set_script(tmux_server, [{"kind": "no_report"}])
+    await manager.ensure(task_a, Role.IMPLEMENTER)
+    await manager.ensure(task_b, Role.IMPLEMENTER)
+    injected_a = manager.injected_lines(task_a.id, Role.IMPLEMENTER)
+    shared_text = "hello from a's pointer, injected only on a"
+    injected_a.add(shared_text)
+    pane_b = engine_env.pane(task_b.panes[Role.IMPLEMENTER])
+
+    await pane_b.paste_line(shared_text)
+
+    def _has_intervention(task_id: str) -> bool:
+        current = engine_env.tasks.get(task_id)
+        return current is not None and Hold.INTERVENTION in current.holds
+
+    await wait_until(lambda: _has_intervention(task_b.id), timeout=_SIGNAL_TIMEOUT)
+    assert not _has_intervention(task_a.id)

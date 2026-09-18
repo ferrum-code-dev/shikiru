@@ -32,7 +32,7 @@ from shikiru.domain.recovery import PaneDied, Stalled
 from shikiru.domain.tasks import Hold
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Mapping
+    from collections.abc import Iterator, Mapping
     from datetime import datetime
     from pathlib import Path
     from typing import Any
@@ -54,17 +54,43 @@ type MonitorSignal = AgentSignal | PaneDied | Stalled | InterventionSet
 _STOP = object()
 
 
-def no_pending_lines() -> Collection[str]:
-    """Report no `before_turn` lines pending injection: nothing injects any yet (03 §4.3)."""
-    return ()
+class InjectedLines:
+    """Lines a `TurnRunner` is currently injecting into one session's pane (03 §9).
+
+    `SessionManager` creates one per live session and hands it to that session's
+    `SessionMonitor`, which checks arriving prompts against it. `TurnRunner` records a line
+    with `add()` before injecting it and `discard()`s it once its `PromptSubmitted` arrives or
+    the wait for it ends, so a line pending on one session is never visible to another
+    session's monitor.
+    """
+
+    def __init__(self) -> None:
+        self._lines: set[str] = set()
+
+    def add(self, line: str) -> None:
+        """Record `line` as currently being injected."""
+        self._lines.add(line)
+
+    def discard(self, line: str) -> None:
+        """Stop recording `line`, if it was recorded."""
+        self._lines.discard(line)
+
+    def __contains__(self, line: object) -> bool:
+        return line in self._lines
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._lines)
+
+    def __len__(self) -> int:
+        return len(self._lines)
 
 
 class SessionMonitor:
     """Polls and fans out one live session's signals, persists its facts, and flags holds.
 
-    `pending_lines` lets a future subscriber (the turn runner, 03 §4.3) report the
-    `before_turn` lines it is currently injecting, so a typed prompt arriving in that narrow
-    window isn't mistaken for operator input.
+    `pending_lines` is the `InjectedLines` of whichever `TurnRunner` turn is currently live on
+    this session, so a typed prompt matching a line it is injecting isn't mistaken for
+    operator input.
     """
 
     def __init__(
@@ -81,7 +107,7 @@ class SessionMonitor:
         timeouts: TimeoutsConfig,
         poll_seconds: int,
         expects_started: bool,
-        pending_lines: Callable[[], Collection[str]] = no_pending_lines,
+        pending_lines: InjectedLines | None = None,
     ) -> None:
         """Monitor `session` in `pane`, persisting facts for `run_id` under `tasks`/`runs`."""
         self._session = session
@@ -95,7 +121,7 @@ class SessionMonitor:
         self._timeouts = timeouts
         self._poll_seconds = poll_seconds
         self._expects_started = expects_started
-        self._pending_lines = pending_lines
+        self._pending_lines = pending_lines if pending_lines is not None else InjectedLines()
         self._subscribers: list[asyncio.Queue[MonitorSignal]] = []
         self._last_activity: datetime = clock.now()
         self._tool_running = False
@@ -115,10 +141,6 @@ class SessionMonitor:
     def unsubscribe(self, queue: asyncio.Queue[MonitorSignal]) -> None:
         """Stop fanning signals out to `queue`."""
         self._subscribers.remove(queue)
-
-    def set_pending_lines(self, pending_lines: Callable[[], Collection[str]]) -> None:
-        """Replace the `pending_lines` hook, e.g. once a `TurnRunner` starts using this session."""
-        self._pending_lines = pending_lines
 
     async def run(self) -> None:
         """Consume `session.signals()` and tick until the pane dies or the session ends."""
@@ -186,7 +208,7 @@ class SessionMonitor:
         return None
 
     def _handle_prompt_submitted(self, text: str) -> None:
-        if not is_operator_prompt(text, self._run_dir, self._pending_lines()):
+        if not is_operator_prompt(text, self._run_dir, self._pending_lines):
             return
         self._set_intervention()
         self._publish(InterventionSet())

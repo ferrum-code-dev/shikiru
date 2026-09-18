@@ -27,12 +27,12 @@ from shikiru.agents.contracts import (
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.recovery import PaneDied, Stalled
 from shikiru.engine.decorations import decorate_pane
-from shikiru.engine.monitor import SessionMonitor
+from shikiru.engine.monitor import InjectedLines, SessionMonitor
 from shikiru.errors import CommandFailed, ShikiruError
 from shikiru.workspace.roots import run_dir, task_root
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection
+    from collections.abc import Callable
     from pathlib import Path
 
     from shikiru.agents.contracts import AgentSession, InteractiveAgent, Rung
@@ -63,6 +63,7 @@ class _LiveSession:
     run_id: int
     fresh: bool
     monitor: SessionMonitor
+    injected_lines: InjectedLines
     monitor_task: asyncio.Task[None]
     decorate_task: asyncio.Task[None]
 
@@ -221,6 +222,7 @@ class SessionManager:
         expects_started: bool,
         fresh: bool,
     ) -> AgentSession:
+        injected_lines = InjectedLines()
         monitor = SessionMonitor(
             session,
             pane,
@@ -233,6 +235,7 @@ class SessionManager:
             timeouts=self._settings.orchestration.timeouts,
             poll_seconds=self._settings.orchestration.poll_seconds,
             expects_started=expects_started,
+            pending_lines=injected_lines,
         )
         decoration_queue = monitor.subscribe()
         monitor_task = asyncio.ensure_future(monitor.run())
@@ -267,6 +270,7 @@ class SessionManager:
             run_id=run_id,
             fresh=fresh,
             monitor=monitor,
+            injected_lines=injected_lines,
             monitor_task=monitor_task,
             decorate_task=decorate_task,
         )
@@ -289,11 +293,9 @@ class SessionManager:
         """Stop `queue` from receiving `task_id`'s `role` session's signals."""
         self._live[(task_id, role)].monitor.unsubscribe(queue)
 
-    def set_pending_lines(
-        self, task_id: str, role: Role, pending_lines: Callable[[], Collection[str]]
-    ) -> None:
-        """Report `task_id`'s `role` session's `TurnRunner`-injected lines (03 §9)."""
-        self._live[(task_id, role)].monitor.set_pending_lines(pending_lines)
+    def injected_lines(self, task_id: str, role: Role) -> InjectedLines:
+        """Return `task_id`'s `role` session's `InjectedLines`, for its `TurnRunner` (03 §9)."""
+        return self._live[(task_id, role)].injected_lines
 
     async def shutdown(self) -> None:
         """Cancel every live session's monitor and decorator, touching no pane or agent.

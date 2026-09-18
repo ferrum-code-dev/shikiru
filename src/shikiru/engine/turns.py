@@ -1,9 +1,11 @@
 """`TurnRunner`: runs one agent turn to a `TurnResult`, never escalating (03 §4.3).
 
 Turn dir, `before_turn` lines, pointer injection, submission confirmation, awaiting the
-outcome, nudges and the Helper rebuild all live here. `pending_lines()` reports whichever
-line this runner is currently injecting, so `SessionMonitor` (wired through
-`SessionManager.set_pending_lines`) never mistakes it for an operator prompt (03 §9).
+outcome, nudges and the Helper rebuild all live here. `TurnRunner` keeps no per-turn state of
+its own: the caller passes the session's own `InjectedLines` (from `SessionManager`), and this
+runner records each line it injects there for as long as it stays pending, so `SessionMonitor`
+never mistakes it for an operator prompt (03 §9). A single `TurnRunner` is safe to share across
+concurrently running turns of different tasks.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from shikiru.helper.models import Unrecoverable
 from shikiru.tmux.pane import ENTER_KEY
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping
+    from collections.abc import Mapping
     from datetime import datetime
     from pathlib import Path
 
@@ -42,7 +44,7 @@ if TYPE_CHECKING:
     from shikiru.domain.recovery import TurnResult
     from shikiru.domain.reports import Report, ReportKind
     from shikiru.domain.tasks import Role, Step
-    from shikiru.engine.monitor import MonitorSignal
+    from shikiru.engine.monitor import InjectedLines, MonitorSignal
     from shikiru.helper.helper import Helper
     from shikiru.prompts.renderer import PromptName, PromptRenderer
     from shikiru.tmux.pane import TmuxPane
@@ -111,11 +113,6 @@ class TurnRunner:
         """Render prompts with `renderer`, time every wait and delay through `clock`."""
         self._renderer = renderer
         self._clock = clock
-        self._pending_line: str | None = None
-
-    def pending_lines(self) -> Collection[str]:
-        """Return the line this runner is currently injecting, for `SessionMonitor` (03 §9)."""
-        return () if self._pending_line is None else (self._pending_line,)
 
     async def run(
         self,
@@ -127,14 +124,17 @@ class TurnRunner:
         role: Role,
         spec: TurnSpec,
         helper: Helper,
+        injected: InjectedLines,
     ) -> TurnResult:
         """Run one turn for `role` and return its `TurnResult`; never raises for agent behaviour."""
         turn_dir = self._prepare_turn_dir(run_dir, role, spec)
-        before_turn_result = await self._run_before_turn(session, pane, signals)
+        before_turn_result = await self._run_before_turn(session, pane, signals, injected)
         if before_turn_result is not None:
             return before_turn_result
         prompt_path = turn_dir / PROMPT_FILENAME
-        outcome = await self._submit_pointer(pane, signals, spec.prompt_prefix, prompt_path)
+        outcome = await self._submit_pointer(
+            pane, signals, spec.prompt_prefix, prompt_path, injected
+        )
         return await self._resolve(
             outcome,
             pane,
@@ -143,6 +143,7 @@ class TurnRunner:
             spec=spec,
             helper=helper,
             prompt_path=prompt_path,
+            injected=injected,
         )
 
     def _prepare_turn_dir(self, run_dir: Path, role: Role, spec: TurnSpec) -> Path:
@@ -168,13 +169,20 @@ class TurnRunner:
         link.symlink_to(turn_dir)
 
     async def _run_before_turn(
-        self, session: AgentSession, pane: TmuxPane, signals: asyncio.Queue[MonitorSignal]
+        self,
+        session: AgentSession,
+        pane: TmuxPane,
+        signals: asyncio.Queue[MonitorSignal],
+        injected: InjectedLines,
     ) -> TurnResult | None:
         for line in await session.before_turn():
             deadline = self._clock.now() + timedelta(seconds=BEFORE_TURN_WAIT_SECONDS)
-            await self._inject(pane, line)
-            signal = await self._wait_for_before_turn(signals, deadline)
-            self._pending_line = None
+            injected.add(line)
+            try:
+                await pane.paste_line(line)
+                signal = await self._wait_for_before_turn(signals, deadline)
+            finally:
+                injected.discard(line)
             if signal is None:
                 return Stalled(screen=await pane.capture_visible())
             if isinstance(signal, TurnFailed | PaneDied | Stalled):
@@ -187,12 +195,13 @@ class TurnRunner:
         signals: asyncio.Queue[MonitorSignal],
         prompt_prefix: str,
         prompt_path: Path,
+        injected: InjectedLines,
     ) -> _Outcome | PromptSubmitted:
         line = f"{prompt_prefix}Read {prompt_path} and follow it exactly."
-        confirmed = await self._confirm(pane, signals, line, prompt_path, inject=True)
+        confirmed = await self._confirm(pane, signals, line, prompt_path, injected, inject=True)
         if confirmed is not None:
             return confirmed
-        confirmed = await self._confirm(pane, signals, line, prompt_path, inject=False)
+        confirmed = await self._confirm(pane, signals, line, prompt_path, injected, inject=False)
         if confirmed is not None:
             return confirmed
         return Stalled(screen=await pane.capture_visible())
@@ -203,16 +212,17 @@ class TurnRunner:
         signals: asyncio.Queue[MonitorSignal],
         line: str,
         prompt_path: Path,
+        injected: InjectedLines,
         *,
         inject: bool,
     ) -> _Outcome | PromptSubmitted | None:
-        self._pending_line = line
-        if inject:
-            await pane.paste_line(line)
-        else:
-            await pane.send_keys(ENTER_KEY)
-        deadline = self._clock.now() + timedelta(seconds=SUBMIT_CONFIRM_SECONDS)
+        injected.add(line)
         try:
+            if inject:
+                await pane.paste_line(line)
+            else:
+                await pane.send_keys(ENTER_KEY)
+            deadline = self._clock.now() + timedelta(seconds=SUBMIT_CONFIRM_SECONDS)
             while True:
                 remaining = (deadline - self._clock.now()).total_seconds()
                 if remaining <= 0:
@@ -225,7 +235,7 @@ class TurnRunner:
                 if isinstance(signal, PromptSubmitted) and str(prompt_path) in signal.text:
                     return signal
         finally:
-            self._pending_line = None
+            injected.discard(line)
 
     async def _resolve(
         self,
@@ -237,6 +247,7 @@ class TurnRunner:
         spec: TurnSpec,
         helper: Helper,
         prompt_path: Path,
+        injected: InjectedLines,
     ) -> TurnResult:
         nudges = 0
         current: _Outcome | PromptSubmitted = outcome
@@ -252,9 +263,13 @@ class TurnRunner:
             if nudges >= NUDGE_LIMIT:
                 return await self._rebuild(turn_dir, spec, helper, current.last_message)
             nudges += 1
-            await self._inject(pane, _NUDGE_MESSAGE.format(prompt_path=prompt_path))
-            current = await self._await_outcome(signals)
-            self._pending_line = None
+            nudge_line = _NUDGE_MESSAGE.format(prompt_path=prompt_path)
+            injected.add(nudge_line)
+            try:
+                await pane.paste_line(nudge_line)
+                current = await self._await_outcome(signals)
+            finally:
+                injected.discard(nudge_line)
 
     async def _rebuild(
         self, turn_dir: Path, spec: TurnSpec, helper: Helper, last_message: str
@@ -272,10 +287,6 @@ class TurnRunner:
             return ProtocolError()
         (turn_dir / HELPER_REPORT_FILENAME).write_text(rebuilt.model_dump_json(indent=2))
         return Completed(report=rebuilt, rebuilt=True)
-
-    async def _inject(self, pane: TmuxPane, line: str) -> None:
-        self._pending_line = line
-        await pane.paste_line(line)
 
     async def _await_outcome(self, signals: asyncio.Queue[MonitorSignal]) -> _Outcome:
         while True:
