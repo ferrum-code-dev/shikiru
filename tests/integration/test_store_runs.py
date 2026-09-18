@@ -40,6 +40,27 @@ def test_get_live_returns_none_until_a_run_is_started(connection: Connection) ->
     assert store.get_live(task_id, Role.IMPLEMENTER) == run
 
 
+def test_a_fresh_run_reports_unknown_cost_basis_before_any_usage_is_recorded(
+    connection: Connection,
+) -> None:
+    store, task_id = _make_store(connection)
+
+    run = store.start(task_id, Role.IMPLEMENTER, RUNG)
+
+    assert run.usage.cost_basis == "unknown"
+
+
+def test_an_empty_cost_basis_is_not_rewritten_to_unknown(connection: Connection) -> None:
+    store, task_id = _make_store(connection)
+    run = store.start(task_id, Role.IMPLEMENTER, RUNG)
+    connection.execute("UPDATE runs SET cost_basis = ? WHERE id = ?", ("", run.id))
+
+    reloaded = store.get_live(task_id, Role.IMPLEMENTER)
+
+    assert reloaded is not None
+    assert reloaded.usage.cost_basis == ""
+
+
 def test_exit_removes_a_run_from_get_live_but_keeps_it_in_history(connection: Connection) -> None:
     store, task_id = _make_store(connection)
     run = store.start(task_id, Role.IMPLEMENTER, RUNG)

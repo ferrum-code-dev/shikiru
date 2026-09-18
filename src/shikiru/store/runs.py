@@ -15,6 +15,7 @@ from shikiru.store.database import (
     load_json,
     parse_required_timestamp,
     parse_timestamp,
+    require_after_insert,
 )
 
 if TYPE_CHECKING:
@@ -53,7 +54,7 @@ def _row_to_run(row: sqlite3.Row) -> Run:
             cache_read_tokens=row["cache_read_tokens"],
             cache_write_tokens=row["cache_write_tokens"],
             cost_usd=row["cost_usd"],
-            cost_basis=row["cost_basis"] or _DEFAULT_COST_BASIS,
+            cost_basis=row["cost_basis"] if row["cost_basis"] is not None else _DEFAULT_COST_BASIS,
             context_used_pct=row["context_used_pct"],
         ),
         started_at=parse_required_timestamp(row["started_at"]),
@@ -101,15 +102,11 @@ class RunStore:
                 format_timestamp(self._clock.now()),
             ),
         )
-        run_id = cursor.lastrowid
-        if run_id is None:
-            message = "sqlite did not allocate a rowid for the new run"
-            raise RuntimeError(message)
+        run_id = require_after_insert(
+            cursor.lastrowid, "sqlite did not allocate a rowid for the new run"
+        )
         run = fetch_run(self._connection, run_id)
-        if run is None:
-            message = f"run {run_id} vanished immediately after insert"
-            raise RuntimeError(message)
-        return run
+        return require_after_insert(run, f"run {run_id} vanished immediately after insert")
 
     def get_live(self, task_id: str, role: Role) -> Run | None:
         """Return `task_id`'s live run for `role`, if any."""

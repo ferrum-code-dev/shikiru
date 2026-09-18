@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from pydantic_core import ErrorDetails
 
 PROJECT_CONFIG_RELATIVE_PATH = ".shikiru/config.toml"
+_PACKAGED_DEFAULTS_SOURCE = "defaults.toml"
 _SET_OVERRIDE_SOURCE = "--set"
 
 
@@ -44,7 +45,10 @@ def _load_defaults() -> tuple[dict[str, Any], dict[str, str]]:
     defaults_text = (
         resources.files("shikiru.config").joinpath("defaults.toml").read_text(encoding="utf-8")
     )
-    return tomllib.loads(defaults_text), {}
+    data = tomllib.loads(defaults_text)
+    sources: dict[str, str] = {}
+    _record_sources(sources, data, _PACKAGED_DEFAULTS_SOURCE)
+    return data, sources
 
 
 def _parse_toml(path: Path, source: str) -> dict[str, Any]:
@@ -95,6 +99,13 @@ def _parse_set_override(text: str) -> tuple[str, Any]:
 
 
 def _parse_set_value(raw_value: str) -> Any:
+    """Parse `raw_value` as a TOML value, or keep it as a plain string if that fails.
+
+    The fallback is deliberate: it lets `--set project.name=demo` work without quoting, since a
+    bare word is not valid TOML on its own. It also means a malformed TOML value silently reaches
+    pydantic as a string instead of failing here — `--set orchestration.max_parallel=3,` parses
+    as `"3,"` and only errors once pydantic rejects it as not-an-integer.
+    """
     try:
         return tomllib.loads(f"v = {raw_value}")["v"]
     except tomllib.TOMLDecodeError:
