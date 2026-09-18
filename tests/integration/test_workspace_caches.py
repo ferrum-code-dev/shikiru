@@ -55,6 +55,23 @@ async def test_clone_copy_is_independent_of_the_source(tmp_path: Path) -> None:
     assert original.read_text() == "cached content\n"
 
 
+async def test_clone_skips_a_glob_match_that_is_not_git_ignored(tmp_path: Path) -> None:
+    repo_dir = await _repo_with_ignored_cache(tmp_path)
+    tracked_cache_dir = repo_dir / "tracked_cache"
+    tracked_cache_dir.mkdir()
+    (tracked_cache_dir / "file.txt").write_text("tracked, not ignored\n")
+    worktree_dir = tmp_path / "worktree"
+    worktree_dir.mkdir()
+    runner = SubprocessRunner()
+    ignored = await Git(runner).ignored_paths(repo_dir)
+    cloner = CacheCloner(runner, cow_args=default_cow_args())
+
+    result = await cloner.clone(repo_dir, worktree_dir, ["tracked_cache"], ignored)
+
+    assert result.copied == ()
+    assert not (worktree_dir / "tracked_cache").exists()
+
+
 async def test_clone_reports_unsupported_cow_without_copying_anything(tmp_path: Path) -> None:
     repo_dir = await _repo_with_ignored_cache(tmp_path)
     worktree_dir = tmp_path / "worktree"

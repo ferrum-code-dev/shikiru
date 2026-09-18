@@ -129,6 +129,28 @@ def test_apply_transition_sets_finished_at_once_for_a_terminal_status(
     assert second_reload.finished_at == first_finished_at
 
 
+def test_submit_rung_overrides_for_leader_and_implementer_reach_the_db(
+    connection: Connection,
+) -> None:
+    store, queue, _ = _make_store(connection)
+    leader_rung = Rung(agent="claude", model="opus", effort="high")
+    implementer_rung = Rung(agent="codex", model="sol", effort="high")
+    queued = queue.append(
+        Submit(
+            task_id="",
+            title="t",
+            request="t",
+            leader=leader_rung,
+            implementer=implementer_rung,
+        )
+    )
+    assert isinstance(queued.command, Submit)
+
+    task = store.insert_from_submit(queued.command)
+
+    assert task.overrides == {Role.LEADER: leader_rung, Role.IMPLEMENTER: implementer_rung}
+
+
 def test_insert_child_allocates_a_new_task_id_with_parent_and_origin(
     connection: Connection,
 ) -> None:

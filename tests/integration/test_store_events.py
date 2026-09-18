@@ -47,3 +47,14 @@ def test_since_filters_by_task_id(connection: Connection) -> None:
     only_task_one = log.since(0, task_id="T-1")
 
     assert [event.message for event in only_task_one] == ["one"]
+
+
+def test_data_round_trips_through_the_json_column(connection: Connection) -> None:
+    log = _make_log(connection)
+    payload = {"rung": {"agent": "codex", "model": "sol"}, "attempt": 2}
+
+    appended = log.append(EventKind.TASK_QUEUED, message="queued", task_id="T-1", data=payload)
+
+    assert appended.data == payload
+    [reloaded] = log.since(0)
+    assert reloaded.data == payload

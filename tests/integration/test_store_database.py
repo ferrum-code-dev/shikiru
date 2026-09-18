@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import sqlite3
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+import pytest
+
+from shikiru.store.database import format_timestamp
 
 if TYPE_CHECKING:
     from shikiru.store.database import Database
+
+START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def test_connect_migrates_a_fresh_db_and_is_idempotent(database: Database) -> None:
@@ -30,8 +38,33 @@ def test_connect_readonly_cannot_write(database: Database) -> None:
     try:
         reader_connection = database.connect_readonly()
         try:
-            assert reader_connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+            with pytest.raises(sqlite3.OperationalError):
+                reader_connection.execute("INSERT INTO sequences (name, value) VALUES ('task', 1)")
         finally:
             reader_connection.close()
+    finally:
+        writer.close()
+
+
+def test_foreign_keys_are_enforced_on_task_deps_and_runs(database: Database) -> None:
+    writer = database.connect()
+    try:
+        writer.execute(
+            "INSERT INTO tasks (id, seq, origin, title, request, status, created_at) "
+            "VALUES ('T-1', 1, 'operator', 't', 't', 'queued', ?)",
+            (format_timestamp(START),),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            writer.execute(
+                "INSERT INTO task_deps (task_id, depends_on) VALUES ('T-1', 'T-missing')"
+            )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            writer.execute(
+                "INSERT INTO runs (id, task_id, role, agent, model, status, started_at) "
+                "VALUES (1, 'T-missing', 'implementer', 'codex', 'sol', 'live', ?)",
+                (format_timestamp(START),),
+            )
     finally:
         writer.close()

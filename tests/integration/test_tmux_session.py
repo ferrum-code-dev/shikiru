@@ -59,6 +59,22 @@ async def test_ensure_is_idempotent(tmux_server: TmuxServer, tmp_path: Path) -> 
     assert windows.count(HOME_WINDOW_NAME) == 1
 
 
+async def test_ensure_recreates_the_home_window_once_it_has_been_killed(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    view = SessionView(tmux)
+    target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+    await view.create_task_window(target, window_name="T-1", cwd=tmp_path)
+    window_target = f"{target}:{HOME_WINDOW_NAME}"
+    await tmux.kill_window(window_target)
+    assert not await tmux.target_exists(window_target)
+
+    await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+
+    assert await tmux.target_exists(window_target)
+
+
 async def test_ensure_applies_session_options_to_a_pre_existing_session(
     tmux_server: TmuxServer, tmp_path: Path
 ) -> None:

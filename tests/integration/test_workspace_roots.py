@@ -152,6 +152,43 @@ async def test_append_to_exclude_adds_exactly_one_line_when_the_file_already_end
     assert exclude_path.read_text() == f"*.log\n{EXCLUDE_LINE}\n"
 
 
+async def test_append_to_exclude_adds_a_newline_first_when_the_file_lacks_a_trailing_one(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    await _init_repo_with_commit(project_root)
+    git = Git(SubprocessRunner())
+    exclude_path = project_root / ".git" / "info" / "exclude"
+    exclude_path.write_text("*.log")
+
+    await git.append_to_exclude(project_root, EXCLUDE_LINE)
+
+    assert exclude_path.read_text() == f"*.log\n{EXCLUDE_LINE}\n"
+
+
+async def test_build_recreates_the_worktree_when_the_branch_exists_but_it_was_removed(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    await _init_repo_with_commit(project_root)
+    builder = _builder(project_root)
+    await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
+    root = builder.task_root(_TASK_ID)
+    runner = SubprocessRunner()
+    await runner.run(
+        ["git", "worktree", "remove", "--force", str(root)],
+        timeout=10,
+        cwd=project_root,
+        check=True,
+    )
+    assert not root.exists()
+
+    states = await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
+
+    assert (root / "README.md").exists()
+    assert states[0].branch == branch_name(_TASK_ID, _TASK_TITLE)
+
+
 async def test_cleanup_is_idempotent_and_tolerates_an_already_removed_worktree(
     tmp_path: Path,
 ) -> None:

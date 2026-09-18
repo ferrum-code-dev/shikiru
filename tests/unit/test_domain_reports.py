@@ -151,6 +151,15 @@ def test_invalid_reports_fail_on_the_expected_field(
     )
 
 
+@pytest.mark.parametrize(
+    "reference", ["T-1", "T-42", "#1", "#7"], ids=["task-id", "task-id-2", "sibling", "sibling-2"]
+)
+def test_new_task_depends_on_accepts_task_ids_and_sibling_references(reference: str) -> None:
+    task = NewTask(**_new_task(depends_on=[reference]))
+
+    assert task.depends_on == [reference]
+
+
 _VALID_CASES: list[tuple[type[BaseModel], dict[str, Any]]] = [
     (TriageReport, _triage(mode="split", subtasks=[_new_task()])),
     (ImplementationReport, _implementation(status="completed", question="")),

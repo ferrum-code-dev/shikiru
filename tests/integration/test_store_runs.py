@@ -73,6 +73,18 @@ def test_exit_removes_a_run_from_get_live_but_keeps_it_in_history(connection: Co
     assert only_run.ended_at is not None
 
 
+def test_close_removes_a_run_from_get_live_and_marks_it_closed(connection: Connection) -> None:
+    store, task_id = _make_store(connection)
+    run = store.start(task_id, Role.IMPLEMENTER, RUNG)
+
+    store.close(run.id)
+
+    assert store.get_live(task_id, Role.IMPLEMENTER) is None
+    [only_run] = store.for_task(task_id)
+    assert only_run.status is RunStatus.CLOSED
+    assert only_run.ended_at is not None
+
+
 def test_set_session_accepts_a_session_that_cannot_be_resumed(connection: Connection) -> None:
     store, task_id = _make_store(connection)
     run = store.start(task_id, Role.IMPLEMENTER, RUNG)
