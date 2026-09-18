@@ -82,8 +82,8 @@ Refs: 04 §1–2.
 
 ### Task 9: Fake agent and contract test kit
 Refs: 04 §3, 07 §3.
-- [ ] `AgentContractSuite` with offline and live checks.
-- [ ] Fake agent as a test-only package `tests/fake_agent` (uv dev dependency, own `shikiru.agents` entry point): scripted REPL using `HookRecorder`, headless `ask` via script; passes the suite on `tmux_server`.
+- [x] `AgentContractSuite` with offline and live checks.
+- [x] Fake agent as a test-only package `tests/fake_agent` (uv dev dependency, own `shikiru.agents` entry point): scripted REPL using `HookRecorder`, headless `ask` via script; passes the suite on `tmux_server`.
 
 ### Task 10: Prompts and Helper
 Refs: 03 §2, §4.3; 04 §6.

@@ -35,7 +35,14 @@ dev = [
   "pytest-cov>=7.1,<7.2",
   "pytest-xdist>=3.8,<3.9",
   "poethepoet>=0.48,<0.49",
+  "fake-agent",
 ]
+
+[tool.uv.workspace]
+members = ["tests/fake_agent"]
+
+[tool.uv.sources]
+fake-agent = { workspace = true }
 
 [tool.poe.tasks]
 format-check = "ruff format --check ."
@@ -80,7 +87,6 @@ ignore = [
   "FBT001", # Typer boolean --flag options are idiomatic positional-looking parameters
   "FBT003", # Typer's typer.Option(False, ...) boolean default is idiomatic, not a bare bool call
 ]
-external = ["V107"] # vulture's unused-parameter code, silenced only on 04 §1's exact Protocol params
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "sqlite3" = { msg = "SQL only in shikiru.store; see 02 §2" }
@@ -102,6 +108,7 @@ runtime-evaluated-base-classes = [
 [tool.ruff.lint.per-file-ignores]
 "src/shikiru/domain/steps.py" = ["PLR0911"] # one return per step/outcome match arm (03 §2, §6)
 "src/shikiru/agents/contracts.py" = ["PLR0917"] # HeadlessAgent.ask is 04 §1's exact signature
+"tests/fake_agent/src/fake_agent/headless.py" = ["ARG002", "PLR0917"] # HeadlessAgent.ask's exact signature (04 §1); the fake ignores every argument but serves canned answers
 "src/shikiru/store/**" = ["TID251", "S608"]
 "src/shikiru/workspace/**" = ["ASYNC240"] # local worktree filesystem ops, as blocking as sqlite3
 "tests/support/git_repo.py" = ["ASYNC240"]

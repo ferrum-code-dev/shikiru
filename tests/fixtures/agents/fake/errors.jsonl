@@ -1,0 +1,2 @@
+{"event":"turn_failed","kind":"quota","message":"rate limited","resets_at":"2030-01-01T00:00:00+00:00"}
+{"event":"turn_failed","kind":"other","message":"unexpected failure","resets_at":null}

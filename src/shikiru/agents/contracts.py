@@ -213,8 +213,8 @@ class HeadlessAgent(Protocol):
 
     async def ask(
         self,
-        prompt: str,  # noqa: V107
-        schema: Mapping[str, Any],  # noqa: V107
+        prompt: str,
+        schema: Mapping[str, Any],
         model: str,
         effort: str | None,
         cwd: Path,
@@ -230,13 +230,13 @@ class InteractiveAgent(Protocol):
     name: str
     keys: SessionKeys
 
-    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:  # noqa: V107
+    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
         """Start a new session for `spec` in `pane`."""
         ...
 
     async def attach(
         self,
-        spec: LaunchSpec,  # noqa: V107
+        spec: LaunchSpec,
         pane: PaneHandle,
         state: Mapping[str, Any],
     ) -> AgentSession:

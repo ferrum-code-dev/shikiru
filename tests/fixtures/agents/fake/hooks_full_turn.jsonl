@@ -1,0 +1,8 @@
+{"event":"session_started","session_id":"11111111-1111-1111-1111-111111111111"}
+{"event":"prompt_submitted","text":"implement the retry helper"}
+{"event":"activity","tool_running":true}
+{"event":"activity","tool_running":false}
+{"event":"turn_ended","last_message":"accept: implement the retry helper","tokens":{"input_tokens":100,"output_tokens":50,"cache_read_tokens":10,"cache_write_tokens":5}}
+{"event":"compacted"}
+{"event":"attention_needed","message":"waiting for operator input"}
+{"event":"session_ended"}

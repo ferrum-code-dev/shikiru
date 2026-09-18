@@ -1,0 +1,5 @@
+{"event":"session_started","session_id":"22222222-2222-2222-2222-222222222222"}
+{"event":"prompt_submitted","text":"first turn"}
+{"event":"turn_ended","last_message":"accept: first turn","tokens":{"input_tokens":100,"output_tokens":50,"cache_read_tokens":10,"cache_write_tokens":5}}
+{"event":"prompt_submitted","text":"second turn"}
+{"event":"turn_ended","last_message":"accept: second turn","tokens":{"input_tokens":200,"output_tokens":100,"cache_read_tokens":20,"cache_write_tokens":10}}
