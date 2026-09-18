@@ -30,6 +30,7 @@ class TmuxServer:
     socket_name: str
     env: dict[str, str]
     runner: SubprocessRunner = field(default_factory=SubprocessRunner)
+    session: str = _SESSION_NAME
 
     async def run(self, *args: str, check: bool = True) -> ProcessResult:
         """Run a tmux command scoped to this server's socket."""

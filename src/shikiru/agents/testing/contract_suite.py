@@ -85,7 +85,6 @@ HEADLESS_ASK_TIMEOUT = timedelta(seconds=15)
 
 _REMAIN_ON_EXIT_OPTION = "remain-on-exit"
 _REMAIN_ON_EXIT_VALUE = "on"
-_FALLBACK_SESSION_NAME = "test"
 
 _TURNS_DIRNAME = "turns"
 _TURN_NAME = "01-turn"
@@ -94,8 +93,7 @@ _TURN_NAME = "01-turn"
 class TmuxSocket(Protocol):
     """What the live checks need from a private tmux server (structurally, `tmux_server`).
 
-    `session` is the name of the session scratch windows are created in; `_make_pane`
-    falls back to `_FALLBACK_SESSION_NAME` for a double that doesn't (yet) provide it.
+    `session` is the name of the session scratch windows are created in.
     """
 
     socket_name: str
@@ -195,8 +193,7 @@ def _place_sample_files(role_path: Path, files: Mapping[str, Path]) -> None:
 async def _make_pane(tmux_server: TmuxSocket, cwd: Path) -> TmuxPane:
     tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
     window_name = f"{_SCRATCH_WINDOW_PREFIX}{uuid.uuid4().hex[:8]}"
-    session = getattr(tmux_server, "session", _FALLBACK_SESSION_NAME)
-    pane_id = await tmux.new_window(session, name=window_name, cwd=cwd)
+    pane_id = await tmux.new_window(tmux_server.session, name=window_name, cwd=cwd)
     await tmux.set_window_option(pane_id, _REMAIN_ON_EXIT_OPTION, _REMAIN_ON_EXIT_VALUE)
     return TmuxPane(tmux, pane_id, SystemClock())
 
