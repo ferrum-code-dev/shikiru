@@ -28,6 +28,7 @@ from shikiru.agents.contracts import (
     TurnFailed,
 )
 from shikiru.domain.activity import is_operator_prompt, is_stalled
+from shikiru.domain.recovery import PaneDied, Stalled
 from shikiru.domain.tasks import Hold
 
 if TYPE_CHECKING:
@@ -41,18 +42,6 @@ if TYPE_CHECKING:
     from shikiru.config.settings import TimeoutsConfig
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
-
-
-@dataclass(frozen=True)
-class PaneDied:
-    """The session's pane process is no longer running (03 §4.2)."""
-
-
-@dataclass(frozen=True)
-class Stalled:
-    """No activity within the configured timeout, or a launch that never started (03 §4.2)."""
-
-    screen: str
 
 
 @dataclass(frozen=True)

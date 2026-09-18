@@ -25,10 +25,11 @@ from shikiru.agents.contracts import (
     SessionStarted,
 )
 from shikiru.domain.ladder import pick_rung
+from shikiru.domain.recovery import PaneDied, Stalled
 from shikiru.engine.decorations import decorate_pane
-from shikiru.engine.monitor import PaneDied, SessionMonitor, Stalled
+from shikiru.engine.monitor import SessionMonitor
 from shikiru.errors import CommandFailed, ShikiruError
-from shikiru.workspace.roots import run_dir
+from shikiru.workspace.roots import run_dir, task_root
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,7 +46,6 @@ if TYPE_CHECKING:
     from shikiru.store.tasks import TaskStore
     from shikiru.tmux.decorator import PaneDecorator
     from shikiru.tmux.pane import TmuxPane
-    from shikiru.workspace.roots import TaskRootBuilder
 
 EXIT_KILL_DELAY_SECONDS = 10
 _EXIT_POLL_INTERVAL_SECONDS = 1
@@ -77,7 +77,6 @@ class SessionManager:
         *,
         tasks: TaskStore,
         runs: RunStore,
-        task_roots: TaskRootBuilder,
         project_root: Path,
         settings: Settings,
         clock: Clock,
@@ -88,7 +87,6 @@ class SessionManager:
         self._pane_factory = pane_factory
         self._tasks = tasks
         self._runs = runs
-        self._task_roots = task_roots
         self._project_root = project_root
         self._settings = settings
         self._clock = clock
@@ -108,6 +106,7 @@ class SessionManager:
             if pane_alive and tracked.rung.agent == rung.agent:
                 resume_session_id = tracked.session_id
                 await pane.paste_line(self._agent_pool.get(rung.agent).keys.exit_input)
+                await self._await_pane_deaths([pane])
                 await self._forget(task.id, role)
                 return await self._relaunch(
                     task, role, pane, rung, resume_session_id=resume_session_id
@@ -138,15 +137,23 @@ class SessionManager:
                 await pane.paste_line(self._agent_pool.get(live.rung.agent).keys.exit_input)
             self._runs.close(live.run_id)
             await self._forget(*key)
-        survivors = await self._await_pane_deaths(list(task.panes.values()))
-        for pane_id in survivors:
-            await self._pane_factory(pane_id).kill()
+        survivors = await self._await_pane_deaths(
+            [self._pane_factory(pane_id) for pane_id in task.panes.values()]
+        )
+        for pane in survivors:
+            await pane.kill()
 
-    async def _await_pane_deaths(self, pane_ids: list[str]) -> list[str]:
+    async def _await_pane_deaths(self, panes: list[TmuxPane]) -> list[TmuxPane]:
+        """Poll `panes` until every one has died, bounded by `EXIT_KILL_DELAY_SECONDS`.
+
+        Returns whichever panes are still alive once the deadline passes. Polling instead of
+        always sleeping the full delay means the common case (every pane dies promptly) doesn't
+        pay for the worst case.
+        """
         deadline = self._clock.now() + timedelta(seconds=EXIT_KILL_DELAY_SECONDS)
-        survivors = pane_ids
+        survivors = panes
         while survivors:
-            survivors = [pid for pid in survivors if await self._pane_factory(pid).is_alive()]
+            survivors = [pane for pane in survivors if await pane.is_alive()]
             if not survivors or self._clock.now() >= deadline:
                 return survivors
             await self._clock.sleep(_EXIT_POLL_INTERVAL_SECONDS)
@@ -241,10 +248,14 @@ class SessionManager:
             start_queue = monitor.subscribe()
             try:
                 session_id = await self._await_started(start_queue)
-            finally:
+            except SessionLaunchFailedError:
                 monitor.unsubscribe(start_queue)
+                await self._cancel_tasks(monitor_task, decorate_task)
+                self._runs.exit(run_id)
+                raise
+            monitor.unsubscribe(start_queue)
             resume_command = (
-                agent.resume_command(session_id, self._task_roots.task_root(task.id))
+                agent.resume_command(session_id, task_root(self._project_root, task.id))
                 if session_id is not None
                 else None
             )
@@ -303,7 +314,11 @@ class SessionManager:
         live = self._live.pop((task_id, role), None)
         if live is None:
             return
-        for task in (live.monitor_task, live.decorate_task):
+        await self._cancel_tasks(live.monitor_task, live.decorate_task)
+
+    @staticmethod
+    async def _cancel_tasks(*tasks: asyncio.Task[None]) -> None:
+        for task in tasks:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
@@ -322,7 +337,7 @@ class SessionManager:
         return LaunchSpec(
             rung=rung,
             role=role.value,
-            cwd=self._task_roots.task_root(task.id),
+            cwd=task_root(self._project_root, task.id),
             run_dir=task_run_dir,
             add_dirs=(),
             env={
