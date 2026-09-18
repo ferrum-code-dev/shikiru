@@ -2,42 +2,74 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
-from fake_agent.agent import PRICES_PATH, create
-from fake_agent.signals import error_from_entry, signal_from_entry, usage_from_entries
+from fake_agent.agent import REPL_COMMAND, SESSION_ID_ENV_VAR, create
+from pydantic import BaseModel
 
 from shikiru.agents.contracts import (
+    ROLE_ENV_VAR,
+    RUN_DIR_ENV_VAR,
     Activity,
-    AgentContext,
+    AgentFactory,
     AttentionNeeded,
     Compacted,
     FailureKind,
-    InteractiveAgent,
     LaunchSpec,
     PromptSubmitted,
     Rung,
     SessionEnded,
     SessionStarted,
     TurnEnded,
+    TurnFailed,
     Usage,
 )
-from shikiru.agents.sdk.prices import PriceTable
-from shikiru.agents.sdk.reset_time import ResetTimeParser
-from shikiru.agents.testing import AgentContractSuite, Case, LaunchCase, RespawnCall
-from shikiru.clock import SystemClock
-from shikiru.process import SubprocessRunner
+from shikiru.agents.sdk.hooks import HOOKS_FILENAME
+from shikiru.agents.testing import AgentContractSuite, LaunchCase, RespawnCall, SampleCase
 
 _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "agents" / "fake"
 _MODEL = "fake-standard"
+_ROLE = "implementer"
+
+_FULL_TURN_SESSION_ID = "11111111-1111-1111-1111-111111111111"
+_TWO_TURNS_SESSION_ID = "22222222-2222-2222-2222-222222222222"
+_ERRORS_SESSION_ID = "33333333-3333-3333-3333-333333333333"
+
+_FULL_TURN_USAGE = Usage(
+    input_tokens=100,
+    output_tokens=50,
+    cache_read_tokens=10,
+    cache_write_tokens=5,
+    cost_usd=0.00107175,
+    cost_basis="api_equivalent",
+    context_used_pct=0.11499999999999999,
+)
+_TWO_TURNS_USAGE = Usage(
+    input_tokens=300,
+    output_tokens=150,
+    cache_read_tokens=30,
+    cache_write_tokens=15,
+    cost_usd=0.00321525,
+    cost_basis="api_equivalent",
+    context_used_pct=0.22999999999999998,
+)
+_NO_TURNS_USAGE = Usage(
+    input_tokens=0,
+    output_tokens=0,
+    cache_read_tokens=0,
+    cache_write_tokens=0,
+    cost_usd=None,
+    cost_basis="api_equivalent",
+    context_used_pct=None,
+)
+
+_FIXED_NEW_SESSION_ID = "fixed-new-session-id"
 
 
-def _entries(filename: str) -> list[dict[str, Any]]:
-    lines = (_FIXTURES_DIR / filename).read_text().splitlines()
-    return [json.loads(line) for line in lines if line]
+class _AskResult(BaseModel):
+    ok: bool
 
 
 class TestFakeAgentContract(AgentContractSuite):
@@ -45,18 +77,21 @@ class TestFakeAgentContract(AgentContractSuite):
 
     runs_live_checks_in_default_gate: ClassVar[bool] = True
 
-    def build_agent(self) -> InteractiveAgent:
-        context = AgentContext(
-            options={"asks": [{"ok": True}]}, runner=SubprocessRunner(), clock=SystemClock()
-        )
-        return create(context)
+    def agent_factory(self) -> AgentFactory:
+        return create
 
-    def build_live_spec(self, tmp_path: Path, *, resume_session_id: str | None) -> LaunchSpec:
+    def agent_options(self) -> dict[str, object]:
+        return {"asks": [{"ok": True}]}
+
+    def launch_case_options(self) -> dict[str, object]:
+        return {**self.agent_options(), "new_session_id": _FIXED_NEW_SESSION_ID}
+
+    def build_spec(self, tmp_path: Path, *, resume_session_id: str | None) -> LaunchSpec:
         repo = tmp_path / "repo"
-        repo.mkdir(exist_ok=True)
+        repo.mkdir(parents=True, exist_ok=True)
         return LaunchSpec(
             rung=Rung(agent="fake", model=_MODEL, effort=None),
-            role="implementer",
+            role=_ROLE,
             cwd=repo,
             run_dir=tmp_path / "run",
             add_dirs=(),
@@ -64,74 +99,94 @@ class TestFakeAgentContract(AgentContractSuite):
             resume_session_id=resume_session_id,
         )
 
-    def headless_schema(self) -> dict[str, Any]:
-        return {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    def headless_ask_schema_model(self) -> type[BaseModel]:
+        return _AskResult
 
-    def hook_signal_cases(self) -> list[Case]:
-        reset_time = ResetTimeParser(SystemClock())
-        entries = _entries("hooks_full_turn.jsonl")
-        expected = [
-            SessionStarted(session_id="11111111-1111-1111-1111-111111111111"),
-            PromptSubmitted(text="implement the retry helper"),
-            Activity(tool_running=True),
-            Activity(tool_running=False),
-            TurnEnded(last_message="accept: implement the retry helper"),
-            Compacted(),
-            AttentionNeeded(message="waiting for operator input"),
-            SessionEnded(),
+    def hook_signal_cases(self) -> list[SampleCase]:
+        return [
+            SampleCase(
+                name="hooks_full_turn.jsonl",
+                files={HOOKS_FILENAME: _FIXTURES_DIR / "hooks_full_turn.jsonl"},
+                expected_signals=[
+                    SessionStarted(session_id=_FULL_TURN_SESSION_ID),
+                    PromptSubmitted(text="implement the retry helper"),
+                    Activity(tool_running=True),
+                    Activity(tool_running=False),
+                    TurnEnded(last_message="accept: implement the retry helper"),
+                    Compacted(),
+                    AttentionNeeded(message="waiting for operator input"),
+                    SessionEnded(),
+                ],
+                expected_usage=_FULL_TURN_USAGE,
+                session_id=_FULL_TURN_SESSION_ID,
+            )
         ]
-        actual = [signal_from_entry(entry, reset_time) for entry in entries]
-        return [Case(name="hooks_full_turn.jsonl", actual=actual, expected=expected)]
 
-    def usage_cases(self) -> list[Case]:
-        prices = PriceTable.from_toml(PRICES_PATH)
-        entries = _entries("hooks_two_turns.jsonl")
-        actual = usage_from_entries(entries, model=_MODEL, prices=prices)
-        expected = Usage(
-            input_tokens=300,
-            output_tokens=150,
-            cache_read_tokens=30,
-            cache_write_tokens=15,
-            cost_usd=0.00321525,
-            cost_basis="api_equivalent",
-            context_used_pct=0.22999999999999998,
-        )
-        return [Case(name="hooks_two_turns.jsonl", actual=actual, expected=expected)]
-
-    def error_cases(self) -> list[Case]:
-        reset_time = ResetTimeParser(SystemClock())
-        entries = _entries("errors.jsonl")
-        expected = [
-            (FailureKind.QUOTA, datetime(2030, 1, 1, tzinfo=UTC)),
-            (FailureKind.OTHER, None),
+    def usage_cases(self) -> list[SampleCase]:
+        return [
+            SampleCase(
+                name="hooks_two_turns.jsonl",
+                files={HOOKS_FILENAME: _FIXTURES_DIR / "hooks_two_turns.jsonl"},
+                expected_signals=[
+                    SessionStarted(session_id=_TWO_TURNS_SESSION_ID),
+                    PromptSubmitted(text="first turn"),
+                    TurnEnded(last_message="accept: first turn"),
+                    PromptSubmitted(text="second turn"),
+                    TurnEnded(last_message="accept: second turn"),
+                ],
+                expected_usage=_TWO_TURNS_USAGE,
+                session_id=_TWO_TURNS_SESSION_ID,
+            )
         ]
-        actual = [error_from_entry(entry, reset_time) for entry in entries]
-        return [Case(name="errors.jsonl", actual=actual, expected=expected)]
+
+    def error_cases(self) -> list[SampleCase]:
+        return [
+            SampleCase(
+                name="errors.jsonl",
+                files={HOOKS_FILENAME: _FIXTURES_DIR / "errors.jsonl"},
+                expected_signals=[
+                    TurnFailed(
+                        kind=FailureKind.QUOTA,
+                        message="rate limited",
+                        resets_at=datetime(2030, 1, 1, tzinfo=UTC),
+                    ),
+                    TurnFailed(
+                        kind=FailureKind.OTHER, message="unexpected failure", resets_at=None
+                    ),
+                ],
+                expected_usage=_NO_TURNS_USAGE,
+                session_id=_ERRORS_SESSION_ID,
+            )
+        ]
 
     def launch_cases(self, tmp_path: Path) -> list[LaunchCase]:
-        context = AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock())
-        agent = create(context)
-        new_spec = self.build_live_spec(tmp_path, resume_session_id=None)
-
-        def _check_new(call: RespawnCall) -> None:
-            assert call.argv == ("fake-agent-repl",)
-            assert call.env["SHIKIRU_RUN_DIR"] == str(new_spec.run_dir)
-            assert call.env["SHIKIRU_ROLE"] == "implementer"
-            assert call.env["SHIKIRU_FAKE_SESSION_ID"]
-
-        resume_spec = self.build_live_spec(tmp_path, resume_session_id="the-old-session-id")
-
-        def _check_resume(call: RespawnCall) -> None:
-            assert call.argv == ("fake-agent-repl",)
-            assert call.env["SHIKIRU_FAKE_SESSION_ID"] == "the-old-session-id"
-
+        new_spec = self.build_spec(tmp_path / "new", resume_session_id=None)
+        resume_spec = self.build_spec(tmp_path / "resume", resume_session_id="the-old-session-id")
         return [
-            LaunchCase(name="new session", agent=agent, spec=new_spec, check=_check_new),
+            LaunchCase(
+                name="new session",
+                spec=new_spec,
+                expected=RespawnCall(
+                    argv=(REPL_COMMAND,),
+                    env={
+                        RUN_DIR_ENV_VAR: str(new_spec.run_dir),
+                        ROLE_ENV_VAR: _ROLE,
+                        SESSION_ID_ENV_VAR: _FIXED_NEW_SESSION_ID,
+                    },
+                    cwd=new_spec.cwd,
+                ),
+            ),
             LaunchCase(
                 name="resume",
-                agent=agent,
                 spec=resume_spec,
-                check=_check_resume,
-                resume_state={"session_id": "the-old-session-id"},
+                expected=RespawnCall(
+                    argv=(REPL_COMMAND,),
+                    env={
+                        RUN_DIR_ENV_VAR: str(resume_spec.run_dir),
+                        ROLE_ENV_VAR: _ROLE,
+                        SESSION_ID_ENV_VAR: "the-old-session-id",
+                    },
+                    cwd=resume_spec.cwd,
+                ),
             ),
         ]

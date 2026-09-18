@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fake_agent.headless import FakeHeadlessAgent
 from fake_agent.session import FakeSession
-from shikiru.agents.contracts import CheckResult, SessionKeys
+from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, CheckResult, SessionKeys
+from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import ConfigError
@@ -30,31 +32,38 @@ if TYPE_CHECKING:
     from shikiru.process import SubprocessRunner
 
 REPL_COMMAND = "fake-agent-repl"
-RUN_DIR_ENV_VAR = "SHIKIRU_RUN_DIR"
-ROLE_ENV_VAR = "SHIKIRU_ROLE"
 SESSION_ID_ENV_VAR = "SHIKIRU_FAKE_SESSION_ID"
 
-_INTERRUPT_KEYS = ("C-c",)
-_EXIT_INPUT = "/exit"
-_SAFE_KEYS = ("Enter",)
+EXIT_INPUT = "/exit"
+INTERRUPT_KEYS = ("C-c",)
+SAFE_KEYS = ("Enter",)
 
 PRICES_PATH = Path(__file__).parent / "prices.toml"
 _DOCTOR_CHECK_NAME = "binary"
 
 
 class FakeOptions(BaseModel):
-    """`agents.fake.options`: canned answers for `headless().ask()` (04 §3, 07 §3)."""
+    """`agents.fake.options`: `asks` scripts `headless().ask()`; `new_session_id`, when set,
+    replaces `uuid.uuid4()` for a brand-new session, so a contract test can assert an exact
+    `launch()` argv/env instead of a random one (04 §3, 07 §3).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     asks: list[dict[str, Any]] = Field(default_factory=list)
+    new_session_id: str | None = None
+
+
+def _hooks_file_size(run_dir: Path, role: str) -> int:
+    path = run_dir / role / HOOKS_FILENAME
+    return path.stat().st_size if path.is_file() else 0
 
 
 class FakeAgent:
     """A scripted `InteractiveAgent`, used only by tests, driven by `SHIKIRU_FAKE_SCRIPT`."""
 
     name = "fake"
-    keys = SessionKeys(interrupt=_INTERRUPT_KEYS, exit_input=_EXIT_INPUT, safe=_SAFE_KEYS)
+    keys = SessionKeys(interrupt=INTERRUPT_KEYS, exit_input=EXIT_INPUT, safe=SAFE_KEYS)
 
     def __init__(self, runner: SubprocessRunner, clock: Clock, options: FakeOptions) -> None:
         """Hold `options` for `headless()`, pricing usage under this plugin's `prices.toml`."""
@@ -65,18 +74,18 @@ class FakeAgent:
         self._prices = PriceTable.from_toml(PRICES_PATH)
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
-        """Respawn `pane` into a fresh REPL under a newly generated session id."""
-        session_id = str(uuid.uuid4())
+        """Respawn `pane` into a fresh REPL, reusing `spec.resume_session_id` when set."""
+        session_id = spec.resume_session_id or self._options.new_session_id or str(uuid.uuid4())
+        start_offset = await asyncio.to_thread(_hooks_file_size, spec.run_dir, spec.role)
         await self._spawn(spec, pane, session_id)
-        return self._session(spec, session_id)
+        return self._session(spec, session_id, start_offset)
 
     async def attach(
         self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, Any]
     ) -> AgentSession:
-        """Respawn `pane` into the REPL again, under `state`'s recorded session id."""
-        session_id = state["session_id"]
-        await self._spawn(spec, pane, session_id)
-        return self._session(spec, session_id)
+        """Reconnect to the still-running REPL behind `pane`, from `state`'s recorded offset."""
+        del pane
+        return self._session(spec, state["session_id"], state["offset"])
 
     async def quota(self) -> list[QuotaWindow]:
         """Return no quota windows: the fake agent has no quota source."""
@@ -102,11 +111,12 @@ class FakeAgent:
         env[SESSION_ID_ENV_VAR] = session_id
         await pane.respawn([REPL_COMMAND], env=env, cwd=spec.cwd)
 
-    def _session(self, spec: LaunchSpec, session_id: str) -> FakeSession:
+    def _session(self, spec: LaunchSpec, session_id: str, start_offset: int) -> FakeSession:
         return FakeSession(
             spec.run_dir,
             spec.role,
             session_id,
+            start_offset,
             clock=self._clock,
             reset_time=self._reset_time,
             prices=self._prices,

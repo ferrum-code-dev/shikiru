@@ -14,16 +14,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
+from fake_agent.agent import EXIT_INPUT, SESSION_ID_ENV_VAR
 from fake_agent.script import (
-    STEP_ACCEPT,
-    STEP_CHANGES_REQUESTED,
-    STEP_CRASH,
-    STEP_DIALOG,
-    STEP_FAIL,
-    STEP_NEEDS_DECISION,
-    STEP_NO_REPORT,
-    STEP_STALL,
+    AcceptStep,
+    ChangesRequestedStep,
+    CrashStep,
+    DialogStep,
+    FailStep,
+    NeedsDecisionStep,
+    NoReportStep,
     Script,
+    StallStep,
     TurnStep,
 )
 from fake_agent.signals import (
@@ -35,11 +36,12 @@ from fake_agent.signals import (
     turn_failed_payload,
     turn_tokens,
 )
-from shikiru.agents.contracts import FailureKind
+from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR
 from shikiru.agents.sdk.hooks import HookRecorder
 from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
 from shikiru.cli.report import resolve_current_turn_dir
 from shikiru.domain.reports import (
+    REPORT_KIND_FILENAME,
     Commit,
     ConsultAnswer,
     ImplementationReport,
@@ -53,9 +55,6 @@ from shikiru.domain.reports import (
 from shikiru.domain.tasks import Mode
 from shikiru.process import SubprocessRunner
 
-RUN_DIR_ENV_VAR = "SHIKIRU_RUN_DIR"
-ROLE_ENV_VAR = "SHIKIRU_ROLE"
-SESSION_ID_ENV_VAR = "SHIKIRU_FAKE_SESSION_ID"
 SCRIPT_ENV_VAR = "SHIKIRU_FAKE_SCRIPT"
 
 STATE_DIRNAME = "fake_state"
@@ -154,7 +153,7 @@ def _unsupported(kind: ReportKind, step: TurnStep) -> NoReturn:
 
 
 def _triage_report(step: TurnStep, prompt_text: str) -> Report:
-    if step.kind != STEP_ACCEPT:
+    if not isinstance(step, AcceptStep):
         _unsupported(ReportKind.TRIAGE, step)
     return TriageReport(
         title="fake triage",
@@ -166,21 +165,21 @@ def _triage_report(step: TurnStep, prompt_text: str) -> Report:
 
 
 def _plan_report(step: TurnStep, prompt_text: str, commits: list[Commit]) -> Report:
-    if step.kind != STEP_ACCEPT:
+    if not isinstance(step, AcceptStep):
         _unsupported(ReportKind.PLAN, step)
     return PlanReport(summary=f"planned: {prompt_text}", commits=commits)
 
 
 def _consult_report(step: TurnStep, prompt_text: str) -> Report:
-    if step.kind != STEP_ACCEPT:
+    if not isinstance(step, AcceptStep):
         _unsupported(ReportKind.CONSULT, step)
     return ConsultAnswer(decision="answer", answer=f"answer: {prompt_text}")
 
 
 def _verdict_report(step: TurnStep, prompt_text: str) -> Report:
-    if step.kind == STEP_ACCEPT:
+    if isinstance(step, AcceptStep):
         return Verdict(decision="accept", summary=f"verified: {prompt_text}")
-    if step.kind == STEP_CHANGES_REQUESTED:
+    if isinstance(step, ChangesRequestedStep):
         return Verdict(
             decision="changes_requested",
             summary=f"issues found: {prompt_text}",
@@ -190,7 +189,7 @@ def _verdict_report(step: TurnStep, prompt_text: str) -> Report:
 
 
 def _implementation_report(step: TurnStep, prompt_text: str, commits: list[Commit]) -> Report:
-    if step.kind == STEP_ACCEPT:
+    if isinstance(step, AcceptStep):
         return ImplementationReport(
             status="completed",
             summary=f"implemented: {prompt_text}",
@@ -198,7 +197,7 @@ def _implementation_report(step: TurnStep, prompt_text: str, commits: list[Commi
             tests=[],
             trackers_updated=True,
         )
-    if step.kind == STEP_NEEDS_DECISION:
+    if isinstance(step, NeedsDecisionStep):
         return ImplementationReport(
             status="needs_decision",
             summary=f"blocked: {prompt_text}",
@@ -226,7 +225,7 @@ def _build_report(
 
 
 def _current_report_kind(turn_dir: Path) -> ReportKind:
-    return ReportKind((turn_dir / "report.kind").read_text().strip())
+    return ReportKind((turn_dir / REPORT_KIND_FILENAME).read_text().strip())
 
 
 def _write_report_file(role_dir: Path, report: Report) -> Path:
@@ -244,7 +243,7 @@ async def _submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text:
     kind = await asyncio.to_thread(_current_report_kind, turn_dir)
     commit = (
         await _commit_change(ctx.runner, ctx.cwd, prompt_text)
-        if step.kind == STEP_ACCEPT and kind in _KINDS_WITH_COMMITS
+        if isinstance(step, AcceptStep) and kind in _KINDS_WITH_COMMITS
         else None
     )
     report = _build_report(kind, step, prompt_text, commit)
@@ -261,32 +260,41 @@ async def _submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text:
 
 
 async def _apply_step(ctx: ReplContext, step: TurnStep, prompt_text: str) -> bool:
-    if step.kind == STEP_STALL:
+    if isinstance(step, StallStep):
         return True
-    if step.kind == STEP_CRASH:
+    if isinstance(step, CrashStep):
         return False
-    if step.kind == STEP_DIALOG:
-        ctx.recorder.record(attention_needed_payload(step.message or f"dialog: {prompt_text}"))
+    if isinstance(step, DialogStep):
+        message = step.message or f"dialog: {prompt_text}"
+        ctx.recorder.record(attention_needed_payload(ctx.session_id, message))
         return True
-    if step.kind == STEP_FAIL:
-        kind = FailureKind(step.failure_kind or FailureKind.OTHER.value)
+    if isinstance(step, FailStep):
         ctx.recorder.record(
-            turn_failed_payload(kind, message=f"fail: {prompt_text}", resets_at=step.resets_at)
+            turn_failed_payload(
+                ctx.session_id,
+                step.failure_kind,
+                message=f"fail: {prompt_text}",
+                resets_at=step.resets_at,
+            )
         )
         return True
-    if step.kind == STEP_NO_REPORT:
-        ctx.recorder.record(turn_ended_payload(f"no_report: {prompt_text}", tokens=turn_tokens()))
+    if isinstance(step, NoReportStep):
+        ctx.recorder.record(
+            turn_ended_payload(ctx.session_id, f"no_report: {prompt_text}", tokens=turn_tokens())
+        )
         return True
     await _submit_scripted_report(ctx, step, prompt_text)
-    ctx.recorder.record(turn_ended_payload(f"{step.kind}: {prompt_text}", tokens=turn_tokens()))
+    ctx.recorder.record(
+        turn_ended_payload(ctx.session_id, f"{step.kind}: {prompt_text}", tokens=turn_tokens())
+    )
     return True
 
 
 async def _handle_line(ctx: ReplContext, script: Script, prompt_text: str) -> bool:
-    ctx.recorder.record(prompt_submitted_payload(prompt_text))
+    ctx.recorder.record(prompt_submitted_payload(ctx.session_id, prompt_text))
     if prompt_text == RESUME_RECALL_PROMPT:
         recalled = _first_remembered_prompt(ctx.state_path)
-        ctx.recorder.record(turn_ended_payload(recalled, tokens=turn_tokens()))
+        ctx.recorder.record(turn_ended_payload(ctx.session_id, recalled, tokens=turn_tokens()))
         _remember_prompt(ctx.state_path, prompt_text)
         return True
     _remember_prompt(ctx.state_path, prompt_text)
@@ -303,12 +311,16 @@ async def _run() -> None:
         line = await loop.run_in_executor(None, sys.stdin.readline)
         if not line:
             break
-        keep_running = await _handle_line(ctx, script, line.rstrip("\n"))
+        prompt_text = line.rstrip("\n")
+        if prompt_text == EXIT_INPUT:
+            ctx.recorder.record(session_ended_payload(ctx.session_id))
+            return
+        keep_running = await _handle_line(ctx, script, prompt_text)
         if not keep_running:
             sys.exit(1)
-    ctx.recorder.record(session_ended_payload())
+    ctx.recorder.record(session_ended_payload(ctx.session_id))
 
 
 def main() -> None:
-    """Run the fake agent's REPL until stdin closes or a scripted `crash` exits it."""
+    """Run the fake agent's REPL until stdin closes, `/exit` is read, or a `crash` exits it."""
     asyncio.run(_run())

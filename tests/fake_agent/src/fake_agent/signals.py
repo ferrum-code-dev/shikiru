@@ -1,9 +1,11 @@
-"""The fake agent's hook payload format: `{"event": <name>, ...}` lines (see package docstring).
+"""The fake agent's hook payload format: `{"event": <name>, "session_id": <id>, ...}` lines
+(see package docstring).
 
 Builders (`*_payload`) are used by `fake_agent.repl` to write hook lines; readers
 (`signal_from_entry`, `usage_from_entries`, `error_from_entry`) turn them back into
 `agents.contracts` types, both for `fake_agent.session` and for `AgentContractSuite`'s
-offline checks.
+offline checks. Every entry carries `session_id`, so `usage_from_entries` can sum only one
+session's turns even when several sessions have shared a role directory over time.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
     from shikiru.agents.sdk.reset_time import ResetTimeParser
 
 EVENT_FIELD = "event"
+SESSION_ID_FIELD = "session_id"
 EVENT_SESSION_STARTED = "session_started"
 EVENT_PROMPT_SUBMITTED = "prompt_submitted"
 EVENT_ACTIVITY = "activity"
@@ -70,59 +73,65 @@ def turn_tokens() -> TokenUsage:
     )
 
 
-def session_started_payload(session_id: str | None) -> dict[str, Any]:
+def session_started_payload(session_id: str) -> dict[str, Any]:
     """Build a `session_started` hook entry."""
-    return {EVENT_FIELD: EVENT_SESSION_STARTED, "session_id": session_id}
+    return {EVENT_FIELD: EVENT_SESSION_STARTED, SESSION_ID_FIELD: session_id}
 
 
-def prompt_submitted_payload(text: str) -> dict[str, Any]:
+def prompt_submitted_payload(session_id: str, text: str) -> dict[str, Any]:
     """Build a `prompt_submitted` hook entry."""
-    return {EVENT_FIELD: EVENT_PROMPT_SUBMITTED, "text": text}
+    return {EVENT_FIELD: EVENT_PROMPT_SUBMITTED, SESSION_ID_FIELD: session_id, "text": text}
 
 
-def activity_payload(*, tool_running: bool) -> dict[str, Any]:
+def activity_payload(session_id: str, *, tool_running: bool) -> dict[str, Any]:
     """Build an `activity` hook entry."""
-    return {EVENT_FIELD: EVENT_ACTIVITY, "tool_running": tool_running}
+    return {
+        EVENT_FIELD: EVENT_ACTIVITY,
+        SESSION_ID_FIELD: session_id,
+        "tool_running": tool_running,
+    }
 
 
-def turn_ended_payload(last_message: str, *, tokens: TokenUsage) -> dict[str, Any]:
+def turn_ended_payload(session_id: str, last_message: str, *, tokens: TokenUsage) -> dict[str, Any]:
     """Build a `turn_ended` hook entry, carrying this turn's token counts."""
     return {
         EVENT_FIELD: EVENT_TURN_ENDED,
+        SESSION_ID_FIELD: session_id,
         "last_message": last_message,
         "tokens": asdict(tokens),
     }
 
 
 def turn_failed_payload(
-    kind: FailureKind, *, message: str, resets_at: str | None
+    session_id: str, kind: FailureKind, *, message: str, resets_at: str | None
 ) -> dict[str, Any]:
     """Build a `turn_failed` hook entry; `resets_at` is an ISO-8601 string or `None`."""
     return {
         EVENT_FIELD: EVENT_TURN_FAILED,
+        SESSION_ID_FIELD: session_id,
         "kind": kind.value,
         "message": message,
         "resets_at": resets_at,
     }
 
 
-def compacted_payload() -> dict[str, Any]:
+def compacted_payload(session_id: str) -> dict[str, Any]:
     """Build a `compacted` hook entry."""
-    return {EVENT_FIELD: EVENT_COMPACTED}
+    return {EVENT_FIELD: EVENT_COMPACTED, SESSION_ID_FIELD: session_id}
 
 
-def attention_needed_payload(message: str) -> dict[str, Any]:
+def attention_needed_payload(session_id: str, message: str) -> dict[str, Any]:
     """Build an `attention_needed` hook entry."""
-    return {EVENT_FIELD: EVENT_ATTENTION_NEEDED, "message": message}
+    return {EVENT_FIELD: EVENT_ATTENTION_NEEDED, SESSION_ID_FIELD: session_id, "message": message}
 
 
-def session_ended_payload() -> dict[str, Any]:
+def session_ended_payload(session_id: str) -> dict[str, Any]:
     """Build a `session_ended` hook entry."""
-    return {EVENT_FIELD: EVENT_SESSION_ENDED}
+    return {EVENT_FIELD: EVENT_SESSION_ENDED, SESSION_ID_FIELD: session_id}
 
 
 def _session_started(entry: Mapping[str, Any]) -> AgentSignal:
-    return SessionStarted(session_id=entry["session_id"])
+    return SessionStarted(session_id=entry[SESSION_ID_FIELD])
 
 
 def _prompt_submitted(entry: Mapping[str, Any]) -> AgentSignal:
@@ -184,13 +193,13 @@ def error_from_entry(
 
 
 def usage_from_entries(
-    entries: Iterable[Mapping[str, Any]], *, model: str, prices: PriceTable
+    entries: Iterable[Mapping[str, Any]], *, session_id: str, model: str, prices: PriceTable
 ) -> Usage:
-    """Sum every `turn_ended` entry's tokens into a cumulative `Usage` for `model`."""
+    """Sum `session_id`'s `turn_ended` entries into its cumulative `Usage` for `model`."""
     input_tokens = output_tokens = cache_read_tokens = cache_write_tokens = 0
     context_used_pct: float | None = None
     for entry in entries:
-        if entry.get(EVENT_FIELD) != EVENT_TURN_ENDED:
+        if entry.get(EVENT_FIELD) != EVENT_TURN_ENDED or entry.get(SESSION_ID_FIELD) != session_id:
             continue
         tokens = entry["tokens"]
         input_tokens += tokens["input_tokens"]
