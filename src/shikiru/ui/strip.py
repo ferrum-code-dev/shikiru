@@ -218,11 +218,17 @@ def _active_index(panels: tuple[PanelView, ...]) -> int | None:
     return None
 
 
-def _column_widths(width: int, count: int) -> list[int]:
+def _column_widths(width: int, headers: list[str]) -> list[int]:
+    count = len(headers)
     available = width - (count + 1)
-    base = available // count
-    widths = [base] * count
-    widths[-1] += available - base * count
+    minimums = [cell_len(header) for header in headers]
+    if sum(minimums) > available:
+        base = available // count
+        widths = [base] * count
+        widths[-1] += available - base * count
+        return widths
+    widths = list(minimums)
+    widths[-1] += available - sum(minimums)
     return widths
 
 
@@ -281,11 +287,11 @@ class TaskStrip:
 
     def _render_wide(self, width: int) -> Text:
         panels = self._data.panels
-        widths = _column_widths(width, len(panels))
+        headers = [_header_cell(index, panel) for index, panel in enumerate(panels)]
+        widths = _column_widths(width, headers)
 
         header_cells = [
-            _fit(_header_cell(index, panel), column)
-            for index, (panel, column) in enumerate(zip(panels, widths, strict=True))
+            _fit(header, column) for header, column in zip(headers, widths, strict=True)
         ]
         body_cells = [
             _fit(_body_cell(panel), column) for panel, column in zip(panels, widths, strict=True)

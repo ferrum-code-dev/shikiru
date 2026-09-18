@@ -59,6 +59,29 @@ def test_rendered_width_never_exceeds_available_columns(mode: Mode, width: int) 
         assert cell_len(line) <= width
 
 
+def test_wide_panel_headers_are_shown_in_full_when_the_width_allows() -> None:
+    text = TaskStrip(_build(Mode.IMPLEMENT)).render(WIDE_WIDTH)
+
+    header_line = text.plain.split("\n")[1]
+
+    assert "Implement" in header_line
+
+
+def test_wide_panel_headers_are_truncated_only_when_they_do_not_fit() -> None:
+    panels = tuple(
+        PanelView(label=f"Very Long Label {index}", stage_glyph="⚒", state=PanelState.PENDING)
+        for index in range(4)
+    )
+    data = TaskStripData(task_id="T-1", title="x", panels=panels)
+
+    text = TaskStrip(data).render(WIDE_WIDTH)
+
+    header_line = text.plain.split("\n")[1]
+    assert "Very Long Label 0" not in header_line
+    for line in text.plain.split("\n"):
+        assert cell_len(line) <= WIDE_WIDTH
+
+
 _MONOCHROME_ATTRIBUTES = (STYLE_DIM, STYLE_BOLD, STYLE_REVERSE)
 
 
@@ -113,18 +136,18 @@ def test_strip_golden(mode: Mode, width: int) -> None:
     goldens = {
         (Mode.IMPLEMENT, WIDE_WIDTH): (
             "┏━ T-12 · Add retry to parser ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
-            "┃起 ⌕ Triage  ┃承 ⚒ Implemen┃転 ⚖︎ Verify  ┃結 ⑂ Merge      ┃\n"
-            "┃✔ 3m         ┃⠹ ▲ 2/5      ┃·            ┃·               ┃\n"
-            "┃◆ opus       ┃▲ codex/luna ┃             ┃                ┃\n"
-            "┗━━━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━┛"
+            "┃起 ⌕ Triage┃承 ⚒ Implement┃転 ⚖︎ Verify┃結 ⑂ Merge         ┃\n"
+            "┃✔ 3m       ┃⠹ ▲ 2/5       ┃·          ┃·                  ┃\n"
+            "┃◆ opus     ┃▲ codex/luna  ┃           ┃                   ┃\n"
+            "┗━━━━━━━━━━━┻━━━━━━━━━━━━━━┻━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━┛"
         ),
         (Mode.IMPLEMENT, NARROW_WIDTH): "T-12 ⚒ Implement 2/5 ▲ codex/l",
         (Mode.PLAN, WIDE_WIDTH): (
             "┏━ T-12 · Add retry to parser ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
-            "┃起 ⌕ Triage  ┃承 ≡ Plan    ┃転 —         ┃結 ⑂ Merge      ┃\n"
-            "┃✔ 3m         ┃⠹ ▲ 2/5      ┃·            ┃·               ┃\n"
-            "┃◆ opus       ┃▲ codex/luna ┃             ┃                ┃\n"
-            "┗━━━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━┛"
+            "┃起 ⌕ Triage┃承 ≡ Plan┃転 —┃結 ⑂ Merge                     ┃\n"
+            "┃✔ 3m       ┃⠹ ▲ 2/5  ┃·   ┃·                              ┃\n"
+            "┃◆ opus     ┃▲ codex/l┃    ┃                               ┃\n"
+            "┗━━━━━━━━━━━┻━━━━━━━━━┻━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
         ),
         (Mode.PLAN, NARROW_WIDTH): "T-12 ≡ Plan 2/5 ▲ codex/luna ⠹",
     }
