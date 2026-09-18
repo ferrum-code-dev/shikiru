@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 DASHBOARD_CHANGE_POLL_SECONDS = 0.5
 
-OnChange = Callable[[], Awaitable[None] | None]
+OnChange = Callable[[], Awaitable[None]]
 
 
 class StateReader:
@@ -38,31 +38,31 @@ class StateReader:
         self._clock = clock
 
     def get_task(self, task_id: str) -> Task | None:
-        """Read one task by id, or `None` if it doesn't exist."""
+        """See `shikiru.store.tasks.fetch_task`."""
         return fetch_task(self._connection, task_id)
 
     def list_tasks(self, *, statuses: Sequence[Status] | None = None) -> list[Task]:
-        """Read every task, optionally restricted to `statuses`, ordered by `seq`."""
+        """See `shikiru.store.tasks.fetch_tasks`."""
         return fetch_tasks(self._connection, statuses=statuses)
 
     def list_runs(self, task_id: str) -> list[Run]:
-        """Read every run recorded for `task_id`, most recently started first."""
+        """See `shikiru.store.runs.fetch_runs_for_task`."""
         return fetch_runs_for_task(self._connection, task_id)
 
     def get_escalation(self, escalation_id: str) -> Escalation | None:
-        """Read one escalation by id, or `None` if it doesn't exist."""
+        """See `shikiru.store.escalations.fetch_escalation`."""
         return fetch_escalation(self._connection, escalation_id)
 
     def list_open_escalations(self) -> list[Escalation]:
-        """Read every open escalation, oldest first."""
+        """See `shikiru.store.escalations.fetch_open_escalations`."""
         return fetch_open_escalations(self._connection)
 
     def quotas_for(self, agent: str) -> list[QuotaWindow]:
-        """Read every quota window recorded for `agent`."""
+        """See `shikiru.store.quotas.fetch_quotas`."""
         return fetch_quotas(self._connection, agent)
 
     def active_agent_blocks(self, now: datetime) -> list[AgentBlock]:
-        """Read every agent block still in effect at `now`."""
+        """See `shikiru.store.quotas.fetch_active_agent_blocks`."""
         return fetch_active_agent_blocks(self._connection, now)
 
     def events_since(
@@ -72,7 +72,7 @@ class StateReader:
         kinds: Sequence[EventKind] | None = None,
         task_id: str | None = None,
     ) -> list[Event]:
-        """Read every event since `since_id`, optionally filtered by `kinds` and `task_id`."""
+        """See `shikiru.store.events.fetch_events_since`."""
         return fetch_events_since(self._connection, since_id, kinds=kinds, task_id=task_id)
 
     def data_version(self) -> int:
@@ -93,6 +93,4 @@ class StateReader:
             if current_version == last_version:
                 continue
             last_version = current_version
-            result = on_change()
-            if result is not None:
-                await result
+            await on_change()
