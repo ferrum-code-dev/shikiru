@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import uuid
 from typing import TYPE_CHECKING
 
+import pytest
 from fake_agent.agent import create as create_fake_agent
+from fake_agent.repl import SCRIPT_ENV_VAR
 
+from shikiru.agents.contracts import Rung
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import SystemClock
 from shikiru.config.settings import AgentConfig
@@ -15,6 +19,7 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.engine.agents import AgentPool
+from shikiru.engine.monitor import SessionMonitor
 from shikiru.engine.sessions import SessionManager
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
@@ -23,18 +28,25 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.pane import TmuxPane
-from shikiru.workspace.git import Git
-from shikiru.workspace.roots import TaskRootBuilder
+from shikiru.tmux.session import SessionView
+from shikiru.workspace.roots import task_root
+from tests.support.factories import make_settings
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from pathlib import Path
 
+    from shikiru.agents.contracts import AgentSession, PaneHandle
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.domain.runs import Run
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
 FAKE_AGENT_NAME = "fake"
+FAKE_RUNG = Rung(agent=FAKE_AGENT_NAME, model="fake-1", effort=None)
+
+_SESSION_NAME = "test"
 
 
 def build_registry() -> AgentRegistry:
@@ -49,11 +61,6 @@ def fake_agent_settings() -> dict[str, AgentConfig]:
     return {FAKE_AGENT_NAME: AgentConfig()}
 
 
-def build_task_roots(runner: SubprocessRunner, project_root: Path) -> TaskRootBuilder:
-    """A `TaskRootBuilder` for `project_root`; only its pure `task_root()` lookup is used."""
-    return TaskRootBuilder(Git(runner), project_root)
-
-
 def build_tmux(tmux_server: TmuxServer) -> Tmux:
     """A `Tmux` client scoped to `tmux_server`'s private socket."""
     return Tmux(tmux_server.runner, socket=tmux_server.socket_name)
@@ -64,20 +71,15 @@ def build_decorator(tmux: Tmux) -> PaneDecorator:
     return PaneDecorator(tmux)
 
 
-_REMAIN_ON_EXIT_OPTION = "remain-on-exit"
-_REMAIN_ON_EXIT_ON = "on"
-
-
 async def new_agent_pane(tmux: Tmux, cwd: Path) -> str:
-    """Create a window with `remain-on-exit on`, mirroring a real task window (06 §5.1).
-
-    Without it, tmux closes a dead agent pane's window instead of leaving it for
-    `SessionManager` (and, later, `LayoutGuard`) to observe and act on.
-    """
+    """Create a task window with `remain-on-exit on`, mirroring a real task window (06 §5.1)."""
     name = f"engine-test-{uuid.uuid4().hex[:8]}"
-    pane_id = await tmux.new_window("test", name=name, cwd=cwd)
-    await tmux.set_window_option(f"test:{name}", _REMAIN_ON_EXIT_OPTION, _REMAIN_ON_EXIT_ON)
-    return pane_id
+    return await SessionView(tmux).create_task_window(_SESSION_NAME, window_name=name, cwd=cwd)
+
+
+async def set_script(tmux_server: TmuxServer, steps: list[dict[str, object]]) -> None:
+    """Set `SHIKIRU_FAKE_SCRIPT` for every fake agent pane on `tmux_server`'s server."""
+    await tmux_server.run("set-environment", "-g", SCRIPT_ENV_VAR, json.dumps(steps))
 
 
 async def create_running_task(
@@ -123,10 +125,11 @@ def build_session_manager(
     project_root: Path,
     settings: Settings,
     clock: Clock,
+    registry: AgentRegistry | None = None,
     agent_clock: Clock | None = None,
     pane_clock: Clock | None = None,
 ) -> SessionManager:
-    """A `SessionManager` wired to the `fake` agent, `tmux` and the given stores.
+    """A `SessionManager` wired to `registry` (the `fake` agent by default), `tmux` and the stores.
 
     `agent_clock`/`pane_clock` default to a fresh `SystemClock`-backed pair distinct from
     `clock`: production wires one `Clock` everywhere, but a test driving `clock` as a
@@ -136,7 +139,7 @@ def build_session_manager(
     runner = SubprocessRunner()
     resolved_pane_clock = pane_clock if pane_clock is not None else SystemClock()
     agent_pool = AgentPool(
-        build_registry(),
+        (registry if registry is not None else build_registry()).create,
         runner,
         settings,
         agent_clock if agent_clock is not None else SystemClock(),
@@ -146,9 +149,136 @@ def build_session_manager(
         lambda pane_id: TmuxPane(tmux, pane_id, resolved_pane_clock),
         tasks=tasks,
         runs=runs,
-        task_roots=build_task_roots(runner, project_root),
         project_root=project_root,
         settings=settings,
         clock=clock,
         decorator=build_decorator(tmux),
     )
+
+
+def make_monitor(
+    session: AgentSession,
+    pane: PaneHandle,
+    *,
+    task: Task,
+    run: Run,
+    run_dir: Path,
+    tasks: TaskStore,
+    runs: RunStore,
+    clock: Clock,
+    settings: Settings,
+    expects_started: bool,
+) -> SessionMonitor:
+    """A `SessionMonitor` for `task`/`run`, timed from `settings.orchestration`."""
+    return SessionMonitor(
+        session,
+        pane,
+        task_id=task.id,
+        run_id=run.id,
+        run_dir=run_dir,
+        tasks=tasks,
+        runs=runs,
+        clock=clock,
+        timeouts=settings.orchestration.timeouts,
+        poll_seconds=settings.orchestration.poll_seconds,
+        expects_started=expects_started,
+    )
+
+
+@dataclasses.dataclass
+class EngineEnv:
+    """Everything an `engine` integration test needs: real tmux, real stores, a live manager."""
+
+    tmux: Tmux
+    tasks: TaskStore
+    runs: RunStore
+    connection: Connection
+    project_root: Path
+    manager: SessionManager
+    _extra_managers: list[SessionManager] = dataclasses.field(default_factory=list)
+
+    def build_manager(
+        self,
+        settings: Settings,
+        *,
+        clock: Clock | None = None,
+        registry: AgentRegistry | None = None,
+        agent_clock: Clock | None = None,
+        pane_clock: Clock | None = None,
+    ) -> SessionManager:
+        """Build another `SessionManager` sharing this env's tmux and stores.
+
+        Shut down automatically alongside `manager` when the fixture tears down.
+        """
+        manager = build_session_manager(
+            tmux=self.tmux,
+            tasks=self.tasks,
+            runs=self.runs,
+            project_root=self.project_root,
+            settings=settings,
+            clock=clock if clock is not None else SystemClock(),
+            registry=registry,
+            agent_clock=agent_clock,
+            pane_clock=pane_clock,
+        )
+        self._extra_managers.append(manager)
+        return manager
+
+    async def shutdown_all(self) -> None:
+        """Shut down `manager` and every manager built through `build_manager`."""
+        for extra in self._extra_managers:
+            await extra.shutdown()
+        await self.manager.shutdown()
+
+    async def new_pane(self) -> str:
+        """Create a fresh task window pane in this env's tmux, rooted at `project_root`."""
+        return await new_agent_pane(self.tmux, self.project_root)
+
+    def pane(self, pane_id: str) -> TmuxPane:
+        """A `TmuxPane` for `pane_id` on this env's tmux, timed by a real clock."""
+        return TmuxPane(self.tmux, pane_id, SystemClock())
+
+    async def build_task(
+        self, *, title: str = "t", role: Role = Role.IMPLEMENTER, slot: int = 1
+    ) -> Task:
+        """Insert a task running `role` in a fresh pane, with its task root directory created."""
+        pane_id = await self.new_pane()
+        task = await create_running_task(
+            self.connection, SystemClock(), title=title, pane_id=pane_id, role=role, slot=slot
+        )
+        task_root(self.project_root, task.id).mkdir(parents=True)
+        return task
+
+
+@pytest.fixture
+async def engine_env(
+    tmux_server: TmuxServer, connection: Connection, tmp_path: Path
+) -> AsyncIterator[EngineEnv]:
+    """An `EngineEnv` with a default fake-agent, single-rung `SessionManager`.
+
+    The default manager and any built through `EngineEnv.build_manager` are shut down on
+    teardown, so tests need no `try`/`finally` of their own just for cleanup.
+    """
+    tmux = build_tmux(tmux_server)
+    tasks, runs = build_stores(connection, SystemClock())
+    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
+    manager = build_session_manager(
+        tmux=tmux,
+        tasks=tasks,
+        runs=runs,
+        project_root=tmp_path,
+        settings=settings,
+        clock=SystemClock(),
+    )
+    env = EngineEnv(
+        tmux=tmux,
+        tasks=tasks,
+        runs=runs,
+        connection=connection,
+        project_root=tmp_path,
+        manager=manager,
+    )
+    try:
+        yield env
+    finally:
+        await env.shutdown_all()

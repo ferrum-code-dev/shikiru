@@ -3,49 +3,28 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
-import pytest
-
-from shikiru.agents.contracts import Activity, Rung, SessionEnded, SessionStarted
-from shikiru.clock import SystemClock
+from shikiru.agents.contracts import Activity, SessionEnded, SessionStarted
 from shikiru.domain.runs import NO_USAGE
 from shikiru.domain.tasks import Hold, Role
-from shikiru.engine.monitor import SessionMonitor, Stalled
-from shikiru.process import SubprocessRunner
-from shikiru.tmux.pane import TmuxPane
+from shikiru.engine.monitor import Stalled
 from tests.support.clock import FakeClock
-from tests.support.engine import (
-    build_session_manager,
-    build_stores,
-    build_task_roots,
-    build_tmux,
-    create_running_task,
-    fake_agent_settings,
-    new_agent_pane,
-)
+from tests.support.engine import FAKE_RUNG, fake_agent_settings, make_monitor, set_script
 from tests.support.factories import TASK_CREATED_AT, make_settings
-from tests.support.waiting import WaitTimeoutError, wait_until
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Mapping
-    from pathlib import Path
 
     from shikiru.agents.contracts import AgentSignal, Usage
     from shikiru.engine.monitor import MonitorSignal
     from shikiru.store.database import Database
-    from tests.support.store import Connection
+    from tests.support.engine import EngineEnv
     from tests.support.tmux import TmuxServer
 
-FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
-
 _SIGNAL_TIMEOUT = 15.0
-
-
-async def _set_script(tmux_server: TmuxServer, steps: list[dict[str, object]]) -> None:
-    await tmux_server.run("set-environment", "-g", "SHIKIRU_FAKE_SCRIPT", json.dumps(steps))
 
 
 async def _next_stalled(queue: asyncio.Queue[MonitorSignal]) -> Stalled:
@@ -116,57 +95,45 @@ class _ScriptedSession:
 
 
 async def test_stall_is_published_after_the_configured_timeout(
-    tmux_server: TmuxServer, connection: Connection, tmp_path: Path
+    engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    tmux = build_tmux(tmux_server)
-    task_roots = build_task_roots(SubprocessRunner(), tmp_path)
     settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
-    tasks, runs = build_stores(connection, clock)
-    manager = build_session_manager(
-        tmux=tmux, tasks=tasks, runs=runs, project_root=tmp_path, settings=settings, clock=clock
-    )
-    pane_id = await new_agent_pane(tmux, tmp_path)
-    task = await create_running_task(connection, clock, title="t", pane_id=pane_id)
-    task_roots.task_root(task.id).mkdir(parents=True)
-    await _set_script(tmux_server, [{"kind": "stall"}])
+    manager = engine_env.build_manager(settings, clock=clock)
+    task = await engine_env.build_task()
+    await set_script(tmux_server, [{"kind": "stall"}])
 
-    try:
-        await manager.ensure(task, Role.IMPLEMENTER)
-        queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
 
-        pane = TmuxPane(tmux, pane_id, SystemClock())
-        await pane.paste_line("go")
+    pane_id = task.panes[Role.IMPLEMENTER]
+    await engine_env.pane(pane_id).paste_line("go")
 
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.timeouts.stall + 1)
+    await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+    clock.advance(settings.orchestration.timeouts.stall + 1)
 
-        async def _stall_seen() -> bool:
-            signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
-            return isinstance(signal, Stalled)
+    async def _stall_seen() -> bool:
+        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
+        return isinstance(signal, Stalled)
 
-        await wait_until(_stall_seen, timeout=_SIGNAL_TIMEOUT)
-    finally:
-        await manager.shutdown()
+    await wait_until(_stall_seen, timeout=_SIGNAL_TIMEOUT)
 
 
-async def test_launch_timeout_publishes_stalled(connection: Connection, tmp_path: Path) -> None:
+async def test_launch_timeout_publishes_stalled(engine_env: EngineEnv) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    tasks, runs = build_stores(connection, clock)
-    task = await create_running_task(connection, clock, title="t", pane_id="%0")
-    run = runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
+    task = await engine_env.build_task()
+    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
     settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
-    monitor = SessionMonitor(
+    monitor = make_monitor(
         _SilentSession(),
         _AlwaysAlivePane(),
-        task_id=task.id,
-        run_id=run.id,
-        run_dir=tmp_path / "run",
-        tasks=tasks,
-        runs=runs,
+        task=task,
+        run=run,
+        run_dir=engine_env.project_root / "run",
+        tasks=engine_env.tasks,
+        runs=engine_env.runs,
         clock=clock,
-        timeouts=settings.orchestration.timeouts,
-        poll_seconds=settings.orchestration.poll_seconds,
+        settings=settings,
         expects_started=True,
     )
     queue = monitor.subscribe()
@@ -182,24 +149,22 @@ async def test_launch_timeout_publishes_stalled(connection: Connection, tmp_path
             await run_task
 
 
-async def test_stall_is_published_once_per_episode(connection: Connection, tmp_path: Path) -> None:
+async def test_stall_is_published_once_per_episode(engine_env: EngineEnv) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    tasks, runs = build_stores(connection, clock)
-    task = await create_running_task(connection, clock, title="t", pane_id="%0")
-    run = runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
+    task = await engine_env.build_task()
+    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
     settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
     session = _ScriptedSession()
-    monitor = SessionMonitor(
+    monitor = make_monitor(
         session,
         _AlwaysAlivePane(),
-        task_id=task.id,
-        run_id=run.id,
-        run_dir=tmp_path / "run",
-        tasks=tasks,
-        runs=runs,
+        task=task,
+        run=run,
+        run_dir=engine_env.project_root / "run",
+        tasks=engine_env.tasks,
+        runs=engine_env.runs,
         clock=clock,
-        timeouts=settings.orchestration.timeouts,
-        poll_seconds=settings.orchestration.poll_seconds,
+        settings=settings,
         expects_started=True,
     )
     queue = monitor.subscribe()
@@ -214,8 +179,8 @@ async def test_stall_is_published_once_per_episode(connection: Connection, tmp_p
 
         await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
         clock.advance(settings.orchestration.poll_seconds)
-        with pytest.raises(WaitTimeoutError):
-            await wait_until(lambda: not queue.empty(), timeout=0.3)
+        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+        assert queue.empty()
 
         session.push(Activity(tool_running=False))
         await wait_until(session.idle, timeout=_SIGNAL_TIMEOUT)
@@ -230,25 +195,23 @@ async def test_stall_is_published_once_per_episode(connection: Connection, tmp_p
 
 
 async def test_tick_persists_facts_only_on_change(
-    connection: Connection, database: Database, tmp_path: Path
+    engine_env: EngineEnv, database: Database
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    tasks, runs = build_stores(connection, clock)
-    task = await create_running_task(connection, clock, title="t", pane_id="%0")
-    run = runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
+    task = await engine_env.build_task()
+    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
     settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
     session = _ScriptedSession()
-    monitor = SessionMonitor(
+    monitor = make_monitor(
         session,
         _AlwaysAlivePane(),
-        task_id=task.id,
-        run_id=run.id,
-        run_dir=tmp_path / "run",
-        tasks=tasks,
-        runs=runs,
+        task=task,
+        run=run,
+        run_dir=engine_env.project_root / "run",
+        tasks=engine_env.tasks,
+        runs=engine_env.runs,
         clock=clock,
-        timeouts=settings.orchestration.timeouts,
-        poll_seconds=settings.orchestration.poll_seconds,
+        settings=settings,
         expects_started=True,
     )
     reader_connection = database.connect_readonly()
@@ -271,8 +234,8 @@ async def test_tick_persists_facts_only_on_change(
 
         await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
         clock.advance(settings.orchestration.poll_seconds)
-        with pytest.raises(WaitTimeoutError):
-            await wait_until(lambda: data_version() != version_after_first_tick, timeout=0.3)
+        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+        assert data_version() == version_after_first_tick
 
         session.snapshot_value = {"offset": 42}
         await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
@@ -288,42 +251,21 @@ async def test_tick_persists_facts_only_on_change(
 
 
 async def test_intervention_hold_from_a_typed_prompt_is_scoped_to_its_own_task(
-    tmux_server: TmuxServer, connection: Connection, tmp_path: Path
+    engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
-    tmux = build_tmux(tmux_server)
-    task_roots = build_task_roots(SubprocessRunner(), tmp_path)
-    settings = make_settings(implementer_ladder=[FAKE_RUNG], agents=fake_agent_settings())
-    tasks, runs = build_stores(connection, SystemClock())
-    manager = build_session_manager(
-        tmux=tmux,
-        tasks=tasks,
-        runs=runs,
-        project_root=tmp_path,
-        settings=settings,
-        clock=SystemClock(),
-    )
+    task_a = await engine_env.build_task(title="a")
+    task_b = await engine_env.build_task(title="b")
 
-    pane_a = await new_agent_pane(tmux, tmp_path)
-    task_a = await create_running_task(connection, SystemClock(), title="a", pane_id=pane_a)
-    task_roots.task_root(task_a.id).mkdir(parents=True)
+    await set_script(tmux_server, [{"kind": "no_report"}])
+    await engine_env.manager.ensure(task_a, Role.IMPLEMENTER)
+    await engine_env.manager.ensure(task_b, Role.IMPLEMENTER)
 
-    pane_b = await new_agent_pane(tmux, tmp_path)
-    task_b = await create_running_task(connection, SystemClock(), title="b", pane_id=pane_b)
-    task_roots.task_root(task_b.id).mkdir(parents=True)
+    pane_a = task_a.panes[Role.IMPLEMENTER]
+    await engine_env.pane(pane_a).paste_line("hello from the operator")
 
-    await _set_script(tmux_server, [{"kind": "no_report"}])
-    try:
-        await manager.ensure(task_a, Role.IMPLEMENTER)
-        await manager.ensure(task_b, Role.IMPLEMENTER)
+    def _has_intervention(task_id: str) -> bool:
+        task = engine_env.tasks.get(task_id)
+        return task is not None and Hold.INTERVENTION in task.holds
 
-        pane = TmuxPane(tmux, pane_a, SystemClock())
-        await pane.paste_line("hello from the operator")
-
-        def _has_intervention(task_id: str) -> bool:
-            task = tasks.get(task_id)
-            return task is not None and Hold.INTERVENTION in task.holds
-
-        await wait_until(lambda: _has_intervention(task_a.id), timeout=_SIGNAL_TIMEOUT)
-        assert not _has_intervention(task_b.id)
-    finally:
-        await manager.shutdown()
+    await wait_until(lambda: _has_intervention(task_a.id), timeout=_SIGNAL_TIMEOUT)
+    assert not _has_intervention(task_b.id)

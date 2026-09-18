@@ -2,4 +2,4 @@
 
 from __future__ import annotations
 
-pytest_plugins = ["tests.support.tmux", "tests.support.store"]
+pytest_plugins = ["tests.support.tmux", "tests.support.store", "tests.support.engine"]
