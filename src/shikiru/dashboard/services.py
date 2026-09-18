@@ -12,6 +12,7 @@ import fcntl
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.dashboard.contract import RepoStatus
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import RepoConfig
     from shikiru.workspace.git import Git
 
-ENGINE_LOCK_RELATIVE_PATH = ".shikiru/engine.lock"
+ENGINE_LOCK_RELATIVE_PATH = f"{SHIKIRU_DIR_NAME}/engine.lock"
 REPO_STATUS_CACHE_TTL_SECONDS = 10.0
 
 

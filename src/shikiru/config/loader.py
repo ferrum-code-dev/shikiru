@@ -17,7 +17,8 @@ if TYPE_CHECKING:
 
     from pydantic_core import ErrorDetails
 
-PROJECT_CONFIG_RELATIVE_PATH = ".shikiru/config.toml"
+SHIKIRU_DIR_NAME = ".shikiru"
+PROJECT_CONFIG_RELATIVE_PATH = f"{SHIKIRU_DIR_NAME}/config.toml"
 _PACKAGED_DEFAULTS_SOURCE = "defaults.toml"
 _SET_OVERRIDE_SOURCE = "--set"
 

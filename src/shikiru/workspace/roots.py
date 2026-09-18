@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.domain.tasks import RepoState
 from shikiru.workspace.repo_paths import is_monorepo_path, repo_dir
 
@@ -15,7 +16,6 @@ if TYPE_CHECKING:
     from shikiru.config.settings import RepoConfig
     from shikiru.workspace.git import Git
 
-SHIKIRU_DIR_NAME = ".shikiru"
 WORKTREES_DIR_NAME = "worktrees"
 RUNS_DIR_NAME = "runs"
 BRANCH_PREFIX = "shikiru/"
@@ -45,6 +45,11 @@ def run_dir(project_root: Path, task_id: str) -> Path:
     return project_root / SHIKIRU_DIR_NAME / RUNS_DIR_NAME / task_id
 
 
+def task_root(project_root: Path, task_id: str) -> Path:
+    """Return `task_id`'s task root directory `.shikiru/worktrees/T-n/` (03 §5)."""
+    return project_root / SHIKIRU_DIR_NAME / WORKTREES_DIR_NAME / task_id
+
+
 def _is_monorepo(repos: Sequence[RepoConfig]) -> bool:
     return len(repos) == 1 and is_monorepo_path(repos[0].path)
 
@@ -59,7 +64,7 @@ class TaskRootBuilder:
 
     def task_root(self, task_id: str) -> Path:
         """Return the task root directory for `task_id`."""
-        return self._project_root / SHIKIRU_DIR_NAME / WORKTREES_DIR_NAME / task_id
+        return task_root(self._project_root, task_id)
 
     async def build(self, task_id: str, title: str, repos: Sequence[RepoConfig]) -> list[RepoState]:
         """Build (or reuse) the task root and every repo's worktree for `task_id`.
