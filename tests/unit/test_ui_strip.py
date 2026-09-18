@@ -80,18 +80,18 @@ def test_strip_golden(mode: Mode, width: int) -> None:
     goldens = {
         (Mode.IMPLEMENT, WIDE_WIDTH): (
             "T-12 · Add retry to parser                                  \n"
-            "⌕ Triage      |⚒ Implement   |⚖ Verify      |⑂ Merge        \n"
-            "✔ done 3m     |⠹ active 2/5  |·︎ pending     |·︎ pending      \n"
+            "⌕ Triage      |⚒ Implement   |⚖︎ Verify      |⑂ Merge        \n"
+            "✔ done 3m     |⠹ active 2/5  |· pending     |· pending      \n"
             "◆ opus        |              |              |               "
         ),
         (Mode.IMPLEMENT, NARROW_WIDTH): "T-12 ⚒ Implement ⠹ active 2/5",
         (Mode.PLAN, WIDE_WIDTH): (
             "T-12 · Add retry to parser                                  \n"
-            "⌕ Triage      |≡︎ Plan        |—             |⑂ Merge        \n"
-            "✔ done 3m     |⠹ active 2/5  |·︎ pending     |·︎ pending      \n"
+            "⌕ Triage      |≡ Plan        |—             |⑂ Merge        \n"
+            "✔ done 3m     |⠹ active 2/5  |· pending     |· pending      \n"
             "◆ opus        |              |              |               "
         ),
-        (Mode.PLAN, NARROW_WIDTH): "T-12 ≡︎ Plan ⠹ active 2/5",
+        (Mode.PLAN, NARROW_WIDTH): "T-12 ≡ Plan ⠹ active 2/5",
     }
     assert text.plain == goldens[(mode, width)]
 

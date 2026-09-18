@@ -1,9 +1,10 @@
 """The one glyph set shared by the CLI and the dashboard (docs/design/06-operator.md §6.1).
 
-Every glyph below renders in exactly one terminal cell. A base character whose default East
-Asian Width is `Ambiguous` drifts to two cells in a CJK-wide terminal, so it is followed by
-U+FE0E (the text-presentation variation selector) to pin it narrow; `is_single_cell` is the
-check a unit test runs over every glyph registered here.
+Ambiguous-width characters (`◆ ▲ ≡ · ○ ◑ ●`) are drawn one cell wide, as Textual assumes;
+terminals set to CJK ambiguous-wide are unsupported. A character with an emoji variant
+(`⚖ ⚙ ⏸ ⚠`) carries U+FE0E, the text-presentation variation selector, because some terminals
+render it as wide color emoji without it. `is_single_cell` is the check a unit test runs over
+every glyph registered here.
 """
 
 from __future__ import annotations
@@ -15,13 +16,10 @@ from shikiru.domain.tasks import Role
 _TEXT_PRESENTATION_SELECTOR = "︎"
 _ZERO_WIDTH_CATEGORIES = frozenset({"Mn", "Me", "Cf"})
 _WIDE_EAST_ASIAN_WIDTHS = frozenset({"W", "F"})
-_AMBIGUOUS_EAST_ASIAN_WIDTH = "A"
 
-
-def _narrow(char: str) -> str:
-    if unicodedata.east_asian_width(char) == _AMBIGUOUS_EAST_ASIAN_WIDTH:
-        return char + _TEXT_PRESENTATION_SELECTOR
-    return char
+_EMOJI_CAPABLE_CODE_POINTS = frozenset({"⚖", "⚙", "⏸", "⚠"})
+"""The base characters we use that have an emoji-presentation variant (Unicode has no stdlib
+property for this, so this is the small explicit set our own glyphs draw from)."""
 
 
 def is_single_cell(glyph: str) -> bool:
@@ -33,44 +31,43 @@ def is_single_cell(glyph: str) -> bool:
             continue
         if unicodedata.category(character) in _ZERO_WIDTH_CATEGORIES:
             continue
-        width = unicodedata.east_asian_width(character)
-        if width in _WIDE_EAST_ASIAN_WIDTHS:
+        if unicodedata.east_asian_width(character) in _WIDE_EAST_ASIAN_WIDTHS:
             return False
         followed_by_selector = (
             index + 1 < len(characters) and characters[index + 1] == _TEXT_PRESENTATION_SELECTOR
         )
-        if width == _AMBIGUOUS_EAST_ASIAN_WIDTH and not followed_by_selector:
+        if character in _EMOJI_CAPABLE_CODE_POINTS and not followed_by_selector:
             return False
         cells += 1
     return cells == 1
 
 
 STAGE_TRIAGE = "⌕"
-STAGE_PLAN = _narrow("≡")
+STAGE_PLAN = "≡"
 STAGE_IMPLEMENT = "⚒"
-STAGE_VERIFY = _narrow("⚖")
+STAGE_VERIFY = "⚖︎"
 STAGE_MERGE = "⑂"
 STAGE_PR = "⇪"
 
 ROLE_GLYPHS: dict[Role, str] = {
-    Role.LEADER: _narrow("◆"),
-    Role.IMPLEMENTER: _narrow("▲"),
+    Role.LEADER: "◆",
+    Role.IMPLEMENTER: "▲",
     Role.HELPER: "✦",
 }
 GLYPH_OPERATOR = "⌨"
-GLYPH_ENGINE = _narrow("⚙")
+GLYPH_ENGINE = "⚙︎"
 
 GLYPH_DONE = "✔"
 GLYPH_REWORK = "↺"
 GLYPH_CONSULT = "?"
-GLYPH_PAUSED = _narrow("⏸")
+GLYPH_PAUSED = "⏸︎"
 GLYPH_QUOTA = "⧗"
-GLYPH_STALLED = _narrow("⚠")
+GLYPH_STALLED = "⚠︎"
 GLYPH_ESCALATED = "‼"
 GLYPH_BLOCKED = "⊘"
-GLYPH_PENDING = _narrow("·")
+GLYPH_PENDING = "·"
 
-GAUGE_GLYPHS = (_narrow("○"), "◔", _narrow("◑"), "◕", _narrow("●"))
+GAUGE_GLYPHS = ("○", "◔", "◑", "◕", "●")
 
 SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 

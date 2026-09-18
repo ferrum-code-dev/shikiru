@@ -15,13 +15,14 @@ def test_every_registered_glyph_is_a_single_terminal_cell(glyph: str) -> None:
     [
         ("a", True),
         ("?", True),
+        ("◆", True),
         ("文", False),
         ("🔥", False),
-        ("◆", False),
-        ("◆︎", True),
+        ("⚠", False),
+        ("⚠︎", True),
     ],
 )
-def test_is_single_cell_rejects_wide_ambiguous_and_emoji_presentation(
+def test_is_single_cell_rejects_wide_and_emoji_presentation_characters(
     glyph: str, expected: bool
 ) -> None:
     assert is_single_cell(glyph) is expected
