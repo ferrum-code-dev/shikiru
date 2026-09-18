@@ -9,7 +9,7 @@ from textual.widgets import Static
 
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.steps import ACTING_ROLE
-from shikiru.domain.tasks import Hold, Status, Step, Task
+from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Status, StatusReason, Step, Task
 from shikiru.ui.glyphs import ROLE_GLYPHS, SPINNER_FRAMES, STAGE_TRIAGE
 from shikiru.ui.strip import (
     STRIP_WIDE_MIN_COLUMNS,
@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import WidgetContext
     from shikiru.store.reader import StateReader
 
-_ACTIVE_STATUSES = (Status.RUNNING, Status.INTEGRATING, Status.ESCALATED)
 _PANEL_INDEX: dict[Step, int] = {
     Step.TRIAGE: 0,
     Step.PLAN: 1,
@@ -118,13 +117,18 @@ def _split_strip_data(parent: Task, children: list[str]) -> TaskStripData:
 def _strips(
     state: StateReader, focus_task: str | None, settings: Settings, width: int
 ) -> list[Text]:
-    active = state.list_tasks(statuses=_ACTIVE_STATUSES)
+    active = state.list_tasks(statuses=ACTIVE_STATUSES)
     active.sort(key=lambda task: task.id != focus_task)
     rendered: list[Text] = []
     seen_parents: set[str] = set()
     for task in active:
         parent = state.get_task(task.parent_id) if task.parent_id is not None else None
-        if parent is not None and parent.status_reason == "split" and parent.id not in seen_parents:
+        split_reason = StatusReason.SPLIT.value
+        if (
+            parent is not None
+            and parent.status_reason == split_reason
+            and parent.id not in seen_parents
+        ):
             seen_parents.add(parent.id)
             children = [
                 sibling.id for sibling in state.list_tasks() if sibling.parent_id == parent.id

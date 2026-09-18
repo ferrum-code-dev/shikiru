@@ -6,13 +6,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import Rung, Usage
-from shikiru.domain.commands import Submit
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role
-from shikiru.store.commands import CommandQueue
 from shikiru.store.runs import RunStore
-from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
+from tests.support.store import seed_task
 
 if TYPE_CHECKING:
     from tests.support.store import Connection
@@ -23,10 +21,7 @@ RUNG = Rung(agent="codex", model="sol", effort="high")
 
 def _make_store(connection: Connection) -> tuple[RunStore, str]:
     clock = FakeClock(START)
-    queue = CommandQueue(connection, clock)
-    queued = queue.append(Submit(task_id="", title="t", request="r"))
-    assert isinstance(queued.command, Submit)
-    task = TaskStore(connection, clock).insert_from_submit(queued.command)
+    task = seed_task(connection, clock)
     return RunStore(connection, clock), task.id
 
 

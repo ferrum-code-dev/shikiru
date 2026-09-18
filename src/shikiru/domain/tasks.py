@@ -30,6 +30,17 @@ class Status(StrEnum):
     CANCELLED = auto()
 
 
+ACTIVE_STATUSES = (Status.RUNNING, Status.INTEGRATING, Status.ESCALATED)
+"""The statuses that hold a dispatch slot (03 §1.2)."""
+
+
+class StatusReason(StrEnum):
+    """Why a terminal `status` was reached outside the ordinary happy path (03 §2, §6)."""
+
+    SPLIT = auto()
+    SUPERSEDED = auto()
+
+
 class Step(StrEnum):
     """The current step of a running task (03 §2)."""
 

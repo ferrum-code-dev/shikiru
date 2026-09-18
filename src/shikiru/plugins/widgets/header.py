@@ -6,14 +6,12 @@ from typing import TYPE_CHECKING
 
 from textual.widgets import Static
 
-from shikiru.domain.tasks import Status
+from shikiru.domain.tasks import ACTIVE_STATUSES
 
 if TYPE_CHECKING:
     from textual.widget import Widget
 
     from shikiru.dashboard.contract import RepoStatus, WidgetContext
-
-_ACTIVE_STATUSES = (Status.RUNNING, Status.INTEGRATING, Status.ESCALATED)
 
 
 def _repo_line(status: RepoStatus) -> str:
@@ -37,7 +35,7 @@ class HeaderPanel(Static):
 
     async def _refresh(self) -> None:
         settings = self._widget_context.settings
-        active = len(self._widget_context.state.list_tasks(statuses=_ACTIVE_STATUSES))
+        active = len(self._widget_context.state.list_tasks(statuses=ACTIVE_STATUSES))
         max_parallel = settings.orchestration.max_parallel
         engine_state = "up" if self._widget_context.services.engine_up() else "down"
         repo_statuses = await self._widget_context.services.repo_status()

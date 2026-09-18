@@ -22,7 +22,14 @@ PROJECT_DIR_ENV_VAR = "SHIKIRU_PROJECT_DIR"
 HOME_WINDOW_NAME = "shikiru"
 
 _PALETTE_KEY = "Space"
-SHIKIRU_SESSION_PATTERN = r"#{m:\[shikiru\]*,#{session_name}}"
+_GLOB_SPECIAL_CHARS = "\\[]*?"
+
+
+def _escape_glob(text: str) -> str:
+    return "".join(f"\\{char}" if char in _GLOB_SPECIAL_CHARS else char for char in text)
+
+
+SHIKIRU_SESSION_PATTERN = f"#{{m:{_escape_glob(SESSION_PREFIX)}*,#{{session_name}}}}"
 _DEFAULT_PALETTE_KEY_COMMAND = "next-layout"
 
 _SESSION_SCOPED_OPTIONS: dict[str, str] = {

@@ -5,13 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from shikiru.domain.commands import Submit
 from shikiru.domain.escalation import options_for
 from shikiru.domain.tasks import EscalationReason
-from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
-from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
+from tests.support.store import seed_task
 
 if TYPE_CHECKING:
     from tests.support.store import Connection
@@ -21,10 +19,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 def _make_store(connection: Connection) -> tuple[EscalationStore, str]:
     clock = FakeClock(START)
-    queue = CommandQueue(connection, clock)
-    queued = queue.append(Submit(task_id="", title="t", request="r"))
-    assert isinstance(queued.command, Submit)
-    task = TaskStore(connection, clock).insert_from_submit(queued.command)
+    task = seed_task(connection, clock)
     return EscalationStore(connection, clock), task.id
 
 

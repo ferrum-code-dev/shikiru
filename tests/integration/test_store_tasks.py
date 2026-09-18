@@ -15,12 +15,23 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.reports import NewTask
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Counters, Hold, RepoState, Role, Status, Step, Task, TaskOrigin
+from shikiru.domain.tasks import (
+    Counters,
+    Hold,
+    RepoState,
+    Role,
+    Status,
+    StatusReason,
+    Step,
+    Task,
+    TaskOrigin,
+)
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database, transaction
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
+from tests.support.store import seed_task
 
 if TYPE_CHECKING:
     from tests.support.store import Connection
@@ -29,23 +40,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _make_store(connection: Connection) -> tuple[TaskStore, CommandQueue, FakeClock]:
-    clock = FakeClock(START)
-    return TaskStore(connection, clock), CommandQueue(connection, clock), clock
-
-
 def _submit(
-    store: TaskStore, queue: CommandQueue, title: str, depends_on: list[str] | None = None
+    connection: Connection, clock: FakeClock, title: str, depends_on: list[str] | None = None
 ) -> Task:
-    queued = queue.append(
-        Submit(task_id="", title=title, request=title, depends_on=depends_on or [])
-    )
-    assert isinstance(queued.command, Submit)
-    return store.insert_from_submit(queued.command)
+    return seed_task(connection, clock, title=title, depends_on=depends_on or [])
 
 
 def test_submit_allocates_sequential_task_ids(connection: Connection) -> None:
-    _, queue, _ = _make_store(connection)
+    clock = FakeClock(START)
+    queue = CommandQueue(connection, clock)
 
     ids: list[str] = []
     for _ in range(3):
@@ -84,8 +87,9 @@ async def test_concurrent_command_append_allocates_unique_task_ids(tmp_path: Pat
 def test_transition_round_trips_step_status_counters_rungs_and_overrides(
     connection: Connection,
 ) -> None:
-    store, queue, clock = _make_store(connection)
-    task = _submit(store, queue, "t")
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    task = _submit(connection, clock, "t")
 
     transition = Transition(
         step=Step.IMPLEMENT,
@@ -94,6 +98,7 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(
         counters=Counters(consults=1, rejections_on_rung=1),
         rung_index={Role.LEADER: 1},
         overrides={Role.IMPLEMENTER: Rung(agent="codex", model="sol", effort="high")},
+        status_reason=StatusReason.SUPERSEDED.value,
     )
     store.apply_transition(task.id, transition)
 
@@ -106,13 +111,15 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(
     assert reloaded.rung_index == transition.rung_index
     assert reloaded.overrides == transition.overrides
     assert reloaded.started_at == clock.now()
+    assert reloaded.status_reason == StatusReason.SUPERSEDED.value
 
 
 def test_apply_transition_sets_finished_at_once_for_a_terminal_status(
     connection: Connection,
 ) -> None:
-    store, queue, clock = _make_store(connection)
-    task = _submit(store, queue, "t")
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    task = _submit(connection, clock, "t")
     done = Transition(
         step=None, status=Status.DONE, iteration=0, counters=Counters(), rung_index={}, overrides={}
     )
@@ -132,21 +139,11 @@ def test_apply_transition_sets_finished_at_once_for_a_terminal_status(
 def test_submit_rung_overrides_for_leader_and_implementer_reach_the_db(
     connection: Connection,
 ) -> None:
-    store, queue, _ = _make_store(connection)
+    clock = FakeClock(START)
     leader_rung = Rung(agent="claude", model="opus", effort="high")
     implementer_rung = Rung(agent="codex", model="sol", effort="high")
-    queued = queue.append(
-        Submit(
-            task_id="",
-            title="t",
-            request="t",
-            leader=leader_rung,
-            implementer=implementer_rung,
-        )
-    )
-    assert isinstance(queued.command, Submit)
 
-    task = store.insert_from_submit(queued.command)
+    task = seed_task(connection, clock, leader=leader_rung, implementer=implementer_rung)
 
     assert task.overrides == {Role.LEADER: leader_rung, Role.IMPLEMENTER: implementer_rung}
 
@@ -154,9 +151,10 @@ def test_submit_rung_overrides_for_leader_and_implementer_reach_the_db(
 def test_insert_child_allocates_a_new_task_id_with_parent_and_origin(
     connection: Connection,
 ) -> None:
-    store, queue, _ = _make_store(connection)
-    parent = _submit(store, queue, "parent")
-    dep = _submit(store, queue, "dep")
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    parent = _submit(connection, clock, "parent")
+    dep = _submit(connection, clock, "dep")
 
     child = store.insert_child(
         NewTask(title="Subtask", request="Do the subtask", priority=5),
@@ -174,8 +172,9 @@ def test_insert_child_allocates_a_new_task_id_with_parent_and_origin(
 
 
 def test_scheduling_fields_round_trip(connection: Connection) -> None:
-    store, queue, clock = _make_store(connection)
-    task = _submit(store, queue, "t")
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    task = _submit(connection, clock, "t")
 
     store.set_holds(task.id, frozenset({Hold.PAUSED}))
     store.set_priority(task.id, 7)
@@ -210,9 +209,10 @@ def test_scheduling_fields_round_trip(connection: Connection) -> None:
 
 
 def test_list_queued_active_and_all_partition_by_status(connection: Connection) -> None:
-    store, queue, _ = _make_store(connection)
-    queued = _submit(store, queue, "queued")
-    running = _submit(store, queue, "running")
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    queued = _submit(connection, clock, "queued")
+    running = _submit(connection, clock, "running")
     store.apply_transition(
         running.id,
         Transition(
@@ -233,13 +233,14 @@ def test_list_queued_active_and_all_partition_by_status(connection: Connection) 
 def test_repoint_dependents_moves_every_dependency_onto_the_new_tasks(
     connection: Connection,
 ) -> None:
-    store, queue, _ = _make_store(connection)
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
 
-    old = _submit(store, queue, "old")
-    dependent = _submit(store, queue, "dependent", depends_on=[old.id])
-    unrelated = _submit(store, queue, "unrelated")
-    new_a = _submit(store, queue, "new-a")
-    new_b = _submit(store, queue, "new-b")
+    old = _submit(connection, clock, "old")
+    dependent = _submit(connection, clock, "dependent", depends_on=[old.id])
+    unrelated = _submit(connection, clock, "unrelated")
+    new_a = _submit(connection, clock, "new-a")
+    new_b = _submit(connection, clock, "new-b")
 
     store.repoint_dependents(old.id, [new_a.id, new_b.id])
 
@@ -260,9 +261,8 @@ def test_transaction_composes_so_a_later_failure_rolls_back_nested_writes(
 ) -> None:
     clock = FakeClock(START)
     store = TaskStore(connection, clock)
-    queue = CommandQueue(connection, clock)
-    old = _submit(store, queue, "old")
-    dependent = _submit(store, queue, "dependent", depends_on=[old.id])
+    old = _submit(connection, clock, "old")
+    dependent = _submit(connection, clock, "dependent", depends_on=[old.id])
     children_before = len(store.list_all())
 
     def insert_child_and_repoint_then_fail() -> None:
