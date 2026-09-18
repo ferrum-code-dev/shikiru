@@ -7,11 +7,12 @@ from pydantic import ValidationError
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.loader import load_settings
-from shikiru.config.settings import ComplexityLadder, ImplementerConfig
+from shikiru.config.settings import ComplexityLadder, ImplementerConfig, Settings
 from tests.support.config import write_minimal_project
-from tests.support.factories import DEFAULT_AGENTS, make_settings
+from tests.support.factories import make_settings
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -47,21 +48,21 @@ _GHOST_RUNG = Rung(agent="ghost", model="m", effort=None)
 
 
 @pytest.mark.parametrize(
-    "kwargs",
+    "build",
     [
-        pytest.param({"leader_ladder": [_GHOST_RUNG]}, id="leader"),
-        pytest.param({"implementer_ladder": [_GHOST_RUNG]}, id="implementer"),
+        pytest.param(lambda: make_settings(leader_ladder=[_GHOST_RUNG]), id="leader"),
+        pytest.param(lambda: make_settings(implementer_ladder=[_GHOST_RUNG]), id="implementer"),
         pytest.param(
-            {
-                "implementer_complexity": {
-                    "high": ComplexityLadder(ladder=[_GHOST_RUNG]),
-                },
-            },
+            lambda: make_settings(
+                implementer_complexity={"high": ComplexityLadder(ladder=[_GHOST_RUNG])}
+            ),
             id="implementer-complexity-override",
         ),
-        pytest.param({"helper_ladder": [_GHOST_RUNG]}, id="helper"),
+        pytest.param(lambda: make_settings(helper_ladder=[_GHOST_RUNG]), id="helper"),
     ],
 )
-def test_settings_rejects_a_ladder_agent_with_no_agents_table(kwargs: dict[str, object]) -> None:
+def test_settings_rejects_a_ladder_agent_with_no_agents_table(
+    build: Callable[[], Settings],
+) -> None:
     with pytest.raises(ValidationError, match="ghost"):
-        make_settings(**kwargs)
+        build()
