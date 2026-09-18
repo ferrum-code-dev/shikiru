@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from shikiru.tmux.client import Tmux
 
 INJECT_DELAY_SECONDS = 0.15
-_ENTER_KEY = "Enter"
+ENTER_KEY = "Enter"
 _INJECT_BUFFER_PREFIX = "shikiru-inject-"
 
 
@@ -46,7 +46,7 @@ class TmuxPane:
         await self._tmux.load_buffer(buffer_name, text)
         await self._tmux.paste_buffer(self._pane_id, buffer_name)
         await self._clock.sleep(INJECT_DELAY_SECONDS)
-        await self._tmux.send_keys(self._pane_id, _ENTER_KEY)
+        await self._tmux.send_keys(self._pane_id, ENTER_KEY)
 
     async def send_keys(self, *keys: str) -> None:
         """Send `keys` to this pane, e.g. an interrupt or exit sequence."""

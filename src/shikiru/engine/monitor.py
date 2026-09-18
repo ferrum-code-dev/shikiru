@@ -116,6 +116,10 @@ class SessionMonitor:
         """Stop fanning signals out to `queue`."""
         self._subscribers.remove(queue)
 
+    def set_pending_lines(self, pending_lines: Callable[[], Collection[str]]) -> None:
+        """Replace the `pending_lines` hook, e.g. once a `TurnRunner` starts using this session."""
+        self._pending_lines = pending_lines
+
     async def run(self) -> None:
         """Consume `session.signals()` and tick until the pane dies or the session ends."""
         consume = asyncio.ensure_future(self._consume_signals())

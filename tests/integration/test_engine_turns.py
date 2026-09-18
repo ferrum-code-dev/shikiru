@@ -1,0 +1,266 @@
+"""`TurnRunner`: turn dir, pointer injection, confirmation, nudges and rebuild (03 §4.3)."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from datetime import timedelta
+from typing import TYPE_CHECKING, Any
+
+from shikiru.agents.contracts import SessionEnded
+from shikiru.config.settings import AgentConfig
+from shikiru.domain.recovery import Completed, Stalled
+from shikiru.domain.reports import ConsultAnswer, ReportKind
+from shikiru.domain.tasks import Hold, Role, Step
+from shikiru.engine.agents import AgentPool
+from shikiru.engine.turns import TurnRunner, TurnSpec
+from shikiru.helper.helper import Helper
+from shikiru.process import SubprocessRunner
+from shikiru.prompts.renderer import PromptName, PromptRenderer
+from shikiru.workspace.roots import run_dir, task_root
+from tests.support.clock import FakeClock
+from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, build_registry, set_script
+from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.waiting import wait_until
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Mapping
+    from pathlib import Path
+
+    from shikiru.agents.contracts import AgentSignal, Usage
+    from shikiru.config.settings import Settings
+    from shikiru.engine.monitor import MonitorSignal
+    from tests.support.engine import EngineEnv
+    from tests.support.tmux import TmuxServer
+
+_SIGNAL_TIMEOUT = 15.0
+_RETRY_WAIT_SECONDS = 16
+
+
+class _NoBeforeTurnSession:
+    """An `AgentSession` double with no `before_turn` lines (04 §1)."""
+
+    async def signals(self) -> AsyncGenerator[AgentSignal]:
+        while True:
+            await asyncio.Event().wait()
+            yield SessionEnded()
+
+    async def before_turn(self) -> list[str]:
+        return []
+
+    async def usage(self) -> Usage:
+        raise NotImplementedError
+
+    def snapshot(self) -> Mapping[str, Any]:
+        return {}
+
+
+class _FixedBeforeTurnSession(_NoBeforeTurnSession):
+    """An `AgentSession` double whose `before_turn()` returns a fixed set of lines (04 §1)."""
+
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = lines
+
+    async def before_turn(self) -> list[str]:
+        return self._lines
+
+
+def _settings_with_asks(asks: list[dict[str, Any]]) -> Settings:
+    return make_settings(
+        implementer_ladder=[FAKE_RUNG],
+        agents={FAKE_AGENT_NAME: AgentConfig(options={"asks": asks})},
+    )
+
+
+def _build_helper(settings: Settings) -> Helper:
+    pool = AgentPool(
+        build_registry().create, SubprocessRunner(), settings, FakeClock(TASK_CREATED_AT)
+    )
+    return Helper(pool.get(FAKE_AGENT_NAME))
+
+
+def _spec(*, cwd: Path, iteration: int = 1) -> TurnSpec:
+    return TurnSpec(
+        step=Step.CONSULT,
+        iteration=iteration,
+        kind=ReportKind.CONSULT,
+        template=PromptName.CONSULT,
+        context={
+            "request": "Add retries to the flaky parser",
+            "trackers": [],
+            "reports": [],
+            "question": "Which retry library should I use?",
+        },
+        prompt_prefix="",
+        facts="",
+        cwd=cwd,
+        helper_model="fake-helper",
+        helper_effort=None,
+        helper_timeout=timedelta(seconds=5),
+    )
+
+
+async def test_a_turn_that_is_accepted_immediately_completes_with_its_report(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = _settings_with_asks([])
+    manager = engine_env.build_manager(settings)
+    task = await engine_env.build_task()
+    await set_script(tmux_server, [{"kind": "accept"}])
+    session = await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    pane = engine_env.pane(task.panes[Role.IMPLEMENTER])
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
+    helper = _build_helper(settings)
+
+    result = await asyncio.wait_for(
+        runner.run(
+            session,
+            pane,
+            queue,
+            run_dir=run_dir(engine_env.project_root, task.id),
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+        ),
+        timeout=_SIGNAL_TIMEOUT,
+    )
+
+    assert isinstance(result, Completed)
+    assert result.rebuilt is False
+    assert isinstance(result.report, ConsultAnswer)
+    assert result.report.decision == "answer"
+
+
+async def test_a_turn_ended_without_a_report_is_nudged_then_completes(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = _settings_with_asks([])
+    manager = engine_env.build_manager(settings)
+    task = await engine_env.build_task()
+    await set_script(tmux_server, [{"kind": "no_report"}])
+    session = await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    pane = engine_env.pane(task.panes[Role.IMPLEMENTER])
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
+    helper = _build_helper(settings)
+
+    result = await asyncio.wait_for(
+        runner.run(
+            session,
+            pane,
+            queue,
+            run_dir=run_dir(engine_env.project_root, task.id),
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+        ),
+        timeout=_SIGNAL_TIMEOUT,
+    )
+
+    assert isinstance(result, Completed)
+    assert result.rebuilt is False
+
+
+async def test_three_reportless_turns_are_rebuilt_by_the_helper(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    rebuilt_answer = {"decision": "answer", "answer": "Use tenacity"}
+    settings = _settings_with_asks([rebuilt_answer])
+    manager = engine_env.build_manager(settings)
+    task = await engine_env.build_task()
+    await set_script(
+        tmux_server, [{"kind": "no_report"}, {"kind": "no_report"}, {"kind": "no_report"}]
+    )
+    session = await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    pane = engine_env.pane(task.panes[Role.IMPLEMENTER])
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
+    helper = _build_helper(settings)
+    task_run_dir = run_dir(engine_env.project_root, task.id)
+
+    result = await asyncio.wait_for(
+        runner.run(
+            session,
+            pane,
+            queue,
+            run_dir=task_run_dir,
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+        ),
+        timeout=_SIGNAL_TIMEOUT,
+    )
+
+    assert isinstance(result, Completed)
+    assert result.rebuilt is True
+    assert isinstance(result.report, ConsultAnswer)
+    assert result.report.answer == "Use tenacity"
+    helper_json = task_run_dir / "turns" / "01-consult-i1" / "helper.json"
+    assert json.loads(helper_json.read_text())["answer"] == "Use tenacity"
+
+
+async def test_an_unconfirmed_pointer_retries_once_then_stalls(engine_env: EngineEnv) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    task = await engine_env.build_task()
+    pane_id = await engine_env.new_pane()
+    pane = engine_env.pane(pane_id)
+    signals: asyncio.Queue[MonitorSignal] = asyncio.Queue()
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), clock)
+    helper = _build_helper(_settings_with_asks([]))
+
+    run_task = asyncio.ensure_future(
+        runner.run(
+            _NoBeforeTurnSession(),
+            pane,
+            signals,
+            run_dir=run_dir(engine_env.project_root, task.id),
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+        )
+    )
+    try:
+        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+        clock.advance(_RETRY_WAIT_SECONDS)
+        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+        clock.advance(_RETRY_WAIT_SECONDS)
+        result = await asyncio.wait_for(run_task, timeout=_SIGNAL_TIMEOUT)
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+
+    assert isinstance(result, Stalled)
+
+
+async def test_a_before_turn_line_is_not_flagged_as_an_operator_prompt(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = _settings_with_asks([])
+    manager = engine_env.build_manager(settings)
+    task = await engine_env.build_task()
+    await set_script(tmux_server, [{"kind": "accept"}, {"kind": "accept"}])
+    await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    pane = engine_env.pane(task.panes[Role.IMPLEMENTER])
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
+    manager.set_pending_lines(task.id, Role.IMPLEMENTER, runner.pending_lines)
+    helper = _build_helper(settings)
+
+    result = await asyncio.wait_for(
+        runner.run(
+            _FixedBeforeTurnSession(["/compact"]),
+            pane,
+            queue,
+            run_dir=run_dir(engine_env.project_root, task.id),
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+        ),
+        timeout=_SIGNAL_TIMEOUT,
+    )
+
+    assert isinstance(result, Completed)
+    current = engine_env.tasks.get(task.id)
+    assert current is not None
+    assert Hold.INTERVENTION not in current.holds

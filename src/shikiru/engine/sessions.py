@@ -32,7 +32,7 @@ from shikiru.errors import CommandFailed, ShikiruError
 from shikiru.workspace.roots import run_dir, task_root
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection
     from pathlib import Path
 
     from shikiru.agents.contracts import AgentSession, InteractiveAgent, Rung
@@ -288,6 +288,12 @@ class SessionManager:
     def unsubscribe(self, task_id: str, role: Role, queue: asyncio.Queue[MonitorSignal]) -> None:
         """Stop `queue` from receiving `task_id`'s `role` session's signals."""
         self._live[(task_id, role)].monitor.unsubscribe(queue)
+
+    def set_pending_lines(
+        self, task_id: str, role: Role, pending_lines: Callable[[], Collection[str]]
+    ) -> None:
+        """Report `task_id`'s `role` session's `TurnRunner`-injected lines (03 §9)."""
+        self._live[(task_id, role)].monitor.set_pending_lines(pending_lines)
 
     async def shutdown(self) -> None:
         """Cancel every live session's monitor and decorator, touching no pane or agent.

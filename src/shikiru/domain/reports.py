@@ -13,9 +13,11 @@ from shikiru.domain.tasks import DomainModel, Mode
 TRIAGE_TITLE_MAX_LENGTH = 60
 
 CURRENT_TURN_LINK_NAME = "current_turn"
+PROMPT_FILENAME = "prompt.md"
 REPORT_KIND_FILENAME = "report.kind"
 REPORT_SCHEMA_FILENAME = "report.schema.json"
 REPORT_FILENAME = "report.json"
+HELPER_REPORT_FILENAME = "helper.json"
 
 DEPENDS_ON_PATTERN = r"^(T-\d+|#\d+)$"
 
