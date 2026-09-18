@@ -14,6 +14,7 @@ from shikiru.domain.steps import (
     next_step,
 )
 from shikiru.domain.tasks import Counters, EscalationReason, Mode, Role, Status, Step, Task
+from shikiru.errors import UsageError
 from tests.support.factories import (
     ESCALATE_AFTER,
     MAX_ITERATIONS,
@@ -63,7 +64,7 @@ def test_first_step_with_mode_implement_starts_at_iteration_one() -> None:
 def test_first_step_rejects_mode_split() -> None:
     task = make_task(mode=Mode.SPLIT)
 
-    with pytest.raises(ValueError, match="split"):
+    with pytest.raises(UsageError, match="split"):
         first_step(task)
 
 
@@ -337,6 +338,40 @@ def test_integrate_conflict_rejects_a_supersede_verdict() -> None:
 
     with pytest.raises(ValueError, match="supersede"):
         _next(task, make_verdict(decision="supersede"))
+
+
+def test_integrate_conflicts_report_completed_returns_to_the_post_rebase_verify() -> None:
+    task = make_task(step=Step.INTEGRATE, status=Status.INTEGRATING)
+
+    transition = _next(task, make_implementation_report(status="completed"))
+
+    assert transition.step is Step.INTEGRATE
+    assert transition.status is Status.INTEGRATING
+
+
+@pytest.mark.parametrize("status", ["needs_decision", "blocked"])
+def test_integrate_conflicts_report_not_completed_moves_to_consult(
+    status: Literal["needs_decision", "blocked"],
+) -> None:
+    task = make_task(step=Step.INTEGRATE, status=Status.INTEGRATING, counters=Counters(consults=1))
+
+    transition = _next(task, make_implementation_report(status=status))
+
+    assert transition.step is Step.CONSULT
+    assert transition.counters.consults == 2
+
+
+def test_integrate_conflicts_at_the_consult_limit_escalates_instead_of_consulting_again() -> None:
+    task = make_task(
+        step=Step.INTEGRATE, status=Status.INTEGRATING, counters=Counters(consults=CONSULT_LIMIT)
+    )
+
+    transition = _next(task, make_implementation_report(status="needs_decision"))
+
+    assert transition.status is Status.ESCALATED
+    assert transition.escalation_reason is EscalationReason.DECISION_REQUIRED
+    assert transition.step is Step.CONSULT
+    assert transition.counters.consults == CONSULT_LIMIT
 
 
 def test_next_step_rejects_an_outcome_that_does_not_match_the_current_step() -> None:

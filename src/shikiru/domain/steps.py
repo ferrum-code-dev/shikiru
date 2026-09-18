@@ -15,6 +15,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.tasks import Counters, EscalationReason, Mode, Role, Status, Step, Task
+from shikiru.errors import UsageError
 
 if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
@@ -75,7 +76,7 @@ def first_step(task: Task) -> Transition:
     if task.mode is Mode.IMPLEMENT:
         return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
     message = "submit --mode split has no first step; split only happens as a triage outcome"
-    raise ValueError(message)
+    raise UsageError(message)
 
 
 def _from_triage(task: Task, outcome: TriageReport) -> Transition:
@@ -175,6 +176,16 @@ def _from_integrate(task: Task, outcome: Verdict) -> Transition:
             raise ValueError(message)
 
 
+def _from_integrate_conflicts(task: Task, outcome: ImplementationReport) -> Transition:
+    if outcome.status == "completed":
+        return Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
+    if task.counters.consults >= CONSULT_LIMIT:
+        return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
+    counters = task.counters.model_copy(update={"consults": task.counters.consults + 1})
+    base = Transition.stay(task, step=Step.CONSULT, status=Status.INTEGRATING)
+    return dataclasses.replace(base, counters=counters)
+
+
 def next_step(task: Task, outcome: Outcome, settings: Settings) -> Transition:
     """Apply `outcome` to `task`'s current step and return the resulting transition."""
     match task.step, outcome:
@@ -190,6 +201,8 @@ def next_step(task: Task, outcome: Outcome, settings: Settings) -> Transition:
             return _from_verify(task, outcome, settings)
         case Step.INTEGRATE, Verdict():
             return _from_integrate(task, outcome)
+        case Step.INTEGRATE, ImplementationReport():
+            return _from_integrate_conflicts(task, outcome)
         case _:
             message = f"no transition for step {task.step!r} with outcome {outcome!r}"
             raise ValueError(message)
