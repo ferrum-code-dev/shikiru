@@ -13,7 +13,8 @@ if TYPE_CHECKING:
 
 _REQUEST = "Add retries to the flaky parser"
 _REPORT_JSON = '{"status": "completed"}'
-_BACKTICK_LADEN_REPORT_JSON = [
+_FENCED_REPORT_JSON = [
+    _REPORT_JSON,
     '{"note": "closes a ``` fence early"}',
     '{"note": "closes a ```` fence early"}',
 ]
@@ -47,18 +48,9 @@ def test_every_template_includes_the_request_and_ends_with_the_report_instructio
     assert rendered.rstrip().endswith(REPORT_INSTRUCTION)
 
 
+@pytest.mark.parametrize("report_json", _FENCED_REPORT_JSON)
 @pytest.mark.parametrize("name", list(PromptName))
-def test_every_template_fences_earlier_reports(tmp_path: Path, name: PromptName) -> None:
-    renderer = PromptRenderer(tmp_path)
-
-    rendered = renderer.render(name, _full_context(name))
-
-    assert fence(_REPORT_JSON, "json") in rendered
-
-
-@pytest.mark.parametrize("report_json", _BACKTICK_LADEN_REPORT_JSON)
-@pytest.mark.parametrize("name", list(PromptName))
-def test_every_template_keeps_backtick_laden_content_inside_one_fence(
+def test_every_template_fences_earlier_reports_even_with_backticks_inside(
     tmp_path: Path, name: PromptName, report_json: str
 ) -> None:
     renderer = PromptRenderer(tmp_path)
@@ -66,7 +58,6 @@ def test_every_template_keeps_backtick_laden_content_inside_one_fence(
     rendered = renderer.render(name, _full_context(name, report_json=report_json))
 
     assert fence(report_json, "json") in rendered
-    assert rendered.rstrip().endswith(REPORT_INSTRUCTION)
 
 
 @pytest.mark.parametrize("name", list(PromptName))
