@@ -158,12 +158,24 @@ def test_implement_below_the_consult_limit_still_consults() -> None:
 
 
 def test_consult_answer_returns_to_implement_at_the_same_iteration() -> None:
-    task = make_task(step=Step.CONSULT, iteration=1, counters=Counters(consults=1))
+    task = make_task(
+        step=Step.CONSULT, status=Status.RUNNING, iteration=1, counters=Counters(consults=1)
+    )
 
     transition = _next(task, make_consult_answer(decision="answer"))
 
     assert transition.step is Step.IMPLEMENT
+    assert transition.status is Status.RUNNING
     assert transition.iteration == 1
+
+
+def test_consult_answer_during_integration_returns_to_integrate() -> None:
+    task = make_task(step=Step.CONSULT, status=Status.INTEGRATING, counters=Counters(consults=1))
+
+    transition = _next(task, make_consult_answer(decision="answer"))
+
+    assert transition.step is Step.INTEGRATE
+    assert transition.status is Status.INTEGRATING
 
 
 def test_consult_escalate_raises_decision_required() -> None:

@@ -107,8 +107,17 @@ def _from_implement(task: Task, outcome: ImplementationReport) -> Transition:
 
 
 def _from_consult(task: Task, outcome: ConsultAnswer) -> Transition:
+    """Return an answered consult to the step it interrupted.
+
+    `consult` has no step of its own to return to on the task, so `task.status` stands in for
+    it: `integrating` means this consult was raised from the conflicts turn (03 §6) and answers
+    back into `integrate`, with the integration lock still held; anything else means it was
+    raised from `implement` and answers back there at the same iteration, `running` as before.
+    """
     if outcome.decision == "escalate":
         return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
+    if task.status is Status.INTEGRATING:
+        return Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
     return Transition.stay(task, step=Step.IMPLEMENT)
 
 
