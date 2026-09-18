@@ -15,7 +15,7 @@ import json
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
@@ -63,10 +63,10 @@ _NUDGE_MESSAGE = (
 )
 
 type _Outcome = TurnEnded | TurnFailed | PaneDied | Stalled
-type _BeforeTurnSignal = Compacted | TurnEnded | TurnFailed | PaneDied | Stalled
 
 _OUTCOME_TYPES = (TurnEnded, TurnFailed, PaneDied, Stalled)
 _BEFORE_TURN_TYPES = (Compacted, TurnEnded, TurnFailed, PaneDied, Stalled)
+_CONFIRM_TYPES = (*_OUTCOME_TYPES, PromptSubmitted)
 
 
 @dataclass(frozen=True)
@@ -180,7 +180,7 @@ class TurnRunner:
             injected.add(line)
             try:
                 await pane.paste_line(line)
-                signal = await self._wait_for_before_turn(signals, deadline)
+                signal = await self._next_signal(signals, _BEFORE_TURN_TYPES, deadline)
             finally:
                 injected.discard(line)
             if signal is None:
@@ -224,16 +224,14 @@ class TurnRunner:
                 await pane.send_keys(ENTER_KEY)
             deadline = self._clock.now() + timedelta(seconds=SUBMIT_CONFIRM_SECONDS)
             while True:
-                remaining = (deadline - self._clock.now()).total_seconds()
-                if remaining <= 0:
-                    return None
-                signal = await self._wait_for(signals, remaining)
+                signal = await self._next_signal(signals, _CONFIRM_TYPES, deadline)
                 if signal is None:
                     return None
-                if isinstance(signal, _OUTCOME_TYPES):
-                    return signal
-                if isinstance(signal, PromptSubmitted) and str(prompt_path) in signal.text:
-                    return signal
+                if isinstance(signal, PromptSubmitted):
+                    if str(prompt_path) in signal.text:
+                        return signal
+                    continue
+                return cast("_Outcome", signal)
         finally:
             injected.discard(line)
 
@@ -289,22 +287,31 @@ class TurnRunner:
         return Completed(report=rebuilt, rebuilt=True)
 
     async def _await_outcome(self, signals: asyncio.Queue[MonitorSignal]) -> _Outcome:
-        while True:
-            signal = await signals.get()
-            if isinstance(signal, _OUTCOME_TYPES):
-                return signal
+        return cast("_Outcome", await self._next_signal(signals, _OUTCOME_TYPES, None))
 
-    async def _wait_for_before_turn(
-        self, signals: asyncio.Queue[MonitorSignal], deadline: datetime
-    ) -> _BeforeTurnSignal | None:
+    async def _next_signal(
+        self,
+        signals: asyncio.Queue[MonitorSignal],
+        accept: tuple[type, ...],
+        deadline: datetime | None,
+    ) -> MonitorSignal | None:
+        """Return the next signal in `signals` matching `accept`, discarding any others.
+
+        With `deadline` set, gives up and returns `None` once it passes; with `deadline` set to
+        `None`, waits indefinitely. Shared by the before-turn wait, the pointer confirmation
+        wait and the outcome wait, which differ only in their accepted signals and deadline.
+        """
         while True:
-            remaining = (deadline - self._clock.now()).total_seconds()
-            if remaining <= 0:
-                return None
-            signal = await self._wait_for(signals, remaining)
-            if signal is None:
-                return None
-            if isinstance(signal, _BEFORE_TURN_TYPES):
+            if deadline is not None:
+                remaining = (deadline - self._clock.now()).total_seconds()
+                if remaining <= 0:
+                    return None
+                signal = await self._wait_for(signals, remaining)
+                if signal is None:
+                    return None
+            else:
+                signal = await signals.get()
+            if isinstance(signal, accept):
                 return signal
 
     async def _wait_for(
