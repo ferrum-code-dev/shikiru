@@ -115,6 +115,12 @@ class EscalationStore:
             escalation, f"escalation {escalation_id} vanished immediately after insert"
         )
 
+    def set_packet_path(self, escalation_id: str, packet_path: str) -> None:
+        """Record `escalation_id`'s packet path once its file has been written (03 §8)."""
+        self._connection.execute(
+            "UPDATE escalations SET packet_path = ? WHERE id = ?", (packet_path, escalation_id)
+        )
+
     def get(self, escalation_id: str) -> Escalation | None:
         """Read one escalation by id, or `None` if it doesn't exist."""
         return fetch_escalation(self._connection, escalation_id)
