@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 SHIKIRU_DIR_NAME = ".shikiru"
 WORKTREES_DIR_NAME = "worktrees"
+RUNS_DIR_NAME = "runs"
 BRANCH_PREFIX = "shikiru/"
 EXCLUDE_LINE = f"/{SHIKIRU_DIR_NAME}/"
 
@@ -37,6 +38,11 @@ def slugify(title: str) -> str:
 def branch_name(task_id: str, title: str) -> str:
     """Build the deterministic task branch name `shikiru/T-n-<slug>`."""
     return f"{BRANCH_PREFIX}{task_id}-{slugify(title)}"
+
+
+def run_dir(project_root: Path, task_id: str) -> Path:
+    """Return `task_id`'s run directory `.shikiru/runs/T-n/` (02 §5)."""
+    return project_root / SHIKIRU_DIR_NAME / RUNS_DIR_NAME / task_id
 
 
 def _is_monorepo(repos: Sequence[RepoConfig]) -> bool:

@@ -101,8 +101,8 @@ Refs: 06 §5.4, §6.1–6.2.
 
 ### Task 12: Session manager and monitor
 Refs: 03 §4.1–4.2, §9.
-- [ ] `SessionManager.ensure` for every row of 03 §4.1; `resume_command` stored; exit on task end.
-- [ ] `SessionMonitor`: single consumer, fan-out queue (with `PaneDecorator` subscribed), usage/snapshot/last message persisted, pane death, stall and attention via `domain.activity`, intervention hold via `domain.activity`; launch timeout → `Stalled`.
+- [x] `SessionManager.ensure` for every row of 03 §4.1; `resume_command` stored; exit on task end.
+- [x] `SessionMonitor`: single consumer, fan-out queue (with `PaneDecorator` subscribed), usage/snapshot/last message persisted, pane death, stall and attention via `domain.activity`, intervention hold via `domain.activity`; launch timeout → `Stalled`.
 - Tests: integration with fake agent scripts (resume, attach after restart, rung change, crash, stall, typed prompt → hold on that task only).
 
 ### Task 13: Turn runner

@@ -36,6 +36,15 @@ class FakeClock:
             self._sleepers.append((deadline, future))
         await future
 
+    def has_pending_sleep(self) -> bool:
+        """Return whether any caller is currently blocked in `sleep()`.
+
+        Lets a test wait (via `wait_until`) for a coroutine several `await`s deep to actually
+        reach its `sleep()` call, instead of guessing how many `yield_control()` calls that
+        takes.
+        """
+        return bool(self._sleepers)
+
     def advance(self, seconds: float) -> None:
         self._now += timedelta(seconds=seconds)
         due = sorted(
