@@ -46,7 +46,7 @@ config · agents.contracts · agents.sdk
 errors · process · clock                   lowest; no internal imports
 ───────────────────────────────────────────
 plugins.agents.*  → agents.contracts, agents.sdk, process, clock, errors only; loaded by agents.registry from bootstrap
-plugins.widgets.* → dashboard.contract, ui, store.reader only (other data arrives through WidgetContext services)
+plugins.widgets.* → dashboard.contract, ui only (all data arrives as view models through WidgetContext, 06 §5.4)
 ```
 
 | Package | Responsibility | Key types |
@@ -69,7 +69,7 @@ plugins.widgets.* → dashboard.contract, ui, store.reader only (other data arri
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
 | `operator` | Use cases for interfaces; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
-| `cli` / `mcp` / `dashboard` | Typer app; FastMCP stdio server; Textual apps and widget contract | `app`, `build_server()`, `DashboardApp`, `PaletteApp`, `DashboardWidget` |
+| `cli` / `mcp` / `dashboard` | Typer app; FastMCP stdio server; Textual apps and widget contract | `app`, `build_server()`, `DashboardApp`, `PaletteApp`, `DashboardWidget`, `DashboardViews` |
 
 **Engine components**, each with one responsibility:
 

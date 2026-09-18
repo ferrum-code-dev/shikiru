@@ -109,11 +109,21 @@ class DashboardWidget(Protocol):
     def create(self, context: WidgetContext) -> textual.widget.Widget: ...
 
 @dataclass(frozen=True)
-class WidgetContext:  state: StateReader; project_dir: Path; focus_task: str | None
-                      services: WidgetServices    # protocols supplied by bootstrap: repo_status(), resources(), containers(), open_palette(action)
+class WidgetContext:  views: DashboardViews; focus_task: str | None
+                      on_change: Callable[[OnChange], Awaitable[None]]   # StateReader.watch
+                      open_palette: Callable[[str], Awaitable[None]]
+
+class DashboardViews(Protocol):
+    """Ready-to-render view models; the only data a widget sees."""
+    async def header(self) -> HeaderView: ...            # project, engine up, slots, repos (git cached 10 s)
+    def strips(self) -> list[TaskStripData]: ...         # active tasks, focused first, children under parents
+    def queue(self) -> list[QueueRow]: ...               # dispatch order
+    # escalations(), dialogue(), usage(), resources(), containers() arrive with their widgets
 ```
 
-Widgets refresh when `StateReader.on_change` fires. Samplers such as resources and docker have their own interval.
+**Views are the widget API.** `dashboard.views` builds them from `StateReader`, `Settings` and `domain` rules (`pick_rung`, dispatch order, the acting role of a step). A widget only renders: it never sees the state DB, domain types, config or tmux, so an external widget depends on `dashboard.contract` and `ui` alone. View models are frozen dataclasses in `dashboard.contract` (`TaskStripData` is `ui`'s). They may gain fields, but never lose or change them.
+
+Widgets re-read their view when `on_change` fires. Samplers such as resources and docker have their own interval.
 
 | Widget | Content |
 |---|---|
