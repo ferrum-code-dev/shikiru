@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR
+from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir
 from shikiru.agents.sdk.hooks import HookRecorder
 
 
@@ -18,4 +18,4 @@ def hook_command() -> None:
     if not run_dir or not role:
         return
     payload = json.loads(sys.stdin.read())
-    HookRecorder(Path(run_dir) / role).record(payload)
+    HookRecorder(role_dir(Path(run_dir), role)).record(payload)

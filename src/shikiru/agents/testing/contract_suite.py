@@ -44,6 +44,7 @@ from shikiru.agents.contracts import (
     SessionEnded,
     SessionStarted,
     TurnEnded,
+    role_dir,
 )
 from shikiru.agents.testing.resume import RESUME_NONCE_PROMPT, RESUME_RECALL_PROMPT
 from shikiru.clock import SystemClock
@@ -167,16 +168,16 @@ def _prepare_turn(run_dir: Path, role: str, kind: ReportKind) -> None:
     (turn_dir / REPORT_KIND_FILENAME).write_text(kind.value)
     (turn_dir / REPORT_SCHEMA_FILENAME).write_text(json.dumps(schema_for(kind)))
     (turn_dir / REPORT_FILENAME).unlink(missing_ok=True)
-    role_dir = run_dir / role
-    role_dir.mkdir(parents=True, exist_ok=True)
-    link = role_dir / CURRENT_TURN_LINK_NAME
+    role_path = role_dir(run_dir, role)
+    role_path.mkdir(parents=True, exist_ok=True)
+    link = role_path / CURRENT_TURN_LINK_NAME
     link.unlink(missing_ok=True)
     link.symlink_to(turn_dir)
 
 
-def _place_sample_files(role_dir: Path, files: Mapping[str, Path]) -> None:
+def _place_sample_files(role_path: Path, files: Mapping[str, Path]) -> None:
     for relative_path, source_path in files.items():
-        destination = role_dir / relative_path
+        destination = role_path / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(source_path.read_bytes())
 
@@ -285,7 +286,7 @@ class AgentContractSuite:
         spec = self.build_spec(tmp_path, resume_session_id=case.session_id)
         pane = RecordingPaneHandle()
         session = await agent.launch(spec, pane)
-        await asyncio.to_thread(_place_sample_files, spec.run_dir / spec.role, case.files)
+        await asyncio.to_thread(_place_sample_files, role_dir(spec.run_dir, spec.role), case.files)
         signals = session.signals()
         collected: list[AgentSignal] = []
         while len(collected) < len(case.expected_signals):

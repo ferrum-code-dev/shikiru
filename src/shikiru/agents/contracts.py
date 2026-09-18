@@ -31,6 +31,12 @@ _VALID_RUNG_PART_COUNTS = (2, 3)
 RUN_DIR_ENV_VAR = "SHIKIRU_RUN_DIR"
 ROLE_ENV_VAR = "SHIKIRU_ROLE"
 
+
+def role_dir(run_dir: Path, role: str) -> Path:
+    """Return `role`'s directory under `run_dir`, where its per-role files live (02 §5)."""
+    return run_dir / role
+
+
 CostBasis = Literal["billed", "api_equivalent", "unknown"]
 
 

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import typer
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR
+from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     REPORT_FILENAME,
@@ -49,7 +49,7 @@ def resolve_current_turn_dir(environ: Mapping[str, str]) -> Path:
     if not run_dir or not role:
         message = f"{RUN_DIR_ENV_VAR} and {ROLE_ENV_VAR} must both be set"
         raise ReportError(EXIT_NOT_INITIALISED, message)
-    link = Path(run_dir) / role / CURRENT_TURN_LINK_NAME
+    link = role_dir(Path(run_dir), role) / CURRENT_TURN_LINK_NAME
     if not link.is_symlink() or not link.exists():
         message = f"no current turn: {link} is missing or does not point at a live turn dir"
         raise ReportError(EXIT_NOT_INITIALISED, message)
