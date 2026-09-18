@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.cli.report import REPORT_EXIT_INVALID, REPORT_EXIT_NO_CURRENT_TURN
+from shikiru.errors import EXIT_NOT_INITIALISED, EXIT_USAGE_ERROR
 from shikiru.process import SubprocessRunner
 
 if TYPE_CHECKING:
@@ -72,7 +72,7 @@ async def test_an_invalid_report_exits_two_and_names_the_offending_field(tmp_pat
 
     returncode, _, stderr = await _run_report(_env(run_dir), file_path)
 
-    assert returncode == REPORT_EXIT_INVALID
+    assert returncode == EXIT_USAGE_ERROR
     assert "issues" in stderr
     assert not (turn_dir / "report.json").exists()
 
@@ -85,7 +85,7 @@ async def test_malformed_json_exits_two(tmp_path: Path) -> None:
 
     returncode, _, stderr = await _run_report(_env(run_dir), file_path)
 
-    assert returncode == REPORT_EXIT_INVALID
+    assert returncode == EXIT_USAGE_ERROR
     assert "invalid JSON" in stderr
 
 
@@ -99,7 +99,7 @@ async def test_missing_run_dir_env_var_exits_three(tmp_path: Path) -> None:
 
     returncode, _, stderr = await _run_report(env, file_path)
 
-    assert returncode == REPORT_EXIT_NO_CURRENT_TURN
+    assert returncode == EXIT_NOT_INITIALISED
     assert "SHIKIRU_RUN_DIR" in stderr
 
 
@@ -114,7 +114,7 @@ async def test_dangling_current_turn_symlink_exits_three(tmp_path: Path) -> None
 
     returncode, _, stderr = await _run_report(_env(run_dir), file_path)
 
-    assert returncode == REPORT_EXIT_NO_CURRENT_TURN
+    assert returncode == EXIT_NOT_INITIALISED
     assert "current turn" in stderr
 
 
@@ -126,7 +126,7 @@ async def test_unknown_report_kind_exits_two(tmp_path: Path) -> None:
 
     returncode, _, stderr = await _run_report(_env(run_dir), file_path)
 
-    assert returncode == REPORT_EXIT_INVALID
+    assert returncode == EXIT_USAGE_ERROR
     assert "not-a-real-kind" in stderr
 
 

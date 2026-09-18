@@ -12,7 +12,7 @@ import typer
 from pydantic import ValidationError
 
 from shikiru.domain.reports import ReportKind, model_for
-from shikiru.errors import ShikiruError
+from shikiru.errors import EXIT_NOT_INITIALISED, EXIT_USAGE_ERROR, ShikiruError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -25,16 +25,13 @@ CURRENT_TURN_LINK_NAME = "current_turn"
 REPORT_KIND_FILENAME = "report.kind"
 REPORT_FILENAME = "report.json"
 
-REPORT_EXIT_INVALID = 2
-REPORT_EXIT_NO_CURRENT_TURN = 3
-
 
 class ReportError(ShikiruError):
     """A `shikiru report` failure, carrying the exit code it maps to (03 §4.3).
 
     `exit_code` is set per instance rather than per subclass, since 03 §4.3 gives `shikiru
-    report` its own two exit codes (2 invalid, 3 no current turn) that both flow through this
-    one error type instead of one subclass each.
+    report` its own two exit codes (`EXIT_USAGE_ERROR` invalid, `EXIT_NOT_INITIALISED` no
+    current turn) that both flow through this one error type instead of one subclass each.
     """
 
     def __init__(self, exit_code: int, message: str) -> None:
@@ -50,11 +47,11 @@ def resolve_current_turn_dir(environ: Mapping[str, str]) -> Path:
     role = environ.get(ROLE_ENV_VAR)
     if not run_dir or not role:
         message = f"{RUN_DIR_ENV_VAR} and {ROLE_ENV_VAR} must both be set"
-        raise ReportError(REPORT_EXIT_NO_CURRENT_TURN, message)
+        raise ReportError(EXIT_NOT_INITIALISED, message)
     link = Path(run_dir) / role / CURRENT_TURN_LINK_NAME
     if not link.is_symlink() or not link.exists():
         message = f"no current turn: {link} is missing or does not point at a live turn dir"
-        raise ReportError(REPORT_EXIT_NO_CURRENT_TURN, message)
+        raise ReportError(EXIT_NOT_INITIALISED, message)
     return link.resolve()
 
 
@@ -62,13 +59,13 @@ def _report_kind(turn_dir: Path) -> ReportKind:
     kind_path = turn_dir / REPORT_KIND_FILENAME
     if not kind_path.is_file():
         message = f"{kind_path} is missing"
-        raise ReportError(REPORT_EXIT_INVALID, message)
+        raise ReportError(EXIT_USAGE_ERROR, message)
     raw_kind = kind_path.read_text().strip()
     try:
         return ReportKind(raw_kind)
     except ValueError:
         message = f"{kind_path}: unknown report kind {raw_kind!r}"
-        raise ReportError(REPORT_EXIT_INVALID, message) from None
+        raise ReportError(EXIT_USAGE_ERROR, message) from None
 
 
 def _load_report_data(file_path: Path) -> object:
@@ -76,12 +73,12 @@ def _load_report_data(file_path: Path) -> object:
         raw_text = file_path.read_text()
     except OSError as error:
         message = f"cannot read {file_path}: {error}"
-        raise ReportError(REPORT_EXIT_INVALID, message) from error
+        raise ReportError(EXIT_USAGE_ERROR, message) from error
     try:
         return json.loads(raw_text)
     except json.JSONDecodeError as error:
         message = f"{file_path}: invalid JSON: {error}"
-        raise ReportError(REPORT_EXIT_INVALID, message) from error
+        raise ReportError(EXIT_USAGE_ERROR, message) from error
 
 
 def _validation_error_messages(error: ValidationError) -> list[str]:
@@ -101,7 +98,7 @@ def validate_report(turn_dir: Path, file_path: Path) -> BaseModel:
         return model.model_validate(data)
     except ValidationError as error:
         message = "\n".join(_validation_error_messages(error))
-        raise ReportError(REPORT_EXIT_INVALID, message) from error
+        raise ReportError(EXIT_USAGE_ERROR, message) from error
 
 
 def write_report(turn_dir: Path, report: BaseModel) -> Path:
