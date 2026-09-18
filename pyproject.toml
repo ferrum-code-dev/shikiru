@@ -80,6 +80,7 @@ ignore = [
   "FBT001", # Typer boolean --flag options are idiomatic positional-looking parameters
   "FBT003", # Typer's typer.Option(False, ...) boolean default is idiomatic, not a bare bool call
 ]
+external = ["V107"] # vulture's unused-parameter code, silenced only on 04 §1's exact Protocol params
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "sqlite3" = { msg = "SQL only in shikiru.store; see 02 §2" }
@@ -100,6 +101,7 @@ runtime-evaluated-base-classes = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/shikiru/domain/steps.py" = ["PLR0911"] # one return per step/outcome match arm (03 §2, §6)
+"src/shikiru/agents/contracts.py" = ["PLR0917"] # HeadlessAgent.ask is 04 §1's exact signature
 "src/shikiru/store/**" = ["TID251", "S608"]
 "src/shikiru/workspace/**" = ["ASYNC240"] # local worktree filesystem ops, as blocking as sqlite3
 "tests/support/git_repo.py" = ["ASYNC240"]

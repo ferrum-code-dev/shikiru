@@ -1,23 +1,29 @@
 """The agent plugin contract (docs/design/04-agents.md §1).
 
-Only the types earlier tasks need ahead of the rest of the contract exist so far:
-`Rung`, `FailureKind`, `Usage`, `QuotaWindow` and `PaneHandle`.
+Agents are code plugins. The engine depends only on this module, and each plugin owns
+everything agent-specific: CLI argv and auth, hooks and transcripts, prices and context
+windows, quota sources, error mapping and compaction policy. The contract doesn't require
+hooks: a plugin must deliver `AgentSignal`s by whatever means its agent allows, and prove it
+with the contract test kit (`shikiru.agents.testing`, 04 §3).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol
 
 from pydantic import ConfigDict
 
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
-    from datetime import datetime
+    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+    from datetime import datetime, timedelta
     from pathlib import Path
+
+    from shikiru.clock import Clock
+    from shikiru.process import SubprocessRunner
 
 _RUNG_SEPARATOR = ":"
 _VALID_RUNG_PART_COUNTS = (2, 3)
@@ -47,6 +53,81 @@ class Rung:
 
 
 @dataclass(frozen=True)
+class SessionKeys:
+    """The key sequences an `InteractiveAgent` sends to control its pane (04 §1)."""
+
+    interrupt: tuple[str, ...]
+    exit_input: str
+    safe: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SessionStarted:
+    """A session was launched or attached. `session_id` is `None` when it can't be resumed."""
+
+    session_id: str | None
+
+
+@dataclass(frozen=True)
+class PromptSubmitted:
+    """A prompt was accepted by the agent, whether injected or typed by the operator."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class Activity:
+    """The agent is working; `tool_running` is true while a tool call is in flight."""
+
+    tool_running: bool
+
+
+@dataclass(frozen=True)
+class TurnEnded:
+    """A turn finished; `last_message` is the agent's final message for it."""
+
+    last_message: str
+
+
+@dataclass(frozen=True)
+class TurnFailed:
+    """A turn failed. `resets_at` is set only when `kind` is `QUOTA` and it is known."""
+
+    kind: FailureKind
+    message: str
+    resets_at: datetime | None
+
+
+@dataclass(frozen=True)
+class Compacted:
+    """The agent compacted its context."""
+
+
+@dataclass(frozen=True)
+class AttentionNeeded:
+    """The agent is waiting on something the operator or Helper must resolve."""
+
+    message: str
+
+
+@dataclass(frozen=True)
+class SessionEnded:
+    """The session's process exited."""
+
+
+type AgentSignal = (
+    SessionStarted
+    | PromptSubmitted
+    | Activity
+    | TurnEnded
+    | TurnFailed
+    | Compacted
+    | AttentionNeeded
+    | SessionEnded
+)
+
+
+@dataclass(frozen=True)
 class Usage:
     """A session's cumulative token and cost usage, as `AgentSession.usage()` reports it (04 §1)."""
 
@@ -69,6 +150,28 @@ class QuotaWindow:
     observed_at: datetime
 
 
+@dataclass(frozen=True)
+class CheckResult:
+    """One named check from `InteractiveAgent.doctor()`, e.g. binary, version or login."""
+
+    name: str
+    ok: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class LaunchSpec:
+    """Everything an `InteractiveAgent` needs to launch or attach a session (04 §1)."""
+
+    rung: Rung
+    role: str
+    cwd: Path
+    run_dir: Path
+    add_dirs: tuple[Path, ...]
+    env: Mapping[str, str]
+    resume_session_id: str | None
+
+
 class PaneHandle(Protocol):
     """The single tmux pane an agent session lives in (04 §1)."""
 
@@ -83,6 +186,90 @@ class PaneHandle(Protocol):
     async def is_alive(self) -> bool:
         """Return whether the pane's process is still running."""
         ...
+
+
+class AgentSession(Protocol):
+    """A live interactive agent session. `signals()` must be consumed by exactly one reader."""
+
+    def signals(self) -> AsyncIterator[AgentSignal]:
+        """Yield this session's signals, in order, for its single consumer."""
+        ...
+
+    async def before_turn(self) -> list[str]:
+        """Return lines to inject before the next turn, e.g. a compaction command."""
+        ...
+
+    async def usage(self) -> Usage:
+        """Return this session's cumulative usage, which must never decrease."""
+        ...
+
+    def snapshot(self) -> Mapping[str, Any]:
+        """Return opaque state this session's `attach()` call can later resume from."""
+        ...
+
+
+class HeadlessAgent(Protocol):
+    """One-shot, schema-constrained, non-interactive calls."""
+
+    async def ask(
+        self,
+        prompt: str,  # noqa: V107
+        schema: Mapping[str, Any],  # noqa: V107
+        model: str,
+        effort: str | None,
+        cwd: Path,
+        timeout: timedelta,
+    ) -> Mapping[str, Any]:
+        """Run one schema-constrained prompt and return its structured output."""
+        ...
+
+
+class InteractiveAgent(Protocol):
+    """An agent CLI plugin: launches sessions, reports quota and health, resumes and asks."""
+
+    name: str
+    keys: SessionKeys
+
+    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:  # noqa: V107
+        """Start a new session for `spec` in `pane`."""
+        ...
+
+    async def attach(
+        self,
+        spec: LaunchSpec,  # noqa: V107
+        pane: PaneHandle,
+        state: Mapping[str, Any],
+    ) -> AgentSession:
+        """Resume a session already running in `pane`, from a prior `snapshot()`."""
+        ...
+
+    async def quota(self) -> list[QuotaWindow]:
+        """Return known quota windows, or `[]` when unknown; the plugin owns caching and probing."""
+        ...
+
+    async def doctor(self) -> list[CheckResult]:
+        """Run this agent's binary, version and login checks."""
+        ...
+
+    def resume_command(self, session_id: str, cwd: Path) -> str | None:
+        """Return the shell command that resumes `session_id`, or `None` if it can't be resumed."""
+        ...
+
+    def headless(self) -> HeadlessAgent | None:
+        """Return this agent's `HeadlessAgent`, or `None` when it has no headless support."""
+        ...
+
+
+@dataclass(frozen=True)
+class AgentContext:
+    """What an `AgentFactory` needs to validate its options and build its `InteractiveAgent`."""
+
+    options: Mapping[str, Any]
+    runner: SubprocessRunner
+    clock: Clock
+
+
+type AgentFactory = Callable[[AgentContext], InteractiveAgent]
 
 
 def parse_rung(text: str) -> Rung:
