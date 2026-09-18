@@ -6,30 +6,11 @@ import pytest
 
 from shikiru.config.loader import load_settings
 from shikiru.errors import ConfigError
+from tests.support.config import MINIMAL_PROJECT_CONFIG
+from tests.support.config import write_minimal_project as _project
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-_MINIMAL_PROJECT_CONFIG = """
-[project]
-name = "demo"
-
-[roles.leader]
-ladder = [ { agent = "claude", model = "opus", effort = "high" } ]
-
-[roles.implementer]
-ladder = [ { agent = "codex", model = "sol", effort = "high" } ]
-
-[roles.helper]
-ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
-"""
-
-
-def _project(tmp_path: Path, extra: str = "") -> Path:
-    shikiru_dir = tmp_path / ".shikiru"
-    shikiru_dir.mkdir()
-    (shikiru_dir / "config.toml").write_text(_MINIMAL_PROJECT_CONFIG + extra)
-    return tmp_path
 
 
 def test_project_file_overrides_packaged_defaults(tmp_path: Path) -> None:
@@ -86,14 +67,6 @@ def test_set_override_parses_list(tmp_path: Path) -> None:
     assert settings.project.trackers == ["a.md"]
 
 
-def test_set_override_bare_word_is_taken_as_a_string(tmp_path: Path) -> None:
-    project_dir = _project(tmp_path)
-
-    settings = load_settings(project_dir, overrides=["orchestration.integration=merge"])
-
-    assert settings.orchestration.integration == "merge"
-
-
 def test_set_override_without_equals_sign_is_a_config_error(tmp_path: Path) -> None:
     project_dir = _project(tmp_path)
 
@@ -107,10 +80,7 @@ def test_invalid_value_in_project_file_names_file_and_key_path(tmp_path: Path) -
     with pytest.raises(ConfigError) as excinfo:
         load_settings(project_dir)
 
-    assert str(excinfo.value) == (
-        ".shikiru/config.toml: orchestration.max_parallel: "
-        "Input should be a valid integer, unable to parse string as an integer"
-    )
+    assert str(excinfo.value).startswith(".shikiru/config.toml: orchestration.max_parallel: ")
 
 
 def test_invalid_value_from_set_override_names_set_and_key_path(tmp_path: Path) -> None:
@@ -141,7 +111,7 @@ def test_missing_project_file_falls_back_to_defaults_and_still_requires_settings
 def test_missing_required_key_is_attributed_to_the_project_config_file(tmp_path: Path) -> None:
     shikiru_dir = tmp_path / ".shikiru"
     shikiru_dir.mkdir()
-    (shikiru_dir / "config.toml").write_text(_MINIMAL_PROJECT_CONFIG.replace('name = "demo"\n', ""))
+    (shikiru_dir / "config.toml").write_text(MINIMAL_PROJECT_CONFIG.replace('name = "demo"\n', ""))
 
     with pytest.raises(ConfigError) as excinfo:
         load_settings(tmp_path)

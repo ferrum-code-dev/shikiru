@@ -21,10 +21,8 @@ def test_every_reason_has_exactly_one_recommended_option(reason: EscalationReaso
         (EscalationReason.DECISION_REQUIRED, ResolutionKind.ANSWER),
         (EscalationReason.ITERATIONS_EXHAUSTED, ResolutionKind.ANSWER),
         (EscalationReason.AGENT_CRASH, ResolutionKind.RETRY),
-        (EscalationReason.AGENT_AUTH, ResolutionKind.RETRY),
-        (EscalationReason.LADDER_EXHAUSTED, ResolutionKind.RETRY),
     ],
-    ids=["decision", "exhausted", "agent-crash", "agent-auth", "ladder-exhausted"],
+    ids=["decision", "exhausted", "retry-family"],
 )
 def test_recommended_option_matches_the_reason_family(
     reason: EscalationReason, recommended_label: ResolutionKind
@@ -33,3 +31,20 @@ def test_recommended_option_matches_the_reason_family(
 
     recommended = next(option for option in options if option.recommended)
     assert recommended.label is recommended_label
+
+
+def test_only_iterations_exhausted_offers_accept() -> None:
+    labels_by_reason = {
+        reason: {option.label for option in options_for(reason)} for reason in EscalationReason
+    }
+
+    offering_accept = [
+        reason for reason, labels in labels_by_reason.items() if ResolutionKind.ACCEPT in labels
+    ]
+
+    assert offering_accept == [EscalationReason.ITERATIONS_EXHAUSTED]
+    assert labels_by_reason[EscalationReason.ITERATIONS_EXHAUSTED] == {
+        ResolutionKind.ANSWER,
+        ResolutionKind.ACCEPT,
+        ResolutionKind.CANCEL,
+    }

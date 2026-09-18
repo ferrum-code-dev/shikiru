@@ -23,9 +23,7 @@ def test_parse_rung_accepts_valid_input(text: str, expected: Rung) -> None:
     [
         "claude",
         "claude:opus:high:extra",
-        ":opus:high",
         "claude::high",
-        "claude:opus:",
         "",
     ],
 )

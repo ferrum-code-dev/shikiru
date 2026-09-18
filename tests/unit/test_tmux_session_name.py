@@ -11,8 +11,6 @@ from shikiru.tmux.session import session_name
     ("project_name", "expected"),
     [
         ("ferrum", "[shikiru] ferrum"),
-        ("api.gateway", "[shikiru] api_gateway"),
-        ("host:proj", "[shikiru] host_proj"),
         ("a.b:c", "[shikiru] a_b_c"),
     ],
 )

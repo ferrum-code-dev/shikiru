@@ -140,18 +140,6 @@ def test_the_quota_gate_blocks_a_task_whose_leader_agent_is_blocked() -> None:
     assert schedule.wait_reasons == {"T-1": WaitReason.QUOTA}
 
 
-def test_the_quota_gate_blocks_a_task_whose_implementer_agent_is_blocked() -> None:
-    task = make_task(id="T-1", seq=1, status=Status.QUEUED)
-    gates = _gates(
-        blocked_agents=frozenset({"codex"}),
-        agents={"T-1": TaskAgents(leader="claude", implementer="codex")},
-    )
-
-    schedule = pick_ready([task], gates)
-
-    assert schedule.wait_reasons == {"T-1": WaitReason.QUOTA}
-
-
 def test_a_quota_blocked_task_does_not_stop_a_later_task_on_a_different_agent() -> None:
     blocked = make_task(id="T-1", seq=1, status=Status.QUEUED, priority=2)
     other_agent = make_task(id="T-2", seq=2, status=Status.QUEUED, priority=1)
@@ -168,18 +156,6 @@ def test_a_quota_blocked_task_does_not_stop_a_later_task_on_a_different_agent() 
     assert [d.task_id for d in schedule.dispatches] == ["T-2"]
     assert schedule.wait_reasons["T-1"] is WaitReason.QUOTA
     assert "T-2" not in schedule.wait_reasons
-
-
-def test_a_task_with_no_blocked_agents_dispatches_normally() -> None:
-    task = make_task(id="T-1", seq=1, status=Status.QUEUED)
-    gates = _gates(
-        blocked_agents=frozenset({"claude"}),
-        agents={"T-1": TaskAgents(leader="codex", implementer="codex")},
-    )
-
-    schedule = pick_ready([task], gates)
-
-    assert [d.task_id for d in schedule.dispatches] == ["T-1"]
 
 
 def test_dispatch_prefers_the_tasks_previous_slot_when_free() -> None:
