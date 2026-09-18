@@ -59,7 +59,8 @@ class ReadySchedule:
     dependency_cancelled: tuple[str, ...]
 
 
-def _sort_key(task: Task) -> tuple[bool, int, int]:
+def dispatch_sort_key(task: Task) -> tuple[bool, int, int]:
+    """Order `task` the way dispatch does: requeued first, then priority, then submit order."""
     return (task.requeued_at is None, -task.priority, task.seq)
 
 
@@ -103,7 +104,7 @@ def pick_ready(tasks: Sequence[Task], gates: SchedulingGates) -> ReadySchedule:
     by_id = {task.id: task for task in tasks}
     ready, wait_reasons, dependency_cancelled = _group_queued_tasks(tasks, by_id)
 
-    ordered = sorted(ready, key=_sort_key)
+    ordered = sorted(ready, key=dispatch_sort_key)
     remaining_slots = set(gates.free_slots)
     dispatches: list[Dispatch] = []
     stopped_reason: WaitReason | None = None

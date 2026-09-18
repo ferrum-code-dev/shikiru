@@ -26,6 +26,16 @@ CONFLICT_ROUNDS = 2
 
 Outcome = TriageReport | PlanReport | ImplementationReport | ConsultAnswer | Verdict
 
+ACTING_ROLE: dict[Step, Role] = {
+    Step.TRIAGE: Role.LEADER,
+    Step.PLAN: Role.LEADER,
+    Step.IMPLEMENT: Role.IMPLEMENTER,
+    Step.CONSULT: Role.LEADER,
+    Step.VERIFY: Role.LEADER,
+    Step.INTEGRATE: Role.IMPLEMENTER,
+}
+"""Which role acts at each step (03 §2): the Implementer only acts in `integrate` on conflicts."""
+
 
 @dataclass(frozen=True)
 class Transition:
