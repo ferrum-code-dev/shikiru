@@ -38,6 +38,8 @@ from shikiru.operator.detectors import initialize_project
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 
+    from shikiru.config.settings import Settings
+
 PROJECT_OPTION = typer.Option("--project", help="Project directory.")
 JSON_OPTION = typer.Option("--json", help="Print JSON output.")
 OVERRIDES_OPTION = typer.Option("--set", help="Override a config key.")
@@ -188,7 +190,7 @@ def status(
         settings = load_settings(root, state.overrides)
         services = build_operator(root, settings)
         try:
-            _run(_status_loop(services, state, task_id, watch))
+            _run(_status_loop(services, state, task_id, watch, settings=settings))
         finally:
             services.close()
     except ShikiruError as error:
@@ -243,6 +245,8 @@ async def _status_loop(
     state: CliState,
     task_id: str | None,
     watch: bool,
+    *,
+    settings: Settings,
 ) -> None:
     def render() -> None:
         view = services.queries.status(task_id)
@@ -250,7 +254,8 @@ async def _status_loop(
             typer.echo(view.model_dump_json())
         else:
             no_color = bool(os.environ.get("NO_COLOR"))
-            Console(no_color=no_color).print(status_renderable(view))
+            console = Console(no_color=no_color)
+            console.print(status_renderable(view, settings=settings, width=console.width))
 
     render()
     if watch:

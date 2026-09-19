@@ -6,7 +6,8 @@ from rich.console import Console
 
 from shikiru.agents.contracts import QuotaWindow
 from shikiru.cli.render import status_renderable
-from shikiru.domain.tasks import Status
+from shikiru.domain.steps import Step
+from shikiru.domain.tasks import Mode, Status
 from shikiru.operator.queries import (
     SlotView,
     StatusView,
@@ -14,7 +15,7 @@ from shikiru.operator.queries import (
     TaskSummary,
     UsageView,
 )
-from tests.support.factories import make_task
+from tests.support.factories import make_settings, make_task
 
 OBSERVED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -46,7 +47,12 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
     queued = _summary("T-queued", Status.QUEUED, priority=5, wait_reason="dependency")
     historical = _summary("T-history", Status.DONE)
     detail = TaskDetail(
-        task=make_task(id="T-detail", status=Status.DONE),
+        task=make_task(
+            id="T-detail",
+            mode=Mode.IMPLEMENT,
+            status=Status.RUNNING,
+            step=Step.IMPLEMENT,
+        ),
         reports=[
             {
                 "turn": "02-verify-i1",
@@ -88,12 +94,14 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
     )
 
     console = Console(record=True, no_color=True, width=120)
-    console.print(status_renderable(view))
+    console.print(status_renderable(view, settings=make_settings(), width=console.width))
     output = console.export_text()
 
     assert "T-active" in output
     assert "T-queued" in output
     assert "T-history" not in output
+    assert "┏" in output
+    assert "┗" in output
     assert "dependency" in output
     assert "5h" in output
     assert "API-equivalent" in output

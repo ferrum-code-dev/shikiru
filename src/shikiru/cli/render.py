@@ -11,11 +11,13 @@ from rich.text import Text
 
 from shikiru.ui.glyphs import GLYPH_ENGINE
 from shikiru.ui.status import status_visual
+from shikiru.ui.strip import TaskStrip, task_strip_data
 from shikiru.ui.tokens import ALERT_COLOR, ENGINE_COLOR, STYLE_BOLD
 
 if TYPE_CHECKING:
     from rich.console import RenderableType
 
+    from shikiru.config.settings import Settings
     from shikiru.operator.commands import Ack
     from shikiru.operator.queries import StatusView, TaskDetail, TaskSummary
 
@@ -31,7 +33,7 @@ NO_ROWS = "none"
 NO_VALUE = "—"
 
 
-def status_renderable(view: StatusView) -> RenderableType:
+def status_renderable(view: StatusView, *, settings: Settings, width: int) -> RenderableType:
     """Render an operator status model as Rich panels and tables."""
     engine_style = f"{STYLE_BOLD} {ENGINE_COLOR if view.engine_up else ALERT_COLOR}"
     summary = Text.assemble(
@@ -54,11 +56,11 @@ def status_renderable(view: StatusView) -> RenderableType:
     if view.quotas:
         blocks.append(_quota_table(view))
     if view.task is not None:
-        blocks.append(task_detail_renderable(view.task))
+        blocks.append(task_detail_renderable(view.task, settings=settings, width=width))
     return _stack(blocks)
 
 
-def task_detail_renderable(detail: TaskDetail) -> RenderableType:
+def task_detail_renderable(detail: TaskDetail, *, settings: Settings, width: int) -> RenderableType:
     """Render one task's timeline, reports, branches and sessions."""
     table = Table(title=f"{detail.task.id} · {detail.task.title}")
     table.add_column("Time")
@@ -74,6 +76,7 @@ def task_detail_renderable(detail: TaskDetail) -> RenderableType:
     )
     return _stack(
         [
+            TaskStrip(task_strip_data(detail.task, settings)).render(width),
             table,
             _reports_table(detail),
             Panel(
