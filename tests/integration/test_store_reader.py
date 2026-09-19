@@ -111,6 +111,7 @@ def test_reader_serves_every_query_seeded_through_the_writer(
     assert [e.id for e in reader.list_open_escalations()] == [escalation.id]
 
     assert [w.name for w in reader.quotas_for("codex")] == ["5h"]
+    assert reader.list_quota_agents() == ["codex"]
 
     assert [b.agent for b in reader.active_agent_blocks(START)] == ["codex"]
     assert reader.active_agent_blocks(START + timedelta(hours=2)) == []

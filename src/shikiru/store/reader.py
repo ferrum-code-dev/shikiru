@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
 from shikiru.store.events import fetch_events_since
-from shikiru.store.quotas import fetch_active_agent_blocks, fetch_quotas
+from shikiru.store.quotas import fetch_active_agent_blocks, fetch_quota_agents, fetch_quotas
 from shikiru.store.runs import fetch_runs_for_task
 from shikiru.store.tasks import fetch_task, fetch_tasks
 
@@ -64,6 +64,10 @@ class StateReader:
     def list_quotas(self, agents: Sequence[str]) -> dict[str, list[QuotaWindow]]:
         """Read quota windows for each requested agent."""
         return {agent: self.quotas_for(agent) for agent in agents}
+
+    def list_quota_agents(self) -> list[str]:
+        """Read every agent with persisted quota windows."""
+        return fetch_quota_agents(self._connection)
 
     def active_agent_blocks(self, now: datetime) -> list[AgentBlock]:
         """See `shikiru.store.quotas.fetch_active_agent_blocks`."""

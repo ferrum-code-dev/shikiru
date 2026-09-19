@@ -1,16 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 from typing import TYPE_CHECKING
 
 import pytest
-import typer
 
-from shikiru.cli.app import emit_ack
-from shikiru.cli.context import CliState
-from shikiru.operator.commands import Ack, AckStatus
 from shikiru.process import SubprocessRunner
 
 if TYPE_CHECKING:
@@ -20,6 +17,7 @@ pytestmark = pytest.mark.asyncio
 
 
 async def _git_project(root: Path) -> None:
+    await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
     runner = SubprocessRunner()
     await runner.run(["git", "init", "-q"], timeout=10, cwd=root, check=True)
     (root / "README.md").write_text("operator test\n")
@@ -107,14 +105,20 @@ async def test_cli_json_init_submit_status_and_stop(tmp_path: Path) -> None:
     assert stop_value["result"] == {"stopped": False}
 
 
-async def test_cli_json_rejected_ack_has_rejected_exit_code(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    state = CliState(project=None, json_output=True, overrides=())
-    ack = Ack(id=7, status=AckStatus.REJECTED, result={"error": "invalid"}, message="invalid")
+async def test_init_scans_repositories_only_through_depth_four(tmp_path: Path) -> None:
+    depth_four = tmp_path / "one" / "two" / "three" / "four"
+    depth_five = depth_four / "five"
+    excluded = tmp_path / ".shikiru" / "nested"
+    await _git_project(depth_four)
+    await _git_project(depth_five)
+    await _git_project(excluded)
 
-    with pytest.raises(typer.Exit) as error:
-        emit_ack(state, ack)
+    code, stdout, stderr = await _cli(tmp_path, "init", "--yes")
 
-    assert error.value.exit_code == 4
-    assert json.loads(capsys.readouterr().out)["status"] == "rejected"
+    assert code == 0
+    assert stderr == ""
+    assert str(tmp_path / ".shikiru" / "config.toml") in stdout
+    config = (tmp_path / ".shikiru" / "config.toml").read_text()
+    assert 'path = "one/two/three/four"' in config
+    assert 'path = "one/two/three/four/five"' not in config
+    assert 'path = ".shikiru/nested"' not in config

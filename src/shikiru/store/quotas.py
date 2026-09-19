@@ -46,6 +46,12 @@ def fetch_quotas(connection: sqlite3.Connection, agent: str) -> list[QuotaWindow
     return [_row_to_quota_window(row) for row in rows]
 
 
+def fetch_quota_agents(connection: sqlite3.Connection) -> list[str]:
+    """Read every agent with at least one recorded quota window."""
+    rows = connection.execute("SELECT DISTINCT agent FROM quotas ORDER BY agent").fetchall()
+    return [row[0] for row in rows]
+
+
 def fetch_active_agent_blocks(connection: sqlite3.Connection, now: datetime) -> list[AgentBlock]:
     """Read every agent block still in effect at `now`."""
     rows = connection.execute(

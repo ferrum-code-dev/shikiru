@@ -101,6 +101,7 @@ class UsageView(OperatorView):
     cache_read_tokens: int
     cache_write_tokens: int
     cost_usd: float | None
+    cost_basis: str
 
 
 class StatusView(OperatorView):
@@ -164,7 +165,7 @@ class OperatorQueries:
         ]
         runs = [run for task in tasks for run in self._reader.list_runs(task.id)]
         usage = _aggregate_usage(runs)
-        agents = sorted({run.agent for run in runs})
+        agents = sorted({run.agent for run in runs} | set(self._reader.list_quota_agents()))
         task_detail = self.get_task(task_id) if task_id is not None else None
         active_slots = len(
             {
@@ -279,6 +280,8 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
     for agent in sorted(by_agent):
         agent_runs = by_agent[agent]
         costs = [run.usage.cost_usd for run in agent_runs if run.usage.cost_usd is not None]
+        cost_bases = {run.usage.cost_basis for run in agent_runs if run.usage.cost_usd is not None}
+        cost_basis = next(iter(cost_bases), "unknown") if len(cost_bases) <= 1 else "mixed"
         views.append(
             UsageView(
                 agent=agent,
@@ -287,6 +290,7 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
                 cache_read_tokens=sum(run.usage.cache_read_tokens for run in agent_runs),
                 cache_write_tokens=sum(run.usage.cache_write_tokens for run in agent_runs),
                 cost_usd=sum(costs) if costs else None,
+                cost_basis=cost_basis,
             )
         )
     return views

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass
 from importlib.metadata import entry_points
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from shikiru.agents.contracts import AgentContext, AgentFactory
@@ -15,8 +17,6 @@ from shikiru.errors import ConfigError, ShikiruError
 from shikiru.workspace.repo_paths import repo_dir
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
     from shikiru.workspace.git import Git
@@ -33,6 +33,7 @@ CACHE_NAMES = (
 )
 EXCLUDE_LINE = f"/{SHIKIRU_DIR_NAME}/"
 DEFAULT_MODEL = "default"
+EXCLUDED_DIRECTORIES = frozenset({SHIKIRU_DIR_NAME, ".git"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,18 +207,32 @@ def _is_git_root(path: Path) -> bool:
 
 
 def _directories_at_depth(root: Path, max_depth: int) -> list[Path]:
-    directories: list[Path] = []
-    for path in (root, *root.rglob("*")):
-        if not path.is_dir() or path.name in {SHIKIRU_DIR_NAME, ".git"}:
-            continue
-        if len(path.relative_to(root).parts) <= max_depth:
-            directories.append(path)
+    directories, _ = _walk_at_depth(root, max_depth)
     return directories
 
 
 def _files_at_depth(root: Path, max_depth: int) -> list[Path]:
-    return [
-        path
-        for path in root.rglob("*")
-        if path.is_file() and path.name != ".git" and len(path.relative_to(root).parts) <= max_depth
-    ]
+    _, files = _walk_at_depth(root, max_depth)
+    return files
+
+
+def _walk_at_depth(root: Path, max_depth: int) -> tuple[list[Path], list[Path]]:
+    directories = [root]
+    files: list[Path] = []
+    pending: list[tuple[Path, int]] = [(root, 0)]
+    while pending:
+        directory, depth = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in sorted(entries, key=lambda item: item.name):
+                if entry.name in EXCLUDED_DIRECTORIES:
+                    continue
+                entry_depth = depth + 1
+                if entry_depth > max_depth:
+                    continue
+                path = Path(entry.path)
+                if entry.is_dir(follow_symlinks=False):
+                    directories.append(path)
+                    pending.append((path, entry_depth))
+                elif entry.is_file(follow_symlinks=False):
+                    files.append(path)
+    return directories, files
