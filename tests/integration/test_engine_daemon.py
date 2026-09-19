@@ -1,0 +1,385 @@
+"""In-process daemon command acknowledgement and stop semantics."""
+
+from __future__ import annotations
+
+import asyncio
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any
+
+import pytest
+
+from shikiru.agents.contracts import Rung, role_dir
+from shikiru.agents.sdk.hooks import HookRecorder
+from shikiru.bootstrap import build_engine
+from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig, RepoConfig
+from shikiru.domain.commands import (
+    Cancel,
+    CancelResolution,
+    Pause,
+    Prioritize,
+    Resolve,
+    Resume,
+    Retry,
+    Say,
+    SetRung,
+    Stop,
+    Submit,
+)
+from shikiru.domain.escalation import EscalationStatus
+from shikiru.domain.events import EventKind
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
+from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
+from shikiru.engine.escalations import EscalationRaiser
+from shikiru.errors import ShikiruError
+from shikiru.store.commands import CommandQueue, CommandStatus
+from shikiru.store.database import Database
+from shikiru.store.escalations import EscalationStore
+from shikiru.store.events import EventLog
+from shikiru.store.runs import RunStore
+from shikiru.store.tasks import TaskStore
+from shikiru.tmux.session import SessionView
+from shikiru.workspace.roots import run_dir
+from tests.support.clock import FakeClock
+from tests.support.engine import build_registry, build_tmux, set_script
+from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.flow import init_project_repo
+from tests.support.waiting import wait_until
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from shikiru.agents.registry import AgentRegistry
+    from shikiru.config.settings import Settings
+    from shikiru.domain.commands import Command
+    from shikiru.store.commands import CommandOutcome, QueuedCommand
+    from tests.support.tmux import TmuxServer
+
+_FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
+_SECOND_RUNG = Rung(agent="fake", model="fake-2", effort=None)
+_LAYOUT = LayoutSplit(
+    split="h",
+    panes=[
+        PaneLeaf(pane="leader"),
+        PaneLeaf(pane="implementer"),
+        PaneLeaf(pane="system"),
+        PaneLeaf(pane="shell"),
+    ],
+)
+
+
+def _settings(*, max_cpu_pct: int = 0, max_parallel: int = 1, with_repo: bool = False) -> Settings:
+    settings = make_settings(
+        leader_ladder=[_FAKE_RUNG],
+        implementer_ladder=[_FAKE_RUNG],
+        helper_ladder=[_FAKE_RUNG],
+        agents={"fake": AgentConfig()},
+    )
+    orchestration = settings.orchestration.model_copy(
+        update={
+            "max_parallel": max_parallel,
+            "resources": settings.orchestration.resources.model_copy(
+                update={"max_cpu_pct": max_cpu_pct, "min_free_ram_gb": 0}
+            ),
+        }
+    )
+    update: dict[str, Any] = {
+        "project": ProjectConfig(name="test"),
+        "orchestration": orchestration,
+        "dashboard": settings.dashboard.model_copy(update={"layout": _LAYOUT}),
+    }
+    if with_repo:
+        update["repos"] = [RepoConfig(path=".")]
+    return settings.model_copy(update=update)
+
+
+async def _wait_for_command(
+    queued: QueuedCommand, queue: CommandQueue, clock: FakeClock
+) -> CommandOutcome:
+    async def completed() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(0.25)
+        outcome = queue.status(queued.id)
+        return outcome is not None and outcome.status is not CommandStatus.PENDING
+
+    await wait_until(completed, timeout=10)
+    outcome = queue.status(queued.id)
+    assert outcome is not None
+    return outcome
+
+
+async def _append_and_wait(
+    command: Command, queue: CommandQueue, clock: FakeClock
+) -> CommandOutcome:
+    return await _wait_for_command(queue.append(command), queue, clock)
+
+
+async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings()
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    registry: AgentRegistry = build_registry()
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=registry)
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    queue = CommandQueue(connection, clock)
+    engine_task = asyncio.create_task(engine.run())
+
+    submitted = queue.append(Submit(task_id="", title="queued task", request="queued task"))
+    outcome = await _wait_for_command(submitted, queue, clock)
+    assert outcome.status is CommandStatus.DONE
+    task_id = str(outcome.result["task_id"]) if outcome.result is not None else ""
+    assert task_id
+
+    prioritized = await _append_and_wait(Prioritize(task_id=task_id, priority=9), queue, clock)
+    assert prioritized.status is CommandStatus.DONE
+    paused = await _append_and_wait(Pause(task_id=task_id), queue, clock)
+    assert paused.status is CommandStatus.DONE
+    resumed = await _append_and_wait(Resume(task_id=task_id), queue, clock)
+    assert resumed.status is CommandStatus.DONE
+    rung = await _append_and_wait(
+        SetRung(task_id=task_id, role=Role.IMPLEMENTER, rung=_SECOND_RUNG), queue, clock
+    )
+    assert rung.status is CommandStatus.DONE
+    retried = await _append_and_wait(Retry(task_id=task_id), queue, clock)
+    assert retried.status is CommandStatus.DONE
+    cancelled = await _append_and_wait(Cancel(task_id=task_id), queue, clock)
+    assert cancelled.status is CommandStatus.DONE
+    stopped = await _append_and_wait(Stop(), queue, clock)
+    assert stopped.status is CommandStatus.DONE
+
+    await engine_task
+
+    events = EventLog(connection, clock).since(0, task_id=task_id)
+    task = TaskStore(connection, clock).get(task_id)
+    assert task is not None
+    assert task.status is Status.CANCELLED
+    assert not any(event.kind is EventKind.TASK_STARTED for event in events)
+    connection.close()
+
+
+async def test_stop_before_first_pass_prevents_same_batch_dispatch(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings(max_cpu_pct=100)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    queue = CommandQueue(connection, clock)
+    submitted = queue.append(Submit(task_id="", title="stop batch", request="stop batch"))
+    stopped = queue.append(Stop())
+    engine_task = asyncio.create_task(engine.run())
+
+    submit_outcome = await _wait_for_command(submitted, queue, clock)
+    stop_outcome = await _wait_for_command(stopped, queue, clock)
+    assert submit_outcome.status is CommandStatus.DONE
+    assert stop_outcome.status is CommandStatus.DONE
+    await engine_task
+
+    task_id = str(submit_outcome.result["task_id"]) if submit_outcome.result is not None else ""
+    task = TaskStore(connection, clock).get(task_id)
+    assert task is not None
+    assert task.status is Status.QUEUED
+    assert task.window_id is None
+    assert not EventLog(connection, clock).since(0, kinds=[EventKind.TASK_STARTED])
+    connection.close()
+
+
+def test_engine_lock_is_exclusive(tmp_path: Path) -> None:
+    lock_path = tmp_path / ".shikiru" / "engine.lock"
+    lock = EngineLock(lock_path)
+    with lock:
+        assert engine_is_running(lock_path)
+        with pytest.raises(EngineAlreadyRunningError):
+            EngineLock(lock_path).acquire()
+    assert not engine_is_running(lock_path)
+
+
+async def test_build_engine_creates_engine_log(tmp_path: Path) -> None:
+    engine = build_engine(tmp_path, _settings(), registry=build_registry())
+    engine.request_stop()
+    await engine.run()
+
+    assert (tmp_path / ".shikiru" / "logs" / "engine.log").is_file()
+
+
+async def test_daemon_surfaces_a_supervised_flow_failure(tmp_path: Path) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings()
+    engine = build_engine(tmp_path, settings, clock=clock, registry=build_registry())
+    await engine.start_task("T-missing")
+    engine_task = asyncio.create_task(engine.run())
+
+    async def finished() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(0.25)
+        return engine_task.done()
+
+    await wait_until(finished, timeout=10)
+    with pytest.raises(ShikiruError, match="T-missing"):
+        await engine_task
+    assert (tmp_path / ".shikiru" / "logs" / "engine.log").is_file()
+
+
+async def test_queued_resolution_is_acknowledged_by_the_daemon(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings()
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    queue = CommandQueue(connection, clock)
+    submitted = queue.append(Submit(task_id="", title="resolve me", request="resolve me"))
+    assert isinstance(submitted.command, Submit)
+    task = tasks.insert_from_submit(submitted.command)
+    tasks.apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.IMPLEMENT, status=Status.ESCALATED),
+    )
+    tasks.set_slot(task.id, 1)
+    events = EventLog(connection, clock)
+    escalation_store = EscalationStore(connection, clock)
+    escalation = await EscalationRaiser(
+        escalation_store, events, RunStore(connection, clock), tmp_path
+    ).raise_escalation(
+        task,
+        step=Step.IMPLEMENT,
+        reason=EscalationReason.DECISION_REQUIRED,
+        question="choose",
+        attempted="test",
+        reports=(),
+        facts="",
+        pane_tail="",
+    )
+    resolve = queue.append(Resolve(escalation_id=escalation.id, resolution=CancelResolution()))
+    stop = queue.append(Stop())
+    engine_task = asyncio.create_task(engine.run())
+
+    resolve_outcome = await _wait_for_command(resolve, queue, clock)
+    stop_outcome = await _wait_for_command(stop, queue, clock)
+    assert resolve_outcome.status is CommandStatus.DONE
+    assert stop_outcome.status is CommandStatus.DONE
+    await engine_task
+
+    updated = tasks.get(task.id)
+    assert updated is not None
+    assert updated.status is Status.CANCELLED
+    resolved = escalation_store.get(escalation.id)
+    assert resolved is not None
+    assert resolved.status is EscalationStatus.RESOLVED
+    connection.close()
+
+
+async def test_engine_observes_two_in_process_flows_in_parallel(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(tmp_path)
+    await set_script(tmux_server, [{"kind": "stall"}])
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings(max_cpu_pct=100, max_parallel=2, with_repo=True)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    queue = CommandQueue(connection, clock)
+    first = queue.append(
+        Submit(task_id="", title="parallel one", request="parallel one", mode=Mode.IMPLEMENT)
+    )
+    second = queue.append(
+        Submit(task_id="", title="parallel two", request="parallel two", mode=Mode.IMPLEMENT)
+    )
+    engine_task = asyncio.create_task(engine.run())
+
+    first_outcome = await _wait_for_command(first, queue, clock)
+    second_outcome = await _wait_for_command(second, queue, clock)
+    first_id = str(first_outcome.result["task_id"]) if first_outcome.result is not None else ""
+    second_id = str(second_outcome.result["task_id"]) if second_outcome.result is not None else ""
+
+    async def both_started() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(0.25)
+        started = EventLog(connection, clock).since(0, kinds=[EventKind.TASK_STARTED])
+        live = RunStore(connection, clock).list_live()
+        started_ids = {event.task_id for event in started}
+        live_ids = {run.task_id for run in live if run.role is Role.IMPLEMENTER}
+        return started_ids == {first_id, second_id} and live_ids == {first_id, second_id}
+
+    await wait_until(both_started, timeout=10)
+    first_task = TaskStore(connection, clock).get(first_id)
+    second_task = TaskStore(connection, clock).get(second_id)
+    assert first_task is not None
+    assert second_task is not None
+    assert {first_task.slot, second_task.slot} == {0, 1}
+
+    stopped = queue.append(Stop())
+    stop_outcome = await _wait_for_command(stopped, queue, clock)
+    assert stop_outcome.status is CommandStatus.DONE
+    await engine_task
+    connection.close()
+
+
+async def test_queued_say_reaches_the_live_agent_through_the_engine(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(tmp_path)
+    await set_script(tmux_server, [{"kind": "stall"}, {"kind": "stall"}])
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings(max_cpu_pct=100, with_repo=True)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    runs = RunStore(connection, clock)
+    queue = CommandQueue(connection, clock)
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        submitted = queue.append(
+            Submit(task_id="", title="say to agent", request="say to agent", mode=Mode.IMPLEMENT)
+        )
+        submitted_outcome = await _wait_for_command(submitted, queue, clock)
+        task_id = (
+            str(submitted_outcome.result["task_id"]) if submitted_outcome.result is not None else ""
+        )
+
+        async def live() -> bool:
+            if clock.has_pending_sleep():
+                clock.advance(0.25)
+            hooks = role_dir(run_dir(tmp_path, task_id), Role.IMPLEMENTER.value)
+            entries = await asyncio.to_thread(lambda: tuple(HookRecorder(hooks).tail()))
+            return any("text" in entry.value for entry in entries)
+
+        await wait_until(live, timeout=10)
+        assert runs.get_live(task_id, Role.IMPLEMENTER) is not None
+        say = queue.append(
+            Say(task_id=task_id, role=Role.IMPLEMENTER, text="inspect this operator note")
+        )
+        say_outcome = await _wait_for_command(say, queue, clock)
+        assert say_outcome.status is CommandStatus.DONE
+        result_path = str(say_outcome.result["path"]) if say_outcome.result is not None else ""
+        expected_line = f"Operator message: read {result_path} and take it into account."
+        run = runs.get_live(task_id, Role.IMPLEMENTER)
+        assert run is not None
+        hooks = role_dir(run_dir(tmp_path, task_id), Role.IMPLEMENTER.value)
+
+        async def received() -> bool:
+            entries = await asyncio.to_thread(lambda: tuple(HookRecorder(hooks).tail()))
+            return any(entry.value.get("text") == expected_line for entry in entries)
+
+        await wait_until(received, timeout=10)
+        stopped = queue.append(Stop())
+        stop_outcome = await _wait_for_command(stopped, queue, clock)
+        assert stop_outcome.status is CommandStatus.DONE
+        await engine_task
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()

@@ -1,0 +1,325 @@
+"""Scheduler gates and dispatch behaviour against real SQLite and tmux."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import TYPE_CHECKING
+
+import pytest
+
+from shikiru.agents.contracts import Rung
+from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig, RepoConfig
+from shikiru.domain.commands import Submit
+from shikiru.domain.events import EventKind
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import EscalationReason, Status, Step
+from shikiru.engine.dependency import DependencyEscalator
+from shikiru.engine.escalations import EscalationRaiser
+from shikiru.engine.layout_guard import LayoutGuard
+from shikiru.engine.scheduler import Scheduler
+from shikiru.process import SubprocessRunner
+from shikiru.store.commands import CommandQueue
+from shikiru.store.escalations import EscalationStore
+from shikiru.store.events import EventLog
+from shikiru.store.quotas import QuotaStore
+from shikiru.store.runs import RunStore
+from shikiru.store.tasks import TaskStore
+from shikiru.telemetry import resources as resources_module
+from shikiru.telemetry.resources import ResourceSampler
+from shikiru.tmux.client import exact_target
+from shikiru.tmux.session import SessionView, session_name
+from shikiru.workspace.git import Git
+from shikiru.workspace.roots import TaskRootBuilder
+from tests.support.clock import FakeClock
+from tests.support.engine import build_tmux
+from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.flow import init_project_repo
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+    from pathlib import Path
+
+    from shikiru.clock import Clock
+    from shikiru.config.settings import Settings
+    from shikiru.domain.tasks import Task
+    from tests.support.store import Connection
+    from tests.support.tmux import TmuxServer
+
+_FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
+_LAYOUT = LayoutSplit(
+    split="h",
+    panes=[
+        PaneLeaf(pane="leader"),
+        PaneLeaf(pane="implementer"),
+        PaneLeaf(pane="system"),
+        PaneLeaf(pane="shell"),
+    ],
+)
+
+
+@dataclass
+class SchedulerFixture:
+    scheduler: Scheduler
+    settings: Settings
+    tasks: TaskStore
+    quotas: QuotaStore
+    events: EventLog
+    layout: LayoutGuard
+    roots: TaskRootBuilder
+    dependency_callback: Callable[[Task], Awaitable[None]]
+    clock: Clock
+
+
+def _settings(*, max_parallel: int = 2, max_cpu_pct: int = 100) -> Settings:
+    settings = make_settings(
+        leader_ladder=[_FAKE_RUNG],
+        implementer_ladder=[_FAKE_RUNG],
+        agents={"fake": AgentConfig()},
+    )
+    orchestration = settings.orchestration.model_copy(
+        update={
+            "max_parallel": max_parallel,
+            "resources": settings.orchestration.resources.model_copy(
+                update={"max_cpu_pct": max_cpu_pct, "min_free_ram_gb": 0}
+            ),
+        }
+    )
+    dashboard = settings.dashboard.model_copy(update={"layout": _LAYOUT})
+    return settings.model_copy(
+        update={
+            "project": ProjectConfig(name="test"),
+            "orchestration": orchestration,
+            "dashboard": dashboard,
+        }
+    )
+
+
+def _submit(
+    connection: Connection,
+    clock: Clock,
+    *,
+    title: str,
+    priority: int = 0,
+    depends_on: list[str] | None = None,
+) -> Task:
+    queued = CommandQueue(connection, clock).append(
+        Submit(
+            task_id="",
+            title=title,
+            request=title,
+            priority=priority,
+            depends_on=depends_on or [],
+        )
+    )
+    assert isinstance(queued.command, Submit)
+    return TaskStore(connection, clock).insert_from_submit(queued.command)
+
+
+def _scheduler(environment: SchedulerFixture, settings: Settings) -> Scheduler:
+    return Scheduler(
+        tasks=environment.tasks,
+        settings=settings,
+        quotas=environment.quotas,
+        resources=ResourceSampler(environment.clock, environment.layout.process_ids),
+        clock=environment.clock,
+        layout=environment.layout,
+        roots=environment.roots,
+        events=environment.events,
+        on_dependency_cancelled=environment.dependency_callback,
+    )
+
+
+@pytest.fixture
+async def scheduler_env(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> SchedulerFixture:
+    await init_project_repo(tmp_path)
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings().model_copy(update={"repos": [RepoConfig(path=".")]})
+    tasks = TaskStore(connection, clock)
+    quotas = QuotaStore(connection)
+    events = EventLog(connection, clock)
+    tmux = build_tmux(tmux_server)
+    layout = LayoutGuard(
+        tmux=tmux,
+        session_target=exact_target(session_name("test")),
+        tasks=tasks,
+        settings=settings,
+        project_root=tmp_path,
+        events=events,
+        clock=clock,
+    )
+    roots = TaskRootBuilder(Git(SubprocessRunner()), tmp_path)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+
+    raiser = EscalationRaiser(
+        EscalationStore(connection, clock), events, RunStore(connection, clock), tmp_path
+    )
+    scheduler = Scheduler(
+        tasks=tasks,
+        settings=settings,
+        quotas=quotas,
+        resources=ResourceSampler(clock, layout.process_ids),
+        clock=clock,
+        layout=layout,
+        roots=roots,
+        events=events,
+        on_dependency_cancelled=DependencyEscalator(tasks, raiser),
+    )
+    return SchedulerFixture(
+        scheduler,
+        settings,
+        tasks,
+        quotas,
+        events,
+        layout,
+        roots,
+        DependencyEscalator(tasks, raiser),
+        clock,
+    )
+
+
+async def test_priority_order_prefers_previous_slot(
+    scheduler_env: SchedulerFixture, connection: Connection
+) -> None:
+    low = _submit(connection, scheduler_env.clock, title="low", priority=1)
+    high = _submit(connection, scheduler_env.clock, title="high", priority=10)
+    scheduler_env.tasks.set_slot(low.id, 1)
+    scheduler_env.tasks.set_slot(high.id, 0)
+
+    schedule = await scheduler_env.scheduler.run_once()
+
+    assert [(dispatch.task_id, dispatch.slot) for dispatch in schedule.dispatches] == [
+        (high.id, 0),
+        (low.id, 1),
+    ]
+    for task_id, slot in ((high.id, 0), (low.id, 1)):
+        current = scheduler_env.tasks.get(task_id)
+        assert current is not None
+        assert current.status is Status.RUNNING
+        assert current.slot == slot
+        assert current.window_id is not None
+    started = scheduler_env.events.since(0, kinds=[EventKind.TASK_STARTED])
+    assert [event.task_id for event in started] == [high.id, low.id]
+
+
+async def test_parallelism_persists_slot_wait_reason(
+    scheduler_env: SchedulerFixture, connection: Connection
+) -> None:
+    first = _submit(connection, scheduler_env.clock, title="first")
+    second = _submit(connection, scheduler_env.clock, title="second")
+    scheduler = _scheduler(scheduler_env, _settings(max_parallel=1))
+
+    schedule = await scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [first.id]
+    waiting = scheduler_env.tasks.get(second.id)
+    assert waiting is not None
+    assert waiting.wait_reason == "slot"
+
+
+async def test_dependency_waits_then_dispatches_after_completion(
+    scheduler_env: SchedulerFixture, connection: Connection
+) -> None:
+    dependency = _submit(connection, scheduler_env.clock, title="dependency")
+    dependent = _submit(
+        connection, scheduler_env.clock, title="dependent", depends_on=[dependency.id]
+    )
+
+    first_schedule = await scheduler_env.scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in first_schedule.dispatches] == [dependency.id]
+    waiting = scheduler_env.tasks.get(dependent.id)
+    assert waiting is not None
+    assert waiting.wait_reason == "dependency"
+
+    current = scheduler_env.tasks.get(dependency.id)
+    assert current is not None
+    scheduler_env.tasks.apply_transition(
+        current.id, Transition.stay(current, step=Step.INTEGRATE, status=Status.DONE)
+    )
+    second_schedule = await scheduler_env.scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in second_schedule.dispatches] == [dependent.id]
+
+
+async def test_integrate_dispatch_enters_integrating_status(
+    scheduler_env: SchedulerFixture, connection: Connection
+) -> None:
+    task = _submit(connection, scheduler_env.clock, title="integrate")
+    scheduler_env.tasks.apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.INTEGRATE, status=Status.QUEUED),
+    )
+
+    schedule = await scheduler_env.scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
+    current = scheduler_env.tasks.get(task.id)
+    assert current is not None
+    assert current.status is Status.INTEGRATING
+
+
+async def test_cancelled_dependency_escalates_with_packet(
+    scheduler_env: SchedulerFixture, connection: Connection
+) -> None:
+    dependency = _submit(connection, scheduler_env.clock, title="cancelled")
+    dependent = _submit(
+        connection, scheduler_env.clock, title="dependent", depends_on=[dependency.id]
+    )
+    current = scheduler_env.tasks.get(dependency.id)
+    assert current is not None
+    scheduler_env.tasks.apply_transition(
+        current.id, Transition.stay(current, step=Step.IMPLEMENT, status=Status.CANCELLED)
+    )
+
+    schedule = await scheduler_env.scheduler.run_once()
+
+    assert schedule.dependency_cancelled == (dependent.id,)
+    updated = scheduler_env.tasks.get(dependent.id)
+    assert updated is not None
+    assert updated.status is Status.ESCALATED
+    assert updated.status_reason is None
+    assert scheduler_env.events.since(0, task_id=dependent.id)[-1].kind is EventKind.ESCALATION
+    escalation = EscalationStore(connection, scheduler_env.clock).list_open()[0]
+    assert escalation.reason is EscalationReason.DEPENDENCY_CANCELLED
+
+
+async def test_resource_gate_blocks_at_zero_and_dispatches_at_hundred(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fixed_cpu_percent(interval: float | None = None) -> float:
+        del interval
+        return 50.0
+
+    monkeypatch.setattr(resources_module.psutil, "cpu_percent", fixed_cpu_percent)
+    task = _submit(connection, scheduler_env.clock, title="resources")
+    blocked_scheduler = _scheduler(scheduler_env, _settings(max_cpu_pct=0))
+
+    blocked = await blocked_scheduler.run_once()
+
+    assert blocked.dispatches == ()
+    waiting = scheduler_env.tasks.get(task.id)
+    assert waiting is not None
+    assert waiting.wait_reason == "resources"
+
+    passing = await _scheduler(scheduler_env, _settings(max_cpu_pct=100)).run_once()
+
+    assert [dispatch.task_id for dispatch in passing.dispatches] == [task.id]
+
+
+async def test_quota_gate_persists_wait_reason(
+    scheduler_env: SchedulerFixture, connection: Connection
+) -> None:
+    task = _submit(connection, scheduler_env.clock, title="quota")
+    scheduler_env.quotas.block("fake", scheduler_env.clock.now() + timedelta(hours=1), "test quota")
+
+    schedule = await scheduler_env.scheduler.run_once()
+
+    assert schedule.dispatches == ()
+    waiting = scheduler_env.tasks.get(task.id)
+    assert waiting is not None
+    assert waiting.wait_reason == "quota"

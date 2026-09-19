@@ -31,7 +31,7 @@ class Status(StrEnum):
 
 
 ACTIVE_STATUSES = (Status.RUNNING, Status.INTEGRATING, Status.ESCALATED)
-"""The statuses that hold a dispatch slot (03 §1.2)."""
+"""The statuses that remain active in a task window (03 §1.2)."""
 
 
 class StatusReason(StrEnum):

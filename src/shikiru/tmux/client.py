@@ -17,6 +17,8 @@ _END_OF_OPTIONS = "--"
 
 FORMAT_PANE_ID = "#{pane_id}"
 FORMAT_PANE_DEAD = "#{pane_dead}"
+FORMAT_PANE_PID = "#{pane_pid}"
+FORMAT_WINDOW_ID = "#{window_id}"
 
 SplitAxis = Literal["h", "v"]
 
@@ -150,6 +152,10 @@ class Tmux:
         """Kill pane `target`."""
         await self._run("kill-pane", "-t", target)
 
+    async def display_message(self, target: str, message: str) -> None:
+        """Display `message` in the status line for `target`."""
+        await self._run("display-message", "-t", target, message)
+
     async def split_window(
         self,
         target: str,
@@ -208,6 +214,26 @@ class Tmux:
         """List every window of session `target`, one formatted line per window."""
         result = await self._run("list-windows", "-t", target, "-F", fmt)
         return result.stdout.splitlines()
+
+    async def list_panes(self, target: str, fmt: str) -> list[str]:
+        """List every pane of `target`, one formatted line per pane."""
+        result = await self._run("list-panes", "-t", target, "-F", fmt)
+        return result.stdout.splitlines()
+
+    async def pane_exists(self, target: str) -> bool:
+        """Return whether an exact pane target exists."""
+        result = await self._run(
+            "display-message", "-p", "-t", target, "-F", FORMAT_PANE_ID, check=False
+        )
+        return result.returncode == 0 and result.stdout.strip() == target
+
+    async def pane_pid(self, target: str) -> int:
+        """Return the process id currently running in pane `target`."""
+        return int(await self.display(target, FORMAT_PANE_PID))
+
+    async def window_id(self, target: str) -> str:
+        """Return the stable window id for pane or window target `target`."""
+        return await self.display(target, FORMAT_WINDOW_ID)
 
     async def display(self, target: str, fmt: str) -> str:
         """Evaluate format `fmt` in the context of `target` and return it, trimmed."""

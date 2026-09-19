@@ -296,6 +296,12 @@ class TaskFlow:
         task = self._require_task(task_id)
         if task.step is None:
             task = await self._apply(task, first_step(task), None)
+        if task.status is Status.RUNNING and task.step is Step.INTEGRATE:
+            task = await self._apply(
+                task,
+                Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING),
+                None,
+            )
         recovery_counters = TurnCounters()
         while task.status is Status.RUNNING:
             step = task.step
@@ -487,6 +493,8 @@ class TaskFlow:
     async def _run_step(
         self, task: Task, step: Step, counters: TurnCounters
     ) -> tuple[Task, TurnCounters, bool]:
+        if Hold.PAUSED in task.holds:
+            return task, counters, True
         execution: _TurnExecution | None = None
         try:
             execution = await self._run_turn(task, step)
@@ -1020,6 +1028,8 @@ class TaskFlow:
 
     async def _apply(self, task: Task, transition: Transition, outcome: Outcome | None) -> Task:
         self._tasks.apply_transition(task.id, transition)
+        if transition.status in (Status.DONE, Status.CANCELLED):
+            self._tasks.set_slot(task.id, None)
         if transition.enqueue_new_tasks:
             if outcome is None:
                 message = f"{task.id}'s transition enqueues new tasks but has no outcome"
@@ -1084,3 +1094,7 @@ class TaskFlow:
             message = f"{task_id} vanished while its flow was running"
             raise ShikiruError(message)
         return task
+
+    def set_consult_question(self, task_id: str, question: str) -> None:
+        """Set the Operator's answer consumed by the next consult turn."""
+        self._recovery_questions[task_id] = question

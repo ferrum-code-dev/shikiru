@@ -5,9 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum, auto
+from typing import TYPE_CHECKING
 
 from shikiru.domain.commands import ResolutionKind
-from shikiru.domain.tasks import DomainModel, EscalationReason, Step
+from shikiru.domain.ladder import reset_for_integration_attempt, reset_for_rung_change
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import Counters, DomainModel, EscalationReason, Role, Status, Step, Task
+
+if TYPE_CHECKING:
+    from shikiru.agents.contracts import Rung
 
 
 @dataclass(frozen=True)
@@ -51,6 +57,58 @@ _OPTIONS_BY_REASON: dict[EscalationReason, tuple[EscalationOption, ...]] = {
 def options_for(reason: EscalationReason) -> tuple[EscalationOption, ...]:
     """Return the resolution options for `reason`, with exactly one recommended default (03 §8)."""
     return _OPTIONS_BY_REASON[reason]
+
+
+def reset_for_resolution(counters: Counters, reason: EscalationReason) -> Counters:
+    """Reset the persisted counter represented by `reason` when it is resolved (03 §8)."""
+    if reason is EscalationReason.DECISION_REQUIRED:
+        return counters.model_copy(update={"consults": 0})
+    if reason is EscalationReason.ITERATIONS_EXHAUSTED:
+        return counters.model_copy(update={"consults": 0})
+    if reason in (
+        EscalationReason.INTEGRATION_CONFLICT,
+        EscalationReason.INTEGRATION_BLOCKED,
+        EscalationReason.PR_CLOSED,
+    ):
+        return counters.model_copy(update={"conflict_rounds": 0})
+    return counters
+
+
+def transition_for_resolution(
+    task: Task,
+    reason: EscalationReason,
+    *,
+    step: Step | None,
+    resolution: ResolutionKind,
+    rung: Rung | None = None,
+    role: Role | None = None,
+) -> Transition:
+    """Build the state transition for one validated escalation resolution."""
+    counters = reset_for_resolution(task.counters, reason)
+    overrides = dict(task.overrides)
+    target_step = step or task.step
+    status = Status.QUEUED
+    if resolution is ResolutionKind.ANSWER:
+        target_step = Step.CONSULT
+    elif resolution is ResolutionKind.ACCEPT:
+        target_step = Step.INTEGRATE
+        counters = reset_for_integration_attempt(counters)
+    elif resolution is ResolutionKind.CANCEL:
+        status = Status.CANCELLED
+    if rung is not None:
+        if role is None:
+            message = "a rung resolution requires its acting role"
+            raise ValueError(message)
+        overrides[role] = rung
+        counters = reset_for_rung_change(counters)
+    return Transition(
+        step=target_step,
+        status=status,
+        iteration=task.iteration,
+        counters=counters,
+        rung_index=dict(task.rung_index),
+        overrides=overrides,
+    )
 
 
 class EscalationStatus(StrEnum):

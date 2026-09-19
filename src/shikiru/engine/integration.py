@@ -262,6 +262,7 @@ class Integrator:
             if done is None:
                 message = f"{current.id} vanished after integration completed"
                 raise ShikiruError(message)
+            self._tasks.set_slot(done.id, None)
             await self._close_window(done)
             self._events.append(
                 EventKind.TASK_DONE,

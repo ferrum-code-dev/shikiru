@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -11,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fake_agent.headless import FakeHeadlessAgent
 from fake_agent.session import FakeSession
-from shikiru.agents.contracts import CheckResult, SessionKeys, role_dir
+from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, role_dir
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
         HeadlessAgent,
         LaunchSpec,
         PaneHandle,
-        QuotaWindow,
     )
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
@@ -42,16 +42,24 @@ PRICES_PATH = Path(__file__).parent / "prices.toml"
 _DOCTOR_CHECK_NAME = "binary"
 
 
+class FakeQuotaWindow(BaseModel):
+    """One quota snapshot returned by the configurable fake agent."""
+
+    name: str
+    used_pct: float
+    resets_at: datetime | None = None
+    observed_at: datetime
+
+
 class FakeOptions(BaseModel):
-    """`agents.fake.options`: `asks` scripts `headless().ask()`; `new_session_id`, when set,
-    replaces `uuid.uuid4()` for a brand-new session, so a contract test can assert an exact
-    `launch()` argv/env instead of a random one (04 §3, 07 §3).
-    """
+    """`agents.fake.options`: scripted asks, sessions and quota snapshots."""
 
     model_config = ConfigDict(extra="forbid")
 
     asks: list[dict[str, Any]] = Field(default_factory=list)
     new_session_id: str | None = None
+    quota: list[FakeQuotaWindow] = Field(default_factory=list)
+    quota_sequence: list[list[FakeQuotaWindow]] = Field(default_factory=list)
 
 
 def _hooks_file_size(run_dir: Path, role: str) -> int:
@@ -72,6 +80,7 @@ class FakeAgent:
         self._options = options
         self._reset_time = ResetTimeParser(clock)
         self._prices = PriceTable.from_toml(PRICES_PATH)
+        self._quota_index = 0
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
         """Respawn `pane` into a fresh REPL, reusing `spec.resume_session_id` when set."""
@@ -88,8 +97,15 @@ class FakeAgent:
         return self._session(spec, state["session_id"], state["offset"])
 
     async def quota(self) -> list[QuotaWindow]:
-        """Return no quota windows: the fake agent has no quota source."""
-        return []
+        """Return the quota windows configured for this fake agent."""
+        sequence = self._options.quota_sequence
+        if sequence:
+            index = min(self._quota_index, len(sequence) - 1)
+            windows = sequence[index]
+            self._quota_index += 1
+        else:
+            windows = self._options.quota
+        return [QuotaWindow(**window.model_dump()) for window in windows]
 
     async def doctor(self) -> list[CheckResult]:
         """Report the REPL command as always present: nothing external to check."""

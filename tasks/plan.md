@@ -130,12 +130,12 @@ Refs: 03 §6.
 
 ### Task 17: Engine daemon, scheduler, handlers
 Refs: 02 §1–2, 03 §9–10, 05 §2.
-- [ ] `Engine`: flock liveness, command loop, supervision of task coroutines, `engine.log`.
-- [ ] `Scheduler`: ready set, slot (previous slot preferred, slot released on escalation)/resources/quota gates, `wait_reason`, dispatch creating the task window; `dependency_cancelled`.
-- [ ] `ResourceSampler` (host and instance process tree) and `QuotaPoller`.
-- [ ] Handlers for every command model (`Submit` … `Stop`), including cancellation semantics (03 §4.3) and resolution options (03 §8).
-- [ ] `LayoutGuard` restoring killed or dead panes; `Notifier` (tmux message and `notify.command`).
-- Tests: integration with the in-process engine: priority order, parallelism, dependencies, resource gate via configured thresholds (0% / 100%), quota gate via `agent_blocks` rows, each handler, resolution options with counter resets, pane restoration, quota polling with the fake agent.
+- [x] `Engine`: flock liveness, command loop, supervision of task coroutines, `engine.log`.
+- [x] `Scheduler`: ready set, slot (previous slot preferred, slot released on escalation)/resources/quota gates, `wait_reason`, dispatch creating the task window; `dependency_cancelled`.
+- [x] `ResourceSampler` (host and instance process tree) and `QuotaPoller`.
+- [x] Handlers for every command model (`Submit` … `Stop`), including cancellation semantics (03 §4.3) and resolution options (03 §8).
+- [x] `LayoutGuard` restoring killed or dead panes; `Notifier` (tmux message and `notify.command`).
+- [x] Tests: integration with the in-process engine: priority order, parallelism, dependencies, resource gate via configured thresholds (0% / 100%), quota gate via `agent_blocks` rows, each handler, resolution options with counter resets, pane restoration, quota polling with the fake agent.
 
 ### Task 18: Operator services, CLI and MCP
 Refs: 06 §1–2, §4.

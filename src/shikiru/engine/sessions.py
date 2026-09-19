@@ -57,6 +57,7 @@ class SessionLaunchFailedError(ShikiruError):
 
 @dataclass
 class _LiveSession:
+    pane_id: str
     rung: Rung
     session_id: str | None
     session: AgentSession
@@ -98,8 +99,15 @@ class SessionManager:
         """Ensure a live session for `task`'s `role`, per every row of 03 §4.1's table."""
         rung = pick_rung(task, role, self._settings)
         pane = self._pane(task, role)
-        pane_alive = await pane.is_alive()
         tracked = self._live.get((task.id, role))
+        pane_id = task.panes[role]
+        if tracked is not None and tracked.pane_id != pane_id:
+            await self._forget(task.id, role)
+            tracked = None
+        try:
+            pane_alive = await pane.is_alive()
+        except CommandFailed:
+            pane_alive = False
 
         if tracked is not None:
             if pane_alive and tracked.rung == rung:
@@ -139,6 +147,28 @@ class SessionManager:
             pick_rung(task, role, self._settings),
             resume_session_id=None,
         )
+
+    async def interrupt(self, task: Task) -> None:
+        """Interrupt every live agent session belonging to `task` (03 §4.3)."""
+        for key, live in tuple(self._live.items()):
+            if key[0] != task.id:
+                continue
+            pane = self._pane(task, key[1])
+            with suppress(CommandFailed):
+                await pane.send_keys(*self._agent_pool.get(live.rung.agent).keys.interrupt)
+
+    async def inject_line(self, task: Task, role: Role, line: str) -> None:
+        """Inject one operator/recovery line into a live session without reading its signals."""
+        live = self._live.get((task.id, role))
+        if live is None:
+            message = f"{task.id} has no live {role.value} session"
+            raise ShikiruError(message)
+        pane = self._pane(task, role)
+        live.injected_lines.add(line)
+        try:
+            await pane.paste_line(line)
+        finally:
+            live.injected_lines.discard(line)
 
     async def exit_task(self, task: Task) -> None:
         """Exit every live session `task` still holds, then kill any pane still alive.
@@ -281,6 +311,7 @@ class SessionManager:
             )
             self._runs.set_session(run_id, session_id, resume_command)
         self._live[(task.id, role)] = _LiveSession(
+            pane_id=task.panes[role],
             rung=rung,
             session_id=session_id,
             session=session,
