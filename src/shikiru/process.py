@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
-from shikiru.errors import CommandFailed, CommandTimeoutError
+from shikiru.errors import (
+    CommandFailed,
+    CommandTimeoutError,
+    DetachedProcessError,
+    ProcessReplacementError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -67,6 +74,49 @@ class SubprocessRunner:
         if check and result.returncode != 0:
             raise CommandFailed(argv_tuple, result.returncode, result.stderr)
         return result
+
+    def spawn_detached(
+        self,
+        argv: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+    ) -> int:
+        """Start `argv` in a new session and return its process id without waiting."""
+        argv_tuple = tuple(argv)
+        null_fd = os.open(os.devnull, os.O_WRONLY)
+        try:
+            file_actions = (
+                (os.POSIX_SPAWN_DUP2, null_fd, 1),
+                (os.POSIX_SPAWN_DUP2, null_fd, 2),
+            )
+            try:
+                return os.posix_spawnp(
+                    argv_tuple[0],
+                    argv_tuple,
+                    dict(env) if env is not None else dict(os.environ),
+                    file_actions=file_actions,
+                    setsid=True,
+                )
+            except OSError as error:
+                raise DetachedProcessError(argv_tuple, error) from error
+        finally:
+            os.close(null_fd)
+
+    def replace(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None) -> NoReturn:
+        """Replace this process with `argv`, resolving its executable on `PATH`."""
+        argv_tuple = tuple(argv)
+        executable = shutil.which(argv_tuple[0])
+        if executable is None:
+            error = FileNotFoundError(argv_tuple[0])
+            raise ProcessReplacementError(argv_tuple, error) from error
+        try:
+            os.execve(  # noqa: S606
+                executable,
+                argv_tuple,
+                dict(env) if env is not None else dict(os.environ),
+            )
+        except OSError as error:
+            raise ProcessReplacementError(argv_tuple, error) from error
 
     @staticmethod
     async def _kill(process: asyncio.subprocess.Process) -> None:

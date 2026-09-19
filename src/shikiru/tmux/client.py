@@ -148,6 +148,10 @@ class Tmux:
         """Kill window `target`."""
         await self._run("kill-window", "-t", target)
 
+    async def kill_session(self, target: str) -> None:
+        """Kill session `target`."""
+        await self._run("kill-session", "-t", target)
+
     async def kill_pane(self, target: str) -> None:
         """Kill pane `target`."""
         await self._run("kill-pane", "-t", target)

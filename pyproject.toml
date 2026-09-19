@@ -10,6 +10,7 @@ dependencies = [
   "jinja2>=3.1,<3.2",
   "textual>=6.3,<6.4",
   "psutil>=7.0,<8.0",
+  "mcp>=1.26,<2.0",
 ]
 
 [project.scripts]
@@ -109,6 +110,11 @@ runtime-evaluated-base-classes = [
   "pydantic.BaseModel",
   "shikiru.config.settings.ConfigModel",
   "shikiru.domain.tasks.DomainModel",
+]
+runtime-evaluated-decorators = [
+  "typer.Typer.command",
+  "typer.Typer.callback",
+  "mcp.server.fastmcp.FastMCP.tool",
 ]
 
 [tool.ruff.lint.per-file-ignores]

@@ -61,6 +61,10 @@ class StateReader:
         """See `shikiru.store.quotas.fetch_quotas`."""
         return fetch_quotas(self._connection, agent)
 
+    def list_quotas(self, agents: Sequence[str]) -> dict[str, list[QuotaWindow]]:
+        """Read quota windows for each requested agent."""
+        return {agent: self.quotas_for(agent) for agent in agents}
+
     def active_agent_blocks(self, now: datetime) -> list[AgentBlock]:
         """See `shikiru.store.quotas.fetch_active_agent_blocks`."""
         return fetch_active_agent_blocks(self._connection, now)

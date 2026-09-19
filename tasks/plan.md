@@ -139,11 +139,11 @@ Refs: 02 §1–2, 03 §9–10, 05 §2.
 
 ### Task 18: Operator services, CLI and MCP
 Refs: 06 §1–2, §4.
-- [ ] `OperatorQueries`, `OperatorCommands` (ack or queued), `EventFeed`.
-- [ ] `init --yes` (with `operator/detectors.py`), `start`, `stop`, `submit`, `status [T-n] [--watch]`, with Rich output via `ui` and `--json`; `start`/`stop` spawn and stop the detached engine. No other command: the rest of 06 §2 is `ls`/`attach` (Task 28) and `doctor` (Task 21).
-- [ ] FastMCP stdio server with every tool, typed inputs and outputs, `wait_for_events` long poll. Mutating operator actions ship here, not as CLI verbs, so they are reachable before the palette exists.
-- [ ] End-to-end with the fake agent through real processes: `init --yes` → `start` → `submit` → task `done`, commit on `base`, task window closed.
-- Tests: integration CLI tests (human and JSON), MCP through an in-memory client, plus the fake end-to-end.
+- [x] `OperatorQueries`, `OperatorCommands` (ack or queued), `EventFeed`.
+- [x] `init --yes` (with `operator/detectors.py`), `start`, `stop`, `submit`, `status [T-n] [--watch]`, with Rich output via `ui` and `--json`; `start`/`stop` spawn and stop the detached engine. No other command: the rest of 06 §2 is `ls`/`attach` (Task 28) and `doctor` (Task 21).
+- [x] FastMCP stdio server with every tool, typed inputs and outputs, `wait_for_events` long poll. Mutating operator actions ship here, not as CLI verbs, so they are reachable before the palette exists.
+- [x] End-to-end with the fake agent through real processes: `init --yes` → `start` → `submit` → task `done`, commit on `base`, task window closed.
+- [x] Tests: integration CLI tests (human and JSON), MCP through an in-memory client, plus the fake end-to-end.
 
 ## Phase 4 — Real agents
 

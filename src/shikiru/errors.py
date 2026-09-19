@@ -62,3 +62,25 @@ class CommandTimeoutError(ShikiruError):
         super().__init__(f"command {argv_tuple} timed out after {timeout}s")
         self.argv = argv_tuple
         self.timeout = timeout
+
+
+class DetachedProcessError(ShikiruError):
+    """A detached process could not be launched."""
+
+    def __init__(self, argv: Sequence[str], error: OSError) -> None:
+        """Record the detached command and operating-system error."""
+        argv_tuple = tuple(argv)
+        super().__init__(f"could not launch detached command {argv_tuple}: {error}")
+        self.argv = argv_tuple
+        self.error = error
+
+
+class ProcessReplacementError(ShikiruError):
+    """A process could not replace the current process."""
+
+    def __init__(self, argv: Sequence[str], error: OSError) -> None:
+        """Record the replacement command and operating-system error."""
+        argv_tuple = tuple(argv)
+        super().__init__(f"could not replace process with {argv_tuple}: {error}")
+        self.argv = argv_tuple
+        self.error = error

@@ -1,0 +1,186 @@
+"""Engine and dashboard process lifecycle service boundaries."""
+
+from __future__ import annotations
+
+import sys
+from typing import TYPE_CHECKING, Protocol
+
+from shikiru.config.loader import load_settings
+from shikiru.errors import ShikiruError
+from shikiru.operator.commands import Ack, AckStatus
+from shikiru.tmux.client import exact_target
+from shikiru.tmux.session import session_name
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Sequence
+    from pathlib import Path
+
+    from shikiru.clock import Clock
+    from shikiru.config.settings import Settings
+    from shikiru.process import SubprocessRunner
+    from shikiru.tmux.client import Tmux
+    from shikiru.tmux.session import SessionView
+
+
+class OperatorCommandsBoundary(Protocol):
+    """The command surface needed to stop an engine."""
+
+    async def stop_engine(self) -> Ack:
+        """Request an orderly engine stop."""
+        ...
+
+
+class OperatorServicesBoundary(Protocol):
+    """The operator bundle lifecycle needs while stopping an engine."""
+
+    @property
+    def commands(self) -> OperatorCommandsBoundary:
+        """Return the command boundary used to stop the engine."""
+        ...
+
+    def close(self) -> None:
+        """Release the operator bundle's state connections."""
+        ...
+
+
+if TYPE_CHECKING:
+    OperatorFactory = Callable[[Path, Settings], OperatorServicesBoundary]
+    PluginValidator = Callable[[Settings], Awaitable[None]]
+    EngineState = Callable[[Path], bool]
+    DashboardRunner = Callable[[Path, Sequence[str], str | None], Awaitable[None]]
+
+PACKAGE_NAME = "shikiru"
+CLI_ENGINE_COMMAND = "engine"
+CLI_DASH_COMMAND = "dash"
+ENGINE_START_WAIT_SECONDS = 5.0
+ENGINE_START_POLL_SECONDS = 0.05
+
+
+class ProjectLifecycle:
+    """Run a project's engine and session through injected process boundaries."""
+
+    def __init__(
+        self,
+        *,
+        runner: SubprocessRunner,
+        tmux: Tmux,
+        session: SessionView,
+        clock: Clock,
+        operator_factory: OperatorFactory,
+        plugin_validator: PluginValidator,
+        engine_up: EngineState,
+        dashboard_runner: DashboardRunner,
+    ) -> None:
+        """Store process, tmux, state-service and validation boundaries."""
+        self._runner = runner
+        self._tmux = tmux
+        self._session = session
+        self._clock = clock
+        self._operator_factory = operator_factory
+        self._plugin_validator = plugin_validator
+        self._engine_up = engine_up
+        self._dashboard_runner = dashboard_runner
+
+    async def start(
+        self,
+        root: Path,
+        overrides: Sequence[str],
+        *,
+        attach: bool,
+    ) -> dict[str, object]:
+        """Validate a project and start or reuse its engine and tmux session."""
+        settings = load_settings(root, overrides)
+        await self._plugin_validator(settings)
+        target = exact_target(session_name(settings.project.name))
+        await self._session.ensure(
+            settings.project.name,
+            root,
+            home_command=command_with_overrides(
+                (
+                    sys.executable,
+                    "-m",
+                    PACKAGE_NAME,
+                    "--project",
+                    str(root),
+                    CLI_DASH_COMMAND,
+                    "--home",
+                ),
+                overrides,
+            ),
+        )
+        started = False
+        if not self._engine_up(root):
+            self._runner.spawn_detached(
+                command_with_overrides(
+                    (
+                        sys.executable,
+                        "-m",
+                        PACKAGE_NAME,
+                        "--project",
+                        str(root),
+                        CLI_ENGINE_COMMAND,
+                    ),
+                    overrides,
+                )
+            )
+            started = True
+            await self._wait_for_engine(root)
+        if attach:
+            self._runner.replace(("tmux", "attach-session", "-t", target))
+        return {"started": started, "engine": "up", "session": target}
+
+    async def stop(
+        self,
+        root: Path,
+        overrides: Sequence[str],
+        *,
+        kill_session: bool,
+    ) -> Ack:
+        """Stop a running engine and optionally remove its tmux session."""
+        settings = load_settings(root, overrides)
+        target = exact_target(session_name(settings.project.name))
+        if not self._engine_up(root):
+            if kill_session and await self._tmux.target_exists(target):
+                await self._tmux.kill_session(target)
+            return Ack(
+                id=0,
+                status=AckStatus.DONE,
+                result={"stopped": False},
+                message="engine already stopped",
+            )
+        services = self._operator_factory(root, settings)
+        try:
+            ack = await services.commands.stop_engine()
+        finally:
+            services.close()
+        if kill_session and ack.status is AckStatus.DONE and await self._tmux.target_exists(target):
+            await self._tmux.kill_session(target)
+        return ack
+
+    async def dashboard(
+        self,
+        root: Path,
+        overrides: Sequence[str],
+        focus_task: str | None,
+    ) -> None:
+        """Run the configured dashboard through its injected adapter."""
+        await self._dashboard_runner(root, overrides, focus_task)
+
+    async def _wait_for_engine(self, root: Path) -> None:
+        deadline = self._clock.now().timestamp() + ENGINE_START_WAIT_SECONDS
+        while not self._engine_up(root):
+            if self._clock.now().timestamp() >= deadline:
+                message = "engine did not acquire its lock after start"
+                raise ShikiruError(message)
+            await self._clock.sleep(ENGINE_START_POLL_SECONDS)
+
+
+def command_with_overrides(command: tuple[str, ...], overrides: Sequence[str]) -> tuple[str, ...]:
+    """Insert global `--set` values before the hidden engine or dashboard command."""
+    command_index = next(
+        index
+        for index, part in enumerate(command)
+        if part in {CLI_ENGINE_COMMAND, CLI_DASH_COMMAND}
+    )
+    override_parts = tuple(part for override in overrides for part in ("--set", override))
+    return (*command[:command_index], *override_parts, *command[command_index:])
