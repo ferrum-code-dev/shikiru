@@ -293,7 +293,7 @@ async def test_resource_gate_blocks_at_zero_and_dispatches_at_hundred(
 ) -> None:
     def fixed_cpu_percent(interval: float | None = None) -> float:
         del interval
-        return 50.0
+        return 100.0
 
     monkeypatch.setattr(resources_module.psutil, "cpu_percent", fixed_cpu_percent)
     task = _submit(connection, scheduler_env.clock, title="resources")
