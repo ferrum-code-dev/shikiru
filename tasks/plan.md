@@ -124,8 +124,8 @@ Refs: 03 §7.
 
 ### Task 16: Integration (local merge)
 Refs: 03 §6.
-- [ ] Integration lock; rebase of repos ahead of base; conflict turn → verify turn with the loop rules of 03 §6; `CONFLICT_ROUNDS`.
-- [ ] `LocalMerge`: pre-check, ff-only or `update-ref`, dirty-overlap retry and `integration_blocked`; cleanup; `task_done` with summary.
+- [x] Integration lock; rebase of repos ahead of base; conflict turn → verify turn with the loop rules of 03 §6; `CONFLICT_ROUNDS`.
+- [x] `LocalMerge`: pre-check, ff-only or `update-ref`, dirty-overlap retry and `integration_blocked`; cleanup; `task_done` with summary.
 - Tests: integration with real repos: clean ff, forced conflict resolved by the fake agent, dirty main checkout wait then success, multi-repo pre-check failure.
 
 ### Task 17: Engine daemon, scheduler, handlers

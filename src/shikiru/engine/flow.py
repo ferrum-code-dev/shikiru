@@ -2,9 +2,8 @@
 
 Every rule of the review loop lives in `domain.steps.next_step`; this module only orchestrates
 around it: resolving each step's turn, applying the resulting `Transition`, inserting any new
-tasks a split/plan/supersede carries, and raising an escalation when one is reached. The
-`integrate` step's own turn (rebase, conflicts, merge strategy) is Task 16's job, so the loop
-stops the moment a task's step becomes `integrate` or its status leaves `running`.
+tasks a split/plan/supersede carries, raising an escalation when one is reached, and delegating
+the integrating state to the injected coordinator.
 """
 
 from __future__ import annotations
@@ -56,6 +55,12 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.steps import ACTING_ROLE, Transition, first_step, next_step
 from shikiru.domain.tasks import EscalationReason, Hold, Role, Status, Step, TaskOrigin
+from shikiru.engine.integration import (
+    IntegrationBlocked,
+    IntegrationConflict,
+    IntegrationCoordinator,
+    IntegrationMetadata,
+)
 from shikiru.engine.turns import TURNS_DIR_NAME, TurnSpec, read_turn_report
 from shikiru.errors import ShikiruError
 from shikiru.helper.helper import Helper
@@ -66,14 +71,14 @@ from shikiru.workspace.roots import run_dir, task_root
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.reports import NewTask, Report
     from shikiru.domain.steps import Outcome
-    from shikiru.domain.tasks import Task
+    from shikiru.domain.tasks import RepoState, Task
     from shikiru.engine.agents import AgentPool
     from shikiru.engine.escalations import EscalationRaiser
     from shikiru.engine.monitor import InjectedLines, MonitorSignal
@@ -91,6 +96,10 @@ ESCALATION_PANE_TAIL_LINES = 60
 """Lines of pane scrollback captured as escalation evidence (03 §8)."""
 
 CONTINUE_INPUT = "continue"
+
+
+class _IntegrationTurnStopped(Exception):
+    pass
 
 
 def clear_intervention(tasks: TaskStore, events: EventLog, task_id: str) -> None:
@@ -122,6 +131,8 @@ def _template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKi
         return PromptName.CONSULT, ReportKind.CONSULT
     if step is Step.VERIFY:
         return PromptName.VERIFY, ReportKind.VERDICT
+    if step is Step.INTEGRATE:
+        return PromptName.CONFLICTS, ReportKind.IMPLEMENTATION
     message = f"TaskFlow does not run a turn for step {step!r}; that is Task 16's job (03 §6)"
     raise ShikiruError(message)
 
@@ -259,6 +270,7 @@ class TaskFlow:
         project_root: Path,
         quota: QuotaStore,
         clock: Clock,
+        integrator: IntegrationCoordinator,
     ) -> None:
         """Wire every collaborator a step turn and its recovery actions need."""
         self._tasks = tasks
@@ -274,8 +286,10 @@ class TaskFlow:
         self._project_root = project_root
         self._quota = quota
         self._clock = clock
+        self._integrator = integrator
         self._recovery_questions: dict[str, str] = {}
         self._force_handoff: set[str] = set()
+        self._integration_context: dict[str, str] = {}
 
     async def run(self, task_id: str) -> None:
         """Run `task_id` from its current step (or its first) until `integrate` or an escalation."""
@@ -293,6 +307,182 @@ class TaskFlow:
             )
             if should_return:
                 return
+        if task.status is Status.INTEGRATING:
+            await self._run_integration(task)
+
+    async def _run_integration(self, task: Task) -> None:
+        metadata = self._integration_metadata(task)
+
+        async def resolve_conflicts(
+            current: Task, repo: RepoState, continue_rebase: Callable[[], Awaitable[None]]
+        ) -> Task:
+            resolved = await self._resolve_conflicts(current, repo, continue_rebase)
+            refreshed = self._integration_metadata(resolved)
+            metadata.summary = refreshed.summary
+            metadata.residual_risks = refreshed.residual_risks
+            return resolved
+
+        try:
+            await self._integrator.run(task, resolve_conflicts, metadata)
+        except _IntegrationTurnStopped:
+            return
+        except (IntegrationBlocked, IntegrationConflict) as error:
+            current = self._require_task(task.id)
+            transition = dataclasses.replace(
+                Transition.stay(current, step=Step.INTEGRATE, status=Status.ESCALATED),
+                escalation_reason=error.reason,
+            )
+            self._tasks.apply_transition(current.id, transition)
+            updated = self._require_task(current.id)
+            await self._titles.refresh(updated)
+            self._recovery_questions[current.id] = str(error)
+            await self._raise_escalation(
+                updated,
+                Step.INTEGRATE,
+                error.reason,
+                None,
+            )
+        finally:
+            self._integration_context.pop(task.id, None)
+
+    async def _resolve_conflicts(
+        self,
+        task: Task,
+        repo: RepoState,
+        continue_rebase: Callable[[], Awaitable[None]],
+    ) -> Task:
+        del repo
+        current = task
+        context = self._integration_context.pop(task.id, "")
+        try:
+            while True:
+                self._integration_context[current.id] = context
+                current, _, stopped = await self._run_step(current, Step.INTEGRATE, TurnCounters())
+                if stopped:
+                    raise _IntegrationTurnStopped
+                latest = self._latest_report(current)
+                if not isinstance(latest, ImplementationReport):
+                    message = f"{current.id} conflicts turn produced no implementation report"
+                    raise ShikiruError(message)
+                if latest.status != "completed":
+                    if current.step is not Step.CONSULT:
+                        message = f"{current.id} conflict report did not route to consult"
+                        raise ShikiruError(message)
+                    current, _, stopped = await self._run_step(
+                        current, Step.CONSULT, TurnCounters()
+                    )
+                    if stopped:
+                        raise _IntegrationTurnStopped
+                    answer = self._latest_report(current)
+                    if not isinstance(answer, ConsultAnswer):
+                        message = f"{current.id} integration consult produced no answer"
+                        raise ShikiruError(message)
+                    context = answer.answer
+                    continue
+                await continue_rebase()
+                current, verdict = await self._verify_conflicts(current, context)
+                if verdict.decision == "accept":
+                    return current
+                context = self._integration_context.get(current.id, context)
+        finally:
+            self._integration_context.pop(task.id, None)
+
+    async def _verify_conflicts(self, task: Task, context: str) -> tuple[Task, Verdict]:
+        self._integration_context[task.id] = context
+        current, outcome = await self._run_report_turn(
+            task,
+            role=Role.LEADER,
+            template=PromptName.VERIFY,
+            kind=ReportKind.VERDICT,
+        )
+        if not isinstance(outcome, Verdict):
+            message = f"{task.id} post-rebase turn produced no verdict"
+            raise ShikiruError(message)
+        transition = next_step(current, outcome, self._settings)
+        escalated = transition.status is Status.ESCALATED
+        updated = await self._apply(current, transition, outcome)
+        if escalated:
+            reason = transition.escalation_reason
+            if reason is None:
+                message = f"{task.id} post-rebase verdict escalated without a reason"
+                raise ShikiruError(message)
+            await self._raise_escalation(
+                updated, transition.step, reason, outcome, role=Role.LEADER
+            )
+            raise _IntegrationTurnStopped
+        if outcome.decision == "changes_requested":
+            self._integration_context[updated.id] = "; ".join(
+                issue.description for issue in outcome.issues
+            )
+        return updated, outcome
+
+    async def _run_report_turn(
+        self,
+        task: Task,
+        *,
+        role: Role,
+        template: PromptName,
+        kind: ReportKind,
+    ) -> tuple[Task, ImplementationReport | Verdict]:
+        execution: _TurnExecution | None = None
+        current = task
+        counters = TurnCounters()
+        try:
+            execution = await self._run_turn(
+                current,
+                Step.INTEGRATE,
+                role_override=role,
+                template_override=template,
+                kind_override=kind,
+            )
+            while True:
+                if isinstance(execution.result, Completed):
+                    await self._close_execution(execution)
+                    clear_intervention(self._tasks, self._events, current.id)
+                    report = execution.result.report
+                    if isinstance(report, ImplementationReport | Verdict):
+                        return current, report
+                    message = f"{current.id} integration turn returned an unexpected report"
+                    raise ShikiruError(message)
+                current, counters, stopped, continued = await self._recover(
+                    current,
+                    Step.INTEGRATE,
+                    execution,
+                    counters,
+                    role_override=role,
+                )
+                if stopped:
+                    raise _IntegrationTurnStopped
+                if continued is not None:
+                    execution = continued
+                    continue
+                execution = await self._run_turn(
+                    current,
+                    Step.INTEGRATE,
+                    role_override=role,
+                    template_override=template,
+                    kind_override=kind,
+                )
+        finally:
+            if execution is not None:
+                await self._close_execution(execution)
+
+    def _integration_metadata(self, task: Task) -> IntegrationMetadata:
+        history = load_history(run_dir(self._project_root, task.id))
+        for _, report in reversed(history):
+            if isinstance(report, Verdict) and report.decision == "accept":
+                return IntegrationMetadata(
+                    summary=report.summary,
+                    residual_risks=tuple(report.residual_risks),
+                )
+        for _, report in reversed(history):
+            if isinstance(report, PlanReport):
+                return IntegrationMetadata(summary=report.summary)
+        return IntegrationMetadata(summary=task.title)
+
+    def _latest_report(self, task: Task) -> Report | None:
+        history = load_history(run_dir(self._project_root, task.id))
+        return history[-1][1] if history else None
 
     async def _run_step(
         self, task: Task, step: Step, counters: TurnCounters
@@ -337,11 +527,17 @@ class TaskFlow:
                 await self._close_execution(execution)
 
     async def _recover(
-        self, task: Task, step: Step, execution: _TurnExecution, counters: TurnCounters
+        self,
+        task: Task,
+        step: Step,
+        execution: _TurnExecution,
+        counters: TurnCounters,
+        *,
+        role_override: Role | None = None,
     ) -> tuple[Task, TurnCounters, bool, _TurnExecution | None]:
         result = execution.result
         self._emit_turn_failed(task, step, result)
-        role = ACTING_ROLE[step]
+        role = role_override if role_override is not None else ACTING_ROLE[step]
         policy = self._recovery_policy(task, role)
         action = decide(result, counters, policy)
         if isinstance(action, ClassifyScreen):
@@ -459,7 +655,7 @@ class TaskFlow:
             if action.different_agent
             else EscalationReason.LADDER_EXHAUSTED
         )
-        return await self._raise_recovery_escalation(task, step, reason, result)
+        return await self._raise_recovery_escalation(task, step, role, reason, result)
 
     async def _apply_recovery_secondary(
         self,
@@ -494,12 +690,12 @@ class TaskFlow:
             await self._titles.refresh(updated)
             return updated, False, counters
         if isinstance(action, Escalate):
-            return await self._raise_recovery_escalation(task, step, action.reason, result)
+            return await self._raise_recovery_escalation(task, step, role, action.reason, result)
         message = f"unsupported recovery action {action!r}"
         raise ShikiruError(message)
 
     async def _raise_recovery_escalation(
-        self, task: Task, step: Step, reason: EscalationReason, result: TurnResult
+        self, task: Task, step: Step, role: Role, reason: EscalationReason, result: TurnResult
     ) -> tuple[Task, bool, TurnCounters]:
         transition = dataclasses.replace(
             Transition.stay(task, step=step, status=Status.ESCALATED),
@@ -508,7 +704,7 @@ class TaskFlow:
         self._tasks.apply_transition(task.id, transition)
         updated = self._require_task(task.id)
         await self._titles.refresh(updated)
-        await self._raise_escalation(updated, step, reason, None, result=result)
+        await self._raise_escalation(updated, step, reason, None, result=result, role=role)
         return updated, True, TurnCounters()
 
     async def _move_rung(
@@ -662,6 +858,7 @@ class TaskFlow:
         outcome: Outcome | None,
         *,
         result: TurnResult | None = None,
+        role: Role | None = None,
     ) -> None:
         question = self._recovery_questions.pop(task.id, None)
         narrative_question, attempted = _escalation_narrative(reason, outcome, result)
@@ -676,23 +873,43 @@ class TaskFlow:
             attempted=attempted,
             reports=_history_context(history),
             facts=await self._facts_text(task),
-            pane_tail=await self._pane_tail(task, step),
+            pane_tail=await self._pane_tail(task, step, role_override=role),
         )
 
-    async def _pane_tail(self, task: Task, step: Step | None) -> str:
-        pane_id = task.panes.get(ACTING_ROLE[step]) if step is not None else None
+    async def _pane_tail(
+        self, task: Task, step: Step | None, *, role_override: Role | None = None
+    ) -> str:
+        role = role_override
+        if role is None and step is not None:
+            role = ACTING_ROLE[step]
+        pane_id = task.panes.get(role) if role is not None else None
         if pane_id is None:
             return ""
         pane = self._pane_factory(pane_id)
         return await pane.capture_tail(ESCALATION_PANE_TAIL_LINES)
 
-    async def _run_turn(self, task: Task, step: Step) -> _TurnExecution:
-        role = ACTING_ROLE[step]
+    async def _run_turn(
+        self,
+        task: Task,
+        step: Step,
+        *,
+        role_override: Role | None = None,
+        template_override: PromptName | None = None,
+        kind_override: ReportKind | None = None,
+    ) -> _TurnExecution:
+        role = role_override if role_override is not None else ACTING_ROLE[step]
         session = await self._sessions.ensure(task, role)
         fresh = self._sessions.launched_fresh(task.id, role)
         task_run_dir = run_dir(self._project_root, task.id)
         history = load_history(task_run_dir)
-        plan = await self._plan_turn(task, step, history, fresh=fresh)
+        plan = await self._plan_turn(
+            task,
+            step,
+            history,
+            fresh=fresh,
+            template_override=template_override,
+            kind_override=kind_override,
+        )
         rung = pick_rung(task, role, self._settings)
         helper_rung = pick_rung(task, Role.HELPER, self._settings)
         spec = TurnSpec(
@@ -759,9 +976,20 @@ class TaskFlow:
         execution.closed = True
 
     async def _plan_turn(
-        self, task: Task, step: Step, history: list[tuple[str, Report]], *, fresh: bool
+        self,
+        task: Task,
+        step: Step,
+        history: list[tuple[str, Report]],
+        *,
+        fresh: bool,
+        template_override: PromptName | None = None,
+        kind_override: ReportKind | None = None,
     ) -> _TurnPlan:
         template, kind = _template_for_step(step, task.iteration)
+        if template_override is not None:
+            template = template_override
+        if kind_override is not None:
+            kind = kind_override
         force_handoff = task.id in self._force_handoff
         context: dict[str, object] = {
             "request": task.request,
@@ -771,7 +999,7 @@ class TaskFlow:
         if template is PromptName.CONSULT:
             context["question"] = self._recovery_questions.pop(task.id, _latest_question(history))
         handoff = (fresh and bool(history)) or force_handoff
-        needs_facts = template is PromptName.VERIFY or handoff
+        needs_facts = template in (PromptName.VERIFY, PromptName.CONFLICTS) or handoff
         facts_text = await self._facts_text(task) if needs_facts else ""
         if handoff:
             template = PromptName.HANDOFF
@@ -780,6 +1008,8 @@ class TaskFlow:
             context["facts"] = facts_text
         if template is PromptName.VERIFY:
             context["final_round"] = task.iteration >= self._settings.orchestration.max_iterations
+        if template is PromptName.CONFLICTS:
+            context["conflict"] = self._integration_context.get(task.id, "")
         return _TurnPlan(template=template, kind=kind, context=context, facts=facts_text)
 
     async def _facts_text(self, task: Task) -> str:

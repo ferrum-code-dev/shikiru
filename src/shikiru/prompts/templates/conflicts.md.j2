@@ -3,6 +3,12 @@
 {% block body %}
 You are the Implementer resolving a rebase conflict during integration of this task.
 
+{% if conflict is defined and conflict %}
+The latest conflict or verification guidance is:
+
+{{ conflict | fenced("text") }}
+{% endif %}
+
 {{ macros.facts_section(facts) }}
 
 Resolve the conflict, keeping the intent of both sides, then commit. Report `completed` only

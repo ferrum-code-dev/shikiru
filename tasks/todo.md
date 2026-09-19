@@ -25,7 +25,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 13: Turn runner
 - [x] Task 14: Task flow
 - [x] Task 15: Recovery
-- [ ] Task 16: Integration (local merge)
+- [x] Task 16: Integration (local merge)
 - [ ] Task 17: Engine daemon, scheduler, handlers
 - [ ] Task 18: Operator services, CLI and MCP
 

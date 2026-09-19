@@ -14,6 +14,8 @@ _GIT_BIN = "git"
 _COMMAND_TIMEOUT_SECONDS = 30.0
 _WORKTREE_LIST_PREFIX = "worktree "
 _STATUS_IGNORED_PREFIX = "!! "
+_STATUS_PATH_OFFSET = 3
+_RENAME_COPY_CODES = frozenset(("R", "C"))
 
 _MERGE_BASE_IS_ANCESTOR = 0
 _MERGE_BASE_IS_NOT_ANCESTOR = 1
@@ -120,6 +122,59 @@ class Git:
             raise CommandFailed(result.argv, result.returncode, result.stderr)
         return result.returncode == _MERGE_BASE_IS_ANCESTOR
 
+    async def rebase(self, repo_dir: Path, base: str) -> None:
+        """Rebase the current branch onto `base`, raising when git reports a conflict."""
+        await self._run(repo_dir, "rebase", base)
+
+    async def rebase_abort(self, repo_dir: Path) -> None:
+        """Abort the current rebase, preserving the branch before the attempt."""
+        await self._run(repo_dir, "rebase", "--abort")
+
+    async def rebase_continue(self, repo_dir: Path) -> None:
+        """Continue a rebase after its conflicts have been resolved and staged."""
+        await self._run(repo_dir, "-c", "core.editor=true", "rebase", "--continue")
+
+    async def merge_ff_only(self, repo_dir: Path, branch: str) -> None:
+        """Fast-forward the checked-out base branch to `branch` only."""
+        await self._run(repo_dir, "merge", "--ff-only", branch)
+
+    async def update_ref(
+        self, repo_dir: Path, branch: str, new_sha: str, expected_old_sha: str
+    ) -> None:
+        """Atomically move `branch` from `expected_old_sha` to `new_sha`."""
+        await self._run(
+            repo_dir,
+            "update-ref",
+            f"refs/heads/{branch}",
+            new_sha,
+            expected_old_sha,
+        )
+
+    async def dirty_paths(self, repo_dir: Path) -> set[str]:
+        """Return paths changed in the working tree, including untracked paths."""
+        result = await self._run(repo_dir, "status", "--porcelain=v1", "-z")
+        entries = result.stdout.split("\0")
+        paths: set[str] = set()
+        index = 0
+        while index < len(entries):
+            entry = entries[index]
+            index += 1
+            if not entry:
+                continue
+            status = entry[:2]
+            path = entry[_STATUS_PATH_OFFSET:]
+            paths.add(path)
+            if any(code in _RENAME_COPY_CODES for code in status) and index < len(entries):
+                paths.add(entries[index])
+                index += 1
+        return paths
+
+    async def is_rebase_in_progress(self, repo_dir: Path) -> bool:
+        """Return whether a rebase operation is currently in progress."""
+        merge_dir = await self._git_path(repo_dir, "rebase-merge")
+        apply_dir = await self._git_path(repo_dir, "rebase-apply")
+        return merge_dir.exists() or apply_dir.exists()
+
     async def append_to_exclude(self, repo_dir: Path, line: str) -> None:
         """Append `line` to this repo's shared `info/exclude`, unless it is already there."""
         exclude_path = await self._exclude_path(repo_dir)
@@ -137,6 +192,11 @@ class Git:
         )
         git_common_dir = result.stdout.strip()
         return Path(git_common_dir) / "info" / "exclude"
+
+    async def _git_path(self, repo_dir: Path, name: str) -> Path:
+        result = await self._run(repo_dir, "rev-parse", "--git-path", name)
+        path = Path(result.stdout.strip())
+        return path if path.is_absolute() else repo_dir / path
 
     async def _worktree_paths(self, repo_dir: Path) -> set[Path]:
         result = await self._run(repo_dir, "worktree", "list", "--porcelain")
