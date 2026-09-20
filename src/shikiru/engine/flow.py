@@ -8,12 +8,13 @@ the integrating state to the injected coordinator.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import FailureKind, PromptSubmitted, role_dir
+from shikiru.agents.contracts import FailureKind, role_dir
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.recovery import (
@@ -62,7 +63,7 @@ from shikiru.engine.integration import (
     IntegrationMetadata,
 )
 from shikiru.engine.turns import TURNS_DIR_NAME, TurnSpec, read_turn_report
-from shikiru.errors import ShikiruError
+from shikiru.errors import CommandFailed, ShikiruError
 from shikiru.helper.helper import Helper
 from shikiru.helper.models import Unrecoverable
 from shikiru.prompts.renderer import PromptName
@@ -70,7 +71,6 @@ from shikiru.workspace.facts import render_facts
 from shikiru.workspace.roots import run_dir, task_root
 
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
@@ -248,6 +248,8 @@ class _TurnExecution:
     helper: Helper
     prompt_path: Path
     injected: InjectedLines
+    intervention_active: Callable[[], bool]
+    launch_pending: bool
     closed: bool = False
 
 
@@ -444,7 +446,7 @@ class TaskFlow:
             while True:
                 if isinstance(execution.result, Completed):
                     await self._close_execution(execution)
-                    clear_intervention(self._tasks, self._events, current.id)
+                    self._clear_intervention(current.id, role)
                     report = execution.result.report
                     if isinstance(report, ImplementationReport | Verdict):
                         return current, report
@@ -490,11 +492,29 @@ class TaskFlow:
         history = load_history(run_dir(self._project_root, task.id))
         return history[-1][1] if history else None
 
+    def _clear_intervention(self, task_id: str, role: Role) -> None:
+        clear_intervention(self._tasks, self._events, task_id)
+        self._sessions.clear_intervention(task_id, role)
+
+    def _intervention_active(self, task_id: str) -> bool:
+        task = self._tasks.get(task_id)
+        return task is not None and Hold.INTERVENTION in task.holds
+
     async def _run_step(
         self, task: Task, step: Step, counters: TurnCounters
     ) -> tuple[Task, TurnCounters, bool]:
-        if Hold.PAUSED in task.holds:
+        task = self._require_task(task.id)
+        if self._step_blocked(task):
             return task, counters, True
+        return await self._run_step_turn(task, step, counters)
+
+    @staticmethod
+    def _step_blocked(task: Task) -> bool:
+        return Hold.PAUSED in task.holds or Hold.INTERVENTION in task.holds
+
+    async def _run_step_turn(
+        self, task: Task, step: Step, counters: TurnCounters
+    ) -> tuple[Task, TurnCounters, bool]:
         execution: _TurnExecution | None = None
         try:
             execution = await self._run_turn(task, step)
@@ -513,11 +533,14 @@ class TaskFlow:
                         if recovery_step is None:
                             message = f"{task.id} recovery left the task with no step"
                             raise ShikiruError(message)
+                        task = self._require_task(task.id)
+                        if self._step_blocked(task):
+                            return task, counters, True
                         step = recovery_step
                         execution = await self._run_turn(task, step)
                     continue
                 await self._close_execution(execution)
-                clear_intervention(self._tasks, self._events, task.id)
+                self._clear_intervention(task.id, ACTING_ROLE[step])
                 outcome = result.report
                 transition = next_step(task, outcome, self._settings)
                 escalated = transition.status is Status.ESCALATED
@@ -544,6 +567,8 @@ class TaskFlow:
         role_override: Role | None = None,
     ) -> tuple[Task, TurnCounters, bool, _TurnExecution | None]:
         result = execution.result
+        if isinstance(result, Stalled) and self._intervention_active(task.id):
+            return self._require_task(task.id), counters, True, None
         self._emit_turn_failed(task, step, result)
         role = role_override if role_override is not None else ACTING_ROLE[step]
         policy = self._recovery_policy(task, role)
@@ -608,8 +633,12 @@ class TaskFlow:
         updated = task
         next_counters = counters
         if isinstance(action, WaitForQuota):
-            await self._wait_for_quota(task, role, action.until)
-            updated = await self._resume_execution(execution)
+            terminal = await self._wait_for_quota(task, role, action.until)
+            updated = (
+                dataclasses.replace(execution, result=terminal)
+                if terminal is not None
+                else await self._resume_execution(execution)
+            )
         elif isinstance(action, Backoff):
             await self._close_execution(execution)
             await self._clock.sleep(action.delay.total_seconds())
@@ -682,14 +711,12 @@ class TaskFlow:
         if isinstance(action, KeepWaiting):
             self._sessions.rearm_stall_detection(task.id, role)
             await self._clock.sleep(self._settings.orchestration.poll_seconds)
+            if execution.launch_pending:
+                await self._close_execution(execution)
+                return self._require_task(task.id), False, counters
             return await self._resume_execution(execution), False, counters
         if isinstance(action, SendKeys):
-            pane_id = task.panes.get(role)
-            if pane_id is None:
-                message = f"{task.id} has no pane assigned for {role.value} recovery"
-                raise ShikiruError(message)
-            await self._pane_factory(pane_id).send_keys(*action.keys)
-            return await self._resume_execution(execution), False, counters
+            return await self._apply_recovery_keys(task, role, execution, counters, action.keys)
         if isinstance(action, Consult):
             self._recovery_questions.setdefault(task.id, "")
             base = Transition.stay(task, step=Step.CONSULT, status=task.status)
@@ -701,6 +728,27 @@ class TaskFlow:
             return await self._raise_recovery_escalation(task, step, role, action.reason, result)
         message = f"unsupported recovery action {action!r}"
         raise ShikiruError(message)
+
+    async def _apply_recovery_keys(
+        self,
+        task: Task,
+        role: Role,
+        execution: _TurnExecution,
+        counters: TurnCounters,
+        keys: tuple[str, ...],
+    ) -> tuple[Task | _TurnExecution, bool, TurnCounters]:
+        pane_id = task.panes.get(role)
+        if pane_id is None:
+            message = f"{task.id} has no pane assigned for {role.value} recovery"
+            raise ShikiruError(message)
+        try:
+            await self._pane_factory(pane_id).send_keys(*keys)
+        except CommandFailed:
+            return dataclasses.replace(execution, result=PaneDied()), False, counters
+        if execution.launch_pending:
+            await self._close_execution(execution)
+            return self._require_task(task.id), False, counters
+        return await self._resume_execution(execution), False, counters
 
     async def _raise_recovery_escalation(
         self, task: Task, step: Step, role: Role, reason: EscalationReason, result: TurnResult
@@ -762,7 +810,9 @@ class TaskFlow:
             data={"agent": agent, "until": until.isoformat(), "reason": "quota"},
         )
 
-    async def _wait_for_quota(self, task: Task, role: Role, until: datetime) -> None:
+    async def _wait_for_quota(
+        self, task: Task, role: Role, until: datetime
+    ) -> PaneDied | Stalled | None:
         agent = pick_rung(task, role, self._settings).agent
         deadline = until
         while True:
@@ -781,28 +831,15 @@ class TaskFlow:
                 message=f"{agent} quota block cleared",
                 data={"agent": agent},
             )
-            await self._send_injected_line(task, role, CONTINUE_INPUT)
-            return
+            return await self._send_injected_line(task, role, CONTINUE_INPUT)
 
-    async def _send_injected_line(self, task: Task, role: Role, line: str) -> None:
-        pane_id = task.panes.get(role)
-        if pane_id is None:
-            message = f"{task.id} has no pane assigned for injected recovery input"
-            raise ShikiruError(message)
-        queue = self._sessions.subscribe(task.id, role)
-        injected = self._sessions.injected_lines(task.id, role)
-        injected.add(line)
+    async def _send_injected_line(
+        self, task: Task, role: Role, line: str
+    ) -> PaneDied | Stalled | None:
         try:
-            await self._pane_factory(pane_id).paste_line(line)
-            while True:
-                signal = await queue.get()
-                if isinstance(signal, PromptSubmitted) and line in signal.text:
-                    return
-                if isinstance(signal, (PaneDied, Stalled)):
-                    return
-        finally:
-            injected.discard(line)
-            self._sessions.unsubscribe(task.id, role, queue)
+            return await self._sessions.inject_line(task, role, line)
+        except ShikiruError:
+            return PaneDied()
 
     async def _classify_screen(
         self, task: Task, role: Role, result: TurnResult
@@ -822,7 +859,11 @@ class TaskFlow:
                 cwd=task_root(self._project_root, task.id),
                 timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
             )
-        except (LookupError, ShikiruError) as error:
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            if isinstance(error, asyncio.CancelledError):
+                raise
             return Unrecoverable(unrecoverable=str(error))
 
     def _emit_helper_action(self, task: Task, classification: ScreenClassification) -> None:
@@ -908,6 +949,11 @@ class TaskFlow:
         role = role_override if role_override is not None else ACTING_ROLE[step]
         session = await self._sessions.ensure(task, role)
         fresh = self._sessions.launched_fresh(task.id, role)
+        launch_pending = self._sessions.launch_pending(task.id, role)
+
+        def intervention_active() -> bool:
+            return self._intervention_active(task.id)
+
         task_run_dir = run_dir(self._project_root, task.id)
         history = load_history(task_run_dir)
         plan = await self._plan_turn(
@@ -947,6 +993,7 @@ class TaskFlow:
                 spec=spec,
                 helper=helper,
                 injected=injected,
+                intervention_active=intervention_active,
             )
             turn_dir = (role_dir(task_run_dir, role.value) / CURRENT_TURN_LINK_NAME).resolve()
             return _TurnExecution(
@@ -960,6 +1007,8 @@ class TaskFlow:
                 helper=helper,
                 prompt_path=turn_dir / PROMPT_FILENAME,
                 injected=injected,
+                intervention_active=intervention_active,
+                launch_pending=launch_pending,
             )
         except BaseException:
             self._sessions.unsubscribe(task.id, role, queue)
@@ -974,6 +1023,7 @@ class TaskFlow:
             helper=execution.helper,
             prompt_path=execution.prompt_path,
             injected=execution.injected,
+            intervention_active=execution.intervention_active,
         )
         return dataclasses.replace(execution, result=result)
 

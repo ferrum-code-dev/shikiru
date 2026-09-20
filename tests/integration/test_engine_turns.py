@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, Any
 
 from shikiru.agents.contracts import SessionEnded
 from shikiru.config.settings import AgentConfig
-from shikiru.domain.recovery import Completed, Stalled
+from shikiru.domain.recovery import Completed, PaneDied, ProtocolError, Stalled
 from shikiru.domain.reports import ConsultAnswer, ReportKind
 from shikiru.domain.tasks import Hold, Role, Step
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.monitor import InjectedLines
-from shikiru.engine.turns import TurnRunner, TurnSpec
+from shikiru.engine.turns import TurnRunner, TurnSpec, read_turn_report
 from shikiru.helper.helper import Helper
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptName, PromptRenderer
@@ -266,6 +266,83 @@ async def test_three_reportless_turns_are_rebuilt_by_the_helper(
     assert result.report.answer == "Use tenacity"
     helper_json = task_run_dir / "turns" / "01-consult-i1" / "helper.json"
     assert json.loads(helper_json.read_text())["answer"] == "Use tenacity"
+
+
+def test_invalid_agent_report_falls_back_to_a_valid_helper_report(tmp_path: Path) -> None:
+    turn_dir = tmp_path / "turn"
+    turn_dir.mkdir()
+    (turn_dir / "report.kind").write_text(ReportKind.CONSULT.value)
+    (turn_dir / "report.json").write_text("not json")
+    (turn_dir / "helper.json").write_text(
+        ConsultAnswer(decision="answer", answer="Use tenacity").model_dump_json()
+    )
+
+    report = read_turn_report(turn_dir)
+
+    assert report == ConsultAnswer(decision="answer", answer="Use tenacity")
+
+
+async def test_helper_failure_becomes_a_protocol_error(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = _settings_with_asks([])
+    manager = engine_env.build_manager(settings)
+    task = await engine_env.build_task()
+    await set_script(
+        tmux_server,
+        [{"kind": "no_report"}, {"kind": "no_report"}, {"kind": "no_report"}],
+    )
+    session = await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    pane = engine_env.pane(task.panes[Role.IMPLEMENTER])
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
+    helper = _build_helper(settings)
+
+    result = await asyncio.wait_for(
+        runner.run(
+            session,
+            pane,
+            queue,
+            run_dir=run_dir(engine_env.project_root, task.id),
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+            injected=manager.injected_lines(task.id, Role.IMPLEMENTER),
+        ),
+        timeout=_SIGNAL_TIMEOUT,
+    )
+
+    assert isinstance(result, ProtocolError)
+
+
+async def test_missing_pane_during_pointer_injection_returns_pane_died(
+    engine_env: EngineEnv,
+) -> None:
+    settings = _settings_with_asks([])
+    manager = engine_env.build_manager(settings)
+    task = await engine_env.build_task()
+    session = await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    pane = engine_env.pane(task.panes[Role.IMPLEMENTER])
+    await pane.kill()
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
+    helper = _build_helper(settings)
+
+    result = await asyncio.wait_for(
+        runner.run(
+            session,
+            pane,
+            queue,
+            run_dir=run_dir(engine_env.project_root, task.id),
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+            injected=manager.injected_lines(task.id, Role.IMPLEMENTER),
+        ),
+        timeout=_SIGNAL_TIMEOUT,
+    )
+
+    assert isinstance(result, PaneDied)
 
 
 async def test_an_unconfirmed_pointer_retries_once_then_stalls(engine_env: EngineEnv) -> None:

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, cast
@@ -33,11 +32,13 @@ from shikiru.domain.reports import (
     model_for,
     schema_for,
 )
+from shikiru.engine.monitor import wait_for_signal
+from shikiru.errors import CommandFailed
 from shikiru.helper.models import Unrecoverable
 from shikiru.tmux.pane import ENTER_KEY
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from datetime import datetime
     from pathlib import Path
 
@@ -109,12 +110,12 @@ def read_turn_report(turn_dir: Path) -> Report | None:
             continue
         try:
             data = json.loads(report_path.read_text())
-        except OSError, json.JSONDecodeError:
-            return None
+        except OSError, UnicodeError, json.JSONDecodeError:
+            continue
         try:
             return model_for(kind).model_validate(data)
         except ValidationError:
-            return None
+            continue
     return None
 
 
@@ -143,6 +144,7 @@ class TurnRunner:
         spec: TurnSpec,
         helper: Helper,
         injected: InjectedLines,
+        intervention_active: Callable[[], bool] | None = None,
     ) -> TurnResult:
         """Run one turn for `role` and return its `TurnResult`; never raises for agent behaviour."""
         turn_dir = self._prepare_turn_dir(run_dir, role, spec)
@@ -162,6 +164,7 @@ class TurnRunner:
             helper=helper,
             prompt_path=prompt_path,
             injected=injected,
+            intervention_active=intervention_active,
         )
 
     async def resume(
@@ -174,6 +177,7 @@ class TurnRunner:
         helper: Helper,
         prompt_path: Path,
         injected: InjectedLines,
+        intervention_active: Callable[[], bool] | None = None,
     ) -> TurnResult:
         """Continue an existing turn after recovery input, without creating a new turn dir."""
         outcome = await self._await_outcome(signals)
@@ -186,6 +190,7 @@ class TurnRunner:
             helper=helper,
             prompt_path=prompt_path,
             injected=injected,
+            intervention_active=intervention_active,
         )
 
     def _prepare_turn_dir(self, run_dir: Path, role: Role, spec: TurnSpec) -> Path:
@@ -223,12 +228,19 @@ class TurnRunner:
             deadline = self._clock.now() + timedelta(seconds=BEFORE_TURN_WAIT_SECONDS)
             injected.add(line)
             try:
-                await pane.paste_line(line)
+                try:
+                    await pane.paste_line(line)
+                except CommandFailed:
+                    return PaneDied()
                 signal = await self._next_signal(signals, _BEFORE_TURN_TYPES, deadline)
             finally:
                 injected.discard(line)
             if signal is None:
-                return Stalled(screen=await pane.capture_visible())
+                try:
+                    screen = await pane.capture_visible()
+                except CommandFailed:
+                    return PaneDied()
+                return Stalled(screen=screen)
             if isinstance(signal, TurnFailed | PaneDied | Stalled):
                 return _terminal_result(signal)
         return None
@@ -248,7 +260,11 @@ class TurnRunner:
         confirmed = await self._confirm(pane, signals, line, prompt_path, injected, inject=False)
         if confirmed is not None:
             return confirmed
-        return Stalled(screen=await pane.capture_visible())
+        try:
+            screen = await pane.capture_visible()
+        except CommandFailed:
+            return PaneDied()
+        return Stalled(screen=screen)
 
     async def _confirm(
         self,
@@ -262,10 +278,13 @@ class TurnRunner:
     ) -> _Outcome | PromptSubmitted | None:
         injected.add(line)
         try:
-            if inject:
-                await pane.paste_line(line)
-            else:
-                await pane.send_keys(ENTER_KEY)
+            try:
+                if inject:
+                    await pane.paste_line(line)
+                else:
+                    await pane.send_keys(ENTER_KEY)
+            except CommandFailed:
+                return PaneDied()
             deadline = self._clock.now() + timedelta(seconds=SUBMIT_CONFIRM_SECONDS)
             while True:
                 signal = await self._next_signal(signals, _CONFIRM_TYPES, deadline)
@@ -290,11 +309,16 @@ class TurnRunner:
         helper: Helper,
         prompt_path: Path,
         injected: InjectedLines,
+        intervention_active: Callable[[], bool] | None,
     ) -> TurnResult:
+        is_intervention_active = intervention_active or (lambda: False)
         nudges = 0
         current: _Outcome | PromptSubmitted = outcome
         while True:
             if isinstance(current, PromptSubmitted):
+                current = await self._await_outcome(signals)
+                continue
+            if isinstance(current, Stalled) and is_intervention_active():
                 current = await self._await_outcome(signals)
                 continue
             if isinstance(current, TurnFailed | PaneDied | Stalled):
@@ -302,13 +326,19 @@ class TurnRunner:
             report = read_turn_report(turn_dir)
             if report is not None:
                 return Completed(report=report)
+            if is_intervention_active():
+                current = await self._await_outcome(signals)
+                continue
             if nudges >= NUDGE_LIMIT:
                 return await self._rebuild(turn_dir, spec, helper, current.last_message)
             nudges += 1
             nudge_line = _NUDGE_MESSAGE.format(prompt_path=prompt_path)
             injected.add(nudge_line)
             try:
-                await pane.paste_line(nudge_line)
+                try:
+                    await pane.paste_line(nudge_line)
+                except CommandFailed:
+                    return PaneDied()
                 current = await self._await_outcome(signals)
             finally:
                 injected.discard(nudge_line)
@@ -316,15 +346,22 @@ class TurnRunner:
     async def _rebuild(
         self, turn_dir: Path, spec: TurnSpec, helper: Helper, last_message: str
     ) -> TurnResult:
-        rebuilt = await helper.rebuild_report(
-            spec.kind,
-            last_message,
-            spec.facts,
-            model=spec.helper_model,
-            effort=spec.helper_effort,
-            cwd=spec.cwd,
-            timeout=spec.helper_timeout,
-        )
+        try:
+            rebuilt = await helper.rebuild_report(
+                spec.kind,
+                last_message,
+                spec.facts,
+                model=spec.helper_model,
+                effort=spec.helper_effort,
+                cwd=spec.cwd,
+                timeout=spec.helper_timeout,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            if isinstance(error, asyncio.CancelledError):
+                raise
+            return ProtocolError()
         if isinstance(rebuilt, Unrecoverable):
             return ProtocolError()
         (turn_dir / HELPER_REPORT_FILENAME).write_text(rebuilt.model_dump_json(indent=2))
@@ -361,19 +398,4 @@ class TurnRunner:
     async def _wait_for(
         self, signals: asyncio.Queue[MonitorSignal], timeout_seconds: float
     ) -> MonitorSignal | None:
-        get_task = asyncio.ensure_future(signals.get())
-        sleep_task = asyncio.ensure_future(self._clock.sleep(timeout_seconds))
-        try:
-            await asyncio.wait({get_task, sleep_task}, return_when=asyncio.FIRST_COMPLETED)
-            if get_task.done():
-                return get_task.result()
-            return None
-        finally:
-            if not get_task.done():
-                get_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await get_task
-            if not sleep_task.done():
-                sleep_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await sleep_task
+        return await wait_for_signal(signals, self._clock, timeout_seconds)

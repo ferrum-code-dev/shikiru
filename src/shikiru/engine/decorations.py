@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import Activity
 from shikiru.domain.recovery import PaneDied, Stalled
-from shikiru.engine.monitor import InterventionSet
+from shikiru.engine.monitor import InterventionCleared, InterventionSet
 from shikiru.ui.glyphs import GLYPH_OPERATOR, GLYPH_STALLED, ROLE_GLYPHS
 from shikiru.ui.tokens import HOLD_COLOR, OPERATOR_COLOR, ROLE_COLORS
 
@@ -51,6 +51,8 @@ def _role_decoration(role: Role) -> _Decoration:
 def _next_decoration(signal: MonitorSignal, current: _Decoration, role: Role) -> _Decoration | None:
     if isinstance(signal, InterventionSet):
         return _Decoration(_Mode.INTERVENTION, OPERATOR_COLOR, GLYPH_OPERATOR)
+    if isinstance(signal, InterventionCleared):
+        return _role_decoration(role)
     if current.mode is _Mode.INTERVENTION:
         return None
     if isinstance(signal, Stalled):

@@ -10,12 +10,14 @@ import pytest
 
 from shikiru.agents.contracts import Rung, SessionEnded, SessionKeys
 from shikiru.config.settings import AgentConfig
+from shikiru.domain.recovery import Stalled
 from shikiru.domain.runs import NO_USAGE, RunStatus
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role
 from shikiru.engine.sessions import SessionLaunchFailedError
+from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_RUNG, build_registry, set_script
-from tests.support.factories import make_settings
+from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -40,6 +42,12 @@ if TYPE_CHECKING:
 FAKE_RUNG_2 = Rung(agent="fake", model="fake-2", effort=None)
 CRASHING_AGENT_NAME = "crashes"
 CRASHING_RUNG = Rung(agent=CRASHING_AGENT_NAME, model="x", effort=None)
+NEVER_STARTING_AGENT_NAME = "never-starts"
+NEVER_STARTING_RUNG = Rung(agent=NEVER_STARTING_AGENT_NAME, model="x", effort=None)
+RAISING_AGENT_NAME = "raises"
+RAISING_RUNG = Rung(agent=RAISING_AGENT_NAME, model="x", effort=None)
+ATTACH_RAISING_AGENT_NAME = "attach-raises"
+ATTACH_RAISING_RUNG = Rung(agent=ATTACH_RAISING_AGENT_NAME, model="x", effort=None)
 
 _WAIT_TIMEOUT = 15.0
 
@@ -53,6 +61,10 @@ def _live_run(runs: RunStore, task_id: str, role: Role) -> Run:
 def _has_agent_state(runs: RunStore, task_id: str, role: Role) -> bool:
     live = runs.get_live(task_id, role)
     return live is not None and live.agent_state != {}
+
+
+async def _pane_is_missing(engine_env: EngineEnv, pane_id: str) -> bool:
+    return not await engine_env.tmux.pane_exists(pane_id)
 
 
 class _NeverSignalsSession:
@@ -100,6 +112,40 @@ class _CrashingAgent:
 
     def headless(self) -> HeadlessAgent | None:
         return None
+
+
+class _NeverStartingAgent(_CrashingAgent):
+    """An `InteractiveAgent` whose pane stays alive without emitting `SessionStarted`."""
+
+    name = NEVER_STARTING_AGENT_NAME
+
+    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
+        await pane.respawn(("sleep", "60"), spec.env, spec.cwd)
+        return _NeverSignalsSession()
+
+
+class _RaisingAgent(_CrashingAgent):
+    """An `InteractiveAgent` whose plugin launch fails before returning a session."""
+
+    name = RAISING_AGENT_NAME
+
+    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
+        del spec, pane
+        message = "plugin launch failed"
+        raise RuntimeError(message)
+
+
+class _AttachRaisingAgent(_CrashingAgent):
+    """An `InteractiveAgent` whose attach fails before returning a session."""
+
+    name = ATTACH_RAISING_AGENT_NAME
+
+    async def attach(
+        self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, object]
+    ) -> AgentSession:
+        del spec, pane, state
+        message = "plugin attach failed"
+        raise RuntimeError(message)
 
 
 async def test_ensure_relaunches_with_resume_after_pane_death(
@@ -178,6 +224,35 @@ async def test_ensure_relaunches_with_resume_on_rung_change(engine_env: EngineEn
     assert runs_for_task[1].model == FAKE_RUNG.model
 
 
+async def test_restart_with_same_agent_rung_change_relaunches_with_resume(
+    engine_env: EngineEnv,
+) -> None:
+    settings = make_settings(
+        implementer_ladder=[FAKE_RUNG, FAKE_RUNG_2], agents={"fake": AgentConfig()}
+    )
+    first_manager = engine_env.build_manager(settings)
+    task = await engine_env.build_task()
+
+    await first_manager.ensure(task, Role.IMPLEMENTER)
+    session_id = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).session_id
+    await first_manager.shutdown()
+
+    rung_index = dict(task.rung_index)
+    rung_index[Role.IMPLEMENTER] = 1
+    transition = dataclasses.replace(Transition.stay(task, step=task.step), rung_index=rung_index)
+    engine_env.tasks.apply_transition(task.id, transition)
+    updated = engine_env.tasks.get(task.id)
+    assert updated is not None
+
+    second_manager = engine_env.build_manager(settings)
+    await second_manager.ensure(updated, Role.IMPLEMENTER)
+
+    runs_for_task = engine_env.runs.for_task(task.id)
+    assert len(runs_for_task) == 2
+    assert runs_for_task[0].model == FAKE_RUNG_2.model
+    assert runs_for_task[0].session_id == session_id
+
+
 async def test_exit_task_sends_exit_input_and_closes_the_run(engine_env: EngineEnv) -> None:
     task = await engine_env.build_task()
 
@@ -191,6 +266,17 @@ async def test_exit_task_sends_exit_input_and_closes_the_run(engine_env: EngineE
     exited_run = engine_env.runs.for_task(task.id)[0]
     assert exited_run.id == run_id
     assert exited_run.status == RunStatus.CLOSED
+
+
+async def test_exit_task_closes_untracked_persisted_live_runs(engine_env: EngineEnv) -> None:
+    task = await engine_env.build_task()
+    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
+    await engine_env.pane(task.panes[Role.IMPLEMENTER]).kill()
+
+    await engine_env.manager.exit_task(task)
+
+    assert engine_env.runs.for_task(task.id)[0].id == run.id
+    assert engine_env.runs.for_task(task.id)[0].status is RunStatus.CLOSED
 
 
 async def test_ensure_exits_the_run_and_leaks_no_task_when_launch_fails(
@@ -217,3 +303,76 @@ async def test_ensure_exits_the_run_and_leaks_no_task_when_launch_fails(
         await manager.ensure(task, Role.IMPLEMENTER)
     assert len(engine_env.runs.for_task(task.id)) == 2
     assert engine_env.runs.get_live(task.id, Role.IMPLEMENTER) is None
+
+
+async def test_launch_timeout_is_delivered_as_a_stalled_turn(engine_env: EngineEnv) -> None:
+    registry = build_registry()
+    registry.register(NEVER_STARTING_AGENT_NAME, lambda _context: _NeverStartingAgent())
+    settings = make_settings(
+        implementer_ladder=[NEVER_STARTING_RUNG],
+        agents={NEVER_STARTING_AGENT_NAME: AgentConfig()},
+    )
+    timeouts = settings.orchestration.timeouts.model_copy(update={"launch": 1})
+    orchestration = settings.orchestration.model_copy(update={"timeouts": timeouts})
+    settings = settings.model_copy(update={"orchestration": orchestration})
+    clock = FakeClock(TASK_CREATED_AT)
+    manager = engine_env.build_manager(settings, clock=clock, registry=registry)
+    task = await engine_env.build_task()
+
+    ensure_task = asyncio.ensure_future(manager.ensure(task, Role.IMPLEMENTER))
+    await wait_until(clock.has_pending_sleep, timeout=_WAIT_TIMEOUT)
+    clock.advance(2)
+    await ensure_task
+
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    signal = await asyncio.wait_for(queue.get(), timeout=_WAIT_TIMEOUT)
+    assert isinstance(signal, Stalled)
+    assert _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).status is RunStatus.LIVE
+
+    await manager.shutdown()
+    await engine_env.pane(task.panes[Role.IMPLEMENTER]).kill()
+
+
+async def test_plugin_launch_exception_exits_run_and_kills_unmonitored_pane(
+    engine_env: EngineEnv,
+) -> None:
+    registry = build_registry()
+    registry.register(RAISING_AGENT_NAME, lambda _context: _RaisingAgent())
+    settings = make_settings(
+        implementer_ladder=[RAISING_RUNG], agents={RAISING_AGENT_NAME: AgentConfig()}
+    )
+    manager = engine_env.build_manager(settings, registry=registry)
+    task = await engine_env.build_task()
+
+    with pytest.raises(RuntimeError, match="plugin launch failed"):
+        await manager.ensure(task, Role.IMPLEMENTER)
+
+    assert engine_env.runs.get_live(task.id, Role.IMPLEMENTER) is None
+    assert engine_env.runs.for_task(task.id)[0].status is RunStatus.EXITED
+    await wait_until(
+        lambda: _pane_is_missing(engine_env, task.panes[Role.IMPLEMENTER]), timeout=_WAIT_TIMEOUT
+    )
+
+
+async def test_plugin_attach_exception_exits_run_and_kills_unmonitored_pane(
+    engine_env: EngineEnv,
+) -> None:
+    registry = build_registry()
+    registry.register(ATTACH_RAISING_AGENT_NAME, lambda _context: _AttachRaisingAgent())
+    settings = make_settings(
+        implementer_ladder=[ATTACH_RAISING_RUNG],
+        agents={ATTACH_RAISING_AGENT_NAME: AgentConfig()},
+    )
+    manager = engine_env.build_manager(settings, registry=registry)
+    task = await engine_env.build_task()
+    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, ATTACH_RAISING_RUNG)
+
+    with pytest.raises(RuntimeError, match="plugin attach failed"):
+        await manager.ensure(task, Role.IMPLEMENTER)
+
+    assert engine_env.runs.get_live(task.id, Role.IMPLEMENTER) is None
+    assert engine_env.runs.for_task(task.id)[0].id == run.id
+    assert engine_env.runs.for_task(task.id)[0].status is RunStatus.EXITED
+    await wait_until(
+        lambda: _pane_is_missing(engine_env, task.panes[Role.IMPLEMENTER]), timeout=_WAIT_TIMEOUT
+    )

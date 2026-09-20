@@ -7,16 +7,18 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 from shikiru.agents.contracts import Activity, SessionEnded, SessionStarted
+from shikiru.domain.recovery import PaneDied
 from shikiru.domain.runs import NO_USAGE
 from shikiru.domain.tasks import Hold, Role
 from shikiru.engine.monitor import Stalled
+from shikiru.errors import CommandFailed
 from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_RUNG, fake_engine_settings, make_monitor, set_script
 from tests.support.factories import TASK_CREATED_AT
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Mapping
+    from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 
     from shikiru.agents.contracts import AgentSignal, Usage
     from shikiru.engine.monitor import MonitorSignal
@@ -63,6 +65,62 @@ class _AlwaysAlivePane:
 
     async def is_alive(self) -> bool:
         return True
+
+
+class _MissingPane(_AlwaysAlivePane):
+    """A `PaneHandle` whose liveness command reports a missing pane."""
+
+    async def is_alive(self) -> bool:
+        raise CommandFailed(("tmux", "is-pane-dead"), 1, "missing pane")
+
+
+class _FailingSession:
+    """An `AgentSession` whose signal stream fails unexpectedly."""
+
+    def signals(self) -> AsyncIterator[AgentSignal]:
+        return _FailingSignals()
+
+    async def before_turn(self) -> list[str]:
+        return []
+
+    async def usage(self) -> Usage:
+        return NO_USAGE
+
+    def snapshot(self) -> Mapping[str, Any]:
+        return {}
+
+
+class _FailingSignals:
+    def __aiter__(self) -> _FailingSignals:
+        return self
+
+    async def __anext__(self) -> AgentSignal:
+        message = "signal stream failed"
+        raise RuntimeError(message)
+
+
+class _ClosedSession:
+    """An `AgentSession` whose signal stream ends without a session-ended signal."""
+
+    def signals(self) -> AsyncIterator[AgentSignal]:
+        return _ClosedSignals()
+
+    async def before_turn(self) -> list[str]:
+        return []
+
+    async def usage(self) -> Usage:
+        return NO_USAGE
+
+    def snapshot(self) -> Mapping[str, Any]:
+        return {}
+
+
+class _ClosedSignals:
+    def __aiter__(self) -> _ClosedSignals:
+        return self
+
+    async def __anext__(self) -> AgentSignal:
+        raise StopAsyncIteration
 
 
 class _ScriptedSession:
@@ -145,6 +203,98 @@ async def test_launch_timeout_publishes_stalled(engine_env: EngineEnv) -> None:
         assert isinstance(signal, Stalled)
     finally:
         run_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await run_task
+
+
+async def test_missing_pane_publishes_pane_died(engine_env: EngineEnv) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    task = await engine_env.build_task()
+    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
+    settings = fake_engine_settings()
+    monitor = make_monitor(
+        _SilentSession(),
+        _MissingPane(),
+        task=task,
+        run=run,
+        run_dir=engine_env.project_root / "run",
+        tasks=engine_env.tasks,
+        runs=engine_env.runs,
+        clock=clock,
+        settings=settings,
+        expects_started=False,
+    )
+    queue = monitor.subscribe()
+    run_task = asyncio.ensure_future(monitor.run())
+    try:
+        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+        clock.advance(settings.orchestration.poll_seconds)
+        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
+        assert isinstance(signal, PaneDied)
+        await asyncio.wait_for(run_task, timeout=_SIGNAL_TIMEOUT)
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await run_task
+
+
+async def test_monitor_exception_publishes_pane_died(engine_env: EngineEnv) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    task = await engine_env.build_task()
+    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
+    settings = fake_engine_settings()
+    monitor = make_monitor(
+        _FailingSession(),
+        _AlwaysAlivePane(),
+        task=task,
+        run=run,
+        run_dir=engine_env.project_root / "run",
+        tasks=engine_env.tasks,
+        runs=engine_env.runs,
+        clock=clock,
+        settings=settings,
+        expects_started=False,
+    )
+    queue = monitor.subscribe()
+    run_task = asyncio.ensure_future(monitor.run())
+    try:
+        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
+        assert isinstance(signal, PaneDied)
+        await asyncio.wait_for(run_task, timeout=_SIGNAL_TIMEOUT)
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await run_task
+
+
+async def test_closed_monitor_stream_publishes_pane_died(engine_env: EngineEnv) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    task = await engine_env.build_task()
+    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
+    settings = fake_engine_settings()
+    monitor = make_monitor(
+        _ClosedSession(),
+        _AlwaysAlivePane(),
+        task=task,
+        run=run,
+        run_dir=engine_env.project_root / "run",
+        tasks=engine_env.tasks,
+        runs=engine_env.runs,
+        clock=clock,
+        settings=settings,
+        expects_started=False,
+    )
+    queue = monitor.subscribe()
+    run_task = asyncio.ensure_future(monitor.run())
+    try:
+        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
+        assert isinstance(signal, PaneDied)
+        await asyncio.wait_for(run_task, timeout=_SIGNAL_TIMEOUT)
+    finally:
+        if not run_task.done():
+            run_task.cancel()
         with suppress(asyncio.CancelledError):
             await run_task
 

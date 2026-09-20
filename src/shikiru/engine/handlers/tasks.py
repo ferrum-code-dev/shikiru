@@ -119,8 +119,12 @@ class ResumeHandler:
             )
         if Hold.INTERVENTION in holds and task.step is not None:
             role = ACTING_ROLE[task.step]
+            self._context.sessions.clear_intervention(task.id, role)
             await self._context.sessions.inject_line(task, role, "continue")
-        if Hold.PAUSED in holds and task.status in (Status.RUNNING, Status.INTEGRATING):
+        if holds & {Hold.PAUSED, Hold.INTERVENTION} and task.status in (
+            Status.RUNNING,
+            Status.INTEGRATING,
+        ):
             await self._context.start_task(task.id)
         return {"task_id": task.id, "paused": False, "intervention": False}
 

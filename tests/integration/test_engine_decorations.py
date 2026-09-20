@@ -9,6 +9,7 @@ from shikiru.agents.contracts import Activity
 from shikiru.domain.recovery import PaneDied, Stalled
 from shikiru.domain.tasks import Role
 from shikiru.engine.decorations import InterventionSet, decorate_pane
+from shikiru.engine.monitor import InterventionCleared
 from shikiru.errors import CommandFailed
 from shikiru.tmux.decorator import PANE_COLOR_OPTION, PANE_GLYPH_OPTION, PaneDecorator
 from shikiru.ui.glyphs import GLYPH_OPERATOR, GLYPH_STALLED, ROLE_GLYPHS
@@ -115,6 +116,12 @@ async def test_intervention_decoration_survives_activity_until_something_else_cl
         queue.put_nowait(Stalled(screen="stuck"))
         await wait_until(queue.empty, timeout=_WAIT_TIMEOUT)
         assert await _decoration(tmux, pane_target) == (OPERATOR_COLOR, GLYPH_OPERATOR)
+
+        queue.put_nowait(InterventionCleared())
+        await wait_until(
+            lambda: _decorated_as(tmux, pane_target, _ROLE_COLOR, _ROLE_GLYPH),
+            timeout=_WAIT_TIMEOUT,
+        )
     finally:
         task.cancel()
 
