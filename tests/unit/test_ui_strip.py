@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from rich.cells import cell_len
 
-from shikiru.domain.tasks import Mode, Role
+from shikiru.domain.tasks import Mode, Role, Status, Step
 from shikiru.ui.strip import (
     STRIP_WIDE_MIN_COLUMNS,
     PanelState,
@@ -13,6 +13,7 @@ from shikiru.ui.strip import (
     TaskStrip,
     TaskStripData,
     panel_specs_for_mode,
+    task_strip_data,
 )
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -24,6 +25,7 @@ from shikiru.ui.tokens import (
     STYLE_REVERSE,
     SUCCESS_COLOR,
 )
+from tests.support.factories import make_settings, make_task
 
 WIDE_WIDTH = STRIP_WIDE_MIN_COLUMNS
 NARROW_WIDTH = 30
@@ -159,3 +161,11 @@ def test_split_parent_renders_as_a_finished_strip_with_child_ids() -> None:
     text = TaskStrip(data).render(WIDE_WIDTH)
     assert "T-4" in text.plain
     assert "T-5" in text.plain
+
+
+def test_submitted_split_task_renders_its_triage_stage_after_dispatch() -> None:
+    task = make_task(mode=Mode.SPLIT, status=Status.RUNNING, step=Step.TRIAGE)
+
+    text = TaskStrip(task_strip_data(task, make_settings())).render(WIDE_WIDTH)
+
+    assert "Triage" in text.plain
