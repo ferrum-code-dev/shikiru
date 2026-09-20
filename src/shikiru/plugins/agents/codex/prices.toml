@@ -1,0 +1,76 @@
+[default]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+[sol]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+[luna]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+[test-model]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+[gpt-5]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+[gpt-5-codex]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+["gpt-5.1-codex"]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+["gpt-5.1-codex-max"]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+["gpt-5.2-codex"]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+["gpt-5.6-sol"]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400
+
+["gpt-5.6-luna"]
+input = 1.25
+cache_read = 0.125
+cache_write = 0.0
+output = 10.0
+context_window = 258400

@@ -1,0 +1,31 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+from shutil import copyfile
+
+from shikiru.agents.sdk.reset_time import ResetTimeParser
+from shikiru.plugins.agents.codex.quota import CodexQuotaProbe
+from tests.support.clock import FakeClock
+
+_FIXTURE = (
+    Path(__file__).parent.parent / "fixtures" / "agents" / "codex" / "rollout_full_turn.jsonl"
+)
+_START = datetime(2026, 1, 1, tzinfo=UTC)
+_RESET = datetime.fromtimestamp(1893459600, tz=UTC)
+
+
+def test_quota_probe_reads_latest_rollout_windows(tmp_path: Path) -> None:
+    home = tmp_path / "codex"
+    rollout = home / "sessions" / "2026" / "01" / "rollout-2026-01-01T00-00-00-session.jsonl"
+    rollout.parent.mkdir(parents=True)
+    copyfile(_FIXTURE, rollout)
+    clock = FakeClock(_START)
+    probe = CodexQuotaProbe(home, clock, ResetTimeParser(clock))
+
+    windows = probe.get()
+
+    assert [window.name for window in windows] == ["primary", "secondary"]
+    assert [window.used_pct for window in windows] == [42.0, 12.0]
+    assert [window.resets_at for window in windows] == [_RESET, _RESET]
+    assert all(window.observed_at == _START for window in windows)

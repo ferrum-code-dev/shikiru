@@ -31,7 +31,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 
 ## Phase 4 — Real agents
 - [x] Task 19: Claude Code plugin
-- [ ] Task 20: Codex plugin
+- [x] Task 20: Codex plugin
 - [ ] Task 21: Doctor and first real E2E
 
 ## Phase 5 — Resilience and operator completeness

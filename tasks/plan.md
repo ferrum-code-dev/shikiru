@@ -154,8 +154,8 @@ Refs: 04 §4.
 
 ### Task 20: Codex plugin
 Refs: 04 §5.
-- [ ] Factory and options; launch/resume/attach (`-c` hooks, trust, `--add-dir`); hook signals; rollout discovery, usage, failures, quota; compaction `before_turn`; keys; `resume_command`; `headless`; `doctor`.
-- [ ] Offline contract checks with committed samples; live contract checks pass.
+- [x] Factory and options; launch/resume/attach (`-c` hooks, trust, `--add-dir`); hook signals; rollout discovery, usage, failures, quota; compaction `before_turn`; keys; `resume_command`; `headless`; `doctor`.
+- [x] Offline contract checks with committed samples; live contract checks pass.
 
 ### Task 21: Doctor and first real E2E
 Refs: 06 §2, 07 §5.

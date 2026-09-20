@@ -1,0 +1,8 @@
+{"hook_event_name":"SessionStart","session_id":"11111111-1111-1111-1111-111111111111","rollout_path":"rollout_full_turn.jsonl","cwd":"/tmp/project","model":"gpt-5.6-sol"}
+{"hook_event_name":"UserPromptSubmit","session_id":"11111111-1111-1111-1111-111111111111","rollout_path":"rollout_full_turn.jsonl","prompt":"implement the retry helper"}
+{"hook_event_name":"PreToolUse","session_id":"11111111-1111-1111-1111-111111111111","rollout_path":"rollout_full_turn.jsonl","tool_name":"shell","tool_input":{"command":"pytest"}}
+{"hook_event_name":"PostToolUse","session_id":"11111111-1111-1111-1111-111111111111","rollout_path":"rollout_full_turn.jsonl","tool_name":"shell","tool_response":{"exit_code":0}}
+{"hook_event_name":"Stop","session_id":"11111111-1111-1111-1111-111111111111","rollout_path":"rollout_full_turn.jsonl"}
+{"hook_event_name":"PostCompact","session_id":"11111111-1111-1111-1111-111111111111","rollout_path":"rollout_full_turn.jsonl"}
+{"hook_event_name":"PermissionRequest","session_id":"11111111-1111-1111-1111-111111111111","rollout_path":"rollout_full_turn.jsonl","tool_name":"shell","reason":"waiting for operator input"}
+{"hook_event_name":"SessionEnd","session_id":"11111111-1111-1111-1111-111111111111","rollout_path":"rollout_full_turn.jsonl"}

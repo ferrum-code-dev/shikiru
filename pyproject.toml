@@ -18,6 +18,7 @@ shikiru = "shikiru.cli.app:app"
 
 [project.entry-points."shikiru.agents"]
 claude = "shikiru.plugins.agents.claude.agent:create"
+codex = "shikiru.plugins.agents.codex.agent:create"
 
 [project.entry-points."shikiru.widgets"]
 header = "shikiru.plugins.widgets.header:HeaderWidget"
@@ -123,6 +124,7 @@ runtime-evaluated-decorators = [
 "src/shikiru/agents/contracts.py" = ["PLR0917"] # HeadlessAgent.ask is 04 §1's exact signature
 "tests/fake_agent/src/fake_agent/headless.py" = ["ARG002", "PLR0917"] # HeadlessAgent.ask's exact signature (04 §1); the fake ignores every argument but serves canned answers
 "src/shikiru/plugins/agents/claude/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature (04 §1)
+"src/shikiru/plugins/agents/codex/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature (04 §1)
 "src/shikiru/store/**" = ["TID251", "S608"]
 "src/shikiru/workspace/**" = ["ASYNC240"] # local worktree filesystem ops, as blocking as sqlite3
 "tests/support/git_repo.py" = ["ASYNC240"]
