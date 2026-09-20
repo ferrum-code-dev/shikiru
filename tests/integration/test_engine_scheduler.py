@@ -133,8 +133,16 @@ def _scheduler(environment: SchedulerFixture, settings: Settings) -> Scheduler:
 
 @pytest.fixture
 async def scheduler_env(
-    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+    connection: Connection,
+    tmux_server: TmuxServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> SchedulerFixture:
+    def fixed_cpu_percent(interval: float | None = None) -> float:
+        del interval
+        return _SAMPLED_CPU_PERCENT
+
+    monkeypatch.setattr(resources_module.psutil, "cpu_percent", fixed_cpu_percent)
     await init_project_repo(tmp_path)
     clock = FakeClock(TASK_CREATED_AT)
     settings = _settings().model_copy(update={"repos": [RepoConfig(path=".")]})
@@ -290,13 +298,7 @@ async def test_cancelled_dependency_escalates_with_packet(
 async def test_resource_gate_blocks_at_zero_and_dispatches_at_hundred(
     scheduler_env: SchedulerFixture,
     connection: Connection,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fixed_cpu_percent(interval: float | None = None) -> float:
-        del interval
-        return _SAMPLED_CPU_PERCENT
-
-    monkeypatch.setattr(resources_module.psutil, "cpu_percent", fixed_cpu_percent)
     task = _submit(connection, scheduler_env.clock, title="resources")
     blocked_scheduler = _scheduler(scheduler_env, _settings(max_cpu_pct=0))
 
@@ -332,7 +334,7 @@ async def test_dispatch_setup_failure_rolls_back_status_and_slot(
     tmux_server: TmuxServer,
 ) -> None:
     task = _submit(connection, scheduler_env.clock, title="dispatch failure")
-    await tmux_server.run("kill-session", "-t", "test")
+    await tmux_server.run("kill-session", "-t", exact_target(session_name("test")))
 
     schedule = await scheduler_env.scheduler.run_once()
 
