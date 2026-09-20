@@ -4,17 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.agents.contracts import Rung, SessionEnded, SessionKeys
+from shikiru.agents.contracts import (
+    PromptSubmitted,
+    Rung,
+    SessionEnded,
+    SessionKeys,
+    SessionStarted,
+)
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.recovery import Stalled
 from shikiru.domain.runs import NO_USAGE, RunStatus
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Role
-from shikiru.engine.sessions import SessionLaunchFailedError
+from shikiru.domain.tasks import Hold, Role
+from shikiru.engine.sessions import INJECT_CONFIRM_SECONDS, SessionLaunchFailedError
+from shikiru.errors import CommandFailed
 from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_RUNG, build_registry, set_script
 from tests.support.factories import TASK_CREATED_AT, make_settings
@@ -48,6 +56,8 @@ RAISING_AGENT_NAME = "raises"
 RAISING_RUNG = Rung(agent=RAISING_AGENT_NAME, model="x", effort=None)
 ATTACH_RAISING_AGENT_NAME = "attach-raises"
 ATTACH_RAISING_RUNG = Rung(agent=ATTACH_RAISING_AGENT_NAME, model="x", effort=None)
+QUEUED_AGENT_NAME = "queued"
+QUEUED_RUNG = Rung(agent=QUEUED_AGENT_NAME, model="x", effort=None)
 
 _WAIT_TIMEOUT = 15.0
 
@@ -146,6 +156,43 @@ class _AttachRaisingAgent(_CrashingAgent):
         del spec, pane, state
         message = "plugin attach failed"
         raise RuntimeError(message)
+
+
+class _QueuedSession:
+    def __init__(self) -> None:
+        self._signals: asyncio.Queue[AgentSignal] = asyncio.Queue()
+
+    def push(self, signal: AgentSignal) -> None:
+        self._signals.put_nowait(signal)
+
+    async def signals(self) -> AsyncGenerator[AgentSignal]:
+        while True:
+            signal = await self._signals.get()
+            yield signal
+            if isinstance(signal, SessionEnded):
+                return
+
+    async def before_turn(self) -> list[str]:
+        return []
+
+    async def usage(self) -> Usage:
+        return NO_USAGE
+
+    def snapshot(self) -> Mapping[str, object]:
+        return {}
+
+
+class _QueuedAgent(_CrashingAgent):
+    name = QUEUED_AGENT_NAME
+
+    def __init__(self) -> None:
+        self.session: _QueuedSession | None = None
+
+    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
+        await pane.respawn(("sleep", "60"), spec.env, spec.cwd)
+        self.session = _QueuedSession()
+        self.session.push(SessionStarted(session_id="queued-session"))
+        return self.session
 
 
 async def test_ensure_relaunches_with_resume_after_pane_death(
@@ -376,3 +423,53 @@ async def test_plugin_attach_exception_exits_run_and_kills_unmonitored_pane(
     await wait_until(
         lambda: _pane_is_missing(engine_env, task.panes[Role.IMPLEMENTER]), timeout=_WAIT_TIMEOUT
     )
+
+
+async def test_injected_line_stays_non_intervention_until_late_prompt_submission(
+    engine_env: EngineEnv,
+) -> None:
+    registry = build_registry()
+    agent = _QueuedAgent()
+    registry.register(QUEUED_AGENT_NAME, lambda _context: agent)
+    settings = make_settings(
+        implementer_ladder=[QUEUED_RUNG], agents={QUEUED_AGENT_NAME: AgentConfig()}
+    )
+    clock = FakeClock(TASK_CREATED_AT)
+    manager = engine_env.build_manager(settings, clock=clock, registry=registry)
+    task = await engine_env.build_task()
+    await manager.ensure(task, Role.IMPLEMENTER)
+
+    injection = asyncio.create_task(manager.inject_line(task, Role.IMPLEMENTER, "continue"))
+    try:
+        await wait_until(
+            lambda: "continue" in manager.injected_lines(task.id, Role.IMPLEMENTER),
+            timeout=_WAIT_TIMEOUT,
+        )
+
+        def bounded_injection_done() -> bool:
+            if not injection.done():
+                clock.advance(INJECT_CONFIRM_SECONDS + 1)
+            return injection.done()
+
+        await wait_until(bounded_injection_done, timeout=_WAIT_TIMEOUT)
+        assert injection.done()
+        assert isinstance(injection.result(), Stalled)
+        assert "continue" in manager.injected_lines(task.id, Role.IMPLEMENTER)
+        assert agent.session is not None
+        agent.session.push(PromptSubmitted(text="continue"))
+        await wait_until(
+            lambda: "continue" not in manager.injected_lines(task.id, Role.IMPLEMENTER),
+            timeout=_WAIT_TIMEOUT,
+        )
+
+        updated = engine_env.tasks.get(task.id)
+        assert updated is not None
+        assert Hold.INTERVENTION not in updated.holds
+    finally:
+        if not injection.done():
+            injection.cancel()
+        with suppress(asyncio.CancelledError):
+            await injection
+        await manager.shutdown()
+        with suppress(CommandFailed):
+            await engine_env.pane(task.panes[Role.IMPLEMENTER]).kill()

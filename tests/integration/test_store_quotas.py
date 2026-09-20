@@ -60,21 +60,6 @@ def test_block_does_not_shorten_an_existing_cross_task_block(connection: Connect
     assert active.until == deadline
 
 
-def test_block_with_limit_caps_a_requested_wait(connection: Connection) -> None:
-    store = _make_store(connection)
-
-    store.block_with_limit(
-        "claude",
-        START + timedelta(hours=1),
-        now=START,
-        max_wait=timedelta(minutes=10),
-        reason="quota",
-    )
-
-    [active] = store.active_blocks(START)
-    assert active.until == START + timedelta(minutes=10)
-
-
 def test_active_blocks_orders_correctly_at_sub_second_precision(connection: Connection) -> None:
     store = _make_store(connection)
     until = START + timedelta(microseconds=500)

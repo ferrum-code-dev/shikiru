@@ -228,13 +228,10 @@ class TurnRunner:
             deadline = self._clock.now() + timedelta(seconds=BEFORE_TURN_WAIT_SECONDS)
             injected.add(line)
             try:
-                try:
-                    await pane.paste_line(line)
-                except CommandFailed:
-                    return PaneDied()
-                signal = await self._next_signal(signals, _BEFORE_TURN_TYPES, deadline)
-            finally:
-                injected.discard(line)
+                await pane.paste_line(line)
+            except CommandFailed:
+                return PaneDied()
+            signal = await self._next_signal(signals, _BEFORE_TURN_TYPES, deadline)
             if signal is None:
                 try:
                     screen = await pane.capture_visible()
@@ -278,25 +275,22 @@ class TurnRunner:
     ) -> _Outcome | PromptSubmitted | None:
         injected.add(line)
         try:
-            try:
-                if inject:
-                    await pane.paste_line(line)
-                else:
-                    await pane.send_keys(ENTER_KEY)
-            except CommandFailed:
-                return PaneDied()
-            deadline = self._clock.now() + timedelta(seconds=SUBMIT_CONFIRM_SECONDS)
-            while True:
-                signal = await self._next_signal(signals, _CONFIRM_TYPES, deadline)
-                if signal is None:
-                    return None
-                if isinstance(signal, PromptSubmitted):
-                    if str(prompt_path) in signal.text:
-                        return signal
-                    continue
-                return cast("_Outcome", signal)
-        finally:
-            injected.discard(line)
+            if inject:
+                await pane.paste_line(line)
+            else:
+                await pane.send_keys(ENTER_KEY)
+        except CommandFailed:
+            return PaneDied()
+        deadline = self._clock.now() + timedelta(seconds=SUBMIT_CONFIRM_SECONDS)
+        while True:
+            signal = await self._next_signal(signals, _CONFIRM_TYPES, deadline)
+            if signal is None:
+                return None
+            if isinstance(signal, PromptSubmitted):
+                if str(prompt_path) in signal.text:
+                    return signal
+                continue
+            return cast("_Outcome", signal)
 
     async def _resolve(
         self,
@@ -335,13 +329,10 @@ class TurnRunner:
             nudge_line = _NUDGE_MESSAGE.format(prompt_path=prompt_path)
             injected.add(nudge_line)
             try:
-                try:
-                    await pane.paste_line(nudge_line)
-                except CommandFailed:
-                    return PaneDied()
-                current = await self._await_outcome(signals)
-            finally:
-                injected.discard(nudge_line)
+                await pane.paste_line(nudge_line)
+            except CommandFailed:
+                return PaneDied()
+            current = await self._await_outcome(signals)
 
     async def _rebuild(
         self, turn_dir: Path, spec: TurnSpec, helper: Helper, last_message: str
@@ -358,9 +349,7 @@ class TurnRunner:
             )
         except asyncio.CancelledError:
             raise
-        except BaseException as error:
-            if isinstance(error, asyncio.CancelledError):
-                raise
+        except Exception:  # noqa: BLE001
             return ProtocolError()
         if isinstance(rebuilt, Unrecoverable):
             return ProtocolError()

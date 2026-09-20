@@ -173,7 +173,7 @@ class SessionManager:
                 await pane.send_keys(*self._agent_pool.get(live.rung.agent).keys.interrupt)
 
     async def inject_line(self, task: Task, role: Role, line: str) -> PaneDied | Stalled | None:
-        """Inject one line and retain its pending marker until acceptance or a terminal outcome."""
+        """Inject one line and retain its pending marker until acceptance or session termination."""
         live = self._live.get((task.id, role))
         if live is None:
             message = f"{task.id} has no live {role.value} session"
@@ -196,12 +196,11 @@ class SessionManager:
                         return PaneDied()
                     return Stalled(screen=screen)
                 signal = await wait_for_signal(queue, self._clock, remaining)
-                if isinstance(signal, PromptSubmitted) and line in signal.text:
+                if isinstance(signal, PromptSubmitted) and signal.text == line:
                     return None
                 if isinstance(signal, (PaneDied, Stalled)):
                     return signal
         finally:
-            live.injected_lines.discard(line)
             live.monitor.unsubscribe(queue)
 
     async def exit_task(self, task: Task) -> None:
@@ -391,8 +390,6 @@ class SessionManager:
             await self._cancel_tasks(monitor_task, decorate_task)
             self._runs.exit(run_id)
             raise
-        if startup_signal is not None:
-            monitor.publish(startup_signal)
         return session
 
     def launched_fresh(self, task_id: str, role: Role) -> bool:
@@ -486,6 +483,7 @@ class SessionManager:
         live = self._live.pop((task_id, role), None)
         if live is None:
             return
+        live.injected_lines.clear()
         await self._cancel_tasks(live.monitor_task, live.decorate_task)
 
     @staticmethod

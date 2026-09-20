@@ -10,7 +10,7 @@ from shikiru.store.database import format_timestamp, parse_required_timestamp, p
 
 if TYPE_CHECKING:
     import sqlite3
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,18 +111,6 @@ class QuotaStore:
             "THEN agent_blocks.reason ELSE excluded.reason END",
             (agent, format_timestamp(until), reason),
         )
-
-    def block_with_limit(
-        self,
-        agent: str,
-        until: datetime,
-        *,
-        now: datetime,
-        max_wait: timedelta,
-        reason: str,
-    ) -> None:
-        """Block `agent` without letting this wait exceed `max_wait` from `now`."""
-        self.block(agent, min(until, now + max_wait), reason)
 
     def clear_block(self, agent: str) -> None:
         """Remove `agent`'s block, if any."""

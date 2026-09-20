@@ -111,6 +111,48 @@ async def test_quota_failure_blocks_then_continues_the_same_turn(
     assert implementer_run.usage.input_tokens == 120
 
 
+async def test_quota_wait_deadline_moves_rung_without_shortening_shared_block(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _rung_settings(Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None))
+    timeouts = settings.orchestration.timeouts.model_copy(update={"max_quota_wait": 120})
+    orchestration = settings.orchestration.model_copy(update={"timeouts": timeouts})
+    settings = settings.model_copy(update={"orchestration": orchestration})
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[
+            {
+                "kind": "fail",
+                "failure_kind": "quota",
+                "resets_at": (TASK_CREATED_AT + timedelta(seconds=30)).isoformat(),
+            }
+        ],
+    )
+
+    quota = QuotaStore(engine_env.connection)
+    await wait_until(lambda: quota.block_for(FAKE_RUNG.agent) is not None, timeout=10)
+    extended_until = TASK_CREATED_AT + timedelta(minutes=5)
+    quota.block(FAKE_RUNG.agent, extended_until, "another task")
+
+    await _drive(flow_task, clock)
+
+    final = engine_env.tasks.get(task_id)
+    assert final is not None
+    assert final.step is Step.INTEGRATE
+    assert final.status is Status.INTEGRATING
+    implementer_runs = [
+        run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER
+    ]
+    assert [run.agent for run in implementer_runs] == [FAKE_AGENT_ALIAS, FAKE_AGENT_NAME]
+    block = quota.block_for(FAKE_RUNG.agent)
+    assert block is not None
+    assert block.until == extended_until
+
+
 async def test_initial_fresh_turn_does_not_collect_handoff_facts(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:

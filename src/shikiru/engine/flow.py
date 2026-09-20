@@ -18,6 +18,7 @@ from shikiru.agents.contracts import FailureKind, role_dir
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.recovery import (
+    QUOTA_MARGIN,
     Action,
     Backoff,
     ClassifyScreen,
@@ -96,6 +97,7 @@ ESCALATION_PANE_TAIL_LINES = 60
 """Lines of pane scrollback captured as escalation evidence (03 §8)."""
 
 CONTINUE_INPUT = "continue"
+_QUOTA_WAIT_EXHAUSTED_MESSAGE = "quota wait exceeded"
 
 
 class _IntegrationTurnStopped(Exception):
@@ -251,6 +253,7 @@ class _TurnExecution:
     intervention_active: Callable[[], bool]
     launch_pending: bool
     closed: bool = False
+    quota_wait_exhausted: bool = False
 
 
 class TaskFlow:
@@ -571,7 +574,9 @@ class TaskFlow:
             return self._require_task(task.id), counters, True, None
         self._emit_turn_failed(task, step, result)
         role = role_override if role_override is not None else ACTING_ROLE[step]
-        policy = self._recovery_policy(task, role)
+        policy = self._recovery_policy(
+            task, role, quota_wait_exhausted=execution.quota_wait_exhausted
+        )
         action = decide(result, counters, policy)
         if isinstance(action, ClassifyScreen):
             classification = await self._classify_screen(task, role, result)
@@ -609,7 +614,9 @@ class TaskFlow:
         next_task = self._require_task(task.id) if isinstance(updated, _TurnExecution) else updated
         return next_task, counters, should_return, continued
 
-    def _recovery_policy(self, task: Task, role: Role) -> RecoveryPolicy:
+    def _recovery_policy(
+        self, task: Task, role: Role, *, quota_wait_exhausted: bool = False
+    ) -> RecoveryPolicy:
         current = move_up(task, role, self._settings)
         different = move_up(task, role, self._settings, different_agent=True)
         return RecoveryPolicy(
@@ -617,6 +624,7 @@ class TaskFlow:
             max_quota_wait=timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait),
             has_next_rung=current is not None,
             has_next_rung_different_agent=different is not None,
+            quota_wait_exhausted=quota_wait_exhausted,
         )
 
     async def _apply_recovery(
@@ -634,11 +642,16 @@ class TaskFlow:
         next_counters = counters
         if isinstance(action, WaitForQuota):
             terminal = await self._wait_for_quota(task, role, action.until)
-            updated = (
-                dataclasses.replace(execution, result=terminal)
-                if terminal is not None
-                else await self._resume_execution(execution)
-            )
+            if terminal is not None:
+                updated = dataclasses.replace(
+                    execution,
+                    result=terminal,
+                    quota_wait_exhausted=(
+                        isinstance(terminal, Failed) and terminal.kind is FailureKind.QUOTA
+                    ),
+                )
+            else:
+                updated = await self._resume_execution(execution)
         elif isinstance(action, Backoff):
             await self._close_execution(execution)
             await self._clock.sleep(action.delay.total_seconds())
@@ -812,17 +825,26 @@ class TaskFlow:
 
     async def _wait_for_quota(
         self, task: Task, role: Role, until: datetime
-    ) -> PaneDied | Stalled | None:
+    ) -> Failed | PaneDied | Stalled | None:
         agent = pick_rung(task, role, self._settings).agent
-        deadline = until
+        deadline = min(
+            until,
+            self._clock.now()
+            + timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait),
+        )
         while True:
-            remaining = (deadline - self._clock.now()).total_seconds()
-            if remaining > 0:
-                await self._clock.sleep(remaining)
             current = self._quota.block_for(agent)
             now = self._clock.now()
-            if current is not None and current.until > now:
-                deadline = current.until
+            current_until = current.until if current is not None else until
+            if current_until > now:
+                if now >= deadline:
+                    return Failed(
+                        kind=FailureKind.QUOTA,
+                        resets_at=current_until - QUOTA_MARGIN,
+                        message=_QUOTA_WAIT_EXHAUSTED_MESSAGE,
+                    )
+                remaining = min(current_until, deadline) - now
+                await self._clock.sleep(remaining.total_seconds())
                 continue
             self._quota.clear_block(agent)
             self._events.append(
@@ -861,9 +883,7 @@ class TaskFlow:
             )
         except asyncio.CancelledError:
             raise
-        except BaseException as error:
-            if isinstance(error, asyncio.CancelledError):
-                raise
+        except Exception as error:  # noqa: BLE001
             return Unrecoverable(unrecoverable=str(error))
 
     def _emit_helper_action(self, task: Task, classification: ScreenClassification) -> None:
@@ -1010,7 +1030,10 @@ class TaskFlow:
                 intervention_active=intervention_active,
                 launch_pending=launch_pending,
             )
-        except BaseException:
+        except asyncio.CancelledError:
+            self._sessions.unsubscribe(task.id, role, queue)
+            raise
+        except Exception:
             self._sessions.unsubscribe(task.id, role, queue)
             raise
 

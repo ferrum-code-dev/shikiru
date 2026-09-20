@@ -84,6 +84,7 @@ class RecoveryPolicy:
     max_quota_wait: timedelta
     has_next_rung: bool
     has_next_rung_different_agent: bool
+    quota_wait_exhausted: bool = False
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,10 @@ def quota_block_until(resets_at: datetime | None, now: datetime) -> datetime:
 
 
 def _quota_action(resets_at: datetime | None, policy: RecoveryPolicy) -> Action:
+    if policy.quota_wait_exhausted:
+        if policy.has_next_rung_different_agent:
+            return NextRung(different_agent=True)
+        return Escalate(EscalationReason.QUOTA_EXHAUSTED)
     until = quota_block_until(resets_at, policy.now)
     if until - policy.now > policy.max_quota_wait:
         if policy.has_next_rung_different_agent:

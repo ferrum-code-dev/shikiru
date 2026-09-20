@@ -88,22 +88,37 @@ class InjectedLines:
     """Lines a `TurnRunner` is currently injecting into one session's pane (03 §9).
 
     `SessionManager` creates one per live session and hands it to that session's
-    `SessionMonitor`, which checks arriving prompts against it. `TurnRunner` records a line
-    with `add()` before injecting it and `discard()`s it once its `PromptSubmitted` arrives or
-    the wait for it ends, so a line pending on one session is never visible to another
-    session's monitor.
+    `SessionMonitor`, which consumes each matching `PromptSubmitted`. A line remains pending
+    after a caller's bounded wait until the agent accepts it or the session terminates.
     """
 
     def __init__(self) -> None:
-        self._lines: set[str] = set()
+        self._lines: dict[str, int] = {}
 
     def add(self, line: str) -> None:
         """Record `line` as currently being injected."""
-        self._lines.add(line)
+        self._lines[line] = self._lines.get(line, 0) + 1
 
     def discard(self, line: str) -> None:
-        """Stop recording `line`, if it was recorded."""
-        self._lines.discard(line)
+        """Stop recording one pending `line`, if it was recorded."""
+        count = self._lines.get(line)
+        if count is None:
+            return
+        if count == 1:
+            del self._lines[line]
+        else:
+            self._lines[line] = count - 1
+
+    def consume(self, text: str) -> bool:
+        """Consume one pending line when the agent confirms its exact text."""
+        if text not in self._lines:
+            return False
+        self.discard(text)
+        return True
+
+    def clear(self) -> None:
+        """Forget every pending line when its session terminates."""
+        self._lines.clear()
 
     def __contains__(self, line: object) -> bool:
         return line in self._lines
@@ -192,10 +207,6 @@ class SessionMonitor:
         """Return whether this monitor is still waiting for `SessionStarted`."""
         return self._expects_started and not self._started
 
-    def publish(self, signal: MonitorSignal) -> None:
-        """Publish a startup outcome to every current subscriber."""
-        self._publish(signal)
-
     async def run(self) -> None:
         """Consume `session.signals()` and tick until the pane dies or the session ends."""
         consume = asyncio.ensure_future(self._consume_signals())
@@ -211,10 +222,8 @@ class SessionMonitor:
                     task.result()
                 except asyncio.CancelledError:
                     raise
-                except BaseException as error:
-                    if isinstance(error, asyncio.CancelledError):
-                        raise
-                    self._publish(PaneDied())
+                except Exception:  # noqa: BLE001
+                    self._publish_pane_died()
                     return
         except asyncio.CancelledError:
             consume.cancel()
@@ -222,14 +231,16 @@ class SessionMonitor:
             with suppress(asyncio.CancelledError):
                 await asyncio.gather(consume, tick)
             raise
-        except BaseException as error:
-            if isinstance(error, asyncio.CancelledError):
-                raise
-            self._publish(PaneDied())
+        except Exception:  # noqa: BLE001
+            self._publish_pane_died()
 
     def _publish(self, signal: MonitorSignal) -> None:
         for queue in self._subscribers:
             queue.put_nowait(signal)
+
+    def _publish_pane_died(self) -> None:
+        self._pending_lines.clear()
+        self._publish(PaneDied())
 
     def _publish_stalled(self, screen: str) -> None:
         if self._stalled:
@@ -245,9 +256,9 @@ class SessionMonitor:
         async for signal in self._session.signals():
             self._publish(signal)
             if self._handle_signal(signal, self._clock.now()) is _STOP:
-                self._publish(PaneDied())
+                self._publish_pane_died()
                 return
-        self._publish(PaneDied())
+        self._publish_pane_died()
 
     def _handle_signal(self, signal: AgentSignal, now: datetime) -> object:
         match signal:
@@ -278,6 +289,8 @@ class SessionMonitor:
         return None
 
     def _handle_prompt_submitted(self, text: str) -> None:
+        if self._pending_lines.consume(text):
+            return
         if not is_operator_prompt(text, self._run_dir, self._pending_lines):
             return
         self._set_intervention()
@@ -290,17 +303,17 @@ class SessionMonitor:
             try:
                 pane_alive = await self._pane.is_alive()
             except CommandFailed:
-                self._publish(PaneDied())
+                self._publish_pane_died()
                 return
             if not pane_alive:
-                self._publish(PaneDied())
+                self._publish_pane_died()
                 return
             now = self._clock.now()
             if self._expects_started and not self._started and now >= launch_deadline:
                 try:
                     screen = await self._pane.capture_visible()
                 except CommandFailed:
-                    self._publish(PaneDied())
+                    self._publish_pane_died()
                     return
                 self._publish_stalled(screen)
                 continue
@@ -309,7 +322,7 @@ class SessionMonitor:
                 try:
                     screen = await self._pane.capture_visible()
                 except CommandFailed:
-                    self._publish(PaneDied())
+                    self._publish_pane_died()
                     return
                 self._publish_stalled(screen)
 
