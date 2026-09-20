@@ -1,0 +1,5 @@
+{"hook_event_name":"SessionStart","session_id":"22222222-2222-2222-2222-222222222222","transcript_path":"transcript_two_turns.jsonl","cwd":"/tmp/project","source":"startup","model":"claude-sonnet-4-5-20250929"}
+{"hook_event_name":"UserPromptSubmit","session_id":"22222222-2222-2222-2222-222222222222","transcript_path":"transcript_two_turns.jsonl","prompt":"first turn"}
+{"hook_event_name":"Stop","session_id":"22222222-2222-2222-2222-222222222222","transcript_path":"transcript_two_turns.jsonl","stop_hook_active":false,"last_assistant_message":"accept: first turn"}
+{"hook_event_name":"UserPromptSubmit","session_id":"22222222-2222-2222-2222-222222222222","transcript_path":"transcript_two_turns.jsonl","prompt":"second turn"}
+{"hook_event_name":"Stop","session_id":"22222222-2222-2222-2222-222222222222","transcript_path":"transcript_two_turns.jsonl","stop_hook_active":false,"last_assistant_message":"accept: second turn"}
