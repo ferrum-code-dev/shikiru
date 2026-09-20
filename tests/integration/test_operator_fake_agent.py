@@ -90,6 +90,12 @@ async def test_operator_cli_fake_agent_completes_and_integrates(
         "orchestration.resources.max_cpu_pct=100",
         "--set",
         "orchestration.resources.min_free_ram_gb=0",
+        "--set",
+        'roles.leader.ladder=[{agent="fake",model="fake-1"}]',
+        "--set",
+        'roles.implementer.ladder=[{agent="fake",model="fake-1"}]',
+        "--set",
+        'roles.helper.ladder=[{agent="fake",model="fake-1"}]',
     )
     started = False
     session_stopped = False

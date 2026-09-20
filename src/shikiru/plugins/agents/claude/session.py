@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from shikiru.agents.contracts import AgentSignal, TurnFailed, Usage, role_dir
+from shikiru.agents.contracts import AgentSignal, FailureKind, TurnFailed, Usage, role_dir
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME, HookRecorder
 from shikiru.agents.sdk.jsonl import JsonlTail
 from shikiru.plugins.agents.claude.signals import (
@@ -92,7 +92,7 @@ class ClaudeSession:
                     transcript=self._transcript_entries(),
                     reset_time=self._reset_time,
                 )
-                if isinstance(signal, TurnFailed):
+                if isinstance(signal, TurnFailed) and signal.kind is FailureKind.QUOTA:
                     self._invalidate_quota()
                 yield signal
             if not advanced:
@@ -135,10 +135,7 @@ class ClaudeSession:
             return None
         candidate = Path(path)
         if candidate.is_absolute():
-            if candidate.is_file():
-                return candidate
-            role_candidate = self._role_path / candidate.name
-            return role_candidate if role_candidate.is_file() else candidate
+            return candidate
         return self._role_path / candidate
 
 

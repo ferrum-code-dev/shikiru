@@ -6,8 +6,9 @@ import asyncio
 import json
 import os
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
@@ -34,8 +35,6 @@ from shikiru.plugins.agents.claude.quota import ClaudeQuotaProbe
 from shikiru.plugins.agents.claude.session import ClaudeSession, hook_file_size, restored_session
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from shikiru.agents.contracts import (
         AgentContext,
         AgentSession,
@@ -48,20 +47,7 @@ if TYPE_CHECKING:
 
 PRICES_PATH = Path(__file__).parent / "prices.toml"
 CLAUDE_VERSION_ARGV = (CLAUDE_COMMAND, "--version")
-LOGIN_PROBE_ARGV = (
-    CLAUDE_COMMAND,
-    "-p",
-    ".",
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--model",
-    "haiku",
-    "--safe-mode",
-    "--tools",
-    "",
-    "--no-session-persistence",
-)
+AUTH_STATUS_ARGV = (CLAUDE_COMMAND, "auth", "status", "--json")
 DOCTOR_TIMEOUT_SECONDS = 60.0
 HOOK_EVENTS = (
     "SessionStart",
@@ -79,8 +65,8 @@ _HOOKS_LIST_FIELD = "hooks"
 _HOOK_TYPE_FIELD = "type"
 _HOOK_COMMAND_FIELD = "command"
 _HOOK_TYPE_COMMAND = "command"
-_AUTHENTICATION_FAILED = "authentication_failed"
-_NOT_LOGGED_IN = "not logged in"
+_AUTH_STATUS_LOGGED_IN_FIELD = "loggedIn"
+_INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
 
 
 class ClaudeAgent:
@@ -206,6 +192,7 @@ class ClaudeAgent:
         environment: dict[str, str | None] = dict(base)
         if self._options.auth == AUTH_API_KEY:
             environment[ANTHROPIC_API_KEY_ENV] = self._api_key()
+            environment[ANTHROPIC_AUTH_TOKEN_ENV] = None
         else:
             environment[ANTHROPIC_API_KEY_ENV] = None
             environment[ANTHROPIC_AUTH_TOKEN_ENV] = None
@@ -215,6 +202,7 @@ class ClaudeAgent:
         environment = dict(os.environ)
         if self._options.auth == AUTH_API_KEY:
             environment[ANTHROPIC_API_KEY_ENV] = self._api_key()
+            environment.pop(ANTHROPIC_AUTH_TOKEN_ENV, None)
         else:
             environment.pop(ANTHROPIC_API_KEY_ENV, None)
             environment.pop(ANTHROPIC_AUTH_TOKEN_ENV, None)
@@ -257,7 +245,7 @@ class ClaudeAgent:
     async def _check_login(self) -> CheckResult:
         try:
             result = await self._runner.run(
-                LOGIN_PROBE_ARGV,
+                AUTH_STATUS_ARGV,
                 timeout=DOCTOR_TIMEOUT_SECONDS,
                 env=self._subprocess_environment(),
                 check=False,
@@ -265,11 +253,15 @@ class ClaudeAgent:
         except (FileNotFoundError, ShikiruError) as error:
             return CheckResult("login", False, str(error))
         output = f"{result.stdout}\n{result.stderr}".strip()
-        lowered = output.lower()
-        failed = (
-            result.returncode != 0 or _AUTHENTICATION_FAILED in lowered or _NOT_LOGGED_IN in lowered
-        )
-        return CheckResult("login", not failed, output)
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return CheckResult("login", False, output or _INVALID_AUTH_STATUS_MESSAGE)
+        if not isinstance(payload, Mapping):
+            return CheckResult("login", False, output or _INVALID_AUTH_STATUS_MESSAGE)
+        typed_payload = cast("Mapping[str, object]", payload)
+        logged_in = typed_payload.get(_AUTH_STATUS_LOGGED_IN_FIELD)
+        return CheckResult("login", result.returncode == 0 and logged_in is True, output)
 
 
 def create(context: AgentContext) -> ClaudeAgent:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 
@@ -225,8 +226,14 @@ class TestClaudeAgentContract(AgentContractSuite):
                 {"auth": "api_key", "api_key_env": api_key_name, "args": []}
             )
             api_pane = RecordingPaneHandle()
-            await api_agent.launch(spec, api_pane)
-            assert api_pane.last_respawn().env["ANTHROPIC_API_KEY"] == "test-key"
+            api_spec = replace(
+                spec,
+                env={**spec.env, "ANTHROPIC_AUTH_TOKEN": "parent-token"},
+            )
+            await api_agent.launch(api_spec, api_pane)
+            api_environment = api_pane.last_respawn().env
+            assert api_environment["ANTHROPIC_API_KEY"] == "test-key"
+            assert api_environment["ANTHROPIC_AUTH_TOKEN"] is None
         finally:
             if previous_key is None:
                 os.environ.pop(api_key_name, None)
