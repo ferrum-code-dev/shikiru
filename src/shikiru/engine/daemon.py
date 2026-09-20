@@ -28,7 +28,7 @@ from shikiru.engine.handlers import (
 from shikiru.errors import CommandRejectedError, ShikiruError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
     from typing import TextIO
 
@@ -131,6 +131,7 @@ class Engine:
         project_root: Path,
         clock: Clock,
         close_state: Callable[[], None],
+        refresh_titles: Callable[[Task], Awaitable[None]] | None = None,
     ) -> None:
         """Wire the engine's stores, orchestration components and lifecycle callbacks."""
         self._lock = EngineLock(lock_path)
@@ -171,6 +172,7 @@ class Engine:
             finish_task=self.finish_task,
             set_consult_question=flow.set_consult_question,
             stop_engine=self.request_stop,
+            refresh_titles=refresh_titles,
         )
         self._handlers = HandlerRegistry(
             [

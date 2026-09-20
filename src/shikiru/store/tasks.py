@@ -19,6 +19,7 @@ from shikiru.domain.tasks import (
     Task,
     TaskOrigin,
 )
+from shikiru.errors import UsageError
 from shikiru.store.database import (
     dump_json,
     format_timestamp,
@@ -111,6 +112,12 @@ def _rows_to_tasks(connection: sqlite3.Connection, rows: Sequence[sqlite3.Row]) 
     return [_row_to_task(row, deps[row["id"]]) for row in rows]
 
 
+def _resolve_dependency(reference: str, child_ids: Sequence[str]) -> str:
+    if reference.startswith("#"):
+        return child_ids[int(reference[1:]) - 1]
+    return reference
+
+
 def fetch_task(connection: sqlite3.Connection, task_id: str) -> Task | None:
     """Read one task by id, or `None` if it doesn't exist."""
     row = connection.execute(
@@ -199,6 +206,57 @@ class TaskStore:
             )
         return self._fetch_or_raise(task_id)
 
+    def apply_scope_change(
+        self,
+        task_id: str,
+        transition: Transition,
+        new_tasks: Sequence[NewTask],
+        *,
+        origin: TaskOrigin,
+        mode: Mode | None = None,
+    ) -> list[Task]:
+        """Atomically transition a parent, enqueue children and repoint its dependents."""
+        with transaction(self._connection):
+            parent = fetch_task(self._connection, task_id)
+            if parent is None:
+                message = f"task {task_id} does not exist"
+                raise UsageError(message)
+            self._validate_scope_references(new_tasks)
+            self.apply_transition(task_id, transition)
+            if transition.status in (Status.DONE, Status.CANCELLED):
+                self.set_slot(task_id, None)
+            child_ids = [self._next_task_id() for _ in new_tasks]
+            resolved_dependencies = [
+                [_resolve_dependency(ref, child_ids) for ref in new_task.depends_on]
+                for new_task in new_tasks
+            ]
+            child_dependencies: list[tuple[str, str]] = []
+            for child_id, new_task, depends_on in zip(
+                child_ids, new_tasks, resolved_dependencies, strict=True
+            ):
+                self._insert_row(
+                    task_id=child_id,
+                    seq=int(child_id.removeprefix(TASK_ID_PREFIX)),
+                    parent_id=parent.id,
+                    origin=origin,
+                    title=new_task.title,
+                    request=new_task.request,
+                    mode=None,
+                    complexity="normal",
+                    priority=new_task.priority,
+                    depends_on=(),
+                    overrides={},
+                )
+                child_dependencies.extend((child_id, dependency) for dependency in depends_on)
+            self._connection.executemany(
+                "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)", child_dependencies
+            )
+            if mode is not None:
+                self.set_mode(task_id, mode)
+            if transition.repoint_dependents:
+                self._repoint_dependents(task_id, child_ids)
+        return [self._fetch_or_raise(child_id) for child_id in child_ids]
+
     def _insert_row(
         self,
         *,
@@ -240,6 +298,38 @@ class TaskStore:
             "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)",
             [(task_id, dep) for dep in depends_on],
         )
+
+    def _next_task_id(self) -> str:
+        return f"{TASK_ID_PREFIX}{next_sequence(self._connection, TASK_SEQUENCE)}"
+
+    def _validate_scope_references(self, new_tasks: Sequence[NewTask]) -> None:
+        sibling_count = len(new_tasks)
+        existing_references = {
+            ref for new_task in new_tasks for ref in new_task.depends_on if not ref.startswith("#")
+        }
+        if existing_references:
+            placeholders = ", ".join("?" for _ in existing_references)
+            rows = self._connection.execute(
+                f"SELECT id FROM tasks WHERE id IN ({placeholders})",
+                tuple(existing_references),
+            ).fetchall()
+            found = {row["id"] for row in rows}
+            missing = existing_references - found
+            if missing:
+                message = f"scope change references missing task(s): {sorted(missing)}"
+                raise UsageError(message)
+        for new_task in new_tasks:
+            for ref in new_task.depends_on:
+                if not ref.startswith("#"):
+                    continue
+                sibling_index = int(ref[1:])
+                if sibling_index < 1 or sibling_index > sibling_count:
+                    message = f"scope change reference {ref!r} is outside the sibling task list"
+                    raise UsageError(message)
+
+    def set_mode(self, task_id: str, mode: Mode) -> None:
+        """Persist the mode selected by a completed triage turn."""
+        self._connection.execute("UPDATE tasks SET mode = ? WHERE id = ?", (mode.value, task_id))
 
     def _fetch_or_raise(self, task_id: str) -> Task:
         task = fetch_task(self._connection, task_id)
@@ -359,18 +449,17 @@ class TaskStore:
     def repoint_dependents(self, old_task_id: str, new_task_ids: Sequence[str]) -> None:
         """Repoint every dependency on `old_task_id` onto each of `new_task_ids` (03 §2, §6)."""
         with transaction(self._connection):
-            dependents = [
-                row["task_id"]
-                for row in self._connection.execute(
-                    "SELECT task_id FROM task_deps WHERE depends_on = ?", (old_task_id,)
-                ).fetchall()
-            ]
-            self._connection.execute("DELETE FROM task_deps WHERE depends_on = ?", (old_task_id,))
-            self._connection.executemany(
-                "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)",
-                [
-                    (dependent, new_task_id)
-                    for dependent in dependents
-                    for new_task_id in new_task_ids
-                ],
-            )
+            self._repoint_dependents(old_task_id, new_task_ids)
+
+    def _repoint_dependents(self, old_task_id: str, new_task_ids: Sequence[str]) -> None:
+        dependents = [
+            row["task_id"]
+            for row in self._connection.execute(
+                "SELECT task_id FROM task_deps WHERE depends_on = ?", (old_task_id,)
+            ).fetchall()
+        ]
+        self._connection.execute("DELETE FROM task_deps WHERE depends_on = ?", (old_task_id,))
+        self._connection.executemany(
+            "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)",
+            [(dependent, new_task_id) for dependent in dependents for new_task_id in new_task_ids],
+        )

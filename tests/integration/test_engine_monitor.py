@@ -6,12 +6,14 @@ import asyncio
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
-from shikiru.agents.contracts import Activity, SessionEnded, SessionStarted
+from shikiru.agents.contracts import Activity, PromptSubmitted, SessionEnded, SessionStarted
+from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import PaneDied
 from shikiru.domain.runs import NO_USAGE
 from shikiru.domain.tasks import Hold, Role
 from shikiru.engine.monitor import Stalled
 from shikiru.errors import CommandFailed
+from shikiru.store.events import EventLog
 from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_RUNG, fake_engine_settings, make_monitor, set_script
 from tests.support.factories import TASK_CREATED_AT
@@ -419,3 +421,43 @@ async def test_intervention_hold_from_a_typed_prompt_is_scoped_to_its_own_task(
 
     await wait_until(lambda: _has_intervention(task_a.id), timeout=_SIGNAL_TIMEOUT)
     assert not _has_intervention(task_b.id)
+
+
+async def test_intervention_prompt_emits_an_event(
+    engine_env: EngineEnv,
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    task = await engine_env.build_task()
+    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
+    session = _ScriptedSession()
+    events = EventLog(engine_env.connection, clock)
+    monitor = make_monitor(
+        session,
+        _AlwaysAlivePane(),
+        task=task,
+        run=run,
+        run_dir=engine_env.project_root / "run",
+        tasks=engine_env.tasks,
+        runs=engine_env.runs,
+        clock=clock,
+        settings=fake_engine_settings(),
+        expects_started=False,
+        events=events,
+    )
+    queue = monitor.subscribe()
+    run_task = asyncio.ensure_future(monitor.run())
+
+    def _has_intervention(task_id: str) -> bool:
+        current = engine_env.tasks.get(task_id)
+        return current is not None and Hold.INTERVENTION in current.holds
+
+    try:
+        session.push(PromptSubmitted(text="operator input"))
+        await wait_until(lambda: _has_intervention(task.id), timeout=5)
+        event = events.since(0, kinds=[EventKind.INTERVENTION], task_id=task.id)[0]
+        assert event.data["text"] == "operator input"
+        assert isinstance(await queue.get(), PromptSubmitted)
+    finally:
+        run_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await run_task

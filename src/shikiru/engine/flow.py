@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
+    from shikiru.agents.contracts import AgentSession, Rung, Usage
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.reports import NewTask, Report
@@ -88,6 +89,7 @@ if TYPE_CHECKING:
     from shikiru.engine.turns import TurnRunner
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
+    from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
     from shikiru.tmux.pane import TmuxPane
     from shikiru.workspace.facts import GitFacts
@@ -184,16 +186,39 @@ def _turn_question(outcome: Outcome) -> str:
     return outcome.question if isinstance(outcome, ImplementationReport) else ""
 
 
+def _turn_outcome(outcome: Outcome) -> str:
+    if isinstance(outcome, TriageReport):
+        return outcome.mode.value
+    if isinstance(outcome, PlanReport):
+        return "completed"
+    if isinstance(outcome, ConsultAnswer):
+        return outcome.decision
+    if isinstance(outcome, ImplementationReport):
+        return outcome.status
+    return outcome.decision
+
+
+def _usage_delta(before: Usage, after: Usage) -> dict[str, int | float | None]:
+    cost_delta = (
+        after.cost_usd - before.cost_usd
+        if before.cost_usd is not None and after.cost_usd is not None
+        else None
+    )
+    return {
+        "input_tokens": after.input_tokens - before.input_tokens,
+        "output_tokens": after.output_tokens - before.output_tokens,
+        "cache_read_tokens": after.cache_read_tokens - before.cache_read_tokens,
+        "cache_write_tokens": after.cache_write_tokens - before.cache_write_tokens,
+        "cost_usd": cost_delta,
+    }
+
+
 def _new_tasks_for(outcome: Outcome) -> list[NewTask]:
     if isinstance(outcome, TriageReport):
         return list(outcome.subtasks)
     if isinstance(outcome, PlanReport | Verdict):
         return list(outcome.new_tasks)
     return []
-
-
-def _resolve_ref(ref: str, sibling_ids: list[str]) -> str:
-    return sibling_ids[int(ref[1:]) - 1] if ref.startswith("#") else ref
 
 
 def _escalation_narrative(
@@ -248,10 +273,15 @@ class _TurnExecution:
     turn_dir: Path
     spec: TurnSpec
     helper: Helper
+    session: AgentSession
     prompt_path: Path
     injected: InjectedLines
     intervention_active: Callable[[], bool]
     launch_pending: bool
+    rung: Rung
+    usage_before: Usage
+    usage_after: Usage
+    on_nudge: Callable[[], None]
     closed: bool = False
     quota_wait_exhausted: bool = False
 
@@ -276,6 +306,7 @@ class TaskFlow:
         quota: QuotaStore,
         clock: Clock,
         integrator: IntegrationCoordinator,
+        runs: RunStore,
     ) -> None:
         """Wire every collaborator a step turn and its recovery actions need."""
         self._tasks = tasks
@@ -292,6 +323,7 @@ class TaskFlow:
         self._quota = quota
         self._clock = clock
         self._integrator = integrator
+        self._runs = runs
         self._recovery_questions: dict[str, str] = {}
         self._force_handoff: set[str] = set()
         self._integration_context: dict[str, str] = {}
@@ -449,9 +481,10 @@ class TaskFlow:
             while True:
                 if isinstance(execution.result, Completed):
                     await self._close_execution(execution)
-                    self._clear_intervention(current.id, role)
+                    await self._clear_intervention(current.id, role)
                     report = execution.result.report
                     if isinstance(report, ImplementationReport | Verdict):
+                        self._emit_turn_completed(current, report, execution)
                         return current, report
                     message = f"{current.id} integration turn returned an unexpected report"
                     raise ShikiruError(message)
@@ -495,9 +528,10 @@ class TaskFlow:
         history = load_history(run_dir(self._project_root, task.id))
         return history[-1][1] if history else None
 
-    def _clear_intervention(self, task_id: str, role: Role) -> None:
+    async def _clear_intervention(self, task_id: str, role: Role) -> None:
         clear_intervention(self._tasks, self._events, task_id)
         self._sessions.clear_intervention(task_id, role)
+        await self._titles.refresh(self._require_task(task_id))
 
     def _intervention_active(self, task_id: str) -> bool:
         task = self._tasks.get(task_id)
@@ -543,8 +577,9 @@ class TaskFlow:
                         execution = await self._run_turn(task, step)
                     continue
                 await self._close_execution(execution)
-                self._clear_intervention(task.id, ACTING_ROLE[step])
+                await self._clear_intervention(task.id, ACTING_ROLE[step])
                 outcome = result.report
+                self._emit_turn_completed(task, outcome, execution)
                 transition = next_step(task, outcome, self._settings)
                 escalated = transition.status is Status.ESCALATED
                 escalation_step, reason = transition.step, transition.escalation_reason
@@ -983,6 +1018,11 @@ class TaskFlow:
             kind_override=kind_override,
         )
         rung = pick_rung(task, role, self._settings)
+        run = self._runs.get_live(task.id, role)
+        if run is None:
+            message = f"{task.id} has no live {role.value} run"
+            raise ShikiruError(message)
+        usage_before = await session.usage()
         helper_rung = pick_rung(task, Role.HELPER, self._settings)
         spec = TurnSpec(
             step=step,
@@ -1002,6 +1042,27 @@ class TaskFlow:
         try:
             helper = Helper(self._agent_pool.get(helper_rung.agent))
             injected = self._sessions.injected_lines(task.id, role)
+
+            def on_nudge() -> None:
+                self._events.append(
+                    EventKind.NUDGE,
+                    task_id=task.id,
+                    message=f"{task.id} {role.value} nudge",
+                    data={"step": step.value, "role": role.value},
+                )
+
+            self._events.append(
+                EventKind.TURN_STARTED,
+                task_id=task.id,
+                message=f"{task.id} {role.value} turn started",
+                data={
+                    "step": step.value,
+                    "role": role.value,
+                    "iteration": task.iteration,
+                    "agent": rung.agent,
+                    "model": rung.model,
+                },
+            )
             result = await self._turns.run(
                 session,
                 pane,
@@ -1012,7 +1073,9 @@ class TaskFlow:
                 helper=helper,
                 injected=injected,
                 intervention_active=intervention_active,
+                on_nudge=on_nudge,
             )
+            usage_after = await session.usage()
             turn_dir = (role_dir(task_run_dir, role.value) / CURRENT_TURN_LINK_NAME).resolve()
             return _TurnExecution(
                 result=result,
@@ -1023,10 +1086,15 @@ class TaskFlow:
                 turn_dir=turn_dir,
                 spec=spec,
                 helper=helper,
+                session=session,
                 prompt_path=turn_dir / PROMPT_FILENAME,
                 injected=injected,
                 intervention_active=intervention_active,
                 launch_pending=launch_pending,
+                rung=rung,
+                usage_before=usage_before,
+                usage_after=usage_after,
+                on_nudge=on_nudge,
             )
         except asyncio.CancelledError:
             self._sessions.unsubscribe(task.id, role, queue)
@@ -1045,8 +1113,10 @@ class TaskFlow:
             prompt_path=execution.prompt_path,
             injected=execution.injected,
             intervention_active=execution.intervention_active,
+            on_nudge=execution.on_nudge,
         )
-        return dataclasses.replace(execution, result=result)
+        usage_after = await execution.session.usage()
+        return dataclasses.replace(execution, result=result, usage_after=usage_after)
 
     async def _close_execution(self, execution: _TurnExecution) -> None:
         if execution.closed:
@@ -1098,41 +1168,44 @@ class TaskFlow:
         return render_facts(facts)
 
     async def _apply(self, task: Task, transition: Transition, outcome: Outcome | None) -> Task:
-        self._tasks.apply_transition(task.id, transition)
-        if transition.status in (Status.DONE, Status.CANCELLED):
-            self._tasks.set_slot(task.id, None)
         if transition.enqueue_new_tasks:
             if outcome is None:
                 message = f"{task.id}'s transition enqueues new tasks but has no outcome"
                 raise ShikiruError(message)
             self._apply_new_tasks(task, transition, outcome)
-        if outcome is not None:
-            self._emit_turn_completed(task, outcome)
+        else:
+            self._tasks.apply_transition(task.id, transition)
+            if transition.status in (Status.DONE, Status.CANCELLED):
+                self._tasks.set_slot(task.id, None)
+            if isinstance(outcome, TriageReport):
+                self._tasks.set_mode(task.id, outcome.mode)
         updated = self._require_task(task.id)
+        if (
+            task.step != updated.step
+            and updated.step is not None
+            and updated.status
+            in (
+                Status.RUNNING,
+                Status.INTEGRATING,
+            )
+        ):
+            self._emit_step_started(updated)
         await self._titles.refresh(updated)
         return updated
 
     def _apply_new_tasks(self, task: Task, transition: Transition, outcome: Outcome) -> None:
         new_tasks = _new_tasks_for(outcome)
         origin = TaskOrigin.SPLIT if isinstance(outcome, TriageReport) else TaskOrigin.LEADER
-        new_ids = self._insert_new_tasks(task, origin, new_tasks)
-        if transition.repoint_dependents:
-            self._tasks.repoint_dependents(task.id, new_ids)
+        selected_mode = outcome.mode if isinstance(outcome, TriageReport) else None
+        children = self._tasks.apply_scope_change(
+            task.id,
+            transition,
+            new_tasks,
+            origin=origin,
+            mode=selected_mode,
+        )
+        new_ids = [child.id for child in children]
         self._emit_scope_change(task, outcome, new_ids)
-
-    def _insert_new_tasks(
-        self, parent: Task, origin: TaskOrigin, new_tasks: Sequence[NewTask]
-    ) -> list[str]:
-        inserted = [
-            self._tasks.insert_child(new_task, depends_on=[], parent_id=parent.id, origin=origin)
-            for new_task in new_tasks
-        ]
-        ids = [child.id for child in inserted]
-        for new_task, child in zip(new_tasks, inserted, strict=True):
-            if new_task.depends_on:
-                resolved = [_resolve_ref(ref, ids) for ref in new_task.depends_on]
-                self._tasks.set_depends_on(child.id, resolved)
-        return ids
 
     def _emit_scope_change(self, task: Task, outcome: Outcome, new_ids: list[str]) -> None:
         if not isinstance(outcome, PlanReport | Verdict):
@@ -1146,18 +1219,55 @@ class TaskFlow:
             data={"new_task_ids": new_ids, "scope_changes": list(outcome.scope_changes)},
         )
 
-    def _emit_turn_completed(self, task: Task, outcome: Outcome) -> None:
+    def _emit_step_started(self, task: Task) -> None:
+        if task.step is None:
+            return
+        role = ACTING_ROLE[task.step]
+        rung = pick_rung(task, role, self._settings)
+        self._events.append(
+            EventKind.STEP_STARTED,
+            task_id=task.id,
+            message=f"{task.id} {task.step.value} started",
+            data={
+                "step": task.step.value,
+                "role": role.value,
+                "iteration": task.iteration,
+                "agent": rung.agent,
+                "model": rung.model,
+            },
+        )
+
+    def _emit_turn_completed(self, task: Task, outcome: Outcome, execution: _TurnExecution) -> None:
+        summary = _turn_summary(outcome)
+        usage_delta = _usage_delta(execution.usage_before, execution.usage_after)
         self._events.append(
             EventKind.TURN_COMPLETED,
             task_id=task.id,
-            message=_turn_summary(outcome),
+            message=summary,
             data={
                 "step": task.step.value if task.step is not None else None,
                 "iteration": task.iteration,
-                "summary": _turn_summary(outcome),
+                "role": execution.role.value,
+                "agent": execution.rung.agent,
+                "model": execution.rung.model,
+                "outcome": _turn_outcome(outcome),
+                "summary": summary,
                 "question": _turn_question(outcome),
+                "usage_delta": usage_delta,
             },
         )
+        if isinstance(outcome, Verdict):
+            self._events.append(
+                EventKind.VERDICT,
+                task_id=task.id,
+                message=summary,
+                data={
+                    "decision": outcome.decision,
+                    "summary": summary,
+                    "issues": [issue.model_dump() for issue in outcome.issues],
+                    "residual_risks": list(outcome.residual_risks),
+                },
+            )
 
     def _require_task(self, task_id: str) -> Task:
         task = self._tasks.get(task_id)

@@ -8,6 +8,7 @@ import pytest
 
 from shikiru.domain.commands import Prioritize
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import ConsultAnswer
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, RepoState, Status
 from shikiru.operator.commands import (
@@ -150,17 +151,57 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
     turn_dir = tmp_path / ".shikiru" / "runs" / task.id / "turns" / "01-triage-i0"
     turn_dir.mkdir(parents=True)
     (turn_dir / "report.kind").write_text("triage")
-    (turn_dir / "report.json").write_text('{"title":"triage"}')
+    (turn_dir / "report.json").write_text(
+        '{"title":"triage","mode":"implement","complexity":"normal",'
+        '"acceptance_criteria":[],"references":[]}'
+    )
 
     detail = _queries(tmp_path, reader).get_task(task.id)
 
     assert detail is not None
     assert len(detail.events) == 1
     assert detail.reports == [
-        {"turn": "01-triage-i0", "kind": "triage", "data": {"title": "triage"}}
+        {
+            "turn": "01-triage-i0",
+            "kind": "triage",
+            "data": {
+                "title": "triage",
+                "mode": "implement",
+                "complexity": "normal",
+                "acceptance_criteria": [],
+                "references": [],
+                "subtasks": [],
+            },
+        }
     ]
     assert detail.branches == ["shikiru/T-1-detail"]
     assert detail.sessions == []
+
+
+async def test_task_detail_uses_a_valid_helper_rebuild_when_agent_report_is_invalid(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="helper detail")
+    turn_dir = tmp_path / ".shikiru" / "runs" / task.id / "turns" / "01-consult-i0"
+    turn_dir.mkdir(parents=True)
+    (turn_dir / "report.kind").write_text("consult")
+    (turn_dir / "report.json").write_text("invalid")
+    helper = ConsultAnswer(decision="answer", answer="Use the safe path")
+    (turn_dir / "helper.json").write_text(helper.model_dump_json())
+
+    detail = _queries(tmp_path, reader).get_task(task.id)
+
+    assert detail is not None
+    assert detail.reports == [
+        {
+            "turn": "01-consult-i0",
+            "kind": "consult",
+            "data": helper.model_dump(mode="json"),
+        }
+    ]
 
 
 async def test_missing_packet_and_pane_are_operator_errors(

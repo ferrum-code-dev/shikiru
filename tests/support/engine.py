@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.runs import Run
+    from shikiru.store.events import EventLog
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -185,6 +186,7 @@ def make_monitor(
     clock: Clock,
     settings: Settings,
     expects_started: bool,
+    events: EventLog | None = None,
 ) -> SessionMonitor:
     """A `SessionMonitor` for `task`/`run`, timed from `settings.orchestration`."""
     return SessionMonitor(
@@ -199,6 +201,7 @@ def make_monitor(
         timeouts=settings.orchestration.timeouts,
         poll_seconds=settings.orchestration.poll_seconds,
         expects_started=expects_started,
+        events=events,
     )
 
 

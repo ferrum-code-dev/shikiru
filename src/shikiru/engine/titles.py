@@ -1,9 +1,9 @@
 """`TaskTitles`: pane and window titles, and window state decorations (03 §4.2; 06 §5.3).
 
-Refreshed by `TaskFlow` at every step boundary (step, iteration, status or hold change). The
-window's `@shk_state_color`/`@shk_state_glyph` mirror the task's own state — its acting role and
-step, or a hold/escalation override — distinct from `engine.decorations`, which mirrors a
-*session's* live activity on its own pane.
+Refreshed at every task state boundary (dispatch, step, iteration, status, hold, rung and usage
+change). The window's `@shk_state_color`/`@shk_state_glyph` mirror the task's own state — its
+acting role and step, or a hold/escalation override — distinct from `engine.decorations`, which
+mirrors a *session's* live activity on its own pane.
 """
 
 from __future__ import annotations

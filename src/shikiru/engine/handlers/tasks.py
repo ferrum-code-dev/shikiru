@@ -18,6 +18,7 @@ from shikiru.domain.steps import ACTING_ROLE, Transition
 from shikiru.domain.tasks import Hold, Status
 from shikiru.engine.handlers.base import (
     HandlerContext,
+    refresh_titles,
     reject_terminal,
     reject_wrong_command,
     require_task,
@@ -26,6 +27,8 @@ from shikiru.errors import CommandRejectedError
 
 if TYPE_CHECKING:
     from shikiru.domain.commands import Command
+
+CONTINUE_INPUT = "continue"
 
 
 class SubmitHandler:
@@ -92,6 +95,7 @@ class PauseHandler:
                 message=f"{task.id} paused",
                 data={"hold": Hold.PAUSED.value, "now": command.now},
             )
+        await refresh_titles(self._context, task.id)
         return {"task_id": task.id, "paused": True, "now": command.now}
 
 
@@ -120,12 +124,13 @@ class ResumeHandler:
         if Hold.INTERVENTION in holds and task.step is not None:
             role = ACTING_ROLE[task.step]
             self._context.sessions.clear_intervention(task.id, role)
-            await self._context.sessions.inject_line(task, role, "continue")
+            await self._context.sessions.inject_line(task, role, CONTINUE_INPUT)
         if holds & {Hold.PAUSED, Hold.INTERVENTION} and task.status in (
             Status.RUNNING,
             Status.INTEGRATING,
         ):
             await self._context.start_task(task.id)
+        await refresh_titles(self._context, task.id)
         return {"task_id": task.id, "paused": False, "intervention": False}
 
 
@@ -164,6 +169,7 @@ class CancelHandler:
         if updated is None:
             message = f"task {task.id} disappeared after cancellation"
             raise CommandRejectedError(message)
+        await refresh_titles(self._context, updated.id)
         await self._context.finish_task(updated)
         return {"task_id": task.id, "status": Status.CANCELLED.value}
 
@@ -201,6 +207,7 @@ class RetryHandler:
         )
         self._context.tasks.apply_transition(current.id, transition)
         self._context.tasks.set_requeued(current.id)
+        await refresh_titles(self._context, current.id)
         return {"task_id": current.id, "status": Status.QUEUED.value}
 
 
@@ -240,4 +247,5 @@ class SetRungHandler:
                 "operator": True,
             },
         )
+        await refresh_titles(self._context, task.id)
         return {"task_id": task.id, "role": command.role.value, "model": command.rung.model}

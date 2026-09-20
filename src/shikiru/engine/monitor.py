@@ -28,12 +28,13 @@ from shikiru.agents.contracts import (
     TurnFailed,
 )
 from shikiru.domain.activity import is_operator_prompt, is_stalled
+from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import PaneDied, Stalled
 from shikiru.domain.tasks import Hold
 from shikiru.errors import CommandFailed
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Awaitable, Callable, Iterator, Mapping
     from datetime import datetime
     from pathlib import Path
     from typing import Any
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import AgentSession, AgentSignal, PaneHandle, Usage
     from shikiru.clock import Clock
     from shikiru.config.settings import TimeoutsConfig
+    from shikiru.domain.tasks import Task
+    from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
 
@@ -153,6 +156,8 @@ class SessionMonitor:
         poll_seconds: int,
         expects_started: bool,
         pending_lines: InjectedLines | None = None,
+        events: EventLog | None = None,
+        refresh_titles: Callable[[Task], Awaitable[None]] | None = None,
     ) -> None:
         """Monitor `session` in `pane`, persisting facts for `run_id` under `tasks`/`runs`."""
         self._session = session
@@ -167,6 +172,8 @@ class SessionMonitor:
         self._poll_seconds = poll_seconds
         self._expects_started = expects_started
         self._pending_lines = pending_lines if pending_lines is not None else InjectedLines()
+        self._events = events
+        self._refresh_titles = refresh_titles
         self._subscribers: list[asyncio.Queue[MonitorSignal]] = []
         self._last_activity: datetime = clock.now()
         self._tool_running = False
@@ -255,12 +262,12 @@ class SessionMonitor:
     async def _consume_signals(self) -> None:
         async for signal in self._session.signals():
             self._publish(signal)
-            if self._handle_signal(signal, self._clock.now()) is _STOP:
+            if await self._handle_signal(signal, self._clock.now()) is _STOP:
                 self._publish_pane_died()
                 return
         self._publish_pane_died()
 
-    def _handle_signal(self, signal: AgentSignal, now: datetime) -> object:
+    async def _handle_signal(self, signal: AgentSignal, now: datetime) -> object:
         match signal:
             case SessionStarted():
                 self._started = True
@@ -272,7 +279,7 @@ class SessionMonitor:
                 self._mark_activity(now)
             case PromptSubmitted(text=text):
                 self._mark_activity(now)
-                self._handle_prompt_submitted(text)
+                await self._handle_prompt_submitted(text)
             case TurnEnded(last_message=last_message):
                 self._mark_activity(now)
                 self._tool_running = False
@@ -288,12 +295,12 @@ class SessionMonitor:
                 return _STOP
         return None
 
-    def _handle_prompt_submitted(self, text: str) -> None:
+    async def _handle_prompt_submitted(self, text: str) -> None:
         if self._pending_lines.consume(text):
             return
         if not is_operator_prompt(text, self._run_dir, self._pending_lines):
             return
-        self._set_intervention()
+        await self._set_intervention(text)
         self._publish(InterventionSet())
 
     async def _tick_loop(self) -> None:
@@ -331,6 +338,12 @@ class SessionMonitor:
         if usage != self._persisted_usage:
             self._runs.record_usage(self._run_id, usage)
             self._persisted_usage = usage
+            if self._refresh_titles is not None:
+                task = self._tasks.get(self._task_id)
+                if task is None:
+                    message = f"{self._task_id} disappeared while refreshing titles"
+                    raise RuntimeError(message)
+                await self._refresh_titles(task)
         snapshot = dict(self._session.snapshot())
         if snapshot != self._persisted_snapshot:
             self._runs.set_agent_state(self._run_id, snapshot)
@@ -339,7 +352,7 @@ class SessionMonitor:
             self._runs.set_last_message(self._run_id, self._last_message)
             self._persisted_message = self._last_message
 
-    def _set_intervention(self) -> None:
+    async def _set_intervention(self, text: str) -> None:
         task = self._tasks.get(self._task_id)
         if task is None:
             message = f"{self._task_id} has a live session but no task row"
@@ -347,3 +360,16 @@ class SessionMonitor:
         if Hold.INTERVENTION in task.holds:
             return
         self._tasks.set_holds(self._task_id, task.holds | {Hold.INTERVENTION})
+        if self._events is not None:
+            self._events.append(
+                EventKind.INTERVENTION,
+                task_id=self._task_id,
+                message=f"{self._task_id} operator intervention detected",
+                data={"text": text},
+            )
+        if self._refresh_titles is not None:
+            updated = self._tasks.get(self._task_id)
+            if updated is None:
+                message = f"{self._task_id} disappeared while refreshing titles"
+                raise RuntimeError(message)
+            await self._refresh_titles(updated)

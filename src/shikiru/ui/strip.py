@@ -123,6 +123,8 @@ _MODE_PANEL_LABELS: dict[Mode, tuple[tuple[str, str], ...]] = {
 
 def panel_specs_for_mode(mode: Mode, *, pull_request: bool = False) -> tuple[tuple[str, str], ...]:
     """Return this mode's `(label, stage glyph)` panels (06 §6.2): implement, plan, or PR."""
+    if mode is Mode.SPLIT:
+        return (("Triage", STAGE_TRIAGE),)
     specs = _MODE_PANEL_LABELS[mode]
     if mode is Mode.IMPLEMENT and pull_request:
         specs = (*specs[:3], ("PR", STAGE_PR))
@@ -252,6 +254,11 @@ def _panels_for(task: Task, settings: Settings) -> tuple[PanelView, ...]:
             raise ValueError(message)
         panel = _panel_view(
             "Triage", STAGE_TRIAGE, active_state, step=step, task=task, settings=settings
+        )
+        return (panel,)
+    if task.mode is Mode.SPLIT:
+        panel = _panel_view(
+            "Triage", STAGE_TRIAGE, active_state, step=Step.TRIAGE, task=task, settings=settings
         )
         return (panel,)
     specs = panel_specs_for_mode(task.mode)

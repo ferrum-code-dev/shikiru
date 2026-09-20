@@ -15,7 +15,12 @@ from shikiru.domain.escalation import EscalationStatus, transition_for_resolutio
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import ACTING_ROLE, Transition
 from shikiru.domain.tasks import EscalationReason, Status
-from shikiru.engine.handlers.base import HandlerContext, reject_wrong_command, require_task
+from shikiru.engine.handlers.base import (
+    HandlerContext,
+    refresh_titles,
+    reject_wrong_command,
+    require_task,
+)
 from shikiru.errors import CommandRejectedError
 
 if TYPE_CHECKING:
@@ -43,6 +48,7 @@ class ResolveHandler:
         else:
             await self._context.cancel_task(task.id)
         self._apply_transition(task, escalation, command, transition)
+        await refresh_titles(self._context, task.id)
         self._context.escalations.resolve(escalation.id, self._resolution_text(command))
         self._context.events.append(
             EventKind.ESCALATION_RESOLVED,

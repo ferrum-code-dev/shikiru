@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 TaskCallback = Callable[[str], Awaitable[None]]
 TerminalCallback = Callable[[Task], Awaitable[None]]
 ConsultCallback = Callable[[str, str], None]
+RefreshCallback = Callable[[Task], Awaitable[None]]
 
 
 @dataclass
@@ -40,6 +41,7 @@ class HandlerContext:
     finish_task: TerminalCallback
     set_consult_question: ConsultCallback
     stop_engine: Callable[[], None]
+    refresh_titles: RefreshCallback | None = None
 
 
 class CommandHandler(Protocol):
@@ -88,3 +90,14 @@ def reject_terminal(task: Task) -> None:
     if task.status in (Status.DONE, Status.CANCELLED):
         message = f"{task.id} is already {task.status.value}"
         raise CommandRejectedError(message)
+
+
+async def refresh_titles(context: HandlerContext, task_id: str) -> None:
+    """Refresh one task's tmux titles after a command changes its persisted state."""
+    if context.refresh_titles is None:
+        return
+    task = context.tasks.get(task_id)
+    if task is None:
+        message = f"task {task_id} disappeared while refreshing titles"
+        raise CommandRejectedError(message)
+    await context.refresh_titles(task)

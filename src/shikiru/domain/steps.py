@@ -24,7 +24,6 @@ from shikiru.domain.tasks import (
     Step,
     Task,
 )
-from shikiru.errors import UsageError
 
 if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
@@ -84,9 +83,8 @@ def first_step(task: Task) -> Transition:
 
     A task with no `mode` starts at `triage`. `submit --mode implement|plan` skips triage
     straight into that step; `implement` also starts numbering from iteration 1, matching the
-    turn dirs (`NN-<step>-i<iteration>`) and 03 §2's "implement (i = 1)". `--mode split` has no
-    first turn of its own, since `split` only ever happens as a triage outcome (03 §2), so it is
-    rejected here.
+    turn dirs (`NN-<step>-i<iteration>`) and 03 §2's "implement (i = 1)". A submitted `split`
+    mode starts at triage so the Leader can provide the child task list.
     """
     if task.mode is None:
         return Transition.stay(task, step=Step.TRIAGE)
@@ -94,8 +92,7 @@ def first_step(task: Task) -> Transition:
         return Transition.stay(task, step=Step.PLAN)
     if task.mode is Mode.IMPLEMENT:
         return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
-    message = "submit --mode split has no first step; split only happens as a triage outcome"
-    raise UsageError(message)
+    return Transition.stay(task, step=Step.TRIAGE)
 
 
 def _from_triage(task: Task, outcome: TriageReport) -> Transition:

@@ -173,5 +173,6 @@ def build_flow(
         quota=QuotaStore(env.connection),
         clock=flow_clock,
         integrator=coordinator,
+        runs=env.runs,
     )
     return FlowEnv(flow=flow, env=env, events=events, escalations=escalations_store, titles=titles)

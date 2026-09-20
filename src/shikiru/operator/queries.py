@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +16,7 @@ from shikiru.domain.scheduling import dispatch_sort_key
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
 from shikiru.store.escalations import Escalation
+from shikiru.workspace.reports import load_turn_report
 
 if TYPE_CHECKING:
     from shikiru.store.reader import StateReader
@@ -258,17 +258,16 @@ class OperatorQueries:
             return []
         reports: list[dict[str, object]] = []
         for turn_dir in sorted(path for path in turns_dir.iterdir() if path.is_dir()):
-            report_path = turn_dir / "report.json"
-            kind_path = turn_dir / "report.kind"
-            if not report_path.is_file() or not kind_path.is_file():
+            loaded = load_turn_report(turn_dir)
+            if loaded is None:
                 continue
-            try:
-                data = json.loads(report_path.read_text())
-                kind = kind_path.read_text().strip()
-            except (OSError, json.JSONDecodeError) as error:
-                message = f"cannot read report in {turn_dir}: {error}"
-                raise OperatorQueryError(message) from error
-            reports.append({"turn": turn_dir.name, "kind": kind, "data": data})
+            reports.append(
+                {
+                    "turn": turn_dir.name,
+                    "kind": loaded.kind.value,
+                    "data": loaded.report.model_dump(mode="json"),
+                }
+            )
         return reports
 
 

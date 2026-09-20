@@ -267,6 +267,11 @@ def build_engine(
         return TmuxPane(resolved_tmux, pane_id, resolved_clock)
 
     decorator = PaneDecorator(resolved_tmux)
+    titles = TaskTitles(decorator, runs, resolved_settings)
+
+    async def refresh_titles(task: Task) -> None:
+        await titles.refresh(task)
+
     sessions = SessionManager(
         agent_pool,
         pane_factory,
@@ -276,6 +281,8 @@ def build_engine(
         settings=resolved_settings,
         clock=resolved_clock,
         decorator=decorator,
+        events=events,
+        refresh_titles=refresh_titles,
     )
     target = exact_target(session_name(resolved_settings.project.name))
     layout = LayoutGuard(
@@ -289,7 +296,6 @@ def build_engine(
     )
     roots = TaskRootBuilder(Git(resolved_runner), project_root)
     escalation_raiser = EscalationRaiser(escalations_store, events, runs, project_root)
-    titles = TaskTitles(decorator, runs, resolved_settings)
     git = Git(resolved_runner)
     integrator = _build_integrator(
         project_root=project_root,
@@ -317,6 +323,7 @@ def build_engine(
         quota=quotas,
         clock=resolved_clock,
         integrator=integrator,
+        runs=runs,
     )
     sampler = ResourceSampler(resolved_clock, layout.process_ids)
     notifier = Notifier(
@@ -337,7 +344,8 @@ def build_engine(
         layout=layout,
         roots=roots,
         events=events,
-        on_dependency_cancelled=DependencyEscalator(tasks, escalation_raiser),
+        on_dependency_cancelled=DependencyEscalator(tasks, escalation_raiser, titles),
+        titles=titles,
     )
     return Engine(
         lock_path=state_dir / "engine.lock",
@@ -359,6 +367,7 @@ def build_engine(
         project_root=project_root,
         clock=resolved_clock,
         close_state=connection.close,
+        refresh_titles=titles.refresh,
     )
 
 

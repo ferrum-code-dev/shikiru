@@ -16,8 +16,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
-from pydantic import ValidationError
-
 from shikiru.agents.contracts import Compacted, PromptSubmitted, TurnEnded, TurnFailed, role_dir
 from shikiru.domain.recovery import Completed, Failed, PaneDied, ProtocolError, Stalled
 from shikiru.domain.reports import (
@@ -29,13 +27,13 @@ from shikiru.domain.reports import (
     REPORT_KIND_FILENAME,
     REPORT_SCHEMA_FILENAME,
     ReportKind,
-    model_for,
     schema_for,
 )
 from shikiru.engine.monitor import wait_for_signal
 from shikiru.errors import CommandFailed
 from shikiru.helper.models import Unrecoverable
 from shikiru.tmux.pane import ENTER_KEY
+from shikiru.workspace.reports import load_turn_report
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -97,26 +95,8 @@ def read_turn_report(turn_dir: Path) -> Report | None:
     nudge"; a caller loading past history treats either as "this turn produced nothing usable",
     so it's dropped from the history the same way.
     """
-    kind_path = turn_dir / REPORT_KIND_FILENAME
-    if not kind_path.is_file():
-        return None
-    try:
-        kind = ReportKind(kind_path.read_text().strip())
-    except ValueError:
-        return None
-    for filename in (REPORT_FILENAME, HELPER_REPORT_FILENAME):
-        report_path = turn_dir / filename
-        if not report_path.is_file():
-            continue
-        try:
-            data = json.loads(report_path.read_text())
-        except OSError, UnicodeError, json.JSONDecodeError:
-            continue
-        try:
-            return model_for(kind).model_validate(data)
-        except ValidationError:
-            continue
-    return None
+    loaded = load_turn_report(turn_dir)
+    return loaded.report if loaded is not None else None
 
 
 def _terminal_result(signal: TurnFailed | PaneDied | Stalled) -> TurnResult:
@@ -145,6 +125,7 @@ class TurnRunner:
         helper: Helper,
         injected: InjectedLines,
         intervention_active: Callable[[], bool] | None = None,
+        on_nudge: Callable[[], None] | None = None,
     ) -> TurnResult:
         """Run one turn for `role` and return its `TurnResult`; never raises for agent behaviour."""
         turn_dir = self._prepare_turn_dir(run_dir, role, spec)
@@ -165,6 +146,7 @@ class TurnRunner:
             prompt_path=prompt_path,
             injected=injected,
             intervention_active=intervention_active,
+            on_nudge=on_nudge,
         )
 
     async def resume(
@@ -178,6 +160,7 @@ class TurnRunner:
         prompt_path: Path,
         injected: InjectedLines,
         intervention_active: Callable[[], bool] | None = None,
+        on_nudge: Callable[[], None] | None = None,
     ) -> TurnResult:
         """Continue an existing turn after recovery input, without creating a new turn dir."""
         outcome = await self._await_outcome(signals)
@@ -191,6 +174,7 @@ class TurnRunner:
             prompt_path=prompt_path,
             injected=injected,
             intervention_active=intervention_active,
+            on_nudge=on_nudge,
         )
 
     def _prepare_turn_dir(self, run_dir: Path, role: Role, spec: TurnSpec) -> Path:
@@ -307,6 +291,7 @@ class TurnRunner:
         prompt_path: Path,
         injected: InjectedLines,
         intervention_active: Callable[[], bool] | None,
+        on_nudge: Callable[[], None] | None,
     ) -> TurnResult:
         is_intervention_active = intervention_active or (lambda: False)
         nudges = 0
@@ -329,6 +314,8 @@ class TurnRunner:
             if nudges >= NUDGE_LIMIT:
                 return await self._rebuild(turn_dir, spec, helper, current.last_message)
             nudges += 1
+            if on_nudge is not None:
+                on_nudge()
             nudge_line = _NUDGE_MESSAGE.format(prompt_path=prompt_path)
             injected.add(nudge_line)
             try:

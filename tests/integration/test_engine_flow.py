@@ -83,6 +83,38 @@ async def test_review_loop_scenarios(
     assert final.status is case.expected_status
 
 
+async def test_flow_events_mark_step_turn_and_verdict_boundaries(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "no_report"}, {"kind": "accept"}],
+    )
+
+    flow_env = await _run_flow(engine_env, task.id, settings)
+
+    events = flow_env.events.since(0, task_id=task.id)
+    kinds = [event.kind for event in events]
+    assert EventKind.STEP_STARTED in kinds
+    assert EventKind.TURN_STARTED in kinds
+    assert EventKind.TURN_COMPLETED in kinds
+    assert EventKind.VERDICT in kinds
+    assert EventKind.NUDGE in kinds
+    completed = next(event for event in events if event.kind is EventKind.TURN_COMPLETED)
+    assert {
+        "agent",
+        "model",
+        "outcome",
+        "summary",
+        "question",
+        "usage_delta",
+    } <= completed.data.keys()
+
+
 async def test_a_final_round_still_requesting_changes_raises_iterations_exhausted(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
@@ -137,6 +169,29 @@ async def test_a_triage_split_repoints_dependents_and_completes_the_parent(
     dependent_now = engine_env.tasks.get(dependent.id)
     assert dependent_now is not None
     assert set(dependent_now.depends_on) == {child.id for child in children}
+
+
+async def test_a_submitted_split_mode_runs_triage_and_completes_with_children(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, title="submitted split", mode=Mode.SPLIT)
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "split", "subtasks": [{"title": "child", "request": "child"}]}],
+    )
+
+    await _run_flow(engine_env, task.id, settings)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.DONE
+    assert final.status_reason == "split"
+    assert [child.title for child in engine_env.tasks.list_all() if child.parent_id == task.id] == [
+        "child"
+    ]
 
 
 async def test_a_plan_report_enqueues_its_new_tasks(

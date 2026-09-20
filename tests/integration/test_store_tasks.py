@@ -26,6 +26,7 @@ from shikiru.domain.tasks import (
     Task,
     TaskOrigin,
 )
+from shikiru.errors import UsageError
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database, transaction
@@ -283,3 +284,74 @@ def test_transaction_composes_so_a_later_failure_rolls_back_nested_writes(
     reloaded_dependent = store.get(dependent.id)
     assert reloaded_dependent is not None
     assert reloaded_dependent.depends_on == [old.id]
+
+
+@pytest.mark.parametrize("reference", ["#0", "#3", "T-999"])
+def test_scope_change_rejects_invalid_dependencies_before_mutating(
+    connection: Connection, reference: str
+) -> None:
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    parent = _submit(connection, clock, "parent")
+    dependent = _submit(connection, clock, "dependent", depends_on=[parent.id])
+    transition = Transition(
+        step=None,
+        status=Status.DONE,
+        iteration=0,
+        counters=Counters(),
+        rung_index={},
+        overrides={},
+        status_reason=StatusReason.SPLIT.value,
+        repoint_dependents=True,
+        enqueue_new_tasks=True,
+    )
+
+    with pytest.raises(UsageError):
+        store.apply_scope_change(
+            parent.id,
+            transition,
+            [
+                NewTask(title="first", request="first"),
+                NewTask(title="second", request="second", depends_on=[reference]),
+            ],
+            origin=TaskOrigin.SPLIT,
+            mode=None,
+        )
+
+    unchanged_parent = store.get(parent.id)
+    unchanged_dependent = store.get(dependent.id)
+    assert unchanged_parent is not None
+    assert unchanged_dependent is not None
+    assert unchanged_parent.status is Status.QUEUED
+    assert unchanged_dependent.depends_on == [parent.id]
+    assert len(store.list_all()) == 2
+
+
+def test_scope_change_resolves_forward_sibling_dependencies_atomically(
+    connection: Connection,
+) -> None:
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    parent = _submit(connection, clock, "parent")
+    transition = Transition(
+        step=None,
+        status=Status.DONE,
+        iteration=0,
+        counters=Counters(),
+        rung_index={},
+        overrides={},
+        status_reason=StatusReason.SPLIT.value,
+        enqueue_new_tasks=True,
+    )
+
+    children = store.apply_scope_change(
+        parent.id,
+        transition,
+        [
+            NewTask(title="first", request="first", depends_on=["#2"]),
+            NewTask(title="second", request="second"),
+        ],
+        origin=TaskOrigin.SPLIT,
+    )
+
+    assert children[0].depends_on == [children[1].id]

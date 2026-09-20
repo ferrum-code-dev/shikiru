@@ -16,7 +16,7 @@ from shikiru.domain.scheduling import (
     TaskAgents,
     pick_ready,
 )
-from shikiru.domain.steps import Transition
+from shikiru.domain.steps import ACTING_ROLE, Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.errors import ShikiruError
 
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.engine.layout_guard import LayoutGuard
+    from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.tasks import TaskStore
@@ -48,6 +49,7 @@ class Scheduler:
         roots: TaskRootBuilder,
         events: EventLog,
         on_dependency_cancelled: DependencyCallback,
+        titles: TaskTitles | None = None,
     ) -> None:
         """Inject state stores, gates, and the task-window dispatch boundary."""
         self._tasks = tasks
@@ -59,6 +61,7 @@ class Scheduler:
         self._roots = roots
         self._events = events
         self._on_dependency_cancelled = on_dependency_cancelled
+        self._titles = titles
         self._logger = logging.getLogger(__name__)
 
     async def run_once(self) -> ReadySchedule:
@@ -134,6 +137,23 @@ class Scheduler:
                 current = self._require_task(task.id, "task-root creation")
             await self._layout.ensure(current)
             current = self._require_task(task.id, "layout creation")
+            if current.step is not None:
+                role = ACTING_ROLE[current.step]
+                rung = pick_rung(current, role, self._settings)
+                self._events.append(
+                    EventKind.STEP_STARTED,
+                    task_id=current.id,
+                    message=f"{current.id} {current.step.value} started",
+                    data={
+                        "step": current.step.value,
+                        "role": role.value,
+                        "iteration": current.iteration,
+                        "agent": rung.agent,
+                        "model": rung.model,
+                    },
+                )
+            if self._titles is not None:
+                await self._titles.refresh(current)
         except Exception:
             self._logger.exception("dispatch setup failed for %s", task.id)
             await self._rollback_dispatch(task)

@@ -23,7 +23,6 @@ from shikiru.domain.tasks import (
     Step,
     Task,
 )
-from shikiru.errors import UsageError
 from tests.support.factories import (
     ESCALATE_AFTER,
     MAX_ITERATIONS,
@@ -70,11 +69,10 @@ def test_first_step_with_mode_implement_starts_at_iteration_one() -> None:
     assert transition.iteration == 1
 
 
-def test_first_step_rejects_mode_split() -> None:
+def test_first_step_routes_submitted_split_mode_through_triage() -> None:
     task = make_task(mode=Mode.SPLIT)
 
-    with pytest.raises(UsageError, match="split"):
-        first_step(task)
+    assert first_step(task).step is Step.TRIAGE
 
 
 def test_triage_implement_starts_the_first_implement_at_iteration_one() -> None:

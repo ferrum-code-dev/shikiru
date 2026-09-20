@@ -34,7 +34,7 @@ from shikiru.errors import CommandFailed, ShikiruError
 from shikiru.workspace.roots import run_dir, task_root
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from shikiru.agents.contracts import AgentSession, InteractiveAgent, Rung
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Role, Task
     from shikiru.engine.agents import AgentPool
     from shikiru.engine.monitor import MonitorSignal
+    from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
     from shikiru.tmux.decorator import PaneDecorator
@@ -91,6 +92,8 @@ class SessionManager:
         settings: Settings,
         clock: Clock,
         decorator: PaneDecorator,
+        events: EventLog | None = None,
+        refresh_titles: Callable[[Task], Awaitable[None]] | None = None,
     ) -> None:
         """Resolve agents through `agent_pool`, panes through `pane_factory`, time with `clock`."""
         self._agent_pool = agent_pool
@@ -101,6 +104,8 @@ class SessionManager:
         self._settings = settings
         self._clock = clock
         self._decorator = decorator
+        self._events = events
+        self._refresh_titles = refresh_titles
         self._live: dict[tuple[str, Role], _LiveSession] = {}
 
     async def ensure(self, task: Task, role: Role) -> AgentSession:
@@ -333,6 +338,8 @@ class SessionManager:
             poll_seconds=self._settings.orchestration.poll_seconds,
             expects_started=expects_started,
             pending_lines=injected_lines,
+            events=self._events,
+            refresh_titles=self._refresh_titles,
         )
         decoration_queue = monitor.subscribe()
         monitor_task = asyncio.ensure_future(monitor.run())
