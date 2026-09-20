@@ -7,7 +7,7 @@ import os
 import uuid
 from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel
 
@@ -30,9 +30,20 @@ from shikiru.agents.contracts import (
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.reset_time import ResetTimeParser
-from shikiru.agents.testing import AgentContractSuite, LaunchCase, RecordingPaneHandle, SampleCase
+from shikiru.agents.testing import (
+    AgentContractSuite,
+    LaunchCase,
+    RecordingPaneHandle,
+    SampleCase,
+    TmuxSocket,
+)
 from shikiru.clock import SystemClock
 from shikiru.plugins.agents.claude.agent import create
+from tests.support.waiting import wait_until
+
+if TYPE_CHECKING:
+    from shikiru.agents.contracts import AgentSession, InteractiveAgent
+    from shikiru.tmux.pane import TmuxPane
 
 _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "agents" / "claude"
 _MODEL = "claude-sonnet-4-5-20250929"
@@ -69,6 +80,11 @@ _NO_TURNS_USAGE = Usage(
     cost_basis="api_equivalent",
     context_used_pct=None,
 )
+
+_LIVE_START_TIMEOUT_SECONDS = 30.0
+_TRUST_PROMPT_MARKER = "Yes, I trust this folder"
+_TRUST_CONFIRM_MARKER = "Enter to confirm"
+_TRUST_PROMPT_STABILITY_COUNT = 10
 
 
 class _AskResult(BaseModel):
@@ -180,6 +196,35 @@ class TestClaudeAgentContract(AgentContractSuite):
     def launch_cases(self, tmp_path: Path) -> list[LaunchCase]:
         del tmp_path
         return []
+
+    async def _launch_live(
+        self, tmux_server: TmuxSocket, tmp_path: Path, *, prepare_turn: bool
+    ) -> tuple[InteractiveAgent, LaunchSpec, TmuxPane, AgentSession]:
+        agent, spec, pane, session = await super()._launch_live(
+            tmux_server, tmp_path, prepare_turn=prepare_turn
+        )
+        role_path = spec.run_dir / spec.role
+        hooks_path = role_path / HOOKS_FILENAME
+        prompt_visible = False
+        prompt_observations = 0
+
+        async def _startup_ready() -> bool:
+            nonlocal prompt_observations, prompt_visible
+            visible = await pane.capture_visible()
+            if _TRUST_PROMPT_MARKER in visible and _TRUST_CONFIRM_MARKER in visible:
+                prompt_observations += 1
+                if prompt_observations >= _TRUST_PROMPT_STABILITY_COUNT:
+                    prompt_visible = True
+                    return True
+            else:
+                prompt_observations = 0
+            return hooks_path.is_file()
+
+        await wait_until(_startup_ready, timeout=_LIVE_START_TIMEOUT_SECONDS)
+        if prompt_visible:
+            await pane.send_keys("Down", "Enter")
+            await wait_until(hooks_path.is_file, timeout=_LIVE_START_TIMEOUT_SECONDS)
+        return agent, spec, pane, session
 
     async def test_offline_launch_argv_and_env(self, tmp_path: Path) -> None:
         spec = self.build_spec(tmp_path / "new", resume_session_id=None)

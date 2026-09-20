@@ -149,8 +149,8 @@ Refs: 06 §1–2, §4.
 
 ### Task 19: Claude Code plugin
 Refs: 04 §4.
-- [ ] Factory and options; launch/resume/attach; hook signals; transcript usage and failures; quota probe with cache; keys; `resume_command`; `headless`; `doctor`.
-- [ ] Offline contract checks with committed samples; live contract checks pass.
+- [x] Factory and options; launch/resume/attach; hook signals; transcript usage and failures; quota probe with cache; keys; `resume_command`; `headless`; `doctor`.
+- [x] Offline contract checks with committed samples; live contract checks pass.
 
 ### Task 20: Codex plugin
 Refs: 04 §5.

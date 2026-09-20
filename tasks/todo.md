@@ -30,7 +30,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 18: Operator services, CLI and MCP
 
 ## Phase 4 — Real agents
-- [ ] Task 19: Claude Code plugin
+- [x] Task 19: Claude Code plugin
 - [ ] Task 20: Codex plugin
 - [ ] Task 21: Doctor and first real E2E
 

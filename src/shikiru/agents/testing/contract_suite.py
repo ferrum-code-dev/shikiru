@@ -405,8 +405,9 @@ class AgentContractSuite:
         resumed = await agent.attach(spec, pane, snapshot)
         resumed_signals = resumed.signals()
         await pane.paste_line("second turn")
-        ended = await _next_signal(resumed_signals, TurnEnded)
-        _expect("second turn" in ended.last_message, "attach() replayed an old signal")
+        submitted = await _next_signal(resumed_signals, PromptSubmitted)
+        _expect(submitted.text == "second turn", "attach() replayed an old prompt")
+        await _next_signal(resumed_signals, TurnEnded)
 
     async def test_live_quota_reports_without_error(self) -> None:
         self._require_live()
