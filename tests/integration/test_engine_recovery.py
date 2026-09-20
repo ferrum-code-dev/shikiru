@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -137,6 +137,39 @@ async def test_quota_wait_deadline_moves_rung_without_shortening_shared_block(
     await wait_until(lambda: quota.block_for(FAKE_RUNG.agent) is not None, timeout=10)
     extended_until = TASK_CREATED_AT + timedelta(minutes=5)
     quota.block(FAKE_RUNG.agent, extended_until, "another task")
+
+    async def advance_to(target: datetime) -> None:
+        def reached() -> bool:
+            if flow_task.done() or clock.now() >= target:
+                return True
+            if clock.has_pending_sleep():
+                clock.advance(1)
+            return flow_task.done() or clock.now() >= target
+
+        await wait_until(reached, timeout=10)
+
+    before_deadline = TASK_CREATED_AT + timedelta(seconds=119)
+    await advance_to(before_deadline)
+    assert clock.now() == before_deadline
+    assert not flow_task.done()
+    implementer_runs = [
+        run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER
+    ]
+    assert [run.agent for run in implementer_runs] == [FAKE_AGENT_NAME]
+
+    deadline = TASK_CREATED_AT + timedelta(seconds=120)
+    await advance_to(deadline)
+    assert clock.now() == deadline
+    await wait_until(
+        lambda: (
+            len([run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER])
+            == 2
+        ),
+        timeout=10,
+    )
+    block = quota.block_for(FAKE_RUNG.agent)
+    assert block is not None
+    assert block.until == extended_until
 
     await _drive(flow_task, clock)
 

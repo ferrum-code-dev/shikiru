@@ -273,13 +273,16 @@ class TurnRunner:
         *,
         inject: bool,
     ) -> _Outcome | PromptSubmitted | None:
-        injected.add(line)
+        if inject:
+            injected.add(line)
         try:
             if inject:
                 await pane.paste_line(line)
             else:
                 await pane.send_keys(ENTER_KEY)
         except CommandFailed:
+            if inject:
+                injected.discard(line)
             return PaneDied()
         deadline = self._clock.now() + timedelta(seconds=SUBMIT_CONFIRM_SECONDS)
         while True:

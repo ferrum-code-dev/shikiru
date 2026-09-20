@@ -827,10 +827,8 @@ class TaskFlow:
         self, task: Task, role: Role, until: datetime
     ) -> Failed | PaneDied | Stalled | None:
         agent = pick_rung(task, role, self._settings).agent
-        deadline = min(
-            until,
-            self._clock.now()
-            + timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait),
+        deadline = self._clock.now() + timedelta(
+            seconds=self._settings.orchestration.timeouts.max_quota_wait
         )
         while True:
             current = self._quota.block_for(agent)

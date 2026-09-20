@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from shikiru.agents.contracts import SessionEnded
+from shikiru.agents.contracts import PromptSubmitted, SessionEnded, TurnEnded
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.recovery import Completed, PaneDied, ProtocolError, Stalled
 from shikiru.domain.reports import ConsultAnswer, ReportKind
@@ -327,6 +328,7 @@ async def test_missing_pane_during_pointer_injection_returns_pane_died(
     await pane.kill()
     runner = TurnRunner(PromptRenderer(engine_env.project_root), FakeClock(TASK_CREATED_AT))
     helper = _build_helper(settings)
+    injected = manager.injected_lines(task.id, Role.IMPLEMENTER)
 
     result = await asyncio.wait_for(
         runner.run(
@@ -337,12 +339,13 @@ async def test_missing_pane_during_pointer_injection_returns_pane_died(
             role=Role.IMPLEMENTER,
             spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
             helper=helper,
-            injected=manager.injected_lines(task.id, Role.IMPLEMENTER),
+            injected=injected,
         ),
         timeout=_SIGNAL_TIMEOUT,
     )
 
     assert isinstance(result, PaneDied)
+    assert len(injected) == 0
 
 
 async def test_an_unconfirmed_pointer_retries_once_then_stalls(engine_env: EngineEnv) -> None:
@@ -375,8 +378,57 @@ async def test_an_unconfirmed_pointer_retries_once_then_stalls(engine_env: Engin
     finally:
         if not run_task.done():
             run_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await run_task
 
     assert isinstance(result, Stalled)
+
+
+async def test_delayed_pointer_confirmation_after_retry_consumes_one_marker(
+    engine_env: EngineEnv,
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    task = await engine_env.build_task()
+    pane = engine_env.pane(await engine_env.new_pane())
+    signals: asyncio.Queue[MonitorSignal] = asyncio.Queue()
+    injected = InjectedLines()
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), clock)
+    helper = _build_helper(_settings_with_asks([]))
+    task_run_dir = run_dir(engine_env.project_root, task.id)
+    prompt_path = task_run_dir / "turns" / "01-consult-i1" / "prompt.md"
+    injected_line = f"Read {prompt_path} and follow it exactly."
+
+    run_task = asyncio.create_task(
+        runner.run(
+            _NoBeforeTurnSession(),
+            pane,
+            signals,
+            run_dir=task_run_dir,
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+            injected=injected,
+        )
+    )
+    try:
+        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+        clock.advance(_RETRY_WAIT_SECONDS)
+        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+        (prompt_path.parent / "report.json").write_text(
+            ConsultAnswer(decision="answer", answer="Use tenacity").model_dump_json()
+        )
+        signals.put_nowait(PromptSubmitted(text=injected_line))
+        assert injected.consume(injected_line)
+        signals.put_nowait(TurnEnded(last_message="done"))
+        result = await asyncio.wait_for(run_task, timeout=_SIGNAL_TIMEOUT)
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await run_task
+
+    assert isinstance(result, Completed)
+    assert len(injected) == 0
 
 
 async def test_a_before_turn_line_is_not_flagged_as_an_operator_prompt(
