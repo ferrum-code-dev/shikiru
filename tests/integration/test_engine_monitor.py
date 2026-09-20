@@ -366,7 +366,9 @@ async def test_stall_is_published_once_per_episode(engine_env: EngineEnv) -> Non
             await run_task
 
 
-async def test_tick_persists_facts_only_on_change(engine_env: EngineEnv) -> None:
+async def test_tick_persists_changed_usage_snapshot_and_last_message(
+    engine_env: EngineEnv,
+) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     task = await engine_env.build_task()
     run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)

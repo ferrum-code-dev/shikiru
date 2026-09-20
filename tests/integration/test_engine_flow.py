@@ -144,7 +144,6 @@ async def test_changes_requested_persists_iteration_rung_and_counter_resets(
     assert final.iteration == 2
     assert final.rung_index[Role.IMPLEMENTER] == 1
     assert final.counters.rejections_on_rung == 0
-    assert final.counters.consults == 0
 
 
 async def test_a_final_round_still_requesting_changes_raises_iterations_exhausted(

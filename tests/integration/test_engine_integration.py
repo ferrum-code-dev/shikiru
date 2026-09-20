@@ -150,12 +150,15 @@ async def test_local_merge_escalates_when_dirty_overlap_never_clears(
     await commit_all(_RUNNER, task_root, "task change")
     (project_root / "README.md").write_text("operator\n")
     clock = FakeClock(TASK_CREATED_AT)
+    integration_wait_seconds = 120
     merge_task = asyncio.create_task(
-        LocalMerge(Git(_RUNNER), clock, integration_wait=120).merge(project_root, task_root, states)
+        LocalMerge(Git(_RUNNER), clock, integration_wait=integration_wait_seconds).merge(
+            project_root, task_root, states
+        )
     )
 
     await wait_until(clock.has_pending_sleep, timeout=5)
-    clock.advance(120)
+    clock.advance(integration_wait_seconds)
 
     with pytest.raises(IntegrationBlocked):
         await merge_task
@@ -173,9 +176,10 @@ async def test_update_ref_rejects_a_stale_expected_sha_without_moving_the_branch
     (project_root / "README.md").write_text("new\n")
     await commit_all(_RUNNER, project_root, "advance main")
     new_sha = await git.rev_parse(project_root, "main")
+    stale_expected_sha = "0" * 40
 
     with pytest.raises(CommandFailed):
-        await git.update_ref(project_root, "release", new_sha, "0" * 40)
+        await git.update_ref(project_root, "release", new_sha, stale_expected_sha)
 
     assert await git.rev_parse(project_root, "release") == old_sha
 
