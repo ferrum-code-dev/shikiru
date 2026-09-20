@@ -157,21 +157,38 @@ def _append_change(marker: Path, prompt_text: str) -> None:
     marker.write_text(previous + prompt_text + "\n")
 
 
-async def _commit_change(runner: SubprocessRunner, cwd: Path, prompt_text: str) -> Commit:
-    marker = cwd / FAKE_CHANGE_FILENAME
-    await asyncio.to_thread(_append_change, marker, prompt_text)
-    await runner.run(["git", "add", "-A"], timeout=_GIT_TIMEOUT_SECONDS, cwd=cwd, check=True)
+def _repository_directories(cwd: Path) -> tuple[Path, ...]:
+    if (cwd / ".git").exists():
+        return (cwd,)
+    repositories = tuple(
+        path for path in sorted(cwd.iterdir()) if path.is_dir() and (path / ".git").exists()
+    )
+    return repositories or (cwd,)
+
+
+async def _commit_changes(runner: SubprocessRunner, cwd: Path, prompt_text: str) -> list[Commit]:
     subject = f"fake: {prompt_text}"[:_MAX_COMMIT_SUBJECT_LENGTH]
-    await runner.run(
-        ["git", *_COMMIT_IDENTITY_ARGS, "commit", "-m", subject],
-        timeout=_GIT_TIMEOUT_SECONDS,
-        cwd=cwd,
-        check=True,
-    )
-    result = await runner.run(
-        ["git", "rev-parse", "HEAD"], timeout=_GIT_TIMEOUT_SECONDS, cwd=cwd, check=True
-    )
-    return Commit(repo=cwd.name, sha=result.stdout.strip(), subject=subject)
+    commits: list[Commit] = []
+    for repository in await asyncio.to_thread(_repository_directories, cwd):
+        marker = repository / FAKE_CHANGE_FILENAME
+        await asyncio.to_thread(_append_change, marker, prompt_text)
+        await runner.run(
+            ["git", "add", "-A"], timeout=_GIT_TIMEOUT_SECONDS, cwd=repository, check=True
+        )
+        await runner.run(
+            ["git", *_COMMIT_IDENTITY_ARGS, "commit", "-m", subject],
+            timeout=_GIT_TIMEOUT_SECONDS,
+            cwd=repository,
+            check=True,
+        )
+        result = await runner.run(
+            ["git", "rev-parse", "HEAD"],
+            timeout=_GIT_TIMEOUT_SECONDS,
+            cwd=repository,
+            check=True,
+        )
+        commits.append(Commit(repo=repository.name, sha=result.stdout.strip(), subject=subject))
+    return commits
 
 
 def _unsupported(kind: ReportKind, step: TurnStep) -> NoReturn:
@@ -261,9 +278,8 @@ def _implementation_report(step: TurnStep, prompt_text: str, commits: list[Commi
 
 
 def _build_report(
-    kind: ReportKind, step: TurnStep, prompt_text: str, commit: Commit | None
+    kind: ReportKind, step: TurnStep, prompt_text: str, commits: list[Commit]
 ) -> Report:
-    commits = [commit] if commit else []
     if kind is ReportKind.TRIAGE:
         return _triage_report(step, prompt_text)
     if kind is ReportKind.PLAN:
@@ -292,12 +308,12 @@ def _write_report_file(role_dir: Path, report: Report) -> Path:
 async def _submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text: str) -> None:
     turn_dir = resolve_current_turn_dir(os.environ)
     kind = await asyncio.to_thread(_current_report_kind, turn_dir)
-    commit = (
-        await _commit_change(ctx.runner, ctx.cwd, prompt_text)
+    commits = (
+        await _commit_changes(ctx.runner, ctx.cwd, prompt_text)
         if isinstance(step, AcceptStep) and kind in _KINDS_WITH_COMMITS
-        else None
+        else []
     )
-    report = _build_report(kind, step, prompt_text, commit)
+    report = _build_report(kind, step, prompt_text, commits)
     role_path = role_dir(ctx.run_dir, ctx.role)
     report_path = await asyncio.to_thread(_write_report_file, role_path, report)
     try:

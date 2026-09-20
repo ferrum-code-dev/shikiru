@@ -197,6 +197,7 @@ markers = [
 addopts = "-n auto --cov=shikiru --cov-report=term-missing --cov-fail-under=80"
 filterwarnings = ["error"]
 testpaths = ["tests"]
+norecursedirs = ["fixtures"]
 timeout = 60
 
 [tool.coverage.run]
