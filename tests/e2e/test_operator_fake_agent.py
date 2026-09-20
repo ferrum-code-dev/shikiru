@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shlex
 import shutil
 import sys
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from fake_agent.repl import TICK_A1_ENV_VAR
 
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import exact_target
@@ -91,6 +92,7 @@ def _tmux_environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, 
     environment.pop("TMUX", None)
     environment.pop("TMUX_PANE", None)
     environment["NO_COLOR"] = "1"
+    environment[TICK_A1_ENV_VAR] = "1"
     environment["PATH"] = f"{shim_dir}{os.pathsep}{environment['PATH']}"
     return environment
 
@@ -142,11 +144,11 @@ async def _engine_is_down(project_root: Path, environment: dict[str, str]) -> bo
 async def _cleanup_project(
     project: PreparedProject, environment: dict[str, str], target: str
 ) -> None:
-    await _cli(project.root, environment, "stop", "--kill-session")
+    code, _, stderr = await _cli(project.root, environment, "stop", "--kill-session")
+    assert code == 0, stderr
     await wait_until(
         lambda: _engine_is_down(project.root, environment), timeout=CLI_TIMEOUT_SECONDS
     )
-    await _cli(project.root, environment, "stop", "--kill-session")
     runner = SubprocessRunner()
 
     async def session_gone() -> bool:
@@ -158,6 +160,20 @@ async def _cleanup_project(
         return result.returncode != 0
 
     await wait_until(session_gone, timeout=CLI_TIMEOUT_SECONDS)
+
+
+async def _assert_tracker_ticked(project: PreparedProject) -> None:
+    tracker = project.root / "tasks" / "todo.md"
+    contents = await asyncio.to_thread(tracker.read_text)
+    assert "- [x] A1" in contents
+    if len(project.repositories) == 1:
+        result = await SubprocessRunner().run(
+            ["git", "show", "HEAD:tasks/todo.md"],
+            timeout=CLI_TIMEOUT_SECONDS,
+            cwd=project.repositories[0],
+            check=True,
+        )
+        assert "- [x] A1" in result.stdout
 
 
 def _assert_usage(task: dict[str, object]) -> None:
@@ -225,6 +241,7 @@ async def test_fake_agent_operator_flow_completes_for_each_topology(
 ) -> None:
     project = await _prepare_project(tmp_path, scenario)
     environment = _tmux_environment(project.root, tmux_server)
+    await tmux_server.run("set-environment", "-g", TICK_A1_ENV_VAR, "1")
     target = exact_target(session_name(project.root.name))
     overrides = (
         "--set",
@@ -270,19 +287,11 @@ async def test_fake_agent_operator_flow_completes_for_each_topology(
         assert detail is not None
         _assert_usage(detail)
         await _assert_base_commits(project)
+        await _assert_tracker_ticked(project)
         await _assert_task_window_closed(project, tmux_server)
 
-        code, _, stderr = await _cli(project.root, environment, *overrides, "stop")
-        assert code == 0, stderr
-        await wait_until(
-            lambda: _engine_is_down(project.root, environment), timeout=CLI_TIMEOUT_SECONDS
-        )
-        code, _, stderr = await _cli(
-            project.root, environment, *overrides, "stop", "--kill-session"
-        )
-        assert code == 0, stderr
+        await _cleanup_project(project, environment, target)
         session_stopped = True
     finally:
         if lifecycle_started and not session_stopped:
-            with suppress(Exception):
-                await _cleanup_project(project, environment, target)
+            await _cleanup_project(project, environment, target)

@@ -60,6 +60,7 @@ from shikiru.domain.tasks import Mode
 from shikiru.process import SubprocessRunner
 
 SCRIPT_ENV_VAR = "SHIKIRU_FAKE_SCRIPT"
+TICK_A1_ENV_VAR = "SHIKIRU_FAKE_TICK_A1"
 
 
 def role_script_env_var(role: str) -> str:
@@ -75,6 +76,9 @@ def role_script_env_var(role: str) -> str:
 STATE_DIRNAME = "fake_state"
 FAKE_CHANGE_FILENAME = "fake-agent-changes.txt"
 REPORT_FILENAME_PREFIX = "fake-agent-report-"
+TODO_FILENAME = "todo.md"
+A1_UNCHECKED = "- [ ] A1"
+A1_CHECKED = "- [x] A1"
 
 _GIT_TIMEOUT_SECONDS = 10.0
 _REPORT_TIMEOUT_SECONDS = 10.0
@@ -157,13 +161,27 @@ def _append_change(marker: Path, prompt_text: str) -> None:
     marker.write_text(previous + prompt_text + "\n")
 
 
+def _tick_a1(cwd: Path) -> None:
+    tracker = cwd / "tasks" / TODO_FILENAME
+    contents = tracker.read_text()
+    if A1_CHECKED in contents:
+        return
+    if A1_UNCHECKED not in contents:
+        message = f"fake agent could not find the A1 checkbox in {tracker}"
+        raise RuntimeError(message)
+    tracker.write_text(contents.replace(A1_UNCHECKED, A1_CHECKED, 1))
+
+
 def _repository_directories(cwd: Path) -> tuple[Path, ...]:
     if (cwd / ".git").exists():
         return (cwd,)
     repositories = tuple(
         path for path in sorted(cwd.iterdir()) if path.is_dir() and (path / ".git").exists()
     )
-    return repositories or (cwd,)
+    if not repositories:
+        message = f"fake agent cwd {cwd} contains no git repository"
+        raise RuntimeError(message)
+    return repositories
 
 
 async def _commit_changes(runner: SubprocessRunner, cwd: Path, prompt_text: str) -> list[Commit]:
@@ -308,6 +326,12 @@ def _write_report_file(role_dir: Path, report: Report) -> Path:
 async def _submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text: str) -> None:
     turn_dir = resolve_current_turn_dir(os.environ)
     kind = await asyncio.to_thread(_current_report_kind, turn_dir)
+    if (
+        isinstance(step, AcceptStep)
+        and kind is ReportKind.IMPLEMENTATION
+        and os.environ.get(TICK_A1_ENV_VAR) == "1"
+    ):
+        await asyncio.to_thread(_tick_a1, ctx.cwd)
     commits = (
         await _commit_changes(ctx.runner, ctx.cwd, prompt_text)
         if isinstance(step, AcceptStep) and kind in _KINDS_WITH_COMMITS
