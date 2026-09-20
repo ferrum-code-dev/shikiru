@@ -5,12 +5,19 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from shikiru.config.settings import DashboardConfig, LayoutSplit, PaneLeaf, TitlesConfig
-from shikiru.domain.tasks import Mode, Role, Status, Step
+from shikiru.agents.contracts import Rung
+from shikiru.config.settings import (
+    AgentConfig,
+    DashboardConfig,
+    LayoutSplit,
+    PaneLeaf,
+    TitlesConfig,
+)
+from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
 from shikiru.tmux.decorator import WINDOW_STATE_COLOR_OPTION, WINDOW_STATE_GLYPH_OPTION
-from shikiru.ui.glyphs import GLYPH_ESCALATED, ROLE_GLYPHS, STAGE_MERGE
-from shikiru.ui.tokens import ALERT_COLOR, ROLE_COLORS
-from tests.support.engine import set_role_script
+from shikiru.ui.glyphs import GLYPH_ESCALATED, GLYPH_PAUSED, ROLE_GLYPHS, STAGE_MERGE
+from shikiru.ui.tokens import ALERT_COLOR, HOLD_COLOR, ROLE_COLORS
+from tests.support.engine import FAKE_RUNG, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 
 if TYPE_CHECKING:
@@ -94,3 +101,58 @@ async def test_an_escalated_task_shows_the_escalated_window_state_and_flag(
     title = await engine_env.tmux.display(leader_pane, "#{pane_title}")
     assert "escalated" in title
     assert ROLE_GLYPHS[Role.LEADER] in title
+
+
+async def test_hold_and_rung_changes_update_titles_on_the_isolated_tmux_server(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    base_settings = _titled_settings()
+    settings = base_settings.model_copy(
+        update={
+            "agents": {"fake": AgentConfig(), "fake2": AgentConfig()},
+            "roles": base_settings.roles.model_copy(
+                update={
+                    "implementer": base_settings.roles.implementer.model_copy(
+                        update={
+                            "ladder": [
+                                FAKE_RUNG,
+                                Rung(agent="fake2", model="fake-2", effort=None),
+                            ]
+                        }
+                    )
+                }
+            ),
+        }
+    )
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "changes_requested"}, {"kind": "changes_requested"}, {"kind": "accept"}],
+    )
+    flow_env = build_flow(engine_env, settings)
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    implementer_pane = final.panes[Role.IMPLEMENTER]
+    assert "fake2:fake-2" in await engine_env.tmux.display(implementer_pane, "#{pane_title}")
+
+    engine_env.tasks.set_holds(final.id, frozenset({Hold.PAUSED}))
+    paused = engine_env.tasks.get(final.id)
+    assert paused is not None
+    await flow_env.titles.refresh(paused)
+
+    assert "paused" in await engine_env.tmux.display(implementer_pane, "#{pane_title}")
+    window_target = paused.window_id
+    assert window_target is not None
+    assert (
+        await engine_env.tmux.show_window_option(window_target, WINDOW_STATE_COLOR_OPTION)
+        == HOLD_COLOR
+    )
+    assert (
+        await engine_env.tmux.show_window_option(window_target, WINDOW_STATE_GLYPH_OPTION)
+        == GLYPH_PAUSED
+    )

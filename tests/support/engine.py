@@ -21,8 +21,10 @@ from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.monitor import SessionMonitor
 from shikiru.engine.sessions import SessionManager
+from shikiru.engine.titles import TaskTitles
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
+from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
@@ -33,14 +35,13 @@ from shikiru.workspace.roots import task_root
 from tests.support.factories import make_settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Awaitable, Callable
     from pathlib import Path
 
     from shikiru.agents.contracts import AgentSession, PaneHandle
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.runs import Run
-    from shikiru.store.events import EventLog
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -143,6 +144,8 @@ def build_session_manager(
     project_root: Path,
     settings: Settings,
     clock: Clock,
+    events: EventLog,
+    titles: TaskTitles,
     registry: AgentRegistry | None = None,
     agent_clock: Clock | None = None,
     pane_clock: Clock | None = None,
@@ -171,6 +174,8 @@ def build_session_manager(
         settings=settings,
         clock=clock,
         decorator=build_decorator(tmux),
+        events=events,
+        refresh_titles=titles.refresh,
     )
 
 
@@ -186,7 +191,8 @@ def make_monitor(
     clock: Clock,
     settings: Settings,
     expects_started: bool,
-    events: EventLog | None = None,
+    events: EventLog,
+    refresh_titles: Callable[[Task], Awaitable[None]],
 ) -> SessionMonitor:
     """A `SessionMonitor` for `task`/`run`, timed from `settings.orchestration`."""
     return SessionMonitor(
@@ -202,6 +208,7 @@ def make_monitor(
         poll_seconds=settings.orchestration.poll_seconds,
         expects_started=expects_started,
         events=events,
+        refresh_titles=refresh_titles,
     )
 
 
@@ -230,13 +237,16 @@ class EngineEnv:
 
         Shut down automatically alongside `manager` when the fixture tears down.
         """
+        manager_clock = clock if clock is not None else SystemClock()
         manager = build_session_manager(
             tmux=self.tmux,
             tasks=self.tasks,
             runs=self.runs,
             project_root=self.project_root,
             settings=settings,
-            clock=clock if clock is not None else SystemClock(),
+            clock=manager_clock,
+            events=EventLog(self.connection, manager_clock),
+            titles=TaskTitles(build_decorator(self.tmux), self.runs, settings),
             registry=registry,
             agent_clock=agent_clock,
             pane_clock=pane_clock,
@@ -282,6 +292,8 @@ async def engine_env(
     tmux = build_tmux(tmux_server)
     tasks, runs = build_stores(connection, SystemClock())
     settings = fake_engine_settings()
+    events = EventLog(connection, SystemClock())
+    titles = TaskTitles(build_decorator(tmux), runs, settings)
     manager = build_session_manager(
         tmux=tmux,
         tasks=tasks,
@@ -289,6 +301,8 @@ async def engine_env(
         project_root=tmp_path,
         settings=settings,
         clock=SystemClock(),
+        events=events,
+        titles=titles,
     )
     env = EngineEnv(
         tmux=tmux,

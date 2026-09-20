@@ -41,7 +41,7 @@ class HandlerContext:
     finish_task: TerminalCallback
     set_consult_question: ConsultCallback
     stop_engine: Callable[[], None]
-    refresh_titles: RefreshCallback | None = None
+    refresh_titles: RefreshCallback
 
 
 class CommandHandler(Protocol):
@@ -94,8 +94,6 @@ def reject_terminal(task: Task) -> None:
 
 async def refresh_titles(context: HandlerContext, task_id: str) -> None:
     """Refresh one task's tmux titles after a command changes its persisted state."""
-    if context.refresh_titles is None:
-        return
     task = context.tasks.get(task_id)
     if task is None:
         message = f"task {task_id} disappeared while refreshing titles"

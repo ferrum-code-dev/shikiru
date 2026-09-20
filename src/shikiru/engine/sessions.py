@@ -92,8 +92,8 @@ class SessionManager:
         settings: Settings,
         clock: Clock,
         decorator: PaneDecorator,
-        events: EventLog | None = None,
-        refresh_titles: Callable[[Task], Awaitable[None]] | None = None,
+        events: EventLog,
+        refresh_titles: Callable[[Task], Awaitable[None]],
     ) -> None:
         """Resolve agents through `agent_pool`, panes through `pane_factory`, time with `clock`."""
         self._agent_pool = agent_pool

@@ -105,14 +105,12 @@ async def test_flow_events_mark_step_turn_and_verdict_boundaries(
     assert EventKind.VERDICT in kinds
     assert EventKind.NUDGE in kinds
     completed = next(event for event in events if event.kind is EventKind.TURN_COMPLETED)
-    assert {
-        "agent",
-        "model",
-        "outcome",
-        "summary",
-        "question",
-        "usage_delta",
-    } <= completed.data.keys()
+    usage_delta = completed.data["usage_delta"]
+    assert usage_delta["input_tokens"] == 240
+    assert usage_delta["output_tokens"] == 120
+    assert usage_delta["cache_read_tokens"] == 40
+    assert usage_delta["cache_write_tokens"] == 20
+    assert usage_delta["cost_usd"] == pytest.approx(0.002607)
 
 
 async def test_a_final_round_still_requesting_changes_raises_iterations_exhausted(
@@ -192,6 +190,64 @@ async def test_a_submitted_split_mode_runs_triage_and_completes_with_children(
     assert [child.title for child in engine_env.tasks.list_all() if child.parent_id == task.id] == [
         "child"
     ]
+
+
+async def test_submitted_split_mode_rejects_a_non_split_triage_report(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, title="required split", mode=Mode.SPLIT)
+    await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
+
+    flow_env = await _run_flow(engine_env, task.id, settings)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.ESCALATED
+    assert final.step is Step.TRIAGE
+    escalation = next(escalation for escalation in flow_env.escalations.list_open())
+    assert escalation.reason is EscalationReason.AGENT_PROTOCOL
+    prompt = next(
+        (engine_env.project_root / ".shikiru" / "runs" / task.id / "turns").glob("*/prompt.md")
+    )
+    assert "must report `mode` as `split`" in prompt.read_text()
+    assert [child for child in engine_env.tasks.list_all() if child.parent_id == task.id] == []
+
+
+@pytest.mark.parametrize("reference", ["#2", "T-999"])
+async def test_invalid_scope_change_escalates_without_creating_tasks(
+    engine_env: EngineEnv, tmux_server: TmuxServer, reference: str
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, title="invalid scope", mode=Mode.PLAN)
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [
+            {
+                "kind": "accept",
+                "new_tasks": [
+                    {
+                        "title": "invalid child",
+                        "request": "invalid child",
+                        "depends_on": [reference],
+                    }
+                ],
+            }
+        ],
+    )
+
+    flow_env = await _run_flow(engine_env, task.id, settings)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.ESCALATED
+    assert final.step is Step.PLAN
+    escalation = next(escalation for escalation in flow_env.escalations.list_open())
+    assert escalation.reason is EscalationReason.AGENT_PROTOCOL
+    assert [child for child in engine_env.tasks.list_all() if child.parent_id == task.id] == []
 
 
 async def test_a_plan_report_enqueues_its_new_tasks(

@@ -19,9 +19,7 @@ if TYPE_CHECKING:
 class DependencyEscalator:
     """Apply and packet a dependency-cancelled escalation through one boundary."""
 
-    def __init__(
-        self, tasks: TaskStore, raiser: EscalationRaiser, titles: TaskTitles | None = None
-    ) -> None:
+    def __init__(self, tasks: TaskStore, raiser: EscalationRaiser, titles: TaskTitles) -> None:
         """Use `tasks` for the state transition and `raiser` for the operator packet."""
         self._tasks = tasks
         self._raiser = raiser
@@ -39,8 +37,7 @@ class DependencyEscalator:
         if current is None:
             message = f"{task.id} vanished before dependency escalation"
             raise ShikiruError(message)
-        if self._titles is not None:
-            await self._titles.refresh(current)
+        await self._titles.refresh(current)
         await self._raiser.raise_escalation(
             current,
             step=current.step,

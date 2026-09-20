@@ -56,7 +56,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.steps import ACTING_ROLE, Transition, first_step, next_step
-from shikiru.domain.tasks import EscalationReason, Hold, Role, Status, Step, TaskOrigin
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step, TaskOrigin
 from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationConflict,
@@ -64,7 +64,7 @@ from shikiru.engine.integration import (
     IntegrationMetadata,
 )
 from shikiru.engine.turns import TURNS_DIR_NAME, TurnSpec, read_turn_report
-from shikiru.errors import CommandFailed, ShikiruError
+from shikiru.errors import CommandFailed, ShikiruError, UsageError
 from shikiru.helper.helper import Helper
 from shikiru.helper.models import Unrecoverable
 from shikiru.prompts.renderer import PromptName
@@ -199,11 +199,12 @@ def _turn_outcome(outcome: Outcome) -> str:
 
 
 def _usage_delta(before: Usage, after: Usage) -> dict[str, int | float | None]:
-    cost_delta = (
-        after.cost_usd - before.cost_usd
-        if before.cost_usd is not None and after.cost_usd is not None
-        else None
-    )
+    if after.cost_usd is None:
+        cost_delta = None
+    elif before.cost_usd is None:
+        cost_delta = after.cost_usd
+    else:
+        cost_delta = after.cost_usd - before.cost_usd
     return {
         "input_tokens": after.input_tokens - before.input_tokens,
         "output_tokens": after.output_tokens - before.output_tokens,
@@ -219,6 +220,29 @@ def _new_tasks_for(outcome: Outcome) -> list[NewTask]:
     if isinstance(outcome, PlanReport | Verdict):
         return list(outcome.new_tasks)
     return []
+
+
+def _validate_report_local_references(new_tasks: Sequence[NewTask]) -> None:
+    for new_task in new_tasks:
+        for reference in new_task.depends_on:
+            if not reference.startswith("#"):
+                continue
+            index = int(reference[1:])
+            if index < 1 or index > len(new_tasks):
+                message = (
+                    f"scope change report-local reference {reference!r} is outside the "
+                    "report's new_tasks list"
+                )
+                raise UsageError(message)
+
+
+def _split_mode_mismatch(task: Task, step: Step, outcome: Outcome) -> bool:
+    return (
+        step is Step.TRIAGE
+        and task.mode is Mode.SPLIT
+        and isinstance(outcome, TriageReport)
+        and outcome.mode is not Mode.SPLIT
+    )
 
 
 def _escalation_narrative(
@@ -577,23 +601,54 @@ class TaskFlow:
                         execution = await self._run_turn(task, step)
                     continue
                 await self._close_execution(execution)
-                await self._clear_intervention(task.id, ACTING_ROLE[step])
-                outcome = result.report
-                self._emit_turn_completed(task, outcome, execution)
-                transition = next_step(task, outcome, self._settings)
-                escalated = transition.status is Status.ESCALATED
-                escalation_step, reason = transition.step, transition.escalation_reason
-                task = await self._apply(task, transition, outcome)
-                if escalated:
-                    if reason is None:
-                        message = f"{task.id} escalated with no escalation_reason on its transition"
-                        raise ShikiruError(message)
-                    await self._raise_escalation(task, escalation_step, reason, outcome)
-                    return task, TurnCounters(), True
-                return task, TurnCounters(), False
+                return await self._complete_step_turn(task, step, execution)
         finally:
             if execution is not None:
                 await self._close_execution(execution)
+
+    async def _complete_step_turn(
+        self, task: Task, step: Step, execution: _TurnExecution
+    ) -> tuple[Task, TurnCounters, bool]:
+        result = execution.result
+        if not isinstance(result, Completed):
+            message = f"{task.id} completed-step handler received {type(result).__name__}"
+            raise ShikiruError(message)
+        outcome = result.report
+        if _split_mode_mismatch(task, step, outcome):
+            return await self._reject_split_mode(task, step, execution, TurnCounters())
+        await self._clear_intervention(task.id, ACTING_ROLE[step])
+        self._emit_turn_completed(task, outcome, execution)
+        transition = next_step(task, outcome, self._settings)
+        escalated = transition.status is Status.ESCALATED
+        escalation_step, reason = transition.step, transition.escalation_reason
+        try:
+            task = await self._apply(task, transition, outcome)
+        except UsageError as error:
+            task = await self._escalate_scope_change_protocol(task, step, outcome, error)
+            return task, TurnCounters(), True
+        if escalated:
+            if reason is None:
+                message = f"{task.id} escalated with no escalation_reason on its transition"
+                raise ShikiruError(message)
+            await self._raise_escalation(task, escalation_step, reason, outcome)
+            return task, TurnCounters(), True
+        return task, TurnCounters(), False
+
+    async def _reject_split_mode(
+        self,
+        task: Task,
+        step: Step,
+        execution: _TurnExecution,
+        counters: TurnCounters,
+    ) -> tuple[Task, TurnCounters, bool]:
+        rejected = dataclasses.replace(execution, result=ProtocolError())
+        updated, next_counters, should_return, _continued = await self._recover(
+            task, step, rejected, counters
+        )
+        if not should_return:
+            message = f"{task.id} split triage protocol recovery did not stop"
+            raise ShikiruError(message)
+        return updated, next_counters, True
 
     async def _recover(
         self,
@@ -1144,6 +1199,9 @@ class TaskFlow:
             "request": task.request,
             "trackers": list(self._settings.project.trackers),
             "reports": _history_context(history),
+            "required_mode": (
+                Mode.SPLIT.value if step is Step.TRIAGE and task.mode is Mode.SPLIT else ""
+            ),
         }
         if template is PromptName.CONSULT:
             context["question"] = self._recovery_questions.pop(task.id, _latest_question(history))
@@ -1195,6 +1253,7 @@ class TaskFlow:
 
     def _apply_new_tasks(self, task: Task, transition: Transition, outcome: Outcome) -> None:
         new_tasks = _new_tasks_for(outcome)
+        _validate_report_local_references(new_tasks)
         origin = TaskOrigin.SPLIT if isinstance(outcome, TriageReport) else TaskOrigin.LEADER
         selected_mode = outcome.mode if isinstance(outcome, TriageReport) else None
         children = self._tasks.apply_scope_change(
@@ -1206,6 +1265,26 @@ class TaskFlow:
         )
         new_ids = [child.id for child in children]
         self._emit_scope_change(task, outcome, new_ids)
+
+    async def _escalate_scope_change_protocol(
+        self, task: Task, step: Step, outcome: Outcome, error: UsageError
+    ) -> Task:
+        self._emit_turn_failed(task, step, ProtocolError())
+        transition = dataclasses.replace(
+            Transition.stay(task, step=step, status=Status.ESCALATED),
+            escalation_reason=EscalationReason.AGENT_PROTOCOL,
+        )
+        self._tasks.apply_transition(task.id, transition)
+        updated = self._require_task(task.id)
+        await self._titles.refresh(updated)
+        self._recovery_questions[task.id] = str(error)
+        await self._raise_escalation(
+            updated,
+            step,
+            EscalationReason.AGENT_PROTOCOL,
+            outcome,
+        )
+        return updated
 
     def _emit_scope_change(self, task: Task, outcome: Outcome, new_ids: list[str]) -> None:
         if not isinstance(outcome, PlanReport | Verdict):

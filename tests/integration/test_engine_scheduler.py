@@ -18,6 +18,7 @@ from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.scheduler import Scheduler
+from shikiru.engine.titles import TaskTitles
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
@@ -32,7 +33,7 @@ from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.git import Git
 from shikiru.workspace.roots import TaskRootBuilder
 from tests.support.clock import FakeClock
-from tests.support.engine import build_tmux
+from tests.support.engine import build_decorator, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 
@@ -68,6 +69,7 @@ class SchedulerFixture:
     events: EventLog
     layout: LayoutGuard
     roots: TaskRootBuilder
+    titles: TaskTitles
     dependency_callback: Callable[[Task], Awaitable[None]]
     clock: Clock
 
@@ -128,6 +130,7 @@ def _scheduler(environment: SchedulerFixture, settings: Settings) -> Scheduler:
         roots=environment.roots,
         events=environment.events,
         on_dependency_cancelled=environment.dependency_callback,
+        titles=environment.titles,
     )
 
 
@@ -165,6 +168,8 @@ async def scheduler_env(
     raiser = EscalationRaiser(
         EscalationStore(connection, clock), events, RunStore(connection, clock), tmp_path
     )
+    titles = TaskTitles(build_decorator(tmux), RunStore(connection, clock), settings)
+    dependency_callback = DependencyEscalator(tasks, raiser, titles)
     scheduler = Scheduler(
         tasks=tasks,
         settings=settings,
@@ -174,7 +179,8 @@ async def scheduler_env(
         layout=layout,
         roots=roots,
         events=events,
-        on_dependency_cancelled=DependencyEscalator(tasks, raiser),
+        on_dependency_cancelled=dependency_callback,
+        titles=titles,
     )
     return SchedulerFixture(
         scheduler,
@@ -184,7 +190,8 @@ async def scheduler_env(
         events,
         layout,
         roots,
-        DependencyEscalator(tasks, raiser),
+        titles,
+        dependency_callback,
         clock,
     )
 
@@ -270,6 +277,28 @@ async def test_integrate_dispatch_enters_integrating_status(
     assert current.status is Status.INTEGRATING
 
 
+async def test_dispatch_emits_task_started_before_step_started(
+    scheduler_env: SchedulerFixture, connection: Connection
+) -> None:
+    task = _submit(connection, scheduler_env.clock, title="ordered events")
+    scheduler_env.tasks.apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.IMPLEMENT, status=Status.QUEUED),
+    )
+
+    await scheduler_env.scheduler.run_once()
+
+    events = scheduler_env.events.since(0, task_id=task.id)
+    assert [
+        event.kind
+        for event in events
+        if event.kind in (EventKind.TASK_STARTED, EventKind.STEP_STARTED)
+    ] == [
+        EventKind.TASK_STARTED,
+        EventKind.STEP_STARTED,
+    ]
+
+
 async def test_cancelled_dependency_escalates_with_packet(
     scheduler_env: SchedulerFixture, connection: Connection
 ) -> None:
@@ -344,3 +373,6 @@ async def test_dispatch_setup_failure_rolls_back_status_and_slot(
     assert current.status is Status.QUEUED
     assert current.slot is None
     assert current.window_id is None
+    assert not scheduler_env.events.since(
+        0, kinds=[EventKind.TASK_STARTED, EventKind.STEP_STARTED], task_id=task.id
+    )

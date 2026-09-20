@@ -156,8 +156,8 @@ class SessionMonitor:
         poll_seconds: int,
         expects_started: bool,
         pending_lines: InjectedLines | None = None,
-        events: EventLog | None = None,
-        refresh_titles: Callable[[Task], Awaitable[None]] | None = None,
+        events: EventLog,
+        refresh_titles: Callable[[Task], Awaitable[None]],
     ) -> None:
         """Monitor `session` in `pane`, persisting facts for `run_id` under `tasks`/`runs`."""
         self._session = session
@@ -338,12 +338,11 @@ class SessionMonitor:
         if usage != self._persisted_usage:
             self._runs.record_usage(self._run_id, usage)
             self._persisted_usage = usage
-            if self._refresh_titles is not None:
-                task = self._tasks.get(self._task_id)
-                if task is None:
-                    message = f"{self._task_id} disappeared while refreshing titles"
-                    raise RuntimeError(message)
-                await self._refresh_titles(task)
+            task = self._tasks.get(self._task_id)
+            if task is None:
+                message = f"{self._task_id} disappeared while refreshing titles"
+                raise RuntimeError(message)
+            await self._refresh_titles(task)
         snapshot = dict(self._session.snapshot())
         if snapshot != self._persisted_snapshot:
             self._runs.set_agent_state(self._run_id, snapshot)
@@ -360,16 +359,14 @@ class SessionMonitor:
         if Hold.INTERVENTION in task.holds:
             return
         self._tasks.set_holds(self._task_id, task.holds | {Hold.INTERVENTION})
-        if self._events is not None:
-            self._events.append(
-                EventKind.INTERVENTION,
-                task_id=self._task_id,
-                message=f"{self._task_id} operator intervention detected",
-                data={"text": text},
-            )
-        if self._refresh_titles is not None:
-            updated = self._tasks.get(self._task_id)
-            if updated is None:
-                message = f"{self._task_id} disappeared while refreshing titles"
-                raise RuntimeError(message)
-            await self._refresh_titles(updated)
+        self._events.append(
+            EventKind.INTERVENTION,
+            task_id=self._task_id,
+            message=f"{self._task_id} operator intervention detected",
+            data={"text": text},
+        )
+        updated = self._tasks.get(self._task_id)
+        if updated is None:
+            message = f"{self._task_id} disappeared while refreshing titles"
+            raise RuntimeError(message)
+        await self._refresh_titles(updated)

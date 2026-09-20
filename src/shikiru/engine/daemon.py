@@ -131,7 +131,7 @@ class Engine:
         project_root: Path,
         clock: Clock,
         close_state: Callable[[], None],
-        refresh_titles: Callable[[Task], Awaitable[None]] | None = None,
+        refresh_titles: Callable[[Task], Awaitable[None]],
     ) -> None:
         """Wire the engine's stores, orchestration components and lifecycle callbacks."""
         self._lock = EngineLock(lock_path)

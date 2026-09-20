@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 _SIGNAL_TIMEOUT = 15.0
 
 
+async def _refresh_titles(_task: object) -> None:
+    return
+
+
 async def _next_stalled(queue: asyncio.Queue[MonitorSignal]) -> Stalled:
     while True:
         signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
@@ -195,6 +199,8 @@ async def test_launch_timeout_publishes_stalled(engine_env: EngineEnv) -> None:
         clock=clock,
         settings=settings,
         expects_started=True,
+        events=EventLog(engine_env.connection, clock),
+        refresh_titles=_refresh_titles,
     )
     queue = monitor.subscribe()
     run_task = asyncio.ensure_future(monitor.run())
@@ -225,6 +231,8 @@ async def test_missing_pane_publishes_pane_died(engine_env: EngineEnv) -> None:
         clock=clock,
         settings=settings,
         expects_started=False,
+        events=EventLog(engine_env.connection, clock),
+        refresh_titles=_refresh_titles,
     )
     queue = monitor.subscribe()
     run_task = asyncio.ensure_future(monitor.run())
@@ -257,6 +265,8 @@ async def test_monitor_exception_publishes_pane_died(engine_env: EngineEnv) -> N
         clock=clock,
         settings=settings,
         expects_started=False,
+        events=EventLog(engine_env.connection, clock),
+        refresh_titles=_refresh_titles,
     )
     queue = monitor.subscribe()
     run_task = asyncio.ensure_future(monitor.run())
@@ -287,6 +297,8 @@ async def test_closed_monitor_stream_publishes_pane_died(engine_env: EngineEnv) 
         clock=clock,
         settings=settings,
         expects_started=False,
+        events=EventLog(engine_env.connection, clock),
+        refresh_titles=_refresh_titles,
     )
     queue = monitor.subscribe()
     run_task = asyncio.ensure_future(monitor.run())
@@ -318,6 +330,8 @@ async def test_stall_is_published_once_per_episode(engine_env: EngineEnv) -> Non
         clock=clock,
         settings=settings,
         expects_started=True,
+        events=EventLog(engine_env.connection, clock),
+        refresh_titles=_refresh_titles,
     )
     queue = monitor.subscribe()
     run_task = asyncio.ensure_future(monitor.run())
@@ -365,6 +379,8 @@ async def test_tick_persists_facts_only_on_change(
         clock=clock,
         settings=settings,
         expects_started=True,
+        events=EventLog(engine_env.connection, clock),
+        refresh_titles=_refresh_titles,
     )
     reader_connection = database.connect_readonly()
     run_task = asyncio.ensure_future(monitor.run())
@@ -443,6 +459,7 @@ async def test_intervention_prompt_emits_an_event(
         settings=fake_engine_settings(),
         expects_started=False,
         events=events,
+        refresh_titles=_refresh_titles,
     )
     queue = monitor.subscribe()
     run_task = asyncio.ensure_future(monitor.run())

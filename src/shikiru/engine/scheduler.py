@@ -49,7 +49,7 @@ class Scheduler:
         roots: TaskRootBuilder,
         events: EventLog,
         on_dependency_cancelled: DependencyCallback,
-        titles: TaskTitles | None = None,
+        titles: TaskTitles,
     ) -> None:
         """Inject state stores, gates, and the task-window dispatch boundary."""
         self._tasks = tasks
@@ -137,23 +137,7 @@ class Scheduler:
                 current = self._require_task(task.id, "task-root creation")
             await self._layout.ensure(current)
             current = self._require_task(task.id, "layout creation")
-            if current.step is not None:
-                role = ACTING_ROLE[current.step]
-                rung = pick_rung(current, role, self._settings)
-                self._events.append(
-                    EventKind.STEP_STARTED,
-                    task_id=current.id,
-                    message=f"{current.id} {current.step.value} started",
-                    data={
-                        "step": current.step.value,
-                        "role": role.value,
-                        "iteration": current.iteration,
-                        "agent": rung.agent,
-                        "model": rung.model,
-                    },
-                )
-            if self._titles is not None:
-                await self._titles.refresh(current)
+            await self._titles.refresh(current)
         except Exception:
             self._logger.exception("dispatch setup failed for %s", task.id)
             await self._rollback_dispatch(task)
@@ -164,6 +148,21 @@ class Scheduler:
             message=f"{current.id} started in slot {slot}",
             data={"slot": slot},
         )
+        if current.step is not None:
+            role = ACTING_ROLE[current.step]
+            rung = pick_rung(current, role, self._settings)
+            self._events.append(
+                EventKind.STEP_STARTED,
+                task_id=current.id,
+                message=f"{current.id} {current.step.value} started",
+                data={
+                    "step": current.step.value,
+                    "role": role.value,
+                    "iteration": current.iteration,
+                    "agent": rung.agent,
+                    "model": rung.model,
+                },
+            )
         return True
 
     async def _rollback_dispatch(self, task: Task) -> None:

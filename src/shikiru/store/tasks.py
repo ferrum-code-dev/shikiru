@@ -316,7 +316,8 @@ class TaskStore:
             found = {row["id"] for row in rows}
             missing = existing_references - found
             if missing:
-                message = f"scope change references missing task(s): {sorted(missing)}"
+                reference = min(missing)
+                message = f"scope change dependency {reference!r} does not exist"
                 raise UsageError(message)
         for new_task in new_tasks:
             for ref in new_task.depends_on:
@@ -324,7 +325,10 @@ class TaskStore:
                     continue
                 sibling_index = int(ref[1:])
                 if sibling_index < 1 or sibling_index > sibling_count:
-                    message = f"scope change reference {ref!r} is outside the sibling task list"
+                    message = (
+                        f"scope change report-local reference {ref!r} is outside the "
+                        "report's new_tasks list"
+                    )
                     raise UsageError(message)
 
     def set_mode(self, task_id: str, mode: Mode) -> None:

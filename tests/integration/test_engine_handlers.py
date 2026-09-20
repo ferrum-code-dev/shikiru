@@ -114,6 +114,9 @@ def handler_env(engine_env: EngineEnv) -> HandlerFixture:
     def stop_engine() -> None:
         stopped.append(True)
 
+    async def refresh_titles(_task: Task) -> None:
+        return
+
     context = HandlerContext(
         tasks=tasks,
         escalations=escalations,
@@ -126,6 +129,7 @@ def handler_env(engine_env: EngineEnv) -> HandlerFixture:
         finish_task=finish_task,
         set_consult_question=set_consult_question,
         stop_engine=stop_engine,
+        refresh_titles=refresh_titles,
     )
     registry = HandlerRegistry(
         [
