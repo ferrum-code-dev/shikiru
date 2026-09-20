@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from typing import TYPE_CHECKING
 
 import pytest
@@ -136,6 +137,32 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
 
     assert result.commits
     assert (project_root / "README.md").read_text() == "task\n"
+
+
+async def test_local_merge_waits_for_a_dirty_directory_ancestor(
+    connection: Connection, tmp_path: Path
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, states = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    task_directory = task_root / "nested"
+    task_directory.mkdir()
+    (task_directory / "task.txt").write_text("task\n")
+    await commit_all(_RUNNER, task_root, "task directory change")
+    dirty_directory = project_root / "nested"
+    await init_repo(_RUNNER, dirty_directory)
+    clock = FakeClock(TASK_CREATED_AT)
+    merge_task = asyncio.create_task(
+        LocalMerge(Git(_RUNNER), clock, integration_wait=300).merge(project_root, task_root, states)
+    )
+    await wait_until(clock.has_pending_sleep, timeout=5)
+    shutil.rmtree(dirty_directory)
+    clock.advance(120)
+
+    result = await merge_task
+
+    assert result.commits
+    assert (project_root / "nested" / "task.txt").read_text() == "task\n"
 
 
 async def test_local_merge_checks_all_repositories_before_merging_any(

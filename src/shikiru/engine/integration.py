@@ -193,11 +193,17 @@ class LocalMerge:
 
 
 def _paths_overlap(changed: set[str], dirty: set[str]) -> bool:
-    return any(
-        left == right or left.startswith(f"{right}/") or right.startswith(f"{left}/")
-        for left in changed
-        for right in dirty
-    )
+    for left in changed:
+        normalized_left = left.rstrip("/")
+        for right in dirty:
+            normalized_right = right.rstrip("/")
+            if (
+                normalized_left == normalized_right
+                or normalized_left.startswith(f"{normalized_right}/")
+                or normalized_right.startswith(f"{normalized_left}/")
+            ):
+                return True
+    return False
 
 
 class Integrator:
