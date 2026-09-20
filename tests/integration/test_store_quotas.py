@@ -37,7 +37,7 @@ def test_clear_block_removes_it(connection: Connection) -> None:
     assert store.active_blocks(START) == []
 
 
-def test_block_replaces_an_earlier_block_for_the_same_agent(connection: Connection) -> None:
+def test_block_extends_an_earlier_block_for_the_same_agent(connection: Connection) -> None:
     store = _make_store(connection)
     store.block("claude", START + timedelta(minutes=5), "first")
 
@@ -46,6 +46,33 @@ def test_block_replaces_an_earlier_block_for_the_same_agent(connection: Connecti
     [active] = store.active_blocks(START)
     assert active.reason == "second"
     assert active.until == START + timedelta(minutes=30)
+
+
+def test_block_does_not_shorten_an_existing_cross_task_block(connection: Connection) -> None:
+    store = _make_store(connection)
+    deadline = START + timedelta(minutes=30)
+    store.block("claude", deadline, "first")
+
+    store.block("claude", START + timedelta(minutes=5), "second")
+
+    [active] = store.active_blocks(START)
+    assert active.reason == "first"
+    assert active.until == deadline
+
+
+def test_block_with_limit_caps_a_requested_wait(connection: Connection) -> None:
+    store = _make_store(connection)
+
+    store.block_with_limit(
+        "claude",
+        START + timedelta(hours=1),
+        now=START,
+        max_wait=timedelta(minutes=10),
+        reason="quota",
+    )
+
+    [active] = store.active_blocks(START)
+    assert active.until == START + timedelta(minutes=10)
 
 
 def test_active_blocks_orders_correctly_at_sub_second_precision(connection: Connection) -> None:

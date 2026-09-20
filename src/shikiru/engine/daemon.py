@@ -196,9 +196,11 @@ class Engine:
             self._close_logging()
             self._close_state()
             raise
-        poller_task = self._quota_poller.start()
-        self._events.append(EventKind.ENGINE_STARTED, message="engine started")
+        poller_task: asyncio.Task[None] | None = None
         try:
+            self._last_notified_event = self._events.latest_id()
+            poller_task = self._quota_poller.start()
+            self._events.append(EventKind.ENGINE_STARTED, message="engine started")
             next_tick = self._clock.now()
             while not self._stop.is_set():
                 await self._supervise_flows()
@@ -311,13 +313,14 @@ class Engine:
             self._last_notified_event = event.id
             await self._notifier.notify(event)
 
-    async def _shutdown(self, poller_task: asyncio.Task[None]) -> None:
+    async def _shutdown(self, poller_task: asyncio.Task[None] | None) -> None:
         try:
             self._events.append(EventKind.ENGINE_STOPPED, message="engine stopped")
             await self._quota_poller.stop()
-            poller_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await poller_task
+            if poller_task is not None:
+                poller_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await poller_task
             for task in tuple(self._flow_tasks.values()):
                 task.cancel()
             if self._flow_tasks:

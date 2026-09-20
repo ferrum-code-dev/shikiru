@@ -14,7 +14,9 @@ from shikiru.domain.commands import Stop, Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step
-from shikiru.engine.quota_poller import QUOTA_POLL_SECONDS
+from shikiru.engine.agents import AgentPool
+from shikiru.engine.quota_poller import QUOTA_POLL_SECONDS, QuotaPoller
+from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
@@ -24,6 +26,7 @@ from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.engine import build_registry
 from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -31,6 +34,7 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import Settings
     from shikiru.store.commands import QueuedCommand
+    from tests.support.store import Connection
 
 
 _FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
@@ -155,3 +159,36 @@ async def test_quota_poller_persists_periodic_and_failure_triggered_snapshots(
         with suppress(asyncio.CancelledError, Exception):
             await engine_task
         connection.close()
+
+
+async def test_quota_poller_continues_after_one_agent_plugin_failure(
+    connection: Connection,
+) -> None:
+    sequence = [[{"name": "short", "used_pct": 10, "observed_at": TASK_CREATED_AT}]]
+    settings = _settings(sequence).model_copy(
+        update={
+            "agents": {
+                "fake": AgentConfig(options={"quota_sequence": sequence}),
+                "fake2": AgentConfig(options={"quota_failure": "probe failed"}),
+            }
+        }
+    )
+    clock = FakeClock(TASK_CREATED_AT)
+    runs = RunStore(connection, clock)
+    quotas = QuotaStore(connection)
+    first = seed_task(connection, clock, title="healthy quota")
+    second = seed_task(connection, clock, title="failing quota")
+    runs.start(first.id, Role.IMPLEMENTER, Rung(agent="fake", model="fake-1"))
+    runs.start(second.id, Role.IMPLEMENTER, Rung(agent="fake2", model="fake-1"))
+    poller = QuotaPoller(
+        AgentPool(build_registry().create, SubprocessRunner(), settings, clock),
+        runs,
+        quotas,
+        clock,
+    )
+
+    await poller.poll_once()
+
+    [window] = quotas.quotas_for("fake")
+    assert window.used_pct == 10
+    assert quotas.quotas_for("fake2") == []

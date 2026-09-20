@@ -60,6 +60,7 @@ class FakeOptions(BaseModel):
     new_session_id: str | None = None
     quota: list[FakeQuotaWindow] = Field(default_factory=list)
     quota_sequence: list[list[FakeQuotaWindow]] = Field(default_factory=list)
+    quota_failure: str | None = None
 
 
 def _hooks_file_size(run_dir: Path, role: str) -> int:
@@ -98,6 +99,8 @@ class FakeAgent:
 
     async def quota(self) -> list[QuotaWindow]:
         """Return the quota windows configured for this fake agent."""
+        if self._options.quota_failure is not None:
+            raise RuntimeError(self._options.quota_failure)
         sequence = self._options.quota_sequence
         if sequence:
             index = min(self._quota_index, len(sequence) - 1)

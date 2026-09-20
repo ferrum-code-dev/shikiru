@@ -155,13 +155,24 @@ class EscalationRaiser:
         )
         packet = render_packet(context)
         headline = _headline(context)
-        escalation = self._escalations.open(
-            task.id, step=step, reason=reason, headline=headline, packet_path="", options=options
-        )
-        packet_path = self._packet_path(task.id, escalation.id)
-        packet_path.parent.mkdir(parents=True, exist_ok=True)
-        packet_path.write_text(packet)
-        self._escalations.set_packet_path(escalation.id, str(packet_path))
+        escalation_id = self._escalations.reserve_id()
+        packet_path = self._packet_path(task.id, escalation_id)
+        try:
+            packet_path.parent.mkdir(parents=True, exist_ok=True)
+            packet_path.write_text(packet)
+            escalation = self._escalations.open_reserved(
+                escalation_id,
+                task.id,
+                step=step,
+                reason=reason,
+                headline=headline,
+                packet_path=str(packet_path),
+                options=options,
+            )
+        except Exception:
+            if packet_path.parent.is_dir() and packet_path.exists():
+                packet_path.unlink()
+            raise
         self._events.append(
             EventKind.ESCALATION,
             task_id=task.id,

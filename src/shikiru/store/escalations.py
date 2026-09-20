@@ -90,26 +90,84 @@ class EscalationStore:
     ) -> Escalation:
         """Allocate an `E-n` id and record a new open escalation."""
         with transaction(self._connection):
-            seq = next_sequence(self._connection, ESCALATION_SEQUENCE)
-            escalation_id = f"{ESCALATION_ID_PREFIX}{seq}"
-            self._connection.execute(
-                """
-                INSERT INTO escalations (
-                  id, task_id, step, reason, headline, packet_path, options, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    escalation_id,
-                    task_id,
-                    step.value if step is not None else None,
-                    reason.value,
-                    headline,
-                    packet_path,
-                    dump_json(_OPTIONS_ADAPTER, options),
-                    EscalationStatus.OPEN.value,
-                    format_timestamp(self._clock.now()),
-                ),
+            escalation_id = self._next_id()
+            self._insert(
+                escalation_id,
+                task_id=task_id,
+                step=step,
+                reason=reason,
+                headline=headline,
+                packet_path=packet_path,
+                options=options,
             )
+        return self._require_opened(escalation_id)
+
+    def reserve_id(self) -> str:
+        """Reserve the next escalation id before creating its packet file."""
+        with transaction(self._connection):
+            return self._next_id()
+
+    def open_reserved(
+        self,
+        escalation_id: str,
+        task_id: str,
+        *,
+        step: Step | None,
+        reason: EscalationReason,
+        headline: str,
+        packet_path: str,
+        options: tuple[EscalationOption, ...],
+    ) -> Escalation:
+        """Record an open escalation using an id reserved before packet creation."""
+        with transaction(self._connection):
+            self._insert(
+                escalation_id,
+                task_id=task_id,
+                step=step,
+                reason=reason,
+                headline=headline,
+                packet_path=packet_path,
+                options=options,
+            )
+        return self._require_opened(escalation_id)
+
+    def _next_id(self) -> str:
+        seq = next_sequence(self._connection, ESCALATION_SEQUENCE)
+        return f"{ESCALATION_ID_PREFIX}{seq}"
+
+    def _insert(
+        self,
+        escalation_id: str,
+        *,
+        task_id: str,
+        step: Step | None,
+        reason: EscalationReason,
+        headline: str,
+        packet_path: str,
+        options: tuple[EscalationOption, ...],
+    ) -> None:
+        if not packet_path:
+            raise ValueError
+        self._connection.execute(
+            """
+            INSERT INTO escalations (
+              id, task_id, step, reason, headline, packet_path, options, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                escalation_id,
+                task_id,
+                step.value if step is not None else None,
+                reason.value,
+                headline,
+                packet_path,
+                dump_json(_OPTIONS_ADAPTER, options),
+                EscalationStatus.OPEN.value,
+                format_timestamp(self._clock.now()),
+            ),
+        )
+
+    def _require_opened(self, escalation_id: str) -> Escalation:
         escalation = fetch_escalation(self._connection, escalation_id)
         return require_after_insert(
             escalation, f"escalation {escalation_id} vanished immediately after insert"
@@ -117,6 +175,8 @@ class EscalationStore:
 
     def set_packet_path(self, escalation_id: str, packet_path: str) -> None:
         """Record `escalation_id`'s packet path once its file has been written (03 §8)."""
+        if not packet_path:
+            raise ValueError
         self._connection.execute(
             "UPDATE escalations SET packet_path = ? WHERE id = ?", (packet_path, escalation_id)
         )

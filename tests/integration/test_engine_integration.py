@@ -54,14 +54,18 @@ async def _repo(path: Path, filename: str = "README.md") -> Path:
 
 
 async def _task_with_worktree(
-    connection: Connection, project_root: Path, *, title: str = "merge task"
+    connection: Connection,
+    project_root: Path,
+    *,
+    title: str = "merge task",
+    base: str = "main",
 ):
     task = seed_task(connection, SystemClock(), title=title, mode=Mode.IMPLEMENT)
     tasks = TaskStore(connection, SystemClock())
     transition = Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
     tasks.apply_transition(task.id, transition)
     states = await TaskRootBuilder(Git(_RUNNER), project_root).build(
-        task.id, task.title, [RepoConfig(path=".", base="main")]
+        task.id, task.title, [RepoConfig(path=".", base=base)]
     )
     tasks.set_repos(task.id, states)
     current = tasks.get(task.id)
@@ -85,6 +89,27 @@ async def test_local_merge_fast_forwards_base_and_reports_commits(
     assert (project_root / "README.md").read_text() == "task\n"
     assert result.commits
     assert await Git(_RUNNER).current_branch(project_root) == "main"
+
+
+async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
+    connection: Connection, tmp_path: Path
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    await _RUNNER.run(["git", "branch", "release"], cwd=project_root, timeout=10, check=True)
+    task, states = await _task_with_worktree(connection, project_root, base="release")
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    (task_root / "README.md").write_text("release task\n")
+    await commit_all(_RUNNER, task_root, "release change")
+
+    result = await LocalMerge(Git(_RUNNER), SystemClock(), integration_wait=1).merge(
+        project_root, task_root, states
+    )
+
+    assert result.commits
+    assert await Git(_RUNNER).rev_parse(project_root, "release") == await Git(_RUNNER).rev_parse(
+        task_root, states[0].branch
+    )
+    assert (project_root / "README.md").read_text() == "base\n"
 
 
 async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(

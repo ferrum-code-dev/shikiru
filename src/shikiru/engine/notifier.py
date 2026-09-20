@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shlex
 from typing import TYPE_CHECKING
 
@@ -33,17 +34,23 @@ class Notifier:
         self._session_target = session_target
         self._command = command
         self._timeout_seconds = timeout_seconds
+        self._logger = logging.getLogger(__name__)
 
     async def notify(self, event: Event) -> None:
         """Deliver `event` when it is an escalation or task completion."""
         if event.kind not in _NOTIFIABLE:
             return
-        await self._tmux.display_message(self._session_target, event.message)
-        if not self._command.strip():
-            return
-        argv = tuple(shlex.split(self._command))
-        payload = json.dumps(event.model_dump(mode="json"))
-        await self._runner.run(argv, timeout=self._timeout_seconds, input_text=payload)
+        try:
+            await self._tmux.display_message(self._session_target, event.message)
+        except Exception:
+            self._logger.exception("tmux notification failed for event %s", event.id)
+        if self._command.strip():
+            try:
+                argv = tuple(shlex.split(self._command))
+                payload = json.dumps(event.model_dump(mode="json"))
+                await self._runner.run(argv, timeout=self._timeout_seconds, input_text=payload)
+            except Exception:
+                self._logger.exception("external notification failed for event %s", event.id)
 
     async def handle(self, event: Event) -> None:
         """Alias for `notify`, suitable as an event subscriber callback."""

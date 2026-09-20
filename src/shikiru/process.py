@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
@@ -60,8 +61,11 @@ class SubprocessRunner:
                     process.communicate(input_bytes), timeout=timeout
                 )
             except TimeoutError:
-                await self._kill(process)
+                await self._kill_and_wait(process)
                 raise CommandTimeoutError(argv_tuple, timeout) from None
+            except asyncio.CancelledError:
+                await self._kill_and_wait(process)
+                raise
         finally:
             self._close_transport(process)
 
@@ -119,8 +123,18 @@ class SubprocessRunner:
             raise ProcessReplacementError(argv_tuple, error) from error
 
     @staticmethod
+    async def _kill_and_wait(process: asyncio.subprocess.Process) -> None:
+        cleanup = asyncio.create_task(SubprocessRunner._kill(process))
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            await cleanup
+
+    @staticmethod
     async def _kill(process: asyncio.subprocess.Process) -> None:
-        process.kill()
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
         await process.wait()
 
     @staticmethod

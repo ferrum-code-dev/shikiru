@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
 
 _FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
+_SAMPLED_CPU_PERCENT = 50.0
 _LAYOUT = LayoutSplit(
     split="h",
     panes=[
@@ -293,7 +294,7 @@ async def test_resource_gate_blocks_at_zero_and_dispatches_at_hundred(
 ) -> None:
     def fixed_cpu_percent(interval: float | None = None) -> float:
         del interval
-        return 100.0
+        return _SAMPLED_CPU_PERCENT
 
     monkeypatch.setattr(resources_module.psutil, "cpu_percent", fixed_cpu_percent)
     task = _submit(connection, scheduler_env.clock, title="resources")
@@ -323,3 +324,21 @@ async def test_quota_gate_persists_wait_reason(
     waiting = scheduler_env.tasks.get(task.id)
     assert waiting is not None
     assert waiting.wait_reason == "quota"
+
+
+async def test_dispatch_setup_failure_rolls_back_status_and_slot(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    tmux_server: TmuxServer,
+) -> None:
+    task = _submit(connection, scheduler_env.clock, title="dispatch failure")
+    await tmux_server.run("kill-session", "-t", "test")
+
+    schedule = await scheduler_env.scheduler.run_once()
+
+    assert schedule.dispatches == ()
+    current = scheduler_env.tasks.get(task.id)
+    assert current is not None
+    assert current.status is Status.QUEUED
+    assert current.slot is None
+    assert current.window_id is None

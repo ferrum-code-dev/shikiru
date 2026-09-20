@@ -105,3 +105,10 @@ class EventLog:
     ) -> list[Event]:
         """Read every event since `since_id`, optionally filtered by `kinds` and `task_id`."""
         return fetch_events_since(self._connection, since_id, kinds=kinds, task_id=task_id)
+
+    def latest_id(self) -> int:
+        """Return the current event cursor, or zero when the log is empty."""
+        row = self._connection.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()
+        if row is None:
+            raise RuntimeError
+        return int(row[0])

@@ -10,7 +10,7 @@ from shikiru.store.database import format_timestamp, parse_required_timestamp, p
 
 if TYPE_CHECKING:
     import sqlite3
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,12 +101,28 @@ class QuotaStore:
         return fetch_quotas(self._connection, agent)
 
     def block(self, agent: str, until: datetime, reason: str) -> None:
-        """Block `agent` from dispatch until `until`, replacing any earlier block."""
+        """Block `agent` from dispatch until the later of the current and requested deadlines."""
         self._connection.execute(
             "INSERT INTO agent_blocks (agent, until, reason) VALUES (?, ?, ?) "
-            "ON CONFLICT (agent) DO UPDATE SET until = excluded.until, reason = excluded.reason",
+            "ON CONFLICT (agent) DO UPDATE SET "
+            "until = CASE WHEN agent_blocks.until >= excluded.until "
+            "THEN agent_blocks.until ELSE excluded.until END, "
+            "reason = CASE WHEN agent_blocks.until >= excluded.until "
+            "THEN agent_blocks.reason ELSE excluded.reason END",
             (agent, format_timestamp(until), reason),
         )
+
+    def block_with_limit(
+        self,
+        agent: str,
+        until: datetime,
+        *,
+        now: datetime,
+        max_wait: timedelta,
+        reason: str,
+    ) -> None:
+        """Block `agent` without letting this wait exceed `max_wait` from `now`."""
+        self.block(agent, min(until, now + max_wait), reason)
 
     def clear_block(self, agent: str) -> None:
         """Remove `agent`'s block, if any."""

@@ -104,3 +104,31 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     assert "claude --resume sess-123" in packet_text
     raised_events = events.since(0, kinds=[EventKind.ESCALATION], task_id=task.id)
     assert len(raised_events) == 1
+
+
+async def test_packet_creation_failure_does_not_open_an_empty_escalation(
+    connection: Connection, tmp_path: Path
+) -> None:
+    clock = SystemClock()
+    events = EventLog(connection, clock)
+    runs = RunStore(connection, clock)
+    escalations_store = EscalationStore(connection, clock)
+    raiser = EscalationRaiser(escalations_store, events, runs, tmp_path)
+    task = seed_task(connection, clock, title="Packet failure")
+    blocked_parent = tmp_path / ".shikiru" / "runs" / task.id / "escalations"
+    blocked_parent.parent.mkdir(parents=True)
+    blocked_parent.write_text("not a directory")
+
+    with pytest.raises(FileExistsError):
+        await raiser.raise_escalation(
+            task,
+            step=Step.VERIFY,
+            reason=EscalationReason.DECISION_REQUIRED,
+            question="What next?",
+            attempted="Nothing yet.",
+            reports=(),
+            facts="",
+            pane_tail="",
+        )
+
+    assert escalations_store.list_open() == []

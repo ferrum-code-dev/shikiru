@@ -97,7 +97,7 @@ class ResourceSampler:
         """Return whether a fresh sample passes scheduling thresholds."""
         sample = self.sample_if_due()
         return (
-            sample.host_cpu_pct <= config.max_cpu_pct
+            sample.host_cpu_pct < config.max_cpu_pct
             and sample.free_ram_gb >= config.min_free_ram_gb
         )
 

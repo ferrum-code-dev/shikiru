@@ -126,14 +126,25 @@ class LocalMerge:
         while True:
             try:
                 candidates = await self._precheck(project_root, task_root_path, repos)
-            except _PrecheckFailed:
+                await self._apply(candidates)
+            except _PrecheckFailed, CommandFailed:
                 remaining = (deadline - self._clock.now()).total_seconds()
                 if remaining <= 0:
                     raise IntegrationBlocked from None
                 await self._clock.sleep(min(INTEGRATION_RETRY.total_seconds(), remaining))
                 continue
             break
+        commits = tuple(
+            f"{candidate.repo.path}: {commit}"
+            for candidate in candidates
+            for commit in candidate.commits
+        )
+        return IntegrationSummary(
+            summary=f"Merged {len(commits)} commit(s) across {len(candidates)} repo(s).",
+            commits=commits,
+        )
 
+    async def _apply(self, candidates: Sequence[_MergeCandidate]) -> None:
         for candidate in candidates:
             if candidate.base_checked_out:
                 await self._git.merge_ff_only(candidate.project_dir, candidate.repo.branch)
@@ -144,15 +155,6 @@ class LocalMerge:
                     candidate.branch_sha,
                     candidate.base_sha,
                 )
-        commits = tuple(
-            f"{candidate.repo.path}: {commit}"
-            for candidate in candidates
-            for commit in candidate.commits
-        )
-        return IntegrationSummary(
-            summary=f"Merged {len(commits)} commit(s) across {len(candidates)} repo(s).",
-            commits=commits,
-        )
 
     async def _precheck(
         self, project_root: Path, task_root_path: Path, repos: Sequence[RepoState]
@@ -173,7 +175,7 @@ class LocalMerge:
                     await self._git.diff_name_only(task_dir, f"{base_sha}...{branch_sha}")
                 )
                 dirty = await self._git.dirty_paths(project_dir)
-                if changed & dirty:
+                if _paths_overlap(changed, dirty):
                     raise _PrecheckFailed
             commits = tuple(await self._git.log_oneline(task_dir, f"{base_sha}..{branch_sha}"))
             candidates.append(
@@ -188,6 +190,14 @@ class LocalMerge:
                 )
             )
         return candidates
+
+
+def _paths_overlap(changed: set[str], dirty: set[str]) -> bool:
+    return any(
+        left == right or left.startswith(f"{right}/") or right.startswith(f"{left}/")
+        for left in changed
+        for right in dirty
+    )
 
 
 class Integrator:

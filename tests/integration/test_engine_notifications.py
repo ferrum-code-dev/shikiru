@@ -51,3 +51,40 @@ async def test_notifier_delivers_only_completion_and_escalation_events(
     await notifier.notify(events.append(EventKind.TASK_DONE, message="done", task_id="T-1"))
     payload = await asyncio.to_thread(payload_path.read_text)
     assert json.loads(payload)["kind"] == EventKind.TASK_DONE.value
+
+
+async def test_notifier_keeps_external_delivery_when_tmux_display_fails(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    tmux = build_tmux(tmux_server)
+    payload_path = tmp_path / "notification.json"
+    command = f"/bin/sh -c {shlex.quote(f'cat > {payload_path}')}"
+    notifier = Notifier(
+        tmux,
+        SubprocessRunner(),
+        session_target=exact_target(session_name("missing")),
+        command=command,
+        timeout_seconds=5,
+    )
+
+    await notifier.notify(EventLog(connection, clock).append(EventKind.TASK_DONE, message="done"))
+
+    assert json.loads(payload_path.read_text())["kind"] == EventKind.TASK_DONE.value
+
+
+async def test_notifier_isolates_external_command_failure(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    notifier = Notifier(
+        tmux,
+        SubprocessRunner(),
+        session_target=exact_target(session_name("test")),
+        command="false",
+        timeout_seconds=5,
+    )
+
+    await notifier.notify(EventLog(connection, clock).append(EventKind.ESCALATION, message="help"))

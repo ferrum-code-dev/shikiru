@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -83,6 +85,30 @@ async def test_timeout_raises_and_kills_the_process(tmp_path: Path) -> None:
         )
 
     await wait_until(pid_file.exists, _PID_FILE_WAIT_TIMEOUT)
+    pid = int(pid_file.read_text().strip())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+async def test_cancellation_kills_and_reaps_the_process(tmp_path: Path) -> None:
+    runner = SubprocessRunner()
+    pid_file = tmp_path / "pid"
+    program = (
+        "from pathlib import Path; import os; import time; "
+        f"Path({str(pid_file)!r}).write_text(str(os.getpid())); time.sleep(30)"
+    )
+    task = asyncio.create_task(
+        runner.run(
+            [sys.executable, "-c", program],
+            timeout=30,
+        )
+    )
+
+    await wait_until(pid_file.exists, _PID_FILE_WAIT_TIMEOUT)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
     pid = int(pid_file.read_text().strip())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)

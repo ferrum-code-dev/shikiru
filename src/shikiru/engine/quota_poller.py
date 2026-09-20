@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
@@ -33,6 +34,7 @@ class QuotaPoller:
         self._runs = runs
         self._quotas = quotas
         self._clock = clock
+        self._logger = logging.getLogger(__name__)
         self._interval_seconds = interval_seconds
         self._task: asyncio.Task[None] | None = None
         self._poll_lock = asyncio.Lock()
@@ -40,10 +42,13 @@ class QuotaPoller:
     async def poll_once(self) -> None:
         """Poll every distinct agent represented by a live run."""
         async with self._poll_lock:
-            names = {run.agent for run in self._runs.list_live()}
+            names = sorted({run.agent for run in self._runs.list_live()})
             for name in names:
-                agent = self._agents.get(name)
-                await self._record(name, agent)
+                try:
+                    agent = self._agents.get(name)
+                    await self._record(name, agent)
+                except Exception:
+                    self._logger.exception("quota polling failed for agent %s", name)
 
     async def run(self) -> None:
         """Poll immediately, then continue at the configured interval until cancelled."""

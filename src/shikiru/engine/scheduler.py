@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
-from shikiru.domain.scheduling import ReadySchedule, SchedulingGates, TaskAgents, pick_ready
+from shikiru.domain.scheduling import (
+    Dispatch,
+    ReadySchedule,
+    SchedulingGates,
+    TaskAgents,
+    pick_ready,
+)
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.errors import ShikiruError
@@ -51,6 +59,7 @@ class Scheduler:
         self._roots = roots
         self._events = events
         self._on_dependency_cancelled = on_dependency_cancelled
+        self._logger = logging.getLogger(__name__)
 
     async def run_once(self) -> ReadySchedule:
         """Evaluate gates, persist wait reasons and dispatch every eligible task."""
@@ -64,13 +73,15 @@ class Scheduler:
                 message = f"{task_id} vanished before dependency cancellation"
                 raise ShikiruError(message)
             await self._cancel_dependency(task)
+        successful_dispatches: list[Dispatch] = []
         for dispatch in schedule.dispatches:
             task = self._tasks.get(dispatch.task_id)
             if task is None:
                 message = f"{dispatch.task_id} vanished before dispatch"
                 raise ShikiruError(message)
-            await self._dispatch(task, dispatch.slot)
-        return schedule
+            if await self._dispatch(task, dispatch.slot):
+                successful_dispatches.append(dispatch)
+        return dataclasses.replace(schedule, dispatches=tuple(successful_dispatches))
 
     def _gates(self, tasks: list[Task]) -> SchedulingGates:
         active_slots = {
@@ -107,30 +118,52 @@ class Scheduler:
     async def _cancel_dependency(self, task: Task) -> None:
         await self._on_dependency_cancelled(task)
 
-    async def _dispatch(self, task: Task, slot: int) -> None:
-        self._tasks.set_slot(task.id, slot)
-        self._tasks.set_wait_reason(task.id, None)
-        status = Status.INTEGRATING if task.step is Step.INTEGRATE else Status.RUNNING
-        self._tasks.apply_transition(task.id, Transition.stay(task, step=task.step, status=status))
-        current = self._tasks.get(task.id)
-        if current is None:
-            message = f"{task.id} vanished after slot assignment"
-            raise ShikiruError(message)
-        if not current.repos:
-            repos = await self._roots.build(current.id, current.title, self._settings.repos)
-            self._tasks.set_repos(current.id, repos)
-            current = self._tasks.get(current.id)
-            if current is None:
-                message = f"{task.id} vanished after task-root creation"
-                raise ShikiruError(message)
-        await self._layout.ensure(current)
-        current = self._tasks.get(current.id)
-        if current is None:
-            message = f"{task.id} vanished after layout creation"
-            raise ShikiruError(message)
+    async def _dispatch(self, task: Task, slot: int) -> bool:
+        current = task
+        try:
+            self._tasks.set_slot(task.id, slot)
+            self._tasks.set_wait_reason(task.id, None)
+            status = Status.INTEGRATING if task.step is Step.INTEGRATE else Status.RUNNING
+            self._tasks.apply_transition(
+                task.id, Transition.stay(task, step=task.step, status=status)
+            )
+            current = self._require_task(task.id, "slot assignment")
+            if not current.repos:
+                repos = await self._roots.build(current.id, current.title, self._settings.repos)
+                self._tasks.set_repos(current.id, repos)
+                current = self._require_task(task.id, "task-root creation")
+            await self._layout.ensure(current)
+            current = self._require_task(task.id, "layout creation")
+        except Exception:
+            self._logger.exception("dispatch setup failed for %s", task.id)
+            await self._rollback_dispatch(task)
+            return False
         self._events.append(
             EventKind.TASK_STARTED,
             task_id=current.id,
             message=f"{current.id} started in slot {slot}",
             data={"slot": slot},
         )
+        return True
+
+    async def _rollback_dispatch(self, task: Task) -> None:
+        current = self._tasks.get(task.id)
+        if current is None:
+            return
+        if task.window_id is None and current.window_id is not None:
+            try:
+                await self._layout.close(current)
+            except Exception:
+                self._logger.exception("dispatch cleanup failed for %s", task.id)
+        self._tasks.apply_transition(
+            current.id, Transition.stay(current, step=current.step, status=Status.QUEUED)
+        )
+        self._tasks.set_slot(current.id, None)
+        self._tasks.set_wait_reason(current.id, None)
+
+    def _require_task(self, task_id: str, operation: str) -> Task:
+        current = self._tasks.get(task_id)
+        if current is None:
+            message = f"{task_id} vanished after {operation}"
+            raise ShikiruError(message)
+        return current
