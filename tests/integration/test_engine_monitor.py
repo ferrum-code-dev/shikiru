@@ -48,6 +48,13 @@ async def _next_stalled(queue: asyncio.Queue[MonitorSignal]) -> Stalled:
             return signal
 
 
+async def _next_prompt_submitted(queue: asyncio.Queue[MonitorSignal]) -> PromptSubmitted:
+    while True:
+        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
+        if isinstance(signal, PromptSubmitted):
+            return signal
+
+
 class _SilentSession:
     """An `AgentSession` double that never emits a signal (04 §1)."""
 
@@ -179,6 +186,7 @@ async def test_stall_is_published_after_the_configured_timeout(
     pane_id = task.panes[Role.IMPLEMENTER]
     await engine_env.pane(pane_id).paste_line("go")
 
+    await _next_prompt_submitted(queue)
     await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
     clock.advance(settings.orchestration.timeouts.stall + 1)
 
