@@ -22,6 +22,7 @@ from shikiru.engine.integration import (
     Integrator,
     LocalMerge,
 )
+from shikiru.errors import CommandFailed
 from shikiru.process import SubprocessRunner
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
@@ -137,6 +138,46 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
 
     assert result.commits
     assert (project_root / "README.md").read_text() == "task\n"
+
+
+async def test_local_merge_escalates_when_dirty_overlap_never_clears(
+    connection: Connection, tmp_path: Path
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, states = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    (task_root / "README.md").write_text("task\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (project_root / "README.md").write_text("operator\n")
+    clock = FakeClock(TASK_CREATED_AT)
+    merge_task = asyncio.create_task(
+        LocalMerge(Git(_RUNNER), clock, integration_wait=120).merge(project_root, task_root, states)
+    )
+
+    await wait_until(clock.has_pending_sleep, timeout=5)
+    clock.advance(120)
+
+    with pytest.raises(IntegrationBlocked):
+        await merge_task
+    assert (project_root / "README.md").read_text() == "operator\n"
+    assert await Git(_RUNNER).current_branch(project_root) == "main"
+
+
+async def test_update_ref_rejects_a_stale_expected_sha_without_moving_the_branch(
+    tmp_path: Path,
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    git = Git(_RUNNER)
+    await _RUNNER.run(["git", "branch", "release"], cwd=project_root, timeout=10, check=True)
+    old_sha = await git.rev_parse(project_root, "release")
+    (project_root / "README.md").write_text("new\n")
+    await commit_all(_RUNNER, project_root, "advance main")
+    new_sha = await git.rev_parse(project_root, "main")
+
+    with pytest.raises(CommandFailed):
+        await git.update_ref(project_root, "release", new_sha, "0" * 40)
+
+    assert await git.rev_parse(project_root, "release") == old_sha
 
 
 async def test_local_merge_waits_for_a_dirty_directory_ancestor(

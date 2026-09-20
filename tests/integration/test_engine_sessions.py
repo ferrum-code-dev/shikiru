@@ -8,6 +8,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING
 
 import pytest
+from fake_agent.agent import REPL_COMMAND, SESSION_ID_ENV_VAR
 
 from shikiru.agents.contracts import (
     PromptSubmitted,
@@ -202,8 +203,10 @@ async def test_ensure_relaunches_with_resume_after_pane_death(
     await set_script(tmux_server, [{"kind": "crash"}])
 
     await engine_env.manager.ensure(task, Role.IMPLEMENTER)
-    first_session_id = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).session_id
+    first_run = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER)
+    first_session_id = first_run.session_id
     assert first_session_id is not None
+    assert first_run.resume_command == f"{SESSION_ID_ENV_VAR}={first_session_id} {REPL_COMMAND}"
     assert engine_env.manager.launched_fresh(task.id, Role.IMPLEMENTER)
 
     pane_id = task.panes[Role.IMPLEMENTER]
@@ -211,8 +214,10 @@ async def test_ensure_relaunches_with_resume_after_pane_death(
     await wait_until(lambda: engine_env.tmux.is_pane_dead(pane_id), timeout=_WAIT_TIMEOUT)
 
     await engine_env.manager.ensure(task, Role.IMPLEMENTER)
-    second_session_id = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).session_id
+    second_run = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER)
+    second_session_id = second_run.session_id
     assert second_session_id == first_session_id
+    assert second_run.resume_command == f"{SESSION_ID_ENV_VAR}={first_session_id} {REPL_COMMAND}"
     assert len(engine_env.runs.for_task(task.id)) == 2
     assert not engine_env.manager.launched_fresh(task.id, Role.IMPLEMENTER)
 
@@ -222,6 +227,9 @@ async def test_ensure_attaches_after_engine_restart(engine_env: EngineEnv) -> No
 
     await engine_env.manager.ensure(task, Role.IMPLEMENTER)
     started_session_id = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).session_id
+    assert started_session_id is not None
+    pane_id = task.panes[Role.IMPLEMENTER]
+    pane_pid_before_restart = await engine_env.tmux.pane_pid(pane_id)
     await wait_until(
         lambda: _has_agent_state(engine_env.runs, task.id, Role.IMPLEMENTER), timeout=_WAIT_TIMEOUT
     )
@@ -234,6 +242,10 @@ async def test_ensure_attaches_after_engine_restart(engine_env: EngineEnv) -> No
     runs_for_task = engine_env.runs.for_task(task.id)
     assert len(runs_for_task) == 1
     assert runs_for_task[0].session_id == started_session_id
+    assert runs_for_task[0].resume_command == (
+        f"{SESSION_ID_ENV_VAR}={started_session_id} {REPL_COMMAND}"
+    )
+    assert await engine_env.tmux.pane_pid(pane_id) == pane_pid_before_restart
     assert not second_manager.launched_fresh(task.id, Role.IMPLEMENTER)
 
 

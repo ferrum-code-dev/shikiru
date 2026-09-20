@@ -6,7 +6,14 @@ import asyncio
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
-from shikiru.agents.contracts import Activity, PromptSubmitted, SessionEnded, SessionStarted
+from shikiru.agents.contracts import (
+    Activity,
+    PromptSubmitted,
+    SessionEnded,
+    SessionStarted,
+    TurnEnded,
+    Usage,
+)
 from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import PaneDied
 from shikiru.domain.runs import NO_USAGE
@@ -22,9 +29,8 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 
-    from shikiru.agents.contracts import AgentSignal, Usage
+    from shikiru.agents.contracts import AgentSignal
     from shikiru.engine.monitor import MonitorSignal
-    from shikiru.store.database import Database
     from tests.support.engine import EngineEnv
     from tests.support.tmux import TmuxServer
 
@@ -360,9 +366,7 @@ async def test_stall_is_published_once_per_episode(engine_env: EngineEnv) -> Non
             await run_task
 
 
-async def test_tick_persists_facts_only_on_change(
-    engine_env: EngineEnv, database: Database
-) -> None:
+async def test_tick_persists_facts_only_on_change(engine_env: EngineEnv) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     task = await engine_env.build_task()
     run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
@@ -382,40 +386,61 @@ async def test_tick_persists_facts_only_on_change(
         events=EventLog(engine_env.connection, clock),
         refresh_titles=_refresh_titles,
     )
-    reader_connection = database.connect_readonly()
     run_task = asyncio.ensure_future(monitor.run())
     try:
-
-        def data_version() -> int:
-            row = reader_connection.execute("PRAGMA data_version").fetchone()
-            return row[0]
-
         session.push(SessionStarted(session_id="s1"))
-
-        version_before_first_tick = data_version()
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.poll_seconds)
-        await wait_until(
-            lambda: data_version() != version_before_first_tick, timeout=_SIGNAL_TIMEOUT
+        first_usage = Usage(
+            input_tokens=11,
+            output_tokens=7,
+            cache_read_tokens=3,
+            cache_write_tokens=0,
+            cost_usd=None,
+            cost_basis="unknown",
+            context_used_pct=None,
         )
-        version_after_first_tick = data_version()
-
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.poll_seconds)
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        assert data_version() == version_after_first_tick
-
+        session.usage_value = first_usage
         session.snapshot_value = {"offset": 42}
+        session.push(PromptSubmitted(text="first"))
+        session.push(TurnEnded(last_message="first"))
         await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
         clock.advance(settings.orchestration.poll_seconds)
         await wait_until(
-            lambda: data_version() != version_after_first_tick, timeout=_SIGNAL_TIMEOUT
+            lambda: (
+                (persisted := engine_env.runs.for_task(task.id))[0].usage == first_usage
+                and persisted[0].agent_state == {"offset": 42}
+                and persisted[0].last_message == "first"
+            ),
+            timeout=_SIGNAL_TIMEOUT,
+        )
+
+        second_usage = Usage(
+            input_tokens=23,
+            output_tokens=19,
+            cache_read_tokens=5,
+            cache_write_tokens=0,
+            cost_usd=None,
+            cost_basis="unknown",
+            context_used_pct=None,
+        )
+        session.usage_value = second_usage
+        session.snapshot_value = {"offset": 84}
+        session.push(PromptSubmitted(text="second"))
+        session.push(TurnEnded(last_message="second"))
+        await wait_until(session.idle, timeout=_SIGNAL_TIMEOUT)
+        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+        clock.advance(settings.orchestration.poll_seconds)
+        await wait_until(
+            lambda: (
+                (persisted := engine_env.runs.for_task(task.id))[0].usage == second_usage
+                and persisted[0].agent_state == {"offset": 84}
+                and persisted[0].last_message == "second"
+            ),
+            timeout=_SIGNAL_TIMEOUT,
         )
     finally:
         run_task.cancel()
         with suppress(asyncio.CancelledError):
             await run_task
-        reader_connection.close()
 
 
 async def test_intervention_hold_from_a_typed_prompt_is_scoped_to_its_own_task(

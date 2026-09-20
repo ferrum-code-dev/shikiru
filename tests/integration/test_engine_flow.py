@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.agents.contracts import Rung
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
-from tests.support.engine import set_role_script
+from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
 from tests.support.flow import (
     FlowEnv,
     build_flow,
@@ -111,6 +112,39 @@ async def test_flow_events_mark_step_turn_and_verdict_boundaries(
     assert usage_delta["cache_read_tokens"] == 40
     assert usage_delta["cache_write_tokens"] == 20
     assert usage_delta["cost_usd"] == pytest.approx(0.002607)
+
+
+async def test_changes_requested_persists_iteration_rung_and_counter_resets(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings(escalate_after=1)
+    second_rung = Rung(agent=FAKE_AGENT_NAME, model="fake-2", effort=None)
+    implementer = settings.roles.implementer.model_copy(update={"ladder": [FAKE_RUNG, second_rung]})
+    roles = settings.roles.model_copy(update={"implementer": implementer})
+    settings = settings.model_copy(update={"roles": roles})
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "accept"}, {"kind": "accept"}],
+    )
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "changes_requested"}, {"kind": "accept"}],
+    )
+
+    await _run_flow(engine_env, task.id, settings)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.INTEGRATING
+    assert final.step is Step.INTEGRATE
+    assert final.iteration == 2
+    assert final.rung_index[Role.IMPLEMENTER] == 1
+    assert final.counters.rejections_on_rung == 0
+    assert final.counters.consults == 0
 
 
 async def test_a_final_round_still_requesting_changes_raises_iterations_exhausted(

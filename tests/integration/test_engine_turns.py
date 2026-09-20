@@ -8,14 +8,19 @@ from contextlib import suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from shikiru.agents.contracts import PromptSubmitted, SessionEnded, TurnEnded
+from shikiru.agents.contracts import PromptSubmitted, SessionEnded, TurnEnded, role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.recovery import Completed, PaneDied, ProtocolError, Stalled
-from shikiru.domain.reports import ConsultAnswer, ReportKind
+from shikiru.domain.reports import ConsultAnswer, ReportKind, schema_for
 from shikiru.domain.tasks import Hold, Role, Step
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.monitor import InjectedLines
-from shikiru.engine.turns import TurnRunner, TurnSpec, read_turn_report
+from shikiru.engine.turns import (
+    BEFORE_TURN_WAIT_SECONDS,
+    TurnRunner,
+    TurnSpec,
+    read_turn_report,
+)
 from shikiru.helper.helper import Helper
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptName, PromptRenderer
@@ -133,6 +138,16 @@ async def test_a_turn_that_is_accepted_immediately_completes_with_its_report(
     assert result.rebuilt is False
     assert isinstance(result.report, ConsultAnswer)
     assert result.report.decision == "answer"
+
+    task_run_dir = run_dir(engine_env.project_root, task.id)
+    turn_dir = task_run_dir / "turns" / "01-consult-i1"
+    assert "Add retries to the flaky parser" in (turn_dir / "prompt.md").read_text()
+    assert json.loads((turn_dir / "report.schema.json").read_text()) == schema_for(
+        ReportKind.CONSULT
+    )
+    assert (turn_dir / "report.kind").read_text() == ReportKind.CONSULT.value
+    current_turn = role_dir(task_run_dir, Role.IMPLEMENTER.value) / "current_turn"
+    assert current_turn.resolve() == turn_dir.resolve()
 
 
 async def test_a_turn_with_facts_writes_facts_md_next_to_the_prompt(
@@ -462,6 +477,64 @@ async def test_a_before_turn_line_is_not_flagged_as_an_operator_prompt(
     current = engine_env.tasks.get(task.id)
     assert current is not None
     assert Hold.INTERVENTION not in current.holds
+
+
+async def test_before_turn_timeout_returns_stalled(engine_env: EngineEnv) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    task = await engine_env.build_task()
+    pane = engine_env.pane(await engine_env.new_pane())
+    signals: asyncio.Queue[MonitorSignal] = asyncio.Queue()
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), clock)
+    helper = _build_helper(_settings_with_asks([]))
+    run_task = asyncio.create_task(
+        runner.run(
+            _FixedBeforeTurnSession(["/compact"]),
+            pane,
+            signals,
+            run_dir=run_dir(engine_env.project_root, task.id),
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+            injected=InjectedLines(),
+        )
+    )
+    try:
+        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
+        clock.advance(BEFORE_TURN_WAIT_SECONDS + 1)
+        result = await asyncio.wait_for(run_task, timeout=_SIGNAL_TIMEOUT)
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await run_task
+
+    assert isinstance(result, Stalled)
+
+
+async def test_before_turn_pane_error_returns_pane_died(engine_env: EngineEnv) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    task = await engine_env.build_task()
+    pane = engine_env.pane(await engine_env.new_pane())
+    await pane.kill()
+    signals: asyncio.Queue[MonitorSignal] = asyncio.Queue()
+    runner = TurnRunner(PromptRenderer(engine_env.project_root), clock)
+    helper = _build_helper(_settings_with_asks([]))
+
+    result = await asyncio.wait_for(
+        runner.run(
+            _FixedBeforeTurnSession(["/compact"]),
+            pane,
+            signals,
+            run_dir=run_dir(engine_env.project_root, task.id),
+            role=Role.IMPLEMENTER,
+            spec=_spec(cwd=task_root(engine_env.project_root, task.id)),
+            helper=helper,
+            injected=InjectedLines(),
+        ),
+        timeout=_SIGNAL_TIMEOUT,
+    )
+
+    assert isinstance(result, PaneDied)
 
 
 async def test_injected_lines_are_isolated_per_session(

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
-from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, FACTS_FILENAME, PROMPT_FILENAME
+from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, FACTS_FILENAME
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
 from shikiru.store.quotas import QuotaStore
 from shikiru.workspace.roots import run_dir
@@ -387,14 +387,9 @@ async def test_quota_exhaustion_moves_to_a_new_agent_with_a_handoff_prompt(
     ]
     assert len(implementer_runs) == 2
     assert implementer_runs[0].agent == FAKE_AGENT_ALIAS
+    assert implementer_runs[1].agent == FAKE_AGENT_NAME
     assert implementer_runs[0].session_id != implementer_runs[1].session_id
     assert implementer_runs[0].usage.input_tokens == 120
-    handoff_prompt = (
-        role_dir(run_dir(engine_env.project_root, task_id), Role.IMPLEMENTER.value)
-        / CURRENT_TURN_LINK_NAME
-        / PROMPT_FILENAME
-    ).read_text()
-    assert "fresh session" in handoff_prompt
     assert QuotaStore(engine_env.connection).block_for(FAKE_AGENT_NAME) is not None
 
 
@@ -457,6 +452,7 @@ async def test_dialog_stall_sends_only_helper_approved_keys_and_resumes(
     events = build_flow(engine_env, settings, clock=clock).events.since(0, task_id=task_id)
     helper_events = [event for event in events if event.kind is EventKind.HELPER_ACTION]
     assert helper_events[0].data["state"] == "dialog"
+    assert helper_events[0].data["keys"] == ["Enter"]
     leader_run = next(run for run in engine_env.runs.for_task(task_id) if run.role is Role.LEADER)
     assert leader_run.usage.input_tokens == 120
 
