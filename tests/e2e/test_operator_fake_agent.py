@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from fake_agent.repl import TICK_A1_ENV_VAR
+from fake_agent.repl import TICK_A1_ENABLED_VALUE, TICK_A1_ENV_VAR
 
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import exact_target
@@ -92,7 +92,7 @@ def _tmux_environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, 
     environment.pop("TMUX", None)
     environment.pop("TMUX_PANE", None)
     environment["NO_COLOR"] = "1"
-    environment[TICK_A1_ENV_VAR] = "1"
+    environment[TICK_A1_ENV_VAR] = TICK_A1_ENABLED_VALUE
     environment["PATH"] = f"{shim_dir}{os.pathsep}{environment['PATH']}"
     return environment
 
@@ -241,7 +241,7 @@ async def test_fake_agent_operator_flow_completes_for_each_topology(
 ) -> None:
     project = await _prepare_project(tmp_path, scenario)
     environment = _tmux_environment(project.root, tmux_server)
-    await tmux_server.run("set-environment", "-g", TICK_A1_ENV_VAR, "1")
+    await tmux_server.run("set-environment", "-g", TICK_A1_ENV_VAR, TICK_A1_ENABLED_VALUE)
     target = exact_target(session_name(project.root.name))
     overrides = (
         "--set",

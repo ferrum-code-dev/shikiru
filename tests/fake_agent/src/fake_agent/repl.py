@@ -61,6 +61,7 @@ from shikiru.process import SubprocessRunner
 
 SCRIPT_ENV_VAR = "SHIKIRU_FAKE_SCRIPT"
 TICK_A1_ENV_VAR = "SHIKIRU_FAKE_TICK_A1"
+TICK_A1_ENABLED_VALUE = "1"
 
 
 def role_script_env_var(role: str) -> str:
@@ -329,7 +330,7 @@ async def _submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text:
     if (
         isinstance(step, AcceptStep)
         and kind is ReportKind.IMPLEMENTATION
-        and os.environ.get(TICK_A1_ENV_VAR) == "1"
+        and os.environ.get(TICK_A1_ENV_VAR) == TICK_A1_ENABLED_VALUE
     ):
         await asyncio.to_thread(_tick_a1, ctx.cwd)
     commits = (
