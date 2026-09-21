@@ -9,12 +9,13 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import CheckResult, ProbeMode, QuotaWindow, SessionKeys
+from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys
 from shikiru.agents.sdk.prices import PriceTable
+from shikiru.agents.sdk.probe import PROBE_ENV_VALUE, PROBE_ENV_VAR
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.claude.headless import ClaudeHeadless
@@ -44,7 +45,6 @@ if TYPE_CHECKING:
         HeadlessAgent,
         LaunchSpec,
         PaneHandle,
-        ProbePaneHandle,
     )
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
@@ -82,6 +82,14 @@ BYPASS_CONFIRM_MARKER = "Yes, I accept"
 PROBE_STARTUP_TIMEOUT_MESSAGE = "Claude trust prompt or session startup did not complete"
 
 
+class _ProbePane(Protocol):
+    async def capture_visible(self) -> str: ...
+
+    async def is_alive(self) -> bool: ...
+
+    async def send_keys(self, *keys: str) -> None: ...
+
+
 class ClaudeAgent:
     """A Claude Code plugin that normalizes hooks, transcripts and quota."""
 
@@ -117,21 +125,22 @@ class ClaudeAgent:
         )
         return self._session(spec, session_id, hook_offset)
 
-    async def prepare_probe(self, spec: LaunchSpec, pane: ProbePaneHandle) -> ProbeMode:
+    async def prepare_probe(self, spec: LaunchSpec, pane: PaneHandle) -> bool:
         """Accept Claude's first-use trust prompt while a doctor probe starts."""
+        probe_pane = cast("_ProbePane", pane)
         deadline = self._clock.now() + timedelta(seconds=PROBE_PREPARE_TIMEOUT_SECONDS)
         hooks_seen_at: datetime | None = None
         prompt_observations = 0
         while self._clock.now() < deadline:
-            if not await pane.is_alive():
-                return ProbeMode.POINTER
-            visible = await pane.capture_visible()
+            if not await probe_pane.is_alive():
+                return False
+            visible = await probe_pane.capture_visible()
             trust_prompt = TRUST_PROMPT_MARKER in visible and TRUST_CONFIRM_MARKER in visible
             bypass_prompt = BYPASS_PERMISSION_MARKER in visible and BYPASS_CONFIRM_MARKER in visible
             if trust_prompt or bypass_prompt:
                 prompt_observations += 1
                 if prompt_observations >= PROBE_PROMPT_STABILITY_COUNT:
-                    await pane.send_keys("Down", "Enter")
+                    await probe_pane.send_keys("Down", "Enter")
                     prompt_observations = 0
                     hooks_seen_at = None
                     await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
@@ -146,7 +155,7 @@ class ClaudeAgent:
                 if (
                     self._clock.now() - hooks_seen_at
                 ).total_seconds() >= PROBE_PROMPT_GRACE_SECONDS:
-                    return ProbeMode.POINTER
+                    return False
             await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
         raise TimeoutError(PROBE_STARTUP_TIMEOUT_MESSAGE)
 
@@ -218,7 +227,9 @@ class ClaudeAgent:
         for directory in (spec.run_dir, *spec.add_dirs):
             argv.extend([ADD_DIR_FLAG, str(directory)])
         argv.extend(
-            [PERMISSION_MODE_FLAG, PERMISSION_MODE_BYPASS] if spec.probe else self._options.args
+            [PERMISSION_MODE_FLAG, PERMISSION_MODE_BYPASS]
+            if _is_probe(spec)
+            else self._options.args
         )
         return tuple(argv)
 
@@ -321,3 +332,7 @@ def create(context: AgentContext) -> ClaudeAgent:
         message = f"invalid options for the Claude agent: {error}"
         raise ConfigError(message) from error
     return ClaudeAgent(context.runner, context.clock, options)
+
+
+def _is_probe(spec: LaunchSpec) -> bool:
+    return spec.env.get(PROBE_ENV_VAR) == PROBE_ENV_VALUE

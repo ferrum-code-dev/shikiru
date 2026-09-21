@@ -9,14 +9,13 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from shikiru.agents.contracts import (
     ROLE_ENV_VAR,
     RUN_DIR_ENV_VAR,
     AgentSignal,
     LaunchSpec,
-    ProbeMode,
     PromptSubmitted,
     Rung,
     SessionStarted,
@@ -25,6 +24,7 @@ from shikiru.agents.contracts import (
     role_dir,
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
+from shikiru.agents.sdk.probe import PROBE_ENV_VALUE, PROBE_ENV_VAR
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     REPORT_FILENAME,
@@ -40,7 +40,7 @@ from shikiru.tmux.pane import TmuxPane
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from shikiru.agents.contracts import ProbeAgent
+    from shikiru.agents.contracts import AgentSession, PaneHandle
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
@@ -55,8 +55,10 @@ PROBE_ROLE = "implementer"
 PROBE_TURN_NAME = "01-doctor"
 PROBE_PROMPT = (
     "This is a Shikiru live contract probe. Read the current turn report.schema.json, "
-    "write a valid completed implementation report with shikiru report, then answer "
-    "exactly SHIKIRU_PROBE_OK. Do not change files outside the current temporary project."
+    "write probe-report.json with status completed, summary probe, commits [], tests [], "
+    "and trackers_updated false, then run shikiru report --file probe-report.json. Answer "
+    "exactly SHIKIRU_PROBE_OK after the report command succeeds. Do not change files outside "
+    "the current temporary project."
 )
 PROBE_MARKER = "SHIKIRU_PROBE_OK"
 PROBE_REMAIN_ON_EXIT_OPTION = "remain-on-exit"
@@ -70,9 +72,23 @@ PROBE_MARKER_MISSING_MESSAGE = "probe turn did not return its marker"
 PROBE_PANE_MISSING_MESSAGE = "probe tmux session did not return a pane"
 PROBE_TURN_TIMEOUT_MESSAGE = "timed out waiting for probe turn completion"
 PROBE_STARTUP_EXIT_MESSAGE = "agent pane exited during probe startup"
-PROBE_PERMISSION_MARKERS = ("Allow", "permission", "trust")
-PROBE_ERROR_MARKERS = ("error", "failed", "not found")
 _TMUX_KILL_ARGS = (PROBE_TMUX_COMMAND, "-L")
+
+
+class _ProbePane(Protocol):
+    async def capture_visible(self) -> str: ...
+
+    async def is_alive(self) -> bool: ...
+
+    async def send_keys(self, *keys: str) -> None: ...
+
+
+class ProbeAgent(Protocol):
+    """The optional structural plugin contract used only by the live probe."""
+
+    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession: ...
+
+    async def prepare_probe(self, spec: LaunchSpec, pane: _ProbePane) -> bool: ...
 
 
 class DoctorProbeError(ShikiruError):
@@ -107,59 +123,77 @@ class AgentProbe:
             tmux = Tmux(self._runner, socket=socket_name)
             session_name = f"{PROBE_TMUX_SESSION_NAME}-{uuid.uuid4().hex[:8]}"
             try:
-                pane_id = await self._new_probe_session(socket_name, session_name, repo, run_dir)
-                if not pane_id:
-                    raise DoctorProbeError(PROBE_PANE_MISSING_MESSAGE)
-                await tmux.set_window_option(
-                    f"{exact_target(session_name)}:{PROBE_TMUX_SESSION_NAME}",
-                    PROBE_REMAIN_ON_EXIT_OPTION,
-                    PROBE_REMAIN_ON_EXIT_VALUE,
+                await self._execute_probe(
+                    tmux,
+                    socket_name,
+                    session_name,
+                    repo,
+                    run_dir,
                 )
-                pane = TmuxPane(tmux, pane_id, self._clock)
-                spec = LaunchSpec(
-                    rung=self._rung,
-                    role=PROBE_ROLE,
-                    cwd=repo,
-                    run_dir=run_dir,
-                    add_dirs=(),
-                    env=_probe_environment(run_dir),
-                    resume_session_id=None,
-                    probe=True,
-                )
-                session = await self._agent.launch(spec, pane)
-                probe_mode = await self._agent.prepare_probe(spec, pane)
-                if not await pane.is_alive():
-                    raise DoctorProbeError(PROBE_STARTUP_EXIT_MESSAGE)
-                signals = session.signals()
-                pointer_before_session = probe_mode is ProbeMode.POINTER_BEFORE_SESSION
-                if pointer_before_session:
-                    await pane.paste_line(PROBE_PROMPT)
-                await self._await_signal(signals, SessionStarted, pane, run_dir)
-                if not pointer_before_session:
-                    await pane.paste_line(PROBE_PROMPT)
-                await self._await_signal(signals, PromptSubmitted, pane, run_dir)
+            except BaseException as error:
                 try:
-                    signal = await self._await_turn(signals, pane)
-                except DoctorProbeError as error:
-                    hooks = role_dir(run_dir, PROBE_ROLE) / HOOKS_FILENAME
-                    report = (
-                        role_dir(run_dir, PROBE_ROLE) / CURRENT_TURN_LINK_NAME / REPORT_FILENAME
-                    )
-                    detail = (
-                        f"{error}; hook_bytes={hooks.stat().st_size if hooks.is_file() else 0}; "
-                        f"report_exists={report.is_file()}"
-                    )
-                    raise DoctorProbeError(detail) from error
-                if isinstance(signal, TurnFailed):
-                    message = f"probe turn failed: {signal.message}"
-                    raise DoctorProbeError(message)
-                report = role_dir(run_dir, PROBE_ROLE) / CURRENT_TURN_LINK_NAME / REPORT_FILENAME
-                if not report.is_file():
-                    raise DoctorProbeError(PROBE_REPORT_MISSING_MESSAGE)
-                if PROBE_MARKER not in signal.last_message:
-                    raise DoctorProbeError(PROBE_MARKER_MISSING_MESSAGE)
-            finally:
+                    await kill_tmux_server(self._runner, socket_name)
+                except (OSError, ShikiruError) as cleanup_error:
+                    error.add_note(f"probe cleanup failed: {cleanup_error}")
+                raise
+            else:
                 await kill_tmux_server(self._runner, socket_name)
+
+    async def _execute_probe(
+        self,
+        tmux: Tmux,
+        socket_name: str,
+        session_name: str,
+        repo: Path,
+        run_dir: Path,
+    ) -> None:
+        pane_id = await self._new_probe_session(socket_name, session_name, repo, run_dir)
+        if not pane_id:
+            raise DoctorProbeError(PROBE_PANE_MISSING_MESSAGE)
+        await tmux.set_window_option(
+            f"{exact_target(session_name)}:{PROBE_TMUX_SESSION_NAME}",
+            PROBE_REMAIN_ON_EXIT_OPTION,
+            PROBE_REMAIN_ON_EXIT_VALUE,
+        )
+        pane = TmuxPane(tmux, pane_id, self._clock)
+        spec = LaunchSpec(
+            rung=self._rung,
+            role=PROBE_ROLE,
+            cwd=repo,
+            run_dir=run_dir,
+            add_dirs=(),
+            env=_probe_environment(run_dir),
+            resume_session_id=None,
+        )
+        session = await self._agent.launch(spec, pane)
+        pointer_before_session = await self._agent.prepare_probe(spec, pane)
+        if not await pane.is_alive():
+            raise DoctorProbeError(PROBE_STARTUP_EXIT_MESSAGE)
+        signals = session.signals()
+        if pointer_before_session:
+            await pane.paste_line(PROBE_PROMPT)
+        await self._await_signal(signals, SessionStarted, pane, run_dir)
+        if not pointer_before_session:
+            await pane.paste_line(PROBE_PROMPT)
+        await self._await_signal(signals, PromptSubmitted, pane, run_dir)
+        try:
+            signal = await self._await_turn(signals, pane)
+        except DoctorProbeError as error:
+            hooks = role_dir(run_dir, PROBE_ROLE) / HOOKS_FILENAME
+            report = role_dir(run_dir, PROBE_ROLE) / CURRENT_TURN_LINK_NAME / REPORT_FILENAME
+            detail = (
+                f"{error}; hook_bytes={hooks.stat().st_size if hooks.is_file() else 0}; "
+                f"report_exists={report.is_file()}"
+            )
+            raise DoctorProbeError(detail) from error
+        if isinstance(signal, TurnFailed):
+            message = f"probe turn failed: {signal.message}"
+            raise DoctorProbeError(message)
+        report = role_dir(run_dir, PROBE_ROLE) / CURRENT_TURN_LINK_NAME / REPORT_FILENAME
+        if not report.is_file():
+            raise DoctorProbeError(PROBE_REPORT_MISSING_MESSAGE)
+        if PROBE_MARKER not in signal.last_message:
+            raise DoctorProbeError(PROBE_MARKER_MISSING_MESSAGE)
 
     async def _new_probe_session(
         self, socket_name: str, session_name: str, repo: Path, run_dir: Path
@@ -240,11 +274,10 @@ class AgentProbe:
             except TimeoutError as error:
                 visible = await pane.capture_visible()
                 alive = await pane.is_alive()
-                prompt_visible = "Yes, I trust this folder" in visible
                 hooks = role_dir(run_dir, PROBE_ROLE) / HOOKS_FILENAME
                 message = (
                     f"timed out waiting for {signal_type.__name__}; alive={alive}; "
-                    f"visible_chars={len(visible)}; trust_visible={prompt_visible}; "
+                    f"visible_chars={len(visible)}; "
                     f"hook_bytes={hooks.stat().st_size if hooks.is_file() else 0}"
                 )
                 raise DoctorProbeError(message) from error
@@ -260,12 +293,8 @@ class AgentProbe:
             except TimeoutError as error:
                 visible = await pane.capture_visible()
                 alive = await pane.is_alive()
-                permission_visible = any(marker in visible for marker in PROBE_PERMISSION_MARKERS)
-                error_visible = any(marker in visible.lower() for marker in PROBE_ERROR_MARKERS)
                 message = (
-                    f"{PROBE_TURN_TIMEOUT_MESSAGE}; alive={alive}; "
-                    f"visible_chars={len(visible)}; permission_visible={permission_visible}; "
-                    f"error_visible={error_visible}"
+                    f"{PROBE_TURN_TIMEOUT_MESSAGE}; alive={alive}; visible_chars={len(visible)}"
                 )
                 raise DoctorProbeError(message) from error
             if isinstance(signal, (TurnEnded, TurnFailed)):
@@ -274,14 +303,15 @@ class AgentProbe:
 
 async def kill_tmux_server(runner: SubprocessRunner, socket_name: str) -> None:
     """Stop a private tmux server used by a diagnostic probe."""
-    try:
-        await runner.run(
-            [*_TMUX_KILL_ARGS, socket_name, "kill-server"],
-            timeout=PROBE_COMMAND_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except OSError, ShikiruError:
-        return
+    result = await runner.run(
+        [*_TMUX_KILL_ARGS, socket_name, "kill-server"],
+        timeout=PROBE_COMMAND_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        message = f"could not stop private tmux server: {detail}"
+        raise DoctorProbeError(message)
 
 
 def _probe_environment(run_dir: Path) -> dict[str, str]:
@@ -296,6 +326,7 @@ def _probe_environment(run_dir: Path) -> dict[str, str]:
         {
             RUN_DIR_ENV_VAR: str(run_dir),
             ROLE_ENV_VAR: PROBE_ROLE,
+            PROBE_ENV_VAR: PROBE_ENV_VALUE,
             PROBE_PATH_ENV_VAR: path,
         }
     )

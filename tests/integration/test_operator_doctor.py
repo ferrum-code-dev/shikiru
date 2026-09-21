@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from shikiru.bootstrap import build_doctor
 from shikiru.process import SubprocessRunner
 
 pytestmark = pytest.mark.asyncio
@@ -70,8 +71,9 @@ async def test_doctor_reports_core_and_configured_plugin_checks(tmp_path: Path) 
         assert checks[name]["ok"] is True
         assert checks[name]["detail"]
     assert checks["cow"]["detail"]
-    assert report["ok"] is all(check["ok"] for check in checks.values())
-    assert code == (0 if report["ok"] else 1)
+    assert report["ok"] is True
+    assert all(check["ok"] for check in checks.values())
+    assert code == 0
     assert (root / ".shikiru" / "state.db").is_file()
 
 
@@ -88,6 +90,7 @@ async def test_doctor_names_invalid_configuration_and_keeps_diagnostics_json_saf
     config_checks = [check for check in report["checks"] if check["name"] == "config"]
     assert len(config_checks) == 1
     assert config_checks[0]["ok"] is False
+    assert report["ok"] is False
     assert "broken" not in stdout
 
 
@@ -102,5 +105,19 @@ async def test_doctor_probe_reports_each_configured_plugin(tmp_path: Path) -> No
     assert code == 0
     assert stderr == ""
     assert report["ok"] is True
+    assert all(check["ok"] for check in report["checks"])
     assert probe_checks[0]["ok"] is True
     assert probe_checks[0]["detail"]
+
+
+async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = await _project(tmp_path)
+    monkeypatch.setattr("shikiru.operator.doctor.default_cow_args", lambda: None)
+
+    report = await build_doctor(root).run()
+
+    checks = {check.name: check for check in report.checks}
+    assert report.ok is True
+    assert checks["cow"].ok is True

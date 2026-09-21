@@ -15,15 +15,19 @@ from shikiru.config.loader import PROJECT_CONFIG_RELATIVE_PATH, SHIKIRU_DIR_NAME
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.probe import AgentProbe, kill_tmux_server
 from shikiru.store.database import Database
-from shikiru.workspace.caches import CacheCloner, default_cow_args
+from shikiru.workspace.caches import (
+    CACHE_COW_UNSUPPORTED_WARNING,
+    CacheCloner,
+    default_cow_args,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from shikiru.agents.contracts import ProbeAgent
     from shikiru.agents.registry import AgentRegistry
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.operator.probe import ProbeAgent
     from shikiru.process import ProcessResult, SubprocessRunner
 
 
@@ -131,29 +135,39 @@ class Doctor:
                 check=False,
             )
             if version.returncode != 0:
-                return DoctorCheck(name=TMUX_CHECK_NAME, ok=False, detail=_process_detail(version))
-            started = await self._runner.run(
-                [
-                    TMUX_COMMAND,
-                    "-L",
-                    socket_name,
-                    "-f",
-                    "/dev/null",
-                    "new-session",
-                    "-d",
-                    "-s",
-                    session_name,
-                ],
-                timeout=DOCTOR_TIMEOUT_SECONDS,
-                check=False,
-            )
-            if started.returncode != 0 or started.stderr.strip():
-                return DoctorCheck(name=TMUX_CHECK_NAME, ok=False, detail=_process_detail(started))
-            return DoctorCheck(name=TMUX_CHECK_NAME, ok=True, detail=version.stdout.strip())
+                check = DoctorCheck(name=TMUX_CHECK_NAME, ok=False, detail=_process_detail(version))
+            else:
+                started = await self._runner.run(
+                    [
+                        TMUX_COMMAND,
+                        "-L",
+                        socket_name,
+                        "-f",
+                        "/dev/null",
+                        "new-session",
+                        "-d",
+                        "-s",
+                        session_name,
+                    ],
+                    timeout=DOCTOR_TIMEOUT_SECONDS,
+                    check=False,
+                )
+                check = DoctorCheck(
+                    name=TMUX_CHECK_NAME,
+                    ok=started.returncode == 0 and not started.stderr.strip(),
+                    detail=_process_detail(started),
+                )
         except (OSError, ShikiruError) as error:
-            return DoctorCheck(name=TMUX_CHECK_NAME, ok=False, detail=str(error))
-        finally:
+            check = DoctorCheck(name=TMUX_CHECK_NAME, ok=False, detail=str(error))
+        try:
             await kill_tmux_server(self._runner, socket_name)
+        except (OSError, ShikiruError) as error:
+            check = DoctorCheck(
+                name=TMUX_CHECK_NAME,
+                ok=False,
+                detail=f"{check.detail}; cleanup failed: {_error_detail(error)}",
+            )
+        return check
 
     async def _git_check(self) -> DoctorCheck:
         try:
@@ -193,8 +207,8 @@ class Doctor:
         if cow_args is None:
             return DoctorCheck(
                 name=COW_CHECK_NAME,
-                ok=False,
-                detail="no copy-on-write command for this platform",
+                ok=True,
+                detail=CACHE_COW_UNSUPPORTED_WARNING,
             )
         try:
             with tempfile.TemporaryDirectory(prefix="shikiru-doctor-cow-") as directory:
@@ -204,7 +218,7 @@ class Doctor:
         except (OSError, ShikiruError) as error:
             return DoctorCheck(name=COW_CHECK_NAME, ok=False, detail=str(error))
         if result.warning is not None:
-            return DoctorCheck(name=COW_CHECK_NAME, ok=False, detail=result.warning)
+            return DoctorCheck(name=COW_CHECK_NAME, ok=True, detail=result.warning)
         return DoctorCheck(name=COW_CHECK_NAME, ok=True, detail="copy-on-write supported")
 
     async def _plugin_checks(self, settings: Settings) -> list[DoctorCheck]:

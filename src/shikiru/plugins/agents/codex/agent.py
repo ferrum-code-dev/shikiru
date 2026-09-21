@@ -10,12 +10,13 @@ import shutil
 import sys
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import CheckResult, ProbeMode, QuotaWindow, SessionKeys
+from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys
 from shikiru.agents.sdk.prices import PriceTable
+from shikiru.agents.sdk.probe import PROBE_ENV_VALUE, PROBE_ENV_VAR
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.codex.headless import CodexHeadless
@@ -61,7 +62,6 @@ if TYPE_CHECKING:
         HeadlessAgent,
         LaunchSpec,
         PaneHandle,
-        ProbePaneHandle,
     )
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
@@ -92,6 +92,14 @@ PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 
 
+class _ProbePane(Protocol):
+    async def capture_visible(self) -> str: ...
+
+    async def is_alive(self) -> bool: ...
+
+    async def send_keys(self, *keys: str) -> None: ...
+
+
 class CodexAgent:
     """A Codex plugin that normalizes hooks, rollouts, quotas and compaction."""
 
@@ -115,7 +123,7 @@ class CodexAgent:
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
         """Launch a new or resumable Codex session in `pane`."""
         hook_offset = await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role)
-        probe_home = self._probe_codex_home(spec) if spec.probe else None
+        probe_home = self._probe_codex_home(spec) if _is_probe(spec) else None
         argv = await self._argv(spec)
         await pane.respawn(
             argv,
@@ -124,23 +132,24 @@ class CodexAgent:
         )
         return self._session(spec, hook_offset, codex_home_path=probe_home)
 
-    async def prepare_probe(self, spec: LaunchSpec, pane: ProbePaneHandle) -> ProbeMode:
+    async def prepare_probe(self, spec: LaunchSpec, pane: PaneHandle) -> bool:
         """Accept Codex's first-use trust prompt while a doctor probe starts."""
         del spec
+        probe_pane = cast("_ProbePane", pane)
         deadline = self._clock.now() + timedelta(seconds=PROBE_PREPARE_TIMEOUT_SECONDS)
         prompt_observations = 0
         ready_observations = 0
         while self._clock.now() < deadline:
-            if not await pane.is_alive():
-                return ProbeMode.POINTER_BEFORE_SESSION
-            visible = await pane.capture_visible()
+            if not await probe_pane.is_alive():
+                return True
+            visible = await probe_pane.capture_visible()
             trust_prompt = (
                 PROBE_TRUST_PROMPT_MARKER in visible and PROBE_TRUST_CONFIRM_MARKER in visible
             )
             if trust_prompt:
                 prompt_observations += 1
                 if prompt_observations >= PROBE_PROMPT_STABILITY_COUNT:
-                    await pane.send_keys("Enter")
+                    await probe_pane.send_keys("Enter")
                     prompt_observations = 0
                     await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
             else:
@@ -148,7 +157,7 @@ class CodexAgent:
             if PROBE_READY_MARKER in visible:
                 ready_observations += 1
                 if ready_observations >= PROBE_READY_STABILITY_COUNT:
-                    return ProbeMode.POINTER_BEFORE_SESSION
+                    return True
             else:
                 ready_observations = 0
             await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
@@ -223,9 +232,9 @@ class CodexAgent:
         if spec.rung.effort is not None:
             argv.extend([CONFIG_FLAG, f'{REASONING_EFFORT_CONFIG}="{spec.rung.effort}"'])
         argv.append(BYPASS_HOOK_TRUST_FLAG)
-        if spec.probe:
+        if _is_probe(spec):
             argv.extend([CONFIG_FLAG, CHECK_FOR_UPDATE_CONFIG])
-        hook_command = self._probe_hook_command() if spec.probe else HOOK_COMMAND
+        hook_command = self._probe_hook_command() if _is_probe(spec) else HOOK_COMMAND
         argv.extend(self._hook_config_args(hook_command))
         argv.extend([CONFIG_FLAG, self._trust_config(spec.cwd), CD_FLAG, str(spec.cwd)])
         directories = [spec.run_dir, *spec.add_dirs, *(await self._git_common_dirs(spec))]
@@ -403,3 +412,7 @@ def create(context: AgentContext) -> CodexAgent:
         message = f"invalid options for the Codex agent: {error}"
         raise ConfigError(message) from error
     return CodexAgent(context.runner, context.clock, options)
+
+
+def _is_probe(spec: LaunchSpec) -> bool:
+    return spec.env.get(PROBE_ENV_VAR) == PROBE_ENV_VALUE
