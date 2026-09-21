@@ -1,1 +1,1 @@
-{"timestamp":"2030-01-01T00:00:00.000Z","type":"event_msg","payload":{"type":"error","status":400,"message":"unexpected failure"}}
+{"timestamp":"2026-09-20T23:24:33.351Z","ordinal":4,"type":"event_msg","payload":{"type":"error","turn_id":"1b4cf89d-632e-4b8c-b33d-7f8be0457d0a","status":400,"message":"unexpected failure"}}

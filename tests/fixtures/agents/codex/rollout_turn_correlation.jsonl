@@ -1,0 +1,2 @@
+{"timestamp":"2026-09-20T23:24:33.351Z","ordinal":4,"type":"event_msg","payload":{"type":"error","turn_id":"1b4cf89d-632e-4b8c-b33d-7f8be0457d0a","status":400,"message":"request failed"}}
+{"timestamp":"2026-09-20T23:24:34.351Z","ordinal":5,"type":"event_msg","payload":{"type":"task_complete","turn_id":"14b7b9b1-9c04-46f1-be68-12eb21708cd5","last_agent_message":"Successful turn."}}

@@ -19,8 +19,10 @@ _INPUT_TOKENS_FIELD = "input_tokens"
 _OUTPUT_TOKENS_FIELD = "output_tokens"
 _CACHE_READ_TOKENS_FIELD = "cached_input_tokens"
 _CACHE_WRITE_TOKENS_FIELD = "cache_write_input_tokens"
+_CONTEXT_WINDOW_FIELD = "model_context_window"
 _COST_BASIS_SUBSCRIPTION = "api_equivalent"
 _COST_BASIS_API_KEY = "billed"
+_PERCENT = 100
 
 
 def rollout_usage(
@@ -34,8 +36,7 @@ def rollout_usage(
     latest = _latest_token_count(entries)
     if latest is None:
         return _empty_usage(api_key_auth)
-    total = latest[0]
-    last = latest[1]
+    total, last, context_window = latest
     input_tokens = _integer(total, _INPUT_TOKENS_FIELD)
     output_tokens = _integer(total, _OUTPUT_TOKENS_FIELD)
     cache_read_tokens = _integer(total, _CACHE_READ_TOKENS_FIELD)
@@ -52,15 +53,7 @@ def rollout_usage(
         if has_usage
         else None
     )
-    context_used_pct = (
-        prices.context_used_pct(
-            model,
-            input_tokens=_integer(last, _INPUT_TOKENS_FIELD),
-            cache_tokens=0,
-        )
-        if _INPUT_TOKENS_FIELD in last
-        else None
-    )
+    context_used_pct = _context_used_pct(last, context_window)
     return Usage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -74,41 +67,40 @@ def rollout_usage(
 
 def latest_token_count(
     entries: Iterable[Mapping[str, Any]],
-) -> tuple[Mapping[str, Any], Mapping[str, Any]] | None:
+) -> tuple[Mapping[str, Any], Mapping[str, Any], int | None] | None:
     """Return the latest total and per-turn token usage records."""
     return _latest_token_count(entries)
 
 
 def _latest_token_count(
     entries: Iterable[Mapping[str, Any]],
-) -> tuple[Mapping[str, Any], Mapping[str, Any]] | None:
-    latest: tuple[Mapping[str, Any], Mapping[str, Any]] | None = None
+) -> tuple[Mapping[str, Any], Mapping[str, Any], int | None] | None:
+    latest: tuple[Mapping[str, Any], Mapping[str, Any], int | None] | None = None
     for entry in entries:
         payload = _payload(entry)
         if payload.get("type") != _TOKEN_COUNT_TYPE:
             continue
         info = payload.get(_INFO_FIELD)
         if not isinstance(info, Mapping):
-            info = payload
+            continue
         typed_info = cast("Mapping[str, Any]", info)
         total = typed_info.get(_TOTAL_USAGE_FIELD)
         last = typed_info.get(_LAST_USAGE_FIELD)
         if isinstance(total, Mapping) and isinstance(last, Mapping):
-            latest = (cast("Mapping[str, Any]", total), cast("Mapping[str, Any]", last))
+            context_window = typed_info.get(_CONTEXT_WINDOW_FIELD)
+            latest = (
+                cast("Mapping[str, Any]", total),
+                cast("Mapping[str, Any]", last),
+                context_window if isinstance(context_window, int) else None,
+            )
     return latest
 
 
 def _payload(entry: Mapping[str, Any]) -> Mapping[str, Any]:
-    if entry.get("type") == _EVENT_MESSAGE_TYPE:
-        payload = entry.get("payload")
-        if isinstance(payload, Mapping):
-            return cast("Mapping[str, Any]", payload)
-    nested_payload = entry.get("payload")
-    if isinstance(nested_payload, Mapping):
-        typed_payload = cast("Mapping[str, Any]", nested_payload)
-        if typed_payload.get("type") == _TOKEN_COUNT_TYPE:
-            return typed_payload
-    return entry
+    if entry.get("type") != _EVENT_MESSAGE_TYPE:
+        return {}
+    payload = entry.get("payload")
+    return cast("Mapping[str, Any]", payload) if isinstance(payload, Mapping) else {}
 
 
 def _empty_usage(api_key_auth: bool) -> Usage:
@@ -128,3 +120,10 @@ def _integer(entry: Mapping[str, Any], key: str) -> int:
     if not isinstance(value, int | float):
         return 0
     return int(value)
+
+
+def _context_used_pct(last: Mapping[str, Any], context_window: int | None) -> float | None:
+    if context_window is None or context_window <= 0 or _INPUT_TOKENS_FIELD not in last:
+        return None
+    tokens = _integer(last, _INPUT_TOKENS_FIELD) + _integer(last, _CACHE_READ_TOKENS_FIELD)
+    return tokens / context_window * _PERCENT

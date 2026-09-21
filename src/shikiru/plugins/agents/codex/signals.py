@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 HOOK_EVENT_FIELD = "hook_event_name"
 SESSION_ID_FIELD = "session_id"
-ROLLOUT_PATH_FIELD = "rollout_path"
+TRANSCRIPT_PATH_FIELD = "transcript_path"
 PROMPT_FIELD = "prompt"
 MESSAGE_FIELD = "message"
 LAST_ASSISTANT_MESSAGE_FIELD = "last_assistant_message"
@@ -40,11 +40,9 @@ STOP_EVENT = "Stop"
 PERMISSION_REQUEST_EVENT = "PermissionRequest"
 POST_COMPACT_EVENT = "PostCompact"
 SESSION_END_EVENT = "SessionEnd"
-STOP_FAILURE_EVENT = "StopFailure"
-
-_ERROR_EVENT_TYPES = frozenset(("error", "turn_failed", "turn_error"))
-_ERROR_MESSAGE_FIELDS = (MESSAGE_FIELD, ERROR_FIELD, "reason", "detail", "text")
-_STATUS_FIELDS = ("status", "status_code", "http_status", "code")
+_ERROR_EVENT_TYPE = "error"
+_ERROR_MESSAGE_FIELD = MESSAGE_FIELD
+_STATUS_FIELD = "status"
 _STATUS_UNAVAILABLE_MIN = 500
 _STATUS_UNAVAILABLE_MAX = 599
 _STATUS_QUOTA = 429
@@ -54,6 +52,7 @@ _DEFAULT_PERMISSION_MESSAGE = "Codex permission request"
 _LIMIT_TEXTS = ("usage limit", "rate limit", "rate_limit", "quota", "usage_limited")
 _CONTEXT_TEXTS = ("context exceeded", "context length", "context window", "too many tokens")
 _UNAVAILABLE_TEXTS = ("overloaded", "temporarily unavailable", "service unavailable")
+_AUTH_TEXTS = ("authentication", "unauthorized")
 _INVALID_HOOK_VALUE = "Codex hook entry has no string {key!r}"
 
 
@@ -107,20 +106,26 @@ def hook_signal(
     builder = _SIMPLE_SIGNAL_BUILDERS.get(event)
     if builder is not None:
         return builder(entry)
-    if event in (STOP_EVENT, STOP_FAILURE_EVENT):
+    if event == STOP_EVENT:
         return _stop_signal(entry, rollout, reset_time)
     message = f"unknown Codex hook event {event!r}"
     raise ValueError(message)
 
 
-def latest_error(entries: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
-    """Return the latest rollout entry that represents an agent error."""
+def latest_error(
+    entries: Iterable[Mapping[str, Any]], turn_id: str | None
+) -> Mapping[str, Any] | None:
+    """Return the latest error for the stopped Codex turn."""
+    if turn_id is None:
+        return None
     latest: Mapping[str, Any] | None = None
     for entry in entries:
         payload = _payload(entry)
-        event_type = payload.get("type")
-        if event_type in _ERROR_EVENT_TYPES or _contains_error_payload(payload):
-            latest = payload
+        if payload.get("type") != _ERROR_EVENT_TYPE:
+            continue
+        if payload.get(TURN_ID_FIELD) != turn_id:
+            continue
+        latest = payload
     return latest
 
 
@@ -140,7 +145,7 @@ def classify_failure(
         return FailureKind.QUOTA, message, _quota_reset(rollout, reset_time)
     if _is_unavailable_status(status) or any(text in lowered for text in _UNAVAILABLE_TEXTS):
         return FailureKind.UNAVAILABLE, message, None
-    if _is_status(status, *_STATUS_AUTH) or "authentication" in lowered:
+    if _is_status(status, *_STATUS_AUTH) or any(text in lowered for text in _AUTH_TEXTS):
         return FailureKind.AUTH, message, None
     if any(text in lowered for text in _CONTEXT_TEXTS):
         return FailureKind.CONTEXT, message, None
@@ -148,30 +153,34 @@ def classify_failure(
 
 
 def rollout_message(entries: Iterable[Mapping[str, Any]], turn_id: str | None = None) -> str:
-    """Return the latest assistant message text recorded in a Codex rollout."""
+    """Return the completed message for a Codex turn."""
+    if turn_id is None:
+        return ""
     message = ""
-    matching_message = ""
     for entry in entries:
         payload = _payload(entry)
-        candidate = _message_from_payload(payload)
-        if candidate:
+        if payload.get("type") != "task_complete":
+            continue
+        if payload.get(TURN_ID_FIELD) != turn_id:
+            continue
+        candidate = payload.get("last_agent_message")
+        if isinstance(candidate, str):
             message = candidate
-            if turn_id is None or _turn_matches(payload, turn_id):
-                matching_message = candidate
-    return matching_message or message
+    return message
 
 
 def _stop_signal(
     hook: Mapping[str, Any], rollout: Iterable[Mapping[str, Any]], reset_time: ResetTimeParser
 ) -> AgentSignal:
     entries = list(rollout)
-    error = latest_error(entries)
-    if error is None and _contains_error_payload(hook):
+    turn_id = _optional_string(hook, TURN_ID_FIELD)
+    error = latest_error(entries, turn_id)
+    hook_error = hook.get(ERROR_FIELD)
+    if error is None and isinstance(hook_error, str) and hook_error:
         error = hook
     if error is not None:
         kind, message, resets_at = classify_failure(error, reset_time, rollout=entries)
         return TurnFailed(kind=kind, message=message, resets_at=resets_at)
-    turn_id = _optional_string(hook, TURN_ID_FIELD)
     last_message = _optional_string(hook, LAST_ASSISTANT_MESSAGE_FIELD) or rollout_message(
         entries, turn_id
     )
@@ -179,17 +188,10 @@ def _stop_signal(
 
 
 def _payload(entry: Mapping[str, Any]) -> Mapping[str, Any]:
+    if entry.get("type") != "event_msg":
+        return {}
     payload = entry.get("payload")
-    if isinstance(payload, Mapping):
-        return cast("Mapping[str, Any]", payload)
-    return entry
-
-
-def _contains_error_payload(entry: Mapping[str, Any]) -> bool:
-    event_type = entry.get("type")
-    if event_type in _ERROR_EVENT_TYPES:
-        return True
-    return isinstance(entry.get(ERROR_FIELD), Mapping | str)
+    return cast("Mapping[str, Any]", payload) if isinstance(payload, Mapping) else {}
 
 
 def _permission_message(entry: Mapping[str, Any]) -> str:
@@ -200,98 +202,17 @@ def _permission_message(entry: Mapping[str, Any]) -> str:
     return _DEFAULT_PERMISSION_MESSAGE
 
 
-def _message_from_payload(entry: Mapping[str, Any]) -> str:
-    event_type = entry.get("type")
-    item = entry.get("item")
-    if isinstance(item, Mapping):
-        item_payload = cast("Mapping[str, Any]", item)
-        item_type = item_payload.get("type")
-        if item_type in ("agent_message", "message") or event_type == "item_completed":
-            message = _message_value(item_payload)
-            if message:
-                return message
-    if event_type in ("agent_message", "message"):
-        return _message_value(entry)
-    content = entry.get("content")
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in cast("list[object]", content):
-            if isinstance(item, Mapping):
-                text = _text_value(cast("Mapping[str, Any]", item))
-                if text:
-                    parts.append(text)
-        return "".join(parts)
-    return ""
-
-
-def _turn_matches(entry: Mapping[str, Any], turn_id: str) -> bool:
-    if entry.get(TURN_ID_FIELD) == turn_id:
-        return True
-    item = entry.get("item")
-    return (
-        isinstance(item, Mapping) and cast("Mapping[str, Any]", item).get(TURN_ID_FIELD) == turn_id
-    )
-
-
-def _message_value(entry: Mapping[str, Any]) -> str:
-    for key in ("text", MESSAGE_FIELD, LAST_ASSISTANT_MESSAGE_FIELD, "output"):
-        value = entry.get(key)
-        if isinstance(value, str):
-            return value
-        if isinstance(value, Mapping):
-            text = _text_value(cast("Mapping[str, Any]", value))
-            if text:
-                return text
-        if isinstance(value, list):
-            parts: list[str] = []
-            for item in cast("list[object]", value):
-                if isinstance(item, Mapping):
-                    item_text = _text_value(cast("Mapping[str, Any]", item))
-                    if item_text:
-                        parts.append(item_text)
-            text = "".join(parts)
-            if text:
-                return text
-    return ""
-
-
-def _text_value(entry: Mapping[str, Any]) -> str:
-    for key in ("text", "output_text", "value"):
-        value = entry.get(key)
-        if isinstance(value, str):
-            return value
-    return ""
-
-
 def _error_text(entry: Mapping[str, Any]) -> str:
-    for key in _ERROR_MESSAGE_FIELDS:
-        value = entry.get(key)
-        if isinstance(value, str) and value:
-            return value
-        if isinstance(value, Mapping):
-            nested = _error_text(cast("Mapping[str, Any]", value))
-            if nested:
-                return nested
-        if isinstance(value, list):
-            parts: list[str] = []
-            for item in cast("list[object]", value):
-                if isinstance(item, Mapping):
-                    text = _error_text(cast("Mapping[str, Any]", item))
-                    if text:
-                        parts.append(text)
-            nested = " ".join(parts)
-            if nested:
-                return nested
+    value = entry.get(_ERROR_MESSAGE_FIELD)
+    if isinstance(value, str) and value:
+        return value
     return _DEFAULT_FAILURE_MESSAGE
 
 
 def _status(entry: Mapping[str, Any]) -> int | None:
-    for key in _STATUS_FIELDS:
-        value = entry.get(key)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
+    value = entry.get(_STATUS_FIELD)
+    if isinstance(value, int):
+        return value
     return None
 
 

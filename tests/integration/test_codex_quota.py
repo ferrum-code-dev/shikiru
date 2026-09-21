@@ -12,7 +12,8 @@ _FIXTURE = (
     Path(__file__).parent.parent / "fixtures" / "agents" / "codex" / "rollout_full_turn.jsonl"
 )
 _START = datetime(2026, 1, 1, tzinfo=UTC)
-_RESET = datetime.fromtimestamp(1893459600, tz=UTC)
+_RESET = datetime.fromtimestamp(1789948365, tz=UTC)
+_SECONDARY_RESET = datetime.fromtimestamp(1790414331, tz=UTC)
 
 
 def test_quota_probe_reads_latest_rollout_windows(tmp_path: Path) -> None:
@@ -26,6 +27,6 @@ def test_quota_probe_reads_latest_rollout_windows(tmp_path: Path) -> None:
     windows = probe.get()
 
     assert [window.name for window in windows] == ["primary", "secondary"]
-    assert [window.used_pct for window in windows] == [42.0, 12.0]
-    assert [window.resets_at for window in windows] == [_RESET, _RESET]
+    assert [window.used_pct for window in windows] == [53.0, 68.0]
+    assert [window.resets_at for window in windows] == [_RESET, _SECONDARY_RESET]
     assert all(window.observed_at == _START for window in windows)

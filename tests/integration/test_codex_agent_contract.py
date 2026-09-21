@@ -6,12 +6,14 @@ import asyncio
 import json
 import os
 import shutil
+import sys
+import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-import pytest
 from pydantic import BaseModel
 
 from shikiru.agents.contracts import (
@@ -19,8 +21,6 @@ from shikiru.agents.contracts import (
     RUN_DIR_ENV_VAR,
     Activity,
     AgentFactory,
-    AttentionNeeded,
-    Compacted,
     FailureKind,
     LaunchSpec,
     PromptSubmitted,
@@ -41,10 +41,14 @@ from shikiru.agents.testing import (
 )
 from shikiru.agents.testing.resume import RESUME_NONCE_PROMPT, RESUME_RECALL_PROMPT
 from shikiru.plugins.agents.codex.agent import create
-from tests.support.waiting import WaitTimeoutError, wait_until
+from shikiru.plugins.agents.codex.options import CONFIG_FLAG, DEFAULT_ARGS, HOOK_EVENTS
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Mapping
+    from typing import Any
+
+    import pytest
 
     from shikiru.agents.contracts import AgentSession, AgentSignal, InteractiveAgent
     from shikiru.tmux.pane import TmuxPane
@@ -53,28 +57,28 @@ _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "agents" / "codex"
 _MODEL = "gpt-5.6-sol"
 _EFFORT = "low"
 _ROLE = "implementer"
-_FULL_TURN_SESSION_ID = "11111111-1111-1111-1111-111111111111"
-_TWO_TURNS_SESSION_ID = "22222222-2222-2222-2222-222222222222"
-_ERROR_SESSION_ID = "33333333-3333-3333-3333-333333333333"
-_RESET = datetime.fromtimestamp(1893459600, tz=UTC)
+_FULL_TURN_SESSION_ID = "cbb5d575-41f3-4e6b-a24f-483c51c0a097"
+_TWO_TURNS_SESSION_ID = "20633415-9075-4c25-a7e9-d007543e2297"
+_ERROR_SESSION_ID = "9747b608-0cc0-4641-b010-ce2bc30c2d89"
+_RESET = datetime.fromtimestamp(1789948365, tz=UTC)
 
 _FULL_TURN_USAGE = Usage(
-    input_tokens=100,
-    output_tokens=50,
-    cache_read_tokens=10,
-    cache_write_tokens=5,
-    cost_usd=0.00062625,
+    input_tokens=14829,
+    output_tokens=232,
+    cache_read_tokens=11008,
+    cache_write_tokens=0,
+    cost_usd=0.02223225,
     cost_basis="api_equivalent",
-    context_used_pct=0.03869969040247678,
+    context_used_pct=9.998839009287925,
 )
 _TWO_TURNS_USAGE = Usage(
-    input_tokens=300,
-    output_tokens=150,
-    cache_read_tokens=30,
-    cache_write_tokens=15,
-    cost_usd=0.00187875,
+    input_tokens=30205,
+    output_tokens=326,
+    cache_read_tokens=22016,
+    cache_write_tokens=0,
+    cost_usd=0.04376825,
     cost_basis="api_equivalent",
-    context_used_pct=0.07739938080495357,
+    context_used_pct=10.210526315789474,
 )
 _NO_TURNS_USAGE = Usage(
     input_tokens=0,
@@ -86,18 +90,18 @@ _NO_TURNS_USAGE = Usage(
     context_used_pct=None,
 )
 
-_LIVE_START_TIMEOUT_SECONDS = 45.0
-_PROMPT_STABILITY_COUNT = 3
-_TRUST_PROMPT_MARKERS = ("Do you trust the contents of this directory?", "Press enter to continue")
-_UPDATE_PROMPT_MARKERS = ("Update now (runs", "Skip", "Press enter to continue")
-_HOOKS_COMPLETION_MARKER = "/hooks  view and manage lifecycle hooks"
-_HOOKS_OVERVIEW_MARKERS = ("Press t to trust all", "Press enter to view hooks")
-_HOOK_DETAIL_MARKER = "Press t to trust; esc to go back"
-_HOOK_TRUSTED_MARKER = "Trust     Trusted"
-_HOOK_CLOSE_ATTEMPTS = 3
-_HOOK_CLOSE_TIMEOUT_SECONDS = 5.0
-_PROMPT_MARKER = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}"
 _TMUX_COMMAND_TIMEOUT_SECONDS = 5.0
+_LIVE_PRIME_PROMPT = "reply with exactly READY"
+_INHERITED_CODEX_ENV_VARS = (
+    "CODEX_API_KEY",
+    "CODEX_CI",
+    "CODEX_SANDBOX_NETWORK_DISABLED",
+    "CODEX_SANDBOX",
+    "CODEX_PERMISSION_PROFILE",
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "OPENAI_API_KEY",
+)
 
 
 class _AskResult(BaseModel):
@@ -108,9 +112,24 @@ class TestCodexAgentContract(AgentContractSuite):
     """Exercise Codex's offline contract and gate live checks behind SHIKIRU_E2E."""
 
     runs_live_checks_in_default_gate: ClassVar[bool] = False
+    _live_codex_home: Path | None = None
+    _live_hook_command: str | None = None
+    _live_path: str | None = None
+    _live_prompt: str | None = None
 
     def agent_factory(self) -> AgentFactory:
         return create
+
+    def agent_options(self) -> Mapping[str, Any]:
+        if self._live_hook_command is None:
+            return {}
+        return {
+            "args": [
+                *DEFAULT_ARGS,
+                *_hook_config_overrides(self._live_hook_command),
+                *([self._live_prompt] if self._live_prompt is not None else []),
+            ]
+        }
 
     def build_spec(self, tmp_path: Path, *, resume_session_id: str | None) -> LaunchSpec:
         repo = tmp_path / "repo"
@@ -122,9 +141,23 @@ class TestCodexAgentContract(AgentContractSuite):
             cwd=repo,
             run_dir=run_dir,
             add_dirs=(),
-            env={RUN_DIR_ENV_VAR: str(run_dir), ROLE_ENV_VAR: _ROLE},
+            env=self._launch_environment(run_dir),
             resume_session_id=resume_session_id,
         )
+
+    def _launch_environment(self, run_dir: Path) -> dict[str, str]:
+        environment = {RUN_DIR_ENV_VAR: str(run_dir), ROLE_ENV_VAR: _ROLE}
+        if self._live_codex_home is not None:
+            environment["CODEX_HOME"] = str(self._live_codex_home)
+        if self._live_path is not None:
+            environment["PATH"] = self._live_path
+        return environment
+
+    def _build_agent(self, options: Mapping[str, Any] | None = None) -> InteractiveAgent:
+        if self._live_codex_home is None:
+            return super()._build_agent(options)
+        with _codex_home_environment(self._live_codex_home):
+            return super()._build_agent(options)
 
     def headless_ask_schema_model(self) -> type[BaseModel]:
         return _AskResult
@@ -142,13 +175,10 @@ class TestCodexAgentContract(AgentContractSuite):
                 },
                 expected_signals=[
                     SessionStarted(session_id=_FULL_TURN_SESSION_ID),
-                    PromptSubmitted(text="implement the retry helper"),
+                    PromptSubmitted(text="prime hooks"),
                     Activity(tool_running=True),
                     Activity(tool_running=False),
-                    TurnEnded(last_message="accept: implement the retry helper"),
-                    Compacted(),
-                    AttentionNeeded(message="waiting for operator input"),
-                    SessionEnded(),
+                    TurnEnded(last_message="Hooks primed."),
                 ],
                 expected_usage=_FULL_TURN_USAGE,
                 session_id=_FULL_TURN_SESSION_ID,
@@ -165,10 +195,12 @@ class TestCodexAgentContract(AgentContractSuite):
                 },
                 expected_signals=[
                     SessionStarted(session_id=_TWO_TURNS_SESSION_ID),
-                    PromptSubmitted(text="first turn"),
-                    TurnEnded(last_message="first turn complete"),
-                    PromptSubmitted(text="second turn"),
-                    TurnEnded(last_message="second turn complete"),
+                    PromptSubmitted(text="prime hooks"),
+                    TurnEnded(last_message="First turn complete."),
+                    PromptSubmitted(
+                        text="Remember this nonce for later in this session: fixture-nonce"
+                    ),
+                    TurnEnded(last_message="Second turn complete."),
                 ],
                 expected_usage=_TWO_TURNS_USAGE,
                 session_id=_TWO_TURNS_SESSION_ID,
@@ -184,11 +216,12 @@ class TestCodexAgentContract(AgentContractSuite):
                     "rollout_quota_error.jsonl": _FIXTURES_DIR / "rollout_quota_error.jsonl",
                 },
                 expected_signals=[
+                    SessionStarted(session_id=_ERROR_SESSION_ID),
                     TurnFailed(
                         kind=FailureKind.QUOTA,
                         message="usage limit reached",
                         resets_at=_RESET,
-                    )
+                    ),
                 ],
                 expected_usage=_NO_TURNS_USAGE,
                 session_id=_ERROR_SESSION_ID,
@@ -201,11 +234,12 @@ class TestCodexAgentContract(AgentContractSuite):
                     / "rollout_unavailable_error.jsonl",
                 },
                 expected_signals=[
+                    SessionStarted(session_id=_ERROR_SESSION_ID),
                     TurnFailed(
                         kind=FailureKind.UNAVAILABLE,
                         message="service overloaded",
                         resets_at=None,
-                    )
+                    ),
                 ],
                 expected_usage=_NO_TURNS_USAGE,
                 session_id=_ERROR_SESSION_ID,
@@ -217,9 +251,10 @@ class TestCodexAgentContract(AgentContractSuite):
                     "rollout_auth_error.jsonl": _FIXTURES_DIR / "rollout_auth_error.jsonl",
                 },
                 expected_signals=[
+                    SessionStarted(session_id=_ERROR_SESSION_ID),
                     TurnFailed(
                         kind=FailureKind.AUTH, message="authentication failed", resets_at=None
-                    )
+                    ),
                 ],
                 expected_usage=_NO_TURNS_USAGE,
                 session_id=_ERROR_SESSION_ID,
@@ -231,7 +266,10 @@ class TestCodexAgentContract(AgentContractSuite):
                     "rollout_context_error.jsonl": _FIXTURES_DIR / "rollout_context_error.jsonl",
                 },
                 expected_signals=[
-                    TurnFailed(kind=FailureKind.CONTEXT, message="context exceeded", resets_at=None)
+                    SessionStarted(session_id=_ERROR_SESSION_ID),
+                    TurnFailed(
+                        kind=FailureKind.CONTEXT, message="context exceeded", resets_at=None
+                    ),
                 ],
                 expected_usage=_NO_TURNS_USAGE,
                 session_id=_ERROR_SESSION_ID,
@@ -243,7 +281,29 @@ class TestCodexAgentContract(AgentContractSuite):
                     "rollout_other_error.jsonl": _FIXTURES_DIR / "rollout_other_error.jsonl",
                 },
                 expected_signals=[
-                    TurnFailed(kind=FailureKind.OTHER, message="unexpected failure", resets_at=None)
+                    SessionStarted(session_id=_ERROR_SESSION_ID),
+                    TurnFailed(
+                        kind=FailureKind.OTHER, message="unexpected failure", resets_at=None
+                    ),
+                ],
+                expected_usage=_NO_TURNS_USAGE,
+                session_id=_ERROR_SESSION_ID,
+            ),
+            SampleCase(
+                name="turn correlation",
+                files={
+                    HOOKS_FILENAME: _FIXTURES_DIR / "hooks_turn_correlation.jsonl",
+                    "rollout_turn_correlation.jsonl": _FIXTURES_DIR
+                    / "rollout_turn_correlation.jsonl",
+                },
+                expected_signals=[
+                    SessionStarted(session_id=_ERROR_SESSION_ID),
+                    TurnFailed(
+                        kind=FailureKind.OTHER,
+                        message="request failed",
+                        resets_at=None,
+                    ),
+                    TurnEnded(last_message="Successful turn."),
                 ],
                 expected_usage=_NO_TURNS_USAGE,
                 session_id=_ERROR_SESSION_ID,
@@ -257,45 +317,131 @@ class TestCodexAgentContract(AgentContractSuite):
     async def _launch_live(
         self, tmux_server: TmuxSocket, tmp_path: Path, *, prepare_turn: bool
     ) -> tuple[InteractiveAgent, LaunchSpec, TmuxPane, AgentSession]:
-        spec = self.build_spec(tmp_path, resume_session_id=None)
-        hook_home = await asyncio.to_thread(
-            _prepare_live_environment,
-            os.environ.get("CODEX_HOME"),
-            spec.cwd,
-            tmp_path,
+        self._require_live()
+        repo = tmp_path / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+        hook_home, codex_home = await asyncio.to_thread(_prepare_live_environment, repo, tmp_path)
+        self._live_codex_home = codex_home
+        self._live_hook_command = f"{hook_home / '.local' / 'bin' / 'shikiru'} hook"
+        codex_path = shutil.which("codex")
+        if codex_path is None:
+            message = "codex executable is required for the live Codex check"
+            raise AssertionError(message)
+        live_path = (
+            f"{hook_home / '.local' / 'bin'}{os.pathsep}"
+            f"{Path(codex_path).parent}{os.pathsep}{os.defpath}"
         )
-        await tmux_server.runner.run(
-            [
-                "tmux",
-                "-L",
-                tmux_server.socket_name,
-                "set-environment",
-                "-g",
-                "HOME",
-                str(hook_home),
-            ],
-            timeout=_TMUX_COMMAND_TIMEOUT_SECONDS,
-            check=True,
-        )
-        await tmux_server.runner.run(
-            [
-                "tmux",
-                "-L",
-                tmux_server.socket_name,
-                "set-environment",
-                "-g",
-                "SHELL",
-                "/bin/sh",
-            ],
-            timeout=_TMUX_COMMAND_TIMEOUT_SECONDS,
-            check=True,
-        )
+        self._live_path = live_path
+        self._live_prompt = _LIVE_PRIME_PROMPT
+        environment = {
+            "HOME": str(hook_home),
+            "CODEX_HOME": str(codex_home),
+            "PATH": live_path,
+            "SHELL": "/bin/sh",
+        }
+        for name, value in environment.items():
+            for target in (("-g",), ("-t", tmux_server.session)):
+                await tmux_server.runner.run(
+                    [
+                        "tmux",
+                        "-L",
+                        tmux_server.socket_name,
+                        "set-environment",
+                        *target,
+                        name,
+                        value,
+                    ],
+                    timeout=_TMUX_COMMAND_TIMEOUT_SECONDS,
+                    check=True,
+                )
+        for name in _INHERITED_CODEX_ENV_VARS:
+            for target in (("-g",), ("-t", tmux_server.session)):
+                await tmux_server.runner.run(
+                    [
+                        "tmux",
+                        "-L",
+                        tmux_server.socket_name,
+                        "set-environment",
+                        *target,
+                        "-r",
+                        name,
+                    ],
+                    timeout=_TMUX_COMMAND_TIMEOUT_SECONDS,
+                    check=False,
+                )
         agent, spec, pane, session = await super()._launch_live(
             tmux_server, tmp_path, prepare_turn=prepare_turn
         )
-        hooks_path = spec.run_dir / spec.role / HOOKS_FILENAME
-        await _prepare_codex_startup(pane, hooks_path)
         return agent, spec, pane, session
+
+    async def _prime_live_session(
+        self, tmux_server: TmuxSocket, tmp_path: Path, *, prepare_turn: bool
+    ) -> tuple[
+        InteractiveAgent,
+        LaunchSpec,
+        TmuxPane,
+        AgentSession,
+        AsyncIterator[AgentSignal],
+        SessionStarted,
+    ]:
+        agent, spec, pane, session = await self._launch_live(
+            tmux_server, tmp_path, prepare_turn=prepare_turn
+        )
+        signals = session.signals()
+        try:
+            started = await _next_signal_for_test(signals, SessionStarted, timeout=20.0)
+            await _next_signal_for_test(signals, PromptSubmitted, timeout=20.0)
+            await _next_signal_for_test(signals, TurnEnded, timeout=20.0)
+        except TimeoutError as error:
+            visible = await pane.capture_visible()
+            hooks_path = spec.run_dir / spec.role / HOOKS_FILENAME
+            hooks = hooks_path.read_text(encoding="utf-8") if hooks_path.is_file() else "missing"
+            message = f"Codex did not emit prime signals; pane={visible!r}; hooks={hooks!r}"
+            raise AssertionError(message) from error
+        return agent, spec, pane, session, signals, started
+
+    async def test_live_launch_starts_session(
+        self, tmux_server: TmuxSocket, tmp_path: Path
+    ) -> None:
+        _agent, _spec, _pane, _session, _signals, started = await self._prime_live_session(
+            tmux_server, tmp_path, prepare_turn=False
+        )
+        assert started.session_id is not None
+
+    async def test_live_turn_completes(self, tmux_server: TmuxSocket, tmp_path: Path) -> None:
+        _agent, _spec, pane, _session, signals, _started = await self._prime_live_session(
+            tmux_server, tmp_path, prepare_turn=True
+        )
+        await pane.paste_line("do the thing")
+        await _next_signal_for_test(signals, PromptSubmitted, timeout=60.0)
+        await _next_signal_for_test(signals, TurnEnded, timeout=60.0)
+
+    async def test_live_usage_reports_tokens(self, tmux_server: TmuxSocket, tmp_path: Path) -> None:
+        _agent, _spec, pane, session, signals, _started = await self._prime_live_session(
+            tmux_server, tmp_path, prepare_turn=True
+        )
+        await pane.paste_line("do the thing")
+        await _next_signal_for_test(signals, PromptSubmitted, timeout=60.0)
+        await _next_signal_for_test(signals, TurnEnded, timeout=60.0)
+        usage = await session.usage()
+        assert usage.input_tokens + usage.output_tokens > 0
+
+    async def test_live_attach_does_not_replay_signals(
+        self, tmux_server: TmuxSocket, tmp_path: Path
+    ) -> None:
+        agent, spec, pane, session, signals, _started = await self._prime_live_session(
+            tmux_server, tmp_path, prepare_turn=True
+        )
+        await pane.paste_line("first turn")
+        await _next_signal_for_test(signals, PromptSubmitted, timeout=60.0)
+        await _next_signal_for_test(signals, TurnEnded, timeout=60.0)
+        snapshot = session.snapshot()
+        resumed = await agent.attach(spec, pane, snapshot)
+        resumed_signals = resumed.signals()
+        await pane.paste_line("second turn")
+        submitted = await _next_signal_for_test(resumed_signals, PromptSubmitted, timeout=60.0)
+        assert submitted.text == "second turn"
+        await _next_signal_for_test(resumed_signals, TurnEnded, timeout=60.0)
 
     async def test_offline_launch_argv_includes_hooks_trust_and_git_dir(
         self, tmp_path: Path
@@ -343,46 +489,49 @@ class TestCodexAgentContract(AgentContractSuite):
         assert environment["CODEX_API_KEY"] == "test-key"
         assert environment["OPENAI_API_KEY"] is None
 
+    async def test_live_quota_reports_without_error(self) -> None:
+        self._require_live()
+        with tempfile.TemporaryDirectory(prefix="shikiru-codex-quota-") as directory:
+            root = Path(directory)
+            _hook_home, codex_home = await asyncio.to_thread(_prepare_live_environment, root, root)
+            self._live_codex_home = codex_home
+            with _codex_home_environment(codex_home):
+                await self._build_agent().quota()
+
+    async def test_live_headless_ask_matches_schema(self, tmp_path: Path) -> None:
+        self._require_live()
+        _hook_home, codex_home = await asyncio.to_thread(
+            _prepare_live_environment, tmp_path, tmp_path
+        )
+        self._live_codex_home = codex_home
+        with _codex_home_environment(codex_home):
+            await super().test_live_headless_ask_matches_schema(tmp_path)
+
     async def test_live_resume_recalls_context(
         self, tmux_server: TmuxSocket, tmp_path: Path
     ) -> None:
-        agent, _spec, pane, session = await self._launch_live(
+        agent, _spec, pane, _session, signals, started = await self._prime_live_session(
             tmux_server, tmp_path, prepare_turn=True
         )
-        signals = session.signals()
-        started = await _next_signal_for_test(signals, SessionStarted)
-        if started.session_id is None:
-            pytest.skip("Codex did not provide a resumable session id")
+        assert started.session_id is not None
         nonce = uuid.uuid4().hex
         await pane.paste_line(RESUME_NONCE_PROMPT.format(nonce=nonce))
-        await _next_signal_for_test(signals, TurnEnded)
+        await _next_signal_for_test(signals, PromptSubmitted, timeout=60.0)
+        await _next_signal_for_test(signals, TurnEnded, timeout=60.0)
         await pane.paste_line(agent.keys.exit_input)
         try:
             await _next_signal_for_test(signals, SessionEnded)
         except TimeoutError:
             await wait_until(lambda: _pane_dead(pane), timeout=15.0)
         resume_spec = self.build_spec(tmp_path, resume_session_id=started.session_id)
-        resumed = await agent.launch(resume_spec, pane)
+        self._live_prompt = RESUME_RECALL_PROMPT
+        resumed_agent = self._build_agent()
+        resumed = await resumed_agent.launch(resume_spec, pane)
         resumed_signals = resumed.signals()
-        try:
-            resumed_started = await _next_signal_for_test(resumed_signals, SessionStarted)
-        except TimeoutError as error:
-            visible = await pane.capture_visible()
-            hooks_path = resume_spec.run_dir / resume_spec.role / HOOKS_FILENAME
-            hooks = hooks_path.read_text(encoding="utf-8") if hooks_path.is_file() else "missing"
-            message = f"Codex resume did not start; pane={visible!r}; hooks={hooks!r}"
-            raise AssertionError(message) from error
+        resumed_started = await _next_signal_for_test(resumed_signals, SessionStarted, timeout=60.0)
         assert resumed_started.session_id == started.session_id
         try:
-            await wait_until(
-                lambda: _resumed_prompt_visible(pane), timeout=_LIVE_START_TIMEOUT_SECONDS
-            )
-        except WaitTimeoutError as error:
-            visible = await pane.capture_visible()
-            message = f"Codex resumed prompt did not open; pane={visible!r}"
-            raise AssertionError(message) from error
-        await pane.paste_line(RESUME_RECALL_PROMPT)
-        try:
+            await _next_signal_for_test(resumed_signals, PromptSubmitted, timeout=60.0)
             ended = await _next_signal_for_test(resumed_signals, TurnEnded, timeout=60.0)
         except TimeoutError as error:
             visible = await pane.capture_visible()
@@ -393,126 +542,41 @@ class TestCodexAgentContract(AgentContractSuite):
         assert nonce in ended.last_message
 
 
-def _prepare_live_environment(codex_home: str | None, cwd: Path, tmp_path: Path) -> Path:
-    if codex_home is not None:
-        home = Path(codex_home)
-        home.mkdir(parents=True, exist_ok=True)
-        project = json.dumps(str(cwd), ensure_ascii=False)
-        (home / "config.toml").write_text(
-            f"check_for_update_on_startup = false\n\n"
-            f'[projects.{project}]\ntrust_level = "trusted"\n',
-            encoding="utf-8",
-        )
+def _prepare_live_environment(cwd: Path, tmp_path: Path) -> tuple[Path, Path]:
+    source_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    source_auth = source_home / "auth.json"
+    if not source_auth.is_file():
+        message = f"authenticated Codex credentials are required at {source_auth}"
+        raise AssertionError(message)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source_auth, codex_home / "auth.json")
+    (codex_home / "auth.json").chmod(0o600)
+    project = json.dumps(str(cwd), ensure_ascii=False)
+    (codex_home / "config.toml").write_text(
+        f'check_for_update_on_startup = false\n\n[projects.{project}]\ntrust_level = "trusted"\n',
+        encoding="utf-8",
+    )
     hook_home = tmp_path / "home"
     hook_bin = hook_home / ".local" / "bin"
     hook_bin.mkdir(parents=True, exist_ok=True)
-    shikiru = shutil.which("shikiru")
-    if shikiru is None:
+    shikiru_path = Path(sys.executable).with_name("shikiru")
+    if not shikiru_path.is_file():
+        fallback = shutil.which("shikiru")
+        if fallback is None:
+            message = "shikiru executable is required for the live Codex check"
+            raise AssertionError(message)
+        shikiru_path = Path(fallback)
+    if not shikiru_path.is_file():
         message = "shikiru executable is required for the live Codex check"
         raise AssertionError(message)
-    (hook_bin / "shikiru").symlink_to(shikiru)
-    return hook_home
+    (hook_bin / "shikiru").symlink_to(shikiru_path)
+    return hook_home, codex_home
 
 
-async def _prepare_codex_startup(pane: TmuxPane, hooks_path: Path) -> None:
-    await _wait_codex_startup(pane, hooks_path)
-    visible = await pane.capture_visible()
-    if all(marker in visible for marker in _TRUST_PROMPT_MARKERS):
-        await pane.send_keys("Enter")
-        await wait_until(
-            lambda: _regular_prompt_visible(pane),
-            timeout=_LIVE_START_TIMEOUT_SECONDS,
-        )
-    visible = await pane.capture_visible()
-    if all(marker in visible for marker in _UPDATE_PROMPT_MARKERS):
-        await pane.send_keys("Down", "Enter")
-        await wait_until(
-            lambda: _regular_prompt_visible(pane),
-            timeout=_LIVE_START_TIMEOUT_SECONDS,
-        )
-    if await _path_is_file(hooks_path):
-        return
-    await _trust_codex_hooks(pane)
-    await pane.paste_line("prime hooks")
-    await wait_until(lambda: _path_is_file(hooks_path), timeout=_LIVE_START_TIMEOUT_SECONDS)
-
-
-async def _wait_codex_startup(pane: TmuxPane, hooks_path: Path) -> None:
-    last_visible = ""
-    trust_prompt_observations = 0
-    update_prompt_observations = 0
-
-    async def _startup_ready() -> bool:
-        nonlocal last_visible, trust_prompt_observations, update_prompt_observations
-        visible = await pane.capture_visible()
-        last_visible = visible
-        if all(marker in visible for marker in _TRUST_PROMPT_MARKERS):
-            trust_prompt_observations += 1
-        else:
-            trust_prompt_observations = 0
-        if all(marker in visible for marker in _UPDATE_PROMPT_MARKERS):
-            update_prompt_observations += 1
-        else:
-            update_prompt_observations = 0
-        return (
-            await _path_is_file(hooks_path)
-            or "Ask Codex to do anything" in visible
-            or trust_prompt_observations >= _PROMPT_STABILITY_COUNT
-            or update_prompt_observations >= _PROMPT_STABILITY_COUNT
-        )
-
-    try:
-        await wait_until(_startup_ready, timeout=_LIVE_START_TIMEOUT_SECONDS)
-    except WaitTimeoutError as error:
-        message = f"Codex startup did not emit hooks; pane={last_visible!r}"
-        raise AssertionError(message) from error
-
-
-async def _trust_codex_hooks(pane: TmuxPane) -> None:
-    await pane.send_keys("C-u")
-    await pane.send_keys("/", "h", "o", "o", "k", "s")
-    await wait_until(
-        lambda: _visible_contains(pane, _HOOKS_COMPLETION_MARKER),
-        timeout=_LIVE_START_TIMEOUT_SECONDS,
-    )
-    await pane.send_keys("Enter")
-    await wait_until(
-        lambda: _visible_lacks(pane, _HOOKS_COMPLETION_MARKER),
-        timeout=_LIVE_START_TIMEOUT_SECONDS,
-    )
-    await pane.send_keys("Enter")
-    try:
-        await wait_until(lambda: _hooks_overview_visible(pane), timeout=_LIVE_START_TIMEOUT_SECONDS)
-    except WaitTimeoutError as error:
-        visible = await pane.capture_visible()
-        message = f"Codex hooks review did not open; pane={visible!r}"
-        raise AssertionError(message) from error
-    visible = await pane.capture_visible()
-    if "Press t to trust all" in visible:
-        await pane.send_keys("t")
-    elif _HOOK_DETAIL_MARKER not in visible:
-        await pane.send_keys("Enter")
-        await wait_until(
-            lambda: _visible_contains(pane, _HOOK_DETAIL_MARKER),
-            timeout=_LIVE_START_TIMEOUT_SECONDS,
-        )
-    if _HOOK_DETAIL_MARKER in visible or _HOOK_DETAIL_MARKER in await pane.capture_visible():
-        await pane.send_keys("t")
-        await wait_until(
-            lambda: _visible_contains(pane, _HOOK_TRUSTED_MARKER),
-            timeout=_LIVE_START_TIMEOUT_SECONDS,
-        )
-    for _ in range(_HOOK_CLOSE_ATTEMPTS):
-        await pane.send_keys("Escape")
-        try:
-            await wait_until(
-                lambda: _regular_prompt_visible(pane),
-                timeout=_HOOK_CLOSE_TIMEOUT_SECONDS,
-            )
-        except WaitTimeoutError:
-            continue
-        break
-    await pane.send_keys("Escape")
+def _hook_config_overrides(command: str) -> list[str]:
+    encoded = '[{hooks=[{type="command",command=' + json.dumps(command) + "}]}]"
+    return [item for event in HOOK_EVENTS for item in (CONFIG_FLAG, f"hooks.{event}={encoded}")]
 
 
 async def _next_signal_for_test[S: AgentSignal](
@@ -528,31 +592,17 @@ async def _pane_dead(pane: TmuxPane) -> bool:
     return not await pane.is_alive()
 
 
-async def _hooks_overview_visible(pane: TmuxPane) -> bool:
-    visible = await pane.capture_visible()
-    return (
-        any(marker in visible for marker in _HOOKS_OVERVIEW_MARKERS)
-        or _HOOK_DETAIL_MARKER in visible
-    )
-
-
-async def _regular_prompt_visible(pane: TmuxPane) -> bool:
-    visible = await pane.capture_visible()
-    return "Ask Codex to do anything" in visible
-
-
-async def _resumed_prompt_visible(pane: TmuxPane) -> bool:
-    visible = await pane.capture_visible()
-    return _MODEL in visible and _PROMPT_MARKER in visible
-
-
-async def _path_is_file(path: Path) -> bool:
-    return await asyncio.to_thread(path.is_file)
-
-
-async def _visible_contains(pane: TmuxPane, marker: str) -> bool:
-    return marker in await pane.capture_visible()
-
-
-async def _visible_lacks(pane: TmuxPane, marker: str) -> bool:
-    return marker not in await pane.capture_visible()
+@contextmanager
+def _codex_home_environment(codex_home: Path):
+    previous = {name: os.environ.get(name) for name in ("CODEX_HOME", *_INHERITED_CODEX_ENV_VARS)}
+    os.environ["CODEX_HOME"] = str(codex_home)
+    for name in _INHERITED_CODEX_ENV_VARS:
+        os.environ.pop(name, None)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value

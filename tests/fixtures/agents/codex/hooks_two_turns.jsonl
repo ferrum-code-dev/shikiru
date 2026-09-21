@@ -1,5 +1,5 @@
-{"hook_event_name":"SessionStart","session_id":"22222222-2222-2222-2222-222222222222","rollout_path":"rollout_two_turns.jsonl","cwd":"/tmp/project","model":"gpt-5.6-sol"}
-{"hook_event_name":"UserPromptSubmit","session_id":"22222222-2222-2222-2222-222222222222","rollout_path":"rollout_two_turns.jsonl","prompt":"first turn"}
-{"hook_event_name":"Stop","session_id":"22222222-2222-2222-2222-222222222222","rollout_path":"rollout_two_turns.jsonl","turn_id":"turn-1"}
-{"hook_event_name":"UserPromptSubmit","session_id":"22222222-2222-2222-2222-222222222222","rollout_path":"rollout_two_turns.jsonl","prompt":"second turn"}
-{"hook_event_name":"Stop","session_id":"22222222-2222-2222-2222-222222222222","rollout_path":"rollout_two_turns.jsonl","turn_id":"turn-2"}
+{"cwd":"/workspace/project","hook_event_name":"SessionStart","model":"gpt-5.6-sol","permission_mode":"default","session_id":"20633415-9075-4c25-a7e9-d007543e2297","source":"startup","transcript_path":"rollout_two_turns.jsonl"}
+{"cwd":"/workspace/project","hook_event_name":"UserPromptSubmit","model":"gpt-5.6-sol","permission_mode":"default","prompt":"prime hooks","session_id":"20633415-9075-4c25-a7e9-d007543e2297","transcript_path":"/codex/sessions/rollout-20633415.jsonl","turn_id":"6037d400-4a1e-48ba-87c2-cbd50255128d"}
+{"cwd":"/workspace/project","hook_event_name":"Stop","model":"gpt-5.6-sol","permission_mode":"default","session_id":"20633415-9075-4c25-a7e9-d007543e2297","transcript_path":"/codex/sessions/rollout-20633415.jsonl","turn_id":"6037d400-4a1e-48ba-87c2-cbd50255128d"}
+{"cwd":"/workspace/project","hook_event_name":"UserPromptSubmit","model":"gpt-5.6-sol","permission_mode":"default","prompt":"Remember this nonce for later in this session: fixture-nonce","session_id":"20633415-9075-4c25-a7e9-d007543e2297","transcript_path":"/codex/sessions/rollout-20633415.jsonl","turn_id":"5375a4aa-7145-49b1-af11-4c2f44f0f14d"}
+{"cwd":"/workspace/project","hook_event_name":"Stop","model":"gpt-5.6-sol","permission_mode":"default","session_id":"20633415-9075-4c25-a7e9-d007543e2297","transcript_path":"/codex/sessions/rollout-20633415.jsonl","turn_id":"5375a4aa-7145-49b1-af11-4c2f44f0f14d"}

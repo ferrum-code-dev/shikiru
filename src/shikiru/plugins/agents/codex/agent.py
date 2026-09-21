@@ -152,7 +152,6 @@ class CodexAgent:
             api_key_auth=self._options.auth == AUTH_API_KEY,
             compact_below_free_pct=self._options.compact_below_free_pct,
             codex_home=self._codex_home,
-            resume_requested=spec.resume_session_id is not None,
         )
 
     async def _argv(self, spec: LaunchSpec) -> tuple[str, ...]:

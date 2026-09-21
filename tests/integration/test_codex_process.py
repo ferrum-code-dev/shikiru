@@ -31,6 +31,8 @@ def _install_fake_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tupl
         'if [ "$1" = "--version" ]; then printf "codex-cli 0.155.0\\n"; exit 0; fi\n'
         'if [ "$1" = "login" ]; then printf "Logged in\\n"; exit 0; fi\n'
         'printf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"{\\"ok\\":false}"}}\'\n'
+        'printf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message",'
         '"text":"{\\"ok\\":true}"}}\'\n',
         encoding="utf-8",
     )

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from shikiru.process import SubprocessRunner
 
 _AGENT_MESSAGE_TYPE = "agent_message"
-_ITEM_COMPLETED_TYPE = "item_completed"
+_ITEM_COMPLETED_TYPE = "item.completed"
 _TYPE_FIELD = "type"
 _ITEM_FIELD = "item"
 _TEXT_FIELD = "text"
@@ -112,6 +112,7 @@ def _strict_schema(value: object) -> object:
 
 
 def _parse_agent_message(stdout: str) -> Mapping[str, Any]:
+    final_message: str | None = None
     for line in stdout.splitlines():
         try:
             raw = json.loads(line)
@@ -123,26 +124,26 @@ def _parse_agent_message(stdout: str) -> Mapping[str, Any]:
         message = _message_from_payload(payload)
         if message is None:
             continue
-        try:
-            decoded = json.loads(message)
-        except json.JSONDecodeError as error:
-            raise ConfigError(_INVALID_JSON_MESSAGE) from error
-        if not isinstance(decoded, Mapping):
-            raise ConfigError(_INVALID_OBJECT_MESSAGE)
-        return cast("Mapping[str, Any]", decoded)
-    raise ConfigError(_MISSING_AGENT_MESSAGE)
+        final_message = message
+    if final_message is None:
+        raise ConfigError(_MISSING_AGENT_MESSAGE)
+    try:
+        decoded = json.loads(final_message)
+    except json.JSONDecodeError as error:
+        raise ConfigError(_INVALID_JSON_MESSAGE) from error
+    if not isinstance(decoded, Mapping):
+        raise ConfigError(_INVALID_OBJECT_MESSAGE)
+    return cast("Mapping[str, Any]", decoded)
 
 
 def _message_from_payload(payload: Mapping[str, Any]) -> str | None:
+    if payload.get(_TYPE_FIELD) != _ITEM_COMPLETED_TYPE:
+        return None
     item = payload.get(_ITEM_FIELD)
     if isinstance(item, Mapping):
         typed_item = cast("Mapping[str, Any]", item)
         if typed_item.get(_TYPE_FIELD) == _AGENT_MESSAGE_TYPE:
             return _text(typed_item)
-    if payload.get(_TYPE_FIELD) == _AGENT_MESSAGE_TYPE:
-        return _text(payload)
-    if payload.get(_TYPE_FIELD) == _ITEM_COMPLETED_TYPE and isinstance(item, Mapping):
-        return _text(cast("Mapping[str, Any]", item))
     return None
 
 
