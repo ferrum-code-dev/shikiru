@@ -37,7 +37,9 @@ def record_e2e_cost(request: pytest.FixtureRequest) -> object:
     def record(cost_usd: float | None) -> None:
         node = cast("object", request.node)
         nodeid = cast("str", node.__getattribute__("nodeid"))
-        _COSTS[nodeid] = DEFAULT_COST_USD if cost_usd is None else cost_usd
+        _COSTS[nodeid] = _COSTS.get(nodeid, DEFAULT_COST_USD) + (
+            DEFAULT_COST_USD if cost_usd is None else cost_usd
+        )
 
     return record
 

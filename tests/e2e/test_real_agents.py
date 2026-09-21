@@ -44,17 +44,6 @@ OUTER_TIMEOUT_SECONDS = (AUTOMATIC_RERUNS + 1) * (
 RUN_STATUS_LIVE = "live"
 PRIVATE_DIRECTORY_MODE = stat.S_IRWXU
 PRIVATE_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR
-CLAUDE_DIRECTORY_NAME = ".claude"
-CLAUDE_CREDENTIALS_FILENAME = ".credentials.json"
-CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_" + "OAUTH_TOKEN"
-CLAUDE_AUTH_CONFIG_KEYS = (
-    "firstStartTime",
-    "hasCompletedOnboarding",
-    "machineID",
-    "migrationVersion",
-    "oauthAccount",
-    "userID",
-)
 CODEX_UPDATE_CONFIG = "check_for_update_on_startup = false\n"
 pytestmark = [
     pytest.mark.asyncio,
@@ -64,8 +53,7 @@ pytestmark = [
 ]
 E1_REQUEST = "Implement task A1 from tasks/plan.md"
 E2_MESSAGE = (
-    "Please verify the whitespace-only input edge case: empty text returns 0, while whitespace-"
-    "only text is invalid."
+    "Please continue the implementation and verification, recording any edge cases you find."
 )
 E2_REQUEST = "Implement task A2 from tasks/plan.md"
 
@@ -150,59 +138,15 @@ def _environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
         f'{shlex.quote(tmux_server.socket_name)} "$@"\n'
     )
     shim.chmod(0o755)
-    isolated_home = project_root.parent / "agent-home"
-    isolated_home.mkdir(mode=PRIVATE_DIRECTORY_MODE)
-    _copy_agent_state(isolated_home, project_root)
+    codex_home = project_root.parent / "codex-home"
+    _copy_codex_auth(codex_home, project_root)
     environment = dict(os.environ)
     environment.pop("TMUX", None)
     environment.pop("TMUX_PANE", None)
-    environment["HOME"] = str(isolated_home)
-    environment["CODEX_HOME"] = str(isolated_home / ".codex")
+    environment["CODEX_HOME"] = str(codex_home)
     environment["NO_COLOR"] = "1"
     environment["PATH"] = f"{shim_dir}{os.pathsep}{environment.get('PATH', os.defpath)}"
     return environment
-
-
-def _copy_agent_state(isolated_home: Path, project_root: Path) -> None:
-    _copy_claude_auth(isolated_home)
-    _copy_codex_auth(isolated_home / ".codex", project_root)
-
-
-def _copy_claude_auth(isolated_home: Path) -> None:
-    source = Path.home() / ".claude.json"
-    if not source.is_file():
-        _require(False, f"Claude auth config is missing at {source}")
-        raise AssertionError
-    try:
-        payload = json.loads(source.read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        _require(False, "Claude auth config could not be read")
-        raise AssertionError from error
-    if not isinstance(payload, dict):
-        _require(False, "Claude auth config is not a JSON object")
-        raise TypeError
-    minimal: dict[str, object] = {
-        key: payload[key] for key in CLAUDE_AUTH_CONFIG_KEYS if key in payload
-    }
-    if "oauthAccount" not in minimal:
-        _require(False, "Claude auth config has no authenticated account")
-        raise AssertionError
-    destination = isolated_home / ".claude.json"
-    destination.write_text(json.dumps(minimal, separators=(",", ":")))
-    destination.chmod(PRIVATE_FILE_MODE)
-    credentials = Path.home() / CLAUDE_DIRECTORY_NAME / CLAUDE_CREDENTIALS_FILENAME
-    if credentials.is_file():
-        target_directory = isolated_home / CLAUDE_DIRECTORY_NAME
-        target_directory.mkdir(mode=PRIVATE_DIRECTORY_MODE)
-        target = target_directory / CLAUDE_CREDENTIALS_FILENAME
-        shutil.copyfile(credentials, target)
-        target.chmod(PRIVATE_FILE_MODE)
-    elif not os.environ.get(CLAUDE_OAUTH_TOKEN_ENV):
-        _require(
-            False,
-            "Claude credentials cannot be isolated; provide CLAUDE_CODE_OAUTH_TOKEN or "
-            f"{credentials}",
-        )
 
 
 def _copy_codex_auth(destination: Path, project_root: Path) -> None:
@@ -491,7 +435,44 @@ def _assert_e2_events(status: dict[str, object] | None) -> None:
         changes_requested is not None and accepted_after is not None,
         "changes-requested verdict was not followed by final accept",
     )
-    _require("operator_message" in event_kinds, "operator message was not observed")
+    operator_messages = [
+        (index, event)
+        for index, event in enumerate(event_values)
+        if event.get("kind") == "operator_message"
+    ]
+    _require(bool(operator_messages), "operator message was not observed")
+    implementer_message = next(
+        (
+            (index, event)
+            for index, event in operator_messages
+            if isinstance(event.get("data"), dict)
+            and cast("dict[str, object]", event["data"]).get("role") == Role.IMPLEMENTER.value
+        ),
+        None,
+    )
+    _require(implementer_message is not None, "implementer did not receive the operator message")
+    if implementer_message is not None:
+        message_index = implementer_message[0]
+        started = [
+            index
+            for index, event in enumerate(event_values)
+            if event.get("kind") == "turn_started"
+            and isinstance(event.get("data"), dict)
+            and cast("dict[str, object]", event["data"]).get("role") == Role.IMPLEMENTER.value
+        ]
+        completed = [
+            index
+            for index, event in enumerate(event_values)
+            if event.get("kind") == "turn_completed"
+            and isinstance(event.get("data"), dict)
+            and cast("dict[str, object]", event["data"]).get("role") == Role.IMPLEMENTER.value
+        ]
+        _require(
+            any(
+                start < message_index < end for start in started for end in completed if start < end
+            ),
+            "operator message was not delivered during an implementer turn",
+        )
     _require("intervention" not in event_kinds, "operator intervention was observed")
     _require(task is not None and task.get("status") == "done", "task did not finish")
 
@@ -510,6 +491,9 @@ async def _run_e1(
             _execute_e1(project, environment, tmux_server, record_cost, state),
             timeout=ATTEMPT_TIMEOUT_SECONDS,
         )
+    except AssertionError, OSError, ShikiruError, TimeoutError:
+        await _record_observed_cost(project, environment, record_cost)
+        raise
     finally:
         await _cleanup_attempt(project, environment, state)
 
@@ -565,8 +549,24 @@ async def _run_e2(
             _execute_e2(project, environment, tmux_server, record_cost, state),
             timeout=ATTEMPT_TIMEOUT_SECONDS,
         )
+    except AssertionError, OSError, ShikiruError, TimeoutError:
+        await _record_observed_cost(project, environment, record_cost)
+        raise
     finally:
         await _cleanup_attempt(project, environment, state)
+
+
+async def _record_observed_cost(
+    project: PreparedProject,
+    environment: dict[str, str],
+    record_cost: Callable[[float | None], None],
+) -> None:
+    try:
+        status = await _status(project.root, environment)
+    except OSError, ShikiruError, json.JSONDecodeError:
+        return
+    if status is not None:
+        record_cost(_cost(status))
 
 
 async def _execute_e2(
