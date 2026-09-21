@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from importlib import resources
 from typing import TYPE_CHECKING
 
+from shikiru.errors import DatabaseError
+
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
@@ -41,6 +43,22 @@ class Database:
     def connect_readonly(self) -> sqlite3.Connection:
         """Open a connection SQLite itself refuses to let write."""
         return self._connect(mode="ro")
+
+    def schema_version(self, connection: sqlite3.Connection) -> int:
+        """Return the migrated schema version for an open database connection."""
+        return connection.execute("PRAGMA user_version").fetchone()[0]
+
+    def health(self) -> int:
+        """Open and migrate the database, returning its schema version."""
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = self.connect()
+            return self.schema_version(connection)
+        except sqlite3.Error as error:
+            raise DatabaseError(str(error)) from error
+        finally:
+            if connection is not None:
+                connection.close()
 
     def _connect(self, *, mode: str) -> sqlite3.Connection:
         connection = sqlite3.connect(

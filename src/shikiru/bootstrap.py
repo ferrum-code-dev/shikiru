@@ -26,6 +26,7 @@ from shikiru.engine.turns import TurnRunner
 from shikiru.errors import ConfigError
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.detectors import ProjectDetectors
+from shikiru.operator.doctor import Doctor
 from shikiru.operator.events import EventFeed
 from shikiru.operator.lifecycle import ProjectLifecycle
 from shikiru.operator.queries import OperatorQueries
@@ -72,6 +73,17 @@ def build_project_detectors(project_root: Path) -> ProjectDetectors:
         git=Git(runner),
         runner=runner,
         clock=build_clock(),
+    )
+
+
+def build_doctor(project_root: Path) -> Doctor:
+    """Build environment diagnostics with one injected process, clock and registry."""
+    runner = SubprocessRunner()
+    return Doctor(
+        project_root,
+        runner=runner,
+        clock=build_clock(),
+        registry=AgentRegistry(),
     )
 
 

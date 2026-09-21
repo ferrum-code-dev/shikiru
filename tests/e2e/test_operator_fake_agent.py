@@ -30,6 +30,14 @@ BASE_BRANCH = "main"
 TASK_ID = "T-1"
 ACTING_ROLES = ("leader", "implementer")
 TMUX_COMMAND_TIMEOUT_SECONDS = 5.0
+FAKE_OVERRIDES = (
+    "--set",
+    'roles.leader.ladder=[{agent="fake",model="fake-1"}]',
+    "--set",
+    'roles.implementer.ladder=[{agent="fake",model="fake-1"}]',
+    "--set",
+    'roles.helper.ladder=[{agent="fake",model="fake-1"}]',
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,13 +268,16 @@ async def test_fake_agent_operator_flow_completes_for_each_topology(
         assert code == 0, stderr
 
         lifecycle_started = True
-        code, _, stderr = await _cli(project.root, environment, *overrides, "start")
+        code, _, stderr = await _cli(
+            project.root, environment, *overrides, *FAKE_OVERRIDES, "start"
+        )
         assert code == 0, stderr
 
         code, stdout, stderr = await _cli(
             project.root,
             environment,
             *overrides,
+            *FAKE_OVERRIDES,
             "submit",
             "Implement task A1 from tasks/plan.md",
         )

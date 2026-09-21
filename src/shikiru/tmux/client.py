@@ -14,6 +14,7 @@ _TMUX_BIN = "tmux"
 _SOCKET_FLAG = "-L"
 _COMMAND_TIMEOUT_SECONDS = 5.0
 _END_OF_OPTIONS = "--"
+_ENV_COMMAND = "env"
 
 FORMAT_PANE_ID = "#{pane_id}"
 FORMAT_PANE_DEAD = "#{pane_dead}"
@@ -196,9 +197,14 @@ class Tmux:
     ) -> None:
         """Restart pane `target`'s process, killing any survivor first."""
         args = ["respawn-pane", "-k", "-t", target, "-c", str(cwd)]
+        command = [_ENV_COMMAND]
         for key, value in env.items():
-            args += ["-e", f"{key}={value}" if value is not None else f"{key}"]
-        args += [_END_OF_OPTIONS, *argv]
+            if value is None:
+                command += ["-u", key]
+        for key, value in env.items():
+            if value is not None:
+                command.append(f"{key}={value}")
+        args += [_END_OF_OPTIONS, *command, *argv]
         await self._run(*args)
 
     async def capture_pane(self, target: str, *, tail_lines: int | None = None) -> str:

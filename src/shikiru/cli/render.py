@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import Settings
     from shikiru.operator.commands import Ack
+    from shikiru.operator.doctor import DoctorReport
     from shikiru.operator.queries import StatusView, TaskDetail, TaskSummary
 
 STATUS_PANEL_TITLE = "Shikiru status"
@@ -29,6 +30,9 @@ USAGE_TABLE_TITLE = "Usage"
 QUOTA_TABLE_TITLE = "Quota windows"
 REPORTS_TABLE_TITLE = "Reports and verdicts"
 ACK_PANEL_TITLE = "Command"
+DOCTOR_PANEL_TITLE = "Shikiru doctor"
+DOCTOR_OK_LABEL = "ok"
+DOCTOR_FAIL_LABEL = "fail"
 NO_ROWS = "none"
 NO_VALUE = "—"
 
@@ -99,6 +103,21 @@ def ack_renderable(ack: Ack) -> RenderableType:
     if ack.message:
         text = f"{text}\n{ack.message}"
     return Panel(text, title=ACK_PANEL_TITLE)
+
+
+def doctor_renderable(report: DoctorReport) -> Table:
+    """Render environment diagnostics as a compact check table."""
+    table = Table(title=DOCTOR_PANEL_TITLE)
+    table.add_column("Status")
+    table.add_column("Check")
+    table.add_column("Detail")
+    for check in report.checks:
+        table.add_row(
+            DOCTOR_OK_LABEL if check.ok else DOCTOR_FAIL_LABEL,
+            check.name,
+            check.detail,
+        )
+    return table
 
 
 def _tasks_table(tasks: list[TaskSummary], title: str, *, include_priority: bool) -> Table:

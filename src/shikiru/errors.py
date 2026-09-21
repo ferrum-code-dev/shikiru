@@ -41,6 +41,10 @@ class ConfigError(ShikiruError):
     """Project or default configuration is missing or invalid."""
 
 
+class DatabaseError(ShikiruError):
+    """The state database could not be opened, migrated or queried."""
+
+
 class CommandFailed(ShikiruError):
     """A subprocess run through `process.SubprocessRunner` exited non-zero."""
 

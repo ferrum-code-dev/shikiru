@@ -17,6 +17,7 @@ from shikiru.agents.contracts import parse_rung
 from shikiru.agents.sdk.hook_cli import hook_command
 from shikiru.bootstrap import (
     OperatorServices,
+    build_doctor,
     build_engine,
     build_lifecycle,
     build_mcp_server,
@@ -26,7 +27,7 @@ from shikiru.bootstrap import (
 from shikiru.cli.context import CliState, project_root, state_from
 from shikiru.cli.lifecycle import CLI_DASH_COMMAND, CLI_ENGINE_COMMAND, PACKAGE_NAME
 from shikiru.cli.mcp_adapter import run_mcp
-from shikiru.cli.render import ack_renderable, status_renderable
+from shikiru.cli.render import ack_renderable, doctor_renderable, status_renderable
 from shikiru.cli.report import report_command
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import ComplexityName
@@ -46,6 +47,7 @@ OVERRIDES_OPTION = typer.Option("--set", help="Override a config key.")
 ATTACH_OPTION = typer.Option("--attach", help="Attach to the tmux session after start.")
 KILL_SESSION_OPTION = typer.Option("--kill-session", help="Kill the project tmux session.")
 WATCH_OPTION = typer.Option("--watch")
+PROBE_OPTION = typer.Option("--probe", help="Run live agent contract checks.")
 
 app = typer.Typer(name=PACKAGE_NAME, no_args_is_help=True)
 app.command(name="report", hidden=True)(report_command)
@@ -195,6 +197,28 @@ def status(
             services.close()
     except ShikiruError as error:
         _fail(error)
+
+
+@app.command()
+def doctor(
+    context: typer.Context,
+    *,
+    probe: Annotated[bool, PROBE_OPTION] = False,
+) -> None:
+    """Check the environment, project configuration and configured agent plugins."""
+    try:
+        state = state_from(context)
+        root = project_root(state)
+        report = _run(build_doctor(root).run(state.overrides, probe=probe))
+    except ShikiruError as error:
+        _fail(error)
+    if state.json_output:
+        typer.echo(report.model_dump_json())
+    else:
+        no_color = bool(os.environ.get("NO_COLOR"))
+        Console(no_color=no_color).print(doctor_renderable(report))
+    if not report.ok:
+        raise typer.Exit(code=1)
 
 
 @app.command(name=CLI_ENGINE_COMMAND, hidden=True)
