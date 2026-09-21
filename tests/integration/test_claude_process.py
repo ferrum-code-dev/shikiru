@@ -32,7 +32,9 @@ def _install_fake_claude(
         'printf "%s\\n" "${ANTHROPIC_AUTH_TOKEN-}" >> "$SHIKIRU_CLAUDE_ENV"\n'
         'if [ "$1" = "--version" ]; then printf "Claude Code 2.1.278\\n"; exit 0; fi\n'
         'if [ "$1" = "auth" ]; then '
-        'printf "{\\"loggedIn\\":%s}\\n" "$SHIKIRU_CLAUDE_LOGGED_IN"; '
+        'if [ -n "${SHIKIRU_CLAUDE_AUTH_PAYLOAD-}" ]; then '
+        'printf "%s\\n" "$SHIKIRU_CLAUDE_AUTH_PAYLOAD"; '
+        'else printf "{\\"loggedIn\\":%s}\\n" "$SHIKIRU_CLAUDE_LOGGED_IN"; fi; '
         'exit "$SHIKIRU_CLAUDE_AUTH_EXIT"; fi\n'
         'printf "{\\"structured_output\\":{\\"ok\\":true}}\\n"\n',
         encoding="utf-8",
@@ -104,3 +106,22 @@ async def test_doctor_requires_successful_logged_in_auth_status(
     calls = calls_path.read_text(encoding="utf-8").splitlines()
     assert calls[-1] == "auth status --json"
     assert not any(call.startswith("-p .") for call in calls)
+
+
+async def test_doctor_login_detail_does_not_expose_auth_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _bin_dir, _calls_path, _environment_path = _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setenv(
+        "SHIKIRU_CLAUDE_AUTH_PAYLOAD",
+        '{"loggedIn":true,"email":"private@example.invalid","oauthToken":"secret"}',
+    )
+    monkeypatch.setenv("SHIKIRU_CLAUDE_AUTH_EXIT", "0")
+    agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+    checks = await agent.doctor()
+
+    assert checks[-1].ok is True
+    assert checks[-1].detail == "authenticated"
+    assert "private@example.invalid" not in checks[-1].detail
+    assert "secret" not in checks[-1].detail

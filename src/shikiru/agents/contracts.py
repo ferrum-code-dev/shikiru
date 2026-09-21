@@ -127,6 +127,13 @@ class SessionEnded:
     """The session's process exited."""
 
 
+class ProbeMode(StrEnum):
+    """How a plugin gets the diagnostic probe's first prompt into its session."""
+
+    POINTER = auto()
+    POINTER_BEFORE_SESSION = auto()
+
+
 type AgentSignal = (
     SessionStarted
     | PromptSubmitted
@@ -178,6 +185,7 @@ class LaunchSpec:
     `env` already carries the full launch environment (03 §4.1): `RUN_DIR_ENV_VAR`,
     `ROLE_ENV_VAR`, `PROJECT_ENV_VAR`, `TASK_ENV_VAR` and `SLOT_ENV_VAR`. A plugin's
     `respawn()` call passes it straight through; it is the one source for these variables.
+    `probe` requests the plugin's non-interactive startup mode for `doctor --probe`.
     """
 
     rung: Rung
@@ -187,6 +195,7 @@ class LaunchSpec:
     add_dirs: tuple[Path, ...]
     env: Mapping[str, str]
     resume_session_id: str | None
+    probe: bool = False
 
 
 class PaneHandle(Protocol):
@@ -202,6 +211,14 @@ class PaneHandle(Protocol):
 
     async def is_alive(self) -> bool:
         """Return whether the pane's process is still running."""
+        ...
+
+
+class ProbePaneHandle(PaneHandle, Protocol):
+    """A pane handle with the key input needed to resolve agent startup prompts."""
+
+    async def send_keys(self, *keys: str) -> None:
+        """Send key names to the pane."""
         ...
 
 
@@ -274,6 +291,18 @@ class InteractiveAgent(Protocol):
 
     def headless(self) -> HeadlessAgent | None:
         """Return this agent's `HeadlessAgent`, or `None` when it has no headless support."""
+        ...
+
+
+class ProbeAgent(Protocol):
+    """The optional plugin contract used by `doctor --probe`."""
+
+    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
+        """Start a session for the diagnostic probe."""
+        ...
+
+    async def prepare_probe(self, spec: LaunchSpec, pane: ProbePaneHandle) -> ProbeMode:
+        """Resolve startup challenges and describe how the probe submits its prompt."""
         ...
 
 

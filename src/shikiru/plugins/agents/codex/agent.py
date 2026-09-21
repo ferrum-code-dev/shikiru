@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
+import shutil
+import sys
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys
+from shikiru.agents.contracts import CheckResult, ProbeMode, QuotaWindow, SessionKeys
 from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
@@ -20,18 +24,23 @@ from shikiru.plugins.agents.codex.options import (
     AUTH_API_KEY,
     BYPASS_HOOK_TRUST_FLAG,
     CD_FLAG,
+    CHECK_FOR_UPDATE_CONFIG,
     CODEX_API_KEY_ENV,
     CODEX_COMMAND,
+    CODEX_HOME_ENV_VAR,
     CONFIG_FLAG,
     DOCTOR_TIMEOUT_SECONDS,
     GIT_COMMON_DIR_TIMEOUT_SECONDS,
+    HOME_ENV_VAR,
     HOOK_COMMAND,
     HOOK_EVENTS,
     LOGIN_STATUS_ARGV,
     MODEL_FLAG,
     OPENAI_API_KEY_ENV,
+    PATH_ENV_VAR,
     REASONING_EFFORT_CONFIG,
     RESUME_SUBCOMMAND,
+    SHELL_ENV_VAR,
     VERSION_ARGV,
     CodexOptions,
 )
@@ -52,6 +61,7 @@ if TYPE_CHECKING:
         HeadlessAgent,
         LaunchSpec,
         PaneHandle,
+        ProbePaneHandle,
     )
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
@@ -66,6 +76,20 @@ _HOOK_TYPE_FIELD = "type"
 _HOOK_COMMAND_FIELD = "command"
 _HOOK_TYPE_COMMAND = "command"
 _TRUST_LEVEL = "trusted"
+PROBE_CODEX_HOME_NAME = "codex-home"
+PROBE_HOME_NAME = "home"
+PROBE_HOOK_BIN_NAME = ".local/bin"
+PROBE_SHELL = "/bin/sh"
+PROBE_PREPARE_TIMEOUT_SECONDS = 45.0
+PROBE_PREPARE_POLL_SECONDS = 0.1
+PROBE_PROMPT_STABILITY_COUNT = 10
+PROBE_READY_STABILITY_COUNT = 10
+PROBE_READY_MARKER = "Ask Codex to do anything"
+PROBE_TRUST_PROMPT_MARKER = "Do you trust the contents of this directory?"
+PROBE_TRUST_CONFIRM_MARKER = "1. Yes, continue"
+PROBE_STARTUP_TIMEOUT_MESSAGE = "Codex trust prompt or session startup did not complete"
+PRIVATE_DIRECTORY_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
 
 
 class CodexAgent:
@@ -91,9 +115,44 @@ class CodexAgent:
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
         """Launch a new or resumable Codex session in `pane`."""
         hook_offset = await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role)
+        probe_home = self._probe_codex_home(spec) if spec.probe else None
         argv = await self._argv(spec)
-        await pane.respawn(argv, env=self._pane_environment(spec.env), cwd=spec.cwd)
-        return self._session(spec, hook_offset)
+        await pane.respawn(
+            argv,
+            env=self._pane_environment(spec.env, codex_home=probe_home),
+            cwd=spec.cwd,
+        )
+        return self._session(spec, hook_offset, codex_home_path=probe_home)
+
+    async def prepare_probe(self, spec: LaunchSpec, pane: ProbePaneHandle) -> ProbeMode:
+        """Accept Codex's first-use trust prompt while a doctor probe starts."""
+        del spec
+        deadline = self._clock.now() + timedelta(seconds=PROBE_PREPARE_TIMEOUT_SECONDS)
+        prompt_observations = 0
+        ready_observations = 0
+        while self._clock.now() < deadline:
+            if not await pane.is_alive():
+                return ProbeMode.POINTER_BEFORE_SESSION
+            visible = await pane.capture_visible()
+            trust_prompt = (
+                PROBE_TRUST_PROMPT_MARKER in visible and PROBE_TRUST_CONFIRM_MARKER in visible
+            )
+            if trust_prompt:
+                prompt_observations += 1
+                if prompt_observations >= PROBE_PROMPT_STABILITY_COUNT:
+                    await pane.send_keys("Enter")
+                    prompt_observations = 0
+                    await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
+            else:
+                prompt_observations = 0
+            if PROBE_READY_MARKER in visible:
+                ready_observations += 1
+                if ready_observations >= PROBE_READY_STABILITY_COUNT:
+                    return ProbeMode.POINTER_BEFORE_SESSION
+            else:
+                ready_observations = 0
+            await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
+        raise TimeoutError(PROBE_STARTUP_TIMEOUT_MESSAGE)
 
     async def attach(
         self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, object]
@@ -138,7 +197,9 @@ class CodexAgent:
         """Return Codex's schema-constrained headless client."""
         return CodexHeadless(self._runner, self._subprocess_environment())
 
-    def _session(self, spec: LaunchSpec, hook_offset: int) -> CodexSession:
+    def _session(
+        self, spec: LaunchSpec, hook_offset: int, *, codex_home_path: Path | None = None
+    ) -> CodexSession:
         return CodexSession(
             spec.run_dir,
             spec.role,
@@ -151,7 +212,7 @@ class CodexAgent:
             model=spec.rung.model,
             api_key_auth=self._options.auth == AUTH_API_KEY,
             compact_below_free_pct=self._options.compact_below_free_pct,
-            codex_home=self._codex_home,
+            codex_home=codex_home_path or self._codex_home,
         )
 
     async def _argv(self, spec: LaunchSpec) -> tuple[str, ...]:
@@ -162,7 +223,10 @@ class CodexAgent:
         if spec.rung.effort is not None:
             argv.extend([CONFIG_FLAG, f'{REASONING_EFFORT_CONFIG}="{spec.rung.effort}"'])
         argv.append(BYPASS_HOOK_TRUST_FLAG)
-        argv.extend(self._hook_config_args())
+        if spec.probe:
+            argv.extend([CONFIG_FLAG, CHECK_FOR_UPDATE_CONFIG])
+        hook_command = self._probe_hook_command() if spec.probe else HOOK_COMMAND
+        argv.extend(self._hook_config_args(hook_command))
         argv.extend([CONFIG_FLAG, self._trust_config(spec.cwd), CD_FLAG, str(spec.cwd)])
         directories = [spec.run_dir, *spec.add_dirs, *(await self._git_common_dirs(spec))]
         for directory in _unique_paths(directories):
@@ -170,12 +234,19 @@ class CodexAgent:
         argv.extend(self._options.args)
         return tuple(argv)
 
-    def _hook_config_args(self) -> list[str]:
+    def _hook_config_args(self, hook_command: str) -> list[str]:
         encoded = (
             f'[{{{_HOOKS_FIELD}=[{{{_HOOK_TYPE_FIELD}="{_HOOK_TYPE_COMMAND}",'
-            f'{_HOOK_COMMAND_FIELD}="{HOOK_COMMAND}"}}]}}]'
+            f'{_HOOK_COMMAND_FIELD}="{hook_command}"}}]}}]'
         )
         return [item for event in HOOK_EVENTS for item in (CONFIG_FLAG, f"hooks.{event}={encoded}")]
+
+    def _probe_hook_command(self) -> str:
+        executable = Path(sys.executable).with_name("shikiru")
+        if not executable.is_file():
+            message = f"Shikiru executable is missing at {executable}"
+            raise ConfigError(message)
+        return f"{shlex.quote(str(executable))} hook"
 
     def _trust_config(self, cwd: Path) -> str:
         project = json.dumps(str(cwd), ensure_ascii=False)
@@ -197,8 +268,31 @@ class CodexAgent:
                 common_dirs.append(Path(value))
         return common_dirs
 
-    def _pane_environment(self, base: Mapping[str, str]) -> dict[str, str | None]:
+    def _pane_environment(
+        self, base: Mapping[str, str], *, codex_home: Path | None = None
+    ) -> dict[str, str | None]:
         environment: dict[str, str | None] = dict(base)
+        if codex_home is not None:
+            environment[CODEX_HOME_ENV_VAR] = str(codex_home)
+            probe_home = codex_home.parent / PROBE_HOME_NAME
+            probe_home.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
+            environment[HOME_ENV_VAR] = str(probe_home)
+            environment[SHELL_ENV_VAR] = PROBE_SHELL
+            hook_bin = probe_home / PROBE_HOOK_BIN_NAME
+            hook_bin.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
+            hook_executable = hook_bin / "shikiru"
+            executable = Path(sys.executable).with_name("shikiru")
+            if not executable.is_file():
+                message = f"Shikiru executable is missing at {executable}"
+                raise ConfigError(message)
+            hook_executable.symlink_to(executable, target_is_directory=False)
+            codex_executable = shutil.which(CODEX_COMMAND)
+            if codex_executable is None:
+                message = f"Codex executable is missing: {CODEX_COMMAND}"
+                raise ConfigError(message)
+            environment[PATH_ENV_VAR] = os.pathsep.join(
+                (str(hook_bin), str(Path(codex_executable).parent), os.defpath)
+            )
         if self._options.auth == AUTH_API_KEY:
             environment[CODEX_API_KEY_ENV] = self._api_key()
             environment[OPENAI_API_KEY_ENV] = None
@@ -206,6 +300,25 @@ class CodexAgent:
             environment[CODEX_API_KEY_ENV] = None
             environment[OPENAI_API_KEY_ENV] = None
         return environment
+
+    def _probe_codex_home(self, spec: LaunchSpec) -> Path:
+        probe_home = spec.run_dir / PROBE_CODEX_HOME_NAME
+        probe_home.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
+        source_auth = self._codex_home / "auth.json"
+        if not source_auth.is_file():
+            message = f"Codex probe auth file is missing at {source_auth}"
+            raise ConfigError(message)
+        target_auth = probe_home / "auth.json"
+        shutil.copyfile(source_auth, target_auth)
+        target_auth.chmod(PRIVATE_FILE_MODE)
+        project = json.dumps(str(spec.cwd), ensure_ascii=False)
+        config = probe_home / "config.toml"
+        config.write_text(
+            "check_for_update_on_startup = false\n\n"
+            f'[projects.{project}]\ntrust_level = "{_TRUST_LEVEL}"\n'
+        )
+        config.chmod(PRIVATE_FILE_MODE)
+        return probe_home
 
     def _subprocess_environment(self) -> dict[str, str]:
         environment = dict(os.environ)
@@ -261,14 +374,14 @@ class CodexAgent:
             )
         except (FileNotFoundError, ShikiruError) as error:
             return CheckResult("login", False, str(error))
-        output = f"{result.stdout}\n{result.stderr}".strip()
-        lowered = output.lower()
+        lowered = f"{result.stdout}\n{result.stderr}".lower()
         logged_in = (
             result.returncode == 0
             and _AUTH_NOT_LOGGED_IN_TEXT not in lowered
             and any(text in lowered for text in _AUTH_LOGGED_IN_TEXTS)
         )
-        return CheckResult("login", logged_in, output or _INVALID_AUTH_STATUS_MESSAGE)
+        detail = "authenticated" if logged_in else "not authenticated"
+        return CheckResult("login", logged_in, detail)
 
 
 def _unique_paths(paths: list[Path]) -> tuple[Path, ...]:

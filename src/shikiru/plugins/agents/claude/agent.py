@@ -7,12 +7,13 @@ import json
 import os
 import uuid
 from collections.abc import Mapping
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys
+from shikiru.agents.contracts import CheckResult, ProbeMode, QuotaWindow, SessionKeys
 from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
@@ -26,6 +27,8 @@ from shikiru.plugins.agents.claude.options import (
     EFFORT_FLAG,
     HOOK_COMMAND,
     MODEL_FLAG,
+    PERMISSION_MODE_BYPASS,
+    PERMISSION_MODE_FLAG,
     RESUME_FLAG,
     SESSION_ID_FLAG,
     SETTINGS_FLAG,
@@ -41,6 +44,7 @@ if TYPE_CHECKING:
         HeadlessAgent,
         LaunchSpec,
         PaneHandle,
+        ProbePaneHandle,
     )
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
@@ -67,6 +71,15 @@ _HOOK_COMMAND_FIELD = "command"
 _HOOK_TYPE_COMMAND = "command"
 _AUTH_STATUS_LOGGED_IN_FIELD = "loggedIn"
 _INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
+PROBE_PREPARE_TIMEOUT_SECONDS = 45.0
+PROBE_PREPARE_POLL_SECONDS = 0.1
+PROBE_PROMPT_STABILITY_COUNT = 10
+PROBE_PROMPT_GRACE_SECONDS = 5.0
+TRUST_PROMPT_MARKER = "Yes, I trust this folder"
+TRUST_CONFIRM_MARKER = "Enter to confirm"
+BYPASS_PERMISSION_MARKER = "WARNING: Claude Code running in Bypass Permissions mode"
+BYPASS_CONFIRM_MARKER = "Yes, I accept"
+PROBE_STARTUP_TIMEOUT_MESSAGE = "Claude trust prompt or session startup did not complete"
 
 
 class ClaudeAgent:
@@ -103,6 +116,39 @@ class ClaudeAgent:
             cwd=spec.cwd,
         )
         return self._session(spec, session_id, hook_offset)
+
+    async def prepare_probe(self, spec: LaunchSpec, pane: ProbePaneHandle) -> ProbeMode:
+        """Accept Claude's first-use trust prompt while a doctor probe starts."""
+        deadline = self._clock.now() + timedelta(seconds=PROBE_PREPARE_TIMEOUT_SECONDS)
+        hooks_seen_at: datetime | None = None
+        prompt_observations = 0
+        while self._clock.now() < deadline:
+            if not await pane.is_alive():
+                return ProbeMode.POINTER
+            visible = await pane.capture_visible()
+            trust_prompt = TRUST_PROMPT_MARKER in visible and TRUST_CONFIRM_MARKER in visible
+            bypass_prompt = BYPASS_PERMISSION_MARKER in visible and BYPASS_CONFIRM_MARKER in visible
+            if trust_prompt or bypass_prompt:
+                prompt_observations += 1
+                if prompt_observations >= PROBE_PROMPT_STABILITY_COUNT:
+                    await pane.send_keys("Down", "Enter")
+                    prompt_observations = 0
+                    hooks_seen_at = None
+                    await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
+                    continue
+            else:
+                prompt_observations = 0
+            if (
+                prompt_observations == 0
+                and await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role) > 0
+            ):
+                hooks_seen_at = hooks_seen_at or self._clock.now()
+                if (
+                    self._clock.now() - hooks_seen_at
+                ).total_seconds() >= PROBE_PROMPT_GRACE_SECONDS:
+                    return ProbeMode.POINTER
+            await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
+        raise TimeoutError(PROBE_STARTUP_TIMEOUT_MESSAGE)
 
     async def attach(
         self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, object]
@@ -171,7 +217,9 @@ class ClaudeAgent:
         argv.extend([SETTINGS_FLAG, self._settings_json()])
         for directory in (spec.run_dir, *spec.add_dirs):
             argv.extend([ADD_DIR_FLAG, str(directory)])
-        argv.extend(self._options.args)
+        argv.extend(
+            [PERMISSION_MODE_FLAG, PERMISSION_MODE_BYPASS] if spec.probe else self._options.args
+        )
         return tuple(argv)
 
     def _settings_json(self) -> str:
@@ -252,16 +300,17 @@ class ClaudeAgent:
             )
         except (FileNotFoundError, ShikiruError) as error:
             return CheckResult("login", False, str(error))
-        output = f"{result.stdout}\n{result.stderr}".strip()
         try:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError:
-            return CheckResult("login", False, output or _INVALID_AUTH_STATUS_MESSAGE)
+            return CheckResult("login", False, _INVALID_AUTH_STATUS_MESSAGE)
         if not isinstance(payload, Mapping):
-            return CheckResult("login", False, output or _INVALID_AUTH_STATUS_MESSAGE)
+            return CheckResult("login", False, _INVALID_AUTH_STATUS_MESSAGE)
         typed_payload = cast("Mapping[str, object]", payload)
         logged_in = typed_payload.get(_AUTH_STATUS_LOGGED_IN_FIELD)
-        return CheckResult("login", result.returncode == 0 and logged_in is True, output)
+        authenticated = result.returncode == 0 and logged_in is True
+        detail = "authenticated" if authenticated else "not authenticated"
+        return CheckResult("login", authenticated, detail)
 
 
 def create(context: AgentContext) -> ClaudeAgent:

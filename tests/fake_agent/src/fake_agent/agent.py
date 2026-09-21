@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fake_agent.headless import FakeHeadlessAgent
 from fake_agent.session import FakeSession
-from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, role_dir
+from shikiru.agents.contracts import CheckResult, ProbeMode, QuotaWindow, SessionKeys, role_dir
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
@@ -89,6 +89,11 @@ class FakeAgent:
         start_offset = await asyncio.to_thread(_hooks_file_size, spec.run_dir, spec.role)
         await self._spawn(spec, pane, session_id)
         return self._session(spec, session_id, start_offset)
+
+    async def prepare_probe(self, spec: LaunchSpec, pane: PaneHandle) -> ProbeMode:
+        """Confirm fake probe startup, which has no interactive trust challenge."""
+        del spec, pane
+        return ProbeMode.POINTER
 
     async def attach(
         self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, Any]

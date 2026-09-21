@@ -21,6 +21,7 @@ SETTINGS_FLAG = "--settings"
 ADD_DIR_FLAG = "--add-dir"
 PERMISSION_MODE_FLAG = "--permission-mode"
 PERMISSION_MODE_AUTO = "auto"
+PERMISSION_MODE_BYPASS = "bypassPermissions"
 
 
 class ClaudeOptions(BaseModel):
