@@ -82,18 +82,10 @@ def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
 
 def _scenario_result(nodeid: str, report: TestReport) -> dict[str, object]:
     status = _status_for(report)
-    passed = status == RESULTS_STATUS_PASSED
-    failed = status == RESULTS_STATUS_FAILED
-    cost_usd = _COSTS.get(nodeid, DEFAULT_COST_USD)
     return {
         "scenario": nodeid,
         "status": status,
-        "passed": passed,
-        "pass": passed,
-        "failed": failed,
-        "fail": failed,
-        "cost_usd": cost_usd,
-        "cost": cost_usd,
+        "cost": _COSTS.get(nodeid, DEFAULT_COST_USD),
     }
 
 
