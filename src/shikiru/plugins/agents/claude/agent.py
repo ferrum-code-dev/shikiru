@@ -7,9 +7,9 @@ import json
 import os
 import uuid
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from pydantic import ValidationError
 
@@ -74,7 +74,6 @@ _INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
 PROBE_PREPARE_TIMEOUT_SECONDS = 45.0
 PROBE_PREPARE_POLL_SECONDS = 0.1
 PROBE_PROMPT_STABILITY_COUNT = 10
-PROBE_PROMPT_GRACE_SECONDS = 5.0
 TRUST_PROMPT_MARKER = "Yes, I trust this folder"
 TRUST_CONFIRM_MARKER = "Enter to confirm"
 BYPASS_PERMISSION_MARKER = "WARNING: Claude Code running in Bypass Permissions mode"
@@ -82,7 +81,8 @@ BYPASS_CONFIRM_MARKER = "Yes, I accept"
 PROBE_STARTUP_TIMEOUT_MESSAGE = "Claude trust prompt or session startup did not complete"
 
 
-class _ProbePane(Protocol):
+@runtime_checkable
+class _StartupPane(Protocol):
     async def capture_visible(self) -> str: ...
 
     async def is_alive(self) -> bool: ...
@@ -123,17 +123,23 @@ class ClaudeAgent:
             env=self._pane_environment(spec.env),
             cwd=spec.cwd,
         )
+        await self._prepare_startup(spec, pane)
         return self._session(spec, session_id, hook_offset)
 
     async def prepare_probe(self, spec: LaunchSpec, pane: PaneHandle) -> bool:
         """Accept Claude's first-use trust prompt while a doctor probe starts."""
-        probe_pane = cast("_ProbePane", pane)
+        await self._prepare_startup(spec, pane)
+        return False
+
+    async def _prepare_startup(self, spec: LaunchSpec, pane: PaneHandle) -> None:
+        if not isinstance(pane, _StartupPane):
+            return
+        probe_pane = pane
         deadline = self._clock.now() + timedelta(seconds=PROBE_PREPARE_TIMEOUT_SECONDS)
-        hooks_seen_at: datetime | None = None
         prompt_observations = 0
         while self._clock.now() < deadline:
             if not await probe_pane.is_alive():
-                return False
+                return
             visible = await probe_pane.capture_visible()
             trust_prompt = TRUST_PROMPT_MARKER in visible and TRUST_CONFIRM_MARKER in visible
             bypass_prompt = BYPASS_PERMISSION_MARKER in visible and BYPASS_CONFIRM_MARKER in visible
@@ -142,20 +148,12 @@ class ClaudeAgent:
                 if prompt_observations >= PROBE_PROMPT_STABILITY_COUNT:
                     await probe_pane.send_keys("Down", "Enter")
                     prompt_observations = 0
-                    hooks_seen_at = None
                     await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
                     continue
             else:
                 prompt_observations = 0
-            if (
-                prompt_observations == 0
-                and await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role) > 0
-            ):
-                hooks_seen_at = hooks_seen_at or self._clock.now()
-                if (
-                    self._clock.now() - hooks_seen_at
-                ).total_seconds() >= PROBE_PROMPT_GRACE_SECONDS:
-                    return False
+            if await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role) > 0:
+                return
             await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
         raise TimeoutError(PROBE_STARTUP_TIMEOUT_MESSAGE)
 
