@@ -26,7 +26,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 | `attach [NAME] [--host H]` | Attach to a session; with no `NAME` and more than one match, the picker (§5.6) |
 | `submit "<request>" [flags]` | Prints the `T-n` id (05 §1 flags) |
 | `status [T-n] [--watch]` | Without an id: engine, slots, active tasks with `wait_reason`, queue, open escalations, usage and quota per agent. With one: that task's strip, timeline, reports and verdicts, branches and sessions. `--watch` redraws on `StateReader.on_change` |
-| `doctor [--probe]` | Environment, config and plugin checks; `--probe` runs live contract checks 1–2 (04 §3) |
+| `doctor [--probe]` | Environment, config and plugin checks; `--probe` runs live contract checks 1–2 (04 §3) for each agent on a ladder, showing the screen when a probe gets stuck |
 | `mcp` | Stdio MCP server |
 | hidden: `engine`, `dash`, `palette`, `hook`, `report` | Process entrypoints |
 
