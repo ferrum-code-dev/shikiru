@@ -44,7 +44,6 @@ OUTER_TIMEOUT_SECONDS = (AUTOMATIC_RERUNS + 1) * (
 RUN_STATUS_LIVE = "live"
 PRIVATE_DIRECTORY_MODE = stat.S_IRWXU
 PRIVATE_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR
-CODEX_UPDATE_CONFIG = "check_for_update_on_startup = false\n"
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.e2e,
@@ -52,9 +51,7 @@ pytestmark = [
     pytest.mark.timeout(OUTER_TIMEOUT_SECONDS),
 ]
 E1_REQUEST = "Implement task A1 from tasks/plan.md"
-E2_MESSAGE = (
-    "Please continue the implementation and verification, recording any edge cases you find."
-)
+E2_MESSAGE = "Operator note: keep the change small and focused."
 E2_REQUEST = "Implement task A2 from tasks/plan.md"
 
 
@@ -97,7 +94,7 @@ REAL_OVERRIDES = (
     "--set",
     'roles.leader.ladder=[{agent="claude",model="haiku",effort="low"}]',
     "--set",
-    'roles.implementer.ladder=[{agent="codex",model="gpt-5.6-sol",effort="low"}]',
+    'roles.implementer.ladder=[{agent="codex",model="gpt-5.6-luna",effort="low"}]',
     "--set",
     'roles.helper.ladder=[{agent="claude",model="haiku",effort="low"}]',
     "--set",
@@ -141,7 +138,7 @@ def _environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
     )
     shim.chmod(0o755)
     codex_home = project_root.parent / "codex-home"
-    _copy_codex_auth(codex_home, project_root)
+    _copy_codex_auth(codex_home)
     environment = dict(os.environ)
     environment.pop("TMUX", None)
     environment.pop("TMUX_PANE", None)
@@ -153,7 +150,7 @@ def _environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
     return environment
 
 
-def _copy_codex_auth(destination: Path, project_root: Path) -> None:
+def _copy_codex_auth(destination: Path) -> None:
     source_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
     source = source_home / "auth.json"
     if not source.is_file():
@@ -163,10 +160,6 @@ def _copy_codex_auth(destination: Path, project_root: Path) -> None:
     auth_destination = destination / "auth.json"
     shutil.copyfile(source, auth_destination)
     auth_destination.chmod(PRIVATE_FILE_MODE)
-    project = json.dumps(str(project_root))
-    config = destination / "config.toml"
-    config.write_text(CODEX_UPDATE_CONFIG + f'[projects.{project}]\ntrust_level = "trusted"\n')
-    config.chmod(PRIVATE_FILE_MODE)
 
 
 async def _cli(
