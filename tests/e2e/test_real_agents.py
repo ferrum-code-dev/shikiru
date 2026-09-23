@@ -53,6 +53,17 @@ pytestmark = [
 E1_REQUEST = "Implement task A1 from tasks/plan.md"
 E2_MESSAGE = "Operator note: keep the change small and focused."
 E2_REQUEST = "Implement task A2 from tasks/plan.md"
+A2_EDGE_CASE_CHECK = """
+from sample_project import parse_count
+assert parse_count("alpha, beta") == 2
+assert parse_count("") == 0
+try:
+    parse_count("   ")
+except ValueError:
+    pass
+else:
+    raise AssertionError("whitespace-only input was accepted")
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,14 +368,7 @@ async def _assert_a2_implementation(project: PreparedProject) -> None:
         [
             sys.executable,
             "-c",
-            (
-                "from sample_project import parse_count; "
-                "assert parse_count('alpha, beta') == 2; "
-                "assert parse_count('') == 0; "
-                "try: parse_count('   ')\n"
-                "except ValueError: pass\n"
-                "else: raise AssertionError('whitespace-only input was accepted')"
-            ),
+            A2_EDGE_CASE_CHECK,
         ],
         timeout=CLI_TIMEOUT_SECONDS,
         cwd=repository,
