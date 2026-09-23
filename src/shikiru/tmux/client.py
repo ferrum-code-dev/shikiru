@@ -48,12 +48,21 @@ class Tmux:
         cwd: Path,
         env: Mapping[str, str],
         window_name: str,
+        size: tuple[int, int],
         command: Sequence[str] | None = None,
     ) -> str:
-        """Create a detached session `name`, returning the id of its first (base) pane."""
+        """Create a detached session `name` sized `size` until a client attaches.
+
+        Returns the id of its first (base) pane.
+        """
+        columns, rows = size
         args = [
             "new-session",
             "-d",
+            "-x",
+            str(columns),
+            "-y",
+            str(rows),
             "-P",
             "-F",
             FORMAT_PANE_ID,

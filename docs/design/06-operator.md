@@ -65,6 +65,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 ### 5.1 tmux session
 
 - **Name**: `[shikiru] <project.name>`, with `.` and `:` replaced by `_`, always targeted as `=[shikiru] name`. The session env stores `SHIKIRU_PROJECT_DIR`.
+- **Size**: the session is created detached at 240×64, so agent TUIs get readable panes before anyone attaches; an attaching client resizes it as usual.
 - **Options**, set at the scope tmux gives each one:
   - *Session*: `renumber-windows on`, `mouse on`. Applied on every `start`, not only when the session is created.
   - *Window*, applied to each window as it is created (the home window and every task window): `remain-on-exit on`, `allow-rename off`, `automatic-rename off`, `allow-set-title off`, `pane-border-status top`, `pane-border-lines heavy`.

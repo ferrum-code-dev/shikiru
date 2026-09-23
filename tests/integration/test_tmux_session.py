@@ -8,7 +8,13 @@ import pytest
 
 from shikiru.errors import ConfigError
 from shikiru.tmux.client import Tmux, exact_target
-from shikiru.tmux.session import HOME_WINDOW_NAME, PROJECT_DIR_ENV_VAR, SessionView, session_name
+from shikiru.tmux.session import (
+    DETACHED_SIZE,
+    HOME_WINDOW_NAME,
+    PROJECT_DIR_ENV_VAR,
+    SessionView,
+    session_name,
+)
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -86,6 +92,7 @@ async def test_ensure_applies_session_options_to_a_pre_existing_session(
         cwd=tmp_path,
         env={PROJECT_DIR_ENV_VAR: str(tmp_path)},
         window_name=HOME_WINDOW_NAME,
+        size=DETACHED_SIZE,
         command=_HOME_COMMAND,
     )
     view = SessionView(tmux)
@@ -119,6 +126,19 @@ async def test_task_window_is_created_and_closed(tmux_server: TmuxServer, tmp_pa
 
     await view.close_task_window(window_target)
     assert not await tmux.target_exists(window_target)
+
+
+async def test_task_windows_get_the_detached_size_before_any_client_attaches(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    view = SessionView(tmux)
+    target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+
+    await view.create_task_window(target, window_name="T-1", cwd=tmp_path)
+
+    size = await tmux.display(f"{target}:T-1", "#{window_width}x#{window_height}")
+    assert size == "{}x{}".format(*DETACHED_SIZE)
 
 
 async def test_task_window_survives_its_process_exiting(

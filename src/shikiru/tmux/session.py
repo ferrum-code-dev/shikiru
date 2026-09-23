@@ -20,6 +20,7 @@ _SANITIZED_REPLACEMENT = "_"
 
 PROJECT_DIR_ENV_VAR = "SHIKIRU_PROJECT_DIR"
 HOME_WINDOW_NAME = "shikiru"
+DETACHED_SIZE = (240, 64)
 
 _PALETTE_KEY = "Space"
 _GLOB_SPECIAL_CHARS = "\\[]*?"
@@ -98,6 +99,7 @@ class SessionView:
                 cwd=project_dir,
                 env={PROJECT_DIR_ENV_VAR: str(project_dir)},
                 window_name=HOME_WINDOW_NAME,
+                size=DETACHED_SIZE,
                 command=home_command,
             )
             await self._apply_window_options(f"{target}:{HOME_WINDOW_NAME}")
