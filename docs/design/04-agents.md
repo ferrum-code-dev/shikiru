@@ -180,7 +180,7 @@ claude (--session-id <uuid> | --resume <id>) --model <m> --effort <e>
 - `resume_command`: `claude --resume <id>`.
 - `headless().ask`: `claude -p --output-format json --json-schema <s> --model <m> --effort <e> --safe-mode --tools "" --no-session-persistence` → `structured_output`.
 
-## 5. Codex plugin (`plugins/agents/codex`) — verified with 0.154.0
+## 5. Codex plugin (`plugins/agents/codex`) — verified with 0.154.0; startup dialogs checked with 0.156.1
 
 **Options** (`CodexOptions`):
 

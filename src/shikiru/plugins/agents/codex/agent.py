@@ -77,6 +77,7 @@ TRUST_PROMPT_MARKERS = (
     "Do you trust the contents of this directory?",
     "Quick safety check: Is this a project you created or one you trust?",
     "Trusting will apply to the repository root:",
+    "Trust this folder?",
 )
 ACCEPT_TRUST_KEYS = ("1", "Enter")
 

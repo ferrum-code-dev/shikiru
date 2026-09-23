@@ -15,7 +15,7 @@ from shikiru.agents.contracts import (
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.clock import SystemClock
-from shikiru.plugins.agents.codex.agent import create
+from shikiru.plugins.agents.codex.agent import TRUST_PROMPT_MARKERS, create
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.pane import TmuxPane
@@ -113,14 +113,7 @@ async def test_api_key_auth_sets_codex_key_for_headless_and_doctor(
     assert calls.count("login status") == 1
 
 
-@pytest.mark.parametrize(
-    "trust_prompt",
-    [
-        "Do you trust the contents of this directory?",
-        "Quick safety check: Is this a project you created or one you trust?",
-        "Trusting will apply to the repository root:",
-    ],
-)
+@pytest.mark.parametrize("trust_prompt", TRUST_PROMPT_MARKERS)
 async def test_launch_accepts_supported_trust_prompts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
