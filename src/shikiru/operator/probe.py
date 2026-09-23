@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
+import shutil
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,6 +24,7 @@ from shikiru.agents.contracts import (
     shikiru_command,
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
+from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     REPORT_FILENAME,
@@ -52,17 +53,23 @@ PROBE_TMUX_SESSION_PREFIX = "shikiru-doctor-"
 PROBE_TMUX_SESSION_NAME = "probe"
 PROBE_ROLE = "implementer"
 PROBE_TURN_NAME = "01-doctor"
+PROBE_REPORT_FILE = "probe-report.json"
 PROBE_PROMPT = (
     "This is a Shikiru live contract probe. Read the current turn report.schema.json, "
-    "write probe-report.json with status completed, summary probe, commits [], tests [], "
+    f"write {PROBE_REPORT_FILE} with status completed, summary probe, commits [], tests [], "
     f"and trackers_updated false, then run {shikiru_command('report', '--file')} "
-    "probe-report.json. Answer exactly SHIKIRU_PROBE_OK after the report command succeeds. "
-    "Do not change files outside the current temporary project."
+    f"{PROBE_REPORT_FILE}. Answer exactly SHIKIRU_PROBE_OK after the report command succeeds. "
+    "Do not change files outside the current probe repository."
 )
 PROBE_MARKER = "SHIKIRU_PROBE_OK"
 PROBE_REQUIRED_SIGNALS = (SessionStarted, PromptSubmitted)
 PROBE_REMAIN_ON_EXIT_OPTION = "remain-on-exit"
 PROBE_REMAIN_ON_EXIT_VALUE = "on"
+PROBE_DIRECTORY = Path(SHIKIRU_DIR_NAME) / "probe"
+PROBE_REPO_DIRECTORY = "repo"
+PROBE_RUN_DIRECTORY = "run"
+PROBE_GIT_DIRECTORY = ".git"
+PROBE_REPO_README_FILE = "README.md"
 PROBE_REPO_README = "Shikiru doctor probe\n"
 PROBE_REPO_BRANCH = "doctor-probe"
 PROBE_GIT_INIT_ARGS = ("git", "init", "-q", "-b", PROBE_REPO_BRANCH)
@@ -80,48 +87,42 @@ class DoctorProbeError(ShikiruError):
 
 
 class AgentProbe:
-    """Exercise the launch and first-turn portions of an agent contract in scratch state."""
+    """Exercise the launch and first-turn portions of an agent contract in the probe directory."""
 
     def __init__(
         self,
+        project_root: Path,
         agent: InteractiveAgent,
         runner: SubprocessRunner,
         clock: Clock,
         rung: Rung,
     ) -> None:
         """Store probe inputs and injected process boundaries."""
+        self._directory = project_root / PROBE_DIRECTORY
         self._agent = agent
         self._runner = runner
         self._clock = clock
         self._rung = rung
 
     async def run(self) -> None:
-        """Launch a temporary session, submit a report turn and require its completion."""
-        with tempfile.TemporaryDirectory(prefix="shikiru-doctor-probe-") as directory:
-            root = Path(directory)
-            repo = root / "repo"
-            run_dir = root / "run"
-            await self._prepare_repository(repo)
-            self._prepare_turn(run_dir)
-            socket_name = f"{PROBE_TMUX_SESSION_PREFIX}{uuid.uuid4().hex}"
-            tmux = Tmux(self._runner, socket=socket_name)
-            session_name = f"{PROBE_TMUX_SESSION_NAME}-{uuid.uuid4().hex[:8]}"
+        """Launch a private session in the reused probe repository and require a report turn."""
+        repo = self._directory / PROBE_REPO_DIRECTORY
+        run_dir = self._directory / PROBE_RUN_DIRECTORY
+        await self._prepare_repository(repo)
+        await asyncio.to_thread(self._prepare_turn, run_dir)
+        socket_name = f"{PROBE_TMUX_SESSION_PREFIX}{uuid.uuid4().hex}"
+        tmux = Tmux(self._runner, socket=socket_name)
+        session_name = f"{PROBE_TMUX_SESSION_NAME}-{uuid.uuid4().hex[:8]}"
+        try:
+            await self._execute_probe(tmux, socket_name, session_name, repo, run_dir)
+        except BaseException as error:
             try:
-                await self._execute_probe(
-                    tmux,
-                    socket_name,
-                    session_name,
-                    repo,
-                    run_dir,
-                )
-            except BaseException as error:
-                try:
-                    await kill_tmux_server(self._runner, socket_name)
-                except (OSError, ShikiruError) as cleanup_error:
-                    error.add_note(f"probe cleanup failed: {cleanup_error}")
-                raise
-            else:
                 await kill_tmux_server(self._runner, socket_name)
+            except (OSError, ShikiruError) as cleanup_error:
+                error.add_note(f"probe cleanup failed: {cleanup_error}")
+            raise
+        else:
+            await kill_tmux_server(self._runner, socket_name)
 
     async def _execute_probe(
         self,
@@ -206,8 +207,11 @@ class AgentProbe:
         return result.stdout.strip()
 
     async def _prepare_repository(self, repo: Path) -> None:
+        await asyncio.to_thread((repo / PROBE_REPORT_FILE).unlink, missing_ok=True)
+        if await asyncio.to_thread((repo / PROBE_GIT_DIRECTORY).exists):
+            return
         await asyncio.to_thread(repo.mkdir, parents=True, exist_ok=True)
-        await asyncio.to_thread((repo / "README.md").write_text, PROBE_REPO_README)
+        await asyncio.to_thread((repo / PROBE_REPO_README_FILE).write_text, PROBE_REPO_README)
         await self._runner.run(
             PROBE_GIT_INIT_ARGS,
             timeout=PROBE_COMMAND_TIMEOUT_SECONDS,
@@ -217,7 +221,9 @@ class AgentProbe:
 
     def _prepare_turn(self, run_dir: Path) -> None:
         turn_dir = run_dir / PROBE_REPORT_DIRECTORY / PROBE_TURN_NAME
-        turn_dir.mkdir(parents=True, exist_ok=True)
+        if turn_dir.exists():
+            shutil.rmtree(turn_dir)
+        turn_dir.mkdir(parents=True)
         (turn_dir / REPORT_KIND_FILENAME).write_text(ReportKind.IMPLEMENTATION.value)
         (turn_dir / REPORT_SCHEMA_FILENAME).write_text(
             json.dumps(schema_for(ReportKind.IMPLEMENTATION))

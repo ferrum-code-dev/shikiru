@@ -295,6 +295,7 @@ class Doctor:
                     ),
                 )
                 await AgentProbe(
+                    self._project_root,
                     agent,
                     self._runner,
                     self._clock,

@@ -154,4 +154,5 @@ A plugin that is missing or broken fails `start` and `doctor` with its name and 
     turns/NN-<step>-i<iteration>/   prompt.md report.schema.json report.kind report.json facts.md helper.json
     messages/NNN.md
     escalations/E-3.md
+  probe/repo/  probe/run/           # reused by `doctor --probe` so agents keep one trust entry per project
 ```

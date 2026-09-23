@@ -122,7 +122,7 @@ Small, tested building blocks for plugins:
 5. `quota()` returns windows or an empty list, without error.
 6. `headless().ask()` returns schema-valid JSON (when provided).
 
-`shikiru doctor --probe` runs live checks 1–2 for each configured agent through the same `launch` the engine uses.
+`shikiru doctor --probe` runs live checks 1–2 for each configured agent through the same `launch` the engine uses, in a scratch repository reused at `.shikiru/probe/` so each agent records workspace trust for it once.
 
 ## 4. Claude Code plugin (`plugins/agents/claude`) — verified with 2.1.273
 
