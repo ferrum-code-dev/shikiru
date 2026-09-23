@@ -159,9 +159,9 @@ Refs: 04 §5.
 
 ### Task 21: Doctor and first real E2E
 Refs: 06 §2, 07 §5.
-- [ ] `doctor` (tmux, git, config, plugins and their `doctor()`, CoW, DB) and `doctor --probe`.
-- [ ] E2E harness (`poe e2e`, fixture project, cheap rungs, results file).
-- [ ] E2E E1 (monorepo and multi-repo) and E2 pass.
+- [x] `doctor` (tmux, git, config, plugins and their `doctor()`, CoW, DB) and `doctor --probe`.
+- [x] E2E harness (`poe e2e`, fixture project, cheap rungs, results file).
+- [x] E2E E1 (monorepo and multi-repo) and E2 pass.
 
 ## Phase 5 — Resilience and operator completeness
 
