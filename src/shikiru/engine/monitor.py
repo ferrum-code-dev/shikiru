@@ -155,6 +155,7 @@ class SessionMonitor:
         timeouts: TimeoutsConfig,
         poll_seconds: int,
         expects_started: bool,
+        on_session_started: Callable[[str | None], None],
         pending_lines: InjectedLines | None = None,
         events: EventLog,
         refresh_titles: Callable[[Task], Awaitable[None]],
@@ -171,6 +172,7 @@ class SessionMonitor:
         self._timeouts = timeouts
         self._poll_seconds = poll_seconds
         self._expects_started = expects_started
+        self._on_session_started = on_session_started
         self._pending_lines = pending_lines if pending_lines is not None else InjectedLines()
         self._events = events
         self._refresh_titles = refresh_titles
@@ -274,6 +276,7 @@ class SessionMonitor:
                 self._started_session_id = signal.session_id
                 self._expects_started = False
                 self._mark_activity(now)
+                self._on_session_started(signal.session_id)
             case Activity(tool_running=tool_running):
                 self._tool_running = tool_running
                 self._mark_activity(now)

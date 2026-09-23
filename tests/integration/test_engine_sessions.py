@@ -59,6 +59,8 @@ ATTACH_RAISING_AGENT_NAME = "attach-raises"
 ATTACH_RAISING_RUNG = Rung(agent=ATTACH_RAISING_AGENT_NAME, model="x", effort=None)
 QUEUED_AGENT_NAME = "queued"
 QUEUED_RUNG = Rung(agent=QUEUED_AGENT_NAME, model="x", effort=None)
+DEFERRED_START_AGENT_NAME = "deferred-start"
+DEFERRED_START_RUNG = Rung(agent=DEFERRED_START_AGENT_NAME, model="x", effort=None)
 
 _WAIT_TIMEOUT = 15.0
 
@@ -100,6 +102,7 @@ class _CrashingAgent:
     """An `InteractiveAgent` whose launch kills the pane before ever starting a session."""
 
     name = CRASHING_AGENT_NAME
+    session_start_requires_prompt = False
     keys = SessionKeys(interrupt=(), exit_input="exit", safe=())
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
@@ -193,6 +196,18 @@ class _QueuedAgent(_CrashingAgent):
         await pane.respawn(("sleep", "60"), spec.env, spec.cwd)
         self.session = _QueuedSession()
         self.session.push(SessionStarted(session_id="queued-session"))
+        return self.session
+
+
+class _DeferredStartAgent(_CrashingAgent):
+    name = DEFERRED_START_AGENT_NAME
+    session_start_requires_prompt = True
+
+    def __init__(self) -> None:
+        self.session = _QueuedSession()
+
+    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
+        await pane.respawn(("sleep", "60"), spec.env, spec.cwd)
         return self.session
 
 
@@ -388,6 +403,35 @@ async def test_launch_timeout_is_delivered_as_a_stalled_turn(engine_env: EngineE
     assert isinstance(signal, Stalled)
     assert _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).status is RunStatus.LIVE
 
+    await manager.shutdown()
+    await engine_env.pane(task.panes[Role.IMPLEMENTER]).kill()
+
+
+async def test_prompt_started_session_returns_before_started_signal_and_persists_id(
+    engine_env: EngineEnv,
+) -> None:
+    registry = build_registry()
+    agent = _DeferredStartAgent()
+    registry.register(DEFERRED_START_AGENT_NAME, lambda _context: agent)
+    settings = make_settings(
+        implementer_ladder=[DEFERRED_START_RUNG],
+        agents={DEFERRED_START_AGENT_NAME: AgentConfig()},
+    )
+    manager = engine_env.build_manager(settings, registry=registry)
+    task = await engine_env.build_task()
+
+    await manager.ensure(task, Role.IMPLEMENTER)
+
+    assert manager.launch_pending(task.id, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    agent.session.push(SessionStarted(session_id="deferred-session"))
+    await wait_until(
+        lambda: not manager.launch_pending(task.id, Role.IMPLEMENTER), timeout=_WAIT_TIMEOUT
+    )
+
+    live_run = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER)
+    assert live_run.session_id == "deferred-session"
+    assert isinstance(queue.get_nowait(), SessionStarted)
     await manager.shutdown()
     await engine_env.pane(task.panes[Role.IMPLEMENTER]).kill()
 

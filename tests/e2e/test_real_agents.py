@@ -15,7 +15,7 @@ import pytest
 
 from shikiru.bootstrap import build_operator
 from shikiru.config.loader import load_settings
-from shikiru.domain.tasks import Role
+from shikiru.domain.tasks import Role, Status
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import AckStatus
 from shikiru.process import SubprocessRunner
@@ -100,6 +100,8 @@ REAL_OVERRIDES = (
     'roles.implementer.ladder=[{agent="codex",model="gpt-5.6-sol",effort="low"}]',
     "--set",
     'roles.helper.ladder=[{agent="claude",model="haiku",effort="low"}]',
+    "--set",
+    'agents.claude.options.args=["--permission-mode","bypassPermissions"]',
 )
 
 
@@ -145,7 +147,9 @@ def _environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
     environment.pop("TMUX_PANE", None)
     environment["CODEX_HOME"] = str(codex_home)
     environment["NO_COLOR"] = "1"
-    environment["PATH"] = f"{shim_dir}{os.pathsep}{environment.get('PATH', os.defpath)}"
+    environment["PATH"] = os.pathsep.join(
+        (str(shim_dir), str(Path(sys.executable).parent), environment.get("PATH", os.defpath))
+    )
     return environment
 
 
@@ -177,8 +181,13 @@ async def _cli(
     return result.returncode, result.stdout, result.stderr
 
 
-async def _status(project_root: Path, environment: dict[str, str]) -> dict[str, object] | None:
-    code, stdout, _ = await _cli(project_root, environment, "--json", "status", TASK_ID)
+async def _status(
+    project_root: Path,
+    environment: dict[str, str],
+    task_id: str | None = TASK_ID,
+) -> dict[str, object] | None:
+    arguments = ("--json", "status") if task_id is None else ("--json", "status", task_id)
+    code, stdout, _ = await _cli(project_root, environment, *arguments)
     if code != 0:
         return None
     value = json.loads(stdout)
@@ -217,59 +226,82 @@ async def _stop(project: PreparedProject, environment: dict[str, str]) -> None:
 
 async def _wait_done(project: PreparedProject, environment: dict[str, str]) -> None:
     async def done() -> bool:
-        return (_task(await _status(project.root, environment)) or {}).get("status") == "done"
+        status = await _status(project.root, environment, task_id=None)
+        task_ids = _task_tree_ids(status, TASK_ID)
+        tasks = _task_summaries(status)
+        tree = [tasks[task_id] for task_id in task_ids if task_id in tasks]
+        if tree and all(task.get("status") == Status.DONE.value for task in tree):
+            return True
+        _require(
+            not any(
+                task.get("status") in {Status.ESCALATED.value, Status.CANCELLED.value}
+                for task in tree
+            ),
+            f"task tree ended before completion: {[task.get('status') for task in tree]}",
+        )
+        _require(
+            status is not None and status.get("engine_up") is True,
+            "engine stopped before task completed",
+        )
+        return False
 
     await wait_until(done, timeout=ATTEMPT_TIMEOUT_SECONDS)
 
 
-def _cost(status: dict[str, object] | None) -> float:
-    detail = _task_detail(status)
-    if detail is None:
-        return 0.0
-    sessions = detail.get("sessions")
-    if not isinstance(sessions, list):
-        return 0.0
+def _cost(statuses: dict[str, object] | list[dict[str, object] | None] | None) -> float:
+    values = statuses if isinstance(statuses, list) else [statuses]
     total = 0.0
-    for value in cast("list[object]", sessions):
-        if not isinstance(value, dict):
+    for status in values:
+        detail = _task_detail(status)
+        if detail is None:
             continue
-        usage = cast("dict[str, object]", value).get("usage")
-        if not isinstance(usage, dict):
+        sessions = detail.get("sessions")
+        if not isinstance(sessions, list):
             continue
-        amount = cast("dict[str, object]", usage).get("cost_usd")
-        if isinstance(amount, int | float):
-            total += float(amount)
+        for value in cast("list[object]", sessions):
+            if not isinstance(value, dict):
+                continue
+            usage = cast("dict[str, object]", value).get("usage")
+            if not isinstance(usage, dict):
+                continue
+            amount = cast("dict[str, object]", usage).get("cost_usd")
+            if isinstance(amount, int | float):
+                total += float(amount)
     return total
 
 
-def _assert_both_agents_used(status: dict[str, object] | None) -> None:
-    detail = _task_detail(status)
-    _require(detail is not None, "task detail missing")
-    if detail is None:
-        return
-    sessions = detail.get("sessions")
-    _require(isinstance(sessions, list), "task sessions missing")
-    if not isinstance(sessions, list):
-        return
+def _assert_both_agents_used(
+    statuses: dict[str, object] | list[dict[str, object] | None] | None,
+) -> None:
+    values = statuses if isinstance(statuses, list) else [statuses]
     agents: set[str] = set()
-    for value in cast("list[object]", sessions):
-        if not isinstance(value, dict):
+    for status in values:
+        detail = _task_detail(status)
+        _require(detail is not None, "task detail missing")
+        if detail is None:
             continue
-        session = cast("dict[str, object]", value)
-        agent = session.get("agent")
-        usage = session.get("usage")
-        if isinstance(agent, str) and isinstance(usage, dict):
-            agents.add(agent)
-            input_tokens = cast("dict[str, object]", usage).get("input_tokens")
-            output_tokens = cast("dict[str, object]", usage).get("output_tokens")
-            _require(
-                isinstance(input_tokens, int) and input_tokens > 0,
-                f"{agent} input usage missing",
-            )
-            _require(
-                isinstance(output_tokens, int) and output_tokens > 0,
-                f"{agent} output usage missing",
-            )
+        sessions = detail.get("sessions")
+        _require(isinstance(sessions, list), "task sessions missing")
+        if not isinstance(sessions, list):
+            continue
+        for value in cast("list[object]", sessions):
+            if not isinstance(value, dict):
+                continue
+            session = cast("dict[str, object]", value)
+            agent = session.get("agent")
+            usage = session.get("usage")
+            if isinstance(agent, str) and isinstance(usage, dict):
+                agents.add(agent)
+                input_tokens = cast("dict[str, object]", usage).get("input_tokens")
+                output_tokens = cast("dict[str, object]", usage).get("output_tokens")
+                _require(
+                    isinstance(input_tokens, int) and input_tokens > 0,
+                    f"{agent} input usage missing",
+                )
+                _require(
+                    isinstance(output_tokens, int) and output_tokens > 0,
+                    f"{agent} output usage missing",
+                )
     _require({"claude", "codex"} <= agents, f"both real agents were not used: {agents}")
 
 
@@ -371,14 +403,7 @@ async def _read_text(path: Path) -> str:
 async def _send_e2_message(project: PreparedProject, environment: dict[str, str]) -> None:
     async def implementer_turn_started() -> bool:
         status = await _status(project.root, environment)
-        task = _task(status)
-        detail = _task_detail(status)
-        if task is None or detail is None or task.get("step") != "implement":
-            return False
-        sessions = detail.get("sessions")
-        if not isinstance(sessions, list):
-            return False
-        return any(_is_live_implementer(value) for value in cast("list[object]", sessions))
+        return _live_implementer_session(status) and _has_implementer_turn_started(status)
 
     await wait_until(implementer_turn_started, timeout=ATTEMPT_TIMEOUT_SECONDS)
     settings = load_settings(project.root, REAL_OVERRIDES[1::2])
@@ -387,7 +412,85 @@ async def _send_e2_message(project: PreparedProject, environment: dict[str, str]
         ack = await services.commands.send_message(TASK_ID, Role.IMPLEMENTER, E2_MESSAGE)
     finally:
         services.close()
-    _require(ack.status is AckStatus.DONE, f"operator message was not delivered: {ack.message}")
+    _require(
+        ack.status in {AckStatus.DONE, AckStatus.QUEUED},
+        f"operator message was rejected: {ack.message}",
+    )
+
+    async def message_delivered() -> bool:
+        return _has_operator_message(await _status(project.root, environment))
+
+    await wait_until(message_delivered, timeout=CLI_TIMEOUT_SECONDS)
+
+
+def _live_implementer_session(status: dict[str, object] | None) -> bool:
+    _require(
+        status is not None and status.get("engine_up") is True,
+        "engine stopped before the implementer turn started",
+    )
+    task = _task(status)
+    detail = _task_detail(status)
+    _require(
+        task is not None and detail is not None,
+        "task detail missing before the implementer turn started",
+    )
+    if task is None or detail is None:
+        return False
+    _require(
+        task.get("status")
+        not in {Status.ESCALATED.value, Status.CANCELLED.value, Status.DONE.value},
+        f"task ended before the implementer turn started: {task.get('status')}",
+    )
+    sessions = detail.get("sessions")
+    _require(isinstance(sessions, list), "task sessions missing")
+    if not isinstance(sessions, list):
+        return False
+    implementer = next(
+        (
+            cast("dict[str, object]", value)
+            for value in cast("list[object]", sessions)
+            if isinstance(value, dict)
+            and cast("dict[str, object]", value).get("role") == Role.IMPLEMENTER.value
+        ),
+        None,
+    )
+    if implementer is None:
+        return False
+    _require(
+        _is_live_implementer(implementer),
+        f"implementer session exited before its turn started: {implementer.get('status')}",
+    )
+    return True
+
+
+def _has_implementer_turn_started(status: dict[str, object] | None) -> bool:
+    detail = _task_detail(status)
+    if detail is None:
+        return False
+    events = detail.get("events")
+    return isinstance(events, list) and _implementer_turn_started(cast("list[object]", events))
+
+
+def _has_operator_message(status: dict[str, object] | None) -> bool:
+    detail = _task_detail(status)
+    if detail is None:
+        return False
+    events = detail.get("events")
+    if not isinstance(events, list):
+        return False
+    for value in cast("list[object]", events):
+        if not isinstance(value, dict):
+            continue
+        event = cast("dict[str, object]", value)
+        data = event.get("data")
+        if (
+            event.get("kind") == "operator_message"
+            and event.get("message") == E2_MESSAGE
+            and isinstance(data, dict)
+            and cast("dict[str, object]", data).get("role") == Role.IMPLEMENTER.value
+        ):
+            return True
+    return False
 
 
 def _is_live_implementer(value: object) -> bool:
@@ -397,6 +500,21 @@ def _is_live_implementer(value: object) -> bool:
     return (
         session.get("role") == Role.IMPLEMENTER.value and session.get("status") == RUN_STATUS_LIVE
     )
+
+
+def _implementer_turn_started(events: list[object]) -> bool:
+    for value in events:
+        if not isinstance(value, dict):
+            continue
+        event = cast("dict[str, object]", value)
+        data = event.get("data")
+        if (
+            event.get("kind") == "turn_started"
+            and isinstance(data, dict)
+            and cast("dict[str, object]", data).get("role") == Role.IMPLEMENTER.value
+        ):
+            return True
+    return False
 
 
 def _assert_e2_events(status: dict[str, object] | None) -> None:
@@ -509,12 +627,12 @@ async def _execute_e1(
     await _start(project, environment, state)
     await _submit(project, environment, E1_REQUEST)
     await _wait_done(project, environment)
-    status = await _status(project.root, environment)
-    _assert_both_agents_used(status)
+    task_statuses = await _task_tree_statuses(project.root, environment)
+    _assert_both_agents_used(task_statuses)
     await _assert_git_and_tracker(project)
     await _assert_a1_implementation(project)
     await _assert_window_closed(project, tmux_server)
-    record_cost(_cost(status))
+    record_cost(_cost(task_statuses))
 
 
 @pytest.mark.parametrize("scenario", REAL_SCENARIOS, ids=("monorepo", "multi-repo"))
@@ -588,6 +706,47 @@ async def _execute_e2(
     await _assert_a2_implementation(project)
     await _assert_window_closed(project, tmux_server)
     record_cost(_cost(status))
+
+
+def _task_summaries(status: dict[str, object] | None) -> dict[str, dict[str, object]]:
+    if status is None:
+        return {}
+    values = status.get("tasks")
+    if not isinstance(values, list):
+        return {}
+    summaries: dict[str, dict[str, object]] = {}
+    for value in cast("list[object]", values):
+        if not isinstance(value, dict):
+            continue
+        summary = cast("dict[str, object]", value)
+        task_id = summary.get("id")
+        if isinstance(task_id, str):
+            summaries[task_id] = summary
+    return summaries
+
+
+def _task_tree_ids(status: dict[str, object] | None, root_id: str) -> list[str]:
+    tasks = _task_summaries(status)
+    if root_id not in tasks:
+        return []
+    result = [root_id]
+    for task_id in result:
+        result.extend(
+            child_id
+            for child_id, task in tasks.items()
+            if task.get("parent_id") == task_id and child_id not in result
+        )
+    return result
+
+
+async def _task_tree_statuses(
+    project_root: Path, environment: dict[str, str]
+) -> list[dict[str, object] | None]:
+    status = await _status(project_root, environment, task_id=None)
+    return [
+        await _status(project_root, environment, task_id)
+        for task_id in _task_tree_ids(status, TASK_ID)
+    ]
 
 
 async def _initialize(project: PreparedProject, environment: dict[str, str]) -> None:

@@ -74,7 +74,10 @@ _INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
 PROBE_PREPARE_TIMEOUT_SECONDS = 45.0
 PROBE_PREPARE_POLL_SECONDS = 0.1
 PROBE_PROMPT_STABILITY_COUNT = 10
-TRUST_PROMPT_MARKER = "Yes, I trust this folder"
+TRUST_PROMPT_MARKERS = (
+    "Yes, I trust this folder",
+    "Claude Code'll be able to read, edit, and execute",
+)
 TRUST_CONFIRM_MARKER = "Enter to confirm"
 BYPASS_PERMISSION_MARKER = "WARNING: Claude Code running in Bypass Permissions mode"
 BYPASS_CONFIRM_MARKER = "Yes, I accept"
@@ -94,6 +97,7 @@ class ClaudeAgent:
     """A Claude Code plugin that normalizes hooks, transcripts and quota."""
 
     name = "claude"
+    session_start_requires_prompt = False
     keys = SessionKeys(
         interrupt=("Escape",),
         exit_input="/exit",
@@ -141,7 +145,10 @@ class ClaudeAgent:
             if not await probe_pane.is_alive():
                 return
             visible = await probe_pane.capture_visible()
-            trust_prompt = TRUST_PROMPT_MARKER in visible and TRUST_CONFIRM_MARKER in visible
+            trust_prompt = (
+                any(marker in visible for marker in TRUST_PROMPT_MARKERS)
+                and TRUST_CONFIRM_MARKER in visible
+            )
             bypass_prompt = BYPASS_PERMISSION_MARKER in visible and BYPASS_CONFIRM_MARKER in visible
             if trust_prompt or bypass_prompt:
                 prompt_observations += 1

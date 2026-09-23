@@ -246,6 +246,7 @@ class InteractiveAgent(Protocol):
 
     name: str
     keys: SessionKeys
+    session_start_requires_prompt: bool
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
         """Start a new session for `spec` in `pane`."""

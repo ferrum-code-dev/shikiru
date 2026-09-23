@@ -337,6 +337,9 @@ class SessionManager:
             timeouts=self._settings.orchestration.timeouts,
             poll_seconds=self._settings.orchestration.poll_seconds,
             expects_started=expects_started,
+            on_session_started=lambda started_id: self._record_session_started(
+                agent, task, run_id, started_id
+            ),
             pending_lines=injected_lines,
             events=self._events,
             refresh_titles=self._refresh_titles,
@@ -357,7 +360,7 @@ class SessionManager:
             self._runs.exit(run_id)
             raise
         startup_signal: MonitorSignal | None = None
-        if expects_started:
+        if expects_started and not agent.session_start_requires_prompt:
             start_queue = monitor.subscribe()
             try:
                 startup = await self._await_started(start_queue)
@@ -370,12 +373,6 @@ class SessionManager:
             startup_signal = startup if not isinstance(startup, SessionStarted) else None
             if isinstance(startup, SessionStarted):
                 session_id = startup.session_id
-                resume_command = (
-                    agent.resume_command(session_id, task_root(self._project_root, task.id))
-                    if session_id is not None
-                    else None
-                )
-                self._runs.set_session(run_id, session_id, resume_command)
         live = _LiveSession(
             pane_id=task.panes[role],
             rung=rung,
@@ -485,6 +482,16 @@ class SessionManager:
         agent = self._agent_pool.get(live.rung.agent)
         resume_command = agent.resume_command(session_id, task_root(self._project_root, task.id))
         self._runs.set_session(live.run_id, session_id, resume_command)
+
+    def _record_session_started(
+        self, agent: InteractiveAgent, task: Task, run_id: int, session_id: str | None
+    ) -> None:
+        resume_command = (
+            agent.resume_command(session_id, task_root(self._project_root, task.id))
+            if session_id is not None
+            else None
+        )
+        self._runs.set_session(run_id, session_id, resume_command)
 
     async def _forget(self, task_id: str, role: Role) -> None:
         live = self._live.pop((task_id, role), None)

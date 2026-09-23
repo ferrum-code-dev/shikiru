@@ -6,15 +6,27 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.agents.contracts import AgentContext
+from shikiru.agents.contracts import (
+    ROLE_ENV_VAR,
+    RUN_DIR_ENV_VAR,
+    AgentContext,
+    LaunchSpec,
+    Rung,
+)
+from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.clock import SystemClock
 from shikiru.plugins.agents.claude.agent import create
 from shikiru.process import SubprocessRunner
+from shikiru.tmux.client import Tmux
+from shikiru.tmux.pane import TmuxPane
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tests.support.tmux import TmuxServer
+
 _API_KEY_ENV = "SHIKIRU_CLAUDE_TEST_KEY"
+_TRUST_PROMPT_ENV = "SHIKIRU_CLAUDE_TRUST_PROMPT"
 
 
 def _install_fake_claude(
@@ -44,6 +56,25 @@ def _install_fake_claude(
     monkeypatch.setenv("SHIKIRU_CLAUDE_CALLS", str(calls_path))
     monkeypatch.setenv("SHIKIRU_CLAUDE_ENV", str(environment_path))
     return bin_dir, calls_path, environment_path
+
+
+def _install_trust_prompt_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    bin_dir = tmp_path / "trust-prompt-bin"
+    bin_dir.mkdir()
+    executable = bin_dir / "claude"
+    executable.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$SHIKIRU_CLAUDE_TRUST_PROMPT" "Enter to confirm · Esc to cancel"\n'
+        'hooks="$SHIKIRU_RUN_DIR/$SHIKIRU_ROLE/hooks.jsonl"\n'
+        "IFS= read -r confirmation || exit 1\n"
+        'mkdir -p "$(dirname "$hooks")"\n'
+        'printf \'{\\"hook_event_name\\":\\"SessionStart\\"}\\n\' > "$hooks"\n'
+        "while IFS= read -r input; do :; done\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return executable
 
 
 async def test_api_key_auth_removes_parent_token_from_headless_and_doctor(
@@ -125,3 +156,46 @@ async def test_doctor_login_detail_does_not_expose_auth_identity(
     assert checks[-1].detail == "authenticated"
     assert "private@example.invalid" not in checks[-1].detail
     assert "secret" not in checks[-1].detail
+
+
+@pytest.mark.parametrize(
+    "trust_prompt",
+    [
+        "Yes, I trust this folder",
+        "Claude Code'll be able to read, edit, and execute",
+    ],
+)
+async def test_launch_accepts_supported_trust_prompts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmux_server: TmuxServer,
+    trust_prompt: str,
+) -> None:
+    _install_trust_prompt_claude(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
+    pane_id = await tmux_server.run("display-message", "-p", "#{pane_id}")
+    pane = TmuxPane(tmux, pane_id.stdout.strip(), SystemClock())
+    agent = create(AgentContext(options={}, runner=tmux_server.runner, clock=SystemClock()))
+    spec = LaunchSpec(
+        rung=Rung(agent="claude", model="haiku", effort="low"),
+        role="leader",
+        cwd=repository,
+        run_dir=run_dir,
+        add_dirs=(),
+        env={
+            RUN_DIR_ENV_VAR: str(run_dir),
+            ROLE_ENV_VAR: "leader",
+            "PATH": os.environ["PATH"],
+            _TRUST_PROMPT_ENV: trust_prompt,
+        },
+        resume_session_id=None,
+    )
+
+    await agent.launch(spec, pane)
+
+    assert (run_dir / "leader" / HOOKS_FILENAME).is_file()
+    assert await pane.is_alive()

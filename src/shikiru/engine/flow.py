@@ -301,7 +301,6 @@ class _TurnExecution:
     prompt_path: Path
     injected: InjectedLines
     intervention_active: Callable[[], bool]
-    launch_pending: bool
     rung: Rung
     usage_before: Usage
     usage_after: Usage
@@ -814,7 +813,7 @@ class TaskFlow:
         if isinstance(action, KeepWaiting):
             self._sessions.rearm_stall_detection(task.id, role)
             await self._clock.sleep(self._settings.orchestration.poll_seconds)
-            if execution.launch_pending:
+            if self._sessions.launch_pending(task.id, role):
                 await self._close_execution(execution)
                 return self._require_task(task.id), False, counters
             return await self._resume_execution(execution), False, counters
@@ -848,7 +847,7 @@ class TaskFlow:
             await self._pane_factory(pane_id).send_keys(*keys)
         except CommandFailed:
             return dataclasses.replace(execution, result=PaneDied()), False, counters
-        if execution.launch_pending:
+        if self._sessions.launch_pending(task.id, role):
             await self._close_execution(execution)
             return self._require_task(task.id), False, counters
         return await self._resume_execution(execution), False, counters
@@ -1057,7 +1056,6 @@ class TaskFlow:
         role = role_override if role_override is not None else ACTING_ROLE[step]
         session = await self._sessions.ensure(task, role)
         fresh = self._sessions.launched_fresh(task.id, role)
-        launch_pending = self._sessions.launch_pending(task.id, role)
 
         def intervention_active() -> bool:
             return self._intervention_active(task.id)
@@ -1145,7 +1143,6 @@ class TaskFlow:
                 prompt_path=turn_dir / PROMPT_FILENAME,
                 injected=injected,
                 intervention_active=intervention_active,
-                launch_pending=launch_pending,
                 rung=rung,
                 usage_before=usage_before,
                 usage_after=usage_after,

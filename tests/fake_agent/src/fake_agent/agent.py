@@ -72,6 +72,7 @@ class FakeAgent:
     """A scripted `InteractiveAgent`, used only by tests, driven by `SHIKIRU_FAKE_SCRIPT`."""
 
     name = "fake"
+    session_start_requires_prompt = False
     keys = SessionKeys(interrupt=INTERRUPT_KEYS, exit_input=EXIT_INPUT, safe=SAFE_KEYS)
 
     def __init__(self, runner: SubprocessRunner, clock: Clock, options: FakeOptions) -> None:

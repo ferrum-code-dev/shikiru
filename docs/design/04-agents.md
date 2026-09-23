@@ -67,6 +67,7 @@ class InteractiveAgent(Protocol):
     """An agent CLI plugin."""
     name: str
     keys: SessionKeys
+    session_start_requires_prompt: bool
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession: ...
     async def attach(self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, Any]) -> AgentSession: ...
     async def quota(self) -> list[QuotaWindow]: ...      # [] when unknown; plugin owns caching and probing
@@ -192,6 +193,8 @@ codex [resume <id>] -m <m> -c model_reasoning_effort="<e>" --dangerously-bypass-
       -c 'hooks.<Event>=[{hooks=[{type="command",command="shikiru hook"}]}]'   # per event
       -c 'projects."<cwd>".trust_level="trusted"' -C <cwd> --add-dir <run_dir> --add-dir <git common dirs> <args>
 ```
+
+Codex emits `SessionStart` only after receiving its first prompt, so its plugin sets `session_start_requires_prompt` and the engine submits that prompt while still monitoring startup.
 
 **Signals** (hook payloads verified):
 

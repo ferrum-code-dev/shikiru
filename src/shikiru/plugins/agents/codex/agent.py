@@ -10,7 +10,7 @@ import shutil
 import sys
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import ValidationError
 
@@ -33,7 +33,6 @@ from shikiru.plugins.agents.codex.options import (
     DOCTOR_TIMEOUT_SECONDS,
     GIT_COMMON_DIR_TIMEOUT_SECONDS,
     HOME_ENV_VAR,
-    HOOK_COMMAND,
     HOOK_EVENTS,
     LOGIN_STATUS_ARGV,
     MODEL_FLAG,
@@ -80,19 +79,22 @@ PROBE_CODEX_HOME_NAME = "codex-home"
 PROBE_HOME_NAME = "home"
 PROBE_HOOK_BIN_NAME = ".local/bin"
 PROBE_SHELL = "/bin/sh"
-PROBE_PREPARE_TIMEOUT_SECONDS = 45.0
-PROBE_PREPARE_POLL_SECONDS = 0.1
-PROBE_PROMPT_STABILITY_COUNT = 10
-PROBE_READY_STABILITY_COUNT = 10
-PROBE_READY_MARKER = "Ask Codex to do anything"
-PROBE_TRUST_PROMPT_MARKER = "Do you trust the contents of this directory?"
-PROBE_TRUST_CONFIRM_MARKER = "1. Yes, continue"
-PROBE_STARTUP_TIMEOUT_MESSAGE = "Codex trust prompt or session startup did not complete"
+STARTUP_TIMEOUT_SECONDS = 45.0
+STARTUP_POLL_SECONDS = 0.1
+STARTUP_STABILITY_COUNT = 10
+READY_MARKER = "Ask Codex to do anything"
+TRUST_PROMPT_MARKERS = (
+    "Do you trust the contents of this directory?",
+    "Quick safety check: Is this a project you created or one you trust?",
+    "Trusting will apply to the repository root:",
+)
+STARTUP_TIMEOUT_MESSAGE = "Codex trust prompt or session startup did not complete"
 PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 
 
-class _ProbePane(Protocol):
+@runtime_checkable
+class _StartupPane(Protocol):
     async def capture_visible(self) -> str: ...
 
     async def is_alive(self) -> bool: ...
@@ -104,6 +106,7 @@ class CodexAgent:
     """A Codex plugin that normalizes hooks, rollouts, quotas and compaction."""
 
     name = "codex"
+    session_start_requires_prompt = True
     keys = SessionKeys(
         interrupt=("Escape",),
         exit_input="/quit",
@@ -130,38 +133,44 @@ class CodexAgent:
             env=self._pane_environment(spec.env, codex_home=probe_home),
             cwd=spec.cwd,
         )
+        if not _is_probe(spec):
+            await self._prepare_startup(pane)
         return self._session(spec, hook_offset, codex_home_path=probe_home)
+
+    async def _prepare_startup(self, pane: PaneHandle) -> None:
+        if not isinstance(pane, _StartupPane):
+            return
+        deadline = self._clock.now() + timedelta(seconds=STARTUP_TIMEOUT_SECONDS)
+        prompt_observations = 0
+        ready_observations = 0
+        while self._clock.now() < deadline:
+            if not await pane.is_alive():
+                return
+            visible = await pane.capture_visible()
+            trust_prompt = any(marker in visible for marker in TRUST_PROMPT_MARKERS)
+            if trust_prompt:
+                prompt_observations += 1
+                if prompt_observations >= STARTUP_STABILITY_COUNT:
+                    await pane.send_keys("1", "Enter")
+                    prompt_observations = 0
+                    await self._clock.sleep(STARTUP_POLL_SECONDS)
+                    continue
+            else:
+                prompt_observations = 0
+            if READY_MARKER in visible:
+                ready_observations += 1
+                if ready_observations >= STARTUP_STABILITY_COUNT:
+                    return
+            else:
+                ready_observations = 0
+            await self._clock.sleep(STARTUP_POLL_SECONDS)
+        raise TimeoutError(STARTUP_TIMEOUT_MESSAGE)
 
     async def prepare_probe(self, spec: LaunchSpec, pane: PaneHandle) -> bool:
         """Accept Codex's first-use trust prompt while a doctor probe starts."""
         del spec
-        probe_pane = cast("_ProbePane", pane)
-        deadline = self._clock.now() + timedelta(seconds=PROBE_PREPARE_TIMEOUT_SECONDS)
-        prompt_observations = 0
-        ready_observations = 0
-        while self._clock.now() < deadline:
-            if not await probe_pane.is_alive():
-                return True
-            visible = await probe_pane.capture_visible()
-            trust_prompt = (
-                PROBE_TRUST_PROMPT_MARKER in visible and PROBE_TRUST_CONFIRM_MARKER in visible
-            )
-            if trust_prompt:
-                prompt_observations += 1
-                if prompt_observations >= PROBE_PROMPT_STABILITY_COUNT:
-                    await probe_pane.send_keys("Enter")
-                    prompt_observations = 0
-                    await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
-            else:
-                prompt_observations = 0
-            if PROBE_READY_MARKER in visible:
-                ready_observations += 1
-                if ready_observations >= PROBE_READY_STABILITY_COUNT:
-                    return True
-            else:
-                ready_observations = 0
-            await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
-        raise TimeoutError(PROBE_STARTUP_TIMEOUT_MESSAGE)
+        await self._prepare_startup(pane)
+        return True
 
     async def attach(
         self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, object]
@@ -234,8 +243,7 @@ class CodexAgent:
         argv.append(BYPASS_HOOK_TRUST_FLAG)
         if _is_probe(spec):
             argv.extend([CONFIG_FLAG, CHECK_FOR_UPDATE_CONFIG])
-        hook_command = self._probe_hook_command() if _is_probe(spec) else HOOK_COMMAND
-        argv.extend(self._hook_config_args(hook_command))
+        argv.extend(self._hook_config_args(self._hook_command()))
         argv.extend([CONFIG_FLAG, self._trust_config(spec.cwd), CD_FLAG, str(spec.cwd)])
         directories = [spec.run_dir, *spec.add_dirs, *(await self._git_common_dirs(spec))]
         for directory in _unique_paths(directories):
@@ -250,7 +258,7 @@ class CodexAgent:
         )
         return [item for event in HOOK_EVENTS for item in (CONFIG_FLAG, f"hooks.{event}={encoded}")]
 
-    def _probe_hook_command(self) -> str:
+    def _hook_command(self) -> str:
         executable = Path(sys.executable).with_name("shikiru")
         if not executable.is_file():
             message = f"Shikiru executable is missing at {executable}"
@@ -281,8 +289,8 @@ class CodexAgent:
         self, base: Mapping[str, str], *, codex_home: Path | None = None
     ) -> dict[str, str | None]:
         environment: dict[str, str | None] = dict(base)
+        environment[CODEX_HOME_ENV_VAR] = str(codex_home or self._codex_home)
         if codex_home is not None:
-            environment[CODEX_HOME_ENV_VAR] = str(codex_home)
             probe_home = codex_home.parent / PROBE_HOME_NAME
             probe_home.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
             environment[HOME_ENV_VAR] = str(probe_home)

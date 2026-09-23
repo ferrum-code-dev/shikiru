@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -463,10 +464,9 @@ class TestCodexAgentContract(AgentContractSuite):
             if value == "-c" and call.argv[index + 1].startswith("hooks.")
         ]
         assert len(hook_values) == 8
-        assert all(
-            value.endswith('[{hooks=[{type="command",command="shikiru hook"}]}]')
-            for value in hook_values
-        )
+        hook_command = f"{shlex.quote(str(Path(sys.executable).with_name('shikiru')))} hook"
+        hook_suffix = f'[{{hooks=[{{type="command",command="{hook_command}"}}]}}]'
+        assert all(value.endswith(hook_suffix) for value in hook_values)
 
         resume_spec = self.build_spec(tmp_path / "resume", resume_session_id="the-old-session-id")
         resume_pane = RecordingPaneHandle()

@@ -207,6 +207,7 @@ def make_monitor(
         timeouts=settings.orchestration.timeouts,
         poll_seconds=settings.orchestration.poll_seconds,
         expects_started=expects_started,
+        on_session_started=lambda session_id: runs.set_session(run.id, session_id, None),
         events=events,
         refresh_titles=refresh_titles,
     )
