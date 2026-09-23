@@ -143,7 +143,7 @@ claude (--session-id <uuid> | --resume <id>) --model <m> --effort <e>
 
 - Hooks run `shikiru_command("hook")` for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `Notification`, `PostCompact`, `SessionEnd`.
 - The hooks merge with user and project hooks. Nothing else in the user's settings is touched.
-- `launch` returns on the first new hook line, answering the workspace-trust and bypass-permissions dialogs if they show.
+- `launch` returns on the first new hook line, answering the workspace-trust, bypass-permissions and external-imports dialogs if they show. The last appears in multi-repo task roots, whose root instruction files are symlinks into the project (03 §5).
 
 **Signals**, from hooks (payloads verified):
 

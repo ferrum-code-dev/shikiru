@@ -71,13 +71,12 @@ _INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
 STARTUP_TIMEOUT_SECONDS = 45.0
 STARTUP_POLL_SECONDS = 0.1
 STARTUP_STABILITY_COUNT = 10
-TRUST_PROMPT_MARKERS = (
-    "Yes, I trust this folder",
-    "Claude Code'll be able to read, edit, and execute",
+STARTUP_DIALOGS = (
+    ("Yes, I trust this folder", "Enter to confirm"),
+    ("Claude Code'll be able to read, edit, and execute", "Enter to confirm"),
+    ("WARNING: Claude Code running in Bypass Permissions mode", "Yes, I accept"),
+    ("Allow external CLAUDE.md file imports?", "Yes, allow external imports"),
 )
-TRUST_CONFIRM_MARKER = "Enter to confirm"
-BYPASS_PERMISSION_MARKER = "WARNING: Claude Code running in Bypass Permissions mode"
-BYPASS_CONFIRM_MARKER = "Yes, I accept"
 ACCEPT_DIALOG_KEYS = ("Down", "Enter")
 
 
@@ -304,7 +303,4 @@ def create(context: AgentContext) -> ClaudeAgent:
 
 
 def _is_startup_dialog(visible: str) -> bool:
-    trust = any(marker in visible for marker in TRUST_PROMPT_MARKERS)
-    if trust and TRUST_CONFIRM_MARKER in visible:
-        return True
-    return BYPASS_PERMISSION_MARKER in visible and BYPASS_CONFIRM_MARKER in visible
+    return any(question in visible and answer in visible for question, answer in STARTUP_DIALOGS)

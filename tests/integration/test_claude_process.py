@@ -15,7 +15,7 @@ from shikiru.agents.contracts import (
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.clock import SystemClock
-from shikiru.plugins.agents.claude.agent import create
+from shikiru.plugins.agents.claude.agent import STARTUP_DIALOGS, create
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.pane import TmuxPane
@@ -26,7 +26,8 @@ if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
 
 _API_KEY_ENV = "SHIKIRU_CLAUDE_TEST_KEY"
-_TRUST_PROMPT_ENV = "SHIKIRU_CLAUDE_TRUST_PROMPT"
+_DIALOG_QUESTION_ENV = "SHIKIRU_CLAUDE_DIALOG_QUESTION"
+_DIALOG_ANSWER_ENV = "SHIKIRU_CLAUDE_DIALOG_ANSWER"
 
 
 def _install_fake_claude(
@@ -58,13 +59,13 @@ def _install_fake_claude(
     return bin_dir, calls_path, environment_path
 
 
-def _install_trust_prompt_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    bin_dir = tmp_path / "trust-prompt-bin"
+def _install_dialog_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    bin_dir = tmp_path / "dialog-bin"
     bin_dir.mkdir()
     executable = bin_dir / "claude"
     executable.write_text(
         "#!/bin/sh\n"
-        'printf "%s\\n" "$SHIKIRU_CLAUDE_TRUST_PROMPT" "Enter to confirm · Esc to cancel"\n'
+        'printf "%s\\n" "$SHIKIRU_CLAUDE_DIALOG_QUESTION" "$SHIKIRU_CLAUDE_DIALOG_ANSWER"\n'
         'hooks="$SHIKIRU_RUN_DIR/$SHIKIRU_ROLE/hooks.jsonl"\n'
         "IFS= read -r confirmation || exit 1\n"
         'mkdir -p "$(dirname "$hooks")"\n'
@@ -158,20 +159,15 @@ async def test_doctor_login_detail_does_not_expose_auth_identity(
     assert "secret" not in checks[-1].detail
 
 
-@pytest.mark.parametrize(
-    "trust_prompt",
-    [
-        "Yes, I trust this folder",
-        "Claude Code'll be able to read, edit, and execute",
-    ],
-)
-async def test_launch_accepts_supported_trust_prompts(
+@pytest.mark.parametrize(("question", "answer"), STARTUP_DIALOGS)
+async def test_launch_answers_every_startup_dialog(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     tmux_server: TmuxServer,
-    trust_prompt: str,
+    question: str,
+    answer: str,
 ) -> None:
-    _install_trust_prompt_claude(tmp_path, monkeypatch)
+    _install_dialog_claude(tmp_path, monkeypatch)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     repository = tmp_path / "repo"
@@ -190,7 +186,8 @@ async def test_launch_accepts_supported_trust_prompts(
             RUN_DIR_ENV_VAR: str(run_dir),
             ROLE_ENV_VAR: "leader",
             "PATH": os.environ["PATH"],
-            _TRUST_PROMPT_ENV: trust_prompt,
+            _DIALOG_QUESTION_ENV: question,
+            _DIALOG_ANSWER_ENV: answer,
         },
         resume_session_id=None,
     )
