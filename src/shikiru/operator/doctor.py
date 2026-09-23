@@ -270,7 +270,8 @@ class Doctor:
         self, settings: Settings, plugin_checks: Sequence[DoctorCheck]
     ) -> list[DoctorCheck]:
         checks: list[DoctorCheck] = []
-        for name, agent_config in sorted(settings.agents.items()):
+        for name, rung in sorted(_probe_rungs(settings).items()):
+            agent_config = settings.agents[name]
             plugin_check = next(
                 (check for check in plugin_checks if check.name == _plugin_check_name(name)),
                 None,
@@ -297,7 +298,7 @@ class Doctor:
                     agent,
                     self._runner,
                     self._clock,
-                    _probe_rung(settings, name),
+                    rung,
                 ).run()
             except (
                 AttributeError,
@@ -340,15 +341,16 @@ def _probe_check_name(name: str) -> str:
     return f"plugin:{name}:{PROBE_CHECK_SUFFIX}"
 
 
-def _probe_rung(settings: Settings, agent_name: str) -> Rung:
-    ladders = (
-        settings.roles.leader.ladder,
-        settings.roles.implementer.ladder,
-        settings.roles.helper.ladder,
-    )
+def _probe_rungs(settings: Settings) -> dict[str, Rung]:
+    roles = settings.roles
+    ladders = [
+        roles.leader.ladder,
+        roles.implementer.ladder,
+        *(override.ladder for override in roles.implementer.complexity.values()),
+        roles.helper.ladder,
+    ]
+    rungs: dict[str, Rung] = {}
     for ladder in ladders:
         for rung in ladder:
-            if rung.agent == agent_name:
-                return rung
-    message = f"no configured rung for agent {agent_name!r}"
-    raise ConfigError(message)
+            rungs.setdefault(rung.agent, rung)
+    return rungs

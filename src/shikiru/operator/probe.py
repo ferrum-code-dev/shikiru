@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
 PROBE_COMMAND_TIMEOUT_SECONDS = 60.0
 PROBE_TIMEOUT_SECONDS = 90.0
+PROBE_SCREEN_TAIL_LINES = 6
 PROBE_TMUX_COMMAND = "tmux"
 PROBE_TMUX_SESSION_PREFIX = "shikiru-doctor-"
 PROBE_TMUX_SESSION_NAME = "probe"
@@ -237,13 +238,16 @@ class AgentProbe:
             except TimeoutError as error:
                 visible = await pane.capture_visible()
                 alive = await pane.is_alive()
-                message = (
-                    f"{PROBE_TURN_TIMEOUT_MESSAGE}; alive={alive}; visible_chars={len(visible)}"
-                )
+                message = f"{PROBE_TURN_TIMEOUT_MESSAGE}; alive={alive}; screen: {_tail(visible)}"
                 raise DoctorProbeError(message) from error
             if isinstance(signal, (TurnEnded, TurnFailed)):
                 return signal, seen
             seen.add(type(signal))
+
+
+def _tail(visible: str) -> str:
+    lines = [line.strip() for line in visible.splitlines() if line.strip()]
+    return " | ".join(lines[-PROBE_SCREEN_TAIL_LINES:])
 
 
 async def kill_tmux_server(runner: SubprocessRunner, socket_name: str) -> None:
