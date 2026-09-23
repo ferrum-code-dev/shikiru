@@ -6,7 +6,7 @@ import asyncio
 import tempfile
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     from shikiru.agents.registry import AgentRegistry
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
-    from shikiru.operator.probe import ProbeAgent
     from shikiru.process import ProcessResult, SubprocessRunner
 
 
@@ -295,7 +294,7 @@ class Doctor:
                     ),
                 )
                 await AgentProbe(
-                    cast("ProbeAgent", agent),
+                    agent,
                     self._runner,
                     self._clock,
                     _probe_rung(settings, name),

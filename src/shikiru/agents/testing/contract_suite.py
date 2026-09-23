@@ -140,8 +140,12 @@ class RecordingPaneHandle:
         return ""
 
     async def is_alive(self) -> bool:
-        """Report alive: no process ever really runs behind this double."""
-        return True
+        """Report dead: no process ever really runs behind this double."""
+        return False
+
+    async def send_keys(self, *keys: str) -> None:
+        """Drop `keys`: no process ever reads them behind this double."""
+        del keys
 
     def last_respawn(self) -> RespawnCall:
         """Return the most recent `respawn()` call, failing loudly if there was none."""

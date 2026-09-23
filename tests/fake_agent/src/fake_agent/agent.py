@@ -72,7 +72,6 @@ class FakeAgent:
     """A scripted `InteractiveAgent`, used only by tests, driven by `SHIKIRU_FAKE_SCRIPT`."""
 
     name = "fake"
-    session_start_requires_prompt = False
     keys = SessionKeys(interrupt=INTERRUPT_KEYS, exit_input=EXIT_INPUT, safe=SAFE_KEYS)
 
     def __init__(self, runner: SubprocessRunner, clock: Clock, options: FakeOptions) -> None:
@@ -90,11 +89,6 @@ class FakeAgent:
         start_offset = await asyncio.to_thread(_hooks_file_size, spec.run_dir, spec.role)
         await self._spawn(spec, pane, session_id)
         return self._session(spec, session_id, start_offset)
-
-    async def prepare_probe(self, spec: LaunchSpec, pane: PaneHandle) -> bool:
-        """Confirm fake probe startup, which has no interactive trust challenge."""
-        del spec, pane
-        return False
 
     async def attach(
         self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, Any]

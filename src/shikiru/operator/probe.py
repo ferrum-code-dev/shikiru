@@ -8,7 +8,7 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import (
     ROLE_ENV_VAR,
@@ -24,7 +24,6 @@ from shikiru.agents.contracts import (
     shikiru_command,
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
-from shikiru.agents.sdk.probe import PROBE_ENV_VALUE, PROBE_ENV_VAR
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     REPORT_FILENAME,
@@ -40,7 +39,7 @@ from shikiru.tmux.pane import TmuxPane
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from shikiru.agents.contracts import AgentSession, PaneHandle
+    from shikiru.agents.contracts import InteractiveAgent
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
@@ -60,6 +59,7 @@ PROBE_PROMPT = (
     "Do not change files outside the current temporary project."
 )
 PROBE_MARKER = "SHIKIRU_PROBE_OK"
+PROBE_REQUIRED_SIGNALS = (SessionStarted, PromptSubmitted)
 PROBE_REMAIN_ON_EXIT_OPTION = "remain-on-exit"
 PROBE_REMAIN_ON_EXIT_VALUE = "on"
 PROBE_REPO_README = "Shikiru doctor probe\n"
@@ -74,22 +74,6 @@ PROBE_STARTUP_EXIT_MESSAGE = "agent pane exited during probe startup"
 _TMUX_KILL_ARGS = (PROBE_TMUX_COMMAND, "-L")
 
 
-class _ProbePane(Protocol):
-    async def capture_visible(self) -> str: ...
-
-    async def is_alive(self) -> bool: ...
-
-    async def send_keys(self, *keys: str) -> None: ...
-
-
-class ProbeAgent(Protocol):
-    """The optional structural plugin contract used only by the live probe."""
-
-    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession: ...
-
-    async def prepare_probe(self, spec: LaunchSpec, pane: _ProbePane) -> bool: ...
-
-
 class DoctorProbeError(ShikiruError):
     """A live agent probe did not satisfy its contract."""
 
@@ -99,7 +83,7 @@ class AgentProbe:
 
     def __init__(
         self,
-        agent: ProbeAgent,
+        agent: InteractiveAgent,
         runner: SubprocessRunner,
         clock: Clock,
         rung: Rung,
@@ -165,18 +149,11 @@ class AgentProbe:
             resume_session_id=None,
         )
         session = await self._agent.launch(spec, pane)
-        pointer_before_session = await self._agent.prepare_probe(spec, pane)
         if not await pane.is_alive():
             raise DoctorProbeError(PROBE_STARTUP_EXIT_MESSAGE)
-        signals = session.signals()
-        if pointer_before_session:
-            await pane.paste_line(PROBE_PROMPT)
-        await self._await_signal(signals, SessionStarted, pane, run_dir)
-        if not pointer_before_session:
-            await pane.paste_line(PROBE_PROMPT)
-        await self._await_signal(signals, PromptSubmitted, pane, run_dir)
+        await pane.paste_line(PROBE_PROMPT)
         try:
-            signal = await self._await_turn(signals, pane)
+            signal, seen = await self._await_turn(session.signals(), pane)
         except DoctorProbeError as error:
             hooks = role_dir(run_dir, PROBE_ROLE) / HOOKS_FILENAME
             report = role_dir(run_dir, PROBE_ROLE) / CURRENT_TURN_LINK_NAME / REPORT_FILENAME
@@ -187,6 +164,10 @@ class AgentProbe:
             raise DoctorProbeError(detail) from error
         if isinstance(signal, TurnFailed):
             message = f"probe turn failed: {signal.message}"
+            raise DoctorProbeError(message)
+        missing = [kind.__name__ for kind in PROBE_REQUIRED_SIGNALS if kind not in seen]
+        if missing:
+            message = f"probe turn ended without {', '.join(missing)}"
             raise DoctorProbeError(message)
         report = role_dir(run_dir, PROBE_ROLE) / CURRENT_TURN_LINK_NAME / REPORT_FILENAME
         if not report.is_file():
@@ -246,32 +227,10 @@ class AgentProbe:
         link.unlink(missing_ok=True)
         link.symlink_to(turn_dir)
 
-    async def _await_signal(
-        self,
-        signals: AsyncIterator[AgentSignal],
-        signal_type: type[AgentSignal],
-        pane: TmuxPane,
-        run_dir: Path,
-    ) -> AgentSignal:
-        while True:
-            try:
-                signal = await asyncio.wait_for(signals.__anext__(), timeout=PROBE_TIMEOUT_SECONDS)
-            except TimeoutError as error:
-                visible = await pane.capture_visible()
-                alive = await pane.is_alive()
-                hooks = role_dir(run_dir, PROBE_ROLE) / HOOKS_FILENAME
-                message = (
-                    f"timed out waiting for {signal_type.__name__}; alive={alive}; "
-                    f"visible_chars={len(visible)}; "
-                    f"hook_bytes={hooks.stat().st_size if hooks.is_file() else 0}"
-                )
-                raise DoctorProbeError(message) from error
-            if isinstance(signal, signal_type):
-                return signal
-
     async def _await_turn(
         self, signals: AsyncIterator[AgentSignal], pane: TmuxPane
-    ) -> TurnEnded | TurnFailed:
+    ) -> tuple[TurnEnded | TurnFailed, set[type[AgentSignal]]]:
+        seen: set[type[AgentSignal]] = set()
         while True:
             try:
                 signal = await asyncio.wait_for(signals.__anext__(), timeout=PROBE_TIMEOUT_SECONDS)
@@ -283,7 +242,8 @@ class AgentProbe:
                 )
                 raise DoctorProbeError(message) from error
             if isinstance(signal, (TurnEnded, TurnFailed)):
-                return signal
+                return signal, seen
+            seen.add(type(signal))
 
 
 async def kill_tmux_server(runner: SubprocessRunner, socket_name: str) -> None:
@@ -305,7 +265,6 @@ def _probe_environment(run_dir: Path) -> dict[str, str]:
         {
             RUN_DIR_ENV_VAR: str(run_dir),
             ROLE_ENV_VAR: PROBE_ROLE,
-            PROBE_ENV_VAR: PROBE_ENV_VALUE,
         }
     )
     return environment

@@ -180,7 +180,6 @@ class SessionMonitor:
         self._last_activity: datetime = clock.now()
         self._tool_running = False
         self._started = False
-        self._started_session_id: str | None = None
         self._stalled = False
         self._last_message: str | None = None
         self._persisted_usage: Usage | None = None
@@ -205,11 +204,6 @@ class SessionMonitor:
     def clear_intervention(self) -> None:
         """Publish the transition back to the role decoration after an intervention clears."""
         self._publish(InterventionCleared())
-
-    @property
-    def started_session_id(self) -> str | None:
-        """Return the session id observed from `SessionStarted`, if one was provided."""
-        return self._started_session_id
 
     @property
     def launch_pending(self) -> bool:
@@ -273,7 +267,6 @@ class SessionMonitor:
         match signal:
             case SessionStarted():
                 self._started = True
-                self._started_session_id = signal.session_id
                 self._expects_started = False
                 self._mark_activity(now)
                 self._on_session_started(signal.session_id)

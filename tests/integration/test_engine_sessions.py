@@ -18,11 +18,11 @@ from shikiru.agents.contracts import (
     SessionStarted,
 )
 from shikiru.config.settings import AgentConfig
-from shikiru.domain.recovery import Stalled
+from shikiru.domain.recovery import PaneDied, Stalled
 from shikiru.domain.runs import NO_USAGE, RunStatus
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Role
-from shikiru.engine.sessions import INJECT_CONFIRM_SECONDS, SessionLaunchFailedError
+from shikiru.engine.sessions import INJECT_CONFIRM_SECONDS
 from shikiru.errors import CommandFailed
 from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_RUNG, build_registry, set_script
@@ -71,6 +71,13 @@ def _live_run(runs: RunStore, task_id: str, role: Role) -> Run:
     return live
 
 
+async def _started_run(runs: RunStore, task_id: str, role: Role) -> Run:
+    await wait_until(
+        lambda: _live_run(runs, task_id, role).session_id is not None, timeout=_WAIT_TIMEOUT
+    )
+    return _live_run(runs, task_id, role)
+
+
 def _has_agent_state(runs: RunStore, task_id: str, role: Role) -> bool:
     live = runs.get_live(task_id, role)
     return live is not None and live.agent_state != {}
@@ -102,7 +109,6 @@ class _CrashingAgent:
     """An `InteractiveAgent` whose launch kills the pane before ever starting a session."""
 
     name = CRASHING_AGENT_NAME
-    session_start_requires_prompt = False
     keys = SessionKeys(interrupt=(), exit_input="exit", safe=())
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
@@ -201,7 +207,6 @@ class _QueuedAgent(_CrashingAgent):
 
 class _DeferredStartAgent(_CrashingAgent):
     name = DEFERRED_START_AGENT_NAME
-    session_start_requires_prompt = True
 
     def __init__(self) -> None:
         self.session = _QueuedSession()
@@ -218,7 +223,7 @@ async def test_ensure_relaunches_with_resume_after_pane_death(
     await set_script(tmux_server, [{"kind": "crash"}])
 
     await engine_env.manager.ensure(task, Role.IMPLEMENTER)
-    first_run = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER)
+    first_run = await _started_run(engine_env.runs, task.id, Role.IMPLEMENTER)
     first_session_id = first_run.session_id
     assert first_session_id is not None
     assert first_run.resume_command == f"{SESSION_ID_ENV_VAR}={first_session_id} {REPL_COMMAND}"
@@ -229,7 +234,7 @@ async def test_ensure_relaunches_with_resume_after_pane_death(
     await wait_until(lambda: engine_env.tmux.is_pane_dead(pane_id), timeout=_WAIT_TIMEOUT)
 
     await engine_env.manager.ensure(task, Role.IMPLEMENTER)
-    second_run = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER)
+    second_run = await _started_run(engine_env.runs, task.id, Role.IMPLEMENTER)
     second_session_id = second_run.session_id
     assert second_session_id == first_session_id
     assert second_run.resume_command == f"{SESSION_ID_ENV_VAR}={first_session_id} {REPL_COMMAND}"
@@ -241,7 +246,7 @@ async def test_ensure_attaches_after_engine_restart(engine_env: EngineEnv) -> No
     task = await engine_env.build_task()
 
     await engine_env.manager.ensure(task, Role.IMPLEMENTER)
-    started_session_id = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).session_id
+    started_session_id = (await _started_run(engine_env.runs, task.id, Role.IMPLEMENTER)).session_id
     assert started_session_id is not None
     pane_id = task.panes[Role.IMPLEMENTER]
     pane_pid_before_restart = await engine_env.tmux.pane_pid(pane_id)
@@ -272,7 +277,7 @@ async def test_ensure_relaunches_with_resume_on_rung_change(engine_env: EngineEn
     task = await engine_env.build_task()
 
     await manager.ensure(task, Role.IMPLEMENTER)
-    first_session_id = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).session_id
+    first_session_id = (await _started_run(engine_env.runs, task.id, Role.IMPLEMENTER)).session_id
     old_session_queue = manager.subscribe(task.id, Role.IMPLEMENTER)
 
     rung_index = dict(task.rung_index)
@@ -288,7 +293,7 @@ async def test_ensure_relaunches_with_resume_on_rung_change(engine_env: EngineEn
     old_signal = old_session_queue.get_nowait()
     assert isinstance(old_signal, SessionEnded)
 
-    second_session_id = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).session_id
+    second_session_id = (await _started_run(engine_env.runs, task.id, Role.IMPLEMENTER)).session_id
     assert second_session_id == first_session_id
     assert not manager.launched_fresh(task.id, Role.IMPLEMENTER)
 
@@ -353,7 +358,7 @@ async def test_exit_task_closes_untracked_persisted_live_runs(engine_env: Engine
     assert engine_env.runs.for_task(task.id)[0].status is RunStatus.CLOSED
 
 
-async def test_ensure_exits_the_run_and_leaks_no_task_when_launch_fails(
+async def test_pane_death_right_after_launch_reaches_the_next_subscriber(
     engine_env: EngineEnv,
 ) -> None:
     registry = build_registry()
@@ -364,19 +369,14 @@ async def test_ensure_exits_the_run_and_leaks_no_task_when_launch_fails(
     manager = engine_env.build_manager(settings, registry=registry)
     task = await engine_env.build_task()
 
-    tasks_before = asyncio.all_tasks()
-    with pytest.raises(SessionLaunchFailedError):
-        await manager.ensure(task, Role.IMPLEMENTER)
-    assert asyncio.all_tasks() <= tasks_before
+    await manager.ensure(task, Role.IMPLEMENTER)
+    await wait_until(
+        lambda: engine_env.tmux.is_pane_dead(task.panes[Role.IMPLEMENTER]), timeout=_WAIT_TIMEOUT
+    )
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
 
-    assert engine_env.runs.get_live(task.id, Role.IMPLEMENTER) is None
-    first_run = engine_env.runs.for_task(task.id)[0]
-    assert first_run.status == RunStatus.EXITED
-
-    with pytest.raises(SessionLaunchFailedError):
-        await manager.ensure(task, Role.IMPLEMENTER)
-    assert len(engine_env.runs.for_task(task.id)) == 2
-    assert engine_env.runs.get_live(task.id, Role.IMPLEMENTER) is None
+    assert isinstance(await asyncio.wait_for(queue.get(), timeout=_WAIT_TIMEOUT), PaneDied)
+    await manager.shutdown()
 
 
 async def test_launch_timeout_is_delivered_as_a_stalled_turn(engine_env: EngineEnv) -> None:
@@ -393,12 +393,11 @@ async def test_launch_timeout_is_delivered_as_a_stalled_turn(engine_env: EngineE
     manager = engine_env.build_manager(settings, clock=clock, registry=registry)
     task = await engine_env.build_task()
 
-    ensure_task = asyncio.ensure_future(manager.ensure(task, Role.IMPLEMENTER))
+    await manager.ensure(task, Role.IMPLEMENTER)
+    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
     await wait_until(clock.has_pending_sleep, timeout=_WAIT_TIMEOUT)
     clock.advance(2)
-    await ensure_task
 
-    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
     signal = await asyncio.wait_for(queue.get(), timeout=_WAIT_TIMEOUT)
     assert isinstance(signal, Stalled)
     assert _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).status is RunStatus.LIVE
@@ -407,7 +406,7 @@ async def test_launch_timeout_is_delivered_as_a_stalled_turn(engine_env: EngineE
     await engine_env.pane(task.panes[Role.IMPLEMENTER]).kill()
 
 
-async def test_prompt_started_session_returns_before_started_signal_and_persists_id(
+async def test_session_id_is_recorded_when_started_arrives_after_launch(
     engine_env: EngineEnv,
 ) -> None:
     registry = build_registry()
@@ -421,17 +420,15 @@ async def test_prompt_started_session_returns_before_started_signal_and_persists
     task = await engine_env.build_task()
 
     await manager.ensure(task, Role.IMPLEMENTER)
-
-    assert manager.launch_pending(task.id, Role.IMPLEMENTER)
-    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    assert _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).session_id is None
     agent.session.push(SessionStarted(session_id="deferred-session"))
-    await wait_until(
-        lambda: not manager.launch_pending(task.id, Role.IMPLEMENTER), timeout=_WAIT_TIMEOUT
-    )
 
-    live_run = _live_run(engine_env.runs, task.id, Role.IMPLEMENTER)
-    assert live_run.session_id == "deferred-session"
-    assert isinstance(queue.get_nowait(), SessionStarted)
+    await wait_until(
+        lambda: (
+            _live_run(engine_env.runs, task.id, Role.IMPLEMENTER).session_id == "deferred-session"
+        ),
+        timeout=_WAIT_TIMEOUT,
+    )
     await manager.shutdown()
     await engine_env.pane(task.panes[Role.IMPLEMENTER]).kill()
 

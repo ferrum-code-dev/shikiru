@@ -214,6 +214,10 @@ class PaneHandle(Protocol):
         """Return whether the pane's process is still running."""
         ...
 
+    async def send_keys(self, *keys: str) -> None:
+        """Send `keys` to the pane, e.g. to answer the agent's own startup dialog."""
+        ...
+
 
 class AgentSession(Protocol):
     """A live interactive agent session. `signals()` must be consumed by exactly one reader."""
@@ -256,10 +260,9 @@ class InteractiveAgent(Protocol):
 
     name: str
     keys: SessionKeys
-    session_start_requires_prompt: bool
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
-        """Start a new session for `spec` in `pane`."""
+        """Start a session for `spec` in `pane` and return once the agent accepts input."""
         ...
 
     async def attach(

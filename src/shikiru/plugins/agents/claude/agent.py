@@ -9,13 +9,12 @@ import uuid
 from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
 from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, shikiru_command
 from shikiru.agents.sdk.prices import PriceTable
-from shikiru.agents.sdk.probe import PROBE_ENV_VALUE, PROBE_ENV_VAR
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.claude.headless import ClaudeHeadless
@@ -28,8 +27,6 @@ from shikiru.plugins.agents.claude.options import (
     EFFORT_FLAG,
     HOOK_SUBCOMMAND,
     MODEL_FLAG,
-    PERMISSION_MODE_BYPASS,
-    PERMISSION_MODE_FLAG,
     RESUME_FLAG,
     SESSION_ID_FLAG,
     SETTINGS_FLAG,
@@ -71,9 +68,9 @@ _HOOK_COMMAND_FIELD = "command"
 _HOOK_TYPE_COMMAND = "command"
 _AUTH_STATUS_LOGGED_IN_FIELD = "loggedIn"
 _INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
-PROBE_PREPARE_TIMEOUT_SECONDS = 45.0
-PROBE_PREPARE_POLL_SECONDS = 0.1
-PROBE_PROMPT_STABILITY_COUNT = 10
+STARTUP_TIMEOUT_SECONDS = 45.0
+STARTUP_POLL_SECONDS = 0.1
+STARTUP_STABILITY_COUNT = 10
 TRUST_PROMPT_MARKERS = (
     "Yes, I trust this folder",
     "Claude Code'll be able to read, edit, and execute",
@@ -81,23 +78,13 @@ TRUST_PROMPT_MARKERS = (
 TRUST_CONFIRM_MARKER = "Enter to confirm"
 BYPASS_PERMISSION_MARKER = "WARNING: Claude Code running in Bypass Permissions mode"
 BYPASS_CONFIRM_MARKER = "Yes, I accept"
-PROBE_STARTUP_TIMEOUT_MESSAGE = "Claude trust prompt or session startup did not complete"
-
-
-@runtime_checkable
-class _StartupPane(Protocol):
-    async def capture_visible(self) -> str: ...
-
-    async def is_alive(self) -> bool: ...
-
-    async def send_keys(self, *keys: str) -> None: ...
+ACCEPT_DIALOG_KEYS = ("Down", "Enter")
 
 
 class ClaudeAgent:
     """A Claude Code plugin that normalizes hooks, transcripts and quota."""
 
     name = "claude"
-    session_start_requires_prompt = False
     keys = SessionKeys(
         interrupt=("Escape",),
         exit_input="/exit",
@@ -119,7 +106,7 @@ class ClaudeAgent:
         )
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
-        """Launch a new or resumable Claude Code session in `pane`."""
+        """Launch a Claude Code session in `pane` and return once its first hook arrives."""
         session_id = spec.resume_session_id or str(uuid.uuid4())
         hook_offset = await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role)
         await pane.respawn(
@@ -127,42 +114,23 @@ class ClaudeAgent:
             env=self._pane_environment(spec.env),
             cwd=spec.cwd,
         )
-        await self._prepare_startup(spec, pane)
+        await self._await_ready(spec, pane, hook_offset)
         return self._session(spec, session_id, hook_offset)
 
-    async def prepare_probe(self, spec: LaunchSpec, pane: PaneHandle) -> bool:
-        """Accept Claude's first-use trust prompt while a doctor probe starts."""
-        await self._prepare_startup(spec, pane)
-        return False
-
-    async def _prepare_startup(self, spec: LaunchSpec, pane: PaneHandle) -> None:
-        if not isinstance(pane, _StartupPane):
-            return
-        probe_pane = pane
-        deadline = self._clock.now() + timedelta(seconds=PROBE_PREPARE_TIMEOUT_SECONDS)
-        prompt_observations = 0
-        while self._clock.now() < deadline:
-            if not await probe_pane.is_alive():
+    async def _await_ready(self, spec: LaunchSpec, pane: PaneHandle, hook_offset: int) -> None:
+        deadline = self._clock.now() + timedelta(seconds=STARTUP_TIMEOUT_SECONDS)
+        dialog_observations = 0
+        while self._clock.now() < deadline and await pane.is_alive():
+            if await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role) > hook_offset:
                 return
-            visible = await probe_pane.capture_visible()
-            trust_prompt = (
-                any(marker in visible for marker in TRUST_PROMPT_MARKERS)
-                and TRUST_CONFIRM_MARKER in visible
-            )
-            bypass_prompt = BYPASS_PERMISSION_MARKER in visible and BYPASS_CONFIRM_MARKER in visible
-            if trust_prompt or bypass_prompt:
-                prompt_observations += 1
-                if prompt_observations >= PROBE_PROMPT_STABILITY_COUNT:
-                    await probe_pane.send_keys("Down", "Enter")
-                    prompt_observations = 0
-                    await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
-                    continue
+            if _is_startup_dialog(await pane.capture_visible()):
+                dialog_observations += 1
+                if dialog_observations >= STARTUP_STABILITY_COUNT:
+                    await pane.send_keys(*ACCEPT_DIALOG_KEYS)
+                    dialog_observations = 0
             else:
-                prompt_observations = 0
-            if await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role) > 0:
-                return
-            await self._clock.sleep(PROBE_PREPARE_POLL_SECONDS)
-        raise TimeoutError(PROBE_STARTUP_TIMEOUT_MESSAGE)
+                dialog_observations = 0
+            await self._clock.sleep(STARTUP_POLL_SECONDS)
 
     async def attach(
         self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, object]
@@ -231,11 +199,7 @@ class ClaudeAgent:
         argv.extend([SETTINGS_FLAG, self._settings_json()])
         for directory in (spec.run_dir, *spec.add_dirs):
             argv.extend([ADD_DIR_FLAG, str(directory)])
-        argv.extend(
-            [PERMISSION_MODE_FLAG, PERMISSION_MODE_BYPASS]
-            if _is_probe(spec)
-            else self._options.args
-        )
+        argv.extend(self._options.args)
         return tuple(argv)
 
     def _settings_json(self) -> str:
@@ -339,5 +303,8 @@ def create(context: AgentContext) -> ClaudeAgent:
     return ClaudeAgent(context.runner, context.clock, options)
 
 
-def _is_probe(spec: LaunchSpec) -> bool:
-    return spec.env.get(PROBE_ENV_VAR) == PROBE_ENV_VALUE
+def _is_startup_dialog(visible: str) -> bool:
+    trust = any(marker in visible for marker in TRUST_PROMPT_MARKERS)
+    if trust and TRUST_CONFIRM_MARKER in visible:
+        return True
+    return BYPASS_PERMISSION_MARKER in visible and BYPASS_CONFIRM_MARKER in visible

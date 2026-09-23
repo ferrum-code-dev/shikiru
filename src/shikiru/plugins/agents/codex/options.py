@@ -18,7 +18,10 @@ HOOK_SUBCOMMAND = "hook"
 MODEL_FLAG = "-m"
 CONFIG_FLAG = "-c"
 REASONING_EFFORT_CONFIG = "model_reasoning_effort"
-CHECK_FOR_UPDATE_CONFIG = "check_for_update_on_startup=false"
+UNATTENDED_CONFIGS = (
+    "check_for_update_on_startup=false",
+    "notice.hide_rate_limit_model_nudge=true",
+)
 BYPASS_HOOK_TRUST_FLAG = "--dangerously-bypass-hook-trust"
 CD_FLAG = "-C"
 ADD_DIR_FLAG = "--add-dir"

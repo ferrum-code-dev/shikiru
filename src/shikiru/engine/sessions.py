@@ -23,7 +23,6 @@ from shikiru.agents.contracts import (
     TASK_ENV_VAR,
     LaunchSpec,
     PromptSubmitted,
-    SessionStarted,
 )
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.recovery import PaneDied, Stalled
@@ -59,10 +58,6 @@ def _run_matches_rung(run: Run, rung: Rung) -> bool:
     return run.agent == rung.agent and run.model == rung.model and run.effort == rung.effort
 
 
-class SessionLaunchFailedError(ShikiruError):
-    """A launch never reached `SessionStarted` because its pane died."""
-
-
 @dataclass
 class _LiveSession:
     pane_id: str
@@ -75,7 +70,6 @@ class _LiveSession:
     injected_lines: InjectedLines
     monitor_task: asyncio.Task[None]
     decorate_task: asyncio.Task[None]
-    pending_signal: MonitorSignal | None = None
 
 
 class SessionManager:
@@ -127,7 +121,6 @@ class SessionManager:
 
         if tracked is not None:
             if pane_alive and tracked.rung == rung:
-                self._sync_started(task, tracked)
                 return tracked.session
             if pane_alive and tracked.rung.agent == rung.agent:
                 resume_session_id = tracked.session_id
@@ -338,7 +331,7 @@ class SessionManager:
             poll_seconds=self._settings.orchestration.poll_seconds,
             expects_started=expects_started,
             on_session_started=lambda started_id: self._record_session_started(
-                agent, task, run_id, started_id
+                agent, task, role, run_id, started_id
             ),
             pending_lines=injected_lines,
             events=self._events,
@@ -359,20 +352,6 @@ class SessionManager:
             await self._cancel_tasks(monitor_task)
             self._runs.exit(run_id)
             raise
-        startup_signal: MonitorSignal | None = None
-        if expects_started and not agent.session_start_requires_prompt:
-            start_queue = monitor.subscribe()
-            try:
-                startup = await self._await_started(start_queue)
-            except BaseException:
-                monitor.unsubscribe(start_queue)
-                await self._cancel_tasks(monitor_task, decorate_task)
-                self._runs.exit(run_id)
-                raise
-            monitor.unsubscribe(start_queue)
-            startup_signal = startup if not isinstance(startup, SessionStarted) else None
-            if isinstance(startup, SessionStarted):
-                session_id = startup.session_id
         live = _LiveSession(
             pane_id=task.panes[role],
             rung=rung,
@@ -384,16 +363,8 @@ class SessionManager:
             injected_lines=injected_lines,
             monitor_task=monitor_task,
             decorate_task=decorate_task,
-            pending_signal=startup_signal,
         )
         self._live[(task.id, role)] = live
-        try:
-            self._sync_started(task, live)
-        except BaseException:
-            self._live.pop((task.id, role), None)
-            await self._cancel_tasks(monitor_task, decorate_task)
-            self._runs.exit(run_id)
-            raise
         return session
 
     def launched_fresh(self, task_id: str, role: Role) -> bool:
@@ -409,10 +380,8 @@ class SessionManager:
         """Subscribe to `task_id`'s `role` session's fan-out (the only way to read its signals)."""
         live = self._live[(task_id, role)]
         queue = live.monitor.subscribe()
-        if live.pending_signal is not None:
-            if live.monitor.launch_pending:
-                queue.put_nowait(live.pending_signal)
-            live.pending_signal = None
+        if live.monitor_task.done():
+            queue.put_nowait(PaneDied())
         return queue
 
     def unsubscribe(self, task_id: str, role: Role, queue: asyncio.Queue[MonitorSignal]) -> None:
@@ -446,20 +415,6 @@ class SessionManager:
         for key in list(self._live):
             await self._forget(*key)
 
-    @staticmethod
-    async def _await_started(
-        queue: asyncio.Queue[MonitorSignal],
-    ) -> SessionStarted | Stalled:
-        while True:
-            signal = await queue.get()
-            if isinstance(signal, SessionStarted):
-                return signal
-            if isinstance(signal, Stalled):
-                return signal
-            if isinstance(signal, PaneDied):
-                message = "session launch did not start: pane died"
-                raise SessionLaunchFailedError(message)
-
     async def _exit_session(self, pane: TmuxPane, agent_name: str) -> None:
         with suppress(CommandFailed):
             await pane.paste_line(self._agent_pool.get(agent_name).keys.exit_input)
@@ -474,18 +429,17 @@ class SessionManager:
             with suppress(CommandFailed):
                 await pane.kill()
 
-    def _sync_started(self, task: Task, live: _LiveSession) -> None:
-        session_id = live.monitor.started_session_id
-        if live.session_id is not None or session_id is None:
-            return
-        live.session_id = session_id
-        agent = self._agent_pool.get(live.rung.agent)
-        resume_command = agent.resume_command(session_id, task_root(self._project_root, task.id))
-        self._runs.set_session(live.run_id, session_id, resume_command)
-
     def _record_session_started(
-        self, agent: InteractiveAgent, task: Task, run_id: int, session_id: str | None
+        self,
+        agent: InteractiveAgent,
+        task: Task,
+        role: Role,
+        run_id: int,
+        session_id: str | None,
     ) -> None:
+        live = self._live.get((task.id, role))
+        if live is not None:
+            live.session_id = session_id
         resume_command = (
             agent.resume_command(session_id, task_root(self._project_root, task.id))
             if session_id is not None

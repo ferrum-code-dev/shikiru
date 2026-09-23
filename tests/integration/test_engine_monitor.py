@@ -85,6 +85,9 @@ class _AlwaysAlivePane:
     async def is_alive(self) -> bool:
         return True
 
+    async def send_keys(self, *keys: str) -> None:
+        del keys
+
 
 class _MissingPane(_AlwaysAlivePane):
     """A `PaneHandle` whose liveness command reports a missing pane."""

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import Activity
 from shikiru.domain.recovery import PaneDied, Stalled
 from shikiru.engine.monitor import InterventionCleared, InterventionSet
+from shikiru.errors import CommandFailed
 from shikiru.ui.glyphs import GLYPH_OPERATOR, GLYPH_STALLED, ROLE_GLYPHS
 from shikiru.ui.tokens import HOLD_COLOR, OPERATOR_COLOR, ROLE_COLORS
 
@@ -71,17 +72,20 @@ async def decorate_pane(
 ) -> None:
     """Keep pane `pane_target`'s `@shk_color`/`@shk_glyph` in sync with `subscription` (06 §5.3).
 
-    Stops decorating once the pane has died: nothing further is worth drawing on it until
-    `SessionManager` recreates it.
+    Stops decorating once the pane has died or disappeared: nothing further is worth drawing
+    on it until `SessionManager` recreates it.
     """
     current = _role_decoration(role)
-    await decorator.set_pane_state(pane_target, color=current.color, glyph=current.glyph)
-    while True:
-        signal = await subscription.get()
-        if isinstance(signal, PaneDied):
-            return
-        next_decoration = _next_decoration(signal, current, role)
-        if next_decoration is None:
-            continue
-        current = next_decoration
+    try:
         await decorator.set_pane_state(pane_target, color=current.color, glyph=current.glyph)
+        while True:
+            signal = await subscription.get()
+            if isinstance(signal, PaneDied):
+                return
+            next_decoration = _next_decoration(signal, current, role)
+            if next_decoration is None:
+                continue
+            current = next_decoration
+            await decorator.set_pane_state(pane_target, color=current.color, glyph=current.glyph)
+    except CommandFailed:
+        return

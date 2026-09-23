@@ -120,7 +120,7 @@ The Leader accepts only when no issues remain. Non-blocking residual risks go in
 | No session yet, or a different agent | `agent.launch(spec)`. If the task already has reports, the first turn is `handoff` (request, latest reports, facts) |
 
 - **Launch environment**: `SHIKIRU_PROJECT`, `SHIKIRU_TASK`, `SHIKIRU_ROLE`, `SHIKIRU_RUN_DIR`, `SHIKIRU_SLOT`.
-- **After launch**: wait for `SessionStarted` (`timeouts.launch`; on timeout the turn result is `Stalled`), then store `session_id` and `resume_command`.
+- **After launch**: the first turn starts right away. When `SessionStarted` arrives, the monitor stores `session_id` and `resume_command`; without it within `timeouts.launch` the turn result is `Stalled`. A subscriber to a session whose monitor already ended receives `PaneDied`.
 - **Task end**: exit sessions with `keys.exit_input`, and kill the pane after 10 s.
 
 ### 4.2 SessionMonitor

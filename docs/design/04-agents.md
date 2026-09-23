@@ -50,6 +50,7 @@ class PaneHandle(Protocol):
     async def respawn(self, argv: Sequence[str], env: Mapping[str, str | None], cwd: Path) -> None: ...
     async def capture_visible(self) -> str: ...
     async def is_alive(self) -> bool: ...
+    async def send_keys(self, *keys: str) -> None: ...
 
 class AgentSession(Protocol):
     """A live interactive agent session. `signals()` must be consumed by exactly one reader."""
@@ -67,8 +68,7 @@ class InteractiveAgent(Protocol):
     """An agent CLI plugin."""
     name: str
     keys: SessionKeys
-    session_start_requires_prompt: bool
-    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession: ...
+    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession: ...   # returns once the agent accepts input
     async def attach(self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, Any]) -> AgentSession: ...
     async def quota(self) -> list[QuotaWindow]: ...      # [] when unknown; plugin owns caching and probing
     async def doctor(self) -> list[CheckResult]: ...     # binary, version, login
@@ -86,7 +86,7 @@ def shikiru_command(*arguments: str) -> str: ...   # `<python> -P -m shikiru <ar
 Prompts and plugin hooks call Shikiru back only through `shikiru_command`. Agent shells may be login shells with their own `PATH`, so nothing agent-facing relies on `shikiru` being on it.
 
 **Obligations**, checked by the contract kit:
-1. `SessionStarted` exactly once per launch or attach.
+1. `SessionStarted` exactly once per launch or attach, no later than the first accepted prompt. `launch` returns once the agent accepts input, having answered the agent's own first-use dialogs.
 2. `PromptSubmitted` for every prompt the agent accepts, whether it was injected or typed.
 3. `TurnEnded` when a turn finishes, and `TurnFailed` instead when it fails.
 4. `Activity` at least every 60 s while the agent works; `tool_running` is true while a tool runs.
@@ -122,7 +122,7 @@ Small, tested building blocks for plugins:
 5. `quota()` returns windows or an empty list, without error.
 6. `headless().ask()` returns schema-valid JSON (when provided).
 
-`shikiru doctor --probe` runs live checks 1–2 for each configured agent.
+`shikiru doctor --probe` runs live checks 1–2 for each configured agent through the same `launch` the engine uses.
 
 ## 4. Claude Code plugin (`plugins/agents/claude`) — verified with 2.1.273
 
@@ -143,6 +143,7 @@ claude (--session-id <uuid> | --resume <id>) --model <m> --effort <e>
 
 - Hooks run `shikiru_command("hook")` for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `Notification`, `PostCompact`, `SessionEnd`.
 - The hooks merge with user and project hooks. Nothing else in the user's settings is touched.
+- `launch` returns on the first new hook line, answering the workspace-trust and bypass-permissions dialogs if they show.
 
 **Signals**, from hooks (payloads verified):
 
@@ -198,7 +199,7 @@ codex [resume <id>] -m <m> -c model_reasoning_effort="<e>" --dangerously-bypass-
       -c 'projects."<cwd>".trust_level="trusted"' -C <cwd> --add-dir <run_dir> --add-dir <git common dirs> <args>
 ```
 
-Codex emits `SessionStart` only after receiving its first prompt, so its plugin sets `session_start_requires_prompt` and the engine submits that prompt while still monitoring startup.
+Codex emits `SessionStart` only after its first prompt, so `launch` waits for its input prompt on screen and accepts the first-use trust dialog (Codex reads trust only from `config.toml`, not from `-c`). Every launch also passes `-c check_for_update_on_startup=false -c notice.hide_rate_limit_model_nudge=true`, so no unattended pane waits on an update or model-switch dialog.
 
 **Signals** (hook payloads verified):
 

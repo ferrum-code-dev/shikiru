@@ -5,16 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
 from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, shikiru_command
 from shikiru.agents.sdk.prices import PriceTable
-from shikiru.agents.sdk.probe import PROBE_ENV_VALUE, PROBE_ENV_VAR
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.codex.headless import CodexHeadless
@@ -23,7 +21,6 @@ from shikiru.plugins.agents.codex.options import (
     AUTH_API_KEY,
     BYPASS_HOOK_TRUST_FLAG,
     CD_FLAG,
-    CHECK_FOR_UPDATE_CONFIG,
     CODEX_API_KEY_ENV,
     CODEX_COMMAND,
     CODEX_HOME_ENV_VAR,
@@ -37,6 +34,7 @@ from shikiru.plugins.agents.codex.options import (
     OPENAI_API_KEY_ENV,
     REASONING_EFFORT_CONFIG,
     RESUME_SUBCOMMAND,
+    UNATTENDED_CONFIGS,
     VERSION_ARGV,
     CodexOptions,
 )
@@ -71,7 +69,6 @@ _HOOK_TYPE_FIELD = "type"
 _HOOK_COMMAND_FIELD = "command"
 _HOOK_TYPE_COMMAND = "command"
 _TRUST_LEVEL = "trusted"
-PROBE_CODEX_HOME_NAME = "codex-home"
 STARTUP_TIMEOUT_SECONDS = 45.0
 STARTUP_POLL_SECONDS = 0.1
 STARTUP_STABILITY_COUNT = 10
@@ -79,27 +76,14 @@ READY_MARKER = "Ask Codex to do anything"
 TRUST_PROMPT_MARKERS = (
     "Do you trust the contents of this directory?",
     "Quick safety check: Is this a project you created or one you trust?",
-    "Trusting will apply to the repository root:",
 )
-STARTUP_TIMEOUT_MESSAGE = "Codex trust prompt or session startup did not complete"
-PRIVATE_DIRECTORY_MODE = 0o700
-PRIVATE_FILE_MODE = 0o600
-
-
-@runtime_checkable
-class _StartupPane(Protocol):
-    async def capture_visible(self) -> str: ...
-
-    async def is_alive(self) -> bool: ...
-
-    async def send_keys(self, *keys: str) -> None: ...
+ACCEPT_TRUST_KEYS = ("1", "Enter")
 
 
 class CodexAgent:
     """A Codex plugin that normalizes hooks, rollouts, quotas and compaction."""
 
     name = "codex"
-    session_start_requires_prompt = True
     keys = SessionKeys(
         interrupt=("Escape",),
         exit_input="/quit",
@@ -117,53 +101,34 @@ class CodexAgent:
         self._quota_probe = CodexQuotaProbe(self._codex_home, clock, self._reset_time)
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
-        """Launch a new or resumable Codex session in `pane`."""
+        """Launch a Codex session in `pane` and return once its input prompt is ready."""
         hook_offset = await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role)
-        probe_home = self._probe_codex_home(spec) if _is_probe(spec) else None
-        argv = await self._argv(spec)
         await pane.respawn(
-            argv,
-            env=self._pane_environment(spec.env, codex_home=probe_home),
+            await self._argv(spec),
+            env=self._pane_environment(spec.env),
             cwd=spec.cwd,
         )
-        if not _is_probe(spec):
-            await self._prepare_startup(pane)
-        return self._session(spec, hook_offset, codex_home_path=probe_home)
+        await self._await_ready(pane)
+        return self._session(spec, hook_offset)
 
-    async def _prepare_startup(self, pane: PaneHandle) -> None:
-        if not isinstance(pane, _StartupPane):
-            return
+    async def _await_ready(self, pane: PaneHandle) -> None:
         deadline = self._clock.now() + timedelta(seconds=STARTUP_TIMEOUT_SECONDS)
-        prompt_observations = 0
+        trust_observations = 0
         ready_observations = 0
-        while self._clock.now() < deadline:
-            if not await pane.is_alive():
-                return
+        while self._clock.now() < deadline and await pane.is_alive():
             visible = await pane.capture_visible()
-            trust_prompt = any(marker in visible for marker in TRUST_PROMPT_MARKERS)
-            if trust_prompt:
-                prompt_observations += 1
-                if prompt_observations >= STARTUP_STABILITY_COUNT:
-                    await pane.send_keys("1", "Enter")
-                    prompt_observations = 0
-                    await self._clock.sleep(STARTUP_POLL_SECONDS)
-                    continue
-            else:
-                prompt_observations = 0
-            if READY_MARKER in visible:
-                ready_observations += 1
-                if ready_observations >= STARTUP_STABILITY_COUNT:
-                    return
-            else:
-                ready_observations = 0
+            trust_observations = (
+                trust_observations + 1
+                if any(marker in visible for marker in TRUST_PROMPT_MARKERS)
+                else 0
+            )
+            ready_observations = ready_observations + 1 if READY_MARKER in visible else 0
+            if ready_observations >= STARTUP_STABILITY_COUNT:
+                return
+            if trust_observations >= STARTUP_STABILITY_COUNT:
+                await pane.send_keys(*ACCEPT_TRUST_KEYS)
+                trust_observations = 0
             await self._clock.sleep(STARTUP_POLL_SECONDS)
-        raise TimeoutError(STARTUP_TIMEOUT_MESSAGE)
-
-    async def prepare_probe(self, spec: LaunchSpec, pane: PaneHandle) -> bool:
-        """Accept Codex's first-use trust prompt while a doctor probe starts."""
-        del spec
-        await self._prepare_startup(pane)
-        return True
 
     async def attach(
         self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, object]
@@ -208,9 +173,7 @@ class CodexAgent:
         """Return Codex's schema-constrained headless client."""
         return CodexHeadless(self._runner, self._subprocess_environment())
 
-    def _session(
-        self, spec: LaunchSpec, hook_offset: int, *, codex_home_path: Path | None = None
-    ) -> CodexSession:
+    def _session(self, spec: LaunchSpec, hook_offset: int) -> CodexSession:
         return CodexSession(
             spec.run_dir,
             spec.role,
@@ -223,7 +186,7 @@ class CodexAgent:
             model=spec.rung.model,
             api_key_auth=self._options.auth == AUTH_API_KEY,
             compact_below_free_pct=self._options.compact_below_free_pct,
-            codex_home=codex_home_path or self._codex_home,
+            codex_home=self._codex_home,
         )
 
     async def _argv(self, spec: LaunchSpec) -> tuple[str, ...]:
@@ -234,8 +197,8 @@ class CodexAgent:
         if spec.rung.effort is not None:
             argv.extend([CONFIG_FLAG, f'{REASONING_EFFORT_CONFIG}="{spec.rung.effort}"'])
         argv.append(BYPASS_HOOK_TRUST_FLAG)
-        if _is_probe(spec):
-            argv.extend([CONFIG_FLAG, CHECK_FOR_UPDATE_CONFIG])
+        for config in UNATTENDED_CONFIGS:
+            argv.extend([CONFIG_FLAG, config])
         argv.extend(self._hook_config_args(shikiru_command(HOOK_SUBCOMMAND)))
         argv.extend([CONFIG_FLAG, self._trust_config(spec.cwd), CD_FLAG, str(spec.cwd)])
         directories = [spec.run_dir, *spec.add_dirs, *(await self._git_common_dirs(spec))]
@@ -271,11 +234,9 @@ class CodexAgent:
                 common_dirs.append(Path(value))
         return common_dirs
 
-    def _pane_environment(
-        self, base: Mapping[str, str], *, codex_home: Path | None = None
-    ) -> dict[str, str | None]:
+    def _pane_environment(self, base: Mapping[str, str]) -> dict[str, str | None]:
         environment: dict[str, str | None] = dict(base)
-        environment[CODEX_HOME_ENV_VAR] = str(codex_home or self._codex_home)
+        environment[CODEX_HOME_ENV_VAR] = str(self._codex_home)
         if self._options.auth == AUTH_API_KEY:
             environment[CODEX_API_KEY_ENV] = self._api_key()
             environment[OPENAI_API_KEY_ENV] = None
@@ -283,25 +244,6 @@ class CodexAgent:
             environment[CODEX_API_KEY_ENV] = None
             environment[OPENAI_API_KEY_ENV] = None
         return environment
-
-    def _probe_codex_home(self, spec: LaunchSpec) -> Path:
-        probe_home = spec.run_dir / PROBE_CODEX_HOME_NAME
-        probe_home.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
-        source_auth = self._codex_home / "auth.json"
-        if not source_auth.is_file():
-            message = f"Codex probe auth file is missing at {source_auth}"
-            raise ConfigError(message)
-        target_auth = probe_home / "auth.json"
-        shutil.copyfile(source_auth, target_auth)
-        target_auth.chmod(PRIVATE_FILE_MODE)
-        project = json.dumps(str(spec.cwd), ensure_ascii=False)
-        config = probe_home / "config.toml"
-        config.write_text(
-            "check_for_update_on_startup = false\n\n"
-            f'[projects.{project}]\ntrust_level = "{_TRUST_LEVEL}"\n'
-        )
-        config.chmod(PRIVATE_FILE_MODE)
-        return probe_home
 
     def _subprocess_environment(self) -> dict[str, str]:
         environment = dict(os.environ)
@@ -386,7 +328,3 @@ def create(context: AgentContext) -> CodexAgent:
         message = f"invalid options for the Codex agent: {error}"
         raise ConfigError(message) from error
     return CodexAgent(context.runner, context.clock, options)
-
-
-def _is_probe(spec: LaunchSpec) -> bool:
-    return spec.env.get(PROBE_ENV_VAR) == PROBE_ENV_VALUE

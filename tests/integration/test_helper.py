@@ -50,7 +50,6 @@ class _NoHeadlessAgent:
     """An `InteractiveAgent` stub whose `headless()` is unsupported, for the rejection test."""
 
     name = "no-headless"
-    session_start_requires_prompt = False
     keys = SessionKeys(interrupt=(), exit_input="", safe=())
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
