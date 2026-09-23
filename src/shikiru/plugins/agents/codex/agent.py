@@ -76,6 +76,7 @@ READY_MARKER = "Ask Codex to do anything"
 TRUST_PROMPT_MARKERS = (
     "Do you trust the contents of this directory?",
     "Quick safety check: Is this a project you created or one you trust?",
+    "Trusting will apply to the repository root:",
 )
 ACCEPT_TRUST_KEYS = ("1", "Enter")
 

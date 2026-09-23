@@ -118,6 +118,7 @@ async def test_api_key_auth_sets_codex_key_for_headless_and_doctor(
     [
         "Do you trust the contents of this directory?",
         "Quick safety check: Is this a project you created or one you trust?",
+        "Trusting will apply to the repository root:",
     ],
 )
 async def test_launch_accepts_supported_trust_prompts(
