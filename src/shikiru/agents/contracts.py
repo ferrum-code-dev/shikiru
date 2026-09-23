@@ -9,6 +9,8 @@ with the contract test kit (`shikiru.agents.testing`, 04 §3).
 
 from __future__ import annotations
 
+import shlex
+import sys
 from dataclasses import dataclass
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol
@@ -33,6 +35,14 @@ ROLE_ENV_VAR = "SHIKIRU_ROLE"
 PROJECT_ENV_VAR = "SHIKIRU_PROJECT"
 TASK_ENV_VAR = "SHIKIRU_TASK"
 SLOT_ENV_VAR = "SHIKIRU_SLOT"
+SHIKIRU_MODULE = "shikiru"
+_SAFE_PATH_FLAG = "-P"
+_MODULE_FLAG = "-m"
+
+
+def shikiru_command(*arguments: str) -> str:
+    """Return a shell command running this Shikiru installation, independent of the agent's PATH."""
+    return shlex.join([sys.executable, _SAFE_PATH_FLAG, _MODULE_FLAG, SHIKIRU_MODULE, *arguments])
 
 
 def role_dir(run_dir: Path, role: str) -> Path:

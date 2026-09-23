@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
 import tempfile
 import uuid
 from pathlib import Path
@@ -22,6 +21,7 @@ from shikiru.agents.contracts import (
     TurnEnded,
     TurnFailed,
     role_dir,
+    shikiru_command,
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.probe import PROBE_ENV_VALUE, PROBE_ENV_VAR
@@ -50,15 +50,14 @@ PROBE_TIMEOUT_SECONDS = 90.0
 PROBE_TMUX_COMMAND = "tmux"
 PROBE_TMUX_SESSION_PREFIX = "shikiru-doctor-"
 PROBE_TMUX_SESSION_NAME = "probe"
-PROBE_PATH_ENV_VAR = "PATH"
 PROBE_ROLE = "implementer"
 PROBE_TURN_NAME = "01-doctor"
 PROBE_PROMPT = (
     "This is a Shikiru live contract probe. Read the current turn report.schema.json, "
     "write probe-report.json with status completed, summary probe, commits [], tests [], "
-    "and trackers_updated false, then run shikiru report --file probe-report.json. Answer "
-    "exactly SHIKIRU_PROBE_OK after the report command succeeds. Do not change files outside "
-    "the current temporary project."
+    f"and trackers_updated false, then run {shikiru_command('report', '--file')} "
+    "probe-report.json. Answer exactly SHIKIRU_PROBE_OK after the report command succeeds. "
+    "Do not change files outside the current temporary project."
 )
 PROBE_MARKER = "SHIKIRU_PROBE_OK"
 PROBE_REMAIN_ON_EXIT_OPTION = "remain-on-exit"
@@ -222,20 +221,6 @@ class AgentProbe:
             env=environment,
             check=True,
         )
-        for target_args in (("-g",), ("-t", exact_target(session_name))):
-            await self._runner.run(
-                [
-                    PROBE_TMUX_COMMAND,
-                    "-L",
-                    socket_name,
-                    "set-environment",
-                    *target_args,
-                    PROBE_PATH_ENV_VAR,
-                    environment[PROBE_PATH_ENV_VAR],
-                ],
-                timeout=PROBE_COMMAND_TIMEOUT_SECONDS,
-                check=True,
-            )
         return result.stdout.strip()
 
     async def _prepare_repository(self, repo: Path) -> None:
@@ -316,18 +301,11 @@ async def kill_tmux_server(runner: SubprocessRunner, socket_name: str) -> None:
 
 def _probe_environment(run_dir: Path) -> dict[str, str]:
     environment = dict(os.environ)
-    executable_directory = Path(sys.executable).parent
-    current_path = environment.get(PROBE_PATH_ENV_VAR, "")
-    path_parts = [str(executable_directory)]
-    if current_path:
-        path_parts.append(current_path)
-    path = os.pathsep.join(path_parts)
     environment.update(
         {
             RUN_DIR_ENV_VAR: str(run_dir),
             ROLE_ENV_VAR: PROBE_ROLE,
             PROBE_ENV_VAR: PROBE_ENV_VALUE,
-            PROBE_PATH_ENV_VAR: path,
         }
     )
     return environment

@@ -14,6 +14,7 @@ from jinja2 import (
     StrictUndefined,
 )
 
+from shikiru.agents.contracts import shikiru_command
 from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.domain.fencing import fence
 
@@ -28,8 +29,8 @@ TEMPLATE_FILENAME_SUFFIX = ".md.j2"
 
 REPORT_INSTRUCTION = (
     "Write the report JSON matching `report.schema.json` and run "
-    "`shikiru report --file <file>`. If it exits non-zero, fix it and run it again. "
-    "Then end your turn."
+    f"`{shikiru_command('report', '--file')} <file>`. If it exits non-zero, fix it and run it "
+    "again. Then end your turn."
 )
 ALREADY_DONE_SENTENCE = "If this work is already done in the workspace, verify it and report."
 

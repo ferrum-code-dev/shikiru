@@ -27,6 +27,7 @@ from shikiru.agents.contracts import (
     TurnEnded,
     TurnFailed,
     Usage,
+    shikiru_command,
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.reset_time import ResetTimeParser
@@ -253,7 +254,7 @@ class TestClaudeAgentContract(AgentContractSuite):
             "SessionEnd",
         }
         assert all(
-            value == [{"hooks": [{"type": "command", "command": "shikiru hook"}]}]
+            value == [{"hooks": [{"type": "command", "command": shikiru_command("hook")}]}]
             for value in settings["hooks"].values()
         )
 

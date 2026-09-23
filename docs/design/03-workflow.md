@@ -159,6 +159,8 @@ On every `orchestration.poll_seconds` tick, it:
 
 > Write the report JSON matching `report.schema.json` and run `shikiru report --file <file>`. If it exits non-zero, fix it and run it again. Then end your turn.
 
+The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's shell `PATH` never decides which Shikiru runs.
+
 `shikiru report` works as follows:
 - It resolves `$SHIKIRU_RUN_DIR/$SHIKIRU_ROLE/current_turn` and validates with the pydantic model named in `report.kind`, including cross-field rules.
 - It writes `report.json` atomically.

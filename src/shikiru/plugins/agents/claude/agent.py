@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys
+from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, shikiru_command
 from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.probe import PROBE_ENV_VALUE, PROBE_ENV_VAR
 from shikiru.agents.sdk.reset_time import ResetTimeParser
@@ -26,7 +26,7 @@ from shikiru.plugins.agents.claude.options import (
     AUTH_API_KEY,
     CLAUDE_COMMAND,
     EFFORT_FLAG,
-    HOOK_COMMAND,
+    HOOK_SUBCOMMAND,
     MODEL_FLAG,
     PERMISSION_MODE_BYPASS,
     PERMISSION_MODE_FLAG,
@@ -243,7 +243,7 @@ class ClaudeAgent:
             _HOOKS_LIST_FIELD: [
                 {
                     _HOOK_TYPE_FIELD: _HOOK_TYPE_COMMAND,
-                    _HOOK_COMMAND_FIELD: HOOK_COMMAND,
+                    _HOOK_COMMAND_FIELD: shikiru_command(HOOK_SUBCOMMAND),
                 }
             ]
         }

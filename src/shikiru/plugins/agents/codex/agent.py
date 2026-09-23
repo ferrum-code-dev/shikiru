@@ -5,16 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shlex
 import shutil
-import sys
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys
+from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, shikiru_command
 from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.probe import PROBE_ENV_VALUE, PROBE_ENV_VAR
 from shikiru.agents.sdk.reset_time import ResetTimeParser
@@ -32,15 +30,13 @@ from shikiru.plugins.agents.codex.options import (
     CONFIG_FLAG,
     DOCTOR_TIMEOUT_SECONDS,
     GIT_COMMON_DIR_TIMEOUT_SECONDS,
-    HOME_ENV_VAR,
     HOOK_EVENTS,
+    HOOK_SUBCOMMAND,
     LOGIN_STATUS_ARGV,
     MODEL_FLAG,
     OPENAI_API_KEY_ENV,
-    PATH_ENV_VAR,
     REASONING_EFFORT_CONFIG,
     RESUME_SUBCOMMAND,
-    SHELL_ENV_VAR,
     VERSION_ARGV,
     CodexOptions,
 )
@@ -76,9 +72,6 @@ _HOOK_COMMAND_FIELD = "command"
 _HOOK_TYPE_COMMAND = "command"
 _TRUST_LEVEL = "trusted"
 PROBE_CODEX_HOME_NAME = "codex-home"
-PROBE_HOME_NAME = "home"
-PROBE_HOOK_BIN_NAME = ".local/bin"
-PROBE_SHELL = "/bin/sh"
 STARTUP_TIMEOUT_SECONDS = 45.0
 STARTUP_POLL_SECONDS = 0.1
 STARTUP_STABILITY_COUNT = 10
@@ -243,7 +236,7 @@ class CodexAgent:
         argv.append(BYPASS_HOOK_TRUST_FLAG)
         if _is_probe(spec):
             argv.extend([CONFIG_FLAG, CHECK_FOR_UPDATE_CONFIG])
-        argv.extend(self._hook_config_args(self._hook_command()))
+        argv.extend(self._hook_config_args(shikiru_command(HOOK_SUBCOMMAND)))
         argv.extend([CONFIG_FLAG, self._trust_config(spec.cwd), CD_FLAG, str(spec.cwd)])
         directories = [spec.run_dir, *spec.add_dirs, *(await self._git_common_dirs(spec))]
         for directory in _unique_paths(directories):
@@ -254,16 +247,9 @@ class CodexAgent:
     def _hook_config_args(self, hook_command: str) -> list[str]:
         encoded = (
             f'[{{{_HOOKS_FIELD}=[{{{_HOOK_TYPE_FIELD}="{_HOOK_TYPE_COMMAND}",'
-            f'{_HOOK_COMMAND_FIELD}="{hook_command}"}}]}}]'
+            f"{_HOOK_COMMAND_FIELD}={json.dumps(hook_command)}}}]}}]"
         )
         return [item for event in HOOK_EVENTS for item in (CONFIG_FLAG, f"hooks.{event}={encoded}")]
-
-    def _hook_command(self) -> str:
-        executable = Path(sys.executable).with_name("shikiru")
-        if not executable.is_file():
-            message = f"Shikiru executable is missing at {executable}"
-            raise ConfigError(message)
-        return f"{shlex.quote(str(executable))} hook"
 
     def _trust_config(self, cwd: Path) -> str:
         project = json.dumps(str(cwd), ensure_ascii=False)
@@ -290,26 +276,6 @@ class CodexAgent:
     ) -> dict[str, str | None]:
         environment: dict[str, str | None] = dict(base)
         environment[CODEX_HOME_ENV_VAR] = str(codex_home or self._codex_home)
-        if codex_home is not None:
-            probe_home = codex_home.parent / PROBE_HOME_NAME
-            probe_home.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
-            environment[HOME_ENV_VAR] = str(probe_home)
-            environment[SHELL_ENV_VAR] = PROBE_SHELL
-            hook_bin = probe_home / PROBE_HOOK_BIN_NAME
-            hook_bin.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
-            hook_executable = hook_bin / "shikiru"
-            executable = Path(sys.executable).with_name("shikiru")
-            if not executable.is_file():
-                message = f"Shikiru executable is missing at {executable}"
-                raise ConfigError(message)
-            hook_executable.symlink_to(executable, target_is_directory=False)
-            codex_executable = shutil.which(CODEX_COMMAND)
-            if codex_executable is None:
-                message = f"Codex executable is missing: {CODEX_COMMAND}"
-                raise ConfigError(message)
-            environment[PATH_ENV_VAR] = os.pathsep.join(
-                (str(hook_bin), str(Path(codex_executable).parent), os.defpath)
-            )
         if self._options.auth == AUTH_API_KEY:
             environment[CODEX_API_KEY_ENV] = self._api_key()
             environment[OPENAI_API_KEY_ENV] = None

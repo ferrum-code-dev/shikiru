@@ -79,7 +79,11 @@ class InteractiveAgent(Protocol):
 class AgentContext:    options: Mapping[str, Any]; runner: SubprocessRunner; clock: Clock
 
 type AgentFactory = Callable[[AgentContext], InteractiveAgent]   # entry-point target; validates options, raises ConfigError
+
+def shikiru_command(*arguments: str) -> str: ...   # `<python> -P -m shikiru <arguments>` for this installation
 ```
+
+Prompts and plugin hooks call Shikiru back only through `shikiru_command`. Agent shells may be login shells with their own `PATH`, so nothing agent-facing relies on `shikiru` being on it.
 
 **Obligations**, checked by the contract kit:
 1. `SessionStarted` exactly once per launch or attach.
@@ -137,7 +141,7 @@ claude (--session-id <uuid> | --resume <id>) --model <m> --effort <e>
        --settings '<json: hooks only>' --add-dir <run_dir> <args>
 ```
 
-- Hooks run `shikiru hook` for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `Notification`, `PostCompact`, `SessionEnd`.
+- Hooks run `shikiru_command("hook")` for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `Notification`, `PostCompact`, `SessionEnd`.
 - The hooks merge with user and project hooks. Nothing else in the user's settings is touched.
 
 **Signals**, from hooks (payloads verified):
@@ -190,7 +194,7 @@ claude (--session-id <uuid> | --resume <id>) --model <m> --effort <e>
 
 ```
 codex [resume <id>] -m <m> -c model_reasoning_effort="<e>" --dangerously-bypass-hook-trust
-      -c 'hooks.<Event>=[{hooks=[{type="command",command="shikiru hook"}]}]'   # per event
+      -c 'hooks.<Event>=[{hooks=[{type="command",command="<shikiru_command hook>"}]}]'   # per event
       -c 'projects."<cwd>".trust_level="trusted"' -C <cwd> --add-dir <run_dir> --add-dir <git common dirs> <args>
 ```
 

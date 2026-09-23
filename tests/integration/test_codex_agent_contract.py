@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shlex
 import shutil
 import sys
 import tempfile
@@ -31,6 +30,7 @@ from shikiru.agents.contracts import (
     TurnEnded,
     TurnFailed,
     Usage,
+    shikiru_command,
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.testing import (
@@ -464,8 +464,8 @@ class TestCodexAgentContract(AgentContractSuite):
             if value == "-c" and call.argv[index + 1].startswith("hooks.")
         ]
         assert len(hook_values) == 8
-        hook_command = f"{shlex.quote(str(Path(sys.executable).with_name('shikiru')))} hook"
-        hook_suffix = f'[{{hooks=[{{type="command",command="{hook_command}"}}]}}]'
+        hook_command = json.dumps(shikiru_command("hook"))
+        hook_suffix = f'[{{hooks=[{{type="command",command={hook_command}}}]}}]'
         assert all(value.endswith(hook_suffix) for value in hook_values)
 
         resume_spec = self.build_spec(tmp_path / "resume", resume_session_id="the-old-session-id")
