@@ -20,6 +20,7 @@ REPORT_SCHEMA_FILENAME = "report.schema.json"
 REPORT_FILENAME = "report.json"
 HELPER_REPORT_FILENAME = "helper.json"
 
+SIBLING_REFERENCE_PREFIX = "#"
 DEPENDS_ON_PATTERN = r"^(T-\d+|#\d+)$"
 
 _TaskReference = Annotated[str, StringConstraints(pattern=DEPENDS_ON_PATTERN)]
@@ -35,6 +36,20 @@ def _require_iff(*, condition: bool, present: bool, field: str, rule: str) -> No
         raise ValueError(message)
 
 
+def _require_sibling_references_in_range(new_tasks: list[NewTask], field: str) -> None:
+    """Reject a `#k` reference that doesn't name one of the report's own `new_tasks`."""
+    for new_task in new_tasks:
+        for reference in new_task.depends_on:
+            if reference.startswith(SIBLING_REFERENCE_PREFIX) and not (
+                1 <= int(reference[1:]) <= len(new_tasks)
+            ):
+                message = (
+                    f"{field}: sibling reference {reference!r} must be #1..#{len(new_tasks)} "
+                    "(1-based)"
+                )
+                raise ValueError(message)
+
+
 class NewTask(DomainModel):
     """A task to enqueue from a split, plan or verdict report (03 §2, §6; D4)."""
 
@@ -43,7 +58,10 @@ class NewTask(DomainModel):
     priority: int = 0
     depends_on: list[_TaskReference] = Field(
         default_factory=list,
-        description="Each item is an existing 'T-n' or a sibling '#k' (k-th task of this list).",
+        description=(
+            "Each item is an existing 'T-n' or a sibling '#k': the k-th task of this list, "
+            "counting from 1."
+        ),
     )
 
 
@@ -115,6 +133,7 @@ class TriageReport(DomainModel):
             field="subtasks",
             rule="mode is 'split'",
         )
+        _require_sibling_references_in_range(self.subtasks, "subtasks")
         return self
 
 
@@ -146,6 +165,11 @@ class PlanReport(DomainModel):
     commits: list[Commit]
     new_tasks: list[NewTask] = Field(default_factory=list)
     scope_changes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _sibling_references_in_range(self) -> Self:
+        _require_sibling_references_in_range(self.new_tasks, "new_tasks")
+        return self
 
 
 class ConsultAnswer(DomainModel):
@@ -217,6 +241,7 @@ class Verdict(DomainModel):
             field="new_tasks",
             rule="decision is 'supersede'",
         )
+        _require_sibling_references_in_range(self.new_tasks, "new_tasks")
         return self
 
     @model_validator(mode="after")

@@ -248,9 +248,8 @@ async def test_submitted_split_mode_rejects_a_non_split_triage_report(
     assert [child for child in engine_env.tasks.list_all() if child.parent_id == task.id] == []
 
 
-@pytest.mark.parametrize("reference", ["#2", "T-999"])
-async def test_invalid_scope_change_escalates_without_creating_tasks(
-    engine_env: EngineEnv, tmux_server: TmuxServer, reference: str
+async def test_scope_change_on_an_unknown_task_escalates_without_creating_tasks(
+    engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
     settings = flow_settings()
     await init_project_repo(engine_env.project_root)
@@ -265,7 +264,7 @@ async def test_invalid_scope_change_escalates_without_creating_tasks(
                     {
                         "title": "invalid child",
                         "request": "invalid child",
-                        "depends_on": [reference],
+                        "depends_on": ["T-999"],
                     }
                 ],
             }

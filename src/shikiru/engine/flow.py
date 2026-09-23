@@ -222,20 +222,6 @@ def _new_tasks_for(outcome: Outcome) -> list[NewTask]:
     return []
 
 
-def _validate_report_local_references(new_tasks: Sequence[NewTask]) -> None:
-    for new_task in new_tasks:
-        for reference in new_task.depends_on:
-            if not reference.startswith("#"):
-                continue
-            index = int(reference[1:])
-            if index < 1 or index > len(new_tasks):
-                message = (
-                    f"scope change report-local reference {reference!r} is outside the "
-                    "report's new_tasks list"
-                )
-                raise UsageError(message)
-
-
 def _split_mode_mismatch(task: Task, step: Step, outcome: Outcome) -> bool:
     return (
         step is Step.TRIAGE
@@ -1250,7 +1236,6 @@ class TaskFlow:
 
     def _apply_new_tasks(self, task: Task, transition: Transition, outcome: Outcome) -> None:
         new_tasks = _new_tasks_for(outcome)
-        _validate_report_local_references(new_tasks)
         origin = TaskOrigin.SPLIT if isinstance(outcome, TriageReport) else TaskOrigin.LEADER
         selected_mode = outcome.mode if isinstance(outcome, TriageReport) else None
         children = self._tasks.apply_scope_change(

@@ -11,6 +11,7 @@ from shikiru.domain.reports import (
     ImplementationReport,
     NewTask,
     Option,
+    PlanReport,
     ReportKind,
     TriageReport,
     Verdict,
@@ -98,6 +99,17 @@ _INVALID_CASES: list[tuple[type[BaseModel], dict[str, Any], str]] = [
     (TriageReport, _triage(title="x" * 61), "title"),
     (TriageReport, _triage(mode="split", subtasks=[]), "subtasks"),
     (TriageReport, _triage(mode="implement", subtasks=[_new_task()]), "subtasks"),
+    (TriageReport, _triage(mode="split", subtasks=[_new_task(depends_on=["#0"])]), "subtasks"),
+    (
+        PlanReport,
+        {"summary": "P", "commits": [], "new_tasks": [_new_task(depends_on=["#2"])]},
+        "new_tasks",
+    ),
+    (
+        Verdict,
+        _verdict(decision="supersede", new_tasks=[_new_task(depends_on=["#3"])]),
+        "new_tasks",
+    ),
     (ImplementationReport, _implementation(status="needs_decision", question=""), "question"),
     (ConsultAnswer, {"decision": "answer", "answer": ""}, "answer"),
     (
