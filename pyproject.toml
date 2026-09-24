@@ -204,6 +204,7 @@ filterwarnings = ["error"]
 testpaths = ["tests"]
 norecursedirs = ["fixtures"]
 timeout = 60
+tmp_path_retention_policy = "failed"
 
 [tool.coverage.run]
 branch = true
