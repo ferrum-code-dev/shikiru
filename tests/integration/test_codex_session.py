@@ -8,16 +8,12 @@ from shutil import copyfile
 
 from shikiru.agents.contracts import PromptSubmitted, SessionStarted
 from shikiru.agents.sdk.hooks import HookRecorder
-from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.plugins.agents.codex.session import CodexSession
 from tests.support.clock import FakeClock
 from tests.support.waiting import yield_control
 
 _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "agents" / "codex"
-_PRICES_PATH = (
-    Path(__file__).parents[2] / "src" / "shikiru" / "plugins" / "agents" / "codex" / "prices.toml"
-)
 _ROLE = "implementer"
 _SESSION_ID = "cbb5d575-41f3-4e6b-a24f-483c51c0a097"
 _START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -33,9 +29,6 @@ def _session(run_dir: Path, *, compact_below_free_pct: int) -> CodexSession:
         run_dir / _ROLE / "rollout_full_turn.jsonl",
         clock=clock,
         reset_time=ResetTimeParser(clock),
-        prices=PriceTable.from_toml(_PRICES_PATH),
-        model="gpt-5.6-sol",
-        api_key_auth=False,
         compact_below_free_pct=compact_below_free_pct,
         codex_home=run_dir / "codex",
     )
@@ -71,9 +64,6 @@ async def test_session_discovers_rollout_when_start_hook_has_no_path(tmp_path: P
         None,
         clock=clock,
         reset_time=ResetTimeParser(clock),
-        prices=PriceTable.from_toml(_PRICES_PATH),
-        model="gpt-5.6-sol",
-        api_key_auth=False,
         compact_below_free_pct=60,
         codex_home=codex_home,
     )
@@ -97,9 +87,6 @@ async def test_session_ignores_foreign_and_malformed_hook_entries(tmp_path: Path
         None,
         clock=clock,
         reset_time=ResetTimeParser(clock),
-        prices=PriceTable.from_toml(_PRICES_PATH),
-        model="gpt-5.6-sol",
-        api_key_auth=False,
         compact_below_free_pct=60,
         codex_home=tmp_path / "codex",
         session_start_observed=True,
@@ -138,9 +125,6 @@ async def test_resumed_session_waits_for_session_start_evidence(tmp_path: Path) 
         None,
         clock=clock,
         reset_time=ResetTimeParser(clock),
-        prices=PriceTable.from_toml(_PRICES_PATH),
-        model="gpt-5.6-sol",
-        api_key_auth=False,
         compact_below_free_pct=60,
         codex_home=tmp_path / "codex",
     )

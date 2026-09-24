@@ -111,7 +111,6 @@ async def test_flow_events_mark_step_turn_and_verdict_boundaries(
     assert usage_delta["output_tokens"] == 120
     assert usage_delta["cache_read_tokens"] == 40
     assert usage_delta["cache_write_tokens"] == 20
-    assert usage_delta["cost_usd"] == pytest.approx(0.002607)
 
 
 async def test_changes_requested_persists_iteration_rung_and_counter_resets(

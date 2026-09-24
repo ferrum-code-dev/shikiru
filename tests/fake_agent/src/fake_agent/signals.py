@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
     from datetime import datetime
 
-    from shikiru.agents.sdk.prices import PriceTable
     from shikiru.agents.sdk.reset_time import ResetTimeParser
 
 EVENT_FIELD = "event"
@@ -49,8 +48,6 @@ INPUT_TOKENS_PER_TURN = 120
 OUTPUT_TOKENS_PER_TURN = 60
 CACHE_READ_TOKENS_PER_TURN = 20
 CACHE_WRITE_TOKENS_PER_TURN = 10
-
-_COST_BASIS = "api_equivalent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,12 +189,9 @@ def error_from_entry(
     return kind, resets_at
 
 
-def usage_from_entries(
-    entries: Iterable[Mapping[str, Any]], *, session_id: str, model: str, prices: PriceTable
-) -> Usage:
-    """Sum `session_id`'s `turn_ended` entries into its cumulative `Usage` for `model`."""
+def usage_from_entries(entries: Iterable[Mapping[str, Any]], *, session_id: str) -> Usage:
+    """Sum `session_id`'s `turn_ended` token counts; the fake agent reports no cost or context."""
     input_tokens = output_tokens = cache_read_tokens = cache_write_tokens = 0
-    context_used_pct: float | None = None
     for entry in entries:
         if entry.get(EVENT_FIELD) != EVENT_TURN_ENDED or entry.get(SESSION_ID_FIELD) != session_id:
             continue
@@ -206,29 +200,12 @@ def usage_from_entries(
         output_tokens += tokens["output_tokens"]
         cache_read_tokens += tokens["cache_read_tokens"]
         cache_write_tokens += tokens["cache_write_tokens"]
-        context_used_pct = prices.context_used_pct(
-            model,
-            input_tokens=tokens["input_tokens"],
-            cache_tokens=tokens["cache_read_tokens"] + tokens["cache_write_tokens"],
-        )
-    has_usage = input_tokens or output_tokens or cache_read_tokens or cache_write_tokens
-    cost_usd = (
-        prices.cost_usd(
-            model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_write_tokens=cache_write_tokens,
-        )
-        if has_usage
-        else None
-    )
     return Usage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
-        cost_usd=cost_usd,
-        cost_basis=_COST_BASIS,
-        context_used_pct=context_used_pct,
+        cost_usd=None,
+        cost_basis="unknown",
+        context_used_pct=None,
     )

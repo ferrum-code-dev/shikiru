@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from shikiru.agents.contracts import AgentSession, LaunchSpec
-    from shikiru.agents.sdk.prices import PriceTable
     from shikiru.agents.sdk.reset_time import ResetTimeParser
     from shikiru.clock import Clock
 
@@ -50,9 +49,6 @@ class CodexSession:
         *,
         clock: Clock,
         reset_time: ResetTimeParser,
-        prices: PriceTable,
-        model: str,
-        api_key_auth: bool,
         compact_below_free_pct: int,
         codex_home: Path,
         session_start_observed: bool = False,
@@ -65,9 +61,6 @@ class CodexSession:
         self._rollout_path = rollout_path
         self._clock = clock
         self._reset_time = reset_time
-        self._prices = prices
-        self._model = model
-        self._api_key_auth = api_key_auth
         self._compact_below_free_pct = compact_below_free_pct
         self._codex_home = codex_home
         self._session_start_observed = session_start_observed
@@ -107,9 +100,6 @@ class CodexSession:
         """Return cumulative token, cost and context usage from the rollout."""
         return rollout_usage(
             self._rollout_entries(),
-            model=self._model,
-            prices=self._prices,
-            api_key_auth=self._api_key_auth,
         )
 
     def snapshot(self) -> Mapping[str, Any]:
@@ -186,8 +176,6 @@ def restored_session(
     state: Mapping[str, Any],
     clock: Clock,
     reset_time: ResetTimeParser,
-    prices: PriceTable,
-    api_key_auth: bool,
     compact_below_free_pct: int,
     codex_home: Path,
 ) -> AgentSession:
@@ -216,9 +204,6 @@ def restored_session(
         rollout_path,
         clock=clock,
         reset_time=reset_time,
-        prices=prices,
-        model=spec.rung.model,
-        api_key_auth=api_key_auth,
         compact_below_free_pct=compact_below_free_pct,
         codex_home=codex_home,
         session_start_observed=session_id is not None,

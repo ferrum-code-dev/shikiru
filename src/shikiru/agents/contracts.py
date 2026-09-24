@@ -1,7 +1,7 @@
 """The agent plugin contract (docs/design/04-agents.md §1).
 
 Agents are code plugins. The engine depends only on this module, and each plugin owns
-everything agent-specific: CLI argv and auth, hooks and transcripts, prices and context
+everything agent-specific: CLI argv and auth, hooks and transcripts, reported usage and context
 windows, quota sources, error mapping and compaction policy. The contract doesn't require
 hooks: a plugin must deliver `AgentSignal`s by whatever means its agent allows, and prove it
 with the contract test kit (`shikiru.agents.testing`, 04 §3).

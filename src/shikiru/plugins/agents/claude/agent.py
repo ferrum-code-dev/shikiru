@@ -8,13 +8,11 @@ import os
 import uuid
 from collections.abc import Mapping
 from datetime import timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
 from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, shikiru_command
-from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.claude.headless import ClaudeHeadless
@@ -36,6 +34,8 @@ from shikiru.plugins.agents.claude.quota import ClaudeQuotaProbe
 from shikiru.plugins.agents.claude.session import ClaudeSession, hook_file_size, restored_session
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from shikiru.agents.contracts import (
         AgentContext,
         AgentSession,
@@ -46,7 +46,6 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
-PRICES_PATH = Path(__file__).parent / "prices.toml"
 CLAUDE_VERSION_ARGV = (CLAUDE_COMMAND, "--version")
 AUTH_STATUS_ARGV = (CLAUDE_COMMAND, "auth", "status", "--json")
 DOCTOR_TIMEOUT_SECONDS = 60.0
@@ -96,7 +95,6 @@ class ClaudeAgent:
         self._clock = clock
         self._options = options
         self._reset_time = ResetTimeParser(clock)
-        self._prices = PriceTable.from_toml(PRICES_PATH)
         self._quota_probe = ClaudeQuotaProbe(
             runner,
             clock,
@@ -141,8 +139,6 @@ class ClaudeAgent:
             state=state,
             clock=self._clock,
             reset_time=self._reset_time,
-            prices=self._prices,
-            api_key_auth=self._options.auth == AUTH_API_KEY,
             invalidate_quota=self._quota_probe.invalidate,
         )
 
@@ -183,9 +179,6 @@ class ClaudeAgent:
             hook_offset,
             clock=self._clock,
             reset_time=self._reset_time,
-            prices=self._prices,
-            model=spec.rung.model,
-            api_key_auth=self._options.auth == AUTH_API_KEY,
             invalidate_quota=self._quota_probe.invalidate,
         )
 

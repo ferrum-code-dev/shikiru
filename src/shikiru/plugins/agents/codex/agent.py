@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 
 from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, shikiru_command
-from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.codex.headless import CodexHeadless
@@ -59,7 +58,6 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
-PRICES_PATH = Path(__file__).parent / "prices.toml"
 _GIT_COMMON_DIR_ARGV = ("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
 _AUTH_NOT_LOGGED_IN_TEXT = "not logged in"
 _AUTH_LOGGED_IN_TEXTS = ("logged in", "authenticated")
@@ -98,7 +96,6 @@ class CodexAgent:
         self._clock = clock
         self._options = options
         self._reset_time = ResetTimeParser(clock)
-        self._prices = PriceTable.from_toml(PRICES_PATH)
         self._codex_home = codex_home()
         self._quota_probe = CodexQuotaProbe(self._codex_home, clock, self._reset_time)
 
@@ -142,8 +139,6 @@ class CodexAgent:
             state=state,
             clock=self._clock,
             reset_time=self._reset_time,
-            prices=self._prices,
-            api_key_auth=self._options.auth == AUTH_API_KEY,
             compact_below_free_pct=self._options.compact_below_free_pct,
             codex_home=self._codex_home,
         )
@@ -184,9 +179,6 @@ class CodexAgent:
             None,
             clock=self._clock,
             reset_time=self._reset_time,
-            prices=self._prices,
-            model=spec.rung.model,
-            api_key_auth=self._options.auth == AUTH_API_KEY,
             compact_below_free_pct=self._options.compact_below_free_pct,
             codex_home=self._codex_home,
         )

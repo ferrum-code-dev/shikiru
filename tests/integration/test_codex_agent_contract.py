@@ -68,8 +68,8 @@ _FULL_TURN_USAGE = Usage(
     output_tokens=232,
     cache_read_tokens=11008,
     cache_write_tokens=0,
-    cost_usd=0.02223225,
-    cost_basis="api_equivalent",
+    cost_usd=None,
+    cost_basis="unknown",
     context_used_pct=9.998839009287925,
 )
 _TWO_TURNS_USAGE = Usage(
@@ -77,8 +77,8 @@ _TWO_TURNS_USAGE = Usage(
     output_tokens=326,
     cache_read_tokens=22016,
     cache_write_tokens=0,
-    cost_usd=0.04376825,
-    cost_basis="api_equivalent",
+    cost_usd=None,
+    cost_basis="unknown",
     context_used_pct=10.210526315789474,
 )
 _NO_TURNS_USAGE = Usage(
@@ -87,7 +87,7 @@ _NO_TURNS_USAGE = Usage(
     cache_read_tokens=0,
     cache_write_tokens=0,
     cost_usd=None,
-    cost_basis="api_equivalent",
+    cost_basis="unknown",
     context_used_pct=None,
 )
 

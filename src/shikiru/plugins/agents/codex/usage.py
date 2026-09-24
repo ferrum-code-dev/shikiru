@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from shikiru.agents.contracts import Usage
-
-if TYPE_CHECKING:
-    from shikiru.agents.sdk.prices import PriceTable
+from shikiru.domain.runs import NO_USAGE
 
 _EVENT_MESSAGE_TYPE = "event_msg"
 _TOKEN_COUNT_TYPE = "token" + "_count"
@@ -20,47 +18,29 @@ _OUTPUT_TOKENS_FIELD = "output_tokens"
 _CACHE_READ_TOKENS_FIELD = "cached_input_tokens"
 _CACHE_WRITE_TOKENS_FIELD = "cache_write_input_tokens"
 _CONTEXT_WINDOW_FIELD = "model_context_window"
-_COST_BASIS_SUBSCRIPTION = "api_equivalent"
-_COST_BASIS_API_KEY = "billed"
 _PERCENT = 100
 
 
 def rollout_usage(
     entries: Iterable[Mapping[str, Any]],
-    *,
-    model: str,
-    prices: PriceTable,
-    api_key_auth: bool,
 ) -> Usage:
-    """Compute cumulative usage from the latest Codex rollout token count."""
+    """Report the latest rollout token count; context from its window, no priced cost."""
     latest = _latest_token_count(entries)
     if latest is None:
-        return _empty_usage(api_key_auth)
+        return NO_USAGE
     total, last, context_window = latest
     input_tokens = _integer(total, _INPUT_TOKENS_FIELD)
     output_tokens = _integer(total, _OUTPUT_TOKENS_FIELD)
     cache_read_tokens = _integer(total, _CACHE_READ_TOKENS_FIELD)
     cache_write_tokens = _integer(total, _CACHE_WRITE_TOKENS_FIELD)
-    has_usage = input_tokens or output_tokens or cache_read_tokens or cache_write_tokens
-    cost_usd = (
-        prices.cost_usd(
-            model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_write_tokens=cache_write_tokens,
-        )
-        if has_usage
-        else None
-    )
     context_used_pct = _context_used_pct(last, context_window)
     return Usage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
-        cost_usd=cost_usd,
-        cost_basis=_COST_BASIS_API_KEY if api_key_auth else _COST_BASIS_SUBSCRIPTION,
+        cost_usd=None,
+        cost_basis="unknown",
         context_used_pct=context_used_pct,
     )
 
@@ -101,18 +81,6 @@ def _payload(entry: Mapping[str, Any]) -> Mapping[str, Any]:
         return {}
     payload = entry.get("payload")
     return cast("Mapping[str, Any]", payload) if isinstance(payload, Mapping) else {}
-
-
-def _empty_usage(api_key_auth: bool) -> Usage:
-    return Usage(
-        input_tokens=0,
-        output_tokens=0,
-        cache_read_tokens=0,
-        cache_write_tokens=0,
-        cost_usd=None,
-        cost_basis=_COST_BASIS_API_KEY if api_key_auth else _COST_BASIS_SUBSCRIPTION,
-        context_used_pct=None,
-    )
 
 
 def _integer(entry: Mapping[str, Any], key: str) -> int:

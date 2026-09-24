@@ -6,15 +6,11 @@ from shutil import copyfile
 
 from shikiru.agents.contracts import FailureKind, TurnFailed
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
-from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.plugins.agents.claude.session import ClaudeSession
 from tests.support.clock import FakeClock
 
 _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "agents" / "claude"
-_PRICES_PATH = (
-    Path(__file__).parents[2] / "src" / "shikiru" / "plugins" / "agents" / "claude" / "prices.toml"
-)
 _ROLE = "implementer"
 _SESSION_ID = "33333333-3333-3333-3333-333333333333"
 _MODEL = "claude-sonnet-4-5-20250929"
@@ -44,9 +40,6 @@ async def test_claude_session_refreshes_quota_only_for_quota_failures(tmp_path: 
             0,
             clock=clock,
             reset_time=ResetTimeParser(clock),
-            prices=PriceTable.from_toml(_PRICES_PATH),
-            model=_MODEL,
-            api_key_auth=False,
             invalidate_quota=lambda invalidations=invalidations: invalidations.append(None),
         )
 
@@ -73,9 +66,6 @@ def test_absolute_transcript_path_is_not_rebased(tmp_path: Path) -> None:
         0,
         clock=clock,
         reset_time=ResetTimeParser(clock),
-        prices=PriceTable.from_toml(_PRICES_PATH),
-        model=_MODEL,
-        api_key_auth=False,
         invalidate_quota=lambda: None,
         transcript_path=str(absolute_path),
     )

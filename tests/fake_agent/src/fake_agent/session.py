@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.agents.contracts import AgentSignal, Usage
-    from shikiru.agents.sdk.prices import PriceTable
     from shikiru.agents.sdk.reset_time import ResetTimeParser
     from shikiru.clock import Clock
 
@@ -39,8 +38,6 @@ class FakeSession:
         *,
         clock: Clock,
         reset_time: ResetTimeParser,
-        prices: PriceTable,
-        model: str,
     ) -> None:
         """Tail `run_dir/role/hooks.jsonl` from `start_offset`, polled by `clock`."""
         self._recorder = HookRecorder(role_dir(run_dir, role))
@@ -48,8 +45,6 @@ class FakeSession:
         self._offset = start_offset
         self._clock = clock
         self._reset_time = reset_time
-        self._prices = prices
-        self._model = model
 
     async def signals(self) -> AsyncGenerator[AgentSignal]:
         """Yield every hook entry appended since this session's start, for its one reader."""
@@ -69,9 +64,7 @@ class FakeSession:
     async def usage(self) -> Usage:
         """Recompute this session id's cumulative usage from the whole hooks file."""
         entries = [entry.value for entry in self._recorder.tail(0)]
-        return usage_from_entries(
-            entries, session_id=self._session_id, model=self._model, prices=self._prices
-        )
+        return usage_from_entries(entries, session_id=self._session_id)
 
     def snapshot(self) -> Mapping[str, Any]:
         """Return this session's id and its current read offset, for `attach()` to resume from."""

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -14,12 +13,12 @@ from fake_agent.headless import FakeHeadlessAgent
 from fake_agent.session import FakeSession
 from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, role_dir
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
-from shikiru.agents.sdk.prices import PriceTable
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
     from shikiru.agents.contracts import (
         AgentContext,
@@ -38,7 +37,6 @@ EXIT_INPUT = "/exit"
 INTERRUPT_KEYS = ("C-c",)
 SAFE_KEYS = ("Enter",)
 
-PRICES_PATH = Path(__file__).parent / "prices.toml"
 _DOCTOR_CHECK_NAME = "binary"
 
 
@@ -75,12 +73,11 @@ class FakeAgent:
     keys = SessionKeys(interrupt=INTERRUPT_KEYS, exit_input=EXIT_INPUT, safe=SAFE_KEYS)
 
     def __init__(self, runner: SubprocessRunner, clock: Clock, options: FakeOptions) -> None:
-        """Hold `options` for `headless()`, pricing usage under this plugin's `prices.toml`."""
+        """Hold `options` for `headless()`."""
         self._runner = runner
         self._clock = clock
         self._options = options
         self._reset_time = ResetTimeParser(clock)
-        self._prices = PriceTable.from_toml(PRICES_PATH)
         self._quota_index = 0
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
@@ -136,8 +133,6 @@ class FakeAgent:
             start_offset,
             clock=self._clock,
             reset_time=self._reset_time,
-            prices=self._prices,
-            model=spec.rung.model,
         )
 
 

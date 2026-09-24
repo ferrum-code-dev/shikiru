@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
 
     from shikiru.agents.contracts import AgentSession, LaunchSpec
-    from shikiru.agents.sdk.prices import PriceTable
     from shikiru.agents.sdk.reset_time import ResetTimeParser
     from shikiru.clock import Clock
 
@@ -48,9 +47,6 @@ class ClaudeSession:
         *,
         clock: Clock,
         reset_time: ResetTimeParser,
-        prices: PriceTable,
-        model: str,
-        api_key_auth: bool,
         invalidate_quota: Callable[[], None],
         transcript_path: str | None = None,
     ) -> None:
@@ -61,9 +57,6 @@ class ClaudeSession:
         self._hook_offset = hook_offset
         self._clock = clock
         self._reset_time = reset_time
-        self._prices = prices
-        self._model = model
-        self._api_key_auth = api_key_auth
         self._invalidate_quota = invalidate_quota
         self._transcript_path = self._resolve_transcript(transcript_path)
 
@@ -106,9 +99,6 @@ class ClaudeSession:
         """Return cumulative token, cost and context usage from the transcript."""
         return transcript_usage(
             self._transcript_entries(),
-            model=self._model,
-            prices=self._prices,
-            api_key_auth=self._api_key_auth,
         )
 
     def snapshot(self) -> Mapping[str, Any]:
@@ -151,8 +141,6 @@ def restored_session(
     state: Mapping[str, Any],
     clock: Clock,
     reset_time: ResetTimeParser,
-    prices: PriceTable,
-    api_key_auth: bool,
     invalidate_quota: Callable[[], None],
 ) -> AgentSession:
     """Build a session from persisted plugin state."""
@@ -170,9 +158,6 @@ def restored_session(
         hook_offset,
         clock=clock,
         reset_time=reset_time,
-        prices=prices,
-        model=spec.rung.model,
-        api_key_auth=api_key_auth,
         invalidate_quota=invalidate_quota,
         transcript_path=transcript_path,
     )
