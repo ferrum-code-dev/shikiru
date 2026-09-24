@@ -34,7 +34,7 @@ from shikiru.domain.reports import (
     schema_for,
 )
 from shikiru.errors import ShikiruError
-from shikiru.tmux.client import Tmux, exact_target
+from shikiru.tmux.client import Tmux, exact_target, private_socket_name
 from shikiru.tmux.pane import TmuxPane
 
 if TYPE_CHECKING:
@@ -79,7 +79,6 @@ PROBE_MARKER_MISSING_MESSAGE = "probe turn did not return its marker"
 PROBE_PANE_MISSING_MESSAGE = "probe tmux session did not return a pane"
 PROBE_TURN_TIMEOUT_MESSAGE = "timed out waiting for probe turn completion"
 PROBE_STARTUP_EXIT_MESSAGE = "agent pane exited during probe startup"
-_TMUX_KILL_ARGS = (PROBE_TMUX_COMMAND, "-L")
 
 
 class DoctorProbeError(ShikiruError):
@@ -110,19 +109,19 @@ class AgentProbe:
         run_dir = self._directory / PROBE_RUN_DIRECTORY
         await self._prepare_repository(repo)
         await asyncio.to_thread(self._prepare_turn, run_dir)
-        socket_name = f"{PROBE_TMUX_SESSION_PREFIX}{uuid.uuid4().hex}"
+        socket_name = private_socket_name(PROBE_TMUX_SESSION_PREFIX)
         tmux = Tmux(self._runner, socket=socket_name)
         session_name = f"{PROBE_TMUX_SESSION_NAME}-{uuid.uuid4().hex[:8]}"
         try:
             await self._execute_probe(tmux, socket_name, session_name, repo, run_dir)
         except BaseException as error:
             try:
-                await kill_tmux_server(self._runner, socket_name)
+                await tmux.kill_server()
             except (OSError, ShikiruError) as cleanup_error:
                 error.add_note(f"probe cleanup failed: {cleanup_error}")
             raise
         else:
-            await kill_tmux_server(self._runner, socket_name)
+            await tmux.kill_server()
 
     async def _execute_probe(
         self,
@@ -254,19 +253,6 @@ class AgentProbe:
 def _tail(visible: str) -> str:
     lines = [line.strip() for line in visible.splitlines() if line.strip()]
     return " | ".join(lines[-PROBE_SCREEN_TAIL_LINES:])
-
-
-async def kill_tmux_server(runner: SubprocessRunner, socket_name: str) -> None:
-    """Stop a private tmux server used by a diagnostic probe."""
-    result = await runner.run(
-        [*_TMUX_KILL_ARGS, socket_name, "kill-server"],
-        timeout=PROBE_COMMAND_TIMEOUT_SECONDS,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        message = f"could not stop private tmux server: {detail}"
-        raise DoctorProbeError(message)
 
 
 def _probe_environment(run_dir: Path) -> dict[str, str]:

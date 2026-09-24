@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,8 @@ from shikiru.bootstrap import build_doctor
 from shikiru.process import SubprocessRunner
 
 pytestmark = pytest.mark.asyncio
+
+SHORT_DIRECTORY_PREFIX = "s"
 
 FAKE_CONFIG = """
 [project]
@@ -46,8 +50,8 @@ def _write_config(root: Path, config: str = FAKE_CONFIG) -> Path:
     return root
 
 
-async def _cli(root: Path, *args: str) -> tuple[int, str, str]:
-    environment = dict(os.environ, NO_COLOR="1")
+async def _cli(root: Path, *args: str, **extra_environment: str) -> tuple[int, str, str]:
+    environment = dict(os.environ, NO_COLOR="1", **extra_environment)
     environment["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{environment['PATH']}"
     result = await SubprocessRunner().run(
         [sys.executable, "-m", "shikiru", "--project", str(root), *args],
@@ -94,6 +98,19 @@ async def test_doctor_reports_core_and_configured_plugin_checks(tmp_path: Path) 
     assert all(check["ok"] for check in checks.values())
     assert code == 0
     assert (root / ".shikiru" / "state.db").is_file()
+
+
+def _sockets_in(directory: Path) -> list[Path]:
+    return [path for path in directory.rglob("*") if path.is_socket()]
+
+
+async def test_doctor_leaves_no_tmux_socket_behind(tmp_path: Path) -> None:
+    root = await _project(tmp_path)
+    with tempfile.TemporaryDirectory(prefix=SHORT_DIRECTORY_PREFIX) as sockets:
+        code, _, _ = await _cli(root, "doctor", TMUX_TMPDIR=sockets)
+
+        assert code == 0
+        assert await asyncio.to_thread(_sockets_in, Path(sockets)) == []
 
 
 async def test_doctor_fails_a_project_root_inside_a_repository(tmp_path: Path) -> None:

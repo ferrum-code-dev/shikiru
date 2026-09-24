@@ -14,8 +14,9 @@ from shikiru.agents.contracts import AgentContext, Rung
 from shikiru.config.loader import PROJECT_CONFIG_RELATIVE_PATH, SHIKIRU_DIR_NAME, load_settings
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import not_repository_root
-from shikiru.operator.probe import AgentProbe, kill_tmux_server
+from shikiru.operator.probe import AgentProbe
 from shikiru.store.database import Database
+from shikiru.tmux.client import Tmux, private_socket_name
 from shikiru.workspace.caches import (
     CACHE_COW_UNSUPPORTED_WARNING,
     CacheCloner,
@@ -131,7 +132,7 @@ class Doctor:
         return DoctorReport.from_checks(checks)
 
     async def _tmux_check(self) -> DoctorCheck:
-        socket_name = f"{TMUX_SESSION_PREFIX}{uuid.uuid4().hex}"
+        socket_name = private_socket_name(TMUX_SESSION_PREFIX)
         session_name = f"{TMUX_SESSION_NAME}-{uuid.uuid4().hex[:8]}"
         try:
             version = await self._runner.run(
@@ -165,7 +166,7 @@ class Doctor:
         except (OSError, ShikiruError) as error:
             check = DoctorCheck(name=TMUX_CHECK_NAME, ok=False, detail=str(error))
         try:
-            await kill_tmux_server(self._runner, socket_name)
+            await Tmux(self._runner, socket=socket_name).kill_server()
         except (OSError, ShikiruError) as error:
             check = DoctorCheck(
                 name=TMUX_CHECK_NAME,

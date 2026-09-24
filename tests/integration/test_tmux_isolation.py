@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.process import SubprocessRunner
+from shikiru.tmux.client import Tmux
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -43,7 +44,7 @@ async def other_socket_name() -> AsyncIterator[str]:
     try:
         yield socket_name
     finally:
-        await runner.run(["tmux", "-L", socket_name, "kill-server"], timeout=5, check=False)
+        await Tmux(runner, socket=socket_name).kill_server()
 
 
 async def test_tmux_server_socket_is_named_after_the_private_socket_not_default(

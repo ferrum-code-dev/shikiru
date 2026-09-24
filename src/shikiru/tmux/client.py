@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from pathlib import Path
 
     from shikiru.process import ProcessResult, SubprocessRunner
 
@@ -15,13 +17,20 @@ _SOCKET_FLAG = "-L"
 _COMMAND_TIMEOUT_SECONDS = 5.0
 _END_OF_OPTIONS = "--"
 _ENV_COMMAND = "env"
+_PRIVATE_SOCKET_SUFFIX_LENGTH = 8
 
 FORMAT_PANE_ID = "#{pane_id}"
 FORMAT_PANE_DEAD = "#{pane_dead}"
 FORMAT_PANE_PID = "#{pane_pid}"
 FORMAT_WINDOW_ID = "#{window_id}"
+FORMAT_SOCKET_PATH = "#{socket_path}"
 
 SplitAxis = Literal["h", "v"]
+
+
+def private_socket_name(prefix: str) -> str:
+    """Return a unique socket name short enough for the OS socket path limit."""
+    return f"{prefix}{uuid.uuid4().hex[:_PRIVATE_SOCKET_SUFFIX_LENGTH]}"
 
 
 def exact_target(name: str) -> str:
@@ -161,6 +170,14 @@ class Tmux:
     async def kill_session(self, target: str) -> None:
         """Kill session `target`."""
         await self._run("kill-session", "-t", target)
+
+    async def kill_server(self) -> None:
+        """Stop this server and remove the socket file tmux leaves; no-op without a server."""
+        located = await self._run("display-message", "-p", FORMAT_SOCKET_PATH, check=False)
+        if located.returncode != 0:
+            return
+        await self._run("kill-server")
+        await asyncio.to_thread(Path(located.stdout.strip()).unlink, missing_ok=True)
 
     async def kill_pane(self, target: str) -> None:
         """Kill pane `target`."""
