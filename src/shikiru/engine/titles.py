@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.domain.ladder import pick_rung
+from shikiru.domain.runs import NO_USAGE, context_title, cost_title
 from shikiru.domain.steps import ACTING_ROLE
 from shikiru.domain.tasks import Hold, Role, Status, Step
 from shikiru.ui.glyphs import (
@@ -112,24 +113,12 @@ class TaskTitles:
             "iteration": task.iteration,
             "step": task.step.value if task.step is not None else "",
             "status": task.status.value,
-            "context": _context_pct(usage),
-            "cost": _cost_usd(usage),
+            "context": context_title(usage),
+            "cost": cost_title(usage),
             "flags": _flags(task),
         }
         await self._decorator.set_pane_title(pane_id, template, fields)
 
-    def _latest_usage(self, task_id: str, role: Role) -> Usage | None:
+    def _latest_usage(self, task_id: str, role: Role) -> Usage:
         run = self._runs.get_live(task_id, role)
-        return run.usage if run is not None else None
-
-
-def _context_pct(usage: Usage | None) -> int:
-    if usage is None or usage.context_used_pct is None:
-        return 0
-    return round(usage.context_used_pct)
-
-
-def _cost_usd(usage: Usage | None) -> float:
-    if usage is None or usage.cost_usd is None:
-        return 0.0
-    return usage.cost_usd
+        return run.usage if run is not None else NO_USAGE

@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 _TIMEOUT_SECONDS = 60.0
 
 _LEADER_TITLE = (
-    "{glyph} Leader - {agent}:{model} - iter {iteration} - ctx {context}% - ${cost:.2f} {flags}"
+    "{glyph} Leader - {agent}:{model} - iter {iteration} - ctx {context} - {cost} {flags}"
 )
 
 _TITLES = TitlesConfig(  # noqa: S604 -- `shell=` is `TitlesConfig`'s field name, not a subprocess flag

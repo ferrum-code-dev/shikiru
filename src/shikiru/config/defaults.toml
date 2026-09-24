@@ -32,8 +32,8 @@ panes = [
 
 [dashboard.titles]
 window = "{task_id} {title:.24}"
-leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context}% · ${cost:.2f} {flags}"
-implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context}% · ${cost:.2f} {flags}"
+leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
+implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
 system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
 shell = "Shell · {cwd}"
 

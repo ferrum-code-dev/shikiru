@@ -47,3 +47,20 @@ class Run(DomainModel):
     usage: Usage = NO_USAGE
     started_at: datetime
     ended_at: datetime | None = None
+
+
+MISSING_TITLE_VALUE = "\N{EN DASH}"
+
+
+def context_title(usage: Usage) -> str:
+    """Format `usage`'s context share for a title (`42%`), or a dash if unreported (06 §5.3)."""
+    if usage.context_used_pct is None:
+        return MISSING_TITLE_VALUE
+    return f"{round(usage.context_used_pct)}%"
+
+
+def cost_title(usage: Usage) -> str:
+    """Format `usage`'s cost for a title (`$1.84`), or a dash if unreported (06 §5.3)."""
+    if usage.cost_usd is None:
+        return MISSING_TITLE_VALUE
+    return f"${usage.cost_usd:.2f}"

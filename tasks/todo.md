@@ -35,7 +35,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 21: Doctor and first real E2E
 
 ## Phase 4b — Headless agents
-- [ ] Task 31: Usage rules and price-table removal
+- [x] Task 31: Usage rules and price-table removal
 - [ ] Task 32: Headless contract, SDK, contract kit and fake agent
 - [ ] Task 33: Claude Code headless plugin
 - [ ] Task 34: Codex headless plugin

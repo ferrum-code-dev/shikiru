@@ -180,8 +180,8 @@ _Superseded by Phase 4b (D1 revised): `doctor --probe` and E1/E2 are re-done on 
 
 ### Task 31: Usage rules and price-table removal
 Refs: 01 D21, 04 §1–2, 05 §1, 06 §5.3–5.4.
-- [ ] `PriceTable` and both `prices.toml` removed; plugins report `cost_usd = None`, `cost_basis = "unknown"` wherever the agent reports no priced cost, and `context_used_pct = None` without a reliable window.
-- [ ] Title fields `context` and `cost` are preformatted and render `–` when missing; default title templates per 05 §1.
+- [x] `PriceTable` and both `prices.toml` removed; plugins report `cost_usd = None`, `cost_basis = "unknown"` wherever the agent reports no priced cost, and `context_used_pct = None` without a reliable window.
+- [x] Title fields `context` and `cost` are preformatted and render `–` when missing; default title templates per 05 §1.
 - Tests: unit for the title fields with and without values; plugin offline checks updated to the new expectations.
 
 ### Task 32: Headless contract, SDK, contract kit and fake agent
