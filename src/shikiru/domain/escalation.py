@@ -51,6 +51,7 @@ _OPTIONS_BY_REASON: dict[EscalationReason, tuple[EscalationOption, ...]] = {
     EscalationReason.LADDER_EXHAUSTED: _RETRY_OR_CANCEL,
     EscalationReason.QUOTA_EXHAUSTED: _RETRY_OR_CANCEL,
     EscalationReason.DEPENDENCY_CANCELLED: _RETRY_OR_CANCEL,
+    EscalationReason.ENGINE_ERROR: _RETRY_OR_CANCEL,
 }
 
 

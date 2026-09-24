@@ -104,6 +104,7 @@ CONTINUE_INPUT = "continue"
 ENGINE_VERDICT_FILENAME = "engine-verdict.json"
 """The engine's verdict replacing an accept on a dirty workspace (03 §6)."""
 
+FACTS_UNAVAILABLE = "(facts unavailable: {error})"
 UNCOMMITTED_SUMMARY = "The workspace has uncommitted changes, so it cannot be integrated."
 UNCOMMITTED_ISSUE = (
     "Uncommitted changes in the workspace: {paths}. "
@@ -237,6 +238,8 @@ def _escalation_narrative(
     if reason is EscalationReason.ITERATIONS_EXHAUSTED:
         question = "The final round still requested changes; choose accept, supersede or cancel."
         attempted = "Implement and verify cycled to the configured iteration limit."
+    elif reason is EscalationReason.ENGINE_ERROR:
+        attempted = "The engine raised an error no automatic recovery covers."
     elif isinstance(outcome, ConsultAnswer) and outcome.escalation is not None:
         question = outcome.escalation.question
         attempted = "The Leader escalated during a consult turn."
@@ -334,7 +337,17 @@ class TaskFlow:
         self._integration_context: dict[str, str] = {}
 
     async def run(self, task_id: str) -> None:
-        """Run `task_id` from its current step (or its first) until `integrate` or an escalation."""
+        """Run `task_id` from its current step (or its first) until `integrate` or an escalation.
+
+        A `ShikiruError` the flow cannot handle escalates the task as `engine_error` instead of
+        propagating, so one task's failure never stops the engine (03 §8).
+        """
+        try:
+            await self._run(task_id)
+        except ShikiruError as error:
+            await self._escalate_engine_error(self._require_task(task_id), error)
+
+    async def _run(self, task_id: str) -> None:
         task = self._require_task(task_id)
         if task.step is None:
             task = await self._apply(task, first_step(task), None)
@@ -992,9 +1005,17 @@ class TaskFlow:
             question=question,
             attempted=attempted,
             reports=_history_context(history),
-            facts=await self._facts_text(task) if task.repo is not None else "",
+            facts=await self._escalation_facts(task),
             pane_tail=await self._pane_tail(task, step, role_override=role),
         )
+
+    async def _escalation_facts(self, task: Task) -> str:
+        if task.repo is None:
+            return ""
+        try:
+            return await self._facts_text(task)
+        except ShikiruError as error:
+            return FACTS_UNAVAILABLE.format(error=error)
 
     async def _pane_tail(
         self, task: Task, step: Step | None, *, role_override: Role | None = None
@@ -1221,6 +1242,17 @@ class TaskFlow:
             task.id, transition, outcome.new_tasks, origin=TaskOrigin.LEADER
         )
         self._emit_scope_change(task, outcome, [child.id for child in children])
+
+    async def _escalate_engine_error(self, task: Task, error: ShikiruError) -> None:
+        transition = dataclasses.replace(
+            Transition.stay(task, step=task.step, status=Status.ESCALATED),
+            escalation_reason=EscalationReason.ENGINE_ERROR,
+        )
+        self._tasks.apply_transition(task.id, transition)
+        updated = self._require_task(task.id)
+        await self._titles.refresh(updated)
+        self._recovery_questions[task.id] = str(error)
+        await self._raise_escalation(updated, task.step, EscalationReason.ENGINE_ERROR, None)
 
     async def _escalate_scope_change_protocol(
         self, task: Task, step: Step, outcome: Outcome, error: UsageError

@@ -88,6 +88,7 @@ class EscalationReason(StrEnum):
     LADDER_EXHAUSTED = auto()
     QUOTA_EXHAUSTED = auto()
     DEPENDENCY_CANCELLED = auto()
+    ENGINE_ERROR = auto()
 
 
 class DomainModel(BaseModel):

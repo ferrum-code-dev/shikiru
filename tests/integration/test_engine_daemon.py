@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -28,7 +29,7 @@ from shikiru.domain.commands import (
 from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
+from shikiru.domain.tasks import EscalationReason, Mode, RepoState, Role, Status, Step
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.errors import ShikiruError
@@ -39,7 +40,7 @@ from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.session import SessionView
-from shikiru.workspace.roots import run_dir
+from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, build_tmux, set_script
 from tests.support.factories import TASK_CREATED_AT, make_settings
@@ -47,8 +48,6 @@ from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from shikiru.agents.registry import AgentRegistry
     from shikiru.config.settings import Settings
     from shikiru.domain.commands import Command
@@ -221,6 +220,50 @@ async def test_daemon_surfaces_a_supervised_flow_failure(tmp_path: Path) -> None
     with pytest.raises(ShikiruError, match="T-missing"):
         await engine_task
     assert (tmp_path / ".shikiru" / "logs" / "engine.log").is_file()
+
+
+async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_running(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(tmp_path)
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings(max_cpu_pct=100)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    queue = CommandQueue(connection, clock)
+    submitted = queue.append(Submit(task_id="", title="broken root", request="broken root"))
+    assert isinstance(submitted.command, Submit)
+    task = tasks.insert_from_submit(submitted.command)
+    queue.mark_done(submitted.id, {"task_id": task.id})
+    tasks.apply_transition(task.id, Transition.stay(task, step=Step.VERIFY, status=Status.QUEUED))
+    tasks.set_repo(task.id, RepoState(base="missing", base_sha="0" * 40, branch="shikiru/broken"))
+    task_root(tmp_path, task.id).mkdir(parents=True)
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        store = EscalationStore(connection, clock)
+
+        async def escalated() -> bool:
+            if clock.has_pending_sleep():
+                clock.advance(0.25)
+            return bool(store.list_open())
+
+        await wait_until(escalated, timeout=20)
+        escalations = store.list_open()
+        assert [row.reason for row in escalations] == [EscalationReason.ENGINE_ERROR]
+        packet = await asyncio.to_thread(Path(escalations[0].packet_path).read_text)
+        assert "missing" in packet
+        stop_outcome = await _append_and_wait(Stop(), queue, clock)
+        assert stop_outcome.status is CommandStatus.DONE
+        await engine_task
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()
 
 
 async def test_queued_resolution_is_acknowledged_by_the_daemon(

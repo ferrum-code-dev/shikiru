@@ -46,6 +46,7 @@ _HEADLINE_SENTENCES: dict[EscalationReason, str] = {
     EscalationReason.LADDER_EXHAUSTED: "Every rung on the ladder was tried without success.",
     EscalationReason.QUOTA_EXHAUSTED: "The agent's quota stayed exhausted past the wait budget.",
     EscalationReason.DEPENDENCY_CANCELLED: "A dependency of this task was cancelled.",
+    EscalationReason.ENGINE_ERROR: "The engine hit an unexpected error while running this task.",
 }
 
 _CONSEQUENCES: dict[ResolutionKind, str] = {

@@ -240,6 +240,7 @@ Dependents become ready only when their dependencies are `done`.
 | `agent_auth` / `agent_error` / `agent_stuck` / `agent_protocol` | §7 | retry [--rung] ★, cancel |
 | `ladder_exhausted` / `quota_exhausted` | §7 | retry [--rung] ★, cancel |
 | `dependency_cancelled` | A dependency was cancelled | retry ★ (drop the dependency), cancel |
+| `engine_error` | An unexpected engine error (e.g. a failing `git` command) in the task's flow; the packet carries the error, and the engine and other tasks keep running | retry ★, cancel |
 
 **Packet** (`runs/T/escalations/E-n.md`, path stored in the DB):
 - headline (task, step, reason, one sentence)
