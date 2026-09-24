@@ -94,6 +94,7 @@ def _spec(*, cwd: Path, iteration: int = 1, facts: str = "") -> TurnSpec:
         template=PromptName.CONSULT,
         context={
             "request": "Add retries to the flaky parser",
+            "workspace": str(cwd),
             "trackers": [],
             "reports": [],
             "question": "Which retry library should I use?",

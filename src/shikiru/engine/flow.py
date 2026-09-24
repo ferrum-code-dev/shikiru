@@ -1178,6 +1178,7 @@ class TaskFlow:
         force_handoff = task.id in self._force_handoff
         context: dict[str, object] = {
             "request": task.request,
+            "workspace": str(task_root(self._project_root, task.id)),
             "trackers": list(self._settings.project.trackers),
             "reports": _history_context(history),
             "required_mode": (
@@ -1195,6 +1196,7 @@ class TaskFlow:
         if needs_facts:
             context["facts"] = facts_text
         if template is PromptName.VERIFY:
+            context["base"] = _require_repo(task).base
             context["final_round"] = task.iteration >= self._settings.orchestration.max_iterations
         if template is PromptName.CONFLICTS:
             context["conflict"] = self._integration_context.get(task.id, "")

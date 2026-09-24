@@ -5,7 +5,8 @@ You are the Leader verifying the Implementer's work on this task.
 
 {{ macros.facts_section(facts) }}
 
-The facts above outrank the Implementer's claims. Accept only when no issues remain;
+Review the change with `git diff {{ base }}...HEAD` in the workspace. The facts above outrank
+the Implementer's claims. Accept only when no issues remain;
 non-blocking residual risks go into `residual_risks` or `new_tasks`, not `issues`.
 {% if final_round %}
 This is the final round: choose `accept`, `supersede` (decompose into `new_tasks`) or
