@@ -25,14 +25,14 @@ It escalates to the Operator only when something critical comes up.
 - **Resilient**: model ladders, a wait for quota resets followed by a real session resume, and recovery after crashes or restarts.
 - **Comic-strip dashboard**: every task is drawn as a 4-panel strip.
 - **Operators everywhere**: a dashboard with a command palette for humans, an MCP server for AI Operators, a small CLI (`--json`) for scripts, and `ls`/`attach` across machines over SSH.
-- **Works with your setup**: your CLAUDE.md/AGENTS.md, skills, plugins, plan and todo files, monorepo or multi-repo.
+- **Works with your setup**: your CLAUDE.md/AGENTS.md, skills, plugins, plan and todo files; one git repository per project.
 
 ## Quick start
 
 ```sh
 uv tool install shikiru
 cd ~/Projects/my-product
-shikiru init            # wizard: repos, agents, plan files, caches
+shikiru init            # wizard: base branch, agents, plan files, caches
 shikiru start           # launches the engine and the tmux session "[shikiru] my-product"
 shikiru submit "Implement task 20 from Phase 2 in tasks/plan.md"
 shikiru attach

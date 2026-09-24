@@ -26,7 +26,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 | `attach [NAME] [--host H]` | Attach to a session; with no `NAME` and more than one match, the picker (§5.6) |
 | `submit "<request>" [flags]` | Prints the `T-n` id (05 §1 flags) |
 | `status [T-n] [--watch]` | Without an id: engine, slots, active tasks with `wait_reason`, queue, open escalations, usage and quota per agent. With one: that task's strip, timeline, reports and verdicts, branches and sessions. `--watch` redraws on `StateReader.on_change` |
-| `doctor [--probe]` | Environment, config and plugin checks; `--probe` runs live contract checks 1–2 (04 §3) for each agent on a ladder, showing the screen when a probe gets stuck |
+| `doctor [--probe]` | Environment, repository-root (D20), config and plugin checks; `--probe` runs live contract checks 1–2 (04 §3) for each agent on a ladder, showing the screen when a probe gets stuck |
 | `mcp` | Stdio MCP server |
 | hidden: `engine`, `dash`, `palette`, `hook`, `report` | Process entrypoints |
 
@@ -40,7 +40,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 ## 3. `init` wizard
 
 `dashboard/wizard.py` is an inline Textual app. It shares `operator/detectors.py` with `init --yes`:
-1. **Repos**: cwd is a git work tree → `path="."`; otherwise scan subfolders (depth ≤ 4) for `.git`. `base` = the current branch.
+1. **Repository**: the project root must be a git repository root (`git rev-parse --show-toplevel` equals it); otherwise `init` fails naming the path (D20). `base` = the current branch.
 2. **Agents**: installed plugins whose `doctor()` passes. Choose ladders for leader, implementer and helper.
 3. **Trackers**: glob `tasks/*.md`, `**/plan*.md`, `**/todo*.md`.
 4. **Prompt prefix per agent** (suggested when a `using-*` skill is found).
@@ -116,7 +116,7 @@ class WidgetContext:  views: DashboardViews; focus_task: str | None
 
 class DashboardViews(Protocol):
     """Ready-to-render view models; the only data a widget sees."""
-    async def header(self) -> HeaderView: ...            # project, engine up, slots, repos (git cached 10 s)
+    async def header(self) -> HeaderView: ...            # project, engine up, slots, checkout (git cached 10 s)
     def strips(self) -> list[TaskStripData]: ...         # active tasks, focused first, children under parents
     def queue(self) -> list[QueueRow]: ...               # dispatch order
     # escalations(), dialogue(), usage(), resources(), containers() arrive with their widgets
@@ -128,7 +128,7 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 | Widget | Content |
 |---|---|
-| `header` | Project, engine up/down, slots `2/2`, and repos with branch, ahead/behind `base` and dirty count (git data cached 10 s) |
+| `header` | Project, engine up/down, slots `2/2`, and the checkout's branch, ahead/behind `base` and dirty count (git data cached 10 s) |
 | `escalations` | Splash panel per open escalation (§6.4); `r` resolves through the palette form, `o` opens the packet |
 | `strips` | Active tasks as strips (§6.2); the focused task expanded; children grouped under `parent_id` |
 | `queue` | Queued tasks in dispatch order: priority, dependencies, `wait_reason` |

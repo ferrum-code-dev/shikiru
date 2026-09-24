@@ -21,7 +21,7 @@
 | `counters` | Persisted: `rejections_on_rung` (reset on rung change), `consults` (reset each iteration), `conflict_rounds` (reset per integration attempt). Resolving an escalation resets the counter behind its reason |
 | `rung_index` | Per role, persisted. Never decreases |
 | `overrides` | Operator rungs per role |
-| `repos` | `[{path, base, base_sha, branch}]` |
+| `repo` | `{base, base_sha, branch}`, set when the task root is built |
 | `slot`, `window_id`, `panes` | `panes` maps `{role: pane_id}` (the only place pane ids are stored) |
 | `wait_reason` | Written by the scheduler |
 | `requeued_at` | Set when resumed after an escalation; gives precedence |
@@ -69,11 +69,13 @@ queued ──► running ──► integrating ──► done
 `submit --mode` skips triage. The title is then the first line of the request, cut to 60 characters.
 
 **Templates.** Every template:
-- includes the request and earlier reports (fenced as quoted data), tracker paths, and the sentences "If this work is already done in the workspace, verify it and report" and "When the workspace holds several repositories, read each repository's own agent instructions before working in it" (agents start in the task root, above every repo, so they don't load per-repo instruction files on their own);
+- includes the request and earlier reports (fenced as quoted data), tracker paths, the sentence "If this work is already done in the workspace, verify it and report", and a workspace sentence naming the absolute task root: "Your workspace is `<task root>`, the current directory: read and change files only there. The project checkout it came from is off limits.";
 - ends with the fixed report instruction (§4.3);
 - never restates project coding rules.
 
-**Facts** (`facts.md`) are computed by the engine for each repo and outrank the Implementer's claims:
+`verify` (also after a rebase) tells the Leader to review the change with `git diff <base>...HEAD` in the workspace, and that the facts outrank the Implementer's claims.
+
+**Facts** (`facts.md`) are computed by the engine from the task worktree and outrank the Implementer's claims:
 - `git log --oneline base..HEAD`
 - `git diff --stat base...HEAD`
 - `git status --porcelain`
@@ -170,34 +172,31 @@ The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's 
 
 ## 5. Workspaces
 
-- **Task root** `.shikiru/worktrees/T-12/`:
-  - Monorepo: the root *is* the worktree.
-  - Multi-repo: each repo's worktree sits at its relative path, and the non-repo top-level entries (e.g. the root `CLAUDE.md`, `tasks/`) are symlinked.
-  - Agents run in the task root.
-- **Worktrees** are created for every configured repo: `git worktree add -b shikiru/T-12-<slug> <path> <base>`. `base` is `repos[].base` or the repo's current branch. Creation is idempotent.
-- **Caches** are copied copy-on-write (`repos[].caches` globs that match ignored paths): macOS `cp -c -R`, Linux `cp -a --reflink=always`. If CoW isn't supported, nothing is copied and one warning is logged.
+- **Task root** `.shikiru/worktrees/T-12/` *is* the task's worktree of the project repository (D20). Agents run in it and never in the project checkout.
+- **Worktree**: `git worktree add -b shikiru/T-12-<slug> <task root> <base>`. `base` is `repo.base` or the branch checked out in the project. Creation is idempotent.
+- **Caches** are copied copy-on-write (`repo.caches` globs that match ignored paths): macOS `cp -c -R`, Linux `cp -a --reflink=always`. If CoW isn't supported, nothing is copied and one warning is logged.
   - **Copy-on-write**: the filesystem (APFS; btrfs/XFS) creates only metadata that points at the same data blocks.
   - A 5 GB `node_modules` or `target` "copies" in about a second and uses no extra disk; only files that one side later modifies get their own blocks.
   - Every task gets a warm, fully independent cache.
 - **Shared resources**: `SHIKIRU_SLOT` and `SHIKIRU_TASK` let project scripts separate ports and Docker Compose project names.
-- **Git hygiene**: `.shikiru/` is added to each repo's `.git/info/exclude`.
+- **Git hygiene**: `.shikiru/` is added to the repository's `.git/info/exclude`.
 - **Cleanup** on a terminal status: `git worktree remove --force`, and the branch is deleted once merged.
 
 ## 6. Integration
 
-Integration runs under the project integration lock and only for repos with commits ahead of `base`.
+Integration runs under the project integration lock. A branch with no commits ahead of `base` merges nothing and finishes cleanly.
 
-1. **Rebase** each repo.
+1. **Rebase** the task branch onto `base`.
    - On conflict: `rebase --abort` → Implementer `conflicts` turn → Leader `verify` turn with post-rebase facts.
    - A conflicts report that isn't `completed` goes to consult (§2). A post-rebase `changes_requested` counts as a conflict round and re-runs the `conflicts` turn with the issues; `escalate` → `decision_required`.
    - At most `CONFLICT_ROUNDS` (2) rounds, then `integration_conflict`.
 2. **Strategy**:
    - **`LocalMerge`** (`integration = "merge"`):
-     - Pre-check every repo: `merge-base --is-ancestor base branch`, and, if `base` is checked out in the main checkout, no overlap between its dirty paths and the changed paths.
+     - Pre-check: `merge-base --is-ancestor base branch`, and, if `base` is checked out in the main checkout, no overlap between its dirty paths and the changed paths.
      - If a check fails: retry every `INTEGRATION_RETRY` (2 min) for up to `timeouts.integration_wait`, then `integration_blocked`.
-     - Then for each repo: `git merge --ff-only` if `base` is checked out, else `git update-ref refs/heads/<base> <new> <old>`.
+     - Then: `git merge --ff-only` if `base` is checked out, else `git update-ref refs/heads/<base> <new> <old>`.
    - **`PullRequest`** (`integration = "pr"`):
-     - `git push -u <repos[].remote> <branch>` and `gh pr create`.
+     - `git push -u <repo.remote> <branch>` and `gh pr create`.
      - The slot is released, `wait_reason = "PR open"`, and `gh pr view --json state` is polled every `PR_POLL` (5 min).
      - `MERGED` → done. `CLOSED` → `pr_closed`.
 3. **Done**: cleanup, close the window, emit `task_done` (summary, commits, residual risks).

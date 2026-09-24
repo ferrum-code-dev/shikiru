@@ -68,10 +68,10 @@ Refs: 06 §5.1–5.3.
 
 ### Task 7: Workspace
 Refs: 03 §5.
-- [x] `TaskRootBuilder`: monorepo and multi-repo roots, symlinked top-level entries, idempotent worktrees on `shikiru/T-n-<slug>`.
+- [x] `TaskRootBuilder`: the task root is one idempotent worktree of the project repository on `shikiru/T-n-<slug>` (D20).
 - [x] `CacheCloner`: CoW clone of matching ignored paths, a single warning when unsupported.
-- [x] `GitFacts` (log, diffstat, status, trackers changed, repos ahead of base); `.git/info/exclude`; cleanup.
-- Tests: integration with real repos for both topologies.
+- [x] `GitFacts` (log, diffstat, status, trackers changed); `.git/info/exclude`; cleanup.
+- Tests: integration with real repos.
 
 ### Task 8: Agent contract, registry, SDK
 Refs: 04 §1–2.
@@ -124,9 +124,9 @@ Refs: 03 §7.
 
 ### Task 16: Integration (local merge)
 Refs: 03 §6.
-- [x] Integration lock; rebase of repos ahead of base; conflict turn → verify turn with the loop rules of 03 §6; `CONFLICT_ROUNDS`.
+- [x] Integration lock; rebase of the task branch onto base; conflict turn → verify turn with the loop rules of 03 §6; `CONFLICT_ROUNDS`.
 - [x] `LocalMerge`: pre-check, ff-only or `update-ref`, dirty-overlap retry and `integration_blocked`; cleanup; `task_done` with summary.
-- Tests: integration with real repos: clean ff, forced conflict resolved by the fake agent, dirty main checkout wait then success, multi-repo pre-check failure.
+- Tests: integration with real repos: clean ff, forced conflict resolved by the fake agent, dirty main checkout wait then success, base moved past the branch blocks.
 
 ### Task 17: Engine daemon, scheduler, handlers
 Refs: 02 §1–2, 03 §9–10, 05 §2.
@@ -159,9 +159,9 @@ Refs: 04 §5.
 
 ### Task 21: Doctor and first real E2E
 Refs: 06 §2, 07 §5.
-- [x] `doctor` (tmux, git, config, plugins and their `doctor()`, CoW, DB) and `doctor --probe`.
+- [x] `doctor` (tmux, git, repository root, config, plugins and their `doctor()`, CoW, DB) and `doctor --probe`.
 - [x] E2E harness (`poe e2e`, fixture project, cheap rungs, results file).
-- [x] E2E E1 (monorepo and multi-repo) and E2 pass.
+- [x] E2E E1 and E2 pass (one repository per project, D20).
 
 ## Phase 5 — Resilience and operator completeness
 
@@ -205,7 +205,7 @@ Refs: 06 §5.6.
 ### Task 29: Init wizard
 Refs: 06 §3.
 - [ ] Inline Textual wizard over `operator/detectors.py` with the 7 steps; writes config, excludes `.shikiru/`, runs doctor.
-- Tests: Textual `run_test` walkthrough on tmp mono- and multi-repo projects.
+- Tests: Textual `run_test` walkthrough on a tmp repository project, and rejection of a non-repository root.
 
 ### Task 30: Release readiness
 - [ ] All E2E scenarios pass in one `poe e2e` run; coverage ≥ 80%; `poe check` clean.

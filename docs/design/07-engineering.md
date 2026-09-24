@@ -77,7 +77,7 @@ Plugin offline checks use real agent files committed under `tests/fixtures/agent
 - a tiny Python package with pytest;
 - `CLAUDE.md`/`AGENTS.md` telling agents to test, commit and tick `tasks/todo.md`;
 - `tasks/plan.md` with small tasks. Phase B's todo items are **adjacent lines**, so parallel tasks force a rebase conflict.
-- A multi-repo variant.
+- It is one git repository; multi-repo projects are out of scope (D20).
 
 **Runs**:
 - Each scenario copies the fixture, runs `init --yes --set` with the cheapest rungs, `start`, and asserts only observable outcomes.
@@ -87,7 +87,7 @@ Plugin offline checks use real agent files committed under `tests/fixtures/agent
 
 | # | Scenario | Proves |
 |---|---|---|
-| E1 | `submit "Implement task A1 from tasks/plan.md"`, run for monorepo and multi-repo | Triage → implement → verify → merge; commit on `base`; A1 ticked; window closed; usage recorded for both agents; topology agnostic |
+| E1 | `submit "Implement task A1 from tasks/plan.md"` | Triage → implement → verify → merge; commit on `base`; A1 ticked; window closed; usage recorded for both agents; the project checkout stays clean and its base moves only by the merge |
 | E2 | A task whose AC needs an edge case, plus an Operator `send_message` to the Implementer mid-turn | ≥ 1 changes_requested loop, the message delivered without tripping `intervention`, final accept |
 | E3 | `submit "Implement all tasks in phase B"` with `max_parallel = 2` | Split → dependent children; two task windows at once; the conflict in todo.md resolved; all merged |
 | E4 | An ambiguous request ("rounding mode is a product decision") | `decision_required` packet; an AI Operator resolves it via `shikiru mcp` (`wait_for_events` → `resolve_escalation`); task done |

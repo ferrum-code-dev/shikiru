@@ -16,8 +16,7 @@ The full reference (this is also what `init` writes):
 name = "ferrum"                                 # tmux session "[shikiru] ferrum"; default: folder name
 trackers = ["tasks/plan.md", "tasks/todo.md"]
 
-[[repos]]
-path = "."                                      # "." = monorepo; otherwise relative repo paths
+[repo]                                          # the project root is the repository root (D20)
 base = "main"                                   # omit = branch checked out at task start
 caches = ["node_modules", "**/node_modules", ".venv", "target"]
 remote = "origin"                               # used by integration = "pr"
@@ -144,7 +143,7 @@ CREATE TABLE tasks (
   counters TEXT NOT NULL DEFAULT '{}',            -- rejections_on_rung, consults, conflict_rounds
   rung_index TEXT NOT NULL DEFAULT '{}',          -- {role: n}
   overrides TEXT NOT NULL DEFAULT '{}',           -- {role: {agent, model, effort}}
-  repos TEXT NOT NULL DEFAULT '[]',               -- [{path, base, base_sha, branch}]
+  repo TEXT,                                      -- {base, base_sha, branch}; null until the task root exists
   slot INTEGER, window_id TEXT, panes TEXT NOT NULL DEFAULT '{}',
   wait_reason TEXT, requeued_at TEXT, summary TEXT,
   created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT

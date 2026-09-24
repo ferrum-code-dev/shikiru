@@ -126,7 +126,7 @@ tests/  unit/ integration/ e2e/ support/ (tmux fixture, fake clock, wait_until) 
   fake_agent/   test-only package (uv dev dependency) with its own `shikiru.agents` entry point `fake`
 ```
 
-`init --yes` and the interactive wizard share `operator/detectors.py`: repos, agents, trackers, caches.
+`init --yes` and the interactive wizard share `operator/detectors.py`: base branch, agents, trackers, caches.
 
 ## 4. Plugins
 
@@ -146,9 +146,9 @@ A plugin that is missing or broken fails `start` and `doctor` with its name and 
 ## 5. Runtime layout on disk
 
 ```
-<project>/.shikiru/                 # added to .git/info/exclude of every repo
+<project>/.shikiru/                 # added to the repository's .git/info/exclude
   config.toml  prompts/ (optional overrides)  state.db  engine.lock  logs/engine.log
-  worktrees/T-12/<repo path>/
+  worktrees/T-12/                   # the task's worktree
   runs/T-12/
     leader/  implementer/           # current_turn symlink + plugin-private files (e.g. hooks.jsonl)
     turns/NN-<step>-i<iteration>/   prompt.md report.schema.json report.kind report.json facts.md helper.json

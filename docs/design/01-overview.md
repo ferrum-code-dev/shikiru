@@ -35,7 +35,7 @@ English names come first everywhere. Kanji marks are decoration only.
 | D3 | TOML config | YAML, JSON | Operator choice |
 | D4 | The Leader decides scope changes; the Operator is notified | Always escalate | Operator choice |
 | D5 | Python 3.14, uv, Typer+Rich, Textual, SQLite WAL, tmux ≥ 3.4 | — | Fits the requirements |
-| D6 | One git worktree per task per repo under `.shikiru/worktrees/`; build caches copied copy-on-write | In-place branches; full clones; symlinked caches | Isolation with warm caches at almost no cost |
+| D6 | One git worktree per task under `.shikiru/worktrees/`; build caches copied copy-on-write | In-place branches; full clones; symlinked caches | Isolation with warm caches at almost no cost |
 | D7 | Leader and Implementer sessions last for the whole task; each new task starts clean | Session per step | Keeps review context, like the manual loop |
 | D8 | Detached engine daemon per project; the tmux session is only its view | Engine inside a pane | Pane or terminal loss can't kill orchestration |
 | D9 | SQLite `commands` table as the operator→engine bus | Socket/HTTP API | Local, persistent, and works while the engine is down |
@@ -49,6 +49,7 @@ English names come first everywhere. Kanji marks are decoration only.
 | D17 | A permanent home window `shikiru` plus one window per active task | Swapping windows so the count never reaches zero | Simpler, and still meets the "one window remains" rule |
 | D18 | Comic-strip TUI with a small semantic visual language: role and state colours, meaningful glyphs, motion driven by signals | Decorative theme; large animation catalogue | Distinctive and informative, at bounded cost |
 | D19 | The CLI carries only entry points and `submit`/`status`; every other operator action is reached through the palette or MCP | A CLI verb per operator action (v4) | One action, one adapter. The CLI stays small enough to remember |
+| D20 | One git repository per project: the project root is the repository root. Submodules are unsupported. Operators with several repositories run one Shikiru per repository | Multi-repo task roots assembled from several worktrees plus symlinked top-level entries | Symlinks into the live checkout let agents read and edit it, and left tracker edits outside any task branch. Agents started above the repositories, so Codex missed per-repo `AGENTS.md` and Claude asked about external imports. PR integration would need N coordinated PRs. Multi-repo coordination, if ever needed, belongs above projects, not in the engine |
 
 ## 5. Lessons from prior art
 
