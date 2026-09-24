@@ -243,6 +243,8 @@ class Tmux:
 
     async def is_pane_dead(self, target: str) -> bool:
         """Return whether pane `target`'s process has exited (kept alive by `remain-on-exit`)."""
+        if not await self.pane_exists(target):
+            return True
         result = await self.display(target, FORMAT_PANE_DEAD)
         return result == "1"
 

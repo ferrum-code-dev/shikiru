@@ -58,6 +58,14 @@ async def test_is_alive_is_true_for_a_live_pane(tmux_server: TmuxServer) -> None
     assert await pane.is_alive() is True
 
 
+async def test_missing_pane_is_dead(tmux_server: TmuxServer) -> None:
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
+    pane_id = await tmux.new_window("=test", name="removed")
+    await tmux.kill_pane(pane_id)
+
+    assert await tmux.is_pane_dead(pane_id) is True
+
+
 async def test_respawn_replaces_the_process_with_new_argv_cwd_and_env(
     tmux_server: TmuxServer, tmp_path: Path
 ) -> None:

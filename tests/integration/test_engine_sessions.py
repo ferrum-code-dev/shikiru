@@ -25,7 +25,7 @@ from shikiru.domain.tasks import Hold, Role
 from shikiru.engine.sessions import INJECT_CONFIRM_SECONDS
 from shikiru.errors import CommandFailed
 from tests.support.clock import FakeClock
-from tests.support.engine import FAKE_RUNG, build_registry, set_script
+from tests.support.engine import FAKE_RUNG, build_registry, fake_engine_settings, set_script
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.waiting import wait_until
 
@@ -348,14 +348,19 @@ async def test_exit_task_sends_exit_input_and_closes_the_run(engine_env: EngineE
 
 
 async def test_exit_task_closes_untracked_persisted_live_runs(engine_env: EngineEnv) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    manager = engine_env.build_manager(fake_engine_settings(), clock=clock)
     task = await engine_env.build_task()
     run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
     await engine_env.pane(task.panes[Role.IMPLEMENTER]).kill()
 
-    await engine_env.manager.exit_task(task)
+    exiting = asyncio.create_task(manager.exit_task(task))
+    await wait_until(exiting.done, timeout=_WAIT_TIMEOUT)
+    await exiting
 
     assert engine_env.runs.for_task(task.id)[0].id == run.id
     assert engine_env.runs.for_task(task.id)[0].status is RunStatus.CLOSED
+    assert clock.now() == TASK_CREATED_AT
 
 
 async def test_pane_death_right_after_launch_reaches_the_next_subscriber(
