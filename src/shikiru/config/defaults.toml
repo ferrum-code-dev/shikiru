@@ -21,7 +21,7 @@ escalate_after = 2
 
 [dashboard]
 animations = true
-widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
+widgets = ["header", "strips", "queue"]
 
 [dashboard.layout]
 split = "h"

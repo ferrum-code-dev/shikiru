@@ -49,6 +49,28 @@ async def test_dashboard_app_rejects_an_unregistered_widget_name(
         reader.close()
 
 
+async def test_dashboard_mounts_the_default_widgets(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    reader = StateReader(database, SystemClock())
+    settings = load_settings(project_dir)
+    try:
+        app = DashboardApp(
+            state=reader,
+            project_dir=project_dir,
+            focus_task=None,
+            services=_StubServices(),
+            settings=settings,
+            widget_names=settings.dashboard.widgets,
+        )
+        async with app.run_test():
+            pass
+    finally:
+        reader.close()
+
+
 class _FakeDistribution:
     def __init__(self, name: str) -> None:
         self.name = name
