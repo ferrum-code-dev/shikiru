@@ -70,6 +70,7 @@ else:
 class RealScenario:
     fixture_name: str
     repository_paths: tuple[str, ...]
+    repository_test_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +92,7 @@ def _require(condition: bool, message: str) -> None:
 
 REAL_SCENARIOS = (
     RealScenario("sample-project", (".",)),
-    RealScenario("sample-project-multi", ("backend", "frontend")),
+    RealScenario("sample-project-multi", ("backend", "frontend"), "def test_double_contract"),
 )
 REAL_OVERRIDES = (
     "--set",
@@ -329,6 +330,17 @@ async def _assert_git_and_tracker(project: PreparedProject, task_name: str = "A1
         _require(
             branch.stdout.strip() == BASE_BRANCH and current.stdout.strip() != initial_sha,
             f"repository did not merge on {BASE_BRANCH}: {repository}",
+        )
+
+
+def _assert_repository_conventions(project: PreparedProject, scenario: RealScenario) -> None:
+    if scenario.repository_test_name is None:
+        return
+    for repository in project.repositories:
+        test_sources = list((repository / "tests").glob("test_*.py"))
+        _require(
+            any(scenario.repository_test_name in source.read_text() for source in test_sources),
+            f"repository instructions were not followed in {repository}",
         )
 
 
@@ -603,7 +615,9 @@ async def _run_e1(
     state = AttemptState()
     try:
         await asyncio.wait_for(
-            _execute_e1(project, environment, tmux_server, record_cost, state),
+            _execute_e1(
+                project, scenario, environment, tmux_server, record_cost=record_cost, state=state
+            ),
             timeout=ATTEMPT_TIMEOUT_SECONDS,
         )
     except AssertionError, OSError, ShikiruError, TimeoutError:
@@ -615,8 +629,10 @@ async def _run_e1(
 
 async def _execute_e1(
     project: PreparedProject,
+    scenario: RealScenario,
     environment: dict[str, str],
     tmux_server: TmuxServer,
+    *,
     record_cost: Callable[[float | None], None],
     state: AttemptState,
 ) -> None:
@@ -628,6 +644,7 @@ async def _execute_e1(
     _assert_both_agents_used(task_statuses)
     await _assert_git_and_tracker(project)
     await _assert_a1_implementation(project)
+    _assert_repository_conventions(project, scenario)
     await _assert_window_closed(project, tmux_server)
     record_cost(_cost(task_statuses))
 
