@@ -12,7 +12,7 @@ Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`
 **Order**:
 - Phases 0–3 build the whole pipeline against the fake agent.
 - Phase 4 makes it real (E1, E2).
-- Phase 4b moves agents to headless turns on resumed sessions with panes as live views (D1 revised, D21, D22). Its tasks are numbered 31–37 so earlier numbers stay stable; do them before Phase 5.
+- Phase 4b moves agents to headless turns on resumed sessions with panes as live views (D1 revised, D21, D22). Its tasks are numbered 31–38 so earlier numbers stay stable; do them before Phase 5. Task 38 (code health) runs alongside: its correctness items first, the rest together with the Phase 4b tasks they touch.
 - Phases 5–6 complete resilience, operator surfaces and onboarding.
 
 ---
@@ -183,6 +183,48 @@ Refs: 01 D21, 04 §1–2, 05 §1, 06 §5.3–5.4.
 - [x] `PriceTable` and both `prices.toml` removed; plugins report `cost_usd = None`, `cost_basis = "unknown"` wherever the agent reports no priced cost, and `context_used_pct = None` without a reliable window.
 - [x] Title fields `context` and `cost` are preformatted and render `–` when missing; default title templates per 05 §1.
 - Tests: unit for the title fields with and without values; plugin offline checks updated to the new expectations.
+
+### Task 38: Code health from the 2026-09-25 review
+Refs: [review-2026-09-25.md](review-2026-09-25.md), AGENTS.md.
+Do the fixes marked _After/With Task N_ inside or after those tasks. Findings on code that Phase 4b replaces are out of scope. Close each finding, or record in the review file why it was dropped.
+- [ ] Correctness first:
+  - E2 (a non-`ShikiruError` still stops the daemon)
+  - E4 (dispatch failures are silent)
+  - E5 (`integration = "pr"` merges locally without saying so)
+  - F1 (default widgets crash `dash`)
+  - F2 (caches are never cloned: wire them or delete them)
+  - C8 (Helper config fails mid-task)
+  - C11 (a corrupt report is silently treated as "no report")
+  - C12 (`--set` silently turns invalid TOML into a string)
+  - T1 (the FakeClock drive pattern runs an extra turn)
+  - T2 (ordinary runs overwrite E2E results)
+  - T4 (a missing pane counts as alive)
+- [ ] Design debts:
+  - E1 (one escalate sequence)
+  - E3 (the consult answer is persisted, not held in memory)
+  - E6 (the conflict rebase matches 03 §6)
+  - E7 (conflict context is passed explicitly)
+  - E10 (one terminal cleanup)
+  - E11 (integration summary)
+  - E12 (handlers wired in bootstrap)
+  - F4, F5, F10 (dashboard views)
+  - F6, F7 (plugin checks)
+  - F8, C13 (one layout module)
+  - F12 (one operator services type)
+  - C6 (one reference check)
+  - C7 (typed `status_reason`)
+  - C9 (step duplication)
+  - C10 (drop `Commit.repo`)
+  - C17 (`RepoConfig` injected into `TaskRootBuilder`)
+- [ ] Stale code removed: E13–E24, F11, F13–F23, F25, C2–C5, C14–C16, C18.
+- [ ] Tests follow AGENTS.md:
+  - T3, T6–T12 (one table per rule, no duplicates)
+  - T13–T16 (misleading or fake tests)
+  - T17, T18 (no stand-ins for our own classes)
+  - T19–T25 (trivial, flaky or literal-driven tests)
+  - T5 (FakeClock by default)
+- [ ] With Phase 4b tasks: E8, E9 (Task 35), E25, F9 (Task 36), F24 (Tasks 33–34). F3 and C1 duplicate E5 and F2.
+- Tests: every behaviour fix above gets a behaviour test that fails before the fix. The gate stays green, and coverage stays at or above 80% without tests added only for coverage.
 
 ### Task 32: Headless contract, SDK, contract kit and fake agent
 Refs: 04 §1–3, 02 §2, 07 §3–4.
