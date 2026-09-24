@@ -40,7 +40,7 @@ English names come first everywhere. Kanji marks are decoration only.
 | D8 | Detached engine daemon per project; the tmux session is only its view | Engine inside a pane | Pane or terminal loss can't kill orchestration |
 | D9 | SQLite `commands` table as the operator→engine bus | Socket/HTTP API | Local, persistent, and works while the engine is down |
 | D10 | Remote access over SSH (`ls --host`, `attach --host`, `ssh host shikiru mcp`) | Network server | No ports, no auth code |
-| D11 | Every submission is a task that the Leader triages into `implement`, `plan` or `split` | Parsing plan files | Plan formats vary |
+| D11 | Every submission is a task that the Leader triages into `implement` or `plan`; `plan` is the one way to decompose work up front (its `new_tasks` own their tracker entries), verify `supersede` the one way after an attempt | Parsing plan files; a `split` triage outcome | Plan formats vary. `split` was a second way to create child tasks (principle 6), orphaned the parent's tracker entry, and small models over-split trivial requests |
 | D12 | Ladders: the Leader has one base ladder; the Implementer has ladders per complexity. Moving up resumes the session when the agent stays the same | Single model | Mirrors manual model switching |
 | D13 | Real session resume after quota, crash or restart | Fresh session with a summary | Keeps context |
 | D14 | Agents are code plugins behind a normalized contract, built on a small SDK and a shared contract test kit | Agents described in config (v4 profiles); engine parsing transcripts, prices or quota | Testable, stable, decoupled |

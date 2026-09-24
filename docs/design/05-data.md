@@ -90,7 +90,7 @@ shell = "Shell · {cwd}"
 command = ""                                    # optional; event JSON on stdin for escalation and task_done
 ```
 
-**`submit` flags**, applying to that task only: `--mode implement|plan|split`, `--complexity low|normal|high`, `--priority N`, `--after T-n` (repeatable), `--leader a:m:e`, `--implementer a:m:e`.
+**`submit` flags**, applying to that task only: `--mode implement|plan`, `--complexity low|normal|high`, `--priority N`, `--after T-n` (repeatable), `--leader a:m:e`, `--implementer a:m:e`.
 
 **Protocol constants** are named module constants, not configuration:
 
@@ -215,11 +215,10 @@ class EscalationRequest(BaseModel): question: str; options: list[Option]      # 
 
 class TriageReport(BaseModel):
     title: str                                     # ≤ 60 chars
-    mode: Literal["implement", "plan", "split"]
+    mode: Literal["implement", "plan"]
     complexity: Literal["low", "normal", "high"]
     acceptance_criteria: list[str]
     references: list[str]
-    subtasks: list[NewTask] = []                   # required iff mode == split
 
 class ImplementationReport(BaseModel):
     status: Literal["completed", "needs_decision", "blocked"]

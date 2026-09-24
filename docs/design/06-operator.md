@@ -210,7 +210,6 @@ State is never shown by colour alone: each state has a glyph, and a word whereve
 - **Panels by mode**:
   - implement: Triage · Implement · Verify · Merge (or PR)
   - plan: Triage · Plan · — · Merge
-  - split parents are shown as a finished strip with child ids.
 - **Panel state**:
   - pending: dim, dotted border
   - active: heavy border in the acting role's colour, spinner, role glyph, iteration

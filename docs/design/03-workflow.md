@@ -7,15 +7,15 @@
 | Field | Meaning |
 |---|---|
 | `id` / `seq` | `T-<seq>` |
-| `parent_id`, `origin` | `origin` is `operator`, `split` or `leader` |
+| `parent_id`, `origin` | `origin` is `operator` or `leader` |
 | `title`, `request` | `request` is the verbatim text |
-| `mode` | `implement`, `plan` or `split`. `NULL` until triage, unless `submit --mode` sets it |
+| `mode` | `implement` or `plan`. `NULL` until triage, unless `submit --mode` sets it |
 | `complexity` | `low`, `normal` or `high` (default `normal`) |
 | `priority` | Integer; higher runs first |
 | `depends_on` | Task ids |
 | `status` | §1.2 |
 | `step` | `triage`, `plan`, `implement`, `consult`, `verify` or `integrate` |
-| `status_reason` | e.g. `superseded`, `split`, `cancelled by operator` |
+| `status_reason` | e.g. `superseded`, `cancelled by operator` |
 | `holds` | Task-scoped: `paused`, `intervention` |
 | `iteration` | Implement → verify rounds so far |
 | `counters` | Persisted: `rejections_on_rung` (reset on rung change), `consults` (reset each iteration), `conflict_rounds` (reset per integration attempt). Resolving an escalation resets the counter behind its reason |
@@ -54,8 +54,8 @@ queued ──► running ──► integrating ──► done
 
 | Step | Role | Template → report | Outcomes |
 |---|---|---|---|
-| triage | Leader | `triage` → `TriageReport` | `implement` → implement · `plan` → plan · `split` → create child tasks with dependencies; tasks depending on this one are repointed to all children; this task becomes `done` (`status_reason = split`) |
-| plan | Leader | `plan` → `PlanReport` | → integrate; `new_tasks` are enqueued (the template tells the Leader to fill them only when the request asks to execute the plan) |
+| triage | Leader | `triage` → `TriageReport` | `implement` → implement · `plan` → plan (also when the request needs decomposing into several tasks) |
+| plan | Leader | `plan` → `PlanReport` | → integrate; `new_tasks` are enqueued (the template tells the Leader to fill them only when the request asks to execute the plan, giving each new task its own tracker entry in place of this task's) |
 | implement | Implementer | `implement` (i = 1) / `rework` → `ImplementationReport` | `completed` → verify · `needs_decision`/`blocked` → consult |
 | consult | Leader | `consult` → `ConsultAnswer` | `answer` → implement (same iteration) · `escalate` → `decision_required`. More than `CONSULT_LIMIT` (3) consults → `decision_required` |
 | verify | Leader | `verify` (+ `facts.md`) → `Verdict` | `accept` → integrate · `changes_requested` → implement (i + 1) · `escalate` → `decision_required` · `supersede` → `new_tasks` enqueued, dependents repointed to them, this task `cancelled` (`superseded`) |
@@ -65,7 +65,7 @@ queued ──► running ──► integrating ──► done
 - The Leader must choose `accept`, `supersede` (decompose into new tasks) or `escalate`.
 - A `changes_requested` in the final round raises `iterations_exhausted`.
 
-**Triage** is read-only (the prompt forbids edits). Tracker edits happen in `plan` tasks and in verify turns.
+**Triage** is read-only (the prompt forbids edits). Implement and rework turns tick the task's own tracker entry per project conventions; `plan` turns restructure entries (each new task gets its own, and ticks it when done); verify turns may adjust them on scope changes.
 `submit --mode` skips triage. The title is then the first line of the request, cut to 60 characters.
 
 **Templates.** Every template:

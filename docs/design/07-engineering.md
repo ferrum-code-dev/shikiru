@@ -89,7 +89,7 @@ Plugin offline checks use real agent files committed under `tests/fixtures/agent
 |---|---|---|
 | E1 | `submit "Implement task A1 from tasks/plan.md"` | Triage → implement → verify → merge; commit on `base`; A1 ticked; window closed; usage recorded for both agents; the project checkout stays clean and its base moves only by the merge |
 | E2 | A task whose AC needs an edge case, plus an Operator `send_message` to the Implementer mid-turn | ≥ 1 changes_requested loop, the message delivered without tripping `intervention`, final accept |
-| E3 | `submit "Implement all tasks in phase B"` with `max_parallel = 2` | Split → dependent children; two task windows at once; the conflict in todo.md resolved; all merged |
+| E3 | `submit "Implement all tasks in phase B"` with `max_parallel = 2` | Plan → dependent new tasks; two task windows at once; the conflict in todo.md resolved; all merged |
 | E4 | An ambiguous request ("rounding mode is a product decision") | `decision_required` packet; an AI Operator resolves it via `shikiru mcp` (`wait_for_events` → `resolve_escalation`); task done |
 | E5 | `SIGKILL` the engine after the implement `turn_started` event, then `start` | Session attached or resumed with the same id; turn completes; no duplicate commits |
 | E6 | Two parallel tasks; the Operator types into T-1's implementer pane | Only T-1 gets `intervention`; T-2 completes; resuming T-1 completes it |
