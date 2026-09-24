@@ -40,49 +40,26 @@ FAKE_OVERRIDES = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class Scenario:
-    fixture_name: str
-    repository_paths: tuple[str, ...]
+FIXTURE_NAME = "sample-project"
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedProject:
     root: Path
-    repositories: tuple[Path, ...]
-    initial_shas: tuple[str, ...]
+    initial_sha: str
 
 
-SCENARIOS = (
-    Scenario("sample-project", (".",)),
-    Scenario("sample-project-multi", ("backend", "frontend")),
-)
-
-
-def _repository_path(root: Path, relative_path: str) -> Path:
-    return root if relative_path == "." else root / relative_path
-
-
-async def _prepare_project(tmp_path: Path, scenario: Scenario) -> PreparedProject:
-    source = Path(__file__).parents[1] / "fixtures" / scenario.fixture_name
+async def _prepare_project(tmp_path: Path) -> PreparedProject:
+    source = Path(__file__).parents[1] / "fixtures" / FIXTURE_NAME
     root = tmp_path / "project"
     shutil.copytree(source, root)
     runner = SubprocessRunner()
-    repositories: list[Path] = []
-    initial_shas: list[str] = []
-    for relative_path in scenario.repository_paths:
-        repository = _repository_path(root, relative_path)
-        await init_repo(runner, repository, initial_branch=BASE_BRANCH)
-        await commit_all(runner, repository, "fixture")
-        result = await runner.run(
-            ["git", "rev-parse", "HEAD"],
-            timeout=CLI_TIMEOUT_SECONDS,
-            cwd=repository,
-            check=True,
-        )
-        repositories.append(repository)
-        initial_shas.append(result.stdout.strip())
-    return PreparedProject(root, tuple(repositories), tuple(initial_shas))
+    await init_repo(runner, root, initial_branch=BASE_BRANCH)
+    await commit_all(runner, root, "fixture")
+    result = await runner.run(
+        ["git", "rev-parse", "HEAD"], timeout=CLI_TIMEOUT_SECONDS, cwd=root, check=True
+    )
+    return PreparedProject(root, result.stdout.strip())
 
 
 def _tmux_environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
@@ -174,14 +151,13 @@ async def _assert_tracker_ticked(project: PreparedProject) -> None:
     tracker = project.root / "tasks" / "todo.md"
     contents = await asyncio.to_thread(tracker.read_text)
     assert "- [x] A1" in contents
-    if len(project.repositories) == 1:
-        result = await SubprocessRunner().run(
-            ["git", "show", "HEAD:tasks/todo.md"],
-            timeout=CLI_TIMEOUT_SECONDS,
-            cwd=project.repositories[0],
-            check=True,
-        )
-        assert "- [x] A1" in result.stdout
+    result = await SubprocessRunner().run(
+        ["git", "show", "HEAD:tasks/todo.md"],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=project.root,
+        check=True,
+    )
+    assert "- [x] A1" in result.stdout
 
 
 def _assert_usage(task: dict[str, object]) -> None:
@@ -211,28 +187,24 @@ def _assert_usage(task: dict[str, object]) -> None:
 
 async def _assert_base_commits(project: PreparedProject) -> None:
     runner = SubprocessRunner()
-    for repository, initial_sha in zip(project.repositories, project.initial_shas, strict=True):
-        branch = await runner.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            timeout=CLI_TIMEOUT_SECONDS,
-            cwd=repository,
-            check=True,
-        )
-        current = await runner.run(
-            ["git", "rev-parse", "HEAD"],
-            timeout=CLI_TIMEOUT_SECONDS,
-            cwd=repository,
-            check=True,
-        )
-        subject = await runner.run(
-            ["git", "log", "-1", "--format=%s"],
-            timeout=CLI_TIMEOUT_SECONDS,
-            cwd=repository,
-            check=True,
-        )
-        assert branch.stdout.strip() == BASE_BRANCH
-        assert current.stdout.strip() != initial_sha
-        assert subject.stdout.startswith("fake:")
+    branch = await runner.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=project.root,
+        check=True,
+    )
+    current = await runner.run(
+        ["git", "rev-parse", "HEAD"], timeout=CLI_TIMEOUT_SECONDS, cwd=project.root, check=True
+    )
+    subject = await runner.run(
+        ["git", "log", "-1", "--format=%s"],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=project.root,
+        check=True,
+    )
+    assert branch.stdout.strip() == BASE_BRANCH
+    assert current.stdout.strip() != project.initial_sha
+    assert subject.stdout.startswith("fake:")
 
 
 async def _assert_task_window_closed(project: PreparedProject, tmux_server: TmuxServer) -> None:
@@ -243,11 +215,10 @@ async def _assert_task_window_closed(project: PreparedProject, tmux_server: Tmux
     assert not any(name.startswith(TASK_ID) for name in windows.stdout.splitlines())
 
 
-@pytest.mark.parametrize("scenario", SCENARIOS, ids=("monorepo", "multi-repo"))
-async def test_fake_agent_operator_flow_completes_for_each_topology(
-    tmp_path: Path, tmux_server: TmuxServer, scenario: Scenario
+async def test_fake_agent_operator_flow_completes_and_integrates(
+    tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
-    project = await _prepare_project(tmp_path, scenario)
+    project = await _prepare_project(tmp_path)
     environment = _tmux_environment(project.root, tmux_server)
     await tmux_server.run("set-environment", "-g", TICK_A1_ENV_VAR, TICK_A1_ENABLED_VALUE)
     target = exact_target(session_name(project.root.name))

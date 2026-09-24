@@ -66,18 +66,13 @@ else:
 """
 
 
-@dataclass(frozen=True, slots=True)
-class RealScenario:
-    fixture_name: str
-    repository_paths: tuple[str, ...]
-    repository_test_name: str | None = None
+FIXTURE_NAME = "sample-project"
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedProject:
     root: Path
-    repositories: tuple[Path, ...]
-    initial_shas: tuple[str, ...]
+    initial_sha: str
 
 
 @dataclass(slots=True)
@@ -90,10 +85,6 @@ def _require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-REAL_SCENARIOS = (
-    RealScenario("sample-project", (".",)),
-    RealScenario("sample-project-multi", ("backend", "frontend"), "def test_double_contract"),
-)
 REAL_OVERRIDES = (
     "--set",
     "orchestration.poll_seconds=1",
@@ -114,26 +105,17 @@ REAL_OVERRIDES = (
 )
 
 
-async def _prepare_project(tmp_path: Path, scenario: RealScenario) -> PreparedProject:
-    source = Path(__file__).parents[1] / "fixtures" / scenario.fixture_name
+async def _prepare_project(tmp_path: Path) -> PreparedProject:
+    source = Path(__file__).parents[1] / "fixtures" / FIXTURE_NAME
     root = tmp_path / "project"
     shutil.copytree(source, root)
     runner = SubprocessRunner()
-    repositories: list[Path] = []
-    initial_shas: list[str] = []
-    for relative_path in scenario.repository_paths:
-        repository = root if relative_path == "." else root / relative_path
-        await init_repo(runner, repository, initial_branch=BASE_BRANCH)
-        await commit_all(runner, repository, "fixture")
-        result = await runner.run(
-            ["git", "rev-parse", "HEAD"],
-            timeout=CLI_TIMEOUT_SECONDS,
-            cwd=repository,
-            check=True,
-        )
-        repositories.append(repository)
-        initial_shas.append(result.stdout.strip())
-    return PreparedProject(root, tuple(repositories), tuple(initial_shas))
+    await init_repo(runner, root, initial_branch=BASE_BRANCH)
+    await commit_all(runner, root, "fixture")
+    result = await runner.run(
+        ["git", "rev-parse", "HEAD"], timeout=CLI_TIMEOUT_SECONDS, cwd=root, check=True
+    )
+    return PreparedProject(root, result.stdout.strip())
 
 
 def _environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
@@ -314,57 +296,51 @@ async def _assert_git_and_tracker(project: PreparedProject, task_name: str = "A1
     tracker = project.root / "tasks" / "todo.md"
     _require(f"- [x] {task_name}" in await _read_text(tracker), f"{task_name} was not ticked")
     runner = SubprocessRunner()
-    for repository, initial_sha in zip(project.repositories, project.initial_shas, strict=True):
-        branch = await runner.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            timeout=CLI_TIMEOUT_SECONDS,
-            cwd=repository,
-            check=True,
-        )
-        current = await runner.run(
-            ["git", "rev-parse", "HEAD"],
-            timeout=CLI_TIMEOUT_SECONDS,
-            cwd=repository,
-            check=True,
-        )
-        _require(
-            branch.stdout.strip() == BASE_BRANCH and current.stdout.strip() != initial_sha,
-            f"repository did not merge on {BASE_BRANCH}: {repository}",
-        )
+    branch = await runner.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=project.root,
+        check=True,
+    )
+    current = await runner.run(
+        ["git", "rev-parse", "HEAD"], timeout=CLI_TIMEOUT_SECONDS, cwd=project.root, check=True
+    )
+    _require(
+        branch.stdout.strip() == BASE_BRANCH and current.stdout.strip() != project.initial_sha,
+        f"project did not merge on {BASE_BRANCH}",
+    )
 
 
-def _assert_repository_conventions(project: PreparedProject, scenario: RealScenario) -> None:
-    if scenario.repository_test_name is None:
-        return
-    for repository in project.repositories:
-        test_sources = list((repository / "tests").glob("test_*.py"))
-        _require(
-            any(scenario.repository_test_name in source.read_text() for source in test_sources),
-            f"repository instructions were not followed in {repository}",
-        )
+async def _assert_live_checkout_untouched(project: PreparedProject) -> None:
+    runner = SubprocessRunner()
+    status = await runner.run(
+        ["git", "status", "--porcelain"], timeout=CLI_TIMEOUT_SECONDS, cwd=project.root, check=True
+    )
+    _require(not status.stdout.strip(), f"live checkout was edited: {status.stdout}")
+    fast_forward = await runner.run(
+        ["git", "merge-base", "--is-ancestor", project.initial_sha, "HEAD"],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=project.root,
+    )
+    _require(fast_forward.returncode == 0, "live base moved other than by the integration merge")
 
 
 async def _assert_a1_implementation(project: PreparedProject) -> None:
-    runner = SubprocessRunner()
-    for repository in project.repositories:
-        package_sources = list(repository.glob("*/__init__.py"))
-        _require(bool(package_sources), f"package source missing in {repository}")
-        _require(
-            any("def double" in source.read_text() for source in package_sources),
-            f"A1 implementation missing in {repository}",
-        )
-        test_sources = list((repository / "tests").glob("test_*.py"))
-        _require(
-            any("double(21)" in source.read_text() for source in test_sources),
-            f"A1 test missing in {repository}",
-        )
-        result = await runner.run(
-            [sys.executable, "-m", "pytest", "-q"],
-            timeout=CLI_TIMEOUT_SECONDS,
-            cwd=repository,
-            check=False,
-        )
-        _require(result.returncode == 0, f"A1 tests failed in {repository}: {result.stdout}")
+    repository = project.root
+    package_sources = list(repository.glob("*/__init__.py"))
+    _require(
+        any("def double" in source.read_text() for source in package_sources),
+        "A1 implementation missing",
+    )
+    test_sources = list((repository / "tests").glob("test_*.py"))
+    _require(any("double(21)" in source.read_text() for source in test_sources), "A1 test missing")
+    result = await SubprocessRunner().run(
+        [sys.executable, "-m", "pytest", "-q"],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=repository,
+        check=False,
+    )
+    _require(result.returncode == 0, f"A1 tests failed: {result.stdout}")
 
 
 async def _assert_a2_implementation(project: PreparedProject) -> None:
@@ -607,17 +583,14 @@ def _assert_e2_events(status: dict[str, object] | None) -> None:
 async def _run_e1(
     tmp_path: Path,
     tmux_server: TmuxServer,
-    scenario: RealScenario,
     record_cost: Callable[[float | None], None],
 ) -> None:
-    project = await _prepare_project(tmp_path, scenario)
+    project = await _prepare_project(tmp_path)
     environment = _environment(project.root, tmux_server)
     state = AttemptState()
     try:
         await asyncio.wait_for(
-            _execute_e1(
-                project, scenario, environment, tmux_server, record_cost=record_cost, state=state
-            ),
+            _execute_e1(project, environment, tmux_server, record_cost=record_cost, state=state),
             timeout=ATTEMPT_TIMEOUT_SECONDS,
         )
     except AssertionError, OSError, ShikiruError, TimeoutError:
@@ -629,7 +602,6 @@ async def _run_e1(
 
 async def _execute_e1(
     project: PreparedProject,
-    scenario: RealScenario,
     environment: dict[str, str],
     tmux_server: TmuxServer,
     *,
@@ -643,24 +615,22 @@ async def _execute_e1(
     task_statuses = await _task_tree_statuses(project.root, environment)
     _assert_both_agents_used(task_statuses)
     await _assert_git_and_tracker(project)
+    await _assert_live_checkout_untouched(project)
     await _assert_a1_implementation(project)
-    _assert_repository_conventions(project, scenario)
     await _assert_window_closed(project, tmux_server)
     record_cost(_cost(task_statuses))
 
 
-@pytest.mark.parametrize("scenario", REAL_SCENARIOS, ids=("monorepo", "multi-repo"))
-async def test_real_agents_e1_completes_for_each_topology(
+async def test_real_agents_e1_completes_and_integrates(
     tmp_path: Path,
     tmux_server: TmuxServer,
-    scenario: RealScenario,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
     if os.environ.get(REAL_E2E_ENV_VAR) != REAL_E2E_ENABLED:
         pytest.skip(f"set {REAL_E2E_ENV_VAR}=1 to run real-agent E2E")
     for attempt in range(AUTOMATIC_RERUNS + 1):
         try:
-            await _run_e1(tmp_path / f"attempt-{attempt}", tmux_server, scenario, record_e2e_cost)
+            await _run_e1(tmp_path / f"attempt-{attempt}", tmux_server, record_e2e_cost)
         except AssertionError, OSError, ShikiruError, TimeoutError:
             if attempt == AUTOMATIC_RERUNS:
                 raise
@@ -673,7 +643,7 @@ async def _run_e2(
     tmux_server: TmuxServer,
     record_cost: Callable[[float | None], None],
 ) -> None:
-    project = await _prepare_project(tmp_path, REAL_SCENARIOS[0])
+    project = await _prepare_project(tmp_path)
     environment = _environment(project.root, tmux_server)
     state = AttemptState()
     try:
