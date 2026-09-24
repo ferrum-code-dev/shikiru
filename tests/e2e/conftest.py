@@ -27,6 +27,7 @@ REPORT_PHASE_CALL = "call"
 REPORT_PHASE_SETUP = "setup"
 _COSTS: dict[str, float | None] = {}
 _REPORTS: dict[str, TestReport] = {}
+_REAL_E2E_NODEIDS: set[str] = set()
 
 
 @pytest.fixture
@@ -43,8 +44,8 @@ def record_e2e_cost(request: pytest.FixtureRequest) -> object:
 
 def pytest_runtest_logreport(report: TestReport) -> None:
     """Collect completed scenario reports for the dated results artifact."""
-    if report.when == REPORT_PHASE_CALL or (
-        report.when == REPORT_PHASE_SETUP and (report.skipped or report.failed)
+    if report.nodeid in _REAL_E2E_NODEIDS and (
+        report.when == REPORT_PHASE_CALL or (report.when == REPORT_PHASE_SETUP and report.failed)
     ):
         _REPORTS[report.nodeid] = report
 
@@ -52,6 +53,12 @@ def pytest_runtest_logreport(report: TestReport) -> None:
 def pytest_collection_modifyitems(config: Config, items: list[Item]) -> None:
     """Skip real-agent scenarios unless the explicit E2E opt-in is present."""
     del config
+    _COSTS.clear()
+    _REPORTS.clear()
+    _REAL_E2E_NODEIDS.clear()
+    _REAL_E2E_NODEIDS.update(
+        item.nodeid for item in items if item.get_closest_marker("real_e2e") is not None
+    )
     if os.environ.get("SHIKIRU_E2E") == "1":
         return
     skip = pytest.mark.skip(reason="set SHIKIRU_E2E=1 to run real-agent E2E")
@@ -62,7 +69,7 @@ def pytest_collection_modifyitems(config: Config, items: list[Item]) -> None:
 
 def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
     """Write one redaction-safe dated results file after the E2E session."""
-    if _is_xdist_worker(session.config):
+    if _is_xdist_worker(session.config) or not _REPORTS:
         return
     scenarios = [_scenario_result(nodeid, report) for nodeid, report in sorted(_REPORTS.items())]
     payload = {
