@@ -65,7 +65,7 @@ queued ──► running ──► integrating ──► done
 - The Leader must choose `accept`, `supersede` (decompose into new tasks) or `escalate`.
 - A `changes_requested` in the final round raises `iterations_exhausted`.
 
-**Triage** is read-only (the prompt forbids edits). Implement and rework turns tick the task's own tracker entry per project conventions; `plan` turns restructure entries (each new task gets its own, and ticks it when done); verify turns may adjust them on scope changes.
+**Triage** is read-only (the prompt forbids edits). Implement and rework turns tick the task's own tracker entry per project conventions; `plan` turns restructure entries (each new task gets its own, and ticks it when done); verify turns never change code or tests (anything missing or wrong is `changes_requested`) and edit only trackers, on scope changes, committing those edits.
 `submit --mode` skips triage. The title is then the first line of the request, cut to 60 characters.
 
 **Templates.** Every template:
