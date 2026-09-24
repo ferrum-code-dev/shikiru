@@ -7,7 +7,7 @@ Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`
 - Work on one task at a time.
 - `uv run poe check` must be green before every commit.
 - Tick each AC here and the task in `todo.md` when done.
-- An AC naming an E2E scenario is ticked only with a passing `tests/e2e/results/*.json` committed.
+- An AC naming an E2E scenario is ticked only after a passing `poe e2e` run; the ticking commit message states the run date, scenarios and cost.
 
 **Order**:
 - Phases 0–3 build the whole pipeline against the fake agent.

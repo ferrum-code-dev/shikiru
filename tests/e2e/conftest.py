@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from _pytest.reports import TestReport
 
 
-RESULTS_DIRECTORY = Path(__file__).parent / "results"
+RESULTS_DIRECTORY = Path(__file__).parents[2] / "build" / "e2e"
 RESULTS_DATE_FORMAT = "%Y-%m-%d"
 RESULTS_FILENAME_SUFFIX = ".json"
 RESULTS_TEMP_SUFFIX = ".tmp"
