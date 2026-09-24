@@ -129,6 +129,7 @@ A turn is one agent process (D1, 04 §1): `Agent.start_turn(spec)` spawns it as 
 
 One monitor per turn process. It is the **only** consumer of `turn.signals()`. For each signal it:
 - persists session facts on the run: `session_id`, usage (`UsageReported`), quota windows (`QuotaReported` → `quotas`), the last `Message` or `TurnEnded.last_message`;
+- emits a `compacted` event for `Compacted` (pre and post tokens);
 - appends the signal, timestamped, to `runs/T/<role>/view.jsonl`, which the role's pane renders (06 §5.1);
 - updates pane decorations (`PaneDecorator`).
 
@@ -211,7 +212,7 @@ Dependents become ready only when their dependencies are `done`.
 |---|---|
 | `Failed(QUOTA)` | Block the agent in `agent_blocks` until `resets_at + QUOTA_MARGIN` (unknown reset: now + `QUOTA_PROBE`). When the block ends, a resumed `continue` turn re-runs the step's prompt; a new failure repeats the cycle. If the wait exceeds `timeouts.max_quota_wait`: next rung with a different agent; none left → `quota_exhausted` |
 | `Failed(UNAVAILABLE)` | Retry after 30 s, 2 min, 5 min; then next rung; none left → `ladder_exhausted` |
-| `Failed(CONTEXT)` | New session on the same rung with `handoff` (once), then `agent_error` |
+| `Failed(CONTEXT)` | The plugin has already compacted and re-run the prompt (04 §1, obligation 8). New session on the same rung with `handoff` (once), then `agent_error` |
 | `Failed(AUTH)` | `agent_auth` |
 | `Failed(OTHER)` | Retry once, then `agent_error`; unclassified (§4.3 step 5) → `agent_error` at once |
 | `Stalled` | The process was stopped; a resumed `continue` turn (≤ 2 per turn), then `agent_stuck` |

@@ -228,28 +228,30 @@ Do the fixes marked _After/With Task N_ inside or after those tasks. Findings on
 
 ### Task 32: Headless contract, SDK, contract kit and fake agent
 Refs: 04 §1–3, 02 §2, 07 §3–4.
-- [ ] `agents/contracts.py` per 04 §1 (`Agent`, `Turn`, `TurnSpec`, signals, `FailureKind.UNKNOWN`), with docstrings.
-- [ ] `SubprocessRunner.spawn` (stdin closed, stdout lines, stderr captured, terminate with `TURN_STOP_GRACE`); SDK `TurnParser` and `StreamingTurn` (raw stream and stderr copied to the turn dir, obligations 1 and 3 enforced).
-- [ ] `AgentContractSuite` offline checks replay recorded streams (04 §3); live checks 1–5.
+- [ ] `agents/contracts.py` per 04 §1 (`Agent`, `Turn`, `TurnSpec`, signals incl. `Compacted`, `FailureKind.UNKNOWN`, obligation 8), with docstrings.
+- [ ] `SubprocessRunner.spawn` (stdin closed, stdout lines, stderr captured, terminate with `TURN_STOP_GRACE`); SDK `TurnParser` and `StreamingTurn` (raw stream and stderr copied to the turn dir, obligations 1 and 3 enforced, a process sequence per turn for compaction).
+- [ ] `AgentContractSuite` offline checks 1–4 replay recorded streams (04 §3); live checks 1–6.
 - [ ] Fake agent rewritten as a per-turn fake CLI with session resume by id and a REPL `interactive_command`; passes the suite.
 - Tests: unit for obligation enforcement over synthetic parsers; integration for `spawn`/`stop` with a real child process.
 
 ### Task 33: Claude Code headless plugin
 Refs: 04 §4.
 - [ ] Turn argv (new, resume, model change, auth modes), stream-json parser, failure mapping incl. stderr tags, usage and context rules, `QuotaReported` from `rate_limit_event`, `interactive_command`, `headless`, `doctor`.
+- [ ] Compaction per 04 §4: `/compact` before a turn at `compact_at_pct`, compact-and-rerun on `CONTEXT` (verify `/compact` on an overflowed session), `Compacted` from `compact_boundary`.
 - [ ] Recorded samples under `tests/fixtures/agents/claude/` (subscription, API key, OpenRouter, rate limit, unrecognised model); offline checks pass; live checks pass.
 
 ### Task 34: Codex headless plugin
 Refs: 04 §5.
 - [ ] `exec` / `exec resume` argv with closed stdin, workspace-write sandbox with the run dir and the git common dir writable (verify persistence across `exec resume`), `--json` parser, error-message JSON mapping, rollout context and `rate_limits`, `interactive_command`, `headless`, `doctor`.
+- [ ] Compaction per 04 §5: `model_auto_compact_token_limit` from `compact_at_pct` and the model's window on every turn, compact-and-rerun on `CONTEXT`, `Compacted` from the rollout's `compacted` entry.
 - [ ] Recorded samples under `tests/fixtures/agents/codex/` (first turn, resume with model change, usage limit, API key with null `rate_limits`); offline checks pass; live checks pass, including a commit from the worktree.
 
 ### Task 35: Engine on process-per-turn; screen machinery removed
 Refs: 03 §4, §7, 04 §6, 05 §1–2.
 - [ ] `SessionManager.session_for` per 03 §4.1; `TurnMonitor` (single consumer, run facts, `quotas` from `QuotaReported`, `view.jsonl`, decorations, stall → `stop()`); `TurnRunner` per 03 §4.3 incl. resumed nudge turns and `Helper.classify_failure` with `CLASSIFY_CONFIDENCE`.
 - [ ] Recovery per 03 §7 (`Stalled` → resumed `continue`, quota block → resumed `continue`); cancellation stops the turn; `turn.pid` written and removed.
-- [ ] Removed: `InteractiveAgent`/`AgentSession`/`PaneHandle`, keys, pointer injection and submit confirmation, `before_turn`/`Compacted`, `HookRecorder` and `shikiru hook`, `activity.is_operator_prompt`, `Helper.classify_screen`, `QuotaPoller` and `quota()`, `timeouts.launch`, `compact_below_free_pct`, `runs.agent_state` (migration), `agents.<name>.prompt_prefix` (a slash or `$` skill prefix does not work in headless turns; projects name skills in their own instructions).
-- Tests: integration with the fake CLI: accept; changes_requested → accept on one resumed session; no report → nudge turn; rebuild; stall stop → resume; unknown failure classified above and below the threshold; model change resumes the session; different agent → handoff.
+- [ ] Removed: `InteractiveAgent`/`AgentSession`/`PaneHandle`, keys, pointer injection and submit confirmation, `before_turn` (compaction moves into the plugins, 04 §1 obligation 8), `HookRecorder` and `shikiru hook`, `activity.is_operator_prompt`, `Helper.classify_screen`, `QuotaPoller` and `quota()`, `timeouts.launch`, `compact_below_free_pct`, `runs.agent_state` (migration), `agents.<name>.prompt_prefix` (a slash or `$` skill prefix does not work in headless turns; projects name skills in their own instructions).
+- Tests: integration with the fake CLI: accept; a `Compacted` signal becomes a `compacted` event; changes_requested → accept on one resumed session; no report → nudge turn; rebuild; stall stop → resume; unknown failure classified above and below the threshold; model change resumes the session; different agent → handoff.
 
 ### Task 36: Pane views, take over / hand back, queued `say`
 Refs: 03 §9, 06 §2, §4, §5.1–5.2.

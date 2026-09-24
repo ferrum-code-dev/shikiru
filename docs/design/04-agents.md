@@ -7,6 +7,7 @@ Agents are **code plugins**. The engine depends only on this module, and each pl
 - stream and session-log formats
 - usage, context window and quota extraction
 - error mapping
+- context compaction
 
 **Turn model (D1).** Every turn is one agent process running headless on a session: the first turn creates the session, every later turn resumes it, also after a model change, a stall, a quota wait, an operator take-over or an engine restart. The process reads nothing from stdin (it is closed), shows no dialogs, and exits when the turn ends. Its structured output stream is the only signal source: no hooks, no screen.
 
@@ -31,10 +32,11 @@ class CheckResult:     name: str; ok: bool; detail: str
 @dataclass(frozen=True) class ToolFinished:   name: str
 @dataclass(frozen=True) class UsageReported:  usage: Usage                       # session totals
 @dataclass(frozen=True) class QuotaReported:  windows: tuple[QuotaWindow, ...]
+@dataclass(frozen=True) class Compacted:      pre_tokens: int | None; post_tokens: int | None
 @dataclass(frozen=True) class TurnEnded:      last_message: str
 @dataclass(frozen=True) class TurnFailed:     kind: FailureKind; message: str; resets_at: datetime | None
 type AgentSignal = (SessionStarted | Message | ToolStarted | ToolFinished | UsageReported
-                    | QuotaReported | TurnEnded | TurnFailed)
+                    | QuotaReported | Compacted | TurnEnded | TurnFailed)
 
 @dataclass(frozen=True)
 class TurnSpec:        rung: Rung; role: str; prompt: str; cwd: Path; run_dir: Path; turn_dir: Path
@@ -43,8 +45,9 @@ class TurnSpec:        rung: Rung; role: str; prompt: str; cwd: Path; run_dir: P
                        usage: Usage | None             # the session's totals so far
 
 class Turn(Protocol):
-    """One running agent process. `signals()` must be consumed by exactly one reader."""
-    pid: int
+    """One agent turn: one process, or a short sequence when the plugin compacts (obligation 8).
+    `signals()` must be consumed by exactly one reader."""
+    pid: int                                               # the process running now
     def signals(self) -> AsyncIterator[AgentSignal]: ...   # ends when the process has exited
     async def stop(self) -> None: ...                      # terminate; the session stays resumable
 
@@ -75,10 +78,14 @@ Prompts call Shikiru back only through `shikiru_command`. Agent shells may be lo
 1. `SessionStarted` exactly once per turn, before any other signal. For a resumed turn its id equals `spec.session_id`.
 2. `Message`, `ToolStarted` and `ToolFinished` as the agent works; a tool runs between its `ToolStarted` and `ToolFinished`.
 3. Every stream ends with exactly one `TurnEnded` or `TurnFailed`, and then the process has exited. A process that exits without a structured result yields `TurnFailed(UNKNOWN)` with the exit status and the stderr tail.
-4. `UsageReported` carries session totals and never decreases.
+4. `UsageReported` carries session totals; its token counts never decrease (`context_used_pct` drops after `Compacted`).
 5. **Usage is only what the agent reports** (D21): tokens always; `cost_usd` only when the agent marks its cost as priced, else `None` with `cost_basis = "unknown"`; `context_used_pct` only from a context window the agent reports reliably, else `None`; `QuotaReported` only when the agent reports windows. `cost_basis` is `api_equivalent` for priced subscription usage and `billed` for priced API-key usage.
 6. The process never waits for input: stdin is closed and no flag it is given can open a dialog.
 7. `stop()` ends the process within `TURN_STOP_GRACE` (SIGTERM, then SIGKILL); the next turn on the same `session_id` resumes the session.
+8. **Compaction.** Headless turns never compact reliably on their own, so the plugin keeps the session's context below its `compact_at_pct` option (default 80):
+   - *Before* the turn, the plugin compacts when the session is at or above the threshold (Claude), or starts the turn with the agent's own compaction limit set (Codex).
+   - *After* a context failure, the plugin compacts and re-runs the same prompt once inside the same `Turn` (prompts are idempotent). Only a second context failure ends the turn with `TurnFailed(CONTEXT)`.
+   - Every compaction emits `Compacted`. `SessionStarted` and the final `TurnEnded`/`TurnFailed` still occur once per `Turn`.
 
 **Failure mapping.** A plugin maps the structured errors it knows to a `FailureKind` and returns `UNKNOWN` with the raw text for anything else. The engine asks the Helper to classify `UNKNOWN` (§6); the Helper never replaces the structured path (D22).
 
@@ -89,7 +96,7 @@ Small, tested building blocks for plugins:
 | Block | Purpose |
 |---|---|
 | `TurnParser` | Protocol a plugin implements: `feed(line) → list[AgentSignal]` for one stdout line, `finish(exit_code, stderr) → list[AgentSignal]` at exit. Pure, so recorded streams replay offline |
-| `StreamingTurn` | `Turn` implementation: spawns the argv through `SubprocessRunner.spawn` with stdin closed, copies stdout to `turn_dir/<role>.stream.jsonl` and stderr to `turn_dir/<role>.stderr.log`, feeds lines to the parser, enforces obligations 1 and 3, and implements `stop()` |
+| `StreamingTurn` | `Turn` implementation: spawns the argv through `SubprocessRunner.spawn` with stdin closed, copies stdout to `turn_dir/<role>.stream.jsonl` and stderr to `turn_dir/<role>.stderr.log`, feeds lines to the parser, enforces obligations 1 and 3, and implements `stop()`. Runs the plugin's process sequence for one turn (compact, prompt, compact-and-rerun), appending every process's output to the same files |
 | `JsonlTail` | Incremental reader for agent-written JSONL (e.g. a session log), safe with partial lines |
 | `ResetTimeParser` | "resets 3:10am (Europe/Warsaw)", ISO, epoch, relative durations → `datetime` |
 
@@ -100,7 +107,8 @@ Small, tested building blocks for plugins:
 **Offline checks** (always run; samples are recorded streams committed under `tests/fixtures/agents/<agent>/`, 07 §4):
 1. Each recorded stream (stdout lines, stderr, exit code, plus session-log excerpts when the plugin reads them) replays through the parser to the expected signal sequence and satisfies obligations 1–5.
 2. Recorded error streams map to the expected `FailureKind` and `resets_at`; unmapped text yields `UNKNOWN`.
-3. Argv and env for a new turn, a resumed turn, a model change and each auth mode; `interactive_command`.
+3. Recorded compaction output yields `Compacted`; a context failure followed by a compaction and a rerun yields one `Turn` ending in `TurnEnded`, and a second context failure yields `TurnFailed(CONTEXT)`.
+4. Argv and env for a new turn, a resumed turn, a model change, each auth mode and compaction; `interactive_command`.
 
 **Live checks** (`SHIKIRU_E2E=1`, scratch repository):
 1. A first turn whose prompt points at a prompt file → `SessionStarted`, a valid report through `shikiru report`, `TurnEnded`.
@@ -108,6 +116,7 @@ Small, tested building blocks for plugins:
 3. A resumed turn on another model of the same agent recalls a nonce from turn 1.
 4. `stop()` during a turn, then a resumed turn completes.
 5. `headless().ask()` returns schema-valid JSON (when provided).
+6. With a low `compact_at_pct`, a resumed turn compacts (`Compacted`) and still recalls a nonce from turn 1.
 
 `shikiru doctor --probe` runs live check 1 for each agent on a ladder through the same `start_turn` the engine uses, in a scratch repository reused at `.shikiru/probe/`. No dialog needs answering.
 
@@ -120,6 +129,7 @@ Small, tested building blocks for plugins:
 | `auth` | `subscription` | `subscription` unsets `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`; `api_key` sets `ANTHROPIC_API_KEY` from `api_key_env` |
 | `api_key_env` | `ANTHROPIC_API_KEY` | Env var holding the key |
 | `args` | `["--permission-mode", "bypassPermissions"]` | Extra CLI args; must keep the turn unattended |
+| `compact_at_pct` | `80` | Context use that triggers compaction (obligation 8) |
 
 **Turn**:
 
@@ -138,6 +148,7 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 | `assistant` text block | `Message` |
 | `assistant` `tool_use` block | `ToolStarted(name, input summary)` |
 | `user` `tool_result` block | `ToolFinished` |
+| `system/compact_boundary` | `Compacted(compact_metadata.pre_tokens, post_tokens)` |
 | `rate_limit_event` | `QuotaReported` (`five_hour`, `seven_day`: utilization, `resetsAt`); subscription auth only |
 | `result`, not `is_error` | `UsageReported`, then `TurnEnded(result)` |
 | `result` with `is_error`, `api_error_status` or an error `terminal_reason`; stderr tags such as `[claude-code:unrecognized_model]` | `TurnFailed` |
@@ -154,6 +165,12 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 - Cost: `result.total_cost_usd` (cumulative per session) only when `modelUsage.<m>.costBasis` is `"list"`; `api_equivalent` under subscription, `billed` with `api_key`. Any other basis (e.g. OpenRouter or other non-Anthropic-priced models, where the list-price estimate is wrong) → `None`, `unknown`.
 - Context: the last assistant message's input and cache tokens ÷ `modelUsage.<m>.contextWindow`, only when the cost basis is `"list"` (other providers report a fixed 200000 default).
 
+**Compaction** (obligation 8):
+- Before a resumed turn whose `spec.usage.context_used_pct` ≥ `compact_at_pct`, the plugin first runs `claude -p "/compact" --resume <id>` with the same model and flags. Verified: a headless `/compact` emits `compact_boundary` (47,571 → 1,949 tokens), and the next turn still recalls earlier context.
+- `context_used_pct` is only known for list-priced models (see Usage). On other providers only the after-failure path applies.
+- On a `CONTEXT` failure: `/compact`, then the same prompt once more. *Verify in implementation* that `/compact` succeeds on a session that already overflowed. If it does not, a Claude context failure goes straight to `TurnFailed(CONTEXT)` (handoff, 03 §7).
+- Not relied on: Claude's own auto-compaction. In `-p` mode it did not trigger, even with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`.
+
 **Other**:
 - `interactive_command`: `claude --resume <id> --add-dir <run_dir> <args>` (verified: its turns land in the same session, and the next headless `--resume` sees them).
 - `headless().ask`: `claude -p --output-format json --json-schema <s> --model <m> --effort <e> --safe-mode --tools "" --no-session-persistence` → `structured_output`.
@@ -167,6 +184,7 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 | `auth` | `subscription` | `subscription` unsets `OPENAI_API_KEY`/`CODEX_API_KEY`; `api_key` sets `CODEX_API_KEY` |
 | `api_key_env` | `OPENAI_API_KEY` | Env var holding the key |
 | `args` | `[]` | Extra CLI args |
+| `compact_at_pct` | `80` | Context use that triggers compaction (obligation 8) |
 
 **Turn** (cwd = task root, stdin closed — `codex exec` waits on an open stdin):
 
@@ -196,8 +214,13 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 - 429, `usage_limit_reached` → `QUOTA`, `resets_at` from the latest `rate_limits` or the message; 402 → `QUOTA` without `resets_at`
 - 5xx, overloaded → `UNAVAILABLE`
 - 401 → `AUTH`
-- `context_length_exceeded` → `CONTEXT` (`codex exec` never compacts on its own, so a full context always ends here and moves to a new session with `handoff`)
+- `context_length_exceeded` → `CONTEXT` (after the compact-and-rerun of obligation 8)
 - else → `UNKNOWN`
+
+**Compaction** (obligation 8):
+- Every turn adds `-c model_auto_compact_token_limit=<compact_at_pct × context window>`. The window is the model's `model_context_window` from the latest rollout, or, before the first turn, from Codex's model list (`$CODEX_HOME/models_cache.json`). When neither knows the model, the limit is omitted.
+- Without the limit, `codex exec` never compacts. With it (verified), Codex compacts at the start of the next turn whose context exceeds it, keeping earlier context. The compaction shows only in the rollout as a `compacted` entry, so the plugin emits `Compacted` from the rollout (`pre_tokens` from the last `token_count` before it, `post_tokens` from the first after).
+- On a `CONTEXT` failure: the same prompt once more via `exec resume` with the limit set, which compacts first.
 
 **Usage**: tokens from `turn.completed.usage` (cumulative for the thread on resume, so already session totals); context from the rollout; no cost is reported anywhere → `cost_usd = None`, `cost_basis = "unknown"`.
 

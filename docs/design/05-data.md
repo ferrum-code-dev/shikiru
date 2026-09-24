@@ -177,7 +177,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 **`EventKind`** (in `domain.events`; `events.data` carries typed fields):
 - `task_queued`, `task_started`, `step_started`
 - `turn_started`, `turn_completed` (agent, model, outcome, summary, question, usage delta), `turn_failed`
-- `nudge`, `helper_action`, `rung_changed`
+- `nudge`, `helper_action`, `rung_changed`, `compacted`
 - `quota_blocked`, `quota_cleared`
 - `verdict`, `scope_change`
 - `hold_set`, `hold_cleared`, `taken_over`, `handed_back`, `operator_message`
