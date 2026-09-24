@@ -34,6 +34,15 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 20: Codex plugin
 - [x] Task 21: Doctor and first real E2E
 
+## Phase 4b — Headless agents
+- [ ] Task 31: Usage rules and price-table removal
+- [ ] Task 32: Headless contract, SDK, contract kit and fake agent
+- [ ] Task 33: Claude Code headless plugin
+- [ ] Task 34: Codex headless plugin
+- [ ] Task 35: Engine on process-per-turn; screen machinery removed
+- [ ] Task 36: Pane views, take over / hand back, queued `say`
+- [ ] Task 37: Probe and real E2E on headless turns
+
 ## Phase 5 — Resilience and operator completeness
 - [ ] Task 22: Engine restart recovery
 - [ ] Task 23: Pull request integration

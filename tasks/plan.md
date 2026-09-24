@@ -12,6 +12,7 @@ Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`
 **Order**:
 - Phases 0–3 build the whole pipeline against the fake agent.
 - Phase 4 makes it real (E1, E2).
+- Phase 4b moves agents to headless turns on resumed sessions with panes as live views (D1 revised, D21, D22). Its tasks are numbered 31–37 so earlier numbers stay stable; do them before Phase 5.
 - Phases 5–6 complete resilience, operator surfaces and onboarding.
 
 ---
@@ -43,6 +44,7 @@ Refs: 03 §1–3, §7–8, §10; 05 §2.
 - [x] `activity.is_stalled` and `activity.is_operator_prompt` (03 §4.2, §9).
 - [x] `scheduling.pick_ready(tasks, gates)` with ordering and `wait_reason`; `escalation.options_for(reason)` per 03 §8.
 - Tests: table-driven unit tests, one row per documented rule.
+_Superseded by Phase 4b (D1 revised): `activity.is_operator_prompt` is removed by Task 35._
 
 ### Task 4: Report models and `shikiru report`
 Refs: 05 §4, 03 §4.3.
@@ -65,6 +67,7 @@ Refs: 06 §5.1–5.3.
 - [x] `SessionView`: name rules and collision check, session options, home window, task window create/close.
 - [x] `LayoutBuilder` from the layout tree → `{role: pane_id}`; `TmuxPane` implementing `PaneHandle` plus `paste_line` and `send_keys`; `PaneDecorator` (`@shk_*` pane and window options, border and status formats, titles from templates); conditional `prefix + Space` binding.
 - Tests: integration on `tmux_server`: geometry, paste reaches `cat`, decorations render, binding keeps its default outside Shikiru sessions.
+_Superseded by Phase 4b (D1 revised): `paste_line`, `send_keys` and `PaneHandle` are removed by Task 35._
 
 ### Task 7: Workspace
 Refs: 03 §5.
@@ -79,17 +82,20 @@ Refs: 04 §1–2.
 - [x] `AgentRegistry`: loads `AgentFactory` entry points (and factories registered by `bootstrap`), reports missing or broken plugins and option errors by name.
 - [x] SDK: `HookRecorder` + `shikiru hook` (flock, no-op outside Shikiru), `JsonlTail`, `ResetTimeParser`, `PriceTable`.
 - Tests: unit for `ResetTimeParser` and `PriceTable`; integration for hook append/tail with concurrent writers.
+_Superseded by Phase 4b (D1 revised): the contract is replaced by Task 32; `HookRecorder`/`shikiru hook` by Task 35; `PriceTable` by Task 31._
 
 ### Task 9: Fake agent and contract test kit
 Refs: 04 §3, 07 §3.
 - [x] `AgentContractSuite` with offline and live checks.
 - [x] Fake agent as a test-only package `tests/fake_agent` (uv dev dependency, own `shikiru.agents` entry point): scripted REPL using `HookRecorder`, headless `ask` via script; passes the suite on `tmux_server`.
+_Superseded by Phase 4b (D1 revised): the REPL fake agent and live-pane checks are replaced by Task 32._
 
 ### Task 10: Prompts and Helper
 Refs: 03 §2, §4.3; 04 §6.
 - [x] `PromptRenderer` with packaged templates `triage`, `plan`, `implement`, `rework`, `consult`, `verify`, `conflicts`, `continue`, `handoff`; `.shikiru/prompts/` overrides.
 - [x] `Helper.rebuild_report` and `Helper.classify_screen` over `headless()` with validated results.
 - Tests: property tests (request and report instruction present, fenced reports, `StrictUndefined` raises); Helper against the fake agent's headless script.
+_Superseded by Phase 4b (D1 revised): `classify_screen` is replaced by `classify_failure` in Task 35._
 
 ### Task 11: UI core and dashboard shell
 Refs: 06 §5.4, §6.1–6.2.
@@ -104,11 +110,13 @@ Refs: 03 §4.1–4.2, §9.
 - [x] `SessionManager.ensure` for every row of 03 §4.1; `resume_command` stored; exit on task end.
 - [x] `SessionMonitor`: single consumer, fan-out queue (with `PaneDecorator` subscribed), usage/snapshot/last message persisted, pane death, stall and attention via `domain.activity`, intervention hold via `domain.activity`; launch timeout → `Stalled`.
 - Tests: integration with fake agent scripts (resume, attach after restart, rung change, crash, stall, typed prompt → hold on that task only).
+_Superseded by Phase 4b (D1 revised): launch/attach/exit, pane death, screen stall and typed-prompt intervention are replaced by Task 35._
 
 ### Task 13: Turn runner
 Refs: 03 §4.3.
 - [x] Turn dir and `current_turn`, `before_turn` lines, pointer injection with recorded injected set, submit confirmation with one Enter retry, await, nudges, Helper rebuild (`helper.json`), `TurnResult` variants.
 - Tests: integration: accept; no report → nudge → report; no report ×3 → rebuilt; unconfirmed submit → retry → `Stalled`.
+_Superseded by Phase 4b (D1 revised): pointer injection, `before_turn` and submit confirmation are replaced by Task 35._
 
 ### Task 14: Task flow
 Refs: 03 §2–3.
@@ -121,6 +129,7 @@ Refs: 03 §2–3.
 Refs: 03 §7.
 - [x] `TaskFlow` applies `recovery.decide` actions: agent quota blocks with `continue` after the block, backoff, next rung (same-agent resume, other-agent handoff), relaunch, context handoff, stall → `classify_screen` actions (Leader question → `decision_required`).
 - [x] Tests: integration with fake failures for each 03 §7 row using `FakeClock`.
+_Superseded by Phase 4b (D1 revised): relaunch and `classify_screen` actions are replaced by Task 35._
 
 ### Task 16: Integration (local merge)
 Refs: 03 §6.
@@ -136,6 +145,7 @@ Refs: 02 §1–2, 03 §9–10, 05 §2.
 - [x] Handlers for every command model (`Submit` … `Stop`), including cancellation semantics (03 §4.3) and resolution options (03 §8).
 - [x] `LayoutGuard` restoring killed or dead panes; `Notifier` (tmux message and `notify.command`).
 - [x] Tests: integration with the in-process engine: priority order, parallelism, dependencies, resource gate via configured thresholds (0% / 100%), quota gate via `agent_blocks` rows, each handler, resolution options with counter resets, pane restoration, quota polling with the fake agent.
+_Superseded by Phase 4b (D1 revised): `QuotaPoller` is removed by Task 35 (quota comes from turn streams)._
 
 ### Task 18: Operator services, CLI and MCP
 Refs: 06 §1–2, §4.
@@ -151,23 +161,71 @@ Refs: 06 §1–2, §4.
 Refs: 04 §4.
 - [x] Factory and options; launch/resume/attach; hook signals; transcript usage and failures; quota probe with cache; keys; `resume_command`; `headless`; `doctor`.
 - [x] Offline contract checks with committed samples; live contract checks pass.
+_Superseded by Phase 4b (D1 revised): the interactive plugin is replaced by Task 33._
 
 ### Task 20: Codex plugin
 Refs: 04 §5.
 - [x] Factory and options; launch/resume/attach (`-c` hooks, trust, `--add-dir`); hook signals; rollout discovery, usage, failures, quota; compaction `before_turn`; keys; `resume_command`; `headless`; `doctor`.
 - [x] Offline contract checks with committed samples; live contract checks pass.
+_Superseded by Phase 4b (D1 revised): the interactive plugin is replaced by Task 34._
 
 ### Task 21: Doctor and first real E2E
 Refs: 06 §2, 07 §5.
 - [x] `doctor` (tmux, git, repository root, config, plugins and their `doctor()`, CoW, DB) and `doctor --probe`.
 - [x] E2E harness (`poe e2e`, fixture project, cheap rungs, results file).
 - [x] E2E E1 and E2 pass (one repository per project, D20).
+_Superseded by Phase 4b (D1 revised): `doctor --probe` and E1/E2 are re-done on headless turns by Task 37._
+
+## Phase 4b — Headless agents
+
+### Task 31: Usage rules and price-table removal
+Refs: 01 D21, 04 §1–2, 05 §1, 06 §5.3–5.4.
+- [ ] `PriceTable` and both `prices.toml` removed; plugins report `cost_usd = None`, `cost_basis = "unknown"` wherever the agent reports no priced cost, and `context_used_pct = None` without a reliable window.
+- [ ] Title fields `context` and `cost` are preformatted and render `–` when missing; default title templates per 05 §1.
+- Tests: unit for the title fields with and without values; plugin offline checks updated to the new expectations.
+
+### Task 32: Headless contract, SDK, contract kit and fake agent
+Refs: 04 §1–3, 02 §2, 07 §3–4.
+- [ ] `agents/contracts.py` per 04 §1 (`Agent`, `Turn`, `TurnSpec`, signals, `FailureKind.UNKNOWN`), with docstrings.
+- [ ] `SubprocessRunner.spawn` (stdin closed, stdout lines, stderr captured, terminate with `TURN_STOP_GRACE`); SDK `TurnParser` and `StreamingTurn` (raw stream and stderr copied to the turn dir, obligations 1 and 3 enforced).
+- [ ] `AgentContractSuite` offline checks replay recorded streams (04 §3); live checks 1–5.
+- [ ] Fake agent rewritten as a per-turn fake CLI with session resume by id and a REPL `interactive_command`; passes the suite.
+- Tests: unit for obligation enforcement over synthetic parsers; integration for `spawn`/`stop` with a real child process.
+
+### Task 33: Claude Code headless plugin
+Refs: 04 §4.
+- [ ] Turn argv (new, resume, model change, auth modes), stream-json parser, failure mapping incl. stderr tags, usage and context rules, `QuotaReported` from `rate_limit_event`, `interactive_command`, `headless`, `doctor`.
+- [ ] Recorded samples under `tests/fixtures/agents/claude/` (subscription, API key, OpenRouter, rate limit, unrecognised model); offline checks pass; live checks pass.
+
+### Task 34: Codex headless plugin
+Refs: 04 §5.
+- [ ] `exec` / `exec resume` argv with closed stdin, workspace-write sandbox with the run dir and the git common dir writable (verify persistence across `exec resume`), `--json` parser, error-message JSON mapping, rollout context and `rate_limits`, `interactive_command`, `headless`, `doctor`.
+- [ ] Recorded samples under `tests/fixtures/agents/codex/` (first turn, resume with model change, usage limit, API key with null `rate_limits`); offline checks pass; live checks pass, including a commit from the worktree.
+
+### Task 35: Engine on process-per-turn; screen machinery removed
+Refs: 03 §4, §7, 04 §6, 05 §1–2.
+- [ ] `SessionManager.session_for` per 03 §4.1; `TurnMonitor` (single consumer, run facts, `quotas` from `QuotaReported`, `view.jsonl`, decorations, stall → `stop()`); `TurnRunner` per 03 §4.3 incl. resumed nudge turns and `Helper.classify_failure` with `CLASSIFY_CONFIDENCE`.
+- [ ] Recovery per 03 §7 (`Stalled` → resumed `continue`, quota block → resumed `continue`); cancellation stops the turn; `turn.pid` written and removed.
+- [ ] Removed: `InteractiveAgent`/`AgentSession`/`PaneHandle`, keys, pointer injection and submit confirmation, `before_turn`/`Compacted`, `HookRecorder` and `shikiru hook`, `activity.is_operator_prompt`, `Helper.classify_screen`, `QuotaPoller` and `quota()`, `timeouts.launch`, `compact_below_free_pct`, `runs.agent_state` (migration).
+- Tests: integration with the fake CLI: accept; changes_requested → accept on one resumed session; no report → nudge turn; rebuild; stall stop → resume; unknown failure classified above and below the threshold; model change resumes the session; different agent → handoff.
+
+### Task 36: Pane views, take over / hand back, queued `say`
+Refs: 03 §9, 06 §2, §4, §5.1–5.2.
+- [ ] `shikiru view T-n ROLE` renders `view.jsonl` live (`ui.StreamLine`); role panes run it; `LayoutGuard` respawns dead view panes.
+- [ ] `TakeOver`/`HandBack` commands, handlers and `Takeover` per 03 §9; MCP `take_over`/`hand_back`; a dead taken-over pane hands back; `taken_over`/`handed_back` events.
+- [ ] `Say` queues `messages/<role>/NNN.md`, delivered into the role's next turn dir and listed in its prompt.
+- Tests: integration on `tmux_server` with the fake agent: the view shows a turn's messages and tool calls; take over stops the turn, holds only that task and runs the REPL; exiting the REPL hands back and the step completes on the same session; a message sent mid-turn appears in the next prompt of that role only.
+
+### Task 37: Probe and real E2E on headless turns
+Refs: 04 §3, 06 §2, 07 §5.
+- [ ] `doctor --probe` runs live check 1 per ladder agent in `.shikiru/probe/`, reporting the stream tail and stderr on failure.
+- [ ] E2E E1 and E2 (queued delivery, 07 §5) pass.
 
 ## Phase 5 — Resilience and operator completeness
 
 ### Task 22: Engine restart recovery
 Refs: 03 §7.
-- [ ] `Reconciler`: rebuild windows, attach or resume sessions, re-run current steps idempotently, integration restart.
+- [ ] `Reconciler`: rebuild windows, end orphaned turn processes (`turn.pid`), re-run current steps idempotently on resumed sessions, integration restart.
 - [ ] Integration test: kill the in-process engine at each step boundary with the fake agent. E2E E5 passes.
 
 ### Task 23: Pull request integration
@@ -188,8 +246,8 @@ Refs: 06 §5.4, §6.3–6.4.
 
 ### Task 26: Palette
 Refs: 06 §5.5.
-- [ ] `PaletteApp` with every action including the escalation resolution form and intervene; tmux popup and `Ctrl+P` in `dash`.
-- Tests: Textual `run_test` for submit, prioritize, resolve, intervene.
+- [ ] `PaletteApp` with every action including the escalation resolution form and take over / hand back; tmux popup and `Ctrl+P` in `dash`.
+- Tests: Textual `run_test` for submit, prioritize, resolve, take over.
 
 ### Task 27: Motion
 Refs: 06 §6.5.
