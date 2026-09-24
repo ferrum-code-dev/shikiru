@@ -69,7 +69,7 @@ queued ──► running ──► integrating ──► done
 `submit --mode` skips triage. The title is then the first line of the request, cut to 60 characters.
 
 **Templates.** Every template:
-- includes the request and earlier reports (fenced as quoted data), tracker paths, and the sentence "If this work is already done in the workspace, verify it and report";
+- includes the request and earlier reports (fenced as quoted data), tracker paths, and the sentences "If this work is already done in the workspace, verify it and report" and "When the workspace holds several repositories, read each repository's own agent instructions before working in it" (agents start in the task root, above every repo, so they don't load per-repo instruction files on their own);
 - ends with the fixed report instruction (§4.3);
 - never restates project coding rules.
 

@@ -33,6 +33,10 @@ REPORT_INSTRUCTION = (
     "again. Then end your turn."
 )
 ALREADY_DONE_SENTENCE = "If this work is already done in the workspace, verify it and report."
+REPOSITORY_INSTRUCTIONS_SENTENCE = (
+    "When the workspace holds several repositories, read each repository's own agent "
+    "instructions before working in it."
+)
 
 
 class PromptName(StrEnum):
@@ -73,6 +77,7 @@ class PromptRenderer:
         merged = {
             "report_instruction": REPORT_INSTRUCTION,
             "already_done_sentence": ALREADY_DONE_SENTENCE,
+            "repository_instructions_sentence": REPOSITORY_INSTRUCTIONS_SENTENCE,
             **context,
         }
         return template.render(**merged)

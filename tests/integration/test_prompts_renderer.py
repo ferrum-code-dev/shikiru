@@ -6,7 +6,12 @@ import pytest
 from jinja2 import UndefinedError
 
 from shikiru.domain.fencing import fence
-from shikiru.prompts.renderer import REPORT_INSTRUCTION, PromptName, PromptRenderer
+from shikiru.prompts.renderer import (
+    REPORT_INSTRUCTION,
+    REPOSITORY_INSTRUCTIONS_SENTENCE,
+    PromptName,
+    PromptRenderer,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,7 +43,7 @@ def _full_context(name: PromptName, *, report_json: str = _REPORT_JSON) -> dict[
 
 
 @pytest.mark.parametrize("name", list(PromptName))
-def test_every_template_includes_the_request_and_ends_with_the_report_instruction(
+def test_every_template_includes_the_request_and_repository_pointer_and_ends_with_the_report(
     tmp_path: Path, name: PromptName
 ) -> None:
     renderer = PromptRenderer(tmp_path)
@@ -46,6 +51,7 @@ def test_every_template_includes_the_request_and_ends_with_the_report_instructio
     rendered = renderer.render(name, _full_context(name))
 
     assert _REQUEST in rendered
+    assert REPOSITORY_INSTRUCTIONS_SENTENCE in rendered
     assert rendered.rstrip().endswith(REPORT_INSTRUCTION)
 
 
