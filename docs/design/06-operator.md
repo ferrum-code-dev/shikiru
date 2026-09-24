@@ -6,7 +6,7 @@ CLI, MCP and the dashboard palette are thin adapters over three small services:
 
 | Service | Responsibility |
 |---|---|
-| `OperatorQueries` | Read-only views over `StateReader`: status, tasks, task detail, escalations (with packet), peek (DB + `capture-pane`) |
+| `OperatorQueries` | Read-only views over `StateReader`: status, tasks, task detail, escalations (with packet), peek (DB + the role's `view.jsonl`) |
 | `OperatorCommands` | `send(command) -> Ack`. Inserts the typed command row; if the engine is up, waits up to 10 s for `done`/`rejected`; if it's down, returns `queued` ("applies when the engine starts") |
 | `EventFeed` | `read(since, kinds, task)` and `wait(since, kinds, task, timeout)` over `events` |
 
@@ -21,14 +21,14 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 |---|---|
 | `init [--yes]` | Wizard (§3); `--yes` writes the detected defaults |
 | `start [--attach]` | Validate config and plugins, start the engine, ensure the session. On a running engine it only ensures the session. A name collision with another project fails with a hint to set `project.name` |
-| `stop [--kill-session]` | Stop the engine; turns keep running in panes and are reconciled on the next start |
+| `stop [--kill-session]` | Stop the engine; running turns are stopped (their sessions persist) and re-run by resume on the next start |
 | `ls [--host H]` | Every Shikiru project on this host, or on `H` (§5.6): name, directory, engine state, running and queued counts, open escalations |
 | `attach [NAME] [--host H]` | Attach to a session; with no `NAME` and more than one match, the picker (§5.6) |
 | `submit "<request>" [flags]` | Prints the `T-n` id (05 §1 flags) |
 | `status [T-n] [--watch]` | Without an id: engine, slots, active tasks with `wait_reason`, queue, open escalations, usage and quota per agent. With one: that task's strip, timeline, reports and verdicts, branches and sessions. `--watch` redraws on `StateReader.on_change` |
-| `doctor [--probe]` | Environment, repository-root (D20), config and plugin checks; `--probe` runs live contract checks 1–2 (04 §3) for each agent on a ladder, showing the screen when a probe gets stuck |
+| `doctor [--probe]` | Environment, repository-root (D20), config and plugin checks; `--probe` runs live contract check 1 (04 §3), one cheap headless turn requiring a valid report, for each agent on a ladder, showing the stream tail and stderr when a probe fails |
 | `mcp` | Stdio MCP server |
-| hidden: `engine`, `dash`, `palette`, `hook`, `report` | Process entrypoints |
+| hidden: `engine`, `dash`, `palette`, `view`, `report` | Process entrypoints. `view T-n ROLE` is the live view a role pane runs (§5.1) |
 
 **Output**:
 - Human output uses the `ui` renderables and tokens (§6): panels, tables, strips.
@@ -57,7 +57,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 | Group | Tools |
 |---|---|
 | Queries | `status`, `list_tasks`, `get_task`, `list_escalations`, `get_escalation`, `peek_session` |
-| Commands | `submit_task`, `prioritize_task`, `pause_task`, `resume_task`, `cancel_task`, `retry_task`, `set_rung`, `send_message`, `resolve_escalation` |
+| Commands | `submit_task`, `prioritize_task`, `pause_task`, `resume_task`, `cancel_task`, `retry_task`, `set_rung`, `send_message`, `take_over`, `hand_back`, `resolve_escalation` |
 | Events | `wait_for_events(since_id, kinds?, task_id?, timeout_s ≤ 300)` |
 
 ## 5. Dashboard
@@ -65,22 +65,23 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 ### 5.1 tmux session
 
 - **Name**: `[shikiru] <project.name>`, with `.` and `:` replaced by `_`, always targeted as `=[shikiru] name`. The session env stores `SHIKIRU_PROJECT_DIR`.
-- **Size**: the session is created detached at 240×64, so agent TUIs get readable panes before anyone attaches; an attaching client resizes it as usual.
+- **Size**: the session is created detached at 240×64, so views get readable panes before anyone attaches; an attaching client resizes it as usual.
 - **Options**, set at the scope tmux gives each one:
   - *Session*: `renumber-windows on`, `mouse on`. Applied on every `start`, not only when the session is created.
   - *Window*, applied to each window as it is created (the home window and every task window): `remain-on-exit on`, `allow-rename off`, `automatic-rename off`, `allow-set-title off`, `pane-border-status top`, `pane-border-lines heavy`.
-  - A window option set at session scope reaches only the session's current window, so `remain-on-exit` in particular must be set per window: without it a dead agent pane disappears instead of staying for recovery (03 §7).
+  - A window option set at session scope reaches only the session's current window, so `remain-on-exit` in particular must be set per window: without it a dead pane disappears instead of staying for the guard (§5.2).
 - **Windows**:
   - The permanent home window `shikiru` has `shikiru dash --home` and a shell.
   - Each active task has its own window, named by `titles.window`, built from `dashboard.layout`. It is created at dispatch and closed at a terminal status.
+- **Role panes** run `shikiru view T-n ROLE`: a read-only Rich live tail of `runs/T/<role>/view.jsonl` (turn boundaries with step and rung, messages, tool calls, usage, failures) through `ui.StreamLine`. It writes nothing and survives engine restarts. While the role is taken over (03 §9), the pane runs the agent's own TUI instead.
 
 ### 5.2 Layout and protection (`LayoutGuard`)
 
 - **Build**: the layout tree is built with `split-window -h|-v -l <size>%`. `{role: pane_id}` is stored in `tasks.panes`.
 - **Guard**: every `poll_seconds`, the guard compares each task window with the DB.
   - A missing pane (killed) is recreated in the layout.
-  - A dead `system` or `shell` pane is respawned.
-  - A dead agent pane is left to recovery (03 §7).
+  - A dead `system`, `shell` or view pane is respawned.
+  - A dead taken-over pane (the Operator exited the TUI) becomes a `HandBack` (03 §9).
   - Each restoration emits `pane_restored`.
 
   There are no global key-binding overrides, so closing a pane has no lasting effect.
@@ -91,13 +92,13 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 - **Titles** use the `dashboard.titles` templates. Fields:
   - `task_id`, `title`, `project`, `role`, `glyph`, `agent`, `model`, `effort`
   - `iteration`, `step`, `status`
-  - `context`, `cost`
+  - `context`, `cost`: preformatted (`42%`, `$1.84`), `–` when the agent reports no value (04 §1)
   - `active`, `queued`, `max_parallel`, `cwd`
   - `flags`: `⏸︎ paused`, `⌨ operator`, `⧗ quota`, `‼ escalated`, `⚠︎ stalled`
 - **Decorations** follow §6.1:
   - Pane options `@shk_color` and `@shk_glyph` feed `pane-border-format " #[fg=#{@shk_color}]#{@shk_glyph} #{pane_title} "`.
   - Window options `@shk_state_color` and `@shk_state_glyph` feed the window-status formats.
-  - `SessionMonitor` updates them on change.
+  - `TurnMonitor` and `TaskFlow` update them on change.
 
 ### 5.4 System pane and widgets
 
@@ -133,13 +134,13 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 | `strips` | Active tasks as strips (§6.2); the focused task expanded; children grouped under `parent_id` |
 | `queue` | Queued tasks in dispatch order: priority, dependencies, `wait_reason` |
 | `dialogue` | Last 20 speech bubbles (§6.3); `enter` shows the full text |
-| `usage` | Per agent: tokens, cost with an "API-equivalent" label when applicable, quota gauges with reset countdown and observation age |
+| `usage` | Per agent: tokens; cost with an "API-equivalent" label when applicable, `–` when unknown; quota gauges with reset countdown and observation age, only for reported windows |
 | `resources` | Host CPU%/RAM, and this instance's CPU%/RSS (engine plus the process trees of all panes), sampled every 2 s |
 | `docker` | Containers with CPU% and memory (`docker stats --no-stream --format json` every 5 s); hidden when Docker is unavailable |
 
 ### 5.5 Palette
 
-- `PaletteApp` offers: submit, prioritise, pause/resume, intervene (pause + select the agent pane), cancel, retry, change rung, message agent, peek, resolve escalation (a form with the packet and options), stop engine.
+- `PaletteApp` offers: submit, prioritise, pause/resume, take over (then select that pane) / hand back, cancel, retry, change rung, message agent, peek, resolve escalation (a form with the packet and options), stop engine.
 - It opens as a tmux popup (`prefix + Space`), and `Ctrl+P` in `dash` pushes the same screen.
 - Every action calls `OperatorCommands` and shows the `Ack`.
 
@@ -241,7 +242,7 @@ Motion is driven by real signals, so the dashboard shows how alive the system is
 
 | Motion | Meaning |
 |---|---|
-| Active panel spinner runs only while `Activity` arrived in the last 10 s; otherwise it freezes, and after the stall timeout the panel turns `hold` with `⚠︎` | Working vs idle vs stalled |
+| Active panel spinner runs only while a stream signal arrived in the last 10 s; otherwise it freezes, and after the stall timeout the panel turns `hold` with `⚠︎` | Working vs idle vs stalled |
 | Stamp flash (400 ms reverse video) when a verdict or merge lands | A turn outcome just happened |
 | Escalation border pulses red/dim at 1 Hz while open | Needs attention |
 | Elapsed time, quota countdowns and cost tick live | Live time and spend |

@@ -3,18 +3,23 @@
 ## 1. Processes
 
 ```
- Operator (human)           Operator (tool / AI)                      Agent CLIs (in panes)
-   │ tmux attach               │ shikiru … --json │ shikiru mcp             │ plugin hooks → shikiru hook
-   ▼                           ▼                                            │ shikiru report
-┌──────────────── tmux session "[shikiru] <project>" ───────────────────────┼──────────┐
-│ window "shikiru": dash --home │ shell                                     │          │
-│ window per task:  dash --task │ leader │ implementer │ shell              │          │
-└──────────────▲────────────────────────────────▲───────────────────────────┼──────────┘
-               │ read state, append commands    │ tmux                      │ files (.shikiru/runs)
-          ┌────┴───────┐                  ┌─────┴───────────────────────────▼───┐
-          │ state.db   │◀─── state ───────│ engine daemon (asyncio, 1/project)  │
-          │ SQLite WAL │──── commands ───▶│                                     │
-          └────────────┘                  └─────────────────────────────────────┘
+ Operator (human)           Operator (tool / AI)
+   │ tmux attach               │ shikiru … --json │ shikiru mcp
+   ▼                           ▼
+┌──────────────── tmux session "[shikiru] <project>" ──────────────────────────────┐
+│ window "shikiru": dash --home │ shell                                            │
+│ window per task:  dash --task │ view leader │ view implementer │ shell           │
+│                   (a view pane runs the agent's TUI while taken over)            │
+└──────────────▲──────────────────────────────▲──────────────────▲─────────────────┘
+               │ read state, append commands  │ tmux             │ tail runs/T/<role>/view.jsonl
+          ┌────┴───────┐                ┌─────┴──────────────────┴────────────┐
+          │ state.db   │◀─── state ─────│ engine daemon (asyncio, 1/project)  │
+          │ SQLite WAL │─── commands ──▶│                                     │
+          └────────────┘                └─────┬─────────────────▲─────────────┘
+                                              │ spawn per turn  │ stream (stdout JSONL), exit
+                                        ┌─────▼─────────────────┴─────┐
+                                        │ agent CLI, headless          │── shikiru report ──▶ .shikiru/runs
+                                        └──────────────────────────────┘
 ```
 
 | Process | Started by | Writes |
@@ -22,8 +27,10 @@
 | `shikiru engine` | `shikiru start` (detached) | All state tables |
 | `shikiru dash`, `shikiru palette` | engine (panes), tmux popup | `commands` rows only |
 | `shikiru <cmd>`, `shikiru mcp` | Operator | `commands` rows only; the `sequences` row when allocating a task id on submit |
-| `shikiru hook`, `shikiru report` | agent CLIs | Files under `.shikiru/runs` only |
-| Helper and quota probes | engine / plugins (subprocess) | nothing |
+| Agent turn processes | engine (child processes, one per running turn) | The task worktree; the agent's own session files |
+| `shikiru report` | agent turn processes | Files under `.shikiru/runs` only |
+| `shikiru view` | engine (role panes) | nothing |
+| Helper calls | engine (subprocess) | nothing |
 
 **Engine liveness and exclusivity** come from one mechanism: an exclusive `flock` on `.shikiru/engine.lock`, held for the engine's lifetime.
 - Clients check liveness with a non-blocking lock attempt.
@@ -52,24 +59,24 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | Package | Responsibility | Key types |
 |---|---|---|
 | `errors` | Error hierarchy with exit codes | `ShikiruError`, `ConfigError`, … |
-| `process` | The only subprocess gateway: argv lists, timeouts, typed errors, async | `SubprocessRunner`, `CommandFailed` |
+| `process` | The only subprocess gateway: argv lists, timeouts, typed errors, async; `spawn` for long-running processes with stdin closed, line-streamed stdout and terminate | `SubprocessRunner`, `CommandFailed` |
 | `clock` | Injectable time for every timer | `Clock`, `SystemClock` |
 | `config` | Merge defaults < project file < `--set`, validate core settings. Plugin `options` stay untyped here | `Settings`, `load_settings()` |
-| `agents.contracts` | Agent plugin contract (04 §1) | `InteractiveAgent`, `AgentSession`, `HeadlessAgent`, signals, `Usage`, `QuotaWindow`, `Rung` |
-| `agents.sdk` | Plugin building blocks and the `shikiru hook` entrypoint | `HookRecorder`, `JsonlTail`, `ResetTimeParser`, `PriceTable` |
+| `agents.contracts` | Agent plugin contract (04 §1) | `Agent`, `Turn`, `TurnSpec`, `HeadlessAgent`, signals, `Usage`, `QuotaWindow`, `Rung` |
+| `agents.sdk` | Plugin building blocks | `TurnParser`, `StreamingTurn`, `JsonlTail`, `ResetTimeParser` |
 | `agents.registry` | Loads `AgentFactory` entry points plus factories registered by `bootstrap` (tests register the fake agent the same way through its own test-only package entry point) | `AgentRegistry` |
 | `agents.testing` | Contract test kit | `AgentContractSuite` |
-| `domain` | Pure rules, no I/O | `Task`, `Status`, `Step`, `Hold`, `Counters`, `EventKind`, command models, report models, `next_step()`, `pick_rung()`, `recovery.decide()`, `scheduling.pick_ready()`, `escalation.options_for()`, `activity.is_stalled()`, `activity.is_operator_prompt()` |
+| `domain` | Pure rules, no I/O | `Task`, `Status`, `Step`, `Hold`, `Counters`, `EventKind`, command models, report models, `next_step()`, `pick_rung()`, `recovery.decide()`, `scheduling.pick_ready()`, `escalation.options_for()`, `activity.is_stalled()` |
 | `store` | SQLite schema, migrations, stores per aggregate, read-only reader | `Database`, `TaskStore`, `RunStore`, `EscalationStore`, `QuotaStore`, `EventLog`, `CommandQueue`, `StateReader` |
 | `workspace` | Task roots, worktrees, caches, git facts | `TaskRootBuilder`, `CacheCloner`, `GitFacts`, `Git` |
-| `tmux` | tmux client; session, windows, layout; pane decorations; the `PaneHandle` implementation | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator`, `TmuxPane` |
+| `tmux` | tmux client; session, windows, layout; pane decorations; pane respawn and liveness | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator`, `TmuxPane` |
 | `prompts` | Jinja2 templates (packaged, overridable) | `PromptRenderer` |
 | `helper` | Joshu calls | `Helper` |
-| `ui` | Visual language and Rich renderables shared by CLI and dashboard | `Tokens`, `Glyphs`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge` |
+| `ui` | Visual language and Rich renderables shared by CLI, dashboard and view | `Tokens`, `Glyphs`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
 | `operator` | Use cases for interfaces; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
-| `cli` / `mcp` / `dashboard` | Typer app; FastMCP stdio server; Textual apps and widget contract | `app`, `build_server()`, `DashboardApp`, `PaletteApp`, `DashboardWidget`, `DashboardViews` |
+| `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract | `app`, `build_server()`, `DashboardApp`, `PaletteApp`, `DashboardWidget`, `DashboardViews` |
 
 **Engine components**, each with one responsibility:
 
@@ -79,20 +86,20 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `handlers/*` | One `CommandHandler` per command model, found through a registry `dict[type[Command], CommandHandler]` |
 | `Scheduler` | Ready set, gates, slot assignment; persists `tasks.wait_reason` |
 | `TaskFlow` | Runs a task's steps as async functions (`triage`, `plan`, `implement`, `consult`, `verify`, `integrate`) and applies `domain` transitions and recovery actions |
-| `SessionManager` | Ensures a live `AgentSession` per task role: launch, resume, attach, handoff, exit |
-| `SessionMonitor` | The single consumer of `AgentSession.signals()`: fans signals out to subscribers (`TurnRunner`, `PaneDecorator`) and persists session facts (usage, last message, snapshot). Stall and intervention decisions are delegated to `domain.activity`; pane liveness comes from `PaneHandle.is_alive()` |
-| `TurnRunner` | One turn: turn dir, `before_turn` lines, pointer injection, submission confirmation, await, report validation, nudges, Helper rebuild. Returns a `TurnResult`; never escalates |
+| `SessionManager` | Decides the session a role's next turn runs on: new, resume (also with a new model), or new with `handoff`; stores `session_id` and the resume command on the run |
+| `TurnMonitor` | The single consumer of one `Turn.signals()`: persists session facts (session id, usage, quota, last message), appends the role's view log, updates pane decorations, and stops the turn when `domain.activity.is_stalled` says so |
+| `TurnRunner` | One turn: turn dir, queued operator messages, `start_turn`, await the monitor, report validation, nudge turns, Helper rebuild and failure classification. Returns a `TurnResult`; never escalates |
 | `Integrator` | Rebase and conflict hand-off, then delegates to an `IntegrationStrategy`: `LocalMerge` or `PullRequest` |
 | `EscalationRaiser` | Builds the packet and records the escalation |
-| `Reconciler` | Restores sessions, windows and in-flight steps at engine start |
-| `LayoutGuard` | Keeps windows and panes matching the DB (recreates killed or dead panes) |
-| `QuotaPoller` | Calls `agent.quota()` every `QUOTA_POLL` for agents with live runs and right after a `QUOTA` failure; writes `quotas` |
+| `Reconciler` | At engine start: restores windows, ends orphaned turn processes, re-runs in-flight steps |
+| `LayoutGuard` | Keeps windows and panes matching the DB (recreates killed or dead panes; a dead taken-over pane is handed back) |
+| `Takeover` | Take over and hand back one task role (03 §9) |
 | `Notifier` | tmux message plus `notify.command` on escalation and task completion |
 
 **Enforced rules** (lint, not convention):
 - import-linter layers as above;
 - ruff `banned-api`: `sqlite3` only in `store`, `subprocess`/`asyncio.create_subprocess_*` only in `process`, `time.sleep`/`asyncio.sleep` only through `clock`;
-- nothing outside `plugins/agents/*` names an agent CLI, transcript format, model price or quota source.
+- nothing outside `plugins/agents/*` names an agent CLI, stream or session-log format, or quota source.
 
 ## 3. Project structure
 
@@ -104,23 +111,23 @@ src/shikiru/
   domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py
   store/        database.py migrations/ tasks.py runs.py escalations.py quotas.py events.py commands.py reader.py
   agents/       contracts.py registry.py
-    sdk/        hooks.py hook_cli.py jsonl.py reset_time.py prices.py
+    sdk/        turn.py jsonl.py reset_time.py
     testing/    contract_suite.py
   workspace/    roots.py caches.py facts.py git.py
   tmux/         client.py session.py layout.py pane.py decorator.py
   prompts/      renderer.py templates/
   helper/       helper.py templates/
-  ui/           tokens.py glyphs.py strip.py bubbles.py splash.py gauge.py
+  ui/           tokens.py glyphs.py strip.py bubbles.py splash.py gauge.py stream.py
   telemetry/    resources.py docker.py
-  engine/       daemon.py scheduler.py flow.py sessions.py monitor.py turns.py integration.py escalations.py reconcile.py layout_guard.py quota_poller.py notifier.py
+  engine/       daemon.py scheduler.py flow.py sessions.py monitor.py turns.py takeover.py integration.py escalations.py reconcile.py layout_guard.py notifier.py
     handlers/   tasks.py sessions.py escalations.py engine.py
   operator/     queries.py commands.py events.py detectors.py
-  cli/          app.py project.py sessions.py tasks.py diagnostics.py report.py render.py
+  cli/          app.py project.py sessions.py tasks.py diagnostics.py report.py view.py render.py
   mcp/          server.py
   dashboard/    app.py contract.py palette.py wizard.py
   plugins/
-    agents/claude/  agent.py session.py signals.py usage.py quota.py headless.py options.py prices.toml
-    agents/codex/   agent.py session.py signals.py usage.py quota.py headless.py options.py prices.toml
+    agents/claude/  agent.py argv.py parser.py headless.py options.py
+    agents/codex/   agent.py argv.py parser.py rollout.py headless.py options.py
     widgets/        header.py strips.py escalations.py queue.py dialogue.py usage.py resources.py docker.py
 tests/  unit/ integration/ e2e/ support/ (tmux fixture, fake clock, wait_until) fixtures/ (sample-project, agent samples)
   fake_agent/   test-only package (uv dev dependency) with its own `shikiru.agents` entry point `fake`
@@ -150,9 +157,10 @@ A plugin that is missing or broken fails `start` and `doctor` with its name and 
   config.toml  prompts/ (optional overrides)  state.db  engine.lock  logs/engine.log
   worktrees/T-12/                   # the task's worktree
   runs/T-12/
-    leader/  implementer/           # current_turn symlink + plugin-private files (e.g. hooks.jsonl)
+    leader/  implementer/           # current_turn symlink, view.jsonl (view log), turn.pid while a turn runs
     turns/NN-<step>-i<iteration>/   prompt.md report.schema.json report.kind report.json facts.md helper.json
-    messages/NNN.md
+                                    <role>.stream.jsonl <role>.stderr.log (raw agent output)  messages/ (delivered)
+    messages/<role>/NNN.md          # operator messages queued for the role's next turn
     escalations/E-3.md
-  probe/repo/  probe/run/           # reused by `doctor --probe` so agents keep one trust entry per project
+  probe/repo/  probe/run/           # scratch repository and run dir reused by `doctor --probe`
 ```

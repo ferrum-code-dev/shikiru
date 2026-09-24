@@ -47,19 +47,20 @@
 
 | Layer | What | How |
 |---|---|---|
-| Unit | `domain` rules (transitions, `pick_rung`, `recovery.decide`, `pick_ready`, escalation options), report and command model validators, config merge, SDK parsers (`ResetTimeParser`, `PriceTable`), glyph width safety | Table-driven, no I/O |
-| Integration | Everything else, against real SQLite, git, tmux and Textual, with the fake agent: store; workspace; tmux client, layout, guard and decorations; session manager, monitor and turn runner; task flow paths; integration strategies (`gh` faked on PATH); engine and handlers; reconciler; operator services; CLI; MCP (in-memory client); widgets (Textual `run_test`); plugin offline contract checks | Behaviour assertions on observable outcomes: DB rows, events, git history, files, tmux state |
+| Unit | `domain` rules (transitions, `pick_rung`, `recovery.decide`, `pick_ready`, escalation options), report and command model validators, config merge, SDK parsers (`ResetTimeParser`), plugin `TurnParser`s over recorded streams, glyph width safety | Table-driven, no I/O |
+| Integration | Everything else, against real SQLite, git, tmux and Textual, with the fake agent: store; workspace; tmux client, layout, guard and decorations; session manager, turn monitor and turn runner; take over and hand back; `shikiru view`; task flow paths; integration strategies (`gh` faked on PATH); engine and handlers; reconciler; operator services; CLI; MCP (in-memory client); widgets (Textual `run_test`); plugin offline contract checks | Behaviour assertions on observable outcomes: DB rows, events, git history, files, tmux state |
 | E2E | Real Claude Code and Codex | §5 |
 
 **Test infrastructure** (`tests/support/`):
 - **`tmux_server` fixture**: `tmux -L shikiru-test-<uuid> -f /dev/null` with a fixed `-x 200 -y 50`, `default-shell /bin/sh` and a clean env. Killed in teardown, unique per xdist worker.
 - **`wait_until(predicate, timeout)`**: the only way to wait. No sleeps.
 - **`FakeClock`**: injected into the engine, so timeouts, backoffs, quota waits and PR polls run instantly.
-- **Fake agent plugin** (`tests/fake_agent/`, a test-only package with its own entry point): a line-reading REPL in a real pane that emits hook lines through `HookRecorder`.
-  - It is scripted by `SHIKIRU_FAKE_SCRIPT` to: accept, changes_requested×N, needs_decision, no report, fail(kind, resets_at), crash, stall, dialog.
+- **Fake agent plugin** (`tests/fake_agent/`, a test-only package with its own entry point): a fake CLI run per turn through `StreamingTurn`, printing a JSONL stream its own `TurnParser` reads, resuming sessions by id from files under its run dir.
+  - It is scripted by `SHIKIRU_FAKE_SCRIPT` to: accept, changes_requested×N, needs_decision, no report, fail(kind, resets_at), unknown failure text, exit without result, stall.
   - It runs the real `shikiru report` and commits files.
+  - Its `interactive_command` is a line-reading REPL on the same session, for take-over tests on `tmux_server`.
   - It passes `AgentContractSuite`.
-- **In-process engine**: flow tests run `build_engine()` inside the test process, so coverage is measured directly. The subprocess patch covers `shikiru hook`/`report`/CLI.
+- **In-process engine**: flow tests run `build_engine()` inside the test process, so coverage is measured directly. The subprocess patch covers the fake CLI, `shikiru report` and the CLI.
 
 **Meaningful tests, no snapshot spam**:
 - Assert behaviour and properties: rendered width ≤ available columns; every state shows a word or glyph under `NO_COLOR`; a packet has all sections and exactly one ★; a template contains the request and the report instruction, and `StrictUndefined` raises on missing fields.
@@ -69,7 +70,7 @@
 
 ## 4. Agent samples
 
-Plugin offline checks use real agent files committed under `tests/fixtures/agents/<agent>/`: hook payloads, transcript and rollout excerpts, error entries, quota probe output. They are captured once from real runs. When an agent CLI changes format, add new samples next to the old ones.
+Plugin offline checks replay real recorded streams committed under `tests/fixtures/agents/<agent>/`: per sample the stdout JSONL, stderr, exit code and expected signals, plus session-log excerpts where the plugin reads them (Codex rollout `token_count`). Samples cover a first turn, a resumed turn with a model change, tool calls, rate-limit and usage-limit errors, auth errors, unknown models and priced/unpriced usage (e.g. Claude via OpenRouter). They are captured from real runs — a turn's `<role>.stream.jsonl` and `<role>.stderr.log` are already in that form. When an agent CLI changes format, add new samples next to the old ones.
 
 ## 5. E2E scenarios (`poe e2e`, `SHIKIRU_E2E=1`)
 
@@ -88,13 +89,13 @@ Plugin offline checks use real agent files committed under `tests/fixtures/agent
 | # | Scenario | Proves |
 |---|---|---|
 | E1 | `submit "Implement task A1 from tasks/plan.md"` | Triage → implement → verify → merge; commit on `base`; A1 ticked; window closed; usage recorded for both agents; the project checkout stays clean and its base moves only by the merge |
-| E2 | A task, plus an Operator `send_message` to the Leader during the first verify that adds an edge-case requirement | The message delivered without tripping `intervention`, a changes_requested verdict after it, final accept with the edge case handled |
+| E2 | A task, plus an Operator `send_message` to the Leader while the Implementer's first turn runs, adding an edge-case requirement | The message delivered with the first verify prompt (queued, no hold), a changes_requested verdict citing it, final accept with the edge case handled |
 | E3 | `submit "Implement all tasks in phase B"` with `max_parallel = 2` | Plan → dependent new tasks; two task windows at once; the conflict in todo.md resolved; all merged |
 | E4 | An ambiguous request ("rounding mode is a product decision") | `decision_required` packet; an AI Operator resolves it via `shikiru mcp` (`wait_for_events` → `resolve_escalation`); task done |
-| E5 | `SIGKILL` the engine after the implement `turn_started` event, then `start` | Session attached or resumed with the same id; turn completes; no duplicate commits |
-| E6 | Two parallel tasks; the Operator types into T-1's implementer pane | Only T-1 gets `intervention`; T-2 completes; resuming T-1 completes it |
+| E5 | `SIGKILL` the engine after the implement `turn_started` event, then `start` | The orphaned turn process ended; the turn re-run on the same session id; it completes; no duplicate commits |
+| E6 | Two parallel tasks; the Operator takes over T-1's implementer, then hands back | Only T-1 gets `intervention` and its pane runs the agent's TUI; T-2 completes; after hand back T-1 resumes the same session and completes |
 
 **Covered by integration tests with the fake agent instead**:
 - quota wait and resume, unavailable backoff, ladder moves;
-- pane death, stall with dialog, report rebuild;
-- PR strategy, plan mode, remote attach argv, pane restoration.
+- turn process exiting without a result, stall stop and resume, failure classification by the Helper, report rebuild;
+- PR strategy, plan mode, remote attach argv, pane restoration, take over and hand back, queued `say`.

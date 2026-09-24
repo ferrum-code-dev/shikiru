@@ -27,7 +27,7 @@
 | `requeued_at` | Set when resumed after an escalation; gives precedence |
 | `summary` | Final summary |
 
-Counters that only matter within one turn (nudges, relaunches, stall recoveries) live in memory. A restart re-runs the turn with those counters reset, which is bounded and safe.
+Counters that only matter within one turn (nudges, stall retries) live in memory. A restart re-runs the turn with those counters reset, which is bounded and safe.
 
 ### 1.2 Status
 
@@ -42,7 +42,7 @@ queued ──► running ──► integrating ──► done
 | `queued` | no |
 | `running` | yes (also while `paused`; `pause` on a `queued` task only keeps it from being dispatched) |
 | `integrating` | yes, except while a PR is open (§6) |
-| `escalated` | no. The worktree, sessions and window stay. On re-dispatch the task gets its previous slot if free; otherwise its sessions are relaunched with resume under the new `SHIKIRU_SLOT` |
+| `escalated` | no. The worktree, sessions and window stay. On re-dispatch the task gets its previous slot if free; otherwise its next turns resume the sessions under the new `SHIKIRU_SLOT` |
 | `done` | — terminal: window closed, worktrees removed, run files kept |
 | `cancelled` | — terminal: window closed, worktrees removed, run files kept |
 
@@ -109,51 +109,49 @@ The Leader accepts only when no issues remain. Non-blocking residual risks go in
 
 ## 4. Sessions and turns
 
+A turn is one agent process (D1, 04 §1): `Agent.start_turn(spec)` spawns it as a child of the engine, and it exits when the turn ends. Sessions outlive turns: every turn after the first resumes the role's session.
+
 ### 4.1 SessionManager
 
-`ensure(task, role) → AgentSession`:
+`session_for(task, role) → (rung, session_id | None, handoff)` decides what the role's next turn runs on:
 
-| Situation | Action |
+| Situation | Next turn |
 |---|---|
-| Run live and pane alive | Return the monitored session |
-| Engine restarted, pane process alive | `agent.attach(spec, pane, runs.agent_state)` |
-| No live process, `session_id` known | `agent.launch(spec with resume_session_id)` |
-| Rung change, same agent | Send `keys.exit_input`, then launch with resume and the new model |
-| No session yet, or a different agent | `agent.launch(spec)`. If the task already has reports, the first turn is `handoff` (request, latest reports, facts) |
+| Run with a `session_id`, same rung | Resume it |
+| Rung change, same agent | Resume it with the new model and effort |
+| No session yet, a different agent, or a `CONTEXT` failure | New session. If the task already has reports, the first turn is `handoff` (request, latest reports, facts) |
 
-- **Launch environment**: `SHIKIRU_PROJECT`, `SHIKIRU_TASK`, `SHIKIRU_ROLE`, `SHIKIRU_RUN_DIR`, `SHIKIRU_SLOT`.
-- **After launch**: the first turn starts right away. When `SessionStarted` arrives, the monitor stores `session_id` and `resume_command`; without it within `timeouts.launch` the turn result is `Stalled`. A subscriber to a session whose monitor already ended receives `PaneDied`.
-- **Task end**: exit sessions with `keys.exit_input`, and kill the pane after 10 s.
+- **Turn environment**: `SHIKIRU_PROJECT`, `SHIKIRU_TASK`, `SHIKIRU_ROLE`, `SHIKIRU_RUN_DIR`, `SHIKIRU_SLOT`.
+- The run row is created with the session; `session_id` and the resume command (`interactive_command`, shell-quoted) are stored when `SessionStarted` arrives.
+- **Task end**: nothing to exit; the run is closed.
 
-### 4.2 SessionMonitor
+### 4.2 TurnMonitor
 
-There is one monitor per live session. It is the **only** consumer of `session.signals()`, and it publishes every signal to subscribers (the current `TurnRunner`) through an asyncio queue.
+One monitor per turn process. It is the **only** consumer of `turn.signals()`. For each signal it:
+- persists session facts on the run: `session_id`, usage (`UsageReported`), quota windows (`QuotaReported` → `quotas`), the last `Message` or `TurnEnded.last_message`;
+- appends the signal, timestamped, to `runs/T/<role>/view.jsonl`, which the role's pane renders (06 §5.1);
+- updates pane decorations (`PaneDecorator`).
 
-On every `orchestration.poll_seconds` tick, it:
-- stores `usage()`, `snapshot()` and the last `TurnEnded.last_message` on the run;
-- checks `pane.is_alive()` → publishes engine event `PaneDied`;
-- publishes `Stalled(screen)` when `domain.activity.is_stalled(last_activity, tool_running, now, timeouts)`; `AttentionNeeded` publishes `Stalled` immediately;
-- sets the intervention hold when `domain.activity.is_operator_prompt` says so (§9).
+Every `orchestration.poll_seconds` it checks `domain.activity.is_stalled(last_signal_at, tool_running, now, timeouts)`: no signal for `timeouts.stall` while no tool runs, or for `timeouts.tool` while one does. A stall calls `turn.stop()` and the monitor returns `Stalled`; the session is resumed by the next attempt.
 
-`PaneDecorator` subscribes to the same fan-out and updates pane titles and decorations.
+The engine writes `runs/T/<role>/turn.pid` while the process runs, so a restarted engine can end an orphan (§7).
 
 ### 4.3 TurnRunner
 
-`run(session, TurnSpec) → TurnResult`, where the result is one of:
+`run(task, role, TurnSpec) → TurnResult`, where the result is one of:
 - `Completed(report, rebuilt)`
 - `Failed(kind, resets_at, message)`
-- `PaneDied`
-- `Stalled(screen)`
+- `Stalled`
 - `ProtocolError`
 
 1. **Turn dir** `runs/T/turns/NN-<step>-i<iteration>/`: write `prompt.md`, `report.schema.json` and `report.kind`, remove any stale `report.json`, and point `runs/T/<role>/current_turn` at it.
-2. **Before turn**: inject each line from `session.before_turn()` and wait for `Compacted` or `TurnEnded` (≤ `BEFORE_TURN_WAIT`, 10 min; on timeout → `Stalled`).
-3. **Inject the pointer**: tmux `load-buffer` → `paste-buffer -p` → `INJECT_DELAY` (150 ms) → `Enter`. The line is `{prompt_prefix}Read {prompt path} and follow it exactly.`
-4. **Confirm**: a `PromptSubmitted` containing the path within `SUBMIT_CONFIRM` (15 s). Otherwise press `Enter` once more. Otherwise return `Stalled`.
-5. **Await** `TurnEnded`, `TurnFailed`, `PaneDied` or `Stalled`.
+2. **Operator messages**: move the role's queued `runs/T/messages/<role>/*.md` into the turn dir's `messages/`; `prompt.md` lists them under "Operator messages — read these first" (§9).
+3. **Start** the turn with the pointer line `{prompt_prefix}Read {prompt path} and follow it exactly.` and the session from §4.1.
+4. **Await** the monitor's terminal outcome: `TurnEnded`, `TurnFailed` or `Stalled`.
+5. **On `TurnFailed(UNKNOWN)`**: `helper.classify_failure` (04 §6); a result with confidence ≥ `CLASSIFY_CONFIDENCE` becomes `Failed(kind)`, anything else `Failed(OTHER)` marked unclassified, which escalates `agent_error` without a retry (§7).
 6. **On `TurnEnded`**:
    - a valid `report.json` → `Completed`;
-   - otherwise nudge, up to `NUDGE_LIMIT` (2) times: inject "Your turn ended without a valid report. Submit it with `shikiru report` as described at the end of {prompt path}.";
+   - otherwise nudge, up to `NUDGE_LIMIT` (2) times, each a short resumed turn with the line "Your turn ended without a valid report. Submit it with `shikiru report` as described at the end of {prompt path}.";
    - otherwise `helper.rebuild_report` → `Completed(rebuilt=true)`, saved as `helper.json`;
    - otherwise `ProtocolError`.
 
@@ -168,7 +166,7 @@ The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's 
 - It writes `report.json` atomically.
 - Exit codes: `0` ok, `2` invalid (errors on stderr), `3` no current turn.
 
-**Cancellation**: `pause --now`, `cancel` and `retry` handlers send `keys.interrupt` and cancel the task coroutine. Step state is persisted at step boundaries, and prompts are idempotent, so the step simply re-runs later.
+**Cancellation**: `pause --now`, `cancel`, `retry` and take over (§9) call `turn.stop()` and cancel the task coroutine. Step state is persisted at step boundaries, and prompts are idempotent, so the step simply re-runs later on the same session.
 
 ## 5. Workspaces
 
@@ -211,13 +209,12 @@ Dependents become ready only when their dependencies are `done`.
 
 | Result | Action |
 |---|---|
-| `Failed(QUOTA)` | Block the agent in `agent_blocks` until `resets_at + QUOTA_MARGIN` (unknown reset: now + `QUOTA_PROBE`). When the block ends, re-inject `continue` into the live session (or resume it); a new failure repeats the cycle. If the wait exceeds `timeouts.max_quota_wait`: next rung with a different agent; none left → `quota_exhausted` |
+| `Failed(QUOTA)` | Block the agent in `agent_blocks` until `resets_at + QUOTA_MARGIN` (unknown reset: now + `QUOTA_PROBE`). When the block ends, a resumed `continue` turn re-runs the step's prompt; a new failure repeats the cycle. If the wait exceeds `timeouts.max_quota_wait`: next rung with a different agent; none left → `quota_exhausted` |
 | `Failed(UNAVAILABLE)` | Retry after 30 s, 2 min, 5 min; then next rung; none left → `ladder_exhausted` |
 | `Failed(CONTEXT)` | New session on the same rung with `handoff` (once), then `agent_error` |
 | `Failed(AUTH)` | `agent_auth` |
-| `Failed(OTHER)` | Retry once, then `agent_error` |
-| `PaneDied` | Relaunch with resume (≤ 2 per turn), then next rung, then `agent_crash` |
-| `Stalled(screen)` | `helper.classify_screen`: `working` → keep waiting · `dialog` → send the keys if they are all in `keys.safe` · `question` → consult for the Implementer, `decision_required` for the Leader · `quota` → same as `Failed(QUOTA)` · `error` → same as `Failed(OTHER)`. More than 2 per turn → `agent_stuck` |
+| `Failed(OTHER)` | Retry once, then `agent_error`; unclassified (§4.3 step 5) → `agent_error` at once |
+| `Stalled` | The process was stopped; a resumed `continue` turn (≤ 2 per turn), then `agent_stuck` |
 | `ProtocolError` | `agent_protocol` |
 
 **Rungs**:
@@ -227,8 +224,9 @@ Dependents become ready only when their dependencies are `done`.
 
 **Engine restart (`Reconciler`)**:
 1. Rebuild the tmux session and windows from the DB (`LayoutGuard`).
-2. For each `running` or `integrating` task, ensure sessions (§4.1), then re-run the current step. The step's turn is idempotent: an existing valid `report.json` is consumed without re-injecting.
-3. Pending `commands` are processed by the normal loop.
+2. End orphaned turn processes: a `runs/T/<role>/turn.pid` whose process still runs is stopped (SIGTERM, then SIGKILL after `TURN_STOP_GRACE`), since the old engine died without stopping it.
+3. For each `running` or `integrating` task, re-run the current step; its turn resumes the session (§4.1). The step's turn is idempotent: an existing valid `report.json` is consumed without starting a turn.
+4. Pending `commands` are processed by the normal loop.
 
 ## 8. Escalation
 
@@ -239,7 +237,7 @@ Dependents become ready only when their dependencies are `done`.
 | `integration_conflict` | Conflict rounds exhausted | retry ★, cancel |
 | `integration_blocked` | Main checkout blocked beyond `integration_wait` | retry ★, cancel |
 | `pr_closed` | PR closed unmerged | retry ★ (new PR), cancel |
-| `agent_auth` / `agent_error` / `agent_crash` / `agent_stuck` / `agent_protocol` | §7 | retry [--rung] ★, cancel |
+| `agent_auth` / `agent_error` / `agent_stuck` / `agent_protocol` | §7 | retry [--rung] ★, cancel |
 | `ladder_exhausted` / `quota_exhausted` | §7 | retry [--rung] ★, cancel |
 | `dependency_cancelled` | A dependency was cancelled | retry ★ (drop the dependency), cancel |
 
@@ -247,7 +245,7 @@ Dependents become ready only when their dependencies are `done`.
 - headline (task, step, reason, one sentence)
 - timeline of recent events
 - what was tried
-- evidence: latest reports and verdict, facts, last 60 pane lines, session ids and resume commands
+- evidence: latest reports and verdict, facts, the last 60 view lines per role, session ids and resume commands
 - the Leader's question
 - applicable options with consequences and exactly one ★
 
@@ -265,18 +263,26 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 
 | Action | Human | Tool / AI (MCP) | Engine behaviour |
 |---|---|---|---|
-| Watch | attach, select the window | `peek_session` | Last message, pane screen, usage (from the DB and `capture-pane`) |
-| Type into a session | select the pane and type | `send_message` | See below |
-| Pause / resume | palette | `pause_task` (`now`), `resume_task` | `pause` stops before the next turn; `now` interrupts and cancels the current step |
+| Watch | attach, select the window (role panes are live views) | `peek_session` | Last message, recent view lines, usage (from the DB and `view.jsonl`) |
+| Message an agent | palette | `send_message` | Queued for the role's next turn (below) |
+| Take over / hand back | palette; hand back also by exiting the agent's TUI | `take_over`, `hand_back` | Below |
+| Pause / resume | palette | `pause_task` (`now`), `resume_task` | `pause` stops before the next turn; `now` stops the running turn and cancels the current step |
 | Change model | palette | `set_rung` | Applied at the next turn (§4.1) |
 | Redo current step | palette | `retry_task` | Cancels and re-runs the current step |
-| Open elsewhere | `status T-n` lists `resume_command` | `get_task` | — |
+| Open elsewhere | `status T-n` lists the resume command | `get_task` | — |
 
-**Manual intervention.** `domain.activity.is_operator_prompt(text, run_dir, pending_lines)` is true when the prompt contains no path under the task's run dir (every pointer, nudge, `continue`, handoff and `say` injection does) and isn't a `before_turn` line currently being injected. It needs no persisted state. A true result sets the `intervention` hold on **that task**.
-- **While set**: no nudges, stall handling or new turns. The pane border turns operator magenta and the title shows `⌨ operator`.
-- **Cleared** when the current turn ends with a valid report (the Operator helped finish it), or on resume, which injects `continue` into that pane.
+**Take over** (`TakeOver(task, role)`, by `Takeover`):
+1. If a turn is running on the task, `turn.stop()` and cancel the current step; the session persists.
+2. Set the `intervention` hold on **that task** and mark the run `taken_over`.
+3. Respawn the role's pane with the plugin's `interactive_command(session_id, task root)`, with the turn environment of §4.1. The Operator answers any dialog the TUI shows. With no session yet, take over is rejected.
+- **While held**: no turns start for the task. The pane border turns operator magenta and the title shows `⌨ operator`.
 
-**`say`** writes `runs/T/messages/NNN.md` and injects `Operator message: read <path> and take it into account.` Agent TUIs queue input while busy, so `say` works mid-turn and never sets `intervention`.
+**Hand back** (`HandBack(task, role)`, or the taken-over pane's process exits, which `LayoutGuard` turns into a `HandBack`):
+1. Respawn the pane with the view, mark the run active, clear `intervention`.
+2. Queue an operator message for that role: "The Operator worked in this session since your last turn; take their changes into account."
+3. Re-run the current step; its turn resumes the same session, which already holds the Operator's exchange (verified for Claude).
+
+**`say`** (`Say(task, role, text)`) writes `runs/T/messages/<role>/NNN.md`. A headless turn takes no input mid-turn, so the message is delivered at the start of that role's next turn (§4.3 step 2), never interrupting; interrupting is what take over is for. `say` never sets a hold.
 
 ## 10. Scheduling
 

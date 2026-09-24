@@ -32,9 +32,8 @@ max_cpu_pct = 85
 min_free_ram_gb = 4
 
 [orchestration.timeouts]                        # seconds
-launch = 90
-stall = 1200
-tool = 7200
+stall = 1200                                    # no stream event while no tool runs
+tool = 7200                                     # no stream event while a tool runs
 max_quota_wait = 28800
 integration_wait = 1800
 
@@ -47,7 +46,6 @@ auth = "subscription"
 prompt_prefix = "$using-agent-skills "
 [agents.codex.options]                          # plugin-owned (04 §5)
 auth = "subscription"
-compact_below_free_pct = 60
 
 [roles.leader]
 ladder = [
@@ -81,8 +79,8 @@ layout = { split = "h", panes = [
 
 [dashboard.titles]                              # fields: 06 §5.3
 window = "{task_id} {title:.24}"
-leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context}% · ${cost:.2f} {flags}"
-implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context}% · ${cost:.2f} {flags}"
+leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
+implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
 system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
 shell = "Shell · {cwd}"
 
@@ -96,25 +94,21 @@ command = ""                                    # optional; event JSON on stdin 
 
 | Constant | Value |
 |---|---|
-| `INJECT_DELAY` | 150 ms |
-| `SUBMIT_CONFIRM` | 15 s |
-| `BEFORE_TURN_WAIT` | 10 min |
 | `NUDGE_LIMIT` | 2 |
 | `CONSULT_LIMIT` | 3 |
 | `CONFLICT_ROUNDS` | 2 |
-| Relaunches per turn | 2 |
-| Stall recoveries per turn | 2 |
+| Stall retries per turn | 2 |
+| `CLASSIFY_CONFIDENCE` | 0.8 |
 | Unavailable backoff | 30 s / 2 min / 5 min |
 | `QUOTA_PROBE` | 15 min |
 | `INTEGRATION_RETRY` | 2 min |
 | `PR_POLL` | 5 min |
 | Command poll | 250 ms |
 | Dashboard change poll | 500 ms |
-| Session exit grace | 10 s |
-| Escalation evidence | 60 pane lines |
+| `TURN_STOP_GRACE` | 10 s |
+| Escalation evidence | 60 view lines per role |
 | Command ack wait | 10 s |
 | `QUOTA_MARGIN` | 60 s |
-| `QUOTA_POLL` | 60 s |
 | `CPU_WINDOW` | 30 s |
 | Git data cache (header) | 10 s |
 | Resource / Docker sampling | 2 s / 5 s |
@@ -154,17 +148,17 @@ CREATE TABLE task_deps (task_id TEXT NOT NULL REFERENCES tasks(id), depends_on T
 CREATE TABLE runs (                               -- one agent session per task role
   id INTEGER PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), role TEXT NOT NULL,
   agent TEXT NOT NULL, model TEXT NOT NULL, effort TEXT,
-  session_id TEXT, resume_command TEXT,
-  agent_state TEXT NOT NULL DEFAULT '{}', last_message TEXT,
-  status TEXT NOT NULL,                           -- live | exited | closed
+  session_id TEXT, resume_command TEXT, last_message TEXT,
+  status TEXT NOT NULL,                           -- active | taken_over | closed
   input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-  cost_usd REAL, cost_basis TEXT, context_used_pct REAL,
+  cost_usd REAL, cost_basis TEXT, context_used_pct REAL,   -- session totals as reported (04 §1); NULL = not reported
   started_at TEXT NOT NULL, ended_at TEXT
 );
 
 CREATE TABLE agent_blocks (agent TEXT PRIMARY KEY, until TEXT NOT NULL, reason TEXT NOT NULL);
-CREATE TABLE quotas (agent TEXT NOT NULL, window TEXT NOT NULL, used_pct REAL NOT NULL, resets_at TEXT,
+CREATE TABLE quotas (agent TEXT NOT NULL,                  -- only windows an agent reported (04 §1)
+  window TEXT NOT NULL, used_pct REAL NOT NULL, resets_at TEXT,
   observed_at TEXT NOT NULL, PRIMARY KEY (agent, window));
 
 CREATE TABLE escalations (
@@ -188,7 +182,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `nudge`, `helper_action`, `rung_changed`
 - `quota_blocked`, `quota_cleared`
 - `verdict`, `scope_change`
-- `hold_set`, `hold_cleared`, `intervention`, `operator_message`
+- `hold_set`, `hold_cleared`, `taken_over`, `handed_back`, `operator_message`
 - `escalation`, `escalation_resolved`
 - `integration_started`, `pr_opened`
 - `task_done`, `task_cancelled`
@@ -196,11 +190,11 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 
 **Commands** are pydantic models in `domain.commands`, stored as `kind` plus a JSON `payload`:
 - `Submit` (carries the task id allocated from `sequences` at insert)
-- `Prioritize`, `Pause`, `Resume`, `Cancel`, `Retry`, `SetRung`, `Say`, `Resolve`, `Stop`
+- `Prioritize`, `Pause`, `Resume`, `Cancel`, `Retry`, `SetRung`, `Say`, `TakeOver`, `HandBack`, `Resolve`, `Stop`
 
 ## 3. Run files
 
-See 02 §5. `report.kind` names the report model of the turn. `helper.json` exists only for rebuilt reports.
+See 02 §5. `report.kind` names the report model of the turn. `helper.json` exists only for rebuilt reports. `view.jsonl` holds one line per signal (`ts`, `turn`, `signal` type, its fields); only the engine appends and only `shikiru view` and peek read it.
 
 ## 4. Report models (`domain.reports`, pydantic → JSON Schema)
 
