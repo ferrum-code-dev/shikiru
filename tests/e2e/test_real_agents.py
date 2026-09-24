@@ -240,9 +240,9 @@ async def _wait_done(project: PreparedProject, environment: dict[str, str]) -> N
     await wait_until(done, timeout=ATTEMPT_TIMEOUT_SECONDS)
 
 
-def _cost(statuses: dict[str, object] | list[dict[str, object] | None] | None) -> float:
+def _cost(statuses: dict[str, object] | list[dict[str, object] | None] | None) -> float | None:
     values = statuses if isinstance(statuses, list) else [statuses]
-    total = 0.0
+    total: float | None = None
     for status in values:
         detail = _task_detail(status)
         if detail is None:
@@ -258,7 +258,7 @@ def _cost(statuses: dict[str, object] | list[dict[str, object] | None] | None) -
                 continue
             amount = cast("dict[str, object]", usage).get("cost_usd")
             if isinstance(amount, int | float):
-                total += float(amount)
+                total = (total or 0.0) + float(amount)
     return total
 
 

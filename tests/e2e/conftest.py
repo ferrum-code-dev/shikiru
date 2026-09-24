@@ -25,21 +25,18 @@ RESULTS_STATUS_FAILED = "failed"
 RESULTS_STATUS_SKIPPED = "skipped"
 REPORT_PHASE_CALL = "call"
 REPORT_PHASE_SETUP = "setup"
-DEFAULT_COST_USD = 0.0
-_COSTS: dict[str, float] = {}
+_COSTS: dict[str, float | None] = {}
 _REPORTS: dict[str, TestReport] = {}
 
 
 @pytest.fixture
 def record_e2e_cost(request: pytest.FixtureRequest) -> object:
-    """Return a callback that records one scenario's observed USD cost."""
+    """Return a callback that records one scenario's agent-reported USD cost; None stays unknown."""
 
     def record(cost_usd: float | None) -> None:
         node = cast("object", request.node)
         nodeid = cast("str", node.__getattribute__("nodeid"))
-        _COSTS[nodeid] = _COSTS.get(nodeid, DEFAULT_COST_USD) + (
-            DEFAULT_COST_USD if cost_usd is None else cost_usd
-        )
+        _COSTS[nodeid] = _add_cost(_COSTS.get(nodeid), cost_usd)
 
     return record
 
@@ -82,12 +79,20 @@ def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
     temporary_path.replace(result_path)
 
 
+def _add_cost(total: float | None, cost_usd: float | None) -> float | None:
+    if total is None:
+        return cost_usd
+    if cost_usd is None:
+        return total
+    return total + cost_usd
+
+
 def _scenario_result(nodeid: str, report: TestReport) -> dict[str, object]:
     status = _status_for(report)
     return {
         "scenario": nodeid,
         "status": status,
-        "cost": _COSTS.get(nodeid, DEFAULT_COST_USD),
+        "cost": _COSTS.get(nodeid),
     }
 
 

@@ -83,7 +83,7 @@ Plugin offline checks replay real recorded streams committed under `tests/fixtur
 **Runs**:
 - Each scenario copies the fixture, runs `init --yes --set` with the cheapest rungs, `start`, and asserts only observable outcomes.
 - Each scenario has a 30-minute timeout and one automatic rerun.
-- `poe e2e` writes `build/e2e/<date>.json` (scenario, pass/fail, cost). The file is temporary and git-ignored.
+- `poe e2e` writes `build/e2e/<date>.json` (scenario, pass/fail, agent-reported cost or `null` when no agent reported one). The file is temporary and git-ignored.
 - A plan AC that names an E2E scenario is ticked only after a passing `poe e2e` run; the ticking commit message states the run date, scenarios and cost.
 
 | # | Scenario | Proves |
