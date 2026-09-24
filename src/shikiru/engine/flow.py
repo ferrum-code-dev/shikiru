@@ -2,7 +2,7 @@
 
 Every rule of the review loop lives in `domain.steps.next_step`; this module only orchestrates
 around it: resolving each step's turn, applying the resulting `Transition`, inserting any new
-tasks a split/plan/supersede carries, raising an escalation when one is reached, and delegating
+tasks a plan/supersede carries, raising an escalation when one is reached, and delegating
 the integrating state to the injected coordinator.
 """
 
@@ -56,7 +56,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.steps import ACTING_ROLE, Transition, first_step, next_step
-from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step, TaskOrigin
+from shikiru.domain.tasks import EscalationReason, Hold, Role, Status, Step, TaskOrigin
 from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationConflict,
@@ -78,7 +78,7 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import AgentSession, Rung, Usage
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
-    from shikiru.domain.reports import NewTask, Report
+    from shikiru.domain.reports import Report
     from shikiru.domain.steps import Outcome
     from shikiru.domain.tasks import RepoState, Task
     from shikiru.engine.agents import AgentPool
@@ -212,23 +212,6 @@ def _usage_delta(before: Usage, after: Usage) -> dict[str, int | float | None]:
         "cache_write_tokens": after.cache_write_tokens - before.cache_write_tokens,
         "cost_usd": cost_delta,
     }
-
-
-def _new_tasks_for(outcome: Outcome) -> list[NewTask]:
-    if isinstance(outcome, TriageReport):
-        return list(outcome.subtasks)
-    if isinstance(outcome, PlanReport | Verdict):
-        return list(outcome.new_tasks)
-    return []
-
-
-def _split_mode_mismatch(task: Task, step: Step, outcome: Outcome) -> bool:
-    return (
-        step is Step.TRIAGE
-        and task.mode is Mode.SPLIT
-        and isinstance(outcome, TriageReport)
-        and outcome.mode is not Mode.SPLIT
-    )
 
 
 def _escalation_narrative(
@@ -597,8 +580,6 @@ class TaskFlow:
             message = f"{task.id} completed-step handler received {type(result).__name__}"
             raise ShikiruError(message)
         outcome = result.report
-        if _split_mode_mismatch(task, step, outcome):
-            return await self._reject_split_mode(task, step, execution, TurnCounters())
         await self._clear_intervention(task.id, ACTING_ROLE[step])
         self._emit_turn_completed(task, outcome, execution)
         transition = next_step(task, outcome, self._settings)
@@ -616,22 +597,6 @@ class TaskFlow:
             await self._raise_escalation(task, escalation_step, reason, outcome)
             return task, TurnCounters(), True
         return task, TurnCounters(), False
-
-    async def _reject_split_mode(
-        self,
-        task: Task,
-        step: Step,
-        execution: _TurnExecution,
-        counters: TurnCounters,
-    ) -> tuple[Task, TurnCounters, bool]:
-        rejected = dataclasses.replace(execution, result=ProtocolError())
-        updated, next_counters, should_return, _continued = await self._recover(
-            task, step, rejected, counters
-        )
-        if not should_return:
-            message = f"{task.id} split triage protocol recovery did not stop"
-            raise ShikiruError(message)
-        return updated, next_counters, True
 
     async def _recover(
         self,
@@ -1181,9 +1146,6 @@ class TaskFlow:
             "workspace": str(task_root(self._project_root, task.id)),
             "trackers": list(self._settings.project.trackers),
             "reports": _history_context(history),
-            "required_mode": (
-                Mode.SPLIT.value if step is Step.TRIAGE and task.mode is Mode.SPLIT else ""
-            ),
         }
         if template is PromptName.CONSULT:
             context["question"] = self._recovery_questions.pop(task.id, _latest_question(history))
@@ -1237,18 +1199,13 @@ class TaskFlow:
         return updated
 
     def _apply_new_tasks(self, task: Task, transition: Transition, outcome: Outcome) -> None:
-        new_tasks = _new_tasks_for(outcome)
-        origin = TaskOrigin.SPLIT if isinstance(outcome, TriageReport) else TaskOrigin.LEADER
-        selected_mode = outcome.mode if isinstance(outcome, TriageReport) else None
+        if not isinstance(outcome, PlanReport | Verdict):
+            message = f"{task.id}'s transition enqueues new tasks from a {type(outcome).__name__}"
+            raise ShikiruError(message)
         children = self._tasks.apply_scope_change(
-            task.id,
-            transition,
-            new_tasks,
-            origin=origin,
-            mode=selected_mode,
+            task.id, transition, outcome.new_tasks, origin=TaskOrigin.LEADER
         )
-        new_ids = [child.id for child in children]
-        self._emit_scope_change(task, outcome, new_ids)
+        self._emit_scope_change(task, outcome, [child.id for child in children])
 
     async def _escalate_scope_change_protocol(
         self, task: Task, step: Step, outcome: Outcome, error: UsageError
@@ -1270,9 +1227,9 @@ class TaskFlow:
         )
         return updated
 
-    def _emit_scope_change(self, task: Task, outcome: Outcome, new_ids: list[str]) -> None:
-        if not isinstance(outcome, PlanReport | Verdict):
-            return
+    def _emit_scope_change(
+        self, task: Task, outcome: PlanReport | Verdict, new_ids: list[str]
+    ) -> None:
         if not outcome.new_tasks and not outcome.scope_changes:
             return
         self._events.append(

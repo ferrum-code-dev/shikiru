@@ -4,5 +4,7 @@ You are the Leader planning a task.
 
 Shape the plan in the trackers listed above and commit it. Fill `new_tasks` only when the
 request itself asks you to execute the plan, not merely to produce one; otherwise leave it
-empty. Record any tracker changes outside the plan itself in `scope_changes`.
+empty. When you fill `new_tasks`, restructure the tracker entries so each new task has its own
+entry and together they replace this task's entry; each new task ticks its own entry when done.
+Record any tracker changes outside the plan itself in `scope_changes`.
 {% endblock %}

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
@@ -10,10 +9,9 @@ from textual.app import App, ComposeResult
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import RepoStatus, WidgetContext
-from shikiru.domain.reports import NewTask
 from shikiru.domain.scheduling import WaitReason
-from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import Hold, Mode, Status, StatusReason, TaskOrigin
+from shikiru.domain.steps import first_step
+from shikiru.domain.tasks import Hold, Mode, Status
 from shikiru.plugins.widgets.header import HeaderPanel, HeaderWidget
 from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.plugins.widgets.strips import StripsPanel, StripsWidget
@@ -181,37 +179,6 @@ async def test_strips_renders_the_narrow_form_in_a_narrow_pane(
         assert "|" not in text
         for line in text.splitlines():
             assert cell_len(line) <= 30
-
-
-async def test_strips_shows_a_split_parent_as_a_finished_strip_with_its_children(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    parent_id = _submit_task(connection, clock)
-    store = TaskStore(connection, clock)
-    parent = store.get(parent_id)
-    assert parent is not None
-    split_transition = dataclasses.replace(
-        Transition.stay(parent, step=None, status=Status.DONE),
-        status_reason=StatusReason.SPLIT.value,
-    )
-    store.apply_transition(parent_id, split_transition)
-    child = store.insert_child(
-        NewTask(title="Half of it", request="Half of it"),
-        depends_on=(),
-        parent_id=parent_id,
-        origin=TaskOrigin.SPLIT,
-    )
-    store.apply_transition(child.id, first_step(child))
-
-    context = _context(reader, project_dir)
-    widget = cast("StripsPanel", StripsWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
-        await pilot.pause()
-        text = _plain(widget.content)
-        assert parent_id in text
-        assert child.id in text
 
 
 async def test_strips_shows_a_paused_stamp_for_a_held_task(

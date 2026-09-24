@@ -83,30 +83,19 @@ def first_step(task: Task) -> Transition:
 
     A task with no `mode` starts at `triage`. `submit --mode implement|plan` skips triage
     straight into that step; `implement` also starts numbering from iteration 1, matching the
-    turn dirs (`NN-<step>-i<iteration>`) and 03 §2's "implement (i = 1)". A submitted `split`
-    mode starts at triage so the Leader can provide the child task list.
+    turn dirs (`NN-<step>-i<iteration>`) and 03 §2's "implement (i = 1)".
     """
     if task.mode is None:
         return Transition.stay(task, step=Step.TRIAGE)
     if task.mode is Mode.PLAN:
         return Transition.stay(task, step=Step.PLAN)
-    if task.mode is Mode.IMPLEMENT:
-        return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
-    return Transition.stay(task, step=Step.TRIAGE)
+    return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
 
 
 def _from_triage(task: Task, outcome: TriageReport) -> Transition:
     if outcome.mode is Mode.IMPLEMENT:
         return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
-    if outcome.mode is Mode.PLAN:
-        return Transition.stay(task, step=Step.PLAN)
-    base = Transition.stay(task, step=None, status=Status.DONE)
-    return dataclasses.replace(
-        base,
-        status_reason=StatusReason.SPLIT.value,
-        repoint_dependents=True,
-        enqueue_new_tasks=True,
-    )
+    return Transition.stay(task, step=Step.PLAN)
 
 
 def _from_plan(task: Task) -> Transition:

@@ -69,12 +69,6 @@ def test_first_step_with_mode_implement_starts_at_iteration_one() -> None:
     assert transition.iteration == 1
 
 
-def test_first_step_routes_submitted_split_mode_through_triage() -> None:
-    task = make_task(mode=Mode.SPLIT)
-
-    assert first_step(task).step is Step.TRIAGE
-
-
 def test_triage_implement_starts_the_first_implement_at_iteration_one() -> None:
     task = make_task(step=Step.TRIAGE, iteration=0)
 
@@ -91,18 +85,6 @@ def test_triage_plan_moves_to_plan_step() -> None:
     transition = _next(task, make_triage_report(mode=Mode.PLAN))
 
     assert transition.step is Step.PLAN
-
-
-def test_triage_split_closes_the_task_and_enqueues_children() -> None:
-    task = make_task(step=Step.TRIAGE)
-
-    transition = _next(task, make_triage_report(mode=Mode.SPLIT))
-
-    assert transition.step is None
-    assert transition.status is Status.DONE
-    assert transition.status_reason == StatusReason.SPLIT.value
-    assert transition.enqueue_new_tasks is True
-    assert transition.repoint_dependents is True
 
 
 def test_plan_moves_to_integrate_and_enqueues_new_tasks() -> None:

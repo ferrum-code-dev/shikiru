@@ -169,7 +169,6 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
                 "complexity": "normal",
                 "acceptance_criteria": [],
                 "references": [],
-                "subtasks": [],
             },
         }
     ]

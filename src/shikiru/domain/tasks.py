@@ -15,7 +15,6 @@ class TaskOrigin(StrEnum):
     """Where a task came from (03 §1.1)."""
 
     OPERATOR = auto()
-    SPLIT = auto()
     LEADER = auto()
 
 
@@ -37,7 +36,6 @@ ACTIVE_STATUSES = (Status.RUNNING, Status.INTEGRATING, Status.ESCALATED)
 class StatusReason(StrEnum):
     """Why a terminal `status` was reached outside the ordinary happy path (03 §2, §6)."""
 
-    SPLIT = auto()
     SUPERSEDED = auto()
 
 
@@ -57,7 +55,6 @@ class Mode(StrEnum):
 
     IMPLEMENT = auto()
     PLAN = auto()
-    SPLIT = auto()
 
 
 class Hold(StrEnum):

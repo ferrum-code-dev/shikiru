@@ -297,7 +297,7 @@ def test_scope_change_rejects_invalid_dependencies_before_mutating(
         counters=Counters(),
         rung_index={},
         overrides={},
-        status_reason=StatusReason.SPLIT.value,
+        status_reason=StatusReason.SUPERSEDED.value,
         repoint_dependents=True,
         enqueue_new_tasks=True,
     )
@@ -310,8 +310,7 @@ def test_scope_change_rejects_invalid_dependencies_before_mutating(
                 NewTask(title="first", request="first"),
                 NewTask(title="second", request="second", depends_on=[reference]),
             ],
-            origin=TaskOrigin.SPLIT,
-            mode=None,
+            origin=TaskOrigin.LEADER,
         )
 
     unchanged_parent = store.get(parent.id)
@@ -336,7 +335,7 @@ def test_scope_change_resolves_forward_sibling_dependencies_atomically(
         counters=Counters(),
         rung_index={},
         overrides={},
-        status_reason=StatusReason.SPLIT.value,
+        status_reason=StatusReason.SUPERSEDED.value,
         enqueue_new_tasks=True,
     )
 
@@ -347,7 +346,7 @@ def test_scope_change_resolves_forward_sibling_dependencies_atomically(
             NewTask(title="first", request="first", depends_on=["#2"]),
             NewTask(title="second", request="second"),
         ],
-        origin=TaskOrigin.SPLIT,
+        origin=TaskOrigin.LEADER,
     )
 
     assert children[0].depends_on == [children[1].id]

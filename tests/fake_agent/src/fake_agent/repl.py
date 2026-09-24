@@ -25,7 +25,6 @@ from fake_agent.script import (
     NewTaskSpec,
     NoReportStep,
     Script,
-    SplitStep,
     StallStep,
     SupersedeStep,
     TurnStep,
@@ -223,15 +222,6 @@ def _new_tasks(specs: list[NewTaskSpec]) -> list[NewTask]:
 
 
 def _triage_report(step: TurnStep, prompt_text: str) -> Report:
-    if isinstance(step, SplitStep):
-        return TriageReport(
-            title="fake triage",
-            mode=Mode.SPLIT,
-            complexity="normal",
-            acceptance_criteria=[prompt_text],
-            references=[],
-            subtasks=_new_tasks(step.subtasks),
-        )
     if not isinstance(step, AcceptStep):
         _unsupported(ReportKind.TRIAGE, step)
     return TriageReport(

@@ -123,8 +123,6 @@ _MODE_PANEL_LABELS: dict[Mode, tuple[tuple[str, str], ...]] = {
 
 def panel_specs_for_mode(mode: Mode, *, pull_request: bool = False) -> tuple[tuple[str, str], ...]:
     """Return this mode's `(label, stage glyph)` panels (06 §6.2): implement, plan, or PR."""
-    if mode is Mode.SPLIT:
-        return (("Triage", STAGE_TRIAGE),)
     specs = _MODE_PANEL_LABELS[mode]
     if mode is Mode.IMPLEMENT and pull_request:
         specs = (*specs[:3], ("PR", STAGE_PR))
@@ -171,7 +169,6 @@ class TaskStripData:
     title: str
     panels: tuple[PanelView, ...] = ()
     stamp: StripStamp | None = None
-    split_children: tuple[str, ...] = ()
 
 
 _PANEL_INDEX: dict[Step, int] = {
@@ -254,11 +251,6 @@ def _panels_for(task: Task, settings: Settings) -> tuple[PanelView, ...]:
             raise ValueError(message)
         panel = _panel_view(
             "Triage", STAGE_TRIAGE, active_state, step=step, task=task, settings=settings
-        )
-        return (panel,)
-    if task.mode is Mode.SPLIT:
-        panel = _panel_view(
-            "Triage", STAGE_TRIAGE, active_state, step=Step.TRIAGE, task=task, settings=settings
         )
         return (panel,)
     specs = panel_specs_for_mode(task.mode)
@@ -371,19 +363,12 @@ class TaskStrip:
 
     def render(self, width: int) -> Text:
         """Render the full 4-panel strip at `width >= STRIP_WIDE_MIN_COLUMNS`, else one line."""
-        if self._data.split_children:
-            return self._render_split(width)
         if width >= STRIP_WIDE_MIN_COLUMNS:
             return self._render_wide(width)
         return self._render_narrow(width)
 
     def _header_text(self) -> str:
         return f"{self._data.task_id}{_HEADER_SEPARATOR}{self._data.title}"
-
-    def _render_split(self, width: int) -> Text:
-        children = ", ".join(self._data.split_children)
-        line = f"{self._data.task_id}{_HEADER_SEPARATOR}{self._data.title} → split → {children}"
-        return Text(_fit(line, width) if width >= STRIP_WIDE_MIN_COLUMNS else line[:width])
 
     def _render_narrow(self, width: int) -> Text:
         panel = _active_or_last(self._data.panels)

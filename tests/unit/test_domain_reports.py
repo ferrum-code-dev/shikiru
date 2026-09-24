@@ -33,7 +33,6 @@ def _triage(**overrides: Any) -> dict[str, Any]:
         "complexity": "normal",
         "acceptance_criteria": ["retries on failure"],
         "references": [],
-        "subtasks": [],
     }
     fields.update(overrides)
     return fields
@@ -97,9 +96,6 @@ _INVALID_CASES: list[tuple[type[BaseModel], dict[str, Any], str]] = [
         "options",
     ),
     (TriageReport, _triage(title="x" * 61), "title"),
-    (TriageReport, _triage(mode="split", subtasks=[]), "subtasks"),
-    (TriageReport, _triage(mode="implement", subtasks=[_new_task()]), "subtasks"),
-    (TriageReport, _triage(mode="split", subtasks=[_new_task(depends_on=["#0"])]), "subtasks"),
     (
         PlanReport,
         {"summary": "P", "commits": [], "new_tasks": [_new_task(depends_on=["#2"])]},

@@ -6,12 +6,6 @@ This turn is read-only: make no edits to the repository or the trackers.
 
 Decide:
 - `mode`: `implement` for a self-contained change, `plan` when a plan turn should shape the
-  work first, `split` when it should become several independent tasks.
+  work first, including when the request needs decomposing into several tasks.
 - `complexity`, `acceptance_criteria` and `references`.
-- `subtasks`: one `NewTask` per piece, dependency-ordered, required and non-empty only when
-  `mode` is `split`.
-{% if required_mode == "split" %}
-The Operator explicitly selected split mode. You must report `mode` as `split` and provide the
-non-empty `subtasks` list; do not choose another mode.
-{% endif %}
 {% endblock %}

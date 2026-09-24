@@ -7,11 +7,10 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 from textual.widgets import Static
 
-from shikiru.domain.tasks import ACTIVE_STATUSES, StatusReason, Task
+from shikiru.domain.tasks import ACTIVE_STATUSES
 from shikiru.ui.strip import (
     STRIP_WIDE_MIN_COLUMNS,
     TaskStrip,
-    TaskStripData,
     task_strip_data,
 )
 
@@ -24,33 +23,12 @@ if TYPE_CHECKING:
     from shikiru.store.reader import StateReader
 
 
-def _split_strip_data(parent: Task, children: list[str]) -> TaskStripData:
-    return TaskStripData(task_id=parent.id, title=parent.title, split_children=tuple(children))
-
-
 def _strips(
     state: StateReader, focus_task: str | None, settings: Settings, width: int
 ) -> list[Text]:
     active = state.list_tasks(statuses=ACTIVE_STATUSES)
     active.sort(key=lambda task: task.id != focus_task)
-    rendered: list[Text] = []
-    seen_parents: set[str] = set()
-    for task in active:
-        parent = state.get_task(task.parent_id) if task.parent_id is not None else None
-        split_reason = StatusReason.SPLIT.value
-        if (
-            parent is not None
-            and parent.status_reason == split_reason
-            and parent.id not in seen_parents
-        ):
-            seen_parents.add(parent.id)
-            children = [
-                sibling.id for sibling in state.list_tasks() if sibling.parent_id == parent.id
-            ]
-            split_data = _split_strip_data(parent, children)
-            rendered.append(TaskStrip(split_data).render(width))
-        rendered.append(TaskStrip(task_strip_data(task, settings)).render(width))
-    return rendered
+    return [TaskStrip(task_strip_data(task, settings)).render(width) for task in active]
 
 
 class StripsPanel(Static):

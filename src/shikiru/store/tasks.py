@@ -183,7 +183,7 @@ class TaskStore:
         parent_id: str,
         origin: TaskOrigin,
     ) -> Task:
-        """Insert a task enqueued from a split, plan or verdict report (03 §2, §6; D4).
+        """Insert a task enqueued from a plan or verdict report (03 §2, §6; D4).
 
         `depends_on` is the caller's already-resolved dependency ids; `new_task.depends_on`
         (raw `T-n`/`#k` references) is not read here.
@@ -213,7 +213,6 @@ class TaskStore:
         new_tasks: Sequence[NewTask],
         *,
         origin: TaskOrigin,
-        mode: Mode | None = None,
     ) -> list[Task]:
         """Atomically transition a parent, enqueue children and repoint its dependents."""
         with transaction(self._connection):
@@ -251,8 +250,6 @@ class TaskStore:
             self._connection.executemany(
                 "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)", child_dependencies
             )
-            if mode is not None:
-                self.set_mode(task_id, mode)
             if transition.repoint_dependents:
                 self._repoint_dependents(task_id, child_ids)
         return [self._fetch_or_raise(child_id) for child_id in child_ids]

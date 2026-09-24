@@ -37,7 +37,6 @@ _VALID_TRIAGE: dict[str, Any] = {
     "complexity": "normal",
     "acceptance_criteria": ["retries on failure"],
     "references": [],
-    "subtasks": [],
 }
 
 

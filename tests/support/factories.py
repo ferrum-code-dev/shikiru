@@ -131,9 +131,6 @@ def make_triage_report(mode: Mode = Mode.IMPLEMENT, **overrides: Any) -> TriageR
         "complexity": "normal",
         "acceptance_criteria": ["retries on failure"],
         "references": [],
-        "subtasks": [NewTask(title="Add retries", request="Add retries")]
-        if mode is Mode.SPLIT
-        else [],
     }
     fields.update(overrides)
     return TriageReport(**fields)

@@ -51,7 +51,7 @@ def _require_sibling_references_in_range(new_tasks: list[NewTask], field: str) -
 
 
 class NewTask(DomainModel):
-    """A task to enqueue from a split, plan or verdict report (03 §2, §6; D4)."""
+    """A task to enqueue from a plan or verdict report (03 §2, §6; D4)."""
 
     title: str
     request: str
@@ -120,21 +120,6 @@ class TriageReport(DomainModel):
     complexity: ComplexityName
     acceptance_criteria: list[str]
     references: list[str]
-    subtasks: list[NewTask] = Field(
-        default_factory=list,
-        description="Required and non-empty iff mode is 'split'; otherwise empty.",
-    )
-
-    @model_validator(mode="after")
-    def _subtasks_required_iff_split(self) -> Self:
-        _require_iff(
-            condition=self.mode is Mode.SPLIT,
-            present=bool(self.subtasks),
-            field="subtasks",
-            rule="mode is 'split'",
-        )
-        _require_sibling_references_in_range(self.subtasks, "subtasks")
-        return self
 
 
 class ImplementationReport(DomainModel):

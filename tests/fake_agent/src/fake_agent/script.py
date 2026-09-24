@@ -14,7 +14,7 @@ class _StepModel(BaseModel):
 
 
 class NewTaskSpec(_StepModel):
-    """One `NewTask` a scripted `split`, `supersede` or `accept` (plan) step enqueues."""
+    """One `NewTask` a scripted `supersede` or `accept` (plan) step enqueues."""
 
     title: str
     request: str
@@ -30,13 +30,6 @@ class AcceptStep(_StepModel):
 
     kind: Literal["accept"] = "accept"
     new_tasks: list[NewTaskSpec] = Field(default_factory=list)
-
-
-class SplitStep(_StepModel):
-    """Submit a `split` triage report with `subtasks`; only valid for `report.kind == triage`."""
-
-    kind: Literal["split"] = "split"
-    subtasks: list[NewTaskSpec]
 
 
 class SupersedeStep(_StepModel):
@@ -101,7 +94,6 @@ type TurnStep = (
     | CrashStep
     | StallStep
     | DialogStep
-    | SplitStep
     | SupersedeStep
 )
 
