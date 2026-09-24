@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.agents.contracts import Rung
-from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig, RepoConfig
+from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
@@ -148,7 +148,7 @@ async def scheduler_env(
     monkeypatch.setattr(resources_module.psutil, "cpu_percent", fixed_cpu_percent)
     await init_project_repo(tmp_path)
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings().model_copy(update={"repos": [RepoConfig(path=".")]})
+    settings = _settings()
     tasks = TaskStore(connection, clock)
     quotas = QuotaStore(connection)
     events = EventLog(connection, clock)

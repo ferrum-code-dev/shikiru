@@ -1,4 +1,4 @@
-"""The `header` widget: project, engine state, slots and repos (docs/design/06-operator.md §5.4)."""
+"""The `header` widget: project, engine state, slots and repo (docs/design/06-operator.md §5.4)."""
 
 from __future__ import annotations
 
@@ -15,13 +15,11 @@ if TYPE_CHECKING:
 
 
 def _repo_line(status: RepoStatus) -> str:
-    return (
-        f"{status.path} · {status.branch} · +{status.ahead}/-{status.behind} · {status.dirty} dirty"
-    )
+    return f"{status.branch} · +{status.ahead}/-{status.behind} · {status.dirty} dirty"
 
 
 class HeaderPanel(Static):
-    """Shows the project name, engine state, active slots and every repo's checkout state."""
+    """Shows the project name, engine state, active slots and the checkout state."""
 
     def __init__(self, context: WidgetContext) -> None:
         """Hold `context`; nothing here does I/O until `on_mount`."""
@@ -38,10 +36,9 @@ class HeaderPanel(Static):
         active = len(self._widget_context.state.list_tasks(statuses=ACTIVE_STATUSES))
         max_parallel = settings.orchestration.max_parallel
         engine_state = "up" if self._widget_context.services.engine_up() else "down"
-        repo_statuses = await self._widget_context.services.repo_status()
+        repo_status = await self._widget_context.services.repo_status()
         summary = f"{settings.project.name} · engine {engine_state} · slots {active}/{max_parallel}"
-        lines = [summary, *(_repo_line(status) for status in repo_statuses)]
-        self.update("\n".join(lines))
+        self.update(f"{summary}\n{_repo_line(repo_status)}")
 
 
 class HeaderWidget:

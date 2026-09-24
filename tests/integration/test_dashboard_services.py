@@ -53,13 +53,9 @@ async def test_repo_status_reports_branch_ahead_behind_and_dirty_count(tmp_path:
     await commit_all(runner, repo_dir, "feature commit")
     (repo_dir / "c.txt").write_text("dirty")
 
-    service = GitRepoStatusService(
-        git, [RepoConfig(path="repo", base="main")], tmp_path, FakeClock(START)
-    )
-    statuses = await service.repo_status()
+    service = GitRepoStatusService(git, RepoConfig(base="main"), repo_dir, FakeClock(START))
+    status = await service.repo_status()
 
-    assert len(statuses) == 1
-    status = statuses[0]
     assert status.branch == "feature"
     assert status.ahead == 1
     assert status.behind == 0
@@ -75,13 +71,13 @@ async def test_repo_status_is_cached_within_the_ttl(tmp_path: Path) -> None:
     await commit_all(runner, repo_dir, "initial")
 
     clock = FakeClock(START)
-    service = GitRepoStatusService(git, [RepoConfig(path="repo", base="main")], tmp_path, clock)
+    service = GitRepoStatusService(git, RepoConfig(base="main"), repo_dir, clock)
 
     first = await service.repo_status()
     (repo_dir / "b.txt").write_text("2")
     cached = await service.repo_status()
-    assert cached[0].dirty == first[0].dirty == 0
+    assert cached.dirty == first.dirty == 0
 
     clock.advance(11.0)
     refreshed = await service.repo_status()
-    assert refreshed[0].dirty == 1
+    assert refreshed.dirty == 1

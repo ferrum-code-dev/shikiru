@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from pathlib import Path
 
     from textual.widget import Widget
@@ -25,9 +24,8 @@ WIDGET_ENTRY_POINT_GROUP = "shikiru.widgets"
 
 @dataclass(frozen=True)
 class RepoStatus:
-    """One repo's checkout state, as shown by the `header` widget (06 §5.4)."""
+    """The project checkout's state, as shown by the `header` widget (06 §5.4)."""
 
-    path: str
     branch: str
     ahead: int
     behind: int
@@ -37,8 +35,8 @@ class RepoStatus:
 class WidgetServices(Protocol):
     """Services `WidgetContext` supplies beyond `StateReader`, wired by `bootstrap` (06 §5.4)."""
 
-    async def repo_status(self) -> Sequence[RepoStatus]:
-        """Return the project's repos' checkout state, cached for at most 10 s."""
+    async def repo_status(self) -> RepoStatus:
+        """Return the project checkout's state, cached for at most 10 s."""
         ...
 
     def engine_up(self) -> bool:

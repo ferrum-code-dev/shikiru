@@ -201,7 +201,7 @@ class OperatorQueries:
             task=task,
             events=self._reader.events_since(0, task_id=task_id),
             reports=self._reports(task_id),
-            branches=[repo.branch for repo in task.repos],
+            branches=[task.repo.branch] if task.repo is not None else [],
             sessions=runs,
         )
 

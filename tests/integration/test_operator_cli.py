@@ -105,20 +105,16 @@ async def test_cli_json_init_submit_status_and_stop(tmp_path: Path) -> None:
     assert stop_value["result"] == {"stopped": False}
 
 
-async def test_init_scans_repositories_only_through_depth_four(tmp_path: Path) -> None:
-    depth_four = tmp_path / "one" / "two" / "three" / "four"
-    depth_five = depth_four / "five"
-    excluded = tmp_path / ".shikiru" / "nested"
-    await _git_project(depth_four)
-    await _git_project(depth_five)
-    await _git_project(excluded)
+@pytest.mark.parametrize("repo_relative", ["child", ".."])
+async def test_init_rejects_a_project_root_that_is_not_a_repository_root(
+    tmp_path: Path, repo_relative: str
+) -> None:
+    project = tmp_path / "workspace" / "project"
+    await asyncio.to_thread(project.mkdir, parents=True)
+    await _git_project((project / repo_relative).resolve())
 
-    code, stdout, stderr = await _cli(tmp_path, "init", "--yes")
+    code, _, stderr = await _cli(project, "init", "--yes")
 
-    assert code == 0
-    assert stderr == ""
-    assert str(tmp_path / ".shikiru" / "config.toml") in stdout
-    config = (tmp_path / ".shikiru" / "config.toml").read_text()
-    assert 'path = "one/two/three/four"' in config
-    assert 'path = "one/two/three/four/five"' not in config
-    assert 'path = ".shikiru/nested"' not in config
+    assert code != 0
+    assert str(project) in stderr
+    assert not (project / ".shikiru" / "config.toml").exists()

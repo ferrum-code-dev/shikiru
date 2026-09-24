@@ -11,7 +11,7 @@ CREATE TABLE tasks (
   counters TEXT NOT NULL DEFAULT '{}',
   rung_index TEXT NOT NULL DEFAULT '{}',
   overrides TEXT NOT NULL DEFAULT '{}',
-  repos TEXT NOT NULL DEFAULT '[]',
+  repo TEXT,
   slot INTEGER, window_id TEXT, panes TEXT NOT NULL DEFAULT '{}',
   wait_reason TEXT, requeued_at TEXT, summary TEXT,
   created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT

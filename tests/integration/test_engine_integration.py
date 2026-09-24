@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
-    from shikiru.domain.tasks import RepoState, Task
+    from shikiru.domain.tasks import Task
     from tests.support.engine import EngineEnv
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -66,26 +66,26 @@ async def _task_with_worktree(
     tasks = TaskStore(connection, SystemClock())
     transition = Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
     tasks.apply_transition(task.id, transition)
-    states = await TaskRootBuilder(Git(_RUNNER), project_root).build(
-        task.id, task.title, [RepoConfig(path=".", base=base)]
+    state = await TaskRootBuilder(Git(_RUNNER), project_root).build(
+        task.id, task.title, RepoConfig(base=base)
     )
-    tasks.set_repos(task.id, states)
+    tasks.set_repo(task.id, state)
     current = tasks.get(task.id)
     assert current is not None
-    return current, states
+    return current, state
 
 
 async def test_local_merge_fast_forwards_base_and_reports_commits(
     connection: Connection, tmp_path: Path
 ) -> None:
     project_root = await _repo(tmp_path / "project")
-    task, states = await _task_with_worktree(connection, project_root)
+    task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
     (task_root / "README.md").write_text("task\n")
     await commit_all(_RUNNER, task_root, "task change")
 
     result = await LocalMerge(Git(_RUNNER), SystemClock(), integration_wait=1).merge(
-        project_root, task_root, states
+        project_root, task_root, state
     )
 
     assert (project_root / "README.md").read_text() == "task\n"
@@ -98,18 +98,18 @@ async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
 ) -> None:
     project_root = await _repo(tmp_path / "project")
     await _RUNNER.run(["git", "branch", "release"], cwd=project_root, timeout=10, check=True)
-    task, states = await _task_with_worktree(connection, project_root, base="release")
+    task, state = await _task_with_worktree(connection, project_root, base="release")
     task_root = project_root / ".shikiru" / "worktrees" / task.id
     (task_root / "README.md").write_text("release task\n")
     await commit_all(_RUNNER, task_root, "release change")
 
     result = await LocalMerge(Git(_RUNNER), SystemClock(), integration_wait=1).merge(
-        project_root, task_root, states
+        project_root, task_root, state
     )
 
     assert result.commits
     assert await Git(_RUNNER).rev_parse(project_root, "release") == await Git(_RUNNER).rev_parse(
-        task_root, states[0].branch
+        task_root, state.branch
     )
     assert (project_root / "README.md").read_text() == "base\n"
 
@@ -118,14 +118,14 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
     connection: Connection, tmp_path: Path
 ) -> None:
     project_root = await _repo(tmp_path / "project")
-    task, states = await _task_with_worktree(connection, project_root)
+    task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
     (task_root / "README.md").write_text("task\n")
     await commit_all(_RUNNER, task_root, "task change")
     (project_root / "README.md").write_text("operator\n")
     clock = FakeClock(TASK_CREATED_AT)
     merge_task = asyncio.create_task(
-        LocalMerge(Git(_RUNNER), clock, integration_wait=300).merge(project_root, task_root, states)
+        LocalMerge(Git(_RUNNER), clock, integration_wait=300).merge(project_root, task_root, state)
     )
     await wait_until(clock.has_pending_sleep, timeout=5)
     (project_root / "README.md").write_text("base\n")
@@ -144,7 +144,7 @@ async def test_local_merge_escalates_when_dirty_overlap_never_clears(
     connection: Connection, tmp_path: Path
 ) -> None:
     project_root = await _repo(tmp_path / "project")
-    task, states = await _task_with_worktree(connection, project_root)
+    task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
     (task_root / "README.md").write_text("task\n")
     await commit_all(_RUNNER, task_root, "task change")
@@ -153,7 +153,7 @@ async def test_local_merge_escalates_when_dirty_overlap_never_clears(
     integration_wait_seconds = 120
     merge_task = asyncio.create_task(
         LocalMerge(Git(_RUNNER), clock, integration_wait=integration_wait_seconds).merge(
-            project_root, task_root, states
+            project_root, task_root, state
         )
     )
 
@@ -188,7 +188,7 @@ async def test_local_merge_waits_for_a_dirty_directory_ancestor(
     connection: Connection, tmp_path: Path
 ) -> None:
     project_root = await _repo(tmp_path / "project")
-    task, states = await _task_with_worktree(connection, project_root)
+    task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
     task_directory = task_root / "nested"
     task_directory.mkdir()
@@ -198,7 +198,7 @@ async def test_local_merge_waits_for_a_dirty_directory_ancestor(
     await init_repo(_RUNNER, dirty_directory)
     clock = FakeClock(TASK_CREATED_AT)
     merge_task = asyncio.create_task(
-        LocalMerge(Git(_RUNNER), clock, integration_wait=300).merge(project_root, task_root, states)
+        LocalMerge(Git(_RUNNER), clock, integration_wait=300).merge(project_root, task_root, state)
     )
     await wait_until(clock.has_pending_sleep, timeout=5)
     shutil.rmtree(dirty_directory)
@@ -210,41 +210,31 @@ async def test_local_merge_waits_for_a_dirty_directory_ancestor(
     assert (project_root / "nested" / "task.txt").read_text() == "task\n"
 
 
-async def test_local_merge_checks_all_repositories_before_merging_any(
+async def test_local_merge_blocks_when_base_moved_past_the_rebased_branch(
     connection: Connection, tmp_path: Path
 ) -> None:
-    project_root = tmp_path / "project"
-    repo_one = await _repo(project_root / "one")
-    repo_two = await _repo(project_root / "two")
-    task = seed_task(connection, SystemClock(), title="multi repo", mode=Mode.IMPLEMENT)
-    tasks = TaskStore(connection, SystemClock())
-    tasks.apply_transition(
-        task.id, Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
-    )
-    configs = [
-        RepoConfig(path="one", base="main"),
-        RepoConfig(path="two", base="main"),
-    ]
-    states = await TaskRootBuilder(Git(_RUNNER), project_root).build(task.id, task.title, configs)
+    project_root = await _repo(tmp_path / "project")
+    task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
-    (task_root / "one" / "README.md").write_text("task\n")
-    await commit_all(_RUNNER, task_root / "one", "task change")
-    (repo_two / "README.md").write_text("base advanced\n")
-    await commit_all(_RUNNER, repo_two, "advance base")
+    (task_root / "task.txt").write_text("task\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (project_root / "README.md").write_text("base advanced\n")
+    await commit_all(_RUNNER, project_root, "advance base")
+    base_sha = await Git(_RUNNER).rev_parse(project_root, "main")
 
     with pytest.raises(IntegrationBlocked):
         await LocalMerge(Git(_RUNNER), SystemClock(), integration_wait=0).merge(
-            project_root, task_root, states
+            project_root, task_root, state
         )
 
-    assert (repo_one / "README.md").read_text() == "base\n"
+    assert await Git(_RUNNER).rev_parse(project_root, "main") == base_sha
 
 
 async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     connection: Connection, tmp_path: Path
 ) -> None:
     project_root = await _repo(tmp_path / "project")
-    task, states = await _task_with_worktree(connection, project_root, title="conflict task")
+    task, state = await _task_with_worktree(connection, project_root, title="conflict task")
     task_root = project_root / ".shikiru" / "worktrees" / task.id
     task_dir = task_root / "README.md"
     task_dir.write_text("task\n")
@@ -261,7 +251,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
 
     async def finalizer(task_value: Task, _summary: IntegrationSummary) -> None:
         order.append("sessions_exited")
-        await builder.cleanup(task_value.id, states)
+        await builder.cleanup(task_value.id, state)
         order.append("worktrees_cleaned")
 
     async def close_window(task_value: Task) -> None:
@@ -273,7 +263,6 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
 
     async def resolve(
         task_value: Task,
-        _repo: RepoState,
         continue_rebase: Callable[[], Awaitable[None]],
     ) -> Task:
         task_path = task_root / "README.md"
@@ -301,7 +290,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     assert result.residual_risks == ("residual risk",)
     assert order == ["sessions_exited", "worktrees_cleaned", "window_closed"]
     assert not task_root.exists()
-    assert not await Git(_RUNNER).branch_exists(project_root, states[0].branch)
+    assert not await Git(_RUNNER).branch_exists(project_root, state.branch)
     assert (project_root / "README.md").read_text() == "resolved\n"
     done_events = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
     assert done_events
@@ -341,7 +330,8 @@ async def test_taskflow_fake_agent_resolves_conflict_and_repeats_changes_request
     assert final.step is None
     assert final.summary is not None
     assert not (engine_env.project_root / ".shikiru" / "worktrees" / task.id).exists()
-    assert not await Git(_RUNNER).branch_exists(engine_env.project_root, task.repos[0].branch)
+    assert task.repo is not None
+    assert not await Git(_RUNNER).branch_exists(engine_env.project_root, task.repo.branch)
     assert not await engine_env.tmux.target_exists(window_id)
     assert all(run.status is RunStatus.CLOSED for run in engine_env.runs.for_task(task.id))
     done_events = flow_env.events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)

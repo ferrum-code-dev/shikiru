@@ -1,11 +1,9 @@
-"""Git facts for `facts.md`, computed per repo and outranking the Implementer's claims (03 §2)."""
+"""Git facts for `facts.md`, outranking the Implementer's claims (03 §2)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-
-from shikiru.workspace.repo_paths import is_monorepo_path, repo_dir
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -15,93 +13,52 @@ if TYPE_CHECKING:
     from shikiru.workspace.git import Git
 
 
-def _tracker_relative_to_repo(tracker: str, repo_path: str) -> str | None:
-    if is_monorepo_path(repo_path):
-        return tracker
-    prefix = f"{repo_path.rstrip('/')}/"
-    if tracker.startswith(prefix):
-        return tracker[len(prefix) :]
-    return None
-
-
 @dataclass(frozen=True, slots=True)
-class RepoFacts:
-    """The facts computed for one repo."""
+class WorkspaceFacts:
+    """The facts computed for a task's worktree."""
 
-    path: str
     commits: tuple[str, ...] = field(default_factory=tuple)
     diff_stat: str = ""
     status: tuple[str, ...] = field(default_factory=tuple)
     changed_trackers: tuple[str, ...] = field(default_factory=tuple)
-    ahead_of_base: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class WorkspaceFacts:
-    """The facts computed for every repo of a task."""
-
-    repos: tuple[RepoFacts, ...] = field(default_factory=tuple)
-
-
-def _render_repo(repo: RepoFacts) -> str:
-    lines = [f"## {repo.path}" if repo.path else "## (repo)"]
-    lines.append("### Commits (base..HEAD)")
-    lines.append("\n".join(repo.commits) if repo.commits else "(none)")
-    lines.append("### Diff stat (base...HEAD)")
-    lines.append(repo.diff_stat or "(none)")
-    lines.append("### git status --porcelain")
-    lines.append("\n".join(repo.status) if repo.status else "(clean)")
-    lines.append("### Changed trackers")
-    lines.append(", ".join(repo.changed_trackers) if repo.changed_trackers else "(none)")
-    return "\n\n".join(lines)
 
 
 def render_facts(facts: WorkspaceFacts) -> str:
     """Render `facts` as the markdown text a `verify`/`conflicts`/`handoff` prompt embeds (03 §2).
 
     These facts outrank the Implementer's claims, so they carry no interpretation, only the
-    raw `git` output `GitFacts.collect` gathered for each repo.
+    raw `git` output `GitFacts.collect` gathered.
     """
-    if not facts.repos:
-        return "(no repos configured)"
-    return "\n\n".join(_render_repo(repo) for repo in facts.repos)
+    lines = ["### Commits (base..HEAD)"]
+    lines.append("\n".join(facts.commits) if facts.commits else "(none)")
+    lines.append("### Diff stat (base...HEAD)")
+    lines.append(facts.diff_stat or "(none)")
+    lines.append("### git status --porcelain")
+    lines.append("\n".join(facts.status) if facts.status else "(clean)")
+    lines.append("### Changed trackers")
+    lines.append(", ".join(facts.changed_trackers) if facts.changed_trackers else "(none)")
+    return "\n\n".join(lines)
 
 
 class GitFacts:
-    """Computes `RepoFacts` for every repo of a task, from real git state."""
+    """Computes `WorkspaceFacts` for a task's worktree, from real git state."""
 
     def __init__(self, git: Git) -> None:
         """Read git state through `git`."""
         self._git = git
 
     async def collect(
-        self, task_root: Path, repos: Sequence[RepoState], trackers: Sequence[str]
-    ) -> WorkspaceFacts:
-        """Collect facts for every repo in `repos`, whose worktrees sit under `task_root`."""
-        repo_facts = [await self._collect_one(task_root, repo, trackers) for repo in repos]
-        return WorkspaceFacts(repos=tuple(repo_facts))
-
-    async def _collect_one(
         self, task_root: Path, repo: RepoState, trackers: Sequence[str]
-    ) -> RepoFacts:
-        repo_path = repo_dir(task_root, repo.path)
-        commit_range = f"{repo.base}..HEAD"
+    ) -> WorkspaceFacts:
+        """Collect facts for the worktree at `task_root`, checked out as `repo`."""
         diff_range = f"{repo.base}...HEAD"
-        commits = await self._git.log_oneline(repo_path, commit_range)
-        diff_stat = await self._git.diff_stat(repo_path, diff_range)
-        status = await self._git.status_porcelain(repo_path)
-        changed_paths = set(await self._git.diff_name_only(repo_path, diff_range))
-        changed_trackers = tuple(
-            tracker
-            for tracker in trackers
-            if (relative := _tracker_relative_to_repo(tracker, repo.path)) is not None
-            and relative in changed_paths
-        )
-        return RepoFacts(
-            path=repo.path,
+        commits = await self._git.log_oneline(task_root, f"{repo.base}..HEAD")
+        diff_stat = await self._git.diff_stat(task_root, diff_range)
+        status = await self._git.status_porcelain(task_root)
+        changed_paths = set(await self._git.diff_name_only(task_root, diff_range))
+        return WorkspaceFacts(
             commits=tuple(commits),
             diff_stat=diff_stat,
             status=tuple(status),
-            changed_trackers=changed_trackers,
-            ahead_of_base=bool(commits),
+            changed_trackers=tuple(tracker for tracker in trackers if tracker in changed_paths),
         )

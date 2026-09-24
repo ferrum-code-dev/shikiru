@@ -14,7 +14,6 @@ from shikiru.agents.contracts import AgentContext, AgentFactory
 from shikiru.agents.registry import AGENT_ENTRY_POINT_GROUP, load_unique_entry_point
 from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.errors import ConfigError, ShikiruError
-from shikiru.workspace.repo_paths import repo_dir
 
 if TYPE_CHECKING:
     from shikiru.clock import Clock
@@ -36,13 +35,12 @@ DEFAULT_MODEL = "default"
 EXCLUDED_DIRECTORIES = frozenset({SHIKIRU_DIR_NAME, ".git"})
 
 
-@dataclass(frozen=True, slots=True)
-class DetectedRepo:
-    """A repository found under a project root, with its current base branch."""
-
-    path: str
-    base: str
-    caches: tuple[str, ...]
+def not_repository_root(root: Path) -> str:
+    """Explain why `root` cannot be a Shikiru project: it is not a git repository root (D20)."""
+    return (
+        f"{root} is not a git repository root; Shikiru supports one repository per project, "
+        "so run it from the repository's top-level directory"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,13 +48,14 @@ class DetectedProject:
     """All filesystem and plugin facts used to write a default project config."""
 
     name: str
-    repos: tuple[DetectedRepo, ...]
+    base: str
+    caches: tuple[str, ...]
     trackers: tuple[str, ...]
     agents: tuple[str, ...]
 
 
 class ProjectDetectors:
-    """Detect repositories, trackers, installed agents and caches for `init`."""
+    """Detect the repository base, trackers, installed agents and caches for `init`."""
 
     def __init__(self, root: Path, *, git: Git, runner: SubprocessRunner, clock: Clock) -> None:
         """Inspect `root` through injected git, process and clock boundaries."""
@@ -67,50 +66,29 @@ class ProjectDetectors:
 
     async def detect(self) -> DetectedProject:
         """Return deterministic project facts, or an actionable config error."""
-        repos = await self._repositories()
-        if not repos:
-            message = f"no git repository found under {self._root}"
-            raise ConfigError(message)
+        if not await self._git.is_repository_root(self._root):
+            raise ConfigError(not_repository_root(self._root))
         agents = await self._agents()
         if not agents:
             message = "no shikiru.agents plugin is installed"
             raise ConfigError(message)
         return DetectedProject(
             name=self._root.name,
-            repos=tuple(repos),
+            base=await self._git.current_branch(self._root),
+            caches=tuple(await self._caches()),
             trackers=tuple(self._trackers()),
             agents=agents,
         )
 
     async def initialize(self) -> Path:
-        """Detect facts, write config and exclude `.shikiru/` in each repository."""
+        """Detect facts, write config and exclude `.shikiru/` in the repository."""
         config_path = self._root / SHIKIRU_DIR_NAME / "config.toml"
         if await asyncio.to_thread(config_path.is_file):
             return config_path
         project = await self.detect()
         await asyncio.to_thread(_write_config, config_path, render_config(project))
-        for repo in project.repos:
-            await self._git.append_to_exclude(repo_dir(self._root, repo.path), EXCLUDE_LINE)
+        await self._git.append_to_exclude(self._root, EXCLUDE_LINE)
         return config_path
-
-    async def _repositories(self) -> list[DetectedRepo]:
-        if _is_git_root(self._root):
-            base = await self._git.current_branch(self._root)
-            return [
-                DetectedRepo(path=".", base=base, caches=tuple(await self._caches_for(self._root)))
-            ]
-        candidates = [
-            path for path in _directories_at_depth(self._root, MAX_SCAN_DEPTH) if _is_git_root(path)
-        ]
-        candidates.sort(key=lambda path: path.relative_to(self._root).as_posix())
-        return [
-            DetectedRepo(
-                path=path.relative_to(self._root).as_posix(),
-                base=await self._git.current_branch(path),
-                caches=tuple(await self._caches_for(path)),
-            )
-            for path in candidates
-        ]
 
     def _trackers(self) -> list[str]:
         candidates: set[str] = set()
@@ -125,8 +103,8 @@ class ProjectDetectors:
                 candidates.add(relative)
         return sorted(candidates)
 
-    async def _caches_for(self, root: Path) -> list[str]:
-        ignored = await self._git.ignored_paths(root)
+    async def _caches(self) -> list[str]:
+        ignored = await self._git.ignored_paths(self._root)
         return sorted(path.name for path in ignored if path.name in CACHE_NAMES)
 
     async def _agents(self) -> tuple[str, ...]:
@@ -157,17 +135,15 @@ def render_config(project: DetectedProject) -> str:
         f"trackers = {json.dumps(list(project.trackers))}",
         "",
     ]
-    for repo in project.repos:
-        lines.extend(
-            (
-                "[[repos]]",
-                f"path = {json.dumps(repo.path)}",
-                f"base = {json.dumps(repo.base)}",
-                f"caches = {json.dumps(list(repo.caches))}",
-                'remote = "origin"',
-                "",
-            )
+    lines.extend(
+        (
+            "[repo]",
+            f"base = {json.dumps(project.base)}",
+            f"caches = {json.dumps(list(project.caches))}",
+            'remote = "origin"',
+            "",
         )
+    )
     for name in project.agents:
         lines.extend(
             (
@@ -193,7 +169,7 @@ def render_config(project: DetectedProject) -> str:
 
 
 async def initialize_project(detectors: ProjectDetectors) -> Path:
-    """Detect, write config and exclude `.shikiru/` in each detected repository."""
+    """Detect, write config and exclude `.shikiru/` in the project repository."""
     return await detectors.initialize()
 
 
@@ -202,22 +178,7 @@ def _write_config(config_path: Path, contents: str) -> None:
     config_path.write_text(contents)
 
 
-def _is_git_root(path: Path) -> bool:
-    return (path / ".git").exists()
-
-
-def _directories_at_depth(root: Path, max_depth: int) -> list[Path]:
-    directories, _ = _walk_at_depth(root, max_depth)
-    return directories
-
-
 def _files_at_depth(root: Path, max_depth: int) -> list[Path]:
-    _, files = _walk_at_depth(root, max_depth)
-    return files
-
-
-def _walk_at_depth(root: Path, max_depth: int) -> tuple[list[Path], list[Path]]:
-    directories = [root]
     files: list[Path] = []
     pending: list[tuple[Path, int]] = [(root, 0)]
     while pending:
@@ -231,8 +192,7 @@ def _walk_at_depth(root: Path, max_depth: int) -> tuple[list[Path], list[Path]]:
                     continue
                 path = Path(entry.path)
                 if entry.is_dir(follow_symlinks=False):
-                    directories.append(path)
                     pending.append((path, entry_depth))
                 elif entry.is_file(follow_symlinks=False):
                     files.append(path)
-    return directories, files
+    return files

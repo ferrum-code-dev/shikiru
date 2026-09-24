@@ -8,21 +8,20 @@ import shikiru.agents.registry as registry_module
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
+from shikiru.dashboard.contract import RepoStatus
 from shikiru.store.reader import StateReader
 from tests.support.config import write_minimal_project
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from pathlib import Path
 
-    from shikiru.dashboard.contract import RepoStatus
     from shikiru.store.database import Database
     from tests.support.store import Connection
 
 
 class _StubServices:
-    async def repo_status(self) -> Sequence[RepoStatus]:
-        return []
+    async def repo_status(self) -> RepoStatus:
+        return RepoStatus(branch="main", ahead=0, behind=0, dirty=0)
 
     def engine_up(self) -> bool:
         return False

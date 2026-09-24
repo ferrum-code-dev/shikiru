@@ -49,11 +49,11 @@ _COUNTERS_ADAPTER: TypeAdapter[Counters] = TypeAdapter(Counters)
 _RUNG_INDEX_ADAPTER: TypeAdapter[dict[Role, int]] = TypeAdapter(dict[Role, int])
 _OVERRIDES_ADAPTER: TypeAdapter[dict[Role, Rung]] = TypeAdapter(dict[Role, Rung])
 _PANES_ADAPTER: TypeAdapter[dict[Role, str]] = TypeAdapter(dict[Role, str])
-_REPOS_ADAPTER: TypeAdapter[list[RepoState]] = TypeAdapter(list[RepoState])
+_REPO_ADAPTER: TypeAdapter[RepoState] = TypeAdapter(RepoState)
 
 _TASK_COLUMNS = (
     "id, seq, parent_id, origin, title, request, mode, complexity, priority, status, step, "
-    "status_reason, holds, iteration, counters, rung_index, overrides, repos, slot, window_id, "
+    "status_reason, holds, iteration, counters, rung_index, overrides, repo, slot, window_id, "
     "panes, wait_reason, requeued_at, summary, created_at, started_at, finished_at"
 )
 
@@ -78,7 +78,7 @@ def _row_to_task(row: sqlite3.Row, depends_on: Sequence[str]) -> Task:
         counters=load_json(_COUNTERS_ADAPTER, row["counters"]),
         rung_index=load_json(_RUNG_INDEX_ADAPTER, row["rung_index"]),
         overrides=load_json(_OVERRIDES_ADAPTER, row["overrides"]),
-        repos=load_json(_REPOS_ADAPTER, row["repos"]),
+        repo=load_json(_REPO_ADAPTER, row["repo"]) if row["repo"] is not None else None,
         slot=row["slot"],
         window_id=row["window_id"],
         panes=load_json(_PANES_ADAPTER, row["panes"]),
@@ -423,11 +423,11 @@ class TaskStore:
             (dump_json(_PANES_ADAPTER, panes), task_id),
         )
 
-    def set_repos(self, task_id: str, repos: Sequence[RepoState]) -> None:
-        """Record `task_id`'s repo checkout state (03 §5)."""
+    def set_repo(self, task_id: str, repo: RepoState) -> None:
+        """Record `task_id`'s checkout state (03 §5)."""
         self._connection.execute(
-            "UPDATE tasks SET repos = ? WHERE id = ?",
-            (dump_json(_REPOS_ADAPTER, list(repos)), task_id),
+            "UPDATE tasks SET repo = ? WHERE id = ?",
+            (dump_json(_REPO_ADAPTER, repo), task_id),
         )
 
     def set_requeued(self, task_id: str) -> None:

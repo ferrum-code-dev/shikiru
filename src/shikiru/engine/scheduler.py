@@ -131,9 +131,9 @@ class Scheduler:
                 task.id, Transition.stay(task, step=task.step, status=status)
             )
             current = self._require_task(task.id, "slot assignment")
-            if not current.repos:
-                repos = await self._roots.build(current.id, current.title, self._settings.repos)
-                self._tasks.set_repos(current.id, repos)
+            if current.repo is None:
+                repo = await self._roots.build(current.id, current.title, self._settings.repo)
+                self._tasks.set_repo(current.id, repo)
                 current = self._require_task(task.id, "task-root creation")
             await self._layout.ensure(current)
             current = self._require_task(task.id, "layout creation")

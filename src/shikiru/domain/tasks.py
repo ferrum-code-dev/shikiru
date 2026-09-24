@@ -113,9 +113,8 @@ class Counters(DomainModel):
 
 
 class RepoState(DomainModel):
-    """One repo's checkout state for a task (03 §1.1, §5; mirrors `tasks.repos`, 05 §2)."""
+    """The task's checkout state (03 §1.1, §5; mirrors `tasks.repo`, 05 §2)."""
 
-    path: str
     base: str
     base_sha: str
     branch: str
@@ -142,7 +141,7 @@ class Task(DomainModel):
     counters: Counters = Field(default_factory=Counters)
     rung_index: dict[Role, int] = Field(default_factory=dict)
     overrides: dict[Role, Rung] = Field(default_factory=dict)
-    repos: list[RepoState] = Field(default_factory=list)
+    repo: RepoState | None = None
     slot: int | None = None
     window_id: str | None = None
     panes: dict[Role, str] = Field(default_factory=dict)

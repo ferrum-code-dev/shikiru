@@ -257,7 +257,7 @@ class Engine:
             return
         await self._sessions.exit_task(task)
         await self._layout.close(task)
-        await self._roots.cleanup(task.id, task.repos)
+        await self._roots.cleanup(task.id, task.repo)
         self._finished_tasks.add(task.id)
 
     async def _process_commands(self) -> bool:

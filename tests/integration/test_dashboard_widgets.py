@@ -24,7 +24,6 @@ from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from pathlib import Path
 
     from textual.widget import Widget
@@ -44,8 +43,8 @@ class _StubServices:
     def __init__(self, *, engine_running: bool = False) -> None:
         self._engine_running = engine_running
 
-    async def repo_status(self) -> Sequence[RepoStatus]:
-        return [RepoStatus(path=".", branch="main", ahead=1, behind=0, dirty=2)]
+    async def repo_status(self) -> RepoStatus:
+        return RepoStatus(branch="main", ahead=1, behind=0, dirty=2)
 
     def engine_up(self) -> bool:
         return self._engine_running

@@ -81,6 +81,7 @@ def build_doctor(project_root: Path) -> Doctor:
     runner = SubprocessRunner()
     return Doctor(
         project_root,
+        git=Git(runner),
         runner=runner,
         clock=build_clock(),
         registry=AgentRegistry(),
@@ -140,7 +141,7 @@ def build_lifecycle() -> ProjectLifecycle:
         try:
             dashboard_services = dashboard_services_module.DashboardServices(
                 dashboard_services_module.GitRepoStatusService(
-                    git, settings.repos, project_root, clock
+                    git, settings.repo, project_root, clock
                 ),
                 project_root,
             )
@@ -398,7 +399,7 @@ def _build_integrator(
 
     async def finalizer(task: Task, _summary: IntegrationSummary) -> None:
         await sessions.exit_task(task)
-        await roots.cleanup(task.id, task.repos)
+        await roots.cleanup(task.id, task.repo)
 
     async def close_window(task: Task) -> None:
         await layout.close(task)

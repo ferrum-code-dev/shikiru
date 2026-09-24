@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from shikiru.config.settings import RepoConfig
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.git import Git
@@ -21,13 +23,11 @@ def _builder(project_root: Path) -> TaskRootBuilder:
     return TaskRootBuilder(Git(SubprocessRunner()), project_root)
 
 
-async def _init_repo_with_commit(project_root: Path, relative: str = ".") -> Path:
-    repo_dir = project_root if relative == "." else project_root / relative
+async def _init_repo_with_commit(project_root: Path) -> None:
     runner = SubprocessRunner()
-    await init_repo(runner, repo_dir)
-    (repo_dir / "README.md").write_text("hello\n")
-    await commit_all(runner, repo_dir, "initial commit")
-    return repo_dir
+    await init_repo(runner, project_root)
+    (project_root / "README.md").write_text("hello\n")
+    await commit_all(runner, project_root, "initial commit")
 
 
 def test_slugify_is_stable_and_filesystem_safe() -> None:
@@ -36,18 +36,15 @@ def test_slugify_is_stable_and_filesystem_safe() -> None:
     assert slugify("a" * 100) == "a" * 40
 
 
-async def test_build_monorepo_worktree_is_the_task_root(tmp_path: Path) -> None:
+async def test_build_makes_the_worktree_the_task_root(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     await _init_repo_with_commit(project_root)
     builder = _builder(project_root)
 
-    states = await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
+    state = await builder.build(_TASK_ID, _TASK_TITLE, RepoConfig())
 
     root = builder.task_root(_TASK_ID)
     assert (root / "README.md").exists()
-    assert len(states) == 1
-    state = states[0]
-    assert state.path == "."
     assert state.base == "main"
     assert state.branch == branch_name(_TASK_ID, _TASK_TITLE)
     runner = SubprocessRunner()
@@ -55,38 +52,13 @@ async def test_build_monorepo_worktree_is_the_task_root(tmp_path: Path) -> None:
     assert state.base_sha == expected_sha
 
 
-async def test_build_multirepo_symlinks_shared_top_level_entries(tmp_path: Path) -> None:
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    await _init_repo_with_commit(project_root, "backend")
-    await _init_repo_with_commit(project_root, "frontend")
-    (project_root / "CLAUDE.md").write_text("shared rules\n")
-    tasks_dir = project_root / "tasks"
-    tasks_dir.mkdir()
-    (tasks_dir / "plan.md").write_text("plan\n")
-    builder = _builder(project_root)
-
-    states = await builder.build(
-        _TASK_ID, _TASK_TITLE, [RepoConfig(path="backend"), RepoConfig(path="frontend")]
-    )
-
-    root = builder.task_root(_TASK_ID)
-    assert (root / "backend" / "README.md").exists()
-    assert not (root / "backend").is_symlink()
-    assert (root / "frontend" / "README.md").exists()
-    assert (root / "CLAUDE.md").is_symlink()
-    assert (root / "CLAUDE.md").resolve() == (project_root / "CLAUDE.md").resolve()
-    assert (root / "tasks").is_symlink()
-    assert [repo.path for repo in states] == ["backend", "frontend"]
-
-
 async def test_build_is_idempotent(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     await _init_repo_with_commit(project_root)
     builder = _builder(project_root)
 
-    first = await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
-    second = await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
+    first = await builder.build(_TASK_ID, _TASK_TITLE, RepoConfig())
+    second = await builder.build(_TASK_ID, _TASK_TITLE, RepoConfig())
 
     assert first == second
     runner = SubprocessRunner()
@@ -104,38 +76,32 @@ async def test_build_adds_shikiru_to_exclude_without_duplicating(tmp_path: Path)
     await _init_repo_with_commit(project_root)
     builder = _builder(project_root)
 
-    await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
-    await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
+    await builder.build(_TASK_ID, _TASK_TITLE, RepoConfig())
+    await builder.build(_TASK_ID, _TASK_TITLE, RepoConfig())
 
     exclude_text = (project_root / ".git" / "info" / "exclude").read_text()
     assert exclude_text.count(EXCLUDE_LINE) == 1
 
 
-async def test_cleanup_removes_worktree_and_deletes_only_the_merged_branch(
-    tmp_path: Path,
+@pytest.mark.parametrize(("extra_commit", "branch_kept"), [(False, False), (True, True)])
+async def test_cleanup_removes_the_worktree_and_deletes_the_branch_only_when_merged(
+    tmp_path: Path, *, extra_commit: bool, branch_kept: bool
 ) -> None:
     project_root = tmp_path / "project"
-    project_root.mkdir()
-    merged_repo = await _init_repo_with_commit(project_root, "merged")
-    unmerged_repo = await _init_repo_with_commit(project_root, "unmerged")
+    await _init_repo_with_commit(project_root)
     builder = _builder(project_root)
-
-    states = await builder.build(
-        _TASK_ID, _TASK_TITLE, [RepoConfig(path="merged"), RepoConfig(path="unmerged")]
-    )
+    state = await builder.build(_TASK_ID, _TASK_TITLE, RepoConfig())
     root = builder.task_root(_TASK_ID)
     runner = SubprocessRunner()
-    (root / "unmerged" / "new.txt").write_text("change\n")
-    await commit_all(runner, root / "unmerged", "extra commit")
+    if extra_commit:
+        (root / "new.txt").write_text("change\n")
+        await commit_all(runner, root, "extra commit")
 
-    await builder.cleanup(_TASK_ID, states)
+    await builder.cleanup(_TASK_ID, state)
 
-    assert not (root / "merged").exists()
-    assert not (root / "unmerged").exists()
-    merged_branches = await _local_branches(runner, merged_repo)
-    unmerged_branches = await _local_branches(runner, unmerged_repo)
-    assert branch_name(_TASK_ID, _TASK_TITLE) not in merged_branches
-    assert branch_name(_TASK_ID, _TASK_TITLE) in unmerged_branches
+    assert not root.exists()
+    branches = await _local_branches(runner, project_root)
+    assert (branch_name(_TASK_ID, _TASK_TITLE) in branches) is branch_kept
 
 
 async def test_append_to_exclude_adds_exactly_one_line_when_the_file_already_ends_in_a_newline(
@@ -172,7 +138,7 @@ async def test_build_recreates_the_worktree_when_the_branch_exists_but_it_was_re
     project_root = tmp_path / "project"
     await _init_repo_with_commit(project_root)
     builder = _builder(project_root)
-    await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
+    await builder.build(_TASK_ID, _TASK_TITLE, RepoConfig())
     root = builder.task_root(_TASK_ID)
     runner = SubprocessRunner()
     await runner.run(
@@ -183,10 +149,10 @@ async def test_build_recreates_the_worktree_when_the_branch_exists_but_it_was_re
     )
     assert not root.exists()
 
-    states = await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
+    state = await builder.build(_TASK_ID, _TASK_TITLE, RepoConfig())
 
     assert (root / "README.md").exists()
-    assert states[0].branch == branch_name(_TASK_ID, _TASK_TITLE)
+    assert state.branch == branch_name(_TASK_ID, _TASK_TITLE)
 
 
 async def test_cleanup_is_idempotent_and_tolerates_an_already_removed_worktree(
@@ -195,10 +161,10 @@ async def test_cleanup_is_idempotent_and_tolerates_an_already_removed_worktree(
     project_root = tmp_path / "project"
     await _init_repo_with_commit(project_root)
     builder = _builder(project_root)
-    states = await builder.build(_TASK_ID, _TASK_TITLE, [RepoConfig(path=".")])
+    state = await builder.build(_TASK_ID, _TASK_TITLE, RepoConfig())
 
-    await builder.cleanup(_TASK_ID, states)
-    await builder.cleanup(_TASK_ID, states)
+    await builder.cleanup(_TASK_ID, state)
+    await builder.cleanup(_TASK_ID, state)
 
 
 async def _local_branches(runner: SubprocessRunner, repo_dir: Path) -> list[str]:

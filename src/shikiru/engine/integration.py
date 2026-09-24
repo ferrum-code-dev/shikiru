@@ -11,12 +11,11 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
 from shikiru.errors import CommandFailed, ShikiruError
-from shikiru.workspace.repo_paths import repo_dir
 from shikiru.workspace.roots import task_root
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from shikiru.clock import Clock
@@ -67,9 +66,6 @@ class IntegrationMetadata:
 
 @dataclass(frozen=True, slots=True)
 class _MergeCandidate:
-    repo: RepoState
-    project_dir: Path
-    task_dir: Path
     base_sha: str
     branch_sha: str
     base_checked_out: bool
@@ -81,7 +77,7 @@ class _PrecheckFailed(Exception):
 
 
 type ContinueRebase = Callable[[], Awaitable[None]]
-type ConflictResolver = Callable[[Task, RepoState, ContinueRebase], Awaitable[Task]]
+type ConflictResolver = Callable[[Task, ContinueRebase], Awaitable[Task]]
 type Finalizer = Callable[[Task, IntegrationSummary], Awaitable[None]]
 type WindowCloser = Callable[[Task], Awaitable[None]]
 
@@ -90,9 +86,9 @@ class IntegrationStrategy(Protocol):
     """A strategy that applies an already rebased task branch to its base."""
 
     async def merge(
-        self, project_root: Path, task_root_path: Path, repos: Sequence[RepoState]
+        self, project_root: Path, task_root_path: Path, repo: RepoState
     ) -> IntegrationSummary:
-        """Merge every repository that is ahead of its configured base."""
+        """Merge the task branch into its base when it is ahead."""
         ...
 
 
@@ -110,7 +106,7 @@ class IntegrationCoordinator(Protocol):
 
 
 class LocalMerge:
-    """Apply rebased branches locally using fast-forward or compare-and-swap refs."""
+    """Apply a rebased branch locally using fast-forward or a compare-and-swap ref update."""
 
     def __init__(self, git: Git, clock: Clock, *, integration_wait: int) -> None:
         """Use `git` for repository operations and `clock` for retry deadlines."""
@@ -119,14 +115,15 @@ class LocalMerge:
         self._integration_wait = integration_wait
 
     async def merge(
-        self, project_root: Path, task_root_path: Path, repos: Sequence[RepoState]
+        self, project_root: Path, task_root_path: Path, repo: RepoState
     ) -> IntegrationSummary:
-        """Pre-check every repo, then atomically apply every eligible local merge."""
+        """Pre-check the local base, then apply the merge, retrying while it is blocked."""
         deadline = self._clock.now() + timedelta(seconds=self._integration_wait)
         while True:
             try:
-                candidates = await self._precheck(project_root, task_root_path, repos)
-                await self._apply(candidates)
+                candidate = await self._precheck(project_root, task_root_path, repo)
+                if candidate is not None:
+                    await self._apply(project_root, repo, candidate)
             except _PrecheckFailed, CommandFailed:
                 remaining = (deadline - self._clock.now()).total_seconds()
                 if remaining <= 0:
@@ -134,62 +131,41 @@ class LocalMerge:
                 await self._clock.sleep(min(INTEGRATION_RETRY.total_seconds(), remaining))
                 continue
             break
-        commits = tuple(
-            f"{candidate.repo.path}: {commit}"
-            for candidate in candidates
-            for commit in candidate.commits
-        )
-        return IntegrationSummary(
-            summary=f"Merged {len(commits)} commit(s) across {len(candidates)} repo(s).",
-            commits=commits,
-        )
+        commits = candidate.commits if candidate is not None else ()
+        return IntegrationSummary(summary=f"Merged {len(commits)} commit(s).", commits=commits)
 
-    async def _apply(self, candidates: Sequence[_MergeCandidate]) -> None:
-        for candidate in candidates:
-            if candidate.base_checked_out:
-                await self._git.merge_ff_only(candidate.project_dir, candidate.repo.branch)
-            else:
-                await self._git.update_ref(
-                    candidate.project_dir,
-                    candidate.repo.base,
-                    candidate.branch_sha,
-                    candidate.base_sha,
-                )
+    async def _apply(self, project_root: Path, repo: RepoState, candidate: _MergeCandidate) -> None:
+        if candidate.base_checked_out:
+            await self._git.merge_ff_only(project_root, repo.branch)
+        else:
+            await self._git.update_ref(
+                project_root, repo.base, candidate.branch_sha, candidate.base_sha
+            )
 
     async def _precheck(
-        self, project_root: Path, task_root_path: Path, repos: Sequence[RepoState]
-    ) -> list[_MergeCandidate]:
-        candidates: list[_MergeCandidate] = []
-        for repo in repos:
-            project_dir = repo_dir(project_root, repo.path)
-            task_dir = repo_dir(task_root_path, repo.path)
-            base_sha = await self._git.rev_parse(project_dir, repo.base)
-            branch_sha = await self._git.rev_parse(task_dir, repo.branch)
-            if branch_sha == base_sha:
-                continue
-            if not await self._git.merge_base_is_ancestor(project_dir, repo.base, repo.branch):
-                raise _PrecheckFailed
-            base_checked_out = await self._git.current_branch(project_dir) == repo.base
-            if base_checked_out:
-                changed = set(
-                    await self._git.diff_name_only(task_dir, f"{base_sha}...{branch_sha}")
-                )
-                dirty = await self._git.dirty_paths(project_dir)
-                if _paths_overlap(changed, dirty):
-                    raise _PrecheckFailed
-            commits = tuple(await self._git.log_oneline(task_dir, f"{base_sha}..{branch_sha}"))
-            candidates.append(
-                _MergeCandidate(
-                    repo=repo,
-                    project_dir=project_dir,
-                    task_dir=task_dir,
-                    base_sha=base_sha,
-                    branch_sha=branch_sha,
-                    base_checked_out=base_checked_out,
-                    commits=commits,
-                )
+        self, project_root: Path, task_root_path: Path, repo: RepoState
+    ) -> _MergeCandidate | None:
+        base_sha = await self._git.rev_parse(project_root, repo.base)
+        branch_sha = await self._git.rev_parse(task_root_path, repo.branch)
+        if branch_sha == base_sha:
+            return None
+        if not await self._git.merge_base_is_ancestor(project_root, repo.base, repo.branch):
+            raise _PrecheckFailed
+        base_checked_out = await self._git.current_branch(project_root) == repo.base
+        if base_checked_out:
+            changed = set(
+                await self._git.diff_name_only(task_root_path, f"{base_sha}...{branch_sha}")
             )
-        return candidates
+            dirty = await self._git.dirty_paths(project_root)
+            if _paths_overlap(changed, dirty):
+                raise _PrecheckFailed
+        commits = tuple(await self._git.log_oneline(task_root_path, f"{base_sha}..{branch_sha}"))
+        return _MergeCandidate(
+            base_sha=base_sha,
+            branch_sha=branch_sha,
+            base_checked_out=base_checked_out,
+            commits=commits,
+        )
 
 
 def _paths_overlap(changed: set[str], dirty: set[str]) -> bool:
@@ -239,29 +215,26 @@ class Integrator:
     ) -> IntegrationSummary:
         """Rebase and integrate `task`, delegating conflict turns to TaskFlow."""
         async with self._lock:
+            repo = task.repo
+            if repo is None:
+                message = f"{task.id} has no task root to integrate"
+                raise ShikiruError(message)
             self._events.append(
                 EventKind.INTEGRATION_STARTED,
                 task_id=task.id,
                 message=f"{task.id} integration started",
-                data={"repos": [repo.path for repo in task.repos]},
+                data={"branch": repo.branch, "base": repo.base},
             )
             current = task
-            for repo in current.repos:
-                task_dir = repo_dir(task_root(self._project_root, current.id), repo.path)
-                base_sha = await self._git.rev_parse(task_dir, repo.base)
-                branch_sha = await self._git.rev_parse(task_dir, repo.branch)
-                if base_sha == branch_sha:
-                    continue
-                if await self._try_rebase(task_dir, repo.base):
-                    await self._git.rebase_abort(task_dir)
-                    await self._try_rebase(task_dir, repo.base)
-                    current = await resolve_conflicts(
-                        current, repo, lambda task_dir=task_dir: self._continue_rebase(task_dir)
-                    )
-                    await self._continue_rebase(task_dir)
-            raw_summary = await self._strategy.merge(
-                self._project_root, task_root(self._project_root, current.id), current.repos
-            )
+            task_dir = task_root(self._project_root, current.id)
+            base_sha = await self._git.rev_parse(task_dir, repo.base)
+            branch_sha = await self._git.rev_parse(task_dir, repo.branch)
+            if base_sha != branch_sha and await self._try_rebase(task_dir, repo.base):
+                await self._git.rebase_abort(task_dir)
+                await self._try_rebase(task_dir, repo.base)
+                current = await resolve_conflicts(current, lambda: self._continue_rebase(task_dir))
+                await self._continue_rebase(task_dir)
+            raw_summary = await self._strategy.merge(self._project_root, task_dir, repo)
             summary = dataclasses.replace(
                 raw_summary,
                 summary=metadata.summary,

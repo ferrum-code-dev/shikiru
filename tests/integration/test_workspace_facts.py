@@ -35,29 +35,25 @@ async def test_collect_reports_commits_diff_status_and_changed_trackers(tmp_path
     (repo_dir / "src.py").write_text("print('hi')\n")
     await commit_all(runner, repo_dir, "do the task")
     (repo_dir / "untracked.txt").write_text("scratch\n")
-    repo = RepoState(path=".", base=base_sha, base_sha=base_sha, branch="main")
+    repo = RepoState(base=base_sha, base_sha=base_sha, branch="main")
 
-    facts = await GitFacts(Git(runner)).collect(repo_dir, [repo], _TRACKERS)
+    facts = await GitFacts(Git(runner)).collect(repo_dir, repo, _TRACKERS)
 
-    repo_facts = facts.repos[0]
-    assert len(repo_facts.commits) == 1
-    assert "src.py" in repo_facts.diff_stat
-    assert any(line.endswith("untracked.txt") for line in repo_facts.status)
-    assert repo_facts.changed_trackers == ("tasks/plan.md",)
-    assert repo_facts.ahead_of_base is True
+    assert len(facts.commits) == 1
+    assert "src.py" in facts.diff_stat
+    assert any(line.endswith("untracked.txt") for line in facts.status)
+    assert facts.changed_trackers == ("tasks/plan.md",)
 
 
-async def test_collect_reports_a_repo_not_ahead_of_base(tmp_path: Path) -> None:
+async def test_collect_reports_nothing_when_not_ahead_of_base(tmp_path: Path) -> None:
     repo_dir, base_sha = await _repo_at_base(tmp_path)
     runner = SubprocessRunner()
-    repo = RepoState(path=".", base=base_sha, base_sha=base_sha, branch="main")
+    repo = RepoState(base=base_sha, base_sha=base_sha, branch="main")
 
-    facts = await GitFacts(Git(runner)).collect(repo_dir, [repo], _TRACKERS)
+    facts = await GitFacts(Git(runner)).collect(repo_dir, repo, _TRACKERS)
 
-    repo_facts = facts.repos[0]
-    assert repo_facts.commits == ()
-    assert repo_facts.changed_trackers == ()
-    assert repo_facts.ahead_of_base is False
+    assert facts.commits == ()
+    assert facts.changed_trackers == ()
 
 
 async def test_collect_detects_a_tracker_at_a_path_diff_stat_would_elide(
@@ -74,30 +70,11 @@ async def test_collect_detects_a_tracker_at_a_path_diff_stat_would_elide(
     base_sha = await Git(runner).rev_parse(repo_dir, "HEAD")
     tracker_path.write_text("- [x] task\n")
     await commit_all(runner, repo_dir, "update plan")
-    repo = RepoState(path=".", base=base_sha, base_sha=base_sha, branch="main")
+    repo = RepoState(base=base_sha, base_sha=base_sha, branch="main")
 
     diff_stat = await Git(runner).diff_stat(repo_dir, f"{base_sha}...HEAD")
     assert tracker not in diff_stat, "test setup no longer reproduces --stat's elision"
 
-    facts = await GitFacts(Git(runner)).collect(repo_dir, [repo], [tracker])
+    facts = await GitFacts(Git(runner)).collect(repo_dir, repo, [tracker])
 
-    assert facts.repos[0].changed_trackers == (tracker,)
-
-
-async def test_collect_maps_trackers_relative_to_a_multirepo_repo_path(tmp_path: Path) -> None:
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    repo_dir = project_root / "backend"
-    runner = SubprocessRunner()
-    await init_repo(runner, repo_dir)
-    (repo_dir / "tasks").mkdir()
-    (repo_dir / "tasks" / "plan.md").write_text("- [ ] task\n")
-    await commit_all(runner, repo_dir, "initial commit")
-    base_sha = await Git(runner).rev_parse(repo_dir, "HEAD")
-    (repo_dir / "tasks" / "plan.md").write_text("- [x] task\n")
-    await commit_all(runner, repo_dir, "update plan")
-    repo = RepoState(path="backend", base=base_sha, base_sha=base_sha, branch="main")
-
-    facts = await GitFacts(Git(runner)).collect(project_root, [repo], ["backend/tasks/plan.md"])
-
-    assert facts.repos[0].changed_trackers == ("backend/tasks/plan.md",)
+    assert facts.changed_trackers == (tracker,)

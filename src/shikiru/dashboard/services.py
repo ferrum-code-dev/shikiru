@@ -16,7 +16,6 @@ from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.dashboard.contract import RepoStatus
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -45,42 +44,41 @@ def engine_is_running(project_dir: Path) -> bool:
 @dataclass(frozen=True)
 class _CachedRepoStatus:
     fetched_at: datetime
-    statuses: tuple[RepoStatus, ...]
+    status: RepoStatus
 
 
 class GitRepoStatusService:
-    """Reports `header`'s repo rows, refreshing git data at most once per 10 s (06 §5.4)."""
+    """Reports `header`'s repo row, refreshing git data at most once per 10 s (06 §5.4)."""
 
-    def __init__(
-        self, git: Git, repos: Sequence[RepoConfig], project_dir: Path, clock: Clock
-    ) -> None:
-        """Resolve every `repos` entry against `project_dir` when asked, through `git`."""
+    def __init__(self, git: Git, repo: RepoConfig, project_dir: Path, clock: Clock) -> None:
+        """Read `project_dir`'s checkout, configured by `repo`, through `git` when asked."""
         self._git = git
-        self._repos = repos
+        self._repo = repo
         self._project_dir = project_dir
         self._clock = clock
         self._cache: _CachedRepoStatus | None = None
 
-    async def repo_status(self) -> Sequence[RepoStatus]:
-        """Return every repo's branch, ahead/behind `base` and dirty count."""
+    async def repo_status(self) -> RepoStatus:
+        """Return the checkout's branch, ahead/behind `base` and dirty count."""
         now = self._clock.now()
         if self._cache is not None:
             age = (now - self._cache.fetched_at).total_seconds()
             if age < REPO_STATUS_CACHE_TTL_SECONDS:
-                return self._cache.statuses
-        statuses = tuple([await self._status_for(repo) for repo in self._repos])
-        self._cache = _CachedRepoStatus(fetched_at=now, statuses=statuses)
-        return statuses
+                return self._cache.status
+        status = await self._status()
+        self._cache = _CachedRepoStatus(fetched_at=now, status=status)
+        return status
 
-    async def _status_for(self, repo: RepoConfig) -> RepoStatus:
-        repo_dir = self._project_dir / repo.path
+    async def _status(self) -> RepoStatus:
+        repo = self._repo
+        repo_dir = self._project_dir
         branch = await self._git.current_branch(repo_dir)
         dirty = len(await self._git.status_porcelain(repo_dir))
         ahead, behind = 0, 0
         if repo.base is not None and repo.base != branch:
             ahead = len(await self._git.log_oneline(repo_dir, f"{repo.base}..{branch}"))
             behind = len(await self._git.log_oneline(repo_dir, f"{branch}..{repo.base}"))
-        return RepoStatus(path=repo.path, branch=branch, ahead=ahead, behind=behind, dirty=dirty)
+        return RepoStatus(branch=branch, ahead=ahead, behind=behind, dirty=dirty)
 
 
 class DashboardServices:
@@ -91,7 +89,7 @@ class DashboardServices:
         self._repo_status_service = repo_status_service
         self._project_dir = project_dir
 
-    async def repo_status(self) -> Sequence[RepoStatus]:
+    async def repo_status(self) -> RepoStatus:
         """See `GitRepoStatusService.repo_status`."""
         return await self._repo_status_service.repo_status()
 

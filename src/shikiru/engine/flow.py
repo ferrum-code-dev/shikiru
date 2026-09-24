@@ -366,9 +366,9 @@ class TaskFlow:
         metadata = self._integration_metadata(task)
 
         async def resolve_conflicts(
-            current: Task, repo: RepoState, continue_rebase: Callable[[], Awaitable[None]]
+            current: Task, continue_rebase: Callable[[], Awaitable[None]]
         ) -> Task:
-            resolved = await self._resolve_conflicts(current, repo, continue_rebase)
+            resolved = await self._resolve_conflicts(current, continue_rebase)
             refreshed = self._integration_metadata(resolved)
             metadata.summary = refreshed.summary
             metadata.residual_risks = refreshed.residual_risks
@@ -400,10 +400,8 @@ class TaskFlow:
     async def _resolve_conflicts(
         self,
         task: Task,
-        repo: RepoState,
         continue_rebase: Callable[[], Awaitable[None]],
     ) -> Task:
-        del repo
         current = task
         context = self._integration_context.pop(task.id, "")
         try:
@@ -1014,7 +1012,7 @@ class TaskFlow:
             question=question,
             attempted=attempted,
             reports=_history_context(history),
-            facts=await self._facts_text(task),
+            facts=await self._facts_text(task) if task.repo is not None else "",
             pane_tail=await self._pane_tail(task, step, role_override=role),
         )
 
@@ -1204,7 +1202,9 @@ class TaskFlow:
 
     async def _facts_text(self, task: Task) -> str:
         facts = await self._git_facts.collect(
-            task_root(self._project_root, task.id), task.repos, self._settings.project.trackers
+            task_root(self._project_root, task.id),
+            _require_repo(task),
+            self._settings.project.trackers,
         )
         return render_facts(facts)
 
@@ -1340,3 +1340,10 @@ class TaskFlow:
     def set_consult_question(self, task_id: str, question: str) -> None:
         """Set the Operator's answer consumed by the next consult turn."""
         self._recovery_questions[task_id] = question
+
+
+def _require_repo(task: Task) -> RepoState:
+    if task.repo is None:
+        message = f"{task.id} has no task root yet"
+        raise ShikiruError(message)
+    return task.repo

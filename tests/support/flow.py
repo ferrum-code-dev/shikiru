@@ -42,8 +42,6 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Mode, Task
     from tests.support.engine import EngineEnv
 
-_MONOREPO = (RepoConfig(path="."),)
-
 
 class _NoOpIntegrationCoordinator:
     async def run(
@@ -66,7 +64,7 @@ def flow_settings(*, max_iterations: int = 5, escalate_after: int = 2) -> Settin
 
 
 async def init_project_repo(project_root: Path) -> None:
-    """Turn `project_root` into a one-commit monorepo git repo (03 §5's monorepo case)."""
+    """Turn `project_root` into a one-commit git repository."""
     runner = SubprocessRunner()
     await init_repo(runner, project_root)
     (project_root / "README.md").write_text("shikiru flow test project\n")
@@ -76,7 +74,7 @@ async def init_project_repo(project_root: Path) -> None:
 async def build_flow_task(
     env: EngineEnv, *, title: str = "Add retries", mode: Mode | None = None
 ) -> Task:
-    """Insert a queued task with a leader+implementer pane and a real monorepo worktree.
+    """Insert a queued task with a leader+implementer pane and a real worktree.
 
     `init_project_repo` must already have made `env.project_root` a git repo: every flow test
     needs a real worktree because the fake agent commits into it during implement and plan
@@ -93,8 +91,8 @@ async def build_flow_task(
     tasks.set_panes(submitted.id, {Role.LEADER: leader_pane, Role.IMPLEMENTER: implementer_pane})
     tasks.set_window(submitted.id, leader_pane)
     builder = TaskRootBuilder(Git(SubprocessRunner()), env.project_root)
-    repos = await builder.build(submitted.id, submitted.title, _MONOREPO)
-    tasks.set_repos(submitted.id, repos)
+    repo = await builder.build(submitted.id, submitted.title, RepoConfig())
+    tasks.set_repo(submitted.id, repo)
     task = tasks.get(submitted.id)
     assert task is not None
     return task
@@ -136,7 +134,7 @@ def build_flow(
 
         async def finalizer(task: Task, _summary: IntegrationSummary) -> None:
             await sessions.exit_task(task)
-            await builder.cleanup(task.id, task.repos)
+            await builder.cleanup(task.id, task.repo)
 
         async def close_window(task: Task) -> None:
             window_id = task.window_id

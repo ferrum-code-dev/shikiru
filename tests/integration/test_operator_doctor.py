@@ -31,10 +31,19 @@ ladder = [{agent = "fake", model = "default"}]
 
 
 async def _project(tmp_path: Path, config: str = FAKE_CONFIG) -> Path:
-    config_dir = tmp_path / ".shikiru"
+    await _git_init(tmp_path)
+    return _write_config(tmp_path, config)
+
+
+async def _git_init(root: Path) -> None:
+    await SubprocessRunner().run(["git", "init", "-q"], timeout=10, cwd=root, check=True)
+
+
+def _write_config(root: Path, config: str = FAKE_CONFIG) -> Path:
+    config_dir = root / ".shikiru"
     config_dir.mkdir()
     (config_dir / "config.toml").write_text(config)
-    return tmp_path
+    return root
 
 
 async def _cli(root: Path, *args: str) -> tuple[int, str, str]:
@@ -60,6 +69,7 @@ async def test_doctor_reports_core_and_configured_plugin_checks(tmp_path: Path) 
     assert {
         "tmux",
         "git",
+        "repository",
         "config",
         "db",
         "cow",
@@ -67,7 +77,16 @@ async def test_doctor_reports_core_and_configured_plugin_checks(tmp_path: Path) 
         "plugin:fake:binary",
         "plugins",
     } <= checks.keys()
-    for name in ("tmux", "git", "config", "db", "plugin:fake:binary", "plugin:fake", "plugins"):
+    for name in (
+        "tmux",
+        "git",
+        "repository",
+        "config",
+        "db",
+        "plugin:fake:binary",
+        "plugin:fake",
+        "plugins",
+    ):
         assert checks[name]["ok"] is True
         assert checks[name]["detail"]
     assert checks["cow"]["detail"]
@@ -75,6 +94,20 @@ async def test_doctor_reports_core_and_configured_plugin_checks(tmp_path: Path) 
     assert all(check["ok"] for check in checks.values())
     assert code == 0
     assert (root / ".shikiru" / "state.db").is_file()
+
+
+async def test_doctor_fails_a_project_root_inside_a_repository(tmp_path: Path) -> None:
+    await _git_init(tmp_path)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    root = _write_config(nested)
+
+    code, stdout, _ = await _cli(root, "--json", "doctor")
+
+    checks = {check["name"]: check for check in json.loads(stdout)["checks"]}
+    assert checks["repository"]["ok"] is False
+    assert str(root) in checks["repository"]["detail"]
+    assert code != 0
 
 
 async def test_doctor_names_invalid_configuration_and_keeps_diagnostics_json_safe(

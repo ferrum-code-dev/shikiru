@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict
 from shikiru.agents.contracts import AgentContext, Rung
 from shikiru.config.loader import PROJECT_CONFIG_RELATIVE_PATH, SHIKIRU_DIR_NAME, load_settings
 from shikiru.errors import ConfigError, ShikiruError
+from shikiru.operator.detectors import not_repository_root
 from shikiru.operator.probe import AgentProbe, kill_tmux_server
 from shikiru.store.database import Database
 from shikiru.workspace.caches import (
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.process import ProcessResult, SubprocessRunner
+    from shikiru.workspace.git import Git
 
 
 DOCTOR_TIMEOUT_SECONDS = 60.0
@@ -39,6 +41,7 @@ GIT_COMMAND = "git"
 GIT_VERSION_ARGS = (GIT_COMMAND, "--version")
 GIT_CHECK_NAME = "git"
 TMUX_CHECK_NAME = "tmux"
+REPOSITORY_CHECK_NAME = "repository"
 CONFIG_CHECK_NAME = "config"
 PLUGINS_CHECK_NAME = "plugins"
 PLUGIN_CONFIG_CHECK_NAME = "config.plugins"
@@ -80,12 +83,14 @@ class Doctor:
         self,
         project_root: Path,
         *,
+        git: Git,
         runner: SubprocessRunner,
         clock: Clock,
         registry: AgentRegistry,
     ) -> None:
-        """Store the project and injected process, clock and plugin boundaries."""
+        """Store the project and injected git, process, clock and plugin boundaries."""
         self._project_root = project_root.resolve()
+        self._git = git
         self._runner = runner
         self._clock = clock
         self._registry = registry
@@ -95,6 +100,7 @@ class Doctor:
         checks: list[DoctorCheck] = []
         checks.append(await self._tmux_check())
         checks.append(await self._git_check())
+        checks.append(await self._repository_check())
         settings, config_check = self._settings_check(overrides)
         checks.append(config_check)
         checks.append(await self._database_check())
@@ -182,6 +188,14 @@ class Doctor:
             ok=result.returncode == 0,
             detail=_process_detail(result),
         )
+
+    async def _repository_check(self) -> DoctorCheck:
+        try:
+            is_root = await self._git.is_repository_root(self._project_root)
+        except (OSError, ShikiruError) as error:
+            return DoctorCheck(name=REPOSITORY_CHECK_NAME, ok=False, detail=str(error))
+        detail = str(self._project_root) if is_root else not_repository_root(self._project_root)
+        return DoctorCheck(name=REPOSITORY_CHECK_NAME, ok=is_root, detail=detail)
 
     def _settings_check(self, overrides: Sequence[str]) -> tuple[Settings | None, DoctorCheck]:
         config_path = self._project_root / PROJECT_CONFIG_RELATIVE_PATH

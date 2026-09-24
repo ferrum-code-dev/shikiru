@@ -11,7 +11,7 @@ import pytest
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.agents.sdk.hooks import HookRecorder
 from shikiru.bootstrap import build_engine
-from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig, RepoConfig
+from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import (
     Cancel,
     CancelResolution,
@@ -68,7 +68,7 @@ _LAYOUT = LayoutSplit(
 )
 
 
-def _settings(*, max_cpu_pct: int = 0, max_parallel: int = 1, with_repo: bool = False) -> Settings:
+def _settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
     settings = make_settings(
         leader_ladder=[_FAKE_RUNG],
         implementer_ladder=[_FAKE_RUNG],
@@ -88,8 +88,6 @@ def _settings(*, max_cpu_pct: int = 0, max_parallel: int = 1, with_repo: bool = 
         "orchestration": orchestration,
         "dashboard": settings.dashboard.model_copy(update={"layout": _LAYOUT}),
     }
-    if with_repo:
-        update["repos"] = [RepoConfig(path=".")]
     return settings.model_copy(update=update)
 
 
@@ -283,7 +281,7 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
     await init_project_repo(tmp_path)
     await set_script(tmux_server, [{"kind": "stall"}])
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=100, max_parallel=2, with_repo=True)
+    settings = _settings(max_cpu_pct=100, max_parallel=2)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -331,7 +329,7 @@ async def test_queued_say_reaches_the_live_agent_through_the_engine(
     await init_project_repo(tmp_path)
     await set_script(tmux_server, [{"kind": "stall"}, {"kind": "stall"}])
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=100, with_repo=True)
+    settings = _settings(max_cpu_pct=100)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())

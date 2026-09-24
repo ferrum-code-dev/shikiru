@@ -139,9 +139,8 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
 ) -> None:
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="detail")
-    TaskStore(connection, clock).set_repos(
-        task.id,
-        [RepoState(path=".", base="main", base_sha="a", branch="shikiru/T-1-detail")],
+    TaskStore(connection, clock).set_repo(
+        task.id, RepoState(base="main", base_sha="a", branch="shikiru/T-1-detail")
     )
     EventLog(connection, clock).append(
         EventKind.TASK_QUEUED,

@@ -28,9 +28,8 @@ class ProjectConfig(ConfigModel):
 
 
 class RepoConfig(ConfigModel):
-    """One `[[repos]]` entry."""
+    """`[repo]`: the project's single git repository, rooted at the project root (D20)."""
 
-    path: str = "."
     base: str | None = None
     caches: list[str] = Field(default_factory=list)
     remote: str = "origin"
@@ -150,7 +149,7 @@ class Settings(ConfigModel):
     """The full merged and validated Shikiru configuration."""
 
     project: ProjectConfig
-    repos: list[RepoConfig] = Field(default_factory=list)
+    repo: RepoConfig = Field(default_factory=RepoConfig)
     orchestration: OrchestrationConfig
     agents: dict[str, AgentConfig] = Field(default_factory=dict)
     roles: RolesConfig

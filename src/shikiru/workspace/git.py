@@ -64,6 +64,11 @@ class Git:
         result = await self._run(repo_dir, "rev-parse", "--abbrev-ref", "HEAD")
         return result.stdout.strip()
 
+    async def is_repository_root(self, path: Path) -> bool:
+        """Return whether `path` is the top-level directory of a git working tree."""
+        result = await self._run(path, "rev-parse", "--show-toplevel", check=False)
+        return result.returncode == 0 and Path(result.stdout.strip()).resolve() == path.resolve()
+
     async def rev_parse(self, repo_dir: Path, ref: str) -> str:
         """Resolve `ref` to a commit sha in the repo at `repo_dir`."""
         result = await self._run(repo_dir, "rev-parse", ref)
