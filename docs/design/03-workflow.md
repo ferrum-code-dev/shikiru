@@ -186,6 +186,8 @@ The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's 
 
 Integration runs under the project integration lock. A branch with no commits ahead of `base` merges nothing and finishes cleanly.
 
+**Uncommitted changes.** A verify `accept` on a worktree with uncommitted changes (`git status --porcelain` not empty) never reaches the rebase: the engine replaces it with its own `changes_requested` verdict whose issue lists the files ("Commit what belongs to this task and discard the rest."), stored as `engine-verdict.json` beside the verify turn's report. It is a normal `changes_requested` round (§3), final-round rules included.
+
 1. **Rebase** the task branch onto `base`.
    - On conflict: `rebase --abort` → Implementer `conflicts` turn → Leader `verify` turn with post-rebase facts.
    - A conflicts report that isn't `completed` goes to consult (§2). A post-rebase `changes_requested` counts as a conflict round and re-runs the `conflicts` turn with the issues; `escalate` → `decision_required`.

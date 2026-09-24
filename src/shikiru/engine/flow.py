@@ -50,6 +50,7 @@ from shikiru.domain.reports import (
     PROMPT_FILENAME,
     ConsultAnswer,
     ImplementationReport,
+    Issue,
     PlanReport,
     ReportKind,
     TriageReport,
@@ -99,6 +100,15 @@ ESCALATION_PANE_TAIL_LINES = 60
 """Lines of pane scrollback captured as escalation evidence (03 §8)."""
 
 CONTINUE_INPUT = "continue"
+
+ENGINE_VERDICT_FILENAME = "engine-verdict.json"
+"""The engine's verdict replacing an accept on a dirty workspace (03 §6)."""
+
+UNCOMMITTED_SUMMARY = "The workspace has uncommitted changes, so it cannot be integrated."
+UNCOMMITTED_ISSUE = (
+    "Uncommitted changes in the workspace: {paths}. "
+    "Commit what belongs to this task and discard the rest."
+)
 _QUOTA_WAIT_EXHAUSTED_MESSAGE = "quota wait exceeded"
 
 
@@ -160,6 +170,9 @@ def load_history(task_run_dir: Path) -> list[tuple[str, Report]]:
         report = read_turn_report(turn_dir)
         if report is not None:
             history.append((turn_dir.name, report))
+        engine_verdict = turn_dir / ENGINE_VERDICT_FILENAME
+        if engine_verdict.is_file():
+            history.append((turn_dir.name, Verdict.model_validate_json(engine_verdict.read_text())))
     return history
 
 
@@ -582,6 +595,8 @@ class TaskFlow:
         outcome = result.report
         await self._clear_intervention(task.id, ACTING_ROLE[step])
         self._emit_turn_completed(task, outcome, execution)
+        if step is Step.VERIFY and isinstance(outcome, Verdict) and outcome.decision == "accept":
+            outcome = await self._reject_uncommitted(task, outcome, execution.turn_dir)
         transition = next_step(task, outcome, self._settings)
         escalated = transition.status is Status.ESCALATED
         escalation_step, reason = transition.step, transition.escalation_reason
@@ -1277,17 +1292,41 @@ class TaskFlow:
             },
         )
         if isinstance(outcome, Verdict):
-            self._events.append(
-                EventKind.VERDICT,
-                task_id=task.id,
-                message=summary,
-                data={
-                    "decision": outcome.decision,
-                    "summary": summary,
-                    "issues": [issue.model_dump() for issue in outcome.issues],
-                    "residual_risks": list(outcome.residual_risks),
-                },
-            )
+            self._emit_verdict(task, outcome, summary)
+
+    def _emit_verdict(self, task: Task, verdict: Verdict, summary: str) -> None:
+        self._events.append(
+            EventKind.VERDICT,
+            task_id=task.id,
+            message=summary,
+            data={
+                "decision": verdict.decision,
+                "summary": summary,
+                "issues": [issue.model_dump() for issue in verdict.issues],
+                "residual_risks": list(verdict.residual_risks),
+            },
+        )
+
+    async def _reject_uncommitted(self, task: Task, verdict: Verdict, turn_dir: Path) -> Verdict:
+        facts = await self._git_facts.collect(
+            task_root(self._project_root, task.id),
+            _require_repo(task),
+            self._settings.project.trackers,
+        )
+        if not facts.status:
+            return verdict
+        issue = Issue(
+            severity="blocker",
+            description=UNCOMMITTED_ISSUE.format(
+                paths=", ".join(line.strip() for line in facts.status)
+            ),
+        )
+        rejection = Verdict(
+            decision="changes_requested", summary=UNCOMMITTED_SUMMARY, issues=[issue]
+        )
+        (turn_dir / ENGINE_VERDICT_FILENAME).write_text(rejection.model_dump_json(indent=2))
+        self._emit_verdict(task, rejection, rejection.summary)
+        return rejection
 
     def _require_task(self, task_id: str) -> Task:
         task = self._tasks.get(task_id)

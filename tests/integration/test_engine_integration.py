@@ -339,6 +339,33 @@ async def test_taskflow_fake_agent_resolves_conflict_and_repeats_changes_request
     assert done_events[-1].data["summary"] == final.summary
 
 
+async def test_uncommitted_changes_at_integration_send_the_task_back_to_implement(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "accept", "uncommitted": "leader_edit.py"}, {"kind": "accept"}],
+    )
+
+    flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.DONE
+    assert final.iteration == 2
+    verdicts = flow_env.events.since(0, kinds=[EventKind.VERDICT], task_id=task.id)
+    assert [event.data["decision"] for event in verdicts] == [
+        "accept",
+        "changes_requested",
+        "accept",
+    ]
+    assert "leader_edit.py" in verdicts[1].data["issues"][0]["description"]
+
+
 async def test_taskflow_conflict_round_limit_escalates_after_two_changes_requested_verdicts(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:

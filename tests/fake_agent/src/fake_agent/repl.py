@@ -328,6 +328,8 @@ async def _submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text:
         if isinstance(step, AcceptStep) and kind in _KINDS_WITH_COMMITS
         else []
     )
+    if isinstance(step, AcceptStep) and step.uncommitted:
+        await asyncio.to_thread((ctx.cwd / step.uncommitted).write_text, prompt_text)
     report = _build_report(kind, step, prompt_text, commits)
     role_path = role_dir(ctx.run_dir, ctx.role)
     report_path = await asyncio.to_thread(_write_report_file, role_path, report)

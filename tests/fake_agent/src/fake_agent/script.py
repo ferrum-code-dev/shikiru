@@ -30,6 +30,7 @@ class AcceptStep(_StepModel):
 
     kind: Literal["accept"] = "accept"
     new_tasks: list[NewTaskSpec] = Field(default_factory=list)
+    uncommitted: str = ""
 
 
 class SupersedeStep(_StepModel):

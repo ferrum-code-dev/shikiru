@@ -18,7 +18,8 @@ entries are each either a bare string, for a no-argument behaviour, or an object
 
 - `"accept"`: submits a `shikiru report` that ends the turn successfully, for whichever
   `report.kind` the current turn dir names. A commit is made first, for report kinds that
-  carry `commits`.
+  carry `commits`. `{"kind": "accept", "uncommitted": "<path>"}` also writes `<path>` in the
+  workspace and leaves it uncommitted.
 - `"changes_requested"`: only valid when `report.kind` is `verdict`. Submits a
   `changes_requested` verdict with one issue.
 - `"needs_decision"`: only valid when `report.kind` is `implementation`. Submits a
