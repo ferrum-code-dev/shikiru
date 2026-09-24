@@ -10,13 +10,15 @@ another action set to choose from.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import EscalationOption, options_for
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import EscalationReason
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import EscalationReason, Status
+from shikiru.errors import ShikiruError
 from shikiru.workspace.roots import run_dir
 
 if TYPE_CHECKING:
@@ -25,9 +27,11 @@ if TYPE_CHECKING:
 
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.tasks import Step, Task
+    from shikiru.engine.titles import TaskTitles
     from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
+    from shikiru.store.tasks import TaskStore
 
 ESCALATIONS_DIR_NAME = "escalations"
 PACKET_FILENAME_SUFFIX = ".md"
@@ -203,3 +207,37 @@ class EscalationRaiser:
             resume = run.resume_command or "(not resumable)"
             lines.append(f"- {run.role.value}: {run.agent} session `{run.session_id}` — {resume}")
         return "\n".join(lines)
+
+
+class DispatchFailureEscalator:
+    """Escalate a task after repeated failures while preparing its dispatch."""
+
+    def __init__(self, tasks: TaskStore, raiser: EscalationRaiser, titles: TaskTitles) -> None:
+        """Use the task store, title updater and packet raiser for dispatch failures."""
+        self._tasks = tasks
+        self._raiser = raiser
+        self._titles = titles
+
+    async def __call__(self, task: Task, error: Exception) -> None:
+        """Mark `task` escalated and record the dispatch error for the operator."""
+        transition = replace(
+            Transition.stay(task, step=task.step, status=Status.ESCALATED),
+            escalation_reason=EscalationReason.ENGINE_ERROR,
+        )
+        self._tasks.apply_transition(task.id, transition)
+        self._tasks.set_wait_reason(task.id, None)
+        current = self._tasks.get(task.id)
+        if current is None:
+            message = f"{task.id} vanished before dispatch failure escalation"
+            raise ShikiruError(message)
+        await self._titles.refresh(current)
+        await self._raiser.raise_escalation(
+            current,
+            step=current.step,
+            reason=EscalationReason.ENGINE_ERROR,
+            question=str(error),
+            attempted="Workspace or pane setup failed after scheduler retries.",
+            reports=(),
+            facts="",
+            pane_tail="",
+        )

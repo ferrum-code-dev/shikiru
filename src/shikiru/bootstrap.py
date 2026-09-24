@@ -13,7 +13,7 @@ from shikiru.config.loader import load_settings
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.daemon import Engine, engine_is_running
 from shikiru.engine.dependency import DependencyEscalator
-from shikiru.engine.escalations import EscalationRaiser
+from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.integration import IntegrationSummary, Integrator, LocalMerge
 from shikiru.engine.layout_guard import LayoutGuard
@@ -24,6 +24,7 @@ from shikiru.engine.sessions import SessionManager
 from shikiru.engine.titles import TaskTitles
 from shikiru.engine.turns import TurnRunner
 from shikiru.errors import ConfigError
+from shikiru.helper.helper import Helper
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.detectors import ProjectDetectors
 from shikiru.operator.doctor import Doctor
@@ -46,6 +47,7 @@ from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.pane import TmuxPane
 from shikiru.tmux.session import SessionView, session_name
+from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
 from shikiru.workspace.roots import TaskRootBuilder
@@ -261,6 +263,12 @@ def build_engine(
     resolved_settings = settings if settings is not None else load_settings(project_root)
     resolved_runner = runner if runner is not None else SubprocessRunner()
     resolved_tmux = tmux if tmux is not None else Tmux(resolved_runner)
+    resolved_registry = registry if registry is not None else AgentRegistry()
+    agent_pool = AgentPool(
+        resolved_registry.create, resolved_runner, resolved_settings, resolved_clock
+    )
+    helper_rung = resolved_settings.roles.helper.ladder[0]
+    helper = Helper(agent_pool.get(helper_rung.agent))
     state_dir = project_root / ".shikiru"
     state_dir.mkdir(parents=True, exist_ok=True)
     connection = Database(state_dir / "state.db").connect()
@@ -271,10 +279,6 @@ def build_engine(
     messages = MessageStore(connection)
     escalations_store = EscalationStore(connection, resolved_clock)
     command_queue = CommandQueue(connection, resolved_clock)
-    resolved_registry = registry if registry is not None else AgentRegistry()
-    agent_pool = AgentPool(
-        resolved_registry.create, resolved_runner, resolved_settings, resolved_clock
-    )
 
     def pane_factory(pane_id: str) -> TmuxPane:
         return TmuxPane(resolved_tmux, pane_id, resolved_clock)
@@ -307,7 +311,11 @@ def build_engine(
         events=events,
         clock=resolved_clock,
     )
-    roots = TaskRootBuilder(Git(resolved_runner), project_root)
+    roots = TaskRootBuilder(
+        Git(resolved_runner),
+        project_root,
+        CacheCloner(resolved_runner, cow_args=default_cow_args()),
+    )
     escalation_raiser = EscalationRaiser(escalations_store, events, runs, project_root)
     git = Git(resolved_runner)
     integrator = _build_integrator(
@@ -331,6 +339,7 @@ def build_engine(
         titles=titles,
         settings=resolved_settings,
         agent_pool=agent_pool,
+        helper=helper,
         pane_factory=pane_factory,
         project_root=project_root,
         quota=quotas,
@@ -358,6 +367,7 @@ def build_engine(
         roots=roots,
         events=events,
         on_dependency_cancelled=DependencyEscalator(tasks, escalation_raiser, titles),
+        on_dispatch_failure=DispatchFailureEscalator(tasks, escalation_raiser, titles),
         titles=titles,
     )
     return Engine(

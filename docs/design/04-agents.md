@@ -230,7 +230,7 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 
 ## 6. Helper (Joshu)
 
-The `Helper` uses the `roles.helper` ladder through `Agent.headless()`. `bootstrap` rejects helper rungs whose agent has no headless support.
+The `Helper` uses the single `roles.helper.ladder` rung through `Agent.headless()`. Settings reject a helper ladder with more than one rung because helper fallback is not implemented. `bootstrap` rejects a helper whose agent has no headless support.
 
 | Call | Input | Output |
 |---|---|---|

@@ -64,7 +64,7 @@ async def _start_flow(
     task = await build_flow_task(engine_env, mode=mode)
     role = Role.LEADER if mode is Mode.PLAN else Role.IMPLEMENTER
     await set_role_script(tmux_server, role, script)
-    flow = build_flow(engine_env, settings, clock=clock)
+    flow = build_flow(engine_env, settings, clock=clock, turn_clock=FakeClock(TASK_CREATED_AT))
     flow_task = asyncio.create_task(flow.flow.run(task.id))
 
     def session_started() -> bool:
@@ -554,7 +554,7 @@ async def test_implementer_question_stall_consults_then_returns_to_implement(
     runs = engine_env.runs.for_task(task_id)
     assert len([run for run in runs if run.role is Role.IMPLEMENTER]) == 1
     leader_run = next(run for run in runs if run.role is Role.LEADER)
-    assert leader_run.usage.input_tokens >= 240
+    assert leader_run.usage.input_tokens == 240
     events = build_flow(engine_env, settings, clock=clock).events.since(0, task_id=task_id)
     helper_events = [event for event in events if event.kind is EventKind.HELPER_ACTION]
     assert helper_events[0].data["state"] == "question"

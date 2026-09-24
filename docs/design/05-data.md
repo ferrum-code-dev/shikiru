@@ -67,6 +67,8 @@ ladder = [
 [roles.helper]
 ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
 
+# `roles.helper.ladder` must contain exactly one rung until helper fallback is implemented.
+
 [dashboard]
 animations = true
 widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]

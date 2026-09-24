@@ -15,7 +15,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Status, Step
 from shikiru.engine.dependency import DependencyEscalator
-from shikiru.engine.escalations import EscalationRaiser
+from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.titles import TaskTitles
@@ -30,12 +30,11 @@ from shikiru.telemetry import resources as resources_module
 from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import SessionView, session_name
-from shikiru.workspace.git import Git
-from shikiru.workspace.roots import TaskRootBuilder
 from tests.support.clock import FakeClock
 from tests.support.engine import build_decorator, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
+from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -44,6 +43,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Task
+    from shikiru.workspace.roots import TaskRootBuilder
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -71,6 +71,7 @@ class SchedulerFixture:
     roots: TaskRootBuilder
     titles: TaskTitles
     dependency_callback: Callable[[Task], Awaitable[None]]
+    dispatch_failure_callback: Callable[[Task, Exception], Awaitable[None]]
     clock: Clock
 
 
@@ -130,6 +131,7 @@ def _scheduler(environment: SchedulerFixture, settings: Settings) -> Scheduler:
         roots=environment.roots,
         events=environment.events,
         on_dependency_cancelled=environment.dependency_callback,
+        on_dispatch_failure=environment.dispatch_failure_callback,
         titles=environment.titles,
     )
 
@@ -162,7 +164,7 @@ async def scheduler_env(
         events=events,
         clock=clock,
     )
-    roots = TaskRootBuilder(Git(SubprocessRunner()), tmp_path)
+    roots = task_root_builder(SubprocessRunner(), tmp_path)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
 
     raiser = EscalationRaiser(
@@ -170,6 +172,7 @@ async def scheduler_env(
     )
     titles = TaskTitles(build_decorator(tmux), RunStore(connection, clock), settings)
     dependency_callback = DependencyEscalator(tasks, raiser, titles)
+    dispatch_failure_callback = DispatchFailureEscalator(tasks, raiser, titles)
     scheduler = Scheduler(
         tasks=tasks,
         settings=settings,
@@ -180,6 +183,7 @@ async def scheduler_env(
         roots=roots,
         events=events,
         on_dependency_cancelled=dependency_callback,
+        on_dispatch_failure=dispatch_failure_callback,
         titles=titles,
     )
     return SchedulerFixture(
@@ -192,6 +196,7 @@ async def scheduler_env(
         roots,
         titles,
         dependency_callback,
+        dispatch_failure_callback,
         clock,
     )
 
@@ -357,7 +362,7 @@ async def test_quota_gate_persists_wait_reason(
     assert waiting.wait_reason == "quota"
 
 
-async def test_dispatch_setup_failure_rolls_back_status_and_slot(
+async def test_dispatch_failures_are_reported_and_eventually_escalated(
     scheduler_env: SchedulerFixture,
     connection: Connection,
     tmux_server: TmuxServer,
@@ -373,6 +378,21 @@ async def test_dispatch_setup_failure_rolls_back_status_and_slot(
     assert current.status is Status.QUEUED
     assert current.slot is None
     assert current.window_id is None
+    dispatch_failures = scheduler_env.events.since(
+        0, kinds=[EventKind.DISPATCH_FAILED], task_id=task.id
+    )
+    assert len(dispatch_failures) == 1
+    assert dispatch_failures[0].data["attempt"] == 1
     assert not scheduler_env.events.since(
         0, kinds=[EventKind.TASK_STARTED, EventKind.STEP_STARTED], task_id=task.id
+    )
+
+    await scheduler_env.scheduler.run_once()
+    await scheduler_env.scheduler.run_once()
+
+    escalated = scheduler_env.tasks.get(task.id)
+    assert escalated is not None
+    assert escalated.status is Status.ESCALATED
+    assert EscalationStore(connection, scheduler_env.clock).list_open()[0].reason is (
+        EscalationReason.ENGINE_ERROR
     )

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -66,11 +67,13 @@ from shikiru.engine.integration import (
 )
 from shikiru.engine.turns import TURNS_DIR_NAME, TurnSpec, read_turn_report
 from shikiru.errors import CommandFailed, ShikiruError, UsageError
-from shikiru.helper.helper import Helper
 from shikiru.helper.models import Unrecoverable
 from shikiru.prompts.renderer import PromptName
 from shikiru.workspace.facts import render_facts
+from shikiru.workspace.reports import InvalidTurnReportError
 from shikiru.workspace.roots import run_dir, task_root
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -88,6 +91,7 @@ if TYPE_CHECKING:
     from shikiru.engine.sessions import SessionManager
     from shikiru.engine.titles import TaskTitles
     from shikiru.engine.turns import TurnRunner
+    from shikiru.helper.helper import Helper
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.runs import RunStore
@@ -160,15 +164,18 @@ def _turn_dirs(task_run_dir: Path) -> list[Path]:
 
 
 def load_history(task_run_dir: Path) -> list[tuple[str, Report]]:
-    """Load every completed turn's report under `task_run_dir`, oldest first (03 §2's "reports").
+    """Load valid reports under `task_run_dir`, oldest first, logging and omitting invalid ones.
 
-    Shares `engine.turns.read_turn_report`'s "invalid means missing" reading: a turn whose
-    `report.json`/`helper.json` doesn't parse or validate is dropped from the history the same
-    way a live turn would treat it as "not done yet".
+    Shares report validation with `engine.turns.read_turn_report`; malformed historical reports
+    are logged and omitted while the remaining reports and engine verdicts are retained.
     """
     history: list[tuple[str, Report]] = []
     for turn_dir in _turn_dirs(task_run_dir):
-        report = read_turn_report(turn_dir)
+        try:
+            report = read_turn_report(turn_dir)
+        except InvalidTurnReportError:
+            _LOGGER.exception("invalid report in %s", turn_dir)
+            report = None
         if report is not None:
             history.append((turn_dir.name, report))
         engine_verdict = turn_dir / ENGINE_VERDICT_FILENAME
@@ -309,6 +316,7 @@ class TaskFlow:
         titles: TaskTitles,
         settings: Settings,
         agent_pool: AgentPool,
+        helper: Helper,
         pane_factory: Callable[[str], TmuxPane],
         project_root: Path,
         quota: QuotaStore,
@@ -326,6 +334,7 @@ class TaskFlow:
         self._titles = titles
         self._settings = settings
         self._agent_pool = agent_pool
+        self._helper = helper
         self._pane_factory = pane_factory
         self._project_root = project_root
         self._quota = quota
@@ -339,13 +348,17 @@ class TaskFlow:
     async def run(self, task_id: str) -> None:
         """Run `task_id` from its current step (or its first) until `integrate` or an escalation.
 
-        A `ShikiruError` the flow cannot handle escalates the task as `engine_error` instead of
-        propagating, so one task's failure never stops the engine (03 §8).
+        An unexpected error escalates the task as `engine_error` instead of propagating, so one
+        task's failure never stops the engine (03 §8).
         """
         try:
             await self._run(task_id)
-        except ShikiruError as error:
-            await self._escalate_engine_error(self._require_task(task_id), error)
+        except Exception as error:
+            _LOGGER.exception("task flow %s failed", task_id)
+            task = self._tasks.get(task_id)
+            if task is None or task.status in (Status.CANCELLED, Status.DONE, Status.ESCALATED):
+                return
+            await self._escalate_engine_error(task, error)
 
     async def _run(self, task_id: str) -> None:
         task = self._require_task(task_id)
@@ -934,10 +947,9 @@ class TaskFlow:
             message = f"{task.id} received a non-stalled result for screen classification"
             raise ShikiruError(message)
         helper_rung = pick_rung(task, Role.HELPER, self._settings)
-        helper = Helper(self._agent_pool.get(helper_rung.agent))
         keys = self._agent_pool.get(pick_rung(task, role, self._settings).agent).keys.safe
         try:
-            return await helper.classify_screen(
+            return await self._helper.classify_screen(
                 result.screen,
                 keys,
                 model=helper_rung.model,
@@ -997,7 +1009,11 @@ class TaskFlow:
         narrative_question, attempted = _escalation_narrative(reason, outcome, result)
         if question is None:
             question = narrative_question
-        history = load_history(run_dir(self._project_root, task.id))
+        try:
+            history = load_history(run_dir(self._project_root, task.id))
+        except Exception:
+            _LOGGER.exception("could not load report history for escalation of %s", task.id)
+            history = []
         await self._escalations.raise_escalation(
             task,
             step=step,
@@ -1078,7 +1094,6 @@ class TaskFlow:
         pane = self._pane_factory(task.panes[role])
         queue = self._sessions.subscribe(task.id, role)
         try:
-            helper = Helper(self._agent_pool.get(helper_rung.agent))
             injected = self._sessions.injected_lines(task.id, role)
 
             def on_nudge() -> None:
@@ -1108,7 +1123,7 @@ class TaskFlow:
                 run_dir=task_run_dir,
                 role=role,
                 spec=spec,
-                helper=helper,
+                helper=self._helper,
                 injected=injected,
                 intervention_active=intervention_active,
                 on_nudge=on_nudge,
@@ -1123,7 +1138,7 @@ class TaskFlow:
                 signals=queue,
                 turn_dir=turn_dir,
                 spec=spec,
-                helper=helper,
+                helper=self._helper,
                 session=session,
                 prompt_path=turn_dir / PROMPT_FILENAME,
                 injected=injected,
@@ -1243,7 +1258,7 @@ class TaskFlow:
         )
         self._emit_scope_change(task, outcome, [child.id for child in children])
 
-    async def _escalate_engine_error(self, task: Task, error: ShikiruError) -> None:
+    async def _escalate_engine_error(self, task: Task, error: Exception) -> None:
         transition = dataclasses.replace(
             Transition.stay(task, step=task.step, status=Status.ESCALATED),
             escalation_reason=EscalationReason.ENGINE_ERROR,

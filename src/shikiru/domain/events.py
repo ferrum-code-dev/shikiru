@@ -16,6 +16,7 @@ class EventKind(StrEnum):
 
     TASK_QUEUED = auto()
     TASK_STARTED = auto()
+    DISPATCH_FAILED = auto()
     STEP_STARTED = auto()
     TURN_STARTED = auto()
     TURN_COMPLETED = auto()

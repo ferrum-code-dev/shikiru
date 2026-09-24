@@ -21,6 +21,7 @@ from shikiru.engine.integration import (
 )
 from shikiru.engine.titles import TaskTitles
 from shikiru.engine.turns import TurnRunner
+from shikiru.helper.helper import Helper
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue
@@ -30,10 +31,10 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.tmux.session import SessionView
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
-from shikiru.workspace.roots import TaskRootBuilder
 from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, build_decorator, build_registry
 from tests.support.factories import make_settings
 from tests.support.git_repo import commit_all, init_repo
+from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -90,7 +91,7 @@ async def build_flow_task(
     tasks.set_slot(submitted.id, 1)
     tasks.set_panes(submitted.id, {Role.LEADER: leader_pane, Role.IMPLEMENTER: implementer_pane})
     tasks.set_window(submitted.id, leader_pane)
-    builder = TaskRootBuilder(Git(SubprocessRunner()), env.project_root)
+    builder = task_root_builder(SubprocessRunner(), env.project_root)
     repo = await builder.build(submitted.id, submitted.title, RepoConfig())
     tasks.set_repo(submitted.id, repo)
     task = tasks.get(submitted.id)
@@ -114,23 +115,26 @@ def build_flow(
     settings: Settings,
     *,
     clock: Clock | None = None,
+    turn_clock: Clock | None = None,
     local_integration: bool = False,
 ) -> FlowEnv:
     """Build a `TaskFlow` for `settings`, with its own `SessionManager` (leader + implementer
     both need the fake agent, unlike `engine_env`'s default single-role manager).
     """
     flow_clock = clock if clock is not None else SystemClock()
+    resolved_turn_clock = turn_clock if turn_clock is not None else flow_clock
     sessions = env.build_manager(settings, clock=flow_clock)
     events = EventLog(env.connection, flow_clock)
     escalations_store = EscalationStore(env.connection, flow_clock)
     escalations = EscalationRaiser(escalations_store, events, env.runs, env.project_root)
     titles = TaskTitles(build_decorator(env.tmux), env.runs, settings)
-    turns = TurnRunner(PromptRenderer(env.project_root), flow_clock)
+    turns = TurnRunner(PromptRenderer(env.project_root), resolved_turn_clock)
     git_facts = GitFacts(Git(SubprocessRunner()))
     agent_pool = AgentPool(build_registry().create, SubprocessRunner(), settings, SystemClock())
+    helper = Helper(agent_pool.get(settings.roles.helper.ladder[0].agent))
     coordinator = _NoOpIntegrationCoordinator()
     if local_integration:
-        builder = TaskRootBuilder(Git(SubprocessRunner()), env.project_root)
+        builder = task_root_builder(SubprocessRunner(), env.project_root)
 
         async def finalizer(task: Task, _summary: IntegrationSummary) -> None:
             await sessions.exit_task(task)
@@ -166,6 +170,7 @@ def build_flow(
         titles=titles,
         settings=settings,
         agent_pool=agent_pool,
+        helper=helper,
         pane_factory=env.pane,
         project_root=env.project_root,
         quota=QuotaStore(env.connection),

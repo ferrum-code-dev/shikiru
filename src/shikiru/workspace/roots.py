@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.config.settings import RepoConfig
+    from shikiru.workspace.caches import CacheCloner
     from shikiru.workspace.git import Git
 
 WORKTREES_DIR_NAME = "worktrees"
@@ -21,6 +23,7 @@ EXCLUDE_LINE = f"/{SHIKIRU_DIR_NAME}/"
 
 _SLUG_MAX_LENGTH = 40
 _NON_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
+_LOGGER = logging.getLogger(__name__)
 
 
 def slugify(title: str) -> str:
@@ -51,10 +54,12 @@ def task_root(project_root: Path, task_id: str) -> Path:
 class TaskRootBuilder:
     """Builds and tears down `.shikiru/worktrees/T-n/` for a task (03 §5)."""
 
-    def __init__(self, git: Git, project_root: Path) -> None:
-        """Build task roots for the repository at `project_root`, running git through `git`."""
+    def __init__(self, git: Git, project_root: Path, cache_cloner: CacheCloner) -> None:
+        """Build task roots with `git` and clone configured caches through `cache_cloner`."""
         self._git = git
         self._project_root = project_root
+        self._cache_cloner = cache_cloner
+        self._warned_cow_unsupported = False
 
     def task_root(self, task_id: str) -> Path:
         """Return the task root directory for `task_id`."""
@@ -77,6 +82,13 @@ class TaskRootBuilder:
                 await self._git.worktree_add_existing_branch(project, root, branch)
             else:
                 await self._git.worktree_add(project, root, new_branch=branch, base=base)
+        if repo.caches:
+            clone_result = await self._cache_cloner.clone(
+                project, root, repo.caches, await self._git.ignored_paths(project)
+            )
+            if clone_result.warning is not None and not self._warned_cow_unsupported:
+                _LOGGER.warning("%s", clone_result.warning)
+                self._warned_cow_unsupported = True
         base_sha = await self._git.rev_parse(project, base)
         return RepoState(base=base, base_sha=base_sha, branch=branch)
 

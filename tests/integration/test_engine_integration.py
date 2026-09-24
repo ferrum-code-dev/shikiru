@@ -27,7 +27,6 @@ from shikiru.process import SubprocessRunner
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from shikiru.workspace.git import Git
-from shikiru.workspace.roots import TaskRootBuilder
 from tests.support.clock import FakeClock
 from tests.support.engine import set_role_script
 from tests.support.factories import TASK_CREATED_AT
@@ -35,6 +34,7 @@ from tests.support.flow import build_flow, build_flow_task, flow_settings, init_
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
+from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -66,7 +66,7 @@ async def _task_with_worktree(
     tasks = TaskStore(connection, SystemClock())
     transition = Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
     tasks.apply_transition(task.id, transition)
-    state = await TaskRootBuilder(Git(_RUNNER), project_root).build(
+    state = await task_root_builder(_RUNNER, project_root).build(
         task.id, task.title, RepoConfig(base=base)
     )
     tasks.set_repo(task.id, state)
@@ -247,7 +247,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     task = tasks.get(task.id)
     assert task is not None
     order: list[str] = []
-    builder = TaskRootBuilder(Git(_RUNNER), project_root)
+    builder = task_root_builder(_RUNNER, project_root)
 
     async def finalizer(task_value: Task, _summary: IntegrationSummary) -> None:
         order.append("sessions_exited")

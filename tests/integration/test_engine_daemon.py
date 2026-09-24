@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from fake_agent.agent import FakeAgent, FakeOptions
 
-from shikiru.agents.contracts import Rung, role_dir
+from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung, role_dir
 from shikiru.agents.sdk.hooks import HookRecorder
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
@@ -32,7 +33,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, RepoState, Role, Status, Step
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
 from shikiru.engine.escalations import EscalationRaiser
-from shikiru.errors import ShikiruError
+from shikiru.errors import ConfigError
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
 from shikiru.store.escalations import EscalationStore
@@ -65,6 +66,15 @@ _LAYOUT = LayoutSplit(
         PaneLeaf(pane="shell"),
     ],
 )
+
+
+class _NoHeadlessFakeAgent(FakeAgent):
+    def headless(self) -> HeadlessAgent | None:
+        return None
+
+
+def _create_no_headless_agent(context: AgentContext) -> FakeAgent:
+    return _NoHeadlessFakeAgent(context.runner, context.clock, FakeOptions())
 
 
 def _settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
@@ -148,13 +158,82 @@ async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch
     assert stopped.status is CommandStatus.DONE
 
     await engine_task
-
     events = EventLog(connection, clock).since(0, task_id=task_id)
     task = TaskStore(connection, clock).get(task_id)
     assert task is not None
     assert task.status is Status.CANCELLED
     assert not any(event.kind is EventKind.TASK_STARTED for event in events)
     connection.close()
+
+
+async def test_unexpected_flow_error_escalates_without_stopping_engine(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings(max_cpu_pct=100)
+    tmux = build_tmux(tmux_server)
+    await init_project_repo(tmp_path)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    queue = CommandQueue(connection, clock)
+    submitted = queue.append(Submit(task_id="", title="corrupt history", request="run"))
+    assert isinstance(submitted.command, Submit)
+    task = tasks.insert_from_submit(submitted.command)
+    queue.mark_done(submitted.id, {"task_id": task.id})
+    turn_dir = run_dir(tmp_path, task.id) / "turns" / "00-stale"
+    turn_dir.mkdir(parents=True)
+    (turn_dir / "engine-verdict.json").write_text("{}")
+    engine_task = asyncio.create_task(engine.run())
+    escalations = EscalationStore(connection, clock)
+
+    try:
+
+        async def escalated() -> bool:
+            if clock.has_pending_sleep():
+                clock.advance(0.25)
+            return (
+                (current := tasks.get(task.id)) is not None
+                and current.status is Status.ESCALATED
+                and bool(escalations.list_open())
+            )
+
+        await wait_until(escalated, timeout=10)
+        assert not engine_task.done()
+        escalation = escalations.list_open()[0]
+        assert escalation.reason is EscalationReason.ENGINE_ERROR
+        await _append_and_wait(Stop(), queue, clock)
+        await engine_task
+    finally:
+        if not engine_task.done():
+            engine.request_stop()
+            clock.advance(1)
+            await engine_task
+        connection.close()
+
+
+def test_engine_rejects_helper_without_headless_support(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    helper_rung = Rung(agent="no-headless", model="fake-helper", effort=None)
+    settings = make_settings(
+        leader_ladder=[_FAKE_RUNG],
+        implementer_ladder=[_FAKE_RUNG],
+        helper_ladder=[helper_rung],
+        agents={"fake": AgentConfig(), "no-headless": AgentConfig()},
+    )
+    registry = build_registry()
+    registry.register("no-headless", _create_no_headless_agent)
+
+    with pytest.raises(ConfigError, match="no headless support"):
+        build_engine(
+            tmp_path,
+            settings,
+            clock=FakeClock(TASK_CREATED_AT),
+            tmux=build_tmux(tmux_server),
+            registry=registry,
+        )
 
 
 async def test_stop_before_first_pass_prevents_same_batch_dispatch(
@@ -201,24 +280,6 @@ async def test_build_engine_creates_engine_log(tmp_path: Path) -> None:
     engine.request_stop()
     await engine.run()
 
-    assert (tmp_path / ".shikiru" / "logs" / "engine.log").is_file()
-
-
-async def test_daemon_surfaces_a_supervised_flow_failure(tmp_path: Path) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings()
-    engine = build_engine(tmp_path, settings, clock=clock, registry=build_registry())
-    await engine.start_task("T-missing")
-    engine_task = asyncio.create_task(engine.run())
-
-    async def finished() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(0.25)
-        return engine_task.done()
-
-    await wait_until(finished, timeout=10)
-    with pytest.raises(ShikiruError, match="T-missing"):
-        await engine_task
     assert (tmp_path / ".shikiru" / "logs" / "engine.log").is_file()
 
 

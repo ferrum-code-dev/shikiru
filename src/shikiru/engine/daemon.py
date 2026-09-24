@@ -159,7 +159,7 @@ class Engine:
         self._last_notified_event = 0
         self._last_scheduled_event = 0
         self._last_quota_event = 0
-        self._logger = logging.getLogger(f"shikiru.engine.{project_root}")
+        self._logger = logging.getLogger("shikiru")
         context = HandlerContext(
             tasks=tasks,
             escalations=escalations,
@@ -308,7 +308,6 @@ class Engine:
                     task_id,
                     exc_info=(type(error), error, error.__traceback__),
                 )
-                raise error
 
     async def _notify_events(self) -> None:
         for event in self._events.since(self._last_notified_event):

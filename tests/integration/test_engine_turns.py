@@ -8,6 +8,8 @@ from contextlib import suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from shikiru.agents.contracts import PromptSubmitted, SessionEnded, TurnEnded, role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.recovery import Completed, PaneDied, ProtocolError, Stalled
@@ -24,6 +26,7 @@ from shikiru.engine.turns import (
 from shikiru.helper.helper import Helper
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptName, PromptRenderer
+from shikiru.workspace.reports import InvalidTurnReportError
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, build_registry, set_script
@@ -297,6 +300,16 @@ def test_invalid_agent_report_falls_back_to_a_valid_helper_report(tmp_path: Path
     report = read_turn_report(turn_dir)
 
     assert report == ConsultAnswer(decision="answer", answer="Use tenacity")
+
+
+def test_corrupt_turn_report_raises_instead_of_looking_missing(tmp_path: Path) -> None:
+    turn_dir = tmp_path / "turn"
+    turn_dir.mkdir()
+    (turn_dir / "report.kind").write_text(ReportKind.CONSULT.value)
+    (turn_dir / "report.json").write_text("not json")
+
+    with pytest.raises(InvalidTurnReportError, match="invalid JSON in report"):
+        read_turn_report(turn_dir)
 
 
 async def test_helper_failure_becomes_a_protocol_error(

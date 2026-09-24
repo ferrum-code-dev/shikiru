@@ -9,7 +9,7 @@ from shikiru.agents.contracts import Rung
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import ComplexityLadder, ImplementerConfig, Settings
 from tests.support.config import write_minimal_project
-from tests.support.factories import make_settings
+from tests.support.factories import HELPER_RUNG, make_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -66,3 +66,10 @@ def test_settings_rejects_a_ladder_agent_with_no_agents_table(
 ) -> None:
     with pytest.raises(ValidationError, match="ghost"):
         build()
+
+
+def test_settings_rejects_multiple_helper_rungs() -> None:
+    with pytest.raises(
+        ValidationError, match=r"roles\.helper\.ladder must contain exactly one rung"
+    ):
+        make_settings(helper_ladder=[HELPER_RUNG, Rung(agent="codex", model="sol", effort="high")])

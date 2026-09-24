@@ -25,6 +25,7 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
+from shikiru.workspace.reports import InvalidTurnReportError
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
@@ -200,6 +201,22 @@ async def test_task_detail_uses_a_valid_helper_rebuild_when_agent_report_is_inva
             "data": helper.model_dump(mode="json"),
         }
     ]
+
+
+async def test_task_detail_surfaces_a_corrupt_report(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="corrupt detail")
+    turn_dir = tmp_path / ".shikiru" / "runs" / task.id / "turns" / "01-consult-i0"
+    turn_dir.mkdir(parents=True)
+    (turn_dir / "report.kind").write_text("consult")
+    (turn_dir / "report.json").write_text("invalid")
+
+    with pytest.raises(InvalidTurnReportError, match="invalid JSON in report"):
+        _queries(tmp_path, reader).get_task(task.id)
 
 
 async def test_missing_packet_and_pane_are_operator_errors(

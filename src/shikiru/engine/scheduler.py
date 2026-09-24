@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     from shikiru.workspace.roots import TaskRootBuilder
 
 DependencyCallback = Callable[[Task], Awaitable[None]]
+DispatchFailureCallback = Callable[[Task, Exception], Awaitable[None]]
+MAX_DISPATCH_FAILURES = 3
 
 
 class Scheduler:
@@ -49,6 +51,7 @@ class Scheduler:
         roots: TaskRootBuilder,
         events: EventLog,
         on_dependency_cancelled: DependencyCallback,
+        on_dispatch_failure: DispatchFailureCallback,
         titles: TaskTitles,
     ) -> None:
         """Inject state stores, gates, and the task-window dispatch boundary."""
@@ -61,7 +64,9 @@ class Scheduler:
         self._roots = roots
         self._events = events
         self._on_dependency_cancelled = on_dependency_cancelled
+        self._on_dispatch_failure = on_dispatch_failure
         self._titles = titles
+        self._dispatch_failures: dict[str, int] = {}
         self._logger = logging.getLogger(__name__)
 
     async def run_once(self) -> ReadySchedule:
@@ -138,10 +143,23 @@ class Scheduler:
             await self._layout.ensure(current)
             current = self._require_task(task.id, "layout creation")
             await self._titles.refresh(current)
-        except Exception:
+        except Exception as error:
             self._logger.exception("dispatch setup failed for %s", task.id)
             await self._rollback_dispatch(task)
+            failures = self._dispatch_failures.get(task.id, 0) + 1
+            self._dispatch_failures[task.id] = failures
+            self._events.append(
+                EventKind.DISPATCH_FAILED,
+                task_id=task.id,
+                message=f"{task.id} dispatch failed",
+                data={"attempt": failures, "error": str(error)},
+            )
+            if failures >= MAX_DISPATCH_FAILURES:
+                current = self._require_task(task.id, "dispatch failure")
+                await self._on_dispatch_failure(current, error)
+                self._dispatch_failures.pop(task.id, None)
             return False
+        self._dispatch_failures.pop(task.id, None)
         self._events.append(
             EventKind.TASK_STARTED,
             task_id=current.id,

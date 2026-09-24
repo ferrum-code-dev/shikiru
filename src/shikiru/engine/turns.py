@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, cast
@@ -33,7 +34,7 @@ from shikiru.engine.monitor import wait_for_signal
 from shikiru.errors import CommandFailed
 from shikiru.helper.models import Unrecoverable
 from shikiru.tmux.pane import ENTER_KEY
-from shikiru.workspace.reports import load_turn_report
+from shikiru.workspace.reports import InvalidTurnReportError, load_turn_report
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from shikiru.tmux.pane import TmuxPane
 
 TURNS_DIR_NAME = "turns"
+_LOGGER = logging.getLogger(__name__)
 
 SUBMIT_CONFIRM_SECONDS = 15
 BEFORE_TURN_WAIT_SECONDS = 600
@@ -88,15 +90,17 @@ class TurnSpec:
 
 
 def read_turn_report(turn_dir: Path) -> Report | None:
-    """Read `turn_dir`'s report: `report.json`, or a Helper `helper.json` rebuild (03 §4.3).
-
-    `None` covers both "no report was ever submitted" and "the file is present but invalid or
-    doesn't match `report.kind`" — a caller with a live turn treats either as "not done yet, so
-    nudge"; a caller loading past history treats either as "this turn produced nothing usable",
-    so it's dropped from the history the same way.
-    """
+    """Read `turn_dir`'s submitted report or Helper rebuild; invalid files raise explicitly."""
     loaded = load_turn_report(turn_dir)
     return loaded.report if loaded is not None else None
+
+
+def _read_turn_report_or_none(turn_dir: Path) -> Report | None:
+    try:
+        return read_turn_report(turn_dir)
+    except InvalidTurnReportError:
+        _LOGGER.exception("invalid report in %s", turn_dir)
+        return None
 
 
 def _terminal_result(signal: TurnFailed | PaneDied | Stalled) -> TurnResult:
@@ -305,7 +309,7 @@ class TurnRunner:
                 continue
             if isinstance(current, TurnFailed | PaneDied | Stalled):
                 return _terminal_result(current)
-            report = read_turn_report(turn_dir)
+            report = _read_turn_report_or_none(turn_dir)
             if report is not None:
                 return Completed(report=report)
             if is_intervention_active():

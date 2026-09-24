@@ -8,9 +8,11 @@ import pytest
 
 from shikiru.config.settings import RepoConfig
 from shikiru.process import SubprocessRunner
+from shikiru.workspace.caches import CACHE_COW_UNSUPPORTED_WARNING, CacheCloner, default_cow_args
 from shikiru.workspace.git import Git
 from shikiru.workspace.roots import EXCLUDE_LINE, TaskRootBuilder, branch_name, slugify
 from tests.support.git_repo import commit_all, init_repo
+from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -20,7 +22,7 @@ _TASK_TITLE = "Add Retry to Parser!!"
 
 
 def _builder(project_root: Path) -> TaskRootBuilder:
-    return TaskRootBuilder(Git(SubprocessRunner()), project_root)
+    return task_root_builder(SubprocessRunner(), project_root)
 
 
 async def _init_repo_with_commit(project_root: Path) -> None:
@@ -50,6 +52,30 @@ async def test_build_makes_the_worktree_the_task_root(tmp_path: Path) -> None:
     runner = SubprocessRunner()
     expected_sha = await Git(runner).rev_parse(project_root, "main")
     assert state.base_sha == expected_sha
+
+
+async def test_task_root_includes_configured_ignored_cache(tmp_path: Path) -> None:
+    runner = SubprocessRunner()
+    project_root = tmp_path / "project"
+    await init_repo(runner, project_root)
+    (project_root / ".gitignore").write_text("node_modules/\n")
+    (project_root / "README.md").write_text("tracked\n")
+    await commit_all(runner, project_root, "initial commit")
+    cache_file = project_root / "node_modules" / "package" / "cache.txt"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_text("warm cache\n")
+    probe_dir = tmp_path / "cow-probe"
+    probe_dir.mkdir()
+    probe = await CacheCloner(runner, cow_args=default_cow_args()).clone(
+        probe_dir, probe_dir, (), ()
+    )
+    if probe.warning == CACHE_COW_UNSUPPORTED_WARNING:
+        pytest.skip(probe.warning)
+
+    await _builder(project_root).build(_TASK_ID, _TASK_TITLE, RepoConfig(caches=["node_modules"]))
+
+    copied_cache = project_root / ".shikiru" / "worktrees" / _TASK_ID / "node_modules"
+    assert (copied_cache / "package" / "cache.txt").read_text() == "warm cache\n"
 
 
 async def test_build_is_idempotent(tmp_path: Path) -> None:

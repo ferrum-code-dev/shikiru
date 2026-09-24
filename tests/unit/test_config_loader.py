@@ -67,6 +67,38 @@ def test_set_override_parses_list(tmp_path: Path) -> None:
     assert settings.project.trackers == ["a.md"]
 
 
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        pytest.param("project.name=demo", "demo", id="bare-word-string"),
+        pytest.param("orchestration.max_parallel=3,", None, id="trailing-comma"),
+        pytest.param("project.name=demo team", None, id="multiple-words"),
+    ],
+)
+def test_set_override_accepts_toml_or_a_bare_word(
+    tmp_path: Path, override: str, expected: object | None
+) -> None:
+    project_dir = _project(tmp_path)
+
+    if expected is None:
+        with pytest.raises(ConfigError) as excinfo:
+            load_settings(project_dir, overrides=[override])
+        assert "--set: " in str(excinfo.value)
+        assert "neither a TOML value nor a bare word" in str(excinfo.value)
+    else:
+        settings = load_settings(project_dir, overrides=[override])
+        assert settings.project.name == expected
+
+
+def test_pr_integration_is_rejected_until_a_pr_strategy_exists(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path)
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_settings(project_dir, overrides=['orchestration.integration="pr"'])
+
+    assert "--set: orchestration.integration" in str(excinfo.value)
+
+
 def test_set_override_without_equals_sign_is_a_config_error(tmp_path: Path) -> None:
     project_dir = _project(tmp_path)
 

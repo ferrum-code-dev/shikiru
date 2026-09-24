@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from importlib import resources
 from typing import TYPE_CHECKING, Any, cast
@@ -21,6 +22,7 @@ SHIKIRU_DIR_NAME = ".shikiru"
 PROJECT_CONFIG_RELATIVE_PATH = f"{SHIKIRU_DIR_NAME}/config.toml"
 _PACKAGED_DEFAULTS_SOURCE = "defaults.toml"
 _SET_OVERRIDE_SOURCE = "--set"
+_BARE_WORD = re.compile(r"[A-Za-z0-9_-]+\Z")
 
 
 def load_settings(project_dir: Path, overrides: Sequence[str] = ()) -> Settings:
@@ -96,21 +98,26 @@ def _parse_set_override(text: str) -> tuple[str, Any]:
     if not separator or not key_path:
         message = f"{_SET_OVERRIDE_SOURCE}: {text!r} is not key.path=value"
         raise ConfigError(message)
-    return key_path, _parse_set_value(raw_value)
+    try:
+        value = _parse_set_value(raw_value)
+    except ConfigError as error:
+        raise _invalid_set_override(key_path, error) from error
+    return key_path, value
+
+
+def _invalid_set_override(key_path: str, error: ConfigError) -> ConfigError:
+    message = f"{_SET_OVERRIDE_SOURCE}: {key_path}: {error}"
+    return ConfigError(message)
 
 
 def _parse_set_value(raw_value: str) -> Any:
-    """Parse `raw_value` as a TOML value, or keep it as a plain string if that fails.
-
-    The fallback is deliberate: it lets `--set project.name=demo` work without quoting, since a
-    bare word is not valid TOML on its own. It also means a malformed TOML value silently reaches
-    pydantic as a string instead of failing here — `--set orchestration.max_parallel=3,` parses
-    as `"3,"` and only errors once pydantic rejects it as not-an-integer.
-    """
     try:
         return tomllib.loads(f"v = {raw_value}")["v"]
-    except tomllib.TOMLDecodeError:
-        return raw_value
+    except tomllib.TOMLDecodeError as error:
+        if _BARE_WORD.fullmatch(raw_value):
+            return raw_value
+        message = f"{raw_value!r} is neither a TOML value nor a bare word"
+        raise ConfigError(message) from error
 
 
 def _format_validation_error(error: ValidationError, sources: dict[str, str]) -> str:

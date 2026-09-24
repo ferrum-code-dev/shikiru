@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from shikiru.agents.contracts import Rung
 
 ComplexityName = Literal["low", "normal", "high"]
-IntegrationStrategy = Literal["merge", "pr"]
+IntegrationStrategy = Literal["merge"]
 LayoutSplitAxis = Literal["h", "v"]
 PaneName = Literal["system", "leader", "implementer", "shell"]
 
@@ -168,5 +168,12 @@ class Settings(ConfigModel):
         if missing:
             names = ", ".join(missing)
             message = f"no [agents.<name>] table for: {names}"
+            raise ValueError(message)
+        return self
+
+    @model_validator(mode="after")
+    def _helper_ladder_has_one_rung(self) -> Settings:
+        if len(self.roles.helper.ladder) != 1:
+            message = "roles.helper.ladder must contain exactly one rung"
             raise ValueError(message)
         return self

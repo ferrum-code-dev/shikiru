@@ -74,6 +74,8 @@ class CacheCloner:
                     continue
                 relative = match.relative_to(repo_dir)
                 destination = worktree_dir / relative
+                if destination.exists():
+                    continue
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 await self._copy(cow_args, match, destination)
                 copied.append(relative)
