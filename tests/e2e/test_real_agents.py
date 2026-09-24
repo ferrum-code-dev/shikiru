@@ -15,7 +15,7 @@ import pytest
 
 from shikiru.bootstrap import build_operator
 from shikiru.config.loader import load_settings
-from shikiru.domain.tasks import Role, Status
+from shikiru.domain.tasks import Role, Status, Step
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import AckStatus
 from shikiru.process import SubprocessRunner
@@ -51,7 +51,12 @@ pytestmark = [
     pytest.mark.timeout(OUTER_TIMEOUT_SECONDS),
 ]
 E1_REQUEST = "Implement task A1 from tasks/plan.md"
-E2_MESSAGE = "Operator note: keep the change small and focused."
+E2_MESSAGE = (
+    "Operator requirement: parse_count must raise ValueError for whitespace-only input such as "
+    '"   ". Request changes if the implementation does not.'
+)
+E2_MESSAGE_ROLE = Role.LEADER
+E2_MESSAGE_STEP = Step.VERIFY
 E2_REQUEST = "Implement task A2 from tasks/plan.md"
 A2_EDGE_CASE_CHECK = """
 from sample_project import parse_count
@@ -386,15 +391,17 @@ async def _read_text(path: Path) -> str:
 
 
 async def _send_e2_message(project: PreparedProject, environment: dict[str, str]) -> None:
-    async def implementer_turn_started() -> bool:
+    async def verify_turn_started() -> bool:
         status = await _status(project.root, environment)
-        return _live_implementer_session(status) and _has_implementer_turn_started(status)
+        return _live_session(status, E2_MESSAGE_ROLE) and _has_turn_started(
+            status, E2_MESSAGE_ROLE, E2_MESSAGE_STEP
+        )
 
-    await wait_until(implementer_turn_started, timeout=ATTEMPT_TIMEOUT_SECONDS)
+    await wait_until(verify_turn_started, timeout=ATTEMPT_TIMEOUT_SECONDS)
     settings = load_settings(project.root, REAL_OVERRIDES[1::2])
     services = build_operator(project.root, settings)
     try:
-        ack = await services.commands.send_message(TASK_ID, Role.IMPLEMENTER, E2_MESSAGE)
+        ack = await services.commands.send_message(TASK_ID, E2_MESSAGE_ROLE, E2_MESSAGE)
     finally:
         services.close()
     _require(
@@ -408,52 +415,59 @@ async def _send_e2_message(project: PreparedProject, environment: dict[str, str]
     await wait_until(message_delivered, timeout=CLI_TIMEOUT_SECONDS)
 
 
-def _live_implementer_session(status: dict[str, object] | None) -> bool:
+def _live_session(status: dict[str, object] | None, role: Role) -> bool:
     _require(
         status is not None and status.get("engine_up") is True,
-        "engine stopped before the implementer turn started",
+        f"engine stopped before the {role.value} turn started",
     )
     task = _task(status)
     detail = _task_detail(status)
     _require(
         task is not None and detail is not None,
-        "task detail missing before the implementer turn started",
+        f"task detail missing before the {role.value} turn started",
     )
     if task is None or detail is None:
         return False
     _require(
         task.get("status")
         not in {Status.ESCALATED.value, Status.CANCELLED.value, Status.DONE.value},
-        f"task ended before the implementer turn started: {task.get('status')}",
+        f"task ended before the {role.value} turn started: {task.get('status')}",
     )
     sessions = detail.get("sessions")
     _require(isinstance(sessions, list), "task sessions missing")
     if not isinstance(sessions, list):
         return False
-    implementer = next(
+    session = next(
         (
             cast("dict[str, object]", value)
             for value in cast("list[object]", sessions)
             if isinstance(value, dict)
-            and cast("dict[str, object]", value).get("role") == Role.IMPLEMENTER.value
+            and cast("dict[str, object]", value).get("role") == role.value
         ),
         None,
     )
-    if implementer is None:
+    if session is None:
         return False
     _require(
-        _is_live_implementer(implementer),
-        f"implementer session exited before its turn started: {implementer.get('status')}",
+        session.get("status") == RUN_STATUS_LIVE,
+        f"{role.value} session exited before its turn started: {session.get('status')}",
     )
     return True
 
 
-def _has_implementer_turn_started(status: dict[str, object] | None) -> bool:
+def _has_turn_started(status: dict[str, object] | None, role: Role, step: Step) -> bool:
     detail = _task_detail(status)
     if detail is None:
         return False
     events = detail.get("events")
-    return isinstance(events, list) and _implementer_turn_started(cast("list[object]", events))
+    if not isinstance(events, list):
+        return False
+    return any(
+        event.get("kind") == "turn_started"
+        and _event_data(event).get("role") == role.value
+        and _event_data(event).get("step") == step.value
+        for event in _event_dicts(cast("list[object]", events))
+    )
 
 
 def _has_operator_message(status: dict[str, object] | None) -> bool:
@@ -463,43 +477,21 @@ def _has_operator_message(status: dict[str, object] | None) -> bool:
     events = detail.get("events")
     if not isinstance(events, list):
         return False
-    for value in cast("list[object]", events):
-        if not isinstance(value, dict):
-            continue
-        event = cast("dict[str, object]", value)
-        data = event.get("data")
-        if (
-            event.get("kind") == "operator_message"
-            and event.get("message") == E2_MESSAGE
-            and isinstance(data, dict)
-            and cast("dict[str, object]", data).get("role") == Role.IMPLEMENTER.value
-        ):
-            return True
-    return False
-
-
-def _is_live_implementer(value: object) -> bool:
-    if not isinstance(value, dict):
-        return False
-    session = cast("dict[str, object]", value)
-    return (
-        session.get("role") == Role.IMPLEMENTER.value and session.get("status") == RUN_STATUS_LIVE
+    return any(
+        event.get("kind") == "operator_message"
+        and event.get("message") == E2_MESSAGE
+        and _event_data(event).get("role") == E2_MESSAGE_ROLE.value
+        for event in _event_dicts(cast("list[object]", events))
     )
 
 
-def _implementer_turn_started(events: list[object]) -> bool:
-    for value in events:
-        if not isinstance(value, dict):
-            continue
-        event = cast("dict[str, object]", value)
-        data = event.get("data")
-        if (
-            event.get("kind") == "turn_started"
-            and isinstance(data, dict)
-            and cast("dict[str, object]", data).get("role") == Role.IMPLEMENTER.value
-        ):
-            return True
-    return False
+def _event_dicts(events: list[object]) -> list[dict[str, object]]:
+    return [cast("dict[str, object]", event) for event in events if isinstance(event, dict)]
+
+
+def _event_data(event: dict[str, object]) -> dict[str, object]:
+    data = event.get("data")
+    return cast("dict[str, object]", data) if isinstance(data, dict) else {}
 
 
 def _assert_e2_events(status: dict[str, object] | None) -> None:
@@ -511,16 +503,12 @@ def _assert_e2_events(status: dict[str, object] | None) -> None:
     _require(isinstance(events, list), "task events missing")
     if not isinstance(events, list):
         return
-    event_values = [
-        cast("dict[str, object]", event)
-        for event in cast("list[object]", events)
-        if isinstance(event, dict)
-    ]
+    event_values = _event_dicts(cast("list[object]", events))
     event_kinds = [event.get("kind") for event in event_values]
     verdicts = [
-        (index, cast("dict[str, object]", event["data"]).get("decision"))
+        (index, _event_data(event).get("decision"))
         for index, event in enumerate(event_values)
-        if event.get("kind") == "verdict" and isinstance(event.get("data"), dict)
+        if event.get("kind") == "verdict"
     ]
     changes_requested = next(
         (index for index, decision in verdicts if decision == "changes_requested"), None
@@ -538,43 +526,26 @@ def _assert_e2_events(status: dict[str, object] | None) -> None:
         changes_requested is not None and accepted_after is not None,
         "changes-requested verdict was not followed by final accept",
     )
-    operator_messages = [
-        (index, event)
-        for index, event in enumerate(event_values)
-        if event.get("kind") == "operator_message"
-    ]
-    _require(bool(operator_messages), "operator message was not observed")
-    implementer_message = next(
+    message_index = next(
         (
-            (index, event)
-            for index, event in operator_messages
-            if isinstance(event.get("data"), dict)
-            and cast("dict[str, object]", event["data"]).get("role") == Role.IMPLEMENTER.value
+            index
+            for index, event in enumerate(event_values)
+            if event.get("kind") == "operator_message"
+            and _event_data(event).get("role") == E2_MESSAGE_ROLE.value
         ),
         None,
     )
-    _require(implementer_message is not None, "implementer did not receive the operator message")
-    if implementer_message is not None:
-        message_index = implementer_message[0]
+    _require(message_index is not None, f"{E2_MESSAGE_ROLE.value} did not receive the message")
+    if message_index is not None and changes_requested is not None:
         started = [
             index
             for index, event in enumerate(event_values)
             if event.get("kind") == "turn_started"
-            and isinstance(event.get("data"), dict)
-            and cast("dict[str, object]", event["data"]).get("role") == Role.IMPLEMENTER.value
-        ]
-        completed = [
-            index
-            for index, event in enumerate(event_values)
-            if event.get("kind") == "turn_completed"
-            and isinstance(event.get("data"), dict)
-            and cast("dict[str, object]", event["data"]).get("role") == Role.IMPLEMENTER.value
+            and _event_data(event).get("role") == E2_MESSAGE_ROLE.value
         ]
         _require(
-            any(
-                start < message_index < end for start in started for end in completed if start < end
-            ),
-            "operator message was not delivered during an implementer turn",
+            any(start < message_index < changes_requested for start in started),
+            "operator message was not delivered during the verify turn that requested changes",
         )
     _require("intervention" not in event_kinds, "operator intervention was observed")
     _require(task is not None and task.get("status") == "done", "task did not finish")
