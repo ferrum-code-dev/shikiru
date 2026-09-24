@@ -146,7 +146,7 @@ The engine writes `runs/T/<role>/turn.pid` while the process runs, so a restarte
 
 1. **Turn dir** `runs/T/turns/NN-<step>-i<iteration>/`: write `prompt.md`, `report.schema.json` and `report.kind`, remove any stale `report.json`, and point `runs/T/<role>/current_turn` at it.
 2. **Operator messages**: move the role's queued `runs/T/messages/<role>/*.md` into the turn dir's `messages/`; `prompt.md` lists them under "Operator messages — read these first" (§9).
-3. **Start** the turn with the pointer line `{prompt_prefix}Read {prompt path} and follow it exactly.` and the session from §4.1.
+3. **Start** the turn with the pointer line `Read {prompt path} and follow it exactly.` and the session from §4.1.
 4. **Await** the monitor's terminal outcome: `TurnEnded`, `TurnFailed` or `Stalled`.
 5. **On `TurnFailed(UNKNOWN)`**: `helper.classify_failure` (04 §6); a result with confidence ≥ `CLASSIFY_CONFIDENCE` becomes `Failed(kind)`, anything else `Failed(OTHER)` marked unclassified, which escalates `agent_error` without a retry (§7).
 6. **On `TurnEnded`**:

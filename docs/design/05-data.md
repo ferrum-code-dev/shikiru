@@ -38,12 +38,10 @@ max_quota_wait = 28800
 integration_wait = 1800
 
 [agents.claude]                                 # table name = plugin entry point
-prompt_prefix = "/using-agent-skills "
 [agents.claude.options]                         # plugin-owned (04 §4)
 auth = "subscription"
 
 [agents.codex]
-prompt_prefix = "$using-agent-skills "
 [agents.codex.options]                          # plugin-owned (04 §5)
 auth = "subscription"
 

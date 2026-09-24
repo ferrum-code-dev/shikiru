@@ -196,7 +196,7 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 - 429, `usage_limit_reached` → `QUOTA`, `resets_at` from the latest `rate_limits` or the message; 402 → `QUOTA` without `resets_at`
 - 5xx, overloaded → `UNAVAILABLE`
 - 401 → `AUTH`
-- `context_length_exceeded` → `CONTEXT`
+- `context_length_exceeded` → `CONTEXT` (`codex exec` never compacts on its own, so a full context always ends here and moves to a new session with `handoff`)
 - else → `UNKNOWN`
 
 **Usage**: tokens from `turn.completed.usage` (cumulative for the thread on resume, so already session totals); context from the rollout; no cost is reported anywhere → `cost_usd = None`, `cost_basis = "unknown"`.
