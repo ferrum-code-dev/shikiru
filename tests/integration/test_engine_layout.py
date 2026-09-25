@@ -114,27 +114,27 @@ async def test_killed_agent_pane_rebuilds_the_task_window(
     assert any(event.data.get("pane") == "agent" for event in pane_events)
 
 
-async def test_dead_agent_pane_is_left_for_session_recovery(
+async def test_dead_view_pane_is_respawned_in_place(
     connection: Connection, tmux_server: TmuxServer, tmp_path: Path
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     layout, tasks, events, task_id = await _task_window(connection, clock, tmux_server, tmp_path)
     task = tasks.get(task_id)
     assert task is not None
-    agent = task.panes[Role.IMPLEMENTER]
+    view = task.panes[Role.IMPLEMENTER]
     tmux = build_tmux(tmux_server)
-    await tmux.respawn_pane(agent, ("/bin/sh", "-c", "exit"), env={}, cwd=tmp_path)
+    await tmux.respawn_pane(view, ("/bin/sh", "-c", "exit"), env={}, cwd=tmp_path)
 
     async def dead() -> bool:
-        return await tmux.is_pane_dead(agent)
+        return await tmux.is_pane_dead(view)
 
     await wait_until(dead, timeout=10)
     restored = await layout.ensure(task)
 
-    assert restored.panes[Role.IMPLEMENTER] == agent
-    assert await tmux.pane_exists(agent)
-    assert await tmux.is_pane_dead(agent)
-    assert not events.since(0, kinds=[EventKind.PANE_RESTORED], task_id=task_id)
+    assert restored.panes[Role.IMPLEMENTER] == view
+    assert not await tmux.is_pane_dead(view)
+    pane_events = events.since(0, kinds=[EventKind.PANE_RESTORED], task_id=task_id)
+    assert [event.data.get("pane") for event in pane_events] == ["implementer"]
 
 
 async def test_dead_special_pane_is_respawned_in_place(

@@ -10,6 +10,10 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import (
+    VIEW_RUNG_KEY,
+    VIEW_SIGNAL_KEY,
+    VIEW_TIME_KEY,
+    VIEW_TURN_KEY,
     AgentSignal,
     Compacted,
     Message,
@@ -33,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
     from pathlib import Path
 
-    from shikiru.agents.contracts import Agent
+    from shikiru.agents.contracts import Agent, Rung
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Role, Task
@@ -78,6 +82,7 @@ class TurnMonitor:
         agent: Agent,
         task: Task,
         role: Role,
+        rung: Rung,
         run_id: int,
         turn_dir: Path,
         run_dir: Path,
@@ -120,7 +125,7 @@ class TurnMonitor:
                 signal = pending_signal.result()
                 pending_signal = asyncio.create_task(_next_signal(iterator))
                 last_signal_at = self._clock.now()
-                self._append_view(run_dir, turn_dir, role, signal)
+                self._append_view(run_dir, turn_dir, role, rung, signal)
                 tool_running, terminal = await self._record_signal(
                     signal,
                     agent=agent,
@@ -212,13 +217,16 @@ class TurnMonitor:
                 timer_task.cancel()
             await asyncio.gather(timer_task, return_exceptions=True)
 
-    def _append_view(self, run_dir: Path, turn_dir: Path, role: Role, signal: AgentSignal) -> None:
+    def _append_view(
+        self, run_dir: Path, turn_dir: Path, role: Role, rung: Rung, signal: AgentSignal
+    ) -> None:
         path = view_log_path(run_dir, role.value)
         path.parent.mkdir(parents=True, exist_ok=True)
         row = {
-            "ts": self._clock.now().isoformat(),
-            "turn": turn_dir.name,
-            "signal": type(signal).__name__,
+            VIEW_TIME_KEY: self._clock.now().isoformat(),
+            VIEW_TURN_KEY: turn_dir.name,
+            VIEW_RUNG_KEY: asdict(rung),
+            VIEW_SIGNAL_KEY: type(signal).__name__,
             **asdict(signal),
         }
         with path.open("a") as handle:

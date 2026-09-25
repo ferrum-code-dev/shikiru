@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from shikiru.agents.contracts import view_argv
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Role, Task
 from shikiru.errors import ShikiruError
@@ -67,6 +68,7 @@ class LayoutGuard:
             await self._restore_missing_panes(task, missing_agents, missing_special)
         await self._restore_special_panes(task)
         restored = await self._refresh_cache(task.id)
+        await self._restore_view_panes(restored)
         if missing_agents:
             self._record_restored(task.id, "agent")
         for pane in missing_special:
@@ -103,6 +105,8 @@ class LayoutGuard:
             name: pane_id for name, pane_id in panes.items() if name in _SPECIAL_PANE_NAMES
         }
         await self._decorator.configure_formats(window_id)
+        for role, pane_id in role_panes.items():
+            await self._start_view(task.id, role, pane_id)
         self._tasks.set_window(task.id, window_id)
         self._tasks.set_panes(task.id, role_panes)
         updated = self._tasks.get(task.id)
@@ -158,6 +162,7 @@ class LayoutGuard:
         for role in (Role.LEADER, Role.IMPLEMENTER):
             if role in missing_agents:
                 role_panes[role] = await self._split_restored_pane(task.window_id, root)
+                await self._start_view(task.id, role, role_panes[role])
         for name in _SPECIAL_PANE_NAMES:
             if name in missing_special:
                 special[name] = await self._split_restored_pane(task.window_id, root)
@@ -183,6 +188,17 @@ class LayoutGuard:
                 continue
             await self._tmux.respawn_pane(pane_id, _SHELL_ARGV, env={}, cwd=root)
             self._record_restored(task.id, name)
+
+    async def _restore_view_panes(self, task: Task) -> None:
+        for role, pane_id in task.panes.items():
+            if await self._tmux.is_pane_dead(pane_id):
+                await self._start_view(task.id, role, pane_id)
+                self._record_restored(task.id, role.value)
+
+    async def _start_view(self, task_id: str, role: Role, pane_id: str) -> None:
+        argv = view_argv(self._project_root, task_id, role.value)
+        root = task_root(self._project_root, task_id)
+        await self._tmux.respawn_pane(pane_id, argv, env={}, cwd=root)
 
     def _record_restored(self, task_id: str, pane: str) -> None:
         self._events.append(

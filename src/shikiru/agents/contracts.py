@@ -30,13 +30,29 @@ TASK_ENV_VAR = "SHIKIRU_TASK"
 SLOT_ENV_VAR = "SHIKIRU_SLOT"
 SHIKIRU_MODULE = "shikiru"
 VIEW_LOG_NAME = "view.jsonl"
+VIEW_TIME_KEY = "ts"
+VIEW_TURN_KEY = "turn"
+VIEW_RUNG_KEY = "rung"
+VIEW_SIGNAL_KEY = "signal"
+CLI_VIEW_COMMAND = "view"
+CLI_PROJECT_FLAG = "--project"
 _SAFE_PATH_FLAG = "-P"
 _MODULE_FLAG = "-m"
 
 
+def shikiru_argv(*arguments: str) -> tuple[str, ...]:
+    """Return the argv running this Shikiru installation, independent of PATH."""
+    return (sys.executable, _SAFE_PATH_FLAG, _MODULE_FLAG, SHIKIRU_MODULE, *arguments)
+
+
 def shikiru_command(*arguments: str) -> str:
     """Return a shell command running this Shikiru installation, independent of PATH."""
-    return shlex.join([sys.executable, _SAFE_PATH_FLAG, _MODULE_FLAG, SHIKIRU_MODULE, *arguments])
+    return shlex.join(shikiru_argv(*arguments))
+
+
+def view_argv(project_root: Path, task_id: str, role: str) -> tuple[str, ...]:
+    """Return the argv of `role`'s read-only view pane for `task_id` (06 §5.1)."""
+    return shikiru_argv(CLI_PROJECT_FLAG, str(project_root), CLI_VIEW_COMMAND, task_id, role)
 
 
 def role_dir(run_dir: Path, role: str) -> Path:

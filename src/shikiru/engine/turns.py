@@ -146,6 +146,7 @@ class TurnRunner:
                 agent=agent,
                 task=task,
                 role=role,
+                rung=selection.rung,
                 run_id=selection.run.id,
                 turn_dir=turn_dir,
                 run_dir=task_run_dir,

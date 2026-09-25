@@ -12,7 +12,7 @@ import typer
 from pydantic import BaseModel
 from rich.console import Console
 
-from shikiru.agents.contracts import parse_rung
+from shikiru.agents.contracts import CLI_VIEW_COMMAND, parse_rung
 from shikiru.bootstrap import (
     build_doctor,
     build_engine,
@@ -25,6 +25,7 @@ from shikiru.bootstrap import (
 from shikiru.cli.context import CliState, project_root, state_from
 from shikiru.cli.render import ack_renderable, doctor_renderable, status_renderable
 from shikiru.cli.report import report_command
+from shikiru.cli.view import view_command
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import Mode
@@ -48,6 +49,7 @@ PROBE_OPTION = typer.Option("--probe", help="Run live agent contract checks.")
 
 app = typer.Typer(name=PACKAGE_NAME, no_args_is_help=True)
 app.command(name="report", hidden=True)(report_command)
+app.command(name=CLI_VIEW_COMMAND, hidden=True)(view_command)
 
 
 def _print_version(*, show: bool) -> None:
