@@ -9,20 +9,19 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shikiru.agents.contracts import CostBasis, QuotaWindow
+from shikiru.agents.contracts import CostBasis, QuotaWindow, Usage, view_log_path
 from shikiru.domain.events import Event
 from shikiru.domain.reports import Report, ReportKind
 from shikiru.domain.runs import Run
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
-from shikiru.paths import turns_dir
+from shikiru.paths import run_dir, turns_dir
 from shikiru.store.escalations import Escalation
 from shikiru.workspace.reports import load_turn_report
 
 if TYPE_CHECKING:
     from shikiru.store.reader import StateReader
-    from shikiru.tmux.client import Tmux
 
 PEEK_TAIL_LINES = 60
 
@@ -88,11 +87,20 @@ class EscalationView(OperatorView):
     packet: str
 
 
+class PeekPane(OperatorView):
+    """One role's last message, usage and most recent view log lines."""
+
+    agent: str
+    last_message: str | None
+    usage: Usage
+    view: list[str]
+
+
 class PeekView(OperatorView):
-    """Visible tail text captured from one or more task agent panes."""
+    """The recorded state of one or more task roles, keyed by role."""
 
     task_id: str
-    panes: dict[str, str]
+    panes: dict[str, PeekPane]
 
 
 class SlotView(OperatorView):
@@ -148,15 +156,13 @@ class OperatorQueries:
         project: str,
         project_root: Path,
         engine_up: EngineState,
-        tmux: Tmux,
         max_parallel: int,
     ) -> None:
-        """Use `reader`, `engine_up` and `tmux` for the operator's read boundaries."""
+        """Use `reader` and `engine_up` for the operator's read boundaries."""
         self._reader = reader
         self._project = project
         self._project_root = project_root
         self._engine_up = engine_up
-        self._tmux = tmux
         self._max_parallel = max_parallel
 
     def status(self, task_id: str | None = None) -> StatusView:
@@ -217,23 +223,27 @@ class OperatorQueries:
             return None
         return EscalationView(escalation=escalation, packet=self._packet_text(escalation))
 
-    async def peek_session(self, task_id: str, role: Role | None = None) -> PeekView | None:
-        """Capture the visible tail of one role pane or every assigned agent pane."""
+    def peek_session(self, task_id: str, role: Role | None = None) -> PeekView | None:
+        """Return the last message, usage and recent view lines of one or every task role."""
         task = self._reader.get_task(task_id)
         if task is None:
             return None
-        roles = [role] if role is not None else list(task.panes)
+        latest = {run.role: run for run in reversed(self._reader.list_runs(task_id))}
+        roles = [role] if role is not None else list(latest)
         if not roles:
-            message = f"{task_id} has no agent panes"
+            message = f"{task_id} has no agent sessions"
             raise OperatorQueryError(message)
-        panes: dict[str, str] = {}
-        for pane_role in roles:
-            pane_id = task.panes.get(pane_role)
-            if pane_id is None:
-                message = f"{task_id} has no {pane_role.value} pane"
+        panes: dict[str, PeekPane] = {}
+        for peek_role in roles:
+            run = latest.get(peek_role)
+            if run is None:
+                message = f"{task_id} has no {peek_role.value} session"
                 raise OperatorQueryError(message)
-            panes[pane_role.value] = await self._tmux.capture_pane(
-                pane_id, tail_lines=PEEK_TAIL_LINES
+            panes[peek_role.value] = PeekPane(
+                agent=run.agent,
+                last_message=run.last_message,
+                usage=run.usage,
+                view=_view_tail(view_log_path(run_dir(self._project_root, task_id), run.role)),
             )
         return PeekView(task_id=task_id, panes=panes)
 
@@ -261,6 +271,17 @@ class OperatorQueries:
                 continue
             reports.append(ReportRow(turn=turn_dir.name, kind=loaded.kind, data=loaded.report))
         return reports
+
+
+def _view_tail(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as error:
+        message = f"cannot read view log {path}: {error}"
+        raise OperatorQueryError(message) from error
+    return lines[-PEEK_TAIL_LINES:]
 
 
 def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:

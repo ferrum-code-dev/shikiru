@@ -95,9 +95,9 @@ def _register_query_tools(server: FastMCP, services: OperatorServices) -> None:
         return services.queries.get_escalation(escalation_id)
 
     @server.tool()
-    async def peek_session(task_id: str, role: Role | None = None) -> PeekView | None:
-        """Read the visible tail of one task role's pane, or every assigned role pane."""
-        return await services.queries.peek_session(task_id, role)
+    def peek_session(task_id: str, role: Role | None = None) -> PeekView | None:
+        """Read one task role's, or every role's, last message, usage and recent view lines."""
+        return services.queries.peek_session(task_id, role)
 
 
 def _register_command_tools(server: FastMCP, services: OperatorServices) -> None:

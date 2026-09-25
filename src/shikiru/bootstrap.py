@@ -126,13 +126,7 @@ def build_lifecycle() -> ProjectLifecycle:
     plugin_checks = PluginChecks(registry, runner, clock)
 
     def operator_factory(project_root: Path, settings: Settings) -> OperatorServices:
-        return build_operator(
-            project_root,
-            settings,
-            clock=clock,
-            runner=runner,
-            tmux=tmux,
-        )
+        return build_operator(project_root, settings, clock=clock)
 
     async def plugin_validator(settings: Settings) -> None:
         results = [
@@ -169,17 +163,9 @@ async def run_dashboard(
     dashboard_services_module = import_module("shikiru.dashboard.services")
     dashboard_views_module = import_module("shikiru.dashboard.views")
     clock = build_clock()
-    runner = SubprocessRunner()
-    tmux = Tmux(runner)
-    git = Git(runner)
+    git = Git(SubprocessRunner())
     settings = load_settings(project_root, overrides)
-    services = build_operator(
-        project_root,
-        settings,
-        clock=clock,
-        runner=runner,
-        tmux=tmux,
-    )
+    services = build_operator(project_root, settings, clock=clock)
     try:
         dashboard_services = dashboard_services_module.DashboardServices(
             dashboard_services_module.GitRepoStatusService(git, settings.repo, project_root, clock),
@@ -207,14 +193,10 @@ def build_operator(
     settings: Settings | None = None,
     *,
     clock: Clock | None = None,
-    runner: SubprocessRunner | None = None,
-    tmux: Tmux | None = None,
 ) -> OperatorServices:
     """Build read, command and event services for one initialized project."""
     resolved_clock = clock if clock is not None else build_clock()
     resolved_settings = settings if settings is not None else load_settings(project_root)
-    resolved_runner = runner if runner is not None else SubprocessRunner()
-    resolved_tmux = tmux if tmux is not None else Tmux(resolved_runner)
     database = Database(state_db_path(project_root))
     connection = database.connect()
     reader = StateReader(database, resolved_clock)
@@ -229,7 +211,6 @@ def build_operator(
         project=resolved_settings.project.name,
         project_root=project_root,
         engine_up=engine_state,
-        tmux=resolved_tmux,
         max_parallel=resolved_settings.orchestration.max_parallel,
     )
     commands = OperatorCommands(command_queue, resolved_clock, engine_up=engine_state)

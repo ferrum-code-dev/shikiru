@@ -29,6 +29,7 @@ PROJECT_ENV_VAR = "SHIKIRU_PROJECT"
 TASK_ENV_VAR = "SHIKIRU_TASK"
 SLOT_ENV_VAR = "SHIKIRU_SLOT"
 SHIKIRU_MODULE = "shikiru"
+VIEW_LOG_NAME = "view.jsonl"
 _SAFE_PATH_FLAG = "-P"
 _MODULE_FLAG = "-m"
 
@@ -41,6 +42,11 @@ def shikiru_command(*arguments: str) -> str:
 def role_dir(run_dir: Path, role: str) -> Path:
     """Return `role`'s directory under `run_dir`, where its per-role files live (02 §5)."""
     return run_dir / role
+
+
+def view_log_path(run_dir: Path, role: str) -> Path:
+    """Return `role`'s live view log, one JSON row per agent signal (05 §5)."""
+    return role_dir(run_dir, role) / VIEW_LOG_NAME
 
 
 CostBasis = Literal["billed", "api_equivalent", "unknown"]

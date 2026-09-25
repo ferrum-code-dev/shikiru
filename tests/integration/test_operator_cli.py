@@ -169,8 +169,6 @@ async def test_start_reports_that_an_existing_engine_was_reused(
             project_root,
             project_settings,
             clock=clock,
-            runner=tmux_server.runner,
-            tmux=tmux,
         )
 
     clock = FakeClock(START)

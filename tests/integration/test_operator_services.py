@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.agents.contracts import view_log_path
 from shikiru.domain.commands import Prioritize
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ConsultAnswer
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import EscalationReason, RepoState, Status
+from shikiru.domain.tasks import EscalationReason, RepoState, Role, Status
 from shikiru.operator.commands import (
     COMMAND_ACK_WAIT_SECONDS,
     COMMAND_POLL_SECONDS,
@@ -18,15 +19,16 @@ from shikiru.operator.commands import (
     OperatorCommands,
 )
 from shikiru.operator.events import EventFeed
-from shikiru.operator.queries import OperatorQueries, OperatorQueryError
-from shikiru.process import SubprocessRunner
+from shikiru.operator.queries import PEEK_TAIL_LINES, OperatorQueries, OperatorQueryError
+from shikiru.paths import run_dir
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
+from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
-from shikiru.tmux.client import Tmux
 from shikiru.workspace.reports import InvalidTurnReportError
 from tests.support.clock import FakeClock
+from tests.support.factories import LEADER_RUNG, LEADER_RUNG_2
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -102,7 +104,6 @@ def _queries(
         project="demo",
         project_root=project_root,
         engine_up=lambda: False,
-        tmux=Tmux(SubprocessRunner()),
         max_parallel=2,
     )
 
@@ -219,7 +220,7 @@ async def test_task_detail_surfaces_a_corrupt_report(
         _queries(tmp_path, reader).get_task(task.id)
 
 
-async def test_missing_packet_and_pane_are_operator_errors(
+async def test_missing_packet_and_session_are_operator_errors(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -239,7 +240,31 @@ async def test_missing_packet_and_pane_are_operator_errors(
     with pytest.raises(OperatorQueryError):
         queries.get_escalation(escalation.id)
     with pytest.raises(OperatorQueryError):
-        await queries.peek_session(task.id)
+        queries.peek_session(task.id)
+
+
+async def test_peek_reads_latest_run_and_view_log_tail(
+    tmp_path: Path,
+    connection: Connection,
+    reader: StateReader,
+) -> None:
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="peek")
+    runs = RunStore(connection, clock)
+    stale = runs.start(task.id, Role.LEADER, LEADER_RUNG)
+    runs.set_last_message(stale.id, "old")
+    current = runs.start(task.id, Role.LEADER, LEADER_RUNG_2)
+    runs.set_last_message(current.id, "latest")
+    log = view_log_path(run_dir(tmp_path, task.id), Role.LEADER.value)
+    log.parent.mkdir(parents=True)
+    log.write_text("".join(f"line-{index}\n" for index in range(PEEK_TAIL_LINES + 5)))
+
+    view = _queries(tmp_path, reader).peek_session(task.id, Role.LEADER)
+
+    assert view is not None
+    pane = view.panes[Role.LEADER.value]
+    assert (pane.agent, pane.last_message) == (LEADER_RUNG_2.agent, "latest")
+    assert pane.view == [f"line-{index}" for index in range(5, PEEK_TAIL_LINES + 5)]
 
 
 async def test_event_feed_filters_and_zero_timeout_are_bounded(

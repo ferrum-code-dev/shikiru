@@ -223,7 +223,7 @@ Do the fixes marked _After/With Task N_ inside or after those tasks. Findings on
   - T17, T18 (no stand-ins for our own classes)
   - T19–T25 (trivial, flaky or literal-driven tests)
   - T5 (FakeClock by default)
-- [ ] With Phase 4b tasks: E8, E9 (Task 35), E25, F9 (Task 36). F24 is closed by Tasks 33–34. F3 and C1 duplicate E5 and F2.
+- [x] With Phase 4b tasks: E8, E9 (Task 35), E25, F9 (Task 36). F24 is closed by Tasks 33–34. F3 and C1 duplicate E5 and F2.
 - Tests: every behaviour fix above gets a behaviour test that fails before the fix. The gate stays green, and coverage stays at or above 80% without tests added only for coverage.
 
 ### Task 32: Headless contract, SDK, contract kit and fake agent

@@ -22,6 +22,7 @@ from shikiru.agents.contracts import (
     TurnFailed,
     UsageReported,
     role_dir,
+    view_log_path,
 )
 from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import ProtocolError, Stalled
@@ -42,7 +43,6 @@ if TYPE_CHECKING:
     from shikiru.store.runs import RunStore
     from shikiru.tmux.decorator import PaneDecorator
 
-_VIEW_LOG_NAME = "view.jsonl"
 _TURN_PID_NAME = "turn.pid"
 _LINE_ENDING = "\n"
 
@@ -213,7 +213,7 @@ class TurnMonitor:
             await asyncio.gather(timer_task, return_exceptions=True)
 
     def _append_view(self, run_dir: Path, turn_dir: Path, role: Role, signal: AgentSignal) -> None:
-        path = role_dir(run_dir, role.value) / _VIEW_LOG_NAME
+        path = view_log_path(run_dir, role.value)
         path.parent.mkdir(parents=True, exist_ok=True)
         row = {
             "ts": self._clock.now().isoformat(),
