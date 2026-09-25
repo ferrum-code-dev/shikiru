@@ -78,26 +78,32 @@ def build_server(services: OperatorServices) -> FastMCP:
 def _register_query_tools(server: FastMCP, services: OperatorServices) -> None:
     @server.tool()
     def status(task_id: str | None = None) -> StatusView:
+        """Read engine, queue, usage and escalation status, optionally with one task's details."""
         return services.queries.status(task_id)
 
     @server.tool()
     def list_tasks(statuses: list[Status] | None = None) -> list[TaskSummary]:
+        """List task summaries, optionally filtered by task status."""
         return services.queries.list_tasks(statuses=statuses)
 
     @server.tool()
     def get_task(task_id: str) -> TaskDetail | None:
+        """Read one task's details, history, reports and sessions, or return null if absent."""
         return services.queries.get_task(task_id)
 
     @server.tool()
     def list_escalations() -> list[EscalationView]:
+        """List all currently open escalations with their packets."""
         return services.queries.list_escalations()
 
     @server.tool()
     def get_escalation(escalation_id: str) -> EscalationView | None:
+        """Read one open escalation and its packet, or return null if absent."""
         return services.queries.get_escalation(escalation_id)
 
     @server.tool()
     async def peek_session(task_id: str, role: Role | None = None) -> PeekView | None:
+        """Read the visible tail of one task role's pane, or every assigned role pane."""
         return await services.queries.peek_session(task_id, role)
 
 
@@ -114,6 +120,7 @@ def _register_command_tools(server: FastMCP, services: OperatorServices) -> None
         leader: str | None = None,
         implementer: str | None = None,
     ) -> Ack:
+        """Queue a task with optional title, mode, complexity, priority, dependencies and rungs."""
         return await services.commands.submit_task(
             request,
             title=title,
@@ -127,30 +134,37 @@ def _register_command_tools(server: FastMCP, services: OperatorServices) -> None
 
     @server.tool()
     async def prioritize_task(task_id: str, priority: int) -> Ack:
+        """Set a queued task's dispatch priority."""
         return await services.commands.prioritize_task(task_id, priority)
 
     @server.tool()
     async def pause_task(task_id: str, *, now: bool = False) -> Ack:
+        """Pause a task, optionally requesting an immediate pause."""
         return await services.commands.pause_task(task_id, now=now)
 
     @server.tool()
     async def resume_task(task_id: str) -> Ack:
+        """Resume a paused task."""
         return await services.commands.resume_task(task_id)
 
     @server.tool()
     async def cancel_task(task_id: str) -> Ack:
+        """Cancel a task."""
         return await services.commands.cancel_task(task_id)
 
     @server.tool()
     async def retry_task(task_id: str) -> Ack:
+        """Retry a failed or escalated task from its current step."""
         return await services.commands.retry_task(task_id)
 
     @server.tool()
     async def set_rung(task_id: str, role: Role, rung: str) -> Ack:
+        """Set the task role's agent, model and optional effort rung."""
         return await services.commands.set_rung(task_id, role, parse_rung(rung))
 
     @server.tool()
     async def resolve_escalation(escalation_id: str, resolution: ResolutionInput) -> Ack:
+        """Resolve an open escalation with an answer, retry, accept or cancel decision."""
         return await services.commands.resolve_escalation(escalation_id, resolution.to_domain())
 
 
@@ -162,7 +176,7 @@ def _register_event_tools(server: FastMCP, services: OperatorServices) -> None:
         task_id: str | None = None,
         timeout_s: float = MAX_WAIT_SECONDS,
     ) -> list[Event]:
-        """Wait for matching events, with a maximum timeout of 300 seconds."""
+        """Wait up to 300 seconds for events after since_id with optional kind and task filters."""
         return await services.events.wait(
             since_id,
             kinds=kinds,
