@@ -51,7 +51,3 @@ class Notifier:
                 await self._runner.run(argv, timeout=self._timeout_seconds, input_text=payload)
             except Exception:
                 self._logger.exception("external notification failed for event %s", event.id)
-
-    async def handle(self, event: Event) -> None:
-        """Alias for `notify`, suitable as an event subscriber callback."""
-        await self.notify(event)
