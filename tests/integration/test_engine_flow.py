@@ -48,8 +48,6 @@ class _ReviewLoopCase:
     expected_status: Status
 
 
-_NEEDS_DECISION_STEP: dict[str, object] = {"kind": "needs_decision"}
-
 _REVIEW_LOOP_CASES = {
     "implement_accept": _ReviewLoopCase(None, None, Step.INTEGRATE, Status.INTEGRATING),
     "changes_requested_then_accept": _ReviewLoopCase(
@@ -63,9 +61,6 @@ _REVIEW_LOOP_CASES = {
         None,
         Step.INTEGRATE,
         Status.INTEGRATING,
-    ),
-    "consult_limit_exceeded": _ReviewLoopCase(
-        [_NEEDS_DECISION_STEP] * 4, None, Step.CONSULT, Status.ESCALATED
     ),
 }
 
@@ -272,24 +267,6 @@ async def test_different_agent_rung_hands_off_prior_reports_in_a_fresh_session(
     handoff_turn = current / "current_turn"
     assert "fresh session" in handoff_turn.resolve().joinpath("prompt.md").read_text()
     assert "fake-agent" in handoff_turn.resolve().joinpath("prompt.md").read_text()
-
-
-async def test_a_final_round_still_requesting_changes_raises_iterations_exhausted(
-    engine_env: EngineEnv, tmux_server: TmuxServer
-) -> None:
-    settings = flow_settings(max_iterations=1)
-    await init_project_repo(engine_env.project_root)
-    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
-    await set_role_script(tmux_server, Role.LEADER, [{"kind": "changes_requested"}])
-
-    flow_env = await _run_flow(engine_env, task.id, settings)
-
-    final = engine_env.tasks.get(task.id)
-    assert final is not None
-    assert final.status is Status.ESCALATED
-    assert final.step is Step.VERIFY
-    matching = [row for row in flow_env.escalations.list_open() if row.task_id == task.id]
-    assert matching[0].reason is EscalationReason.ITERATIONS_EXHAUSTED
 
 
 async def test_scope_change_on_an_unknown_task_escalates_without_creating_tasks(

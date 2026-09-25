@@ -217,7 +217,7 @@ Do the fixes marked _After/With Task N_ inside or after those tasks. Findings on
   - C10 (drop `Commit.repo`)
   - C17 (`RepoConfig` injected into `TaskRootBuilder`)
 - [x] Stale code removed: E13–E24, F11, F13–F23, F25, C2–C5, C14–C16, C18.
-- [ ] Tests follow AGENTS.md:
+- [x] Tests follow AGENTS.md:
   - T3, T6–T12 (one table per rule, no duplicates)
   - T13–T16 (misleading or fake tests)
   - T17, T18 (no stand-ins for our own classes)
