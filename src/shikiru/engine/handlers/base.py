@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, NoReturn, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
+from shikiru.domain.commands import Command
 from shikiru.domain.tasks import Status, Task
 from shikiru.errors import CommandRejectedError
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from shikiru.domain.commands import Command
     from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
@@ -38,12 +38,15 @@ class HandlerContext:
     refresh_titles: RefreshCallback
 
 
-class CommandHandler(Protocol):
+CommandT = TypeVar("CommandT", bound=Command)
+
+
+class CommandHandler(Protocol[CommandT]):
     """Handle one typed domain command and return a JSON-compatible result."""
 
-    command_type: ClassVar[object]
+    command_type: type[CommandT]
 
-    async def handle(self, command: Command) -> dict[str, object]:
+    async def handle(self, command: CommandT) -> dict[str, object]:
         """Apply `command` and return its acknowledgement result."""
         ...
 
@@ -51,7 +54,7 @@ class CommandHandler(Protocol):
 class HandlerRegistry:
     """Dispatches each command model to exactly one registered handler."""
 
-    def __init__(self, handlers: list[CommandHandler]) -> None:
+    def __init__(self, handlers: list[CommandHandler[Any]]) -> None:
         """Index handlers by their concrete command model type."""
         self._handlers = {handler.command_type: handler for handler in handlers}
 
@@ -71,12 +74,6 @@ def require_task(context: HandlerContext, task_id: str) -> Task:
         message = f"task {task_id} does not exist"
         raise CommandRejectedError(message)
     return task
-
-
-def reject_wrong_command(handler: str, command: Command) -> NoReturn:
-    """Reject a handler call whose model does not match its registry entry."""
-    message = f"{handler} received the wrong command model: {type(command).__name__}"
-    raise CommandRejectedError(message)
 
 
 def reject_terminal(task: Task) -> None:

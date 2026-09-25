@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, ClassVar
 
 from shikiru.domain.commands import (
     Cancel,
@@ -22,26 +21,20 @@ from shikiru.engine.handlers.base import (
     interrupt_task,
     refresh_titles,
     reject_terminal,
-    reject_wrong_command,
     require_task,
 )
 from shikiru.errors import CommandRejectedError
-
-if TYPE_CHECKING:
-    from shikiru.domain.commands import Command
 
 
 class SubmitHandler:
     """Insert a submitted task and emit its queue event."""
 
-    command_type: ClassVar[object] = Submit
+    command_type: type[Submit] = Submit
 
     def __init__(self, context: HandlerContext) -> None:
         self._context = context
 
-    async def handle(self, command: Command) -> dict[str, object]:
-        if not isinstance(command, Submit):
-            reject_wrong_command("SubmitHandler", command)
+    async def handle(self, command: Submit) -> dict[str, object]:
         task = self._context.tasks.insert_from_submit(command)
         self._context.events.append(
             EventKind.TASK_QUEUED,
@@ -55,14 +48,12 @@ class SubmitHandler:
 class PrioritizeHandler:
     """Change one queued task's dispatch priority."""
 
-    command_type: ClassVar[object] = Prioritize
+    command_type: type[Prioritize] = Prioritize
 
     def __init__(self, context: HandlerContext) -> None:
         self._context = context
 
-    async def handle(self, command: Command) -> dict[str, object]:
-        if not isinstance(command, Prioritize):
-            reject_wrong_command("PrioritizeHandler", command)
+    async def handle(self, command: Prioritize) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
         if task.status is not Status.QUEUED:
             message = f"{task.id} can only be prioritized while queued"
@@ -74,14 +65,12 @@ class PrioritizeHandler:
 class PauseHandler:
     """Set a task pause hold, optionally interrupting its current turn."""
 
-    command_type: ClassVar[object] = Pause
+    command_type: type[Pause] = Pause
 
     def __init__(self, context: HandlerContext) -> None:
         self._context = context
 
-    async def handle(self, command: Command) -> dict[str, object]:
-        if not isinstance(command, Pause):
-            reject_wrong_command("PauseHandler", command)
+    async def handle(self, command: Pause) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
         if command.now:
@@ -101,14 +90,12 @@ class PauseHandler:
 class ResumeHandler:
     """Clear task holds and resume the task flow."""
 
-    command_type: ClassVar[object] = Resume
+    command_type: type[Resume] = Resume
 
     def __init__(self, context: HandlerContext) -> None:
         self._context = context
 
-    async def handle(self, command: Command) -> dict[str, object]:
-        if not isinstance(command, Resume):
-            reject_wrong_command("ResumeHandler", command)
+    async def handle(self, command: Resume) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
         holds = task.holds
@@ -132,14 +119,12 @@ class ResumeHandler:
 class CancelHandler:
     """Cancel a task, interrupting its current turn and retaining its branch."""
 
-    command_type: ClassVar[object] = Cancel
+    command_type: type[Cancel] = Cancel
 
     def __init__(self, context: HandlerContext) -> None:
         self._context = context
 
-    async def handle(self, command: Command) -> dict[str, object]:
-        if not isinstance(command, Cancel):
-            reject_wrong_command("CancelHandler", command)
+    async def handle(self, command: Cancel) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
         await interrupt_task(self._context, task)
@@ -170,14 +155,12 @@ class CancelHandler:
 class RetryHandler:
     """Cancel the current step and requeue it for an idempotent retry."""
 
-    command_type: ClassVar[object] = Retry
+    command_type: type[Retry] = Retry
 
     def __init__(self, context: HandlerContext) -> None:
         self._context = context
 
-    async def handle(self, command: Command) -> dict[str, object]:
-        if not isinstance(command, Retry):
-            reject_wrong_command("RetryHandler", command)
+    async def handle(self, command: Retry) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
         await interrupt_task(self._context, task)
@@ -199,14 +182,12 @@ class RetryHandler:
 class SetRungHandler:
     """Apply a role rung override to the next task turn."""
 
-    command_type: ClassVar[object] = SetRung
+    command_type: type[SetRung] = SetRung
 
     def __init__(self, context: HandlerContext) -> None:
         self._context = context
 
-    async def handle(self, command: Command) -> dict[str, object]:
-        if not isinstance(command, SetRung):
-            reject_wrong_command("SetRungHandler", command)
+    async def handle(self, command: SetRung) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
         overrides = dict(task.overrides)

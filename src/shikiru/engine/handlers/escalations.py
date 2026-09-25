@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
 from shikiru.domain.commands import (
     AcceptResolution,
@@ -20,13 +20,11 @@ from shikiru.engine.handlers.base import (
     HandlerContext,
     interrupt_task,
     refresh_titles,
-    reject_wrong_command,
     require_task,
 )
 from shikiru.errors import CommandRejectedError
 
 if TYPE_CHECKING:
-    from shikiru.domain.commands import Command
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.tasks import Task
 
@@ -34,14 +32,12 @@ if TYPE_CHECKING:
 class ResolveHandler:
     """Apply `answer`, `retry`, `accept` or `cancel` to an open escalation."""
 
-    command_type: ClassVar[object] = Resolve
+    command_type: type[Resolve] = Resolve
 
     def __init__(self, context: HandlerContext) -> None:
         self._context = context
 
-    async def handle(self, command: Command) -> dict[str, object]:
-        if not isinstance(command, Resolve):
-            reject_wrong_command("ResolveHandler", command)
+    async def handle(self, command: Resolve) -> dict[str, object]:
         escalation = self._open_escalation(command)
         task = require_task(self._context, escalation.task_id)
         transition = self._transition(task, escalation, command)
