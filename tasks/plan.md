@@ -240,7 +240,7 @@ Refs: 04 §4.
 - [ ] Compaction per 04 §4: `/compact` before a turn at `compact_at_pct`, compact-and-rerun on `CONTEXT` (verify `/compact` on an overflowed session), `Compacted` from `compact_boundary`.
 - [ ] Recorded samples under `tests/fixtures/agents/claude/` (subscription, API key, OpenRouter, rate limit, unrecognised model); offline checks pass; live checks pass.
 
-Task 33 verification note (2026-09-25): `uv run poe check` passes (687 passed, 20 skipped). Claude Code 2.1.281 is installed, but the sanitized doctor login check reports `ok=False`, `detail="not authenticated"`. No genuine Claude headless stream-json captures were present in the repository; the new `turn_*.jsonl` files are synthetic protocol scenarios. Keep the live overflow verification and recorded-sample/live-check acceptance criteria open.
+Task 33 verification note (2026-09-25): `uv run poe check` passes with a dedicated `TMUX_TMPDIR` (584 passed, 14 skipped; coverage above the 80% gate). The earlier Task 33 offline check passed (687 passed, 20 skipped), and the committed `turn_*.jsonl` scenarios remain synthetic. An auth-configured live attempt loaded the OpenRouter environment from `.claude/settings.local.json.bak` via a temporary launcher; the file's API-key field was empty and its auth token was present. Claude Code 2.1.281 emitted seven `system/api_retry` events through attempt 7 of 10, with no HTTP status or terminal result, and `test_live_first_turn_writes_a_valid_report` timed out at 60 seconds. No genuine capture was committed. The live contract checks, actual `/compact` check, and overflow-session compaction verification remain open; overflow was not attempted because the endpoint did not complete a basic turn.
 
 ### Task 34: Codex headless plugin
 Refs: 04 §5.
