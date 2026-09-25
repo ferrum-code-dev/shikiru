@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 
 from shikiru.domain.commands import (
     Cancel,
+    HandBack,
     Pause,
     Prioritize,
     Resolution,
@@ -21,6 +22,7 @@ from shikiru.domain.commands import (
     SetRung,
     Stop,
     Submit,
+    TakeOver,
 )
 from shikiru.store.commands import CommandQueue, CommandStatus
 
@@ -153,6 +155,14 @@ class OperatorCommands:
     async def send_message(self, task_id: str, role: Role, text: str) -> Ack:
         """Queue a `Say` command for the role's next turn."""
         return await self.send(Say(task_id=task_id, role=role, text=text))
+
+    async def take_over(self, task_id: str, role: Role) -> Ack:
+        """Queue a `TakeOver` command for the role's pane."""
+        return await self.send(TakeOver(task_id=task_id, role=role))
+
+    async def hand_back(self, task_id: str, role: Role) -> Ack:
+        """Queue a `HandBack` command returning the role's session to the engine."""
+        return await self.send(HandBack(task_id=task_id, role=role))
 
     async def resolve_escalation(self, escalation_id: str, resolution: Resolution) -> Ack:
         """Queue a `Resolve` command for one open escalation."""

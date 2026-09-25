@@ -31,6 +31,8 @@ class CommandKind(StrEnum):
     RETRY = auto()
     SET_RUNG = auto()
     SAY = auto()
+    TAKE_OVER = auto()
+    HAND_BACK = auto()
     RESOLVE = auto()
     STOP = auto()
 
@@ -105,6 +107,22 @@ class Say(DomainModel):
     text: str
 
 
+class TakeOver(DomainModel):
+    """`take-over T-n <role>`: stops the turn and opens the role's session in its pane."""
+
+    kind: Literal[CommandKind.TAKE_OVER] = CommandKind.TAKE_OVER
+    task_id: str
+    role: Role
+
+
+class HandBack(DomainModel):
+    """`hand-back T-n <role>`: returns a taken-over session to the engine."""
+
+    kind: Literal[CommandKind.HAND_BACK] = CommandKind.HAND_BACK
+    task_id: str
+    role: Role
+
+
 class ResolutionKind(StrEnum):
     """The `resolve` answer's discriminator."""
 
@@ -161,6 +179,17 @@ class Stop(DomainModel):
 
 
 Command = Annotated[
-    Submit | Prioritize | Pause | Resume | Cancel | Retry | SetRung | Say | Resolve | Stop,
+    Submit
+    | Prioritize
+    | Pause
+    | Resume
+    | Cancel
+    | Retry
+    | SetRung
+    | Say
+    | TakeOver
+    | HandBack
+    | Resolve
+    | Stop,
     Field(discriminator="kind"),
 ]

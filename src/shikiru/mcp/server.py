@@ -64,6 +64,7 @@ def build_server(services: OperatorServices) -> FastMCP:
 
     _register_query_tools(server, services)
     _register_command_tools(server, services)
+    _register_session_tools(server, services)
     _register_event_tools(server, services)
     return server
 
@@ -156,14 +157,26 @@ def _register_command_tools(server: FastMCP, services: OperatorServices) -> None
         return await services.commands.set_rung(task_id, role, parse_rung(rung))
 
     @server.tool()
+    async def resolve_escalation(escalation_id: str, resolution: ResolutionInput) -> Ack:
+        """Resolve an open escalation with an answer, retry, accept or cancel decision."""
+        return await services.commands.resolve_escalation(escalation_id, resolution.to_domain())
+
+
+def _register_session_tools(server: FastMCP, services: OperatorServices) -> None:
+    @server.tool()
     async def send_message(task_id: str, role: Role, text: str) -> Ack:
         """Queue a message the role reads at the start of its next turn."""
         return await services.commands.send_message(task_id, role, text)
 
     @server.tool()
-    async def resolve_escalation(escalation_id: str, resolution: ResolutionInput) -> Ack:
-        """Resolve an open escalation with an answer, retry, accept or cancel decision."""
-        return await services.commands.resolve_escalation(escalation_id, resolution.to_domain())
+    async def take_over(task_id: str, role: Role) -> Ack:
+        """Stop the role's turn and run its session interactively in its pane."""
+        return await services.commands.take_over(task_id, role)
+
+    @server.tool()
+    async def hand_back(task_id: str, role: Role) -> Ack:
+        """Return a taken-over role's session to the engine and resume the task."""
+        return await services.commands.hand_back(task_id, role)
 
 
 def _register_event_tools(server: FastMCP, services: OperatorServices) -> None:

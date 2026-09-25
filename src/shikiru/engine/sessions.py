@@ -73,7 +73,7 @@ class SessionManager:
     def close_task(self, task_id: str) -> None:
         """Close every role session after its task ends."""
         for run in self._runs.for_task(task_id):
-            if run.status is RunStatus.LIVE:
+            if run.status is not RunStatus.CLOSED:
                 self._runs.close(run.id)
 
     def _has_reports(self, task_id: str) -> bool:

@@ -13,10 +13,12 @@ from shikiru.tmux.client import FORMAT_PANE_ID
 from shikiru.tmux.decorator import render_title
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from shikiru.config.settings import Settings
     from shikiru.store.events import EventLog
+    from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
     from shikiru.tmux.client import Tmux
     from shikiru.tmux.decorator import PaneDecorator
@@ -44,6 +46,8 @@ class LayoutGuard:
         settings: Settings,
         project_root: Path,
         events: EventLog,
+        runs: RunStore,
+        on_operator_exit: Callable[[Task, Role], Awaitable[None]],
     ) -> None:
         """Create windows through `tmux`, storing pane ids through `tasks`."""
         self._tmux = tmux
@@ -55,6 +59,8 @@ class LayoutGuard:
         self._view = view
         self._builder = builder
         self._decorator = decorator
+        self._runs = runs
+        self._on_operator_exit = on_operator_exit
         self._special_panes: dict[str, dict[str, str]] = {}
 
     async def ensure(self, task: Task) -> Task:
@@ -106,7 +112,7 @@ class LayoutGuard:
         }
         await self._decorator.configure_formats(window_id)
         for role, pane_id in role_panes.items():
-            await self._start_view(task.id, role, pane_id)
+            await self.start_view(task.id, role, pane_id)
         self._tasks.set_window(task.id, window_id)
         self._tasks.set_panes(task.id, role_panes)
         updated = self._tasks.get(task.id)
@@ -162,7 +168,7 @@ class LayoutGuard:
         for role in (Role.LEADER, Role.IMPLEMENTER):
             if role in missing_agents:
                 role_panes[role] = await self._split_restored_pane(task.window_id, root)
-                await self._start_view(task.id, role, role_panes[role])
+                await self.start_view(task.id, role, role_panes[role])
         for name in _SPECIAL_PANE_NAMES:
             if name in missing_special:
                 special[name] = await self._split_restored_pane(task.window_id, root)
@@ -191,11 +197,16 @@ class LayoutGuard:
 
     async def _restore_view_panes(self, task: Task) -> None:
         for role, pane_id in task.panes.items():
-            if await self._tmux.is_pane_dead(pane_id):
-                await self._start_view(task.id, role, pane_id)
-                self._record_restored(task.id, role.value)
+            if not await self._tmux.is_pane_dead(pane_id):
+                continue
+            if self._runs.get_taken_over(task.id, role) is not None:
+                await self._on_operator_exit(task, role)
+                continue
+            await self.start_view(task.id, role, pane_id)
+            self._record_restored(task.id, role.value)
 
-    async def _start_view(self, task_id: str, role: Role, pane_id: str) -> None:
+    async def start_view(self, task_id: str, role: Role, pane_id: str) -> None:
+        """Run `role`'s streaming view of `task_id` in `pane_id`."""
         argv = view_argv(self._project_root, task_id, role.value)
         root = task_root(self._project_root, task_id)
         await self._tmux.respawn_pane(pane_id, argv, env={}, cwd=root)

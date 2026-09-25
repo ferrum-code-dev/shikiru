@@ -30,6 +30,7 @@ from shikiru.domain.commands import (
     SetRung,
     Stop,
     Submit,
+    TakeOver,
 )
 from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.events import EventKind
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
     from shikiru.agents.registry import AgentRegistry
     from shikiru.config.settings import Settings
     from shikiru.domain.commands import Command
+    from shikiru.domain.runs import Run
     from shikiru.store.commands import CommandOutcome, QueuedCommand
     from tests.support.tmux import TmuxServer
 
@@ -702,3 +704,79 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
     assert stop_outcome.status is CommandStatus.DONE
     await engine_task
     connection.close()
+
+
+async def _wait_for_session(runs: RunStore, clock: FakeClock, task_id: str) -> Run:
+    async def session_live() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(0.25)
+        run = runs.get_live(task_id, Role.IMPLEMENTER)
+        return run is not None and run.session_id is not None
+
+    await wait_until(session_live, timeout=10)
+    run = runs.get_live(task_id, Role.IMPLEMENTER)
+    assert run is not None
+    return run
+
+
+async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(tmp_path)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}, {"kind": "accept"}])
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings(max_cpu_pct=100, max_parallel=2)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    runs = RunStore(connection, clock)
+    events = EventLog(connection, clock)
+    queue = CommandQueue(connection, clock)
+    first = queue.append(Submit(title="take me", request="take me", mode=Mode.IMPLEMENT))
+    second = queue.append(Submit(title="leave me", request="leave me", mode=Mode.IMPLEMENT))
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        first_outcome = await _wait_for_command(first, queue, clock)
+        second_outcome = await _wait_for_command(second, queue, clock)
+        task_id = str(first_outcome.result["task_id"]) if first_outcome.result else ""
+        other_id = str(second_outcome.result["task_id"]) if second_outcome.result else ""
+
+        run = await _wait_for_session(runs, clock, task_id)
+        session_id = run.session_id
+        step = _required_task(tasks, task_id).step
+
+        taken = await _append_and_wait(
+            TakeOver(task_id=task_id, role=Role.IMPLEMENTER), queue, clock
+        )
+
+        assert taken.status is CommandStatus.DONE
+        assert Hold.INTERVENTION in _required_task(tasks, task_id).holds
+        assert Hold.INTERVENTION not in _required_task(tasks, other_id).holds
+        taken_run = runs.get_taken_over(task_id, Role.IMPLEMENTER)
+        assert taken_run is not None
+        assert taken_run.session_id == session_id
+        assert events.since(0, kinds=[EventKind.TAKEN_OVER], task_id=task_id)
+
+        pane = _required_task(tasks, task_id).panes[Role.IMPLEMENTER]
+        await tmux_server.run("send-keys", "-t", pane, "/exit", "Enter")
+
+        async def handed_back_and_advanced() -> bool:
+            if clock.has_pending_sleep():
+                clock.advance(0.25)
+            task = _required_task(tasks, task_id)
+            handed = events.since(0, kinds=[EventKind.HANDED_BACK], task_id=task_id)
+            return bool(handed) and task.step is not step and Hold.INTERVENTION not in task.holds
+
+        await wait_until(handed_back_and_advanced, timeout=30)
+        resumed = runs.get_live(task_id, Role.IMPLEMENTER)
+        assert resumed is not None
+        assert resumed.id == run.id
+        assert resumed.session_id == session_id
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()

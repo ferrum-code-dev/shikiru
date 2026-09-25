@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.domain.commands import Say
+from shikiru.domain.commands import HandBack, Say, TakeOver
 from shikiru.domain.events import EventKind
 from shikiru.engine.handlers.base import HandlerContext, reject_terminal, require_task
 
 if TYPE_CHECKING:
+    from shikiru.engine.takeover import Takeover
     from shikiru.workspace.messages import OperatorMessages
 
 
@@ -32,3 +33,34 @@ class SayHandler:
             data={"role": command.role.value, "path": str(path)},
         )
         return {"task_id": task.id, "role": command.role.value, "path": str(path)}
+
+
+class TakeOverHandler:
+    """Hand a role's session to the Operator in its pane, holding only that task."""
+
+    command_type: type[TakeOver] = TakeOver
+
+    def __init__(self, context: HandlerContext, takeover: Takeover) -> None:
+        self._context = context
+        self._takeover = takeover
+
+    async def handle(self, command: TakeOver) -> dict[str, object]:
+        task = require_task(self._context, command.task_id)
+        reject_terminal(task)
+        await self._takeover.take_over(task, command.role)
+        return {"task_id": task.id, "role": command.role.value}
+
+
+class HandBackHandler:
+    """Return a taken-over role's session to the engine."""
+
+    command_type: type[HandBack] = HandBack
+
+    def __init__(self, context: HandlerContext, takeover: Takeover) -> None:
+        self._context = context
+        self._takeover = takeover
+
+    async def handle(self, command: HandBack) -> dict[str, object]:
+        task = require_task(self._context, command.task_id)
+        await self._takeover.hand_back(task, command.role)
+        return {"task_id": task.id, "role": command.role.value}

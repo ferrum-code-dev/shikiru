@@ -144,7 +144,7 @@ CREATE TABLE runs (                               -- one agent session per task 
   id INTEGER PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), role TEXT NOT NULL,
   agent TEXT NOT NULL, model TEXT NOT NULL, effort TEXT,
   session_id TEXT, resume_command TEXT, last_message TEXT,
-  status TEXT NOT NULL,                           -- live | closed
+  status TEXT NOT NULL,                           -- live | taken_over | closed
   input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
   cost_usd REAL, cost_basis TEXT NOT NULL DEFAULT 'unknown', context_used_pct REAL,

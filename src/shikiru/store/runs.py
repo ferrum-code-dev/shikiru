@@ -115,11 +115,29 @@ class RunStore:
 
     def get_live(self, task_id: str, role: Role) -> Run | None:
         """Return `task_id`'s live run for `role`, if any."""
+        return self._get_with_status(task_id, role, RunStatus.LIVE)
+
+    def get_taken_over(self, task_id: str, role: Role) -> Run | None:
+        """Return `task_id`'s run for `role` that the Operator has taken over, if any."""
+        return self._get_with_status(task_id, role, RunStatus.TAKEN_OVER)
+
+    def mark_taken_over(self, run_id: int) -> None:
+        """Mark `run_id` taken over: its session runs interactively in the Operator's pane."""
+        self._set_active_status(run_id, RunStatus.TAKEN_OVER)
+
+    def mark_live(self, run_id: int) -> None:
+        """Mark a taken-over `run_id` live again: the engine drives its session."""
+        self._set_active_status(run_id, RunStatus.LIVE)
+
+    def _get_with_status(self, task_id: str, role: Role, status: RunStatus) -> Run | None:
         row = self._connection.execute(
             f"SELECT {_RUN_COLUMNS} FROM runs WHERE task_id = ? AND role = ? AND status = ?",
-            (task_id, role.value, RunStatus.LIVE.value),
+            (task_id, role.value, status.value),
         ).fetchone()
         return _row_to_run(row) if row is not None else None
+
+    def _set_active_status(self, run_id: int, status: RunStatus) -> None:
+        self._connection.execute("UPDATE runs SET status = ? WHERE id = ?", (status.value, run_id))
 
     def for_task(self, task_id: str) -> list[Run]:
         """Return every run recorded for `task_id`."""

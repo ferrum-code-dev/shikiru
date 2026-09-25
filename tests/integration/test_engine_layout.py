@@ -12,13 +12,14 @@ from shikiru.domain.tasks import Role
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.store.commands import CommandQueue
 from shikiru.store.events import EventLog
+from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, exact_target
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
-from tests.support.engine import build_tmux
+from tests.support.engine import build_tmux, no_operator_exit
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.waiting import wait_until
 
@@ -78,6 +79,8 @@ async def _task_window(
         settings=settings,
         project_root=tmp_path,
         events=events,
+        runs=RunStore(connection, clock),
+        on_operator_exit=no_operator_exit,
     )
     queued = CommandQueue(connection, clock).append(
         Submit(title="restore panes", request="restore panes")

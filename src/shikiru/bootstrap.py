@@ -21,6 +21,7 @@ from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaise
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.handlers import (
     CancelHandler,
+    HandBackHandler,
     HandlerContext,
     HandlerRegistry,
     PauseHandler,
@@ -32,6 +33,7 @@ from shikiru.engine.handlers import (
     SetRungHandler,
     StopHandler,
     SubmitHandler,
+    TakeOverHandler,
 )
 from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import Integrator, LocalMerge
@@ -43,6 +45,7 @@ from shikiru.engine.notifier import NOTIFY_TIMEOUT_SECONDS, Notifier
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.supervisor import TaskSupervisor
+from shikiru.engine.takeover import Takeover
 from shikiru.engine.titles import TaskTitles
 from shikiru.engine.turns import TurnRunner
 from shikiru.errors import ConfigError
@@ -84,7 +87,7 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from shikiru.config.settings import Settings
-    from shikiru.domain.tasks import Task
+    from shikiru.domain.tasks import Role, Task
 
 
 def build_clock() -> Clock:
@@ -283,6 +286,10 @@ def build_engine(
         decorator=decorator,
         refresh_titles=refresh_titles,
     )
+
+    async def hand_back(task: Task, role: Role) -> None:
+        await takeover.hand_back(task, role)
+
     target = exact_target(session_name(resolved_settings.project.name))
     layout = LayoutGuard(
         tmux=resolved_tmux,
@@ -294,6 +301,8 @@ def build_engine(
         settings=resolved_settings,
         project_root=project_root,
         events=events,
+        runs=runs,
+        on_operator_exit=hand_back,
     )
     roots = TaskRootBuilder(
         Git(resolved_runner),
@@ -360,6 +369,21 @@ def build_engine(
         stop_engine=task_supervisor.request_stop,
         refresh_titles=titles.refresh,
     )
+    takeover = Takeover(
+        tmux=resolved_tmux,
+        decorator=decorator,
+        layout=layout,
+        agents=agent_pool,
+        tasks=tasks,
+        runs=runs,
+        messages=messages,
+        events=events,
+        project_root=project_root,
+        project_name=resolved_settings.project.name,
+        cancel_task=task_supervisor.cancel_task,
+        start_task=task_supervisor.start_task,
+        refresh_titles=refresh_titles,
+    )
     handlers = HandlerRegistry(
         [
             SubmitHandler(handler_context),
@@ -370,6 +394,8 @@ def build_engine(
             RetryHandler(handler_context),
             SetRungHandler(handler_context),
             SayHandler(handler_context, messages),
+            TakeOverHandler(handler_context, takeover),
+            HandBackHandler(handler_context, takeover),
             ResolveHandler(handler_context),
             StopHandler(handler_context),
         ]

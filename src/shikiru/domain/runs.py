@@ -23,6 +23,7 @@ class RunStatus(StrEnum):
     """A run's lifecycle (05 §2)."""
 
     LIVE = auto()
+    TAKEN_OVER = auto()
     CLOSED = auto()
 
 
