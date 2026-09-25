@@ -22,8 +22,6 @@ from shikiru.bootstrap import (
     build_project_detectors,
 )
 from shikiru.cli.context import CliState, project_root, state_from
-from shikiru.cli.lifecycle import CLI_DASH_COMMAND, CLI_ENGINE_COMMAND, PACKAGE_NAME
-from shikiru.cli.mcp_adapter import run_mcp
 from shikiru.cli.render import ack_renderable, doctor_renderable, status_renderable
 from shikiru.cli.report import report_command
 from shikiru.config.loader import load_settings
@@ -31,7 +29,7 @@ from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import Mode
 from shikiru.errors import ShikiruError, UsageError
 from shikiru.operator.commands import Ack, AckStatus
-from shikiru.operator.detectors import initialize_project
+from shikiru.operator.lifecycle import CLI_DASH_COMMAND, CLI_ENGINE_COMMAND, PACKAGE_NAME
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -94,7 +92,8 @@ def init(
     state = state_from(context)
     root = state.project.resolve() if state.project is not None else Path.cwd().resolve()
     try:
-        config_path = _run(initialize_project(build_project_detectors(root)))
+        detectors = build_project_detectors(root)
+        config_path = _run(detectors.initialize())
     except ShikiruError as error:
         _fail(error)
     _emit_value(state, {"config": str(config_path)}, f"initialized {config_path}")
@@ -255,7 +254,10 @@ def mcp(context: typer.Context) -> None:
         state = state_from(context)
         root = project_root(state)
         server, services = build_mcp_server(root, state.overrides)
-        run_mcp(server, services)
+        try:
+            server.run(transport="stdio")
+        finally:
+            services.close()
     except ShikiruError as error:
         _fail(error)
 

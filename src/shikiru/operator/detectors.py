@@ -158,11 +158,6 @@ def render_config(project: DetectedProject) -> str:
     return "\n".join(lines)
 
 
-async def initialize_project(detectors: ProjectDetectors) -> Path:
-    """Detect, write config and exclude `.shikiru/` in the project repository."""
-    return await detectors.initialize()
-
-
 def _write_config(config_path: Path, contents: str) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(contents)
