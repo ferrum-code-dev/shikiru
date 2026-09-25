@@ -2,14 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field
 
-AUTH_SUBSCRIPTION = "subscription"
-AUTH_API_KEY = "api_key"
-OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
-CODEX_API_KEY_ENV = "CODEX_API_KEY"
 CODEX_HOME_ENV_VAR = "CODEX_HOME"
 CODEX_COMMAND = "codex"
 RESUME_SUBCOMMAND = "resume"
@@ -46,7 +40,5 @@ class CodexOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    auth: Literal["subscription", "api_key"] = AUTH_SUBSCRIPTION
-    api_key_env: str = OPENAI_API_KEY_ENV
     args: list[str] = Field(default_factory=lambda: list(DEFAULT_ARGS))
     compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=100)

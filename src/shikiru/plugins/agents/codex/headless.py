@@ -48,7 +48,7 @@ class CodexHeadless:
     """Runs Codex's ephemeral JSON structured-output mode."""
 
     def __init__(self, runner: SubprocessRunner, environment: Mapping[str, str]) -> None:
-        """Use `runner` and the plugin's resolved authentication environment."""
+        """Use `runner` and the Operator-provided environment."""
         self._runner = runner
         self._environment = dict(environment)
 

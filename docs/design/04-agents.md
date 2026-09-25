@@ -63,7 +63,7 @@ class Agent(Protocol):
     name: str
     async def start_turn(self, spec: TurnSpec) -> Turn: ...
     def interactive_command(self, session_id: str, cwd: Path) -> Sequence[str]: ...   # take over (03 §9); also the resume command
-    async def doctor(self) -> list[CheckResult]: ...     # binary, version, login
+    async def doctor(self) -> list[CheckResult]: ...     # binary, version, native access
     def headless(self) -> HeadlessAgent | None: ...
 
 @dataclass(frozen=True)
@@ -229,6 +229,8 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 **Other**:
 - `interactive_command`: `codex resume <id> <args>`.
 - `headless().ask`: `codex exec --ephemeral --json --output-schema <file> -m <m> -c model_reasoning_effort="<e>" -s read-only --skip-git-repo-check` → the final `agent_message`.
+- Turns inherit the Operator's process environment, with `TurnSpec.env` overriding it for that turn. Headless calls and doctor inherit the process environment unchanged. Codex uses `CODEX_HOME` from that environment; Shikiru uses the same home to read model caches and rollout files.
+- Doctor checks `codex login status` for the built-in provider. When `$CODEX_HOME/config.toml` selects a configured custom provider, the login check reports that provider access is Operator-managed and unverified; the CLI login status does not establish custom-provider access.
 
 ## 6. Helper (Joshu)
 

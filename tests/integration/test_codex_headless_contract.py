@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
@@ -40,6 +40,16 @@ from shikiru.agents.sdk.turn import TurnProcessResult
 from shikiru.agents.testing import AgentContractSuite, InvocationCase, RecordedStream
 from shikiru.agents.testing.resume import RESUME_NONCE_PROMPT, RESUME_RECALL_PROMPT
 from shikiru.clock import SystemClock
+from shikiru.domain.recovery import (
+    QUOTA_MARGIN,
+    Escalate,
+    Failed,
+    RecoveryPolicy,
+    TurnCounters,
+    WaitForQuota,
+    decide,
+)
+from shikiru.domain.tasks import EscalationReason
 from shikiru.plugins.agents.codex.agent import CodexAgent, create
 from shikiru.plugins.agents.codex.options import (
     ADD_DIR_FLAG,
@@ -73,7 +83,6 @@ _LOW_LIVE_COMPACT_AT_PCT = 1.0
 _TURN_TIMEOUT_SECONDS = 60.0
 _LIVE_REPORT_TIMEOUT_SECONDS = 180.0
 _LIVE_REPORT_PYTEST_TIMEOUT_SECONDS = 190.0
-_AUTH_ENV = "SHIKIRU_CODEX_CAPTURE_KEY"
 _STATUS_MESSAGE = "Codex headless contract failed"
 _LIVE_ASK_PROMPT = "Return the JSON object with ok set to true."
 _LIVE_STOP_PROMPT = (
@@ -108,6 +117,10 @@ _OPENROUTER_LIVE_INPUT_TOKENS = 12_340
 _OPENROUTER_LIVE_OUTPUT_TOKENS = 5
 _OPENROUTER_LIVE_CACHE_WRITE_TOKENS = 12_272
 _OPENROUTER_LIVE_MESSAGE = "OK"
+_CODEX_ENV_CAPTURE = "SHIKIRU_CODEX_ENV_CAPTURE"
+_SYNTHETIC_OPENAI_KEY = "synthetic-openai-key"
+_SYNTHETIC_CODEX_KEY = "synthetic-codex-key"
+_SYNTHETIC_PROVIDER_KEY = "synthetic-provider-key"
 _OPENROUTER_LIVE_USAGE = Usage(
     _OPENROUTER_LIVE_INPUT_TOKENS,
     _OPENROUTER_LIVE_OUTPUT_TOKENS,
@@ -296,22 +309,27 @@ class TestCodexHeadlessContract(AgentContractSuite):
             f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=200000",
             resumed.prompt,
         )
-        api_spec = self.build_spec(
-            tmp_path / "api",
+        provider_spec = self.build_spec(
+            tmp_path / "provider",
             resume_session_id=None,
         )
-        (api_spec.cwd / ".git").mkdir()
-        api_spec = TurnSpec(
-            rung=api_spec.rung,
-            role=api_spec.role,
-            prompt=api_spec.prompt,
-            cwd=api_spec.cwd,
-            run_dir=api_spec.run_dir,
-            turn_dir=api_spec.turn_dir,
-            add_dirs=api_spec.add_dirs,
-            env={**api_spec.env, _AUTH_ENV: "capture-key"},
-            session_id=api_spec.session_id,
-            usage=api_spec.usage,
+        (provider_spec.cwd / ".git").mkdir()
+        provider_spec = TurnSpec(
+            rung=provider_spec.rung,
+            role=provider_spec.role,
+            prompt=provider_spec.prompt,
+            cwd=provider_spec.cwd,
+            run_dir=provider_spec.run_dir,
+            turn_dir=provider_spec.turn_dir,
+            add_dirs=provider_spec.add_dirs,
+            env={
+                **provider_spec.env,
+                "OPENAI_API_KEY": _SYNTHETIC_OPENAI_KEY,
+                "CODEX_API_KEY": _SYNTHETIC_CODEX_KEY,
+                "OPENROUTER_API_KEY": _SYNTHETIC_PROVIDER_KEY,
+            },
+            session_id=provider_spec.session_id,
+            usage=provider_spec.usage,
         )
         return [
             InvocationCase(
@@ -331,9 +349,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 expected_interactive_command=("codex", "resume", "session-resumed", *DEFAULT_ARGS),
             ),
             InvocationCase(
-                name="API-key auth uses the configured key and removes the parent key",
-                options={"auth": "api_key", "api_key_env": _AUTH_ENV, "args": []},
-                spec=api_spec,
+                name="turn passes TurnSpec provider environment through unchanged",
+                options={"args": []},
+                spec=provider_spec,
                 expected_argv=[
                     (
                         "codex",
@@ -348,16 +366,18 @@ class TestCodexHeadlessContract(AgentContractSuite):
                         SANDBOX_FLAG,
                         WORKSPACE_WRITE_SANDBOX,
                         ADD_DIR_FLAG,
-                        str(api_spec.run_dir),
+                        str(provider_spec.run_dir),
                         ADD_DIR_FLAG,
-                        str(api_spec.cwd / ".git"),
-                        api_spec.prompt,
+                        str(provider_spec.cwd / ".git"),
+                        provider_spec.prompt,
                     )
                 ],
                 expected_env=[
                     {
-                        CODEX_HOME_ENV_VAR: api_spec.env[CODEX_HOME_ENV_VAR],
-                        "CODEX_API_KEY": "capture-key",
+                        CODEX_HOME_ENV_VAR: provider_spec.env[CODEX_HOME_ENV_VAR],
+                        "OPENAI_API_KEY": _SYNTHETIC_OPENAI_KEY,
+                        "CODEX_API_KEY": _SYNTHETIC_CODEX_KEY,
+                        "OPENROUTER_API_KEY": _SYNTHETIC_PROVIDER_KEY,
                     }
                 ],
             ),
@@ -374,6 +394,26 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
     def headless_ask_prompt(self) -> str:
         return _LIVE_ASK_PROMPT
+
+    def test_turn_inherits_operator_environment_and_uses_turn_codex_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        operator_codex_home = tmp_path / "operator-codex-home"
+        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(operator_codex_home))
+        monkeypatch.setenv("OPENAI_API_KEY", _SYNTHETIC_OPENAI_KEY)
+        monkeypatch.setenv("CODEX_API_KEY", _SYNTHETIC_CODEX_KEY)
+        monkeypatch.setenv("OPENROUTER_API_KEY", _SYNTHETIC_PROVIDER_KEY)
+        spec = self.build_spec(tmp_path, resume_session_id=None)
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+        command = agent.process_sequence(spec, git_common_dir=tmp_path / ".git").start(spec)
+
+        assert command.env[CODEX_HOME_ENV_VAR] == spec.env[CODEX_HOME_ENV_VAR]
+        assert command.env[CODEX_HOME_ENV_VAR] != str(operator_codex_home)
+        assert command.env["OPENAI_API_KEY"] == _SYNTHETIC_OPENAI_KEY
+        assert command.env["CODEX_API_KEY"] == _SYNTHETIC_CODEX_KEY
+        assert command.env["OPENROUTER_API_KEY"] == _SYNTHETIC_PROVIDER_KEY
+        assert f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000" in command.argv
 
     def test_context_error_json_compacts_and_retries_once_on_the_same_session(
         self, tmp_path: Path
@@ -446,7 +486,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
             ),
             (
                 {"status": 402, "message": "payment required"},
-                TurnFailed(FailureKind.QUOTA, "payment required", None),
+                TurnFailed(FailureKind.AUTH, "payment required", None),
             ),
             (
                 {"status": 503, "message": "temporarily unavailable"},
@@ -470,27 +510,129 @@ class TestCodexHeadlessContract(AgentContractSuite):
             ),
         )
         for index, (error, expected) in enumerate(cases):
-            clock = FakeClock(_SAMPLE_NOW)
-            parser = CodexTurnParser(
-                session_id=None,
-                initial_usage=None,
-                home=Path(),
-                clock=clock,
-                reset_time=ResetTimeParser(clock),
-            )
-            parser.feed(json.dumps({"type": "thread.started", "thread_id": f"failure-{index}"}))
-            parser.feed(
-                json.dumps(
-                    {
-                        "type": "turn.failed",
-                        "error": {"message": json.dumps(error)},
-                    }
-                )
-            )
+            assert _failure_for(error, f"failure-{index}") == expected
 
-            signals = parser.finish(1, "")
+    def test_payment_failure_escalates_and_rate_limit_waits_for_reported_reset(self) -> None:
+        payment_failure = _failure_for(
+            {"status": 402, "code": "payment_required", "message": "credits exhausted"},
+            "payment-failure",
+        )
+        payment_action = decide(
+            Failed(payment_failure.kind, payment_failure.resets_at, payment_failure.message),
+            TurnCounters(),
+            RecoveryPolicy(
+                now=_SAMPLE_NOW,
+                max_quota_wait=timedelta(hours=8),
+                has_next_rung=False,
+                has_next_rung_different_agent=False,
+            ),
+        )
 
-            assert signals[-1] == expected
+        reset_at = _SAMPLE_NOW + timedelta(minutes=10)
+        rate_limit_failure = _failure_for(
+            {
+                "status": 429,
+                "code": "usage_limit_reached",
+                "message": "usage limit reached",
+                "resets_at": reset_at.isoformat(),
+            },
+            "rate-limit-failure",
+        )
+        rate_limit_action = decide(
+            Failed(
+                rate_limit_failure.kind, rate_limit_failure.resets_at, rate_limit_failure.message
+            ),
+            TurnCounters(),
+            RecoveryPolicy(
+                now=_SAMPLE_NOW,
+                max_quota_wait=timedelta(hours=8),
+                has_next_rung=False,
+                has_next_rung_different_agent=False,
+            ),
+        )
+
+        assert payment_failure.kind is FailureKind.AUTH
+        assert payment_action == Escalate(EscalationReason.AGENT_AUTH)
+        assert rate_limit_failure.kind is FailureKind.QUOTA
+        assert rate_limit_failure.resets_at == reset_at
+        assert rate_limit_action == WaitForQuota(reset_at + QUOTA_MARGIN)
+
+    @pytest.mark.asyncio
+    async def test_headless_ask_preserves_operator_provider_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        codex_home_path = tmp_path / "operator-codex-home"
+        capture_path = tmp_path / "headless-environment.txt"
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(codex_home_path))
+        monkeypatch.setenv("OPENAI_API_KEY", _SYNTHETIC_OPENAI_KEY)
+        monkeypatch.setenv("CODEX_API_KEY", _SYNTHETIC_CODEX_KEY)
+        monkeypatch.setenv("OPENROUTER_API_KEY", _SYNTHETIC_PROVIDER_KEY)
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        headless = agent.headless()
+        assert headless is not None
+
+        result = await headless.ask(
+            "return true",
+            _AskResult.model_json_schema(),
+            _MODEL,
+            _EFFORT,
+            tmp_path,
+            timedelta(seconds=10),
+        )
+
+        assert result == {"ok": True}
+        assert capture_path.read_text().splitlines()[1:] == [
+            str(codex_home_path),
+            _SYNTHETIC_OPENAI_KEY,
+            _SYNTHETIC_CODEX_KEY,
+            _SYNTHETIC_PROVIDER_KEY,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_doctor_does_not_apply_openai_login_status_to_custom_provider(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        codex_home_path = tmp_path / "operator-codex-home"
+        codex_home_path.mkdir()
+        (codex_home_path / "config.toml").write_text(
+            'model_provider = "openrouter"\n\n'
+            "[model_providers.openrouter]\n"
+            'name = "OpenRouter"\n'
+            'base_url = "https://provider.invalid/api/v1"\n'
+            'wire_api = "responses"\n'
+            'env_key = "OPENROUTER_API_KEY"\n',
+            encoding="utf-8",
+        )
+        capture_path = tmp_path / "doctor-environment.txt"
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(codex_home_path))
+        monkeypatch.setenv("OPENAI_API_KEY", _SYNTHETIC_OPENAI_KEY)
+        monkeypatch.setenv("CODEX_API_KEY", _SYNTHETIC_CODEX_KEY)
+        monkeypatch.setenv("OPENROUTER_API_KEY", _SYNTHETIC_PROVIDER_KEY)
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+        checks = await agent.doctor()
+
+        login = next(check for check in checks if check.name == "login")
+        assert all(check.ok for check in checks)
+        assert "not verified" in login.detail
+        assert capture_path.read_text().splitlines() == [
+            "--version",
+            str(codex_home_path),
+            _SYNTHETIC_OPENAI_KEY,
+            _SYNTHETIC_CODEX_KEY,
+            _SYNTHETIC_PROVIDER_KEY,
+            "--version",
+            str(codex_home_path),
+            _SYNTHETIC_OPENAI_KEY,
+            _SYNTHETIC_CODEX_KEY,
+            _SYNTHETIC_PROVIDER_KEY,
+        ]
 
     @pytest.mark.asyncio
     async def test_offline_compaction_replays_and_retries_once(self, tmp_path: Path) -> None:
@@ -823,6 +965,54 @@ def _latest_usage(signals: Sequence[AgentSignal]) -> tuple[str, Usage]:
     if not usage:
         raise AssertionError(_STATUS_MESSAGE)
     return session.session_id, usage[-1]
+
+
+def _failure_for(error: Mapping[str, object], session_id: str) -> TurnFailed:
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=None,
+        initial_usage=None,
+        home=Path(),
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    parser.feed(json.dumps({"type": "thread.started", "thread_id": session_id}))
+    parser.feed(
+        json.dumps(
+            {
+                "type": "turn.failed",
+                "error": {"message": json.dumps(error)},
+            }
+        )
+    )
+    return next(signal for signal in parser.finish(1, "") if isinstance(signal, TurnFailed))
+
+
+def _install_fake_codex(directory: Path) -> None:
+    directory.mkdir()
+    executable = directory / "codex"
+    response = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": json.dumps({"ok": True})},
+        }
+    )
+    executable.write_text(
+        "#!/bin/sh\n"
+        f'printf \'%s\\n\' "$*" "$CODEX_HOME" "$OPENAI_API_KEY" '
+        f'"$CODEX_API_KEY" "$OPENROUTER_API_KEY" >> "${_CODEX_ENV_CAPTURE}"\n'
+        'if [ "$1" = "--version" ]; then\n'
+        "  printf '%s\\n' 'codex-cli 0.156.1'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = "login" ]; then\n'
+        "  printf '%s\\n' 'Not logged in'\n"
+        "  exit 1\n"
+        "fi\n"
+        f"printf '%s\\n' '{response}'\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
 
 
 async def _run_with_agent(agent: Agent, spec: TurnSpec) -> list[AgentSignal]:

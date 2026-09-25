@@ -85,7 +85,8 @@ _MODEL_CONTEXT_WINDOW_FIELD = "context_window"
 _PERCENT = 100
 _UNAVAILABLE_STATUS_MIN = 500
 _UNAVAILABLE_STATUS_MAX = 599
-_QUOTA_STATUSES = (402, 429)
+_PAYMENT_REQUIRED_STATUS = 402
+_RATE_LIMIT_STATUS = 429
 _AUTH_STATUSES = (401, 403)
 _UNAVAILABLE_TEXT = ("overloaded", "temporarily unavailable", "service unavailable")
 _CONTEXT_TEXT = (
@@ -555,14 +556,18 @@ def _error_details(
 
 def _classify_error(message: str, status: int | None, code: str) -> FailureKind | None:
     text = f"{code} {message}".lower()
-    if status in _QUOTA_STATUSES or any(token in text for token in _QUOTA_TEXT):
+    if (
+        status == _PAYMENT_REQUIRED_STATUS
+        or status in _AUTH_STATUSES
+        or any(token in text for token in _AUTH_TEXT)
+    ):
+        return FailureKind.AUTH
+    if status == _RATE_LIMIT_STATUS or any(token in text for token in _QUOTA_TEXT):
         return FailureKind.QUOTA
     if status is not None and _UNAVAILABLE_STATUS_MIN <= status <= _UNAVAILABLE_STATUS_MAX:
         return FailureKind.UNAVAILABLE
     if any(token in text for token in _UNAVAILABLE_TEXT):
         return FailureKind.UNAVAILABLE
-    if status in _AUTH_STATUSES or any(token in text for token in _AUTH_TEXT):
-        return FailureKind.AUTH
     if any(token in text for token in _CONTEXT_TEXT):
         return FailureKind.CONTEXT
     return None
