@@ -9,8 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from shikiru.bootstrap import build_doctor
+from shikiru.agents.registry import AgentRegistry
+from shikiru.clock import SystemClock
+from shikiru.operator.doctor import Doctor
+from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.process import SubprocessRunner
+from shikiru.workspace.git import Git
 
 pytestmark = pytest.mark.asyncio
 
@@ -145,12 +149,21 @@ async def test_doctor_names_invalid_configuration_and_keeps_diagnostics_json_saf
 
 
 async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     root = await _project(tmp_path)
-    monkeypatch.setattr("shikiru.operator.doctor.default_cow_args", lambda: None)
+    runner = SubprocessRunner()
+    clock = SystemClock()
+    doctor = Doctor(
+        root,
+        cow_args=None,
+        git=Git(runner),
+        runner=runner,
+        clock=clock,
+        plugin_checks=PluginChecks(AgentRegistry(), runner, clock),
+    )
 
-    report = await build_doctor(root).run()
+    report = await doctor.run()
 
     checks = {check.name: check for check in report.checks}
     assert report.ok is True

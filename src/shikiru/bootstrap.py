@@ -107,6 +107,7 @@ def build_doctor(project_root: Path) -> Doctor:
     plugins = PluginChecks(AgentRegistry(), runner, clock)
     return Doctor(
         project_root,
+        cow_args=default_cow_args(),
         git=Git(runner),
         runner=runner,
         clock=clock,

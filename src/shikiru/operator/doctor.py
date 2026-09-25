@@ -19,7 +19,6 @@ from shikiru.tmux.client import Tmux, private_socket_name
 from shikiru.workspace.caches import (
     CACHE_COW_UNSUPPORTED_WARNING,
     CacheCloner,
-    default_cow_args,
 )
 
 if TYPE_CHECKING:
@@ -82,6 +81,7 @@ class Doctor:
         self,
         project_root: Path,
         *,
+        cow_args: Sequence[str] | None,
         git: Git,
         runner: SubprocessRunner,
         clock: Clock,
@@ -89,6 +89,7 @@ class Doctor:
     ) -> None:
         """Store the project and injected git, process, clock and plugin boundaries."""
         self._project_root = project_root.resolve()
+        self._cow_args = tuple(cow_args) if cow_args is not None else None
         self._git = git
         self._runner = runner
         self._clock = clock
@@ -215,8 +216,7 @@ class Doctor:
         return DoctorCheck(name=DATABASE_CHECK_NAME, ok=True, detail=f"schema {version}")
 
     async def _cow_check(self) -> DoctorCheck:
-        cow_args = default_cow_args()
-        if cow_args is None:
+        if self._cow_args is None:
             return DoctorCheck(
                 name=COW_CHECK_NAME,
                 ok=True,
@@ -224,7 +224,7 @@ class Doctor:
             )
         try:
             with tempfile.TemporaryDirectory(prefix="shikiru-doctor-cow-") as directory:
-                result = await CacheCloner(self._runner, cow_args=cow_args).clone(
+                result = await CacheCloner(self._runner, cow_args=self._cow_args).clone(
                     Path(directory), Path(directory), (), ()
                 )
         except (OSError, ShikiruError) as error:
