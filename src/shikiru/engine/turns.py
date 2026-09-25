@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 NUDGE_LIMIT = 2
 CLASSIFY_CONFIDENCE = 0.8
 _TURN_NUMBER_WIDTH = 2
+TURN_PROMPT = "Read {prompt_path} and follow it exactly."
 _NUDGE_MESSAGE = (
     "Your turn ended without a valid report. Submit it with `shikiru report` as described "
     "at the end of {prompt_path}."
@@ -143,7 +144,7 @@ class TurnRunner:
         task_root_dir = task_root(self._project_root, task.id)
         turn_dir = self._prepare_turn_dir(task_run_dir, task.id, role, request)
         prompt_path = turn_dir / PROMPT_FILENAME
-        prompt = f"Read {prompt_path} and follow it exactly."
+        prompt = TURN_PROMPT.format(prompt_path=prompt_path)
         nudges = 0
         last_message = ""
         while True:
