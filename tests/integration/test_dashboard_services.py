@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from shikiru.config.settings import RepoConfig
-from shikiru.dashboard.services import GitRepoStatusService
+from shikiru.dashboard.services import REPO_STATUS_CACHE_TTL_SECONDS, GitRepoStatusService
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
@@ -53,6 +53,6 @@ async def test_repo_status_is_cached_within_the_ttl(tmp_path: Path) -> None:
     cached = await service.repo_status()
     assert cached.dirty == first.dirty == 0
 
-    clock.advance(11.0)
+    clock.advance(REPO_STATUS_CACHE_TTL_SECONDS + 1)
     refreshed = await service.repo_status()
     assert refreshed.dirty == 1

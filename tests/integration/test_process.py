@@ -78,15 +78,17 @@ async def test_without_check_non_zero_exit_does_not_raise() -> None:
 async def test_timeout_raises_and_kills_the_process(tmp_path: Path) -> None:
     runner = SubprocessRunner()
     pid_file = tmp_path / "pid"
-
-    with pytest.raises(CommandTimeoutError):
-        await runner.run(
+    task = asyncio.create_task(
+        runner.run(
             ["sh", "-c", f"echo $$ > {pid_file}; sleep 30"],
-            timeout=0.2,
+            timeout=2.0,
         )
+    )
 
     await wait_until(pid_file.exists, _PID_FILE_WAIT_TIMEOUT)
     pid = int(pid_file.read_text().strip())
+    with pytest.raises(CommandTimeoutError):
+        await task
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
 

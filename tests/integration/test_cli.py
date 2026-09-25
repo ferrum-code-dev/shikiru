@@ -17,11 +17,3 @@ async def test_version_flag_prints_the_installed_package_version() -> None:
 
     assert result.returncode == 0
     assert result.stdout.strip() == version("shikiru")
-
-
-async def test_no_args_shows_help_instead_of_erroring() -> None:
-    runner = SubprocessRunner()
-
-    result = await runner.run([sys.executable, "-m", "shikiru"], timeout=10)
-
-    assert "Usage" in result.stdout

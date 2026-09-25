@@ -85,12 +85,14 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     code, stdout, stderr = await _cli(tmp_path, "status")
     assert code == 0
     assert stderr == ""
-    assert stdout.strip()
+    assert "engine down" in stdout
+    assert "queued 0" in stdout
+    assert "none" in stdout
 
     code, stdout, stderr = await _cli(tmp_path, "stop")
     assert code == 0
     assert stderr == ""
-    assert stdout.strip()
+    assert "engine already stopped" in stdout
 
 
 async def test_cli_json_init_submit_status_and_stop(tmp_path: Path) -> None:
