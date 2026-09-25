@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from operator import attrgetter
 from typing import TYPE_CHECKING
 
 import pytest
@@ -51,44 +52,39 @@ def test_set_override_wins_over_project_file(tmp_path: Path) -> None:
     assert settings.orchestration.max_parallel == 7
 
 
-def test_set_override_parses_int(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("override", "path", "expected"),
+    [
+        pytest.param("project.name=demo", "project.name", "demo", id="bare-word-string"),
+        pytest.param("project.name=demo-project", "project.name", "demo-project", id="hyphen"),
+        pytest.param("orchestration.max_parallel=3", "orchestration.max_parallel", 3, id="integer"),
+        pytest.param('project.trackers=["a.md"]', "project.trackers", ["a.md"], id="list"),
+    ],
+)
+def test_set_override_parses_toml_values_and_bare_words(
+    tmp_path: Path, override: str, path: str, expected: object
+) -> None:
     project_dir = _project(tmp_path)
+    settings = load_settings(project_dir, overrides=[override])
 
-    settings = load_settings(project_dir, overrides=["orchestration.max_parallel=3"])
-
-    assert settings.orchestration.max_parallel == 3
-    assert isinstance(settings.orchestration.max_parallel, int)
-
-
-def test_set_override_parses_list(tmp_path: Path) -> None:
-    project_dir = _project(tmp_path)
-
-    settings = load_settings(project_dir, overrides=['project.trackers=["a.md"]'])
-
-    assert settings.project.trackers == ["a.md"]
+    assert attrgetter(path)(settings) == expected
 
 
 @pytest.mark.parametrize(
-    ("override", "expected"),
+    "override",
     [
-        pytest.param("project.name=demo", "demo", id="bare-word-string"),
-        pytest.param("orchestration.max_parallel=3,", None, id="trailing-comma"),
-        pytest.param("project.name=demo team", None, id="multiple-words"),
+        pytest.param("orchestration.max_parallel=3,", id="trailing-comma"),
+        pytest.param("project.name=demo team", id="multiple-words"),
     ],
 )
-def test_set_override_accepts_toml_or_a_bare_word(
-    tmp_path: Path, override: str, expected: object | None
-) -> None:
+def test_set_override_rejects_malformed_values(tmp_path: Path, override: str) -> None:
     project_dir = _project(tmp_path)
 
-    if expected is None:
-        with pytest.raises(ConfigError) as excinfo:
-            load_settings(project_dir, overrides=[override])
-        assert "--set: " in str(excinfo.value)
-        assert "neither a TOML value nor a bare word" in str(excinfo.value)
-    else:
-        settings = load_settings(project_dir, overrides=[override])
-        assert settings.project.name == expected
+    with pytest.raises(ConfigError) as excinfo:
+        load_settings(project_dir, overrides=[override])
+
+    assert "--set: " in str(excinfo.value)
+    assert "neither a TOML value nor a bare word" in str(excinfo.value)
 
 
 def test_pr_integration_is_rejected_until_a_pr_strategy_exists(tmp_path: Path) -> None:
@@ -134,10 +130,8 @@ def test_invalid_toml_syntax_in_project_file_names_the_file(tmp_path: Path) -> N
         load_settings(tmp_path)
 
 
-def test_missing_project_file_falls_back_to_defaults_and_still_requires_settings(
-    tmp_path: Path,
-) -> None:
-    with pytest.raises(ConfigError):
+def test_missing_project_file_reports_the_required_project_name(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match=r"^defaults\.toml: project\.name: Field required"):
         load_settings(tmp_path)
 
 
@@ -150,11 +144,3 @@ def test_missing_required_key_is_attributed_to_the_project_config_file(tmp_path:
         load_settings(tmp_path)
 
     assert str(excinfo.value).startswith(".shikiru/config.toml: project.name: Field required")
-
-
-def test_set_override_bare_word_that_is_not_valid_toml_stays_a_string(tmp_path: Path) -> None:
-    project_dir = _project(tmp_path)
-
-    settings = load_settings(project_dir, overrides=["project.name=demo-project"])
-
-    assert settings.project.name == "demo-project"

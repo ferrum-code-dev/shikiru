@@ -93,9 +93,7 @@ def test_reader_serves_every_query_seeded_through_the_writer(
         "codex", QuotaWindow(name="5h", used_pct=10.0, resets_at=None, observed_at=START)
     )
 
-    event = EventLog(connection, clock).append(
-        EventKind.TASK_QUEUED, message="queued", task_id=task.id
-    )
+    EventLog(connection, clock).append(EventKind.TASK_QUEUED, message="queued", task_id=task.id)
     EventLog(connection, clock).append(EventKind.TASK_STARTED, message="started", task_id=task.id)
     EventLog(connection, clock).append(EventKind.TASK_QUEUED, message="other task", task_id="T-2")
 
@@ -112,13 +110,4 @@ def test_reader_serves_every_query_seeded_through_the_writer(
     assert [w.name for w in reader.list_quotas(["codex"])["codex"]] == ["5h"]
     assert reader.list_quota_agents() == ["codex"]
 
-    all_events = reader.events_since(0)
-    assert [e.message for e in all_events] == ["queued", "started", "other task"]
-
-    only_started = reader.events_since(0, kinds=[EventKind.TASK_STARTED])
-    assert [e.kind for e in only_started] == [EventKind.TASK_STARTED]
-
-    only_task = reader.events_since(0, task_id=task.id)
-    assert [e.message for e in only_task] == ["queued", "started"]
-
-    assert [e.message for e in reader.events_since(event.id)] == ["started", "other task"]
+    assert [e.message for e in reader.events_since(0)] == ["queued", "started", "other task"]

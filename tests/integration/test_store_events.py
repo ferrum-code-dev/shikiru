@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pytest
+
 from shikiru.domain.events import EventKind
 from shikiru.store.events import EventLog
 from tests.support.clock import FakeClock
@@ -19,34 +21,30 @@ def _make_log(connection: Connection) -> EventLog:
     return EventLog(connection, FakeClock(START))
 
 
-def test_since_returns_everything_after_the_given_id_in_order(connection: Connection) -> None:
-    log = _make_log(connection)
-    first = log.append(EventKind.TASK_QUEUED, message="queued", task_id="T-1")
-    log.append(EventKind.TASK_STARTED, message="started", task_id="T-1")
-    log.append(EventKind.TASK_QUEUED, message="queued", task_id="T-2")
-
-    assert [event.message for event in log.since(0)] == ["queued", "started", "queued"]
-    assert [event.message for event in log.since(first.id)] == ["started", "queued"]
-
-
-def test_since_filters_by_kinds(connection: Connection) -> None:
+@pytest.mark.parametrize(
+    ("after_id", "kinds", "task_id", "expected_messages"),
+    [
+        pytest.param(0, None, None, ["queued", "started", "other"], id="all-in-order"),
+        pytest.param(1, None, None, ["started", "other"], id="after-id"),
+        pytest.param(0, [EventKind.TASK_STARTED], None, ["started"], id="kind-filter"),
+        pytest.param(0, None, "T-1", ["queued", "started"], id="task-filter"),
+    ],
+)
+def test_since_filters_and_orders_events(
+    connection: Connection,
+    after_id: int,
+    kinds: list[EventKind] | None,
+    task_id: str | None,
+    expected_messages: list[str],
+) -> None:
     log = _make_log(connection)
     log.append(EventKind.TASK_QUEUED, message="queued", task_id="T-1")
     log.append(EventKind.TASK_STARTED, message="started", task_id="T-1")
+    log.append(EventKind.TASK_QUEUED, message="other", task_id="T-2")
 
-    only_started = log.since(0, kinds=[EventKind.TASK_STARTED])
+    events = log.since(after_id, kinds=kinds, task_id=task_id)
 
-    assert [event.kind for event in only_started] == [EventKind.TASK_STARTED]
-
-
-def test_since_filters_by_task_id(connection: Connection) -> None:
-    log = _make_log(connection)
-    log.append(EventKind.TASK_QUEUED, message="one", task_id="T-1")
-    log.append(EventKind.TASK_QUEUED, message="two", task_id="T-2")
-
-    only_task_one = log.since(0, task_id="T-1")
-
-    assert [event.message for event in only_task_one] == ["one"]
+    assert [event.message for event in events] == expected_messages
 
 
 def test_data_round_trips_through_the_json_column(connection: Connection) -> None:

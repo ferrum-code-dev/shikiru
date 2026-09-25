@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
 
 from shikiru.agents.contracts import Rung
-from shikiru.config.settings import ComplexityLadder
+from shikiru.config.settings import ComplexityLadder, Settings
 from shikiru.domain.ladder import (
     move_up,
     pick_rung,
@@ -13,8 +14,9 @@ from shikiru.domain.ladder import (
     reset_for_new_iteration,
     reset_for_rung_change,
 )
-from shikiru.domain.tasks import Counters, Role
+from shikiru.domain.tasks import Counters, Role, Task
 from tests.support.factories import (
+    HELPER_RUNG,
     IMPLEMENTER_RUNGS,
     LEADER_RUNG_2,
     make_settings,
@@ -27,108 +29,165 @@ if TYPE_CHECKING:
 _SETTINGS = make_settings()
 
 
-def test_pick_rung_uses_the_ladder_at_rung_index_by_default() -> None:
-    task = make_task(rung_index={Role.LEADER: 1})
+@pytest.mark.parametrize(
+    ("task", "role", "settings", "expected"),
+    [
+        pytest.param(
+            make_task(rung_index={Role.LEADER: 1}),
+            Role.LEADER,
+            _SETTINGS,
+            LEADER_RUNG_2,
+            id="indexed-ladder-rung",
+        ),
+        pytest.param(
+            make_task(overrides={Role.LEADER: Rung(agent="claude", model="haiku", effort=None)}),
+            Role.LEADER,
+            _SETTINGS,
+            Rung(agent="claude", model="haiku", effort=None),
+            id="operator-override",
+        ),
+        pytest.param(make_task(), Role.HELPER, _SETTINGS, HELPER_RUNG, id="helper-ladder"),
+    ],
+)
+def test_pick_rung_uses_the_active_role_rung(
+    task: Task, role: Role, settings: Settings, expected: Rung
+) -> None:
+    assert pick_rung(task, role, settings) == expected
 
-    assert pick_rung(task, Role.LEADER, _SETTINGS) == LEADER_RUNG_2
 
-
-def test_pick_rung_prefers_an_operator_override() -> None:
-    override = Rung(agent="claude", model="haiku", effort=None)
-    task = make_task(overrides={Role.LEADER: override})
-
-    assert pick_rung(task, Role.LEADER, _SETTINGS) == override
-
-
-def test_pick_rung_resolves_the_implementer_ladder_by_complexity() -> None:
+@pytest.mark.parametrize(
+    ("complexity", "expected"),
+    [
+        pytest.param("high", IMPLEMENTER_RUNGS[1], id="override"),
+        pytest.param("normal", IMPLEMENTER_RUNGS[0], id="base-ladder-fallback"),
+    ],
+)
+def test_implementer_complexity_selects_an_override_or_base_ladder(
+    complexity: str, expected: Rung
+) -> None:
     settings = make_settings(
         implementer_complexity={"high": ComplexityLadder(ladder=[IMPLEMENTER_RUNGS[1]])}
     )
-    task = make_task(complexity="high")
+    task = make_task(complexity=complexity)
 
-    assert pick_rung(task, Role.IMPLEMENTER, settings) == IMPLEMENTER_RUNGS[1]
-
-
-def test_pick_rung_resolves_the_helper_ladder() -> None:
-    task = make_task()
-
-    rung = pick_rung(task, Role.HELPER, _SETTINGS)
-
-    assert rung.agent == "claude"
-    assert rung.model == "haiku"
+    assert pick_rung(task, Role.IMPLEMENTER, settings) == expected
 
 
-def test_move_up_returns_the_following_rung() -> None:
-    task = make_task(rung_index={Role.IMPLEMENTER: 0})
+_ACTIVE_OVERRIDE = Rung(agent="claude", model="haiku", effort=None)
 
-    move = move_up(task, Role.IMPLEMENTER, _SETTINGS)
 
+@dataclass(frozen=True)
+class _MoveUpCase:
+    task: Task
+    role: Role
+    different_agent: bool
+    expected_index: int | None
+    expected_overrides: dict[Role, Rung]
+    expected_counters: Counters
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            _MoveUpCase(
+                make_task(rung_index={Role.IMPLEMENTER: 0}),
+                Role.IMPLEMENTER,
+                False,
+                1,
+                {},
+                Counters(),
+            ),
+            id="next-rung",
+        ),
+        pytest.param(
+            _MoveUpCase(
+                make_task(rung_index={Role.LEADER: 1}),
+                Role.LEADER,
+                False,
+                None,
+                {},
+                Counters(),
+            ),
+            id="exhausted",
+        ),
+        pytest.param(
+            _MoveUpCase(
+                make_task(rung_index={Role.IMPLEMENTER: 0}),
+                Role.IMPLEMENTER,
+                True,
+                2,
+                {},
+                Counters(),
+            ),
+            id="next-different-agent",
+        ),
+        pytest.param(
+            _MoveUpCase(
+                make_task(rung_index={Role.IMPLEMENTER: len(IMPLEMENTER_RUNGS) - 1}),
+                Role.IMPLEMENTER,
+                True,
+                None,
+                {},
+                Counters(),
+            ),
+            id="no-different-agent-remains",
+        ),
+        pytest.param(
+            _MoveUpCase(
+                make_task(
+                    rung_index={Role.IMPLEMENTER: 1},
+                    overrides={Role.IMPLEMENTER: _ACTIVE_OVERRIDE},
+                ),
+                Role.IMPLEMENTER,
+                True,
+                None,
+                {},
+                Counters(),
+            ),
+            id="different-agent-compares-with-active-override",
+        ),
+        pytest.param(
+            _MoveUpCase(
+                make_task(
+                    rung_index={Role.IMPLEMENTER: 0},
+                    overrides={Role.IMPLEMENTER: _ACTIVE_OVERRIDE},
+                    counters=Counters(rejections_on_rung=3, consults=2),
+                ),
+                Role.IMPLEMENTER,
+                False,
+                1,
+                {},
+                Counters(rejections_on_rung=0, consults=2),
+            ),
+            id="clears-override-and-resets-implementer-rejections",
+        ),
+        pytest.param(
+            _MoveUpCase(
+                make_task(
+                    rung_index={Role.LEADER: 0},
+                    counters=Counters(rejections_on_rung=3, consults=2),
+                ),
+                Role.LEADER,
+                False,
+                1,
+                {},
+                Counters(rejections_on_rung=3, consults=2),
+            ),
+            id="leader-keeps-counters",
+        ),
+    ],
+)
+def test_move_up_selects_the_next_allowed_rung_and_updates_role_state(case: _MoveUpCase) -> None:
+    move = move_up(case.task, case.role, _SETTINGS, different_agent=case.different_agent)
+
+    if case.expected_index is None:
+        assert move is None
+        return
     assert move is not None
-    assert move.rung_index[Role.IMPLEMENTER] == 1
-
-
-def test_move_up_returns_none_when_the_ladder_is_exhausted() -> None:
-    task = make_task(rung_index={Role.LEADER: 1})
-
-    assert move_up(task, Role.LEADER, _SETTINGS) is None
-
-
-def test_move_up_with_different_agent_skips_same_agent_rungs() -> None:
-    task = make_task(rung_index={Role.IMPLEMENTER: 0})
-
-    move = move_up(task, Role.IMPLEMENTER, _SETTINGS, different_agent=True)
-
-    assert move is not None
-    assert move.rung_index[Role.IMPLEMENTER] == 2
-
-
-def test_move_up_with_different_agent_returns_none_when_none_remain() -> None:
-    task = make_task(rung_index={Role.IMPLEMENTER: len(IMPLEMENTER_RUNGS) - 1})
-
-    assert move_up(task, Role.IMPLEMENTER, _SETTINGS, different_agent=True) is None
-
-
-def test_move_up_compares_the_different_agent_rule_against_an_active_override() -> None:
-    # Ladder: 0=codex/luna, 1=codex/sol, 2=claude/opus. rung_index sits at 1 (codex), but the
-    # active override is on claude, so "different agent" must skip claude/opus (index 2) too,
-    # leaving nothing -- comparing against ladder[rung_index] instead would wrongly return it.
-    override = Rung(agent="claude", model="haiku", effort=None)
-    task = make_task(rung_index={Role.IMPLEMENTER: 1}, overrides={Role.IMPLEMENTER: override})
-
-    move = move_up(task, Role.IMPLEMENTER, _SETTINGS, different_agent=True)
-
-    assert move is None
-
-
-def test_move_up_clears_the_role_override() -> None:
-    override = Rung(agent="claude", model="haiku", effort=None)
-    task = make_task(rung_index={Role.IMPLEMENTER: 0}, overrides={Role.IMPLEMENTER: override})
-
-    move = move_up(task, Role.IMPLEMENTER, _SETTINGS)
-
-    assert move is not None
-    assert Role.IMPLEMENTER not in move.overrides
-
-
-def test_move_up_resets_rejections_on_rung_for_the_implementer() -> None:
-    task = make_task(
-        rung_index={Role.IMPLEMENTER: 0}, counters=Counters(rejections_on_rung=3, consults=2)
-    )
-
-    move = move_up(task, Role.IMPLEMENTER, _SETTINGS)
-
-    assert move is not None
-    assert move.counters.rejections_on_rung == 0
-    assert move.counters.consults == 2
-
-
-def test_move_up_does_not_reset_counters_for_the_leader() -> None:
-    task = make_task(rung_index={Role.LEADER: 0}, counters=Counters(rejections_on_rung=3))
-
-    move = move_up(task, Role.LEADER, _SETTINGS)
-
-    assert move is not None
-    assert move.counters.rejections_on_rung == 3
+    assert move.rung_index[case.role] == case.expected_index
+    assert move.overrides == case.expected_overrides
+    assert move.counters == case.expected_counters
 
 
 @pytest.mark.parametrize(

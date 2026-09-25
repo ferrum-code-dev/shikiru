@@ -97,11 +97,19 @@ def test_plan_moves_to_integrate_and_enqueues_new_tasks() -> None:
     assert transition.enqueue_new_tasks is True
 
 
-def test_plan_entering_integrate_resets_conflict_rounds() -> None:
-    task = make_task(step=Step.PLAN, counters=Counters(conflict_rounds=1))
+@pytest.mark.parametrize(
+    ("step", "outcome"),
+    [
+        pytest.param(Step.PLAN, make_plan_report(), id="plan-completed"),
+        pytest.param(Step.VERIFY, make_verdict(decision="accept"), id="verify-accepted"),
+    ],
+)
+def test_entering_integrate_resets_conflict_rounds(step: Step, outcome: Outcome) -> None:
+    task = make_task(step=step, counters=Counters(conflict_rounds=1))
 
-    transition = _next(task, make_plan_report())
+    transition = _next(task, outcome)
 
+    assert transition.step is Step.INTEGRATE
     assert transition.counters.conflict_rounds == 0
 
 
@@ -125,25 +133,30 @@ def test_implement_needs_decision_or_blocked_moves_to_consult(
     assert transition.counters.consults == 2
 
 
-def test_implement_at_the_consult_limit_escalates_without_running_another_consult_turn() -> None:
-    task = make_task(step=Step.IMPLEMENT, counters=Counters(consults=CONSULT_LIMIT))
+@pytest.mark.parametrize(
+    ("step", "consults", "expected_status"),
+    [
+        pytest.param(Step.IMPLEMENT, CONSULT_LIMIT, Status.ESCALATED, id="implement-at-limit"),
+        pytest.param(Step.IMPLEMENT, CONSULT_LIMIT - 1, Status.RUNNING, id="implement-below-limit"),
+        pytest.param(Step.INTEGRATE, CONSULT_LIMIT, Status.ESCALATED, id="integrate-at-limit"),
+        pytest.param(
+            Step.INTEGRATE, CONSULT_LIMIT - 1, Status.INTEGRATING, id="integrate-below-limit"
+        ),
+    ],
+)
+def test_consult_limit_controls_implementation_and_conflict_decisions(
+    step: Step, consults: int, expected_status: Status
+) -> None:
+    status = Status.INTEGRATING if step is Step.INTEGRATE else Status.RUNNING
+    task = make_task(step=step, status=status, counters=Counters(consults=consults))
 
     transition = _next(task, make_implementation_report(status="needs_decision"))
 
-    assert transition.status is Status.ESCALATED
-    assert transition.escalation_reason is EscalationReason.DECISION_REQUIRED
+    assert transition.status is expected_status
     assert transition.step is Step.CONSULT
-    assert transition.counters.consults == CONSULT_LIMIT
-
-
-def test_implement_below_the_consult_limit_still_consults() -> None:
-    task = make_task(step=Step.IMPLEMENT, counters=Counters(consults=CONSULT_LIMIT - 1))
-
-    transition = _next(task, make_implementation_report(status="needs_decision"))
-
-    assert transition.status is Status.RUNNING
-    assert transition.step is Step.CONSULT
-    assert transition.counters.consults == CONSULT_LIMIT
+    assert transition.counters.consults == min(consults + 1, CONSULT_LIMIT)
+    if expected_status is Status.ESCALATED:
+        assert transition.escalation_reason is EscalationReason.DECISION_REQUIRED
 
 
 def test_consult_answer_returns_to_implement_at_the_same_iteration() -> None:
@@ -167,10 +180,35 @@ def test_consult_answer_during_integration_returns_to_integrate() -> None:
     assert transition.status is Status.INTEGRATING
 
 
-def test_consult_escalate_raises_decision_required() -> None:
-    task = make_task(step=Step.CONSULT, counters=Counters(consults=1))
+@pytest.mark.parametrize(
+    ("step", "status", "outcome"),
+    [
+        pytest.param(
+            Step.CONSULT,
+            Status.RUNNING,
+            make_consult_answer(decision="escalate"),
+            id="consult-escalation",
+        ),
+        pytest.param(
+            Step.VERIFY,
+            Status.RUNNING,
+            make_verdict(decision="escalate"),
+            id="verify-escalation",
+        ),
+        pytest.param(
+            Step.INTEGRATE,
+            Status.INTEGRATING,
+            make_verdict(decision="escalate"),
+            id="integration-escalation",
+        ),
+    ],
+)
+def test_escalation_decisions_raise_decision_required(
+    step: Step, status: Status, outcome: Outcome
+) -> None:
+    task = make_task(step=step, status=status, counters=Counters(consults=1))
 
-    transition = _next(task, make_consult_answer(decision="escalate"))
+    transition = _next(task, outcome)
 
     assert transition.status is Status.ESCALATED
     assert transition.escalation_reason is EscalationReason.DECISION_REQUIRED
@@ -183,14 +221,6 @@ def test_verify_accept_moves_to_integrate() -> None:
 
     assert transition.step is Step.INTEGRATE
     assert transition.status is Status.INTEGRATING
-
-
-def test_verify_accept_entering_integrate_resets_conflict_rounds() -> None:
-    task = make_task(step=Step.VERIFY, counters=Counters(conflict_rounds=1))
-
-    transition = _next(task, make_verdict(decision="accept"))
-
-    assert transition.counters.conflict_rounds == 0
 
 
 def test_verify_changes_requested_increments_iteration_and_rejections() -> None:
@@ -265,15 +295,6 @@ def test_verify_changes_requested_in_the_final_round_raises_iterations_exhausted
     assert transition.step is Step.VERIFY
 
 
-def test_verify_escalate_raises_decision_required() -> None:
-    task = make_task(step=Step.VERIFY)
-
-    transition = _next(task, make_verdict(decision="escalate"))
-
-    assert transition.status is Status.ESCALATED
-    assert transition.escalation_reason is EscalationReason.DECISION_REQUIRED
-
-
 def test_verify_supersede_cancels_and_enqueues_new_tasks() -> None:
     task = make_task(step=Step.VERIFY)
 
@@ -326,14 +347,6 @@ def test_integrate_conflict_rounds_exhausted_raises_integration_conflict() -> No
     assert transition.escalation_reason is EscalationReason.INTEGRATION_CONFLICT
 
 
-def test_integrate_conflict_escalate_raises_decision_required() -> None:
-    task = make_task(step=Step.INTEGRATE, status=Status.INTEGRATING)
-
-    transition = _next(task, make_verdict(decision="escalate"))
-
-    assert transition.escalation_reason is EscalationReason.DECISION_REQUIRED
-
-
 def test_integrate_conflict_rejects_a_supersede_verdict() -> None:
     task = make_task(step=Step.INTEGRATE, status=Status.INTEGRATING)
 
@@ -360,19 +373,6 @@ def test_integrate_conflicts_report_not_completed_moves_to_consult(
 
     assert transition.step is Step.CONSULT
     assert transition.counters.consults == 2
-
-
-def test_integrate_conflicts_at_the_consult_limit_escalates_instead_of_consulting_again() -> None:
-    task = make_task(
-        step=Step.INTEGRATE, status=Status.INTEGRATING, counters=Counters(consults=CONSULT_LIMIT)
-    )
-
-    transition = _next(task, make_implementation_report(status="needs_decision"))
-
-    assert transition.status is Status.ESCALATED
-    assert transition.escalation_reason is EscalationReason.DECISION_REQUIRED
-    assert transition.step is Step.CONSULT
-    assert transition.counters.consults == CONSULT_LIMIT
 
 
 def test_next_step_rejects_an_outcome_that_does_not_match_the_current_step() -> None:
