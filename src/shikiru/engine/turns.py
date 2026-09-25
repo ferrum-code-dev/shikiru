@@ -85,6 +85,22 @@ def read_turn_report(turn_dir: Path) -> Report | None:
     return loaded.report if loaded is not None else None
 
 
+def turn_environment(
+    task: Task, role: Role, run_dir_path: Path, project_name: str
+) -> dict[str, str]:
+    """Return the environment every agent process of `task`'s `role` runs with (03 §4.1)."""
+    if task.slot is None:
+        message = f"{task.id} has no assigned slot; a turn needs a dispatched task"
+        raise ShikiruError(message)
+    return {
+        RUN_DIR_ENV_VAR: str(run_dir_path),
+        ROLE_ENV_VAR: role.value,
+        PROJECT_ENV_VAR: project_name,
+        TASK_ENV_VAR: task.id,
+        SLOT_ENV_VAR: str(task.slot),
+    }
+
+
 class TurnRunner:
     """Create turn files, run a process per attempt, and resolve reports and failures."""
 
@@ -140,7 +156,7 @@ class TurnRunner:
                 run_dir=task_run_dir,
                 turn_dir=turn_dir,
                 add_dirs=(),
-                env=self._turn_environment(task, role, task_run_dir),
+                env=turn_environment(task, role, task_run_dir, self._settings.project.name),
                 session_id=selection.session_id,
                 usage=selection.run.usage,
             )
@@ -291,15 +307,3 @@ class TurnRunner:
             return ProtocolError()
         (turn_dir / HELPER_REPORT_FILENAME).write_text(report.model_dump_json(indent=2))
         return Completed(report=report, rebuilt=True)
-
-    def _turn_environment(self, task: Task, role: Role, run_dir_path: Path) -> dict[str, str]:
-        if task.slot is None:
-            message = f"{task.id} has no assigned slot; a turn needs a dispatched task"
-            raise ShikiruError(message)
-        return {
-            RUN_DIR_ENV_VAR: str(run_dir_path),
-            ROLE_ENV_VAR: role.value,
-            PROJECT_ENV_VAR: self._settings.project.name,
-            TASK_ENV_VAR: task.id,
-            SLOT_ENV_VAR: str(task.slot),
-        }
