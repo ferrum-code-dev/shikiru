@@ -105,7 +105,7 @@ def _template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKi
         return PromptName.VERIFY, ReportKind.VERDICT
     if step is Step.INTEGRATE:
         return PromptName.CONFLICTS, ReportKind.IMPLEMENTATION
-    message = f"TaskFlow does not run a turn for step {step!r}; that is Task 16's job (03 §6)"
+    message = f"TaskFlow has no turn template for step {step!r}"
     raise ShikiruError(message)
 
 
