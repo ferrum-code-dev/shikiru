@@ -412,17 +412,15 @@ class TaskFlow:
             outcome = await self._reject_uncommitted(task, outcome, execution.turn_dir)
         transition = next_step(task, outcome, self._settings)
         escalated = transition.status is Status.ESCALATED
-        escalation_step, reason = transition.step, transition.escalation_reason
         try:
-            task = await self.apply(task, transition, outcome)
+            if escalated:
+                task = await self._escalate(task, transition, outcome)
+            else:
+                task = await self.apply(task, transition, outcome)
         except UsageError as error:
             task = await self._escalate_scope_change_protocol(task, step, outcome, error)
             return task, TurnCounters(), True
         if escalated:
-            if reason is None:
-                message = f"{task.id} escalated with no escalation_reason on its transition"
-                raise ShikiruError(message)
-            await self.raise_escalation(task, escalation_step, reason, outcome)
             return task, TurnCounters(), True
         return task, TurnCounters(), False
 
@@ -539,14 +537,8 @@ class TaskFlow:
     async def _raise_recovery_escalation(
         self, task: Task, step: Step, role: Role, reason: EscalationReason, result: TurnResult
     ) -> tuple[Task, bool, TurnCounters]:
-        transition = dataclasses.replace(
-            Transition.stay(task, step=step, status=Status.ESCALATED),
-            escalation_reason=reason,
-        )
-        self._tasks.apply_transition(task.id, transition)
-        updated = self.require_task(task.id)
-        await self._titles.refresh(updated)
-        await self.raise_escalation(updated, step, reason, None, result=result, role=role)
+        transition = Transition.escalate(task, reason, step=step)
+        updated = await self._escalate(task, transition, None, result=result, role=role)
         return updated, True, TurnCounters()
 
     async def _move_rung(
@@ -647,14 +639,16 @@ class TaskFlow:
         reason: EscalationReason,
         outcome: Outcome | None,
         *,
+        question: str | None = None,
         result: TurnResult | None = None,
         role: Role | None = None,
     ) -> None:
         """Build and persist the escalation packet for a task flow."""
-        question = self._recovery_questions.pop(task.id, None)
         narrative_question, attempted = _escalation_narrative(reason, outcome, result)
         if question is None:
-            question = narrative_question
+            question = self._recovery_questions.pop(task.id, narrative_question)
+        else:
+            self._recovery_questions.pop(task.id, None)
         try:
             history = self._history.load(task.id)
         except Exception:
@@ -855,35 +849,15 @@ class TaskFlow:
         self._emit_scope_change(task, outcome, [child.id for child in children])
 
     async def _escalate_engine_error(self, task: Task, error: Exception) -> None:
-        transition = dataclasses.replace(
-            Transition.stay(task, step=task.step, status=Status.ESCALATED),
-            escalation_reason=EscalationReason.ENGINE_ERROR,
-        )
-        self._tasks.apply_transition(task.id, transition)
-        updated = self.require_task(task.id)
-        await self._titles.refresh(updated)
-        self._recovery_questions[task.id] = str(error)
-        await self.raise_escalation(updated, task.step, EscalationReason.ENGINE_ERROR, None)
+        transition = Transition.escalate(task, EscalationReason.ENGINE_ERROR, step=task.step)
+        await self._escalate(task, transition, None, question=str(error))
 
     async def _escalate_scope_change_protocol(
         self, task: Task, step: Step, outcome: Outcome, error: UsageError
     ) -> Task:
         self._emit_turn_failed(task, step, ProtocolError())
-        transition = dataclasses.replace(
-            Transition.stay(task, step=step, status=Status.ESCALATED),
-            escalation_reason=EscalationReason.AGENT_PROTOCOL,
-        )
-        self._tasks.apply_transition(task.id, transition)
-        updated = self.require_task(task.id)
-        await self._titles.refresh(updated)
-        self._recovery_questions[task.id] = str(error)
-        await self.raise_escalation(
-            updated,
-            step,
-            EscalationReason.AGENT_PROTOCOL,
-            outcome,
-        )
-        return updated
+        transition = Transition.escalate(task, EscalationReason.AGENT_PROTOCOL, step=step)
+        return await self._escalate(task, transition, outcome, question=str(error))
 
     def _emit_scope_change(
         self, task: Task, outcome: PlanReport | Verdict, new_ids: list[str]
@@ -978,6 +952,46 @@ class TaskFlow:
             message = f"{task_id} vanished while its flow was running"
             raise ShikiruError(message)
         return task
+
+    async def escalate(
+        self,
+        task: Task,
+        transition: Transition,
+        outcome: Outcome | None,
+        *,
+        question: str | None = None,
+        result: TurnResult | None = None,
+        role: Role | None = None,
+    ) -> Task:
+        """Apply and packet an escalation requested by an integration turn."""
+        return await self._escalate(
+            task, transition, outcome, question=question, result=result, role=role
+        )
+
+    async def _escalate(
+        self,
+        task: Task,
+        transition: Transition,
+        outcome: Outcome | None,
+        *,
+        question: str | None = None,
+        result: TurnResult | None = None,
+        role: Role | None = None,
+    ) -> Task:
+        if transition.status is not Status.ESCALATED or transition.escalation_reason is None:
+            message = f"{task.id} escalation has no escalated status or reason"
+            raise ShikiruError(message)
+        updated = await self.apply(task, transition, outcome)
+        await self.raise_escalation(
+            updated,
+            transition.step,
+            transition.escalation_reason,
+            outcome,
+            question=question,
+            result=result,
+            role=role,
+        )
+        return updated
 
     def set_consult_question(self, task_id: str, question: str) -> None:
         """Set the Operator's answer consumed by the next consult turn."""

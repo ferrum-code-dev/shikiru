@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Status
+from shikiru.domain.tasks import EscalationReason
 from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
@@ -27,9 +26,8 @@ class DependencyEscalator:
 
     async def __call__(self, task: Task) -> None:
         """Escalate `task` after the scheduler finds a cancelled dependency."""
-        transition = replace(
-            Transition.stay(task, step=task.step, status=Status.ESCALATED),
-            escalation_reason=EscalationReason.DEPENDENCY_CANCELLED,
+        transition = Transition.escalate(
+            task, EscalationReason.DEPENDENCY_CANCELLED, step=task.step
         )
         self._tasks.apply_transition(task.id, transition)
         self._tasks.set_wait_reason(task.id, None)

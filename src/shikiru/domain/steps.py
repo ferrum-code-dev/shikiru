@@ -72,10 +72,11 @@ class Transition:
             overrides=dict(task.overrides),
         )
 
-
-def _escalate(task: Task, reason: EscalationReason, *, step: Step | None = None) -> Transition:
-    base = Transition.stay(task, step=step if step is not None else task.step)
-    return dataclasses.replace(base, status=Status.ESCALATED, escalation_reason=reason)
+    @staticmethod
+    def escalate(task: Task, reason: EscalationReason, *, step: Step | None) -> Transition:
+        """Build an escalation transition while preserving the task's other state."""
+        base = Transition.stay(task, step=step, status=Status.ESCALATED)
+        return dataclasses.replace(base, escalation_reason=reason)
 
 
 def first_step(task: Task) -> Transition:
@@ -109,7 +110,7 @@ def _from_implement(task: Task, outcome: ImplementationReport) -> Transition:
     if outcome.status == "completed":
         return Transition.stay(task, step=Step.VERIFY)
     if task.counters.consults >= CONSULT_LIMIT:
-        return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
+        return Transition.escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
     counters = task.counters.model_copy(update={"consults": task.counters.consults + 1})
     return dataclasses.replace(Transition.stay(task, step=Step.CONSULT), counters=counters)
 
@@ -123,7 +124,7 @@ def _from_consult(task: Task, outcome: ConsultAnswer) -> Transition:
     raised from `implement` and answers back there at the same iteration, `running` as before.
     """
     if outcome.decision == "escalate":
-        return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
+        return Transition.escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
     if task.status is Status.INTEGRATING:
         return Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
     return Transition.stay(task, step=Step.IMPLEMENT)
@@ -131,7 +132,7 @@ def _from_consult(task: Task, outcome: ConsultAnswer) -> Transition:
 
 def _changes_requested(task: Task, settings: Settings) -> Transition:
     if task.iteration >= settings.orchestration.max_iterations:
-        return _escalate(task, EscalationReason.ITERATIONS_EXHAUSTED, step=Step.VERIFY)
+        return Transition.escalate(task, EscalationReason.ITERATIONS_EXHAUSTED, step=Step.VERIFY)
     rejections = task.counters.rejections_on_rung + 1
     rung_index = dict(task.rung_index)
     overrides = dict(task.overrides)
@@ -159,7 +160,8 @@ def _conflict_round(task: Task) -> Transition:
     base = dataclasses.replace(Transition.stay(task, step=Step.INTEGRATE), counters=counters)
     if rounds >= CONFLICT_ROUNDS:
         return dataclasses.replace(
-            base, status=Status.ESCALATED, escalation_reason=EscalationReason.INTEGRATION_CONFLICT
+            Transition.escalate(task, EscalationReason.INTEGRATION_CONFLICT, step=Step.INTEGRATE),
+            counters=counters,
         )
     return dataclasses.replace(base, status=Status.INTEGRATING)
 
@@ -172,7 +174,7 @@ def _from_verify(task: Task, outcome: Verdict, settings: Settings) -> Transition
         case "changes_requested":
             return _changes_requested(task, settings)
         case "escalate":
-            return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.VERIFY)
+            return Transition.escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.VERIFY)
         case "supersede":
             base = Transition.stay(task, step=None, status=Status.CANCELLED)
             return dataclasses.replace(
@@ -190,7 +192,9 @@ def _from_integrate(task: Task, outcome: Verdict) -> Transition:
         case "changes_requested":
             return _conflict_round(task)
         case "escalate":
-            return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.INTEGRATE)
+            return Transition.escalate(
+                task, EscalationReason.DECISION_REQUIRED, step=Step.INTEGRATE
+            )
         case "supersede":
             message = "a post-rebase conflicts verify cannot supersede the task (03 §6)"
             raise ValueError(message)
@@ -200,7 +204,7 @@ def _from_integrate_conflicts(task: Task, outcome: ImplementationReport) -> Tran
     if outcome.status == "completed":
         return Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
     if task.counters.consults >= CONSULT_LIMIT:
-        return _escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
+        return Transition.escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
     counters = task.counters.model_copy(update={"consults": task.counters.consults + 1})
     base = Transition.stay(task, step=Step.CONSULT, status=Status.INTEGRATING)
     return dataclasses.replace(base, counters=counters)

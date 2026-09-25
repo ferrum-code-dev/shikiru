@@ -10,14 +10,14 @@ another action set to choose from.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import EscalationOption, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Status
+from shikiru.domain.tasks import EscalationReason
 from shikiru.errors import ShikiruError
 from shikiru.workspace.roots import run_dir
 
@@ -219,10 +219,7 @@ class DispatchFailureEscalator:
 
     async def __call__(self, task: Task, error: Exception) -> None:
         """Mark `task` escalated and record the dispatch error for the operator."""
-        transition = replace(
-            Transition.stay(task, step=task.step, status=Status.ESCALATED),
-            escalation_reason=EscalationReason.ENGINE_ERROR,
-        )
+        transition = Transition.escalate(task, EscalationReason.ENGINE_ERROR, step=task.step)
         self._tasks.apply_transition(task.id, transition)
         self._tasks.set_wait_reason(task.id, None)
         current = self._tasks.get(task.id)

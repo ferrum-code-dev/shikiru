@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import dataclasses
 from typing import TYPE_CHECKING, Protocol
 
 from shikiru.domain.recovery import TurnCounters
 from shikiru.domain.reports import ConsultAnswer, ImplementationReport, ReportKind, Verdict
 from shikiru.domain.steps import Transition, next_step
-from shikiru.domain.tasks import EscalationReason, Role, Status, Step, Task
+from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationConflict,
@@ -60,25 +59,21 @@ class IntegrationTurnHost(Protocol):
         """Apply a domain transition and refresh its task title."""
         ...
 
-    async def raise_escalation(
+    async def escalate(
         self,
         task: Task,
-        step: Step | None,
-        reason: EscalationReason,
+        transition: Transition,
         outcome: Outcome | None,
         *,
+        question: str | None = None,
         result: TurnResult | None = None,
         role: Role | None = None,
-    ) -> None:
-        """Create an escalation from a task flow."""
+    ) -> Task:
+        """Apply and packet an escalation through TaskFlow's shared boundary."""
         ...
 
     def require_task(self, task_id: str) -> Task:
         """Reload a task or raise when it disappeared during its flow."""
-        ...
-
-    def set_consult_question(self, task_id: str, question: str) -> None:
-        """Set the question consumed by a later consult turn."""
         ...
 
 
@@ -118,13 +113,8 @@ class IntegrationTurns:
             return
         except (IntegrationBlocked, IntegrationConflict) as error:
             current = host.require_task(task.id)
-            transition = dataclasses.replace(
-                Transition.stay(current, step=Step.INTEGRATE, status=Status.ESCALATED),
-                escalation_reason=error.reason,
-            )
-            updated = await host.apply(current, transition, None)
-            host.set_consult_question(current.id, str(error))
-            await host.raise_escalation(updated, Step.INTEGRATE, error.reason, None)
+            transition = Transition.escalate(current, error.reason, step=Step.INTEGRATE)
+            await host.escalate(current, transition, None, question=str(error))
 
     async def _resolve_conflicts(
         self,
@@ -182,12 +172,8 @@ class IntegrationTurns:
             raise ShikiruError(message)
         transition = next_step(current, outcome, self._settings)
         escalated = transition.status is Status.ESCALATED
-        updated = await host.apply(current, transition, outcome)
         if escalated:
-            reason = transition.escalation_reason
-            if reason is None:
-                message = f"{task.id} post-rebase verdict escalated without a reason"
-                raise ShikiruError(message)
-            await host.raise_escalation(updated, transition.step, reason, outcome, role=Role.LEADER)
+            await host.escalate(current, transition, outcome, role=Role.LEADER)
             raise IntegrationTurnStopped
+        updated = await host.apply(current, transition, outcome)
         return updated, outcome
