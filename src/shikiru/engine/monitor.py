@@ -10,10 +10,6 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import (
-    VIEW_RUNG_KEY,
-    VIEW_SIGNAL_KEY,
-    VIEW_TIME_KEY,
-    VIEW_TURN_KEY,
     AgentSignal,
     Compacted,
     Message,
@@ -26,12 +22,18 @@ from shikiru.agents.contracts import (
     TurnFailed,
     UsageReported,
     role_dir,
-    view_log_path,
 )
 from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import ProtocolError, Stalled
 from shikiru.ui.glyphs import GLYPH_STALLED, ROLE_GLYPHS
 from shikiru.ui.tokens import HOLD_COLOR, ROLE_COLORS
+from shikiru.view_log import (
+    VIEW_RUNG_KEY,
+    VIEW_SIGNAL_KEY,
+    VIEW_TIME_KEY,
+    VIEW_TURN_KEY,
+    view_log_path,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable

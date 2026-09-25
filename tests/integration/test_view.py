@@ -6,9 +6,9 @@ import asyncio
 import json
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import view_argv, view_log_path
 from shikiru.domain.tasks import Mode, Role
 from shikiru.paths import run_dir, task_root
+from shikiru.view_log import view_argv, view_log_path
 from tests.support.engine import set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.waiting import wait_until

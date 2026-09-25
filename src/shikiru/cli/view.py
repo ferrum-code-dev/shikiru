@@ -9,13 +9,13 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 from rich.console import Console
 
-from shikiru.agents.contracts import view_log_path
 from shikiru.cli.context import project_root, state_from
 from shikiru.clock import SystemClock
 from shikiru.domain.tasks import Role
 from shikiru.paths import run_dir
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS
 from shikiru.ui.stream import StreamLine
+from shikiru.view_log import view_log_path
 
 if TYPE_CHECKING:
     from pathlib import Path

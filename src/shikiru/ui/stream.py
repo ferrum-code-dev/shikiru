@@ -7,9 +7,6 @@ from typing import TYPE_CHECKING, Any
 from rich.text import Text
 
 from shikiru.agents.contracts import (
-    VIEW_RUNG_KEY,
-    VIEW_SIGNAL_KEY,
-    VIEW_TURN_KEY,
     Compacted,
     Message,
     QuotaReported,
@@ -22,6 +19,7 @@ from shikiru.agents.contracts import (
 )
 from shikiru.ui.glyphs import GLYPH_DONE, GLYPH_ESCALATED, GLYPH_PENDING, ROLE_GLYPHS
 from shikiru.ui.tokens import ALERT_COLOR, IDLE_COLOR, ROLE_COLORS, STYLE_BOLD, STYLE_DIM
+from shikiru.view_log import VIEW_RUNG_KEY, VIEW_SIGNAL_KEY, VIEW_TURN_KEY
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping

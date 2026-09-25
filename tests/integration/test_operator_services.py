@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.agents.contracts import view_log_path
 from shikiru.domain.commands import Prioritize
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ConsultAnswer
@@ -26,6 +25,7 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.view_log import view_log_path
 from shikiru.workspace.reports import InvalidTurnReportError
 from tests.support.clock import FakeClock
 from tests.support.factories import LEADER_RUNG, LEADER_RUNG_2

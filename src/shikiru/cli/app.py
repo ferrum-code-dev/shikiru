@@ -12,7 +12,7 @@ import typer
 from pydantic import BaseModel
 from rich.console import Console
 
-from shikiru.agents.contracts import CLI_VIEW_COMMAND, parse_rung
+from shikiru.agents.contracts import parse_rung
 from shikiru.bootstrap import (
     build_doctor,
     build_engine,
@@ -32,6 +32,7 @@ from shikiru.domain.tasks import Mode
 from shikiru.errors import ShikiruError, UsageError
 from shikiru.operator.commands import Ack, AckStatus
 from shikiru.operator.lifecycle import CLI_DASH_COMMAND, CLI_ENGINE_COMMAND, PACKAGE_NAME
+from shikiru.view_log import CLI_VIEW_COMMAND
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable

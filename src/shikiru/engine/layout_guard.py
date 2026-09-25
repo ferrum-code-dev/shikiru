@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import view_argv
 from shikiru.domain.commands import HandBack
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Role, Task
@@ -12,6 +11,7 @@ from shikiru.errors import ShikiruError
 from shikiru.paths import task_root
 from shikiru.tmux.client import FORMAT_PANE_ID
 from shikiru.tmux.decorator import render_title
+from shikiru.view_log import view_argv
 
 if TYPE_CHECKING:
     from pathlib import Path

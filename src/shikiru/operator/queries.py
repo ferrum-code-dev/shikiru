@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shikiru.agents.contracts import CostBasis, QuotaWindow, Usage, view_log_path
+from shikiru.agents.contracts import CostBasis, QuotaWindow, Usage
 from shikiru.domain.events import Event
 from shikiru.domain.reports import Report, ReportKind
 from shikiru.domain.runs import Run
@@ -18,6 +18,7 @@ from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
 from shikiru.paths import run_dir, turns_dir
 from shikiru.store.escalations import Escalation
+from shikiru.view_log import view_log_path
 from shikiru.workspace.reports import load_turn_report
 
 if TYPE_CHECKING:
