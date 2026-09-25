@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, ClassVar
 
 from shikiru.domain.commands import (
@@ -187,13 +188,9 @@ class RetryHandler:
             message = f"task {task.id} disappeared while retrying"
             raise CommandRejectedError(message)
         counters = current.counters.model_copy(update={"consults": 0, "conflict_rounds": 0})
-        transition = Transition(
-            step=current.step,
-            status=Status.QUEUED,
-            iteration=current.iteration,
+        transition = dataclasses.replace(
+            Transition.stay(current, step=current.step, status=Status.QUEUED),
             counters=counters,
-            rung_index=dict(current.rung_index),
-            overrides=dict(current.overrides),
         )
         self._context.tasks.apply_transition(current.id, transition)
         self._context.tasks.set_requeued(current.id)
@@ -217,12 +214,8 @@ class SetRungHandler:
         overrides = dict(task.overrides)
         old = overrides.get(command.role)
         overrides[command.role] = command.rung
-        transition = Transition(
-            step=task.step,
-            status=task.status,
-            iteration=task.iteration,
-            counters=task.counters,
-            rung_index=dict(task.rung_index),
+        transition = dataclasses.replace(
+            Transition.stay(task, step=task.step, status=task.status),
             overrides=overrides,
         )
         self._context.tasks.apply_transition(task.id, transition)

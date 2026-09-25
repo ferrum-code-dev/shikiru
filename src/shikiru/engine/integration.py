@@ -283,11 +283,4 @@ class Integrator:
 
 
 def _done_transition(task: Task) -> Transition:
-    return Transition(
-        step=None,
-        status=Status.DONE,
-        iteration=task.iteration,
-        counters=task.counters,
-        rung_index=dict(task.rung_index),
-        overrides=dict(task.overrides),
-    )
+    return Transition.stay(task, step=None, status=Status.DONE)
