@@ -16,7 +16,7 @@ from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.history import ReportHistory
-from shikiru.engine.integration import IntegrationSummary, Integrator, LocalMerge
+from shikiru.engine.integration import Integrator, LocalMerge
 from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.monitor import TurnMonitor
@@ -410,7 +410,7 @@ def _build_integrator(
     layout: LayoutGuard,
 ) -> Integrator:
 
-    async def finalizer(task: Task, _summary: IntegrationSummary) -> None:
+    async def finalizer(task: Task) -> None:
         sessions.close_task(task.id)
         await roots.cleanup(task.id, task.repo)
 

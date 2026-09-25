@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
@@ -56,7 +55,7 @@ class IntegrationSummary:
     residual_risks: tuple[str, ...] = ()
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class IntegrationMetadata:
     """Accepted Leader context carried into the terminal task event."""
 
@@ -77,8 +76,10 @@ class _PrecheckFailed(Exception):
 
 
 type ContinueRebase = Callable[[], Awaitable[None]]
-type ConflictResolver = Callable[[Task, ContinueRebase], Awaitable[Task]]
-type Finalizer = Callable[[Task, IntegrationSummary], Awaitable[None]]
+type ConflictResolver = Callable[
+    [Task, ContinueRebase], Awaitable[tuple[Task, IntegrationMetadata]]
+]
+type Finalizer = Callable[[Task], Awaitable[None]]
 type WindowCloser = Callable[[Task], Awaitable[None]]
 
 
@@ -87,8 +88,8 @@ class IntegrationStrategy(Protocol):
 
     async def merge(
         self, project_root: Path, task_root_path: Path, repo: RepoState
-    ) -> IntegrationSummary:
-        """Merge the task branch into its base when it is ahead."""
+    ) -> tuple[str, ...]:
+        """Merge the task branch into its base and return its commits."""
         ...
 
 
@@ -116,7 +117,7 @@ class LocalMerge:
 
     async def merge(
         self, project_root: Path, task_root_path: Path, repo: RepoState
-    ) -> IntegrationSummary:
+    ) -> tuple[str, ...]:
         """Pre-check the local base, then apply the merge, retrying while it is blocked."""
         deadline = self._clock.now() + timedelta(seconds=self._integration_wait)
         while True:
@@ -131,8 +132,7 @@ class LocalMerge:
                 await self._clock.sleep(min(INTEGRATION_RETRY.total_seconds(), remaining))
                 continue
             break
-        commits = candidate.commits if candidate is not None else ()
-        return IntegrationSummary(summary=f"Merged {len(commits)} commit(s).", commits=commits)
+        return candidate.commits if candidate is not None else ()
 
     async def _apply(self, project_root: Path, repo: RepoState, candidate: _MergeCandidate) -> None:
         if candidate.base_checked_out:
@@ -226,19 +226,22 @@ class Integrator:
                 data={"branch": repo.branch, "base": repo.base},
             )
             current = task
+            current_metadata = metadata
             task_dir = task_root(self._project_root, current.id)
             base_sha = await self._git.rev_parse(task_dir, repo.base)
             branch_sha = await self._git.rev_parse(task_dir, repo.branch)
             if base_sha != branch_sha and await self._try_rebase(task_dir, repo.base):
-                current = await resolve_conflicts(current, lambda: self._continue_rebase(task_dir))
+                current, current_metadata = await resolve_conflicts(
+                    current, lambda: self._continue_rebase(task_dir)
+                )
                 await self._continue_rebase(task_dir)
-            raw_summary = await self._strategy.merge(self._project_root, task_dir, repo)
-            summary = dataclasses.replace(
-                raw_summary,
-                summary=metadata.summary,
-                residual_risks=metadata.residual_risks,
+            commits = await self._strategy.merge(self._project_root, task_dir, repo)
+            summary = IntegrationSummary(
+                summary=current_metadata.summary,
+                commits=commits,
+                residual_risks=current_metadata.residual_risks,
             )
-            await self._finalizer(current, summary)
+            await self._finalizer(current)
             self._tasks.set_summary(current.id, summary.summary)
             updated = self._tasks.get(current.id)
             if updated is None:

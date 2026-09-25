@@ -18,7 +18,6 @@ from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
 from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationMetadata,
-    IntegrationSummary,
     Integrator,
     LocalMerge,
 )
@@ -89,7 +88,7 @@ async def test_local_merge_fast_forwards_base_and_reports_commits(
     )
 
     assert (project_root / "README.md").read_text() == "task\n"
-    assert result.commits
+    assert result
     assert await Git(_RUNNER).current_branch(project_root) == "main"
 
 
@@ -107,7 +106,7 @@ async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
         project_root, task_root, state
     )
 
-    assert result.commits
+    assert result
     assert await Git(_RUNNER).rev_parse(project_root, "release") == await Git(_RUNNER).rev_parse(
         task_root, state.branch
     )
@@ -136,7 +135,7 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
 
     result = await merge_task
 
-    assert result.commits
+    assert result
     assert (project_root / "README.md").read_text() == "task\n"
 
 
@@ -206,7 +205,7 @@ async def test_local_merge_waits_for_a_dirty_directory_ancestor(
 
     result = await merge_task
 
-    assert result.commits
+    assert result
     assert (project_root / "nested" / "task.txt").read_text() == "task\n"
 
 
@@ -249,7 +248,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     order: list[str] = []
     builder = task_root_builder(_RUNNER, project_root)
 
-    async def finalizer(task_value: Task, _summary: IntegrationSummary) -> None:
+    async def finalizer(task_value: Task) -> None:
         order.append("sessions_exited")
         await builder.cleanup(task_value.id, state)
         order.append("worktrees_cleaned")
@@ -264,12 +263,12 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     async def resolve(
         task_value: Task,
         continue_rebase: Callable[[], Awaitable[None]],
-    ) -> Task:
+    ) -> tuple[Task, IntegrationMetadata]:
         task_path = task_root / "README.md"
         task_path.write_text("resolved\n")
         await commit_all(_RUNNER, task_root, "resolve conflict")
         await continue_rebase()
-        return task_value
+        return task_value, IntegrationMetadata("accepted summary", ("residual risk",))
 
     result = await Integrator(
         git=Git(_RUNNER),
@@ -280,7 +279,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
         events=events,
         finalizer=finalizer,
         close_window=close_window,
-    ).run(task, resolve, IntegrationMetadata("accepted summary", ("residual risk",)))
+    ).run(task, resolve, IntegrationMetadata("stale summary"))
 
     final = TaskStore(connection, SystemClock()).get(task.id)
     assert final is not None

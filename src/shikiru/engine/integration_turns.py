@@ -12,6 +12,7 @@ from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationConflict,
     IntegrationCoordinator,
+    IntegrationMetadata,
 )
 from shikiru.errors import ShikiruError
 from shikiru.prompts.renderer import PromptName
@@ -100,12 +101,9 @@ class IntegrationTurns:
 
         async def resolve_conflicts(
             current: Task, continue_rebase: Callable[[], Awaitable[None]]
-        ) -> Task:
+        ) -> tuple[Task, IntegrationMetadata]:
             resolved = await self._resolve_conflicts(current, continue_rebase, host)
-            refreshed = self._history.integration_metadata(resolved)
-            metadata.summary = refreshed.summary
-            metadata.residual_risks = refreshed.residual_risks
-            return resolved
+            return resolved, self._history.integration_metadata(resolved)
 
         try:
             await self._coordinator.run(task, resolve_conflicts, metadata)

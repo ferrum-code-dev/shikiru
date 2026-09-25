@@ -118,7 +118,7 @@ def build_flow(
     if local_integration:
         builder = task_root_builder(SubprocessRunner(), env.project_root)
 
-        async def finalizer(task: Task, _summary: IntegrationSummary) -> None:
+        async def finalizer(task: Task) -> None:
             system.sessions.close_task(task.id)
             await builder.cleanup(task.id, task.repo)
 
