@@ -56,8 +56,7 @@ class CodexQuotaProbe:
             if payload.get("type") != _TOKEN_COUNT_TYPE:
                 continue
             limits = payload.get(_RATE_LIMITS_FIELD)
-            if isinstance(limits, Mapping):
-                latest = cast("Mapping[str, Any]", limits)
+            latest = cast("Mapping[str, Any]", limits) if isinstance(limits, Mapping) else None
         if latest is None:
             return []
         windows: list[QuotaWindow] = []

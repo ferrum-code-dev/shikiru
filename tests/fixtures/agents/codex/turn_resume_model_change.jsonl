@@ -1,0 +1,10 @@
+{"type":"thread.started","thread_id":"session-resume_model_change"}
+{"type":"item.completed","item":{"type":"agent_message","id":"item-1","text":"Working on the change."}}
+{"type":"item.started","item":{"type":"command_execution","id":"item-2","status":"in_progress"}}
+{"type":"item.completed","item":{"type":"command_execution","id":"item-2","status":"completed","exit_code":0}}
+{"type":"item.started","item":{"type":"file_change","id":"item-3","status":"in_progress"}}
+{"type":"item.completed","item":{"type":"file_change","id":"item-3","status":"completed"}}
+{"type":"item.started","item":{"type":"command_execution","id":"item-4","status":"in_progress"}}
+{"type":"item.completed","item":{"type":"command_execution","id":"item-4","status":"completed","exit_code":0}}
+{"type":"item.completed","item":{"type":"agent_message","id":"item-5","text":"Change committed."}}
+{"type":"turn.completed","usage":{"input_tokens":129393,"cached_input_tokens":105344,"output_tokens":608}}

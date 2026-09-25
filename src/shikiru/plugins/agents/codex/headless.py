@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from shikiru.errors import ConfigError
+from shikiru.errors import HeadlessOutputError
 from shikiru.plugins.agents.codex.options import (
     CODEX_COMMAND,
     CONFIG_FLAG,
@@ -126,13 +126,13 @@ def _parse_agent_message(stdout: str) -> Mapping[str, Any]:
             continue
         final_message = message
     if final_message is None:
-        raise ConfigError(_MISSING_AGENT_MESSAGE)
+        raise HeadlessOutputError(_MISSING_AGENT_MESSAGE)
     try:
         decoded = json.loads(final_message)
     except json.JSONDecodeError as error:
-        raise ConfigError(_INVALID_JSON_MESSAGE) from error
+        raise HeadlessOutputError(_INVALID_JSON_MESSAGE) from error
     if not isinstance(decoded, Mapping):
-        raise ConfigError(_INVALID_OBJECT_MESSAGE)
+        raise HeadlessOutputError(_INVALID_OBJECT_MESSAGE)
     return cast("Mapping[str, Any]", decoded)
 
 

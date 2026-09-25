@@ -6,7 +6,6 @@ from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
 from shikiru.agents.contracts import Usage
-from shikiru.domain.runs import NO_USAGE
 
 _EVENT_MESSAGE_TYPE = "event_msg"
 _TOKEN_COUNT_TYPE = "token" + "_count"
@@ -19,6 +18,8 @@ _CACHE_READ_TOKENS_FIELD = "cached_input_tokens"
 _CACHE_WRITE_TOKENS_FIELD = "cache_write_input_tokens"
 _CONTEXT_WINDOW_FIELD = "model_context_window"
 _PERCENT = 100
+_ZERO_TOKENS = 0
+_UNKNOWN_COST = "unknown"
 
 
 def rollout_usage(
@@ -27,7 +28,15 @@ def rollout_usage(
     """Report the latest rollout token count; context from its window, no priced cost."""
     latest = _latest_token_count(entries)
     if latest is None:
-        return NO_USAGE
+        return Usage(
+            _ZERO_TOKENS,
+            _ZERO_TOKENS,
+            _ZERO_TOKENS,
+            _ZERO_TOKENS,
+            None,
+            _UNKNOWN_COST,
+            None,
+        )
     total, last, context_window = latest
     input_tokens = _integer(total, _INPUT_TOKENS_FIELD)
     output_tokens = _integer(total, _OUTPUT_TOKENS_FIELD)
@@ -93,5 +102,5 @@ def _integer(entry: Mapping[str, Any], key: str) -> int:
 def _context_used_pct(last: Mapping[str, Any], context_window: int | None) -> float | None:
     if context_window is None or context_window <= 0 or _INPUT_TOKENS_FIELD not in last:
         return None
-    tokens = _integer(last, _INPUT_TOKENS_FIELD) + _integer(last, _CACHE_READ_TOKENS_FIELD)
+    tokens = _integer(last, _INPUT_TOKENS_FIELD)
     return tokens / context_window * _PERCENT

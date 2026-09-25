@@ -223,7 +223,7 @@ Do the fixes marked _After/With Task N_ inside or after those tasks. Findings on
   - T17, T18 (no stand-ins for our own classes)
   - T19–T25 (trivial, flaky or literal-driven tests)
   - T5 (FakeClock by default)
-- [ ] With Phase 4b tasks: E8, E9 (Task 35), E25, F9 (Task 36), F24 (Tasks 33–34). F3 and C1 duplicate E5 and F2.
+- [ ] With Phase 4b tasks: E8, E9 (Task 35), E25, F9 (Task 36). F24 is closed by Tasks 33–34. F3 and C1 duplicate E5 and F2.
 - Tests: every behaviour fix above gets a behaviour test that fails before the fix. The gate stays green, and coverage stays at or above 80% without tests added only for coverage.
 
 ### Task 32: Headless contract, SDK, contract kit and fake agent
@@ -244,9 +244,11 @@ Task 33 verification note (2026-09-25): `uv run poe check` passes (687 passed, 2
 
 ### Task 34: Codex headless plugin
 Refs: 04 §5.
-- [ ] `exec` / `exec resume` argv with closed stdin, workspace-write sandbox with the run dir and the git common dir writable (verify persistence across `exec resume`), `--json` parser, error-message JSON mapping, rollout context and `rate_limits`, `interactive_command`, `headless`, `doctor`.
-- [ ] Compaction per 04 §5: `model_auto_compact_token_limit` from `compact_at_pct` and the model's window on every turn, compact-and-rerun on `CONTEXT`, `Compacted` from the rollout's `compacted` entry.
-- [ ] Recorded samples under `tests/fixtures/agents/codex/` (first turn, resume with model change, usage limit, API key with null `rate_limits`); offline checks pass; live checks pass, including a commit from the worktree.
+- [x] `exec` / `exec resume` argv with closed stdin, workspace-write sandbox with the run dir and the git common dir writable (verify persistence across `exec resume`), `--json` parser, error-message JSON mapping, rollout context and `rate_limits`, `interactive_command`, `headless`, `doctor`.
+- [x] Compaction per 04 §5: `model_auto_compact_token_limit` from `compact_at_pct` and the model's window on every turn, compact-and-rerun on `CONTEXT`, `Compacted` from the rollout's `compacted` entry.
+- [ ] Recorded samples under `tests/fixtures/agents/codex/` (first turn, resume with model change, usage limit, API key with null `rate_limits`); offline checks pass; live checks pass, including a commit from the worktree. First-turn and resume-with-model-change samples are genuine redacted 0.156.1 captures; the low-threshold compaction sample is a genuine redacted protocol excerpt. The live suite and worktree commit check pass. Genuine headless usage-limit and API-key/null-`rate_limits` captures remain unavailable: the live environment has subscription credentials only and no captured usage-limit failure. Error and null-rate-limit cases have synthetic offline coverage, documented as synthetic in the fixture README.
+
+Task 34 verification note (2026-09-25): `uv run poe check` passes (696 passed, 28 skipped; coverage exceeds the 80% gate). All six live contract checks pass, as do the isolated worktree model-change persistence check and doctor (8 passed in 139.12s). The API-key/null-`rate_limits` and usage-limit recorded-sample evidence remains open for the reasons above.
 
 ### Task 35: Engine on process-per-turn; screen machinery removed
 Refs: 03 §4, §7, 04 §6, 05 §1–2.

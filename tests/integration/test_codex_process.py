@@ -15,6 +15,7 @@ from shikiru.agents.contracts import (
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.clock import SystemClock
+from shikiru.errors import HeadlessOutputError
 from shikiru.plugins.agents.codex.agent import TRUST_PROMPT_MARKERS, create
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import Tmux
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
 _API_KEY_ENV = "SHIKIRU_CODEX_TEST_KEY"
 _TRUST_PROMPT_ENV = "SHIKIRU_CODEX_TRUST_PROMPT"
 _CODEX_HOME_RECORD_ENV = "SHIKIRU_CODEX_HOME_RECORD"
+_MALFORMED_OUTPUT_ENV = "SHIKIRU_CODEX_MALFORMED_OUTPUT"
 
 
 def _install_fake_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, Path]:
@@ -43,6 +45,9 @@ def _install_fake_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tupl
         'printf "%s\\n" "${OPENAI_API_KEY-}" >> "$SHIKIRU_CODEX_ENV"\n'
         'if [ "$1" = "--version" ]; then printf "codex-cli 0.155.0\\n"; exit 0; fi\n'
         'if [ "$1" = "login" ]; then printf "Logged in\\n"; exit 0; fi\n'
+        'if [ "${SHIKIRU_CODEX_MALFORMED_OUTPUT-}" = "1" ]; then '
+        'printf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"not-json"}}\'; exit 0; fi\n'
         'printf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message",'
         '"text":"{\\"ok\\":false}"}}\'\n'
         'printf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message",'
@@ -111,6 +116,26 @@ async def test_api_key_auth_sets_codex_key_for_headless_and_doctor(
     )
     calls = calls_path.read_text(encoding="utf-8").splitlines()
     assert calls.count("login status") == 1
+
+
+async def test_headless_malformed_agent_output_raises_a_dedicated_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_codex(tmp_path, monkeypatch)
+    monkeypatch.setenv(_MALFORMED_OUTPUT_ENV, "1")
+    agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+    headless = agent.headless()
+    assert headless is not None
+
+    with pytest.raises(HeadlessOutputError):
+        await headless.ask(
+            "ping",
+            {"type": "object"},
+            "gpt-5.6-sol",
+            None,
+            tmp_path,
+            timedelta(seconds=5),
+        )
 
 
 @pytest.mark.parametrize("trust_prompt", TRUST_PROMPT_MARKERS)

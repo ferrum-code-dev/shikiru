@@ -70,7 +70,7 @@ _FULL_TURN_USAGE = Usage(
     cache_write_tokens=0,
     cost_usd=None,
     cost_basis="unknown",
-    context_used_pct=9.998839009287925,
+    context_used_pct=5.738777089783282,
 )
 _TWO_TURNS_USAGE = Usage(
     input_tokens=30205,
@@ -79,7 +79,7 @@ _TWO_TURNS_USAGE = Usage(
     cache_write_tokens=0,
     cost_usd=None,
     cost_basis="unknown",
-    context_used_pct=10.210526315789474,
+    context_used_pct=5.95046439628483,
 )
 _NO_TURNS_USAGE = Usage(
     input_tokens=0,
