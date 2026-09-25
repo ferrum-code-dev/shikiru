@@ -15,7 +15,9 @@ from shikiru.engine.daemon import Engine, engine_is_running
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.flow import TaskFlow
+from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import IntegrationSummary, Integrator, LocalMerge
+from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notifier import Notifier
@@ -321,6 +323,7 @@ def build_engine(
         sessions=sessions,
         layout=layout,
     )
+    history = ReportHistory(project_root)
     flow = TaskFlow(
         tasks=tasks,
         events=events,
@@ -343,7 +346,13 @@ def build_engine(
         project_root=project_root,
         quota=quotas,
         clock=resolved_clock,
-        integrator=integrator,
+        integration_turns=IntegrationTurns(
+            coordinator=integrator,
+            history=history,
+            settings=resolved_settings,
+            tasks=tasks,
+        ),
+        history=history,
         runs=runs,
     )
     sampler = ResourceSampler(resolved_clock, layout.process_ids)

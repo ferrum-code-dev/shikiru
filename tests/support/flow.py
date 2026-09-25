@@ -11,12 +11,14 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.tasks import Role
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.flow import TaskFlow
+from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import (
     IntegrationMetadata,
     IntegrationSummary,
     Integrator,
     LocalMerge,
 )
+from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
@@ -140,6 +142,7 @@ def build_flow(
             finalizer=finalizer,
             close_window=close_window,
         )
+    history = ReportHistory(env.project_root)
     flow = TaskFlow(
         tasks=env.tasks,
         events=system.events,
@@ -152,7 +155,13 @@ def build_flow(
         project_root=env.project_root,
         quota=QuotaStore(env.connection),
         clock=flow_clock,
-        integrator=coordinator,
+        integration_turns=IntegrationTurns(
+            coordinator=coordinator,
+            history=history,
+            settings=settings,
+            tasks=env.tasks,
+        ),
+        history=history,
         runs=env.runs,
     )
     return FlowEnv(
