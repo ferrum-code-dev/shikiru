@@ -284,6 +284,17 @@ async def test_retry_requeues_current_step_and_preserves_previous_slot(
     assert handler_env.cancelled == [task.id]
 
 
+@pytest.mark.parametrize("status", [Status.DONE, Status.CANCELLED])
+async def test_retry_rejects_terminal_tasks(handler_env: HandlerFixture, status: Status) -> None:
+    task = _running(handler_env)
+    handler_env.tasks.apply_transition(
+        task.id, Transition.stay(task, step=task.step, status=status)
+    )
+
+    with pytest.raises(CommandRejectedError, match=f"{task.id} is already {status.value}"):
+        await handler_env.registry.handle(Retry(task_id=task.id))
+
+
 async def test_answer_resolution_queues_a_consult_turn(
     handler_env: HandlerFixture,
 ) -> None:

@@ -179,9 +179,7 @@ class RetryHandler:
         if not isinstance(command, Retry):
             reject_wrong_command("RetryHandler", command)
         task = require_task(self._context, command.task_id)
-        if task.status in (Status.DONE, Status.CANCELLED):
-            message = f"{task.id} is already {task.status.value}"
-            raise CommandRejectedError(message)
+        reject_terminal(task)
         await interrupt_task(self._context, task)
         current = self._context.tasks.get(task.id)
         if current is None:
