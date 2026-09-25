@@ -17,8 +17,9 @@ from shikiru.domain.scheduling import (
     occupied_slot_ids,
     pick_ready,
 )
-from shikiru.domain.steps import ACTING_ROLE, Transition
+from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
+from shikiru.engine.events import emit_step_started
 from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
@@ -164,21 +165,7 @@ class Scheduler:
             message=f"{current.id} started in slot {slot}",
             data={"slot": slot},
         )
-        if current.step is not None:
-            role = ACTING_ROLE[current.step]
-            rung = pick_rung(current, role, self._settings)
-            self._events.append(
-                EventKind.STEP_STARTED,
-                task_id=current.id,
-                message=f"{current.id} {current.step.value} started",
-                data={
-                    "step": current.step.value,
-                    "role": role.value,
-                    "iteration": current.iteration,
-                    "agent": rung.agent,
-                    "model": rung.model,
-                },
-            )
+        emit_step_started(self._events, current, self._settings)
         return True
 
     async def _rollback_dispatch(self, task: Task) -> None:

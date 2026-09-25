@@ -47,6 +47,7 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.steps import ACTING_ROLE, Transition, first_step, next_step
 from shikiru.domain.tasks import EscalationReason, Hold, Role, Status, Step, TaskOrigin
+from shikiru.engine.events import emit_step_started
 from shikiru.engine.history import ENGINE_VERDICT_FILENAME, ReportHistory
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
 from shikiru.engine.turns import TurnRequest
@@ -877,22 +878,7 @@ class TaskFlow:
         )
 
     def _emit_step_started(self, task: Task) -> None:
-        if task.step is None:
-            return
-        role = ACTING_ROLE[task.step]
-        rung = pick_rung(task, role, self._settings)
-        self._events.append(
-            EventKind.STEP_STARTED,
-            task_id=task.id,
-            message=f"{task.id} {task.step.value} started",
-            data={
-                "step": task.step.value,
-                "role": role.value,
-                "iteration": task.iteration,
-                "agent": rung.agent,
-                "model": rung.model,
-            },
-        )
+        emit_step_started(self._events, task, self._settings)
 
     def _emit_turn_completed(self, task: Task, outcome: Outcome, execution: _TurnExecution) -> None:
         summary = _turn_summary(outcome)
