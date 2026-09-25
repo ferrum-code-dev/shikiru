@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-import fcntl
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from shikiru.config.settings import RepoConfig
-from shikiru.dashboard.services import (
-    ENGINE_LOCK_RELATIVE_PATH,
-    GitRepoStatusService,
-    engine_is_running,
-)
+from shikiru.dashboard.services import GitRepoStatusService
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
@@ -19,26 +14,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
-
-
-async def test_engine_is_not_running_without_a_lock_file(tmp_path: Path) -> None:
-    assert engine_is_running(tmp_path) is False
-
-
-async def test_engine_is_running_while_another_process_holds_the_lock(tmp_path: Path) -> None:
-    lock_path = tmp_path / ENGINE_LOCK_RELATIVE_PATH
-    lock_path.parent.mkdir(parents=True)
-    lock_path.touch()
-
-    holder = lock_path.open("a+")
-    try:
-        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        assert engine_is_running(tmp_path) is True
-    finally:
-        fcntl.flock(holder, fcntl.LOCK_UN)
-        holder.close()
-
-    assert engine_is_running(tmp_path) is False
 
 
 async def test_repo_status_reports_branch_ahead_behind_and_dirty_count(tmp_path: Path) -> None:

@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-from shikiru.config.loader import PROJECT_CONFIG_RELATIVE_PATH, SHIKIRU_DIR_NAME, load_settings
+from shikiru.config.loader import load_settings
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import not_repository_root
+from shikiru.paths import project_config_path, state_db_path
 from shikiru.store.database import Database
 from shikiru.tmux.client import Tmux, private_socket_name
 from shikiru.workspace.caches import (
@@ -46,7 +47,6 @@ PLUGINS_CHECK_NAME = "plugins"
 PLUGIN_CONFIG_CHECK_NAME = "config.plugins"
 COW_CHECK_NAME = "cow"
 DATABASE_CHECK_NAME = "db"
-STATE_DB_FILENAME = "state.db"
 _PROBE_DEFERRED_MESSAGE = "doctor --probe is deferred to Task 37's headless probe"
 
 
@@ -197,7 +197,7 @@ class Doctor:
         return DoctorCheck(name=REPOSITORY_CHECK_NAME, ok=is_root, detail=detail)
 
     def _settings_check(self, overrides: Sequence[str]) -> tuple[Settings | None, DoctorCheck]:
-        config_path = self._project_root / PROJECT_CONFIG_RELATIVE_PATH
+        config_path = project_config_path(self._project_root)
         if not config_path.is_file():
             return None, DoctorCheck(name=CONFIG_CHECK_NAME, ok=False, detail="config missing")
         try:
@@ -207,7 +207,7 @@ class Doctor:
         return settings, DoctorCheck(name=CONFIG_CHECK_NAME, ok=True, detail=str(config_path))
 
     async def _database_check(self) -> DoctorCheck:
-        database = Database(self._project_root / SHIKIRU_DIR_NAME / STATE_DB_FILENAME)
+        database = Database(state_db_path(self._project_root))
         try:
             version = await asyncio.to_thread(database.health)
         except (OSError, ShikiruError) as error:

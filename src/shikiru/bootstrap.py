@@ -12,9 +12,6 @@ from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.daemon import (
-    ENGINE_LOCK_FILENAME,
-    ENGINE_LOG_DIR,
-    ENGINE_LOG_FILENAME,
     ENGINE_LOGGER_NAME,
     Engine,
     engine_is_running,
@@ -56,6 +53,7 @@ from shikiru.operator.events import EventFeed
 from shikiru.operator.lifecycle import ProjectLifecycle
 from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.queries import OperatorQueries
+from shikiru.paths import engine_lock_path, engine_log_path, project_state_dir, state_db_path
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue
@@ -166,7 +164,7 @@ def build_lifecycle() -> ProjectLifecycle:
                 dashboard_services_module.GitRepoStatusService(
                     git, settings.repo, project_root, clock
                 ),
-                project_root,
+                lambda: engine_is_running(engine_lock_path(project_root)),
             )
             views = dashboard_views_module.StateDashboardViews(
                 services.reader,
@@ -185,7 +183,7 @@ def build_lifecycle() -> ProjectLifecycle:
             services.close()
 
     def engine_up(project_root: Path) -> bool:
-        return engine_is_running(project_root / ".shikiru" / "engine.lock")
+        return engine_is_running(engine_lock_path(project_root))
 
     return ProjectLifecycle(
         runner=runner,
@@ -235,11 +233,11 @@ def build_operator(
     resolved_settings = settings if settings is not None else load_settings(project_root)
     resolved_runner = runner if runner is not None else SubprocessRunner()
     resolved_tmux = tmux if tmux is not None else Tmux(resolved_runner)
-    database = Database(project_root / ".shikiru" / "state.db")
+    database = Database(state_db_path(project_root))
     connection = database.connect()
     reader = StateReader(database, resolved_clock)
     command_queue = CommandQueue(connection, resolved_clock)
-    engine_lock = project_root / ".shikiru" / "engine.lock"
+    engine_lock = engine_lock_path(project_root)
 
     def engine_state() -> bool:
         return engine_is_running(engine_lock)
@@ -294,9 +292,8 @@ def build_engine(
     )
     helper_rung = resolved_settings.roles.helper.ladder[0]
     helper = Helper(agent_pool.get(helper_rung.agent))
-    state_dir = project_root / ".shikiru"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    connection = Database(state_dir / "state.db").connect()
+    project_state_dir(project_root).mkdir(parents=True, exist_ok=True)
+    connection = Database(state_db_path(project_root)).connect()
     tasks = TaskStore(connection, resolved_clock)
     runs = RunStore(connection, resolved_clock)
     events = EventLog(connection, resolved_clock)
@@ -426,8 +423,8 @@ def build_engine(
         on_dispatch_failure=DispatchFailureEscalator(tasks, escalation_raiser, titles),
         titles=titles,
     )
-    lock_path = state_dir / ENGINE_LOCK_FILENAME
-    logger, log_handler = _configure_engine_logging(lock_path)
+    lock_path = engine_lock_path(project_root)
+    logger, log_handler = _configure_engine_logging(project_root)
     return Engine(
         lock_path=lock_path,
         command_queue=command_queue,
@@ -471,10 +468,8 @@ def _build_integrator(
     )
 
 
-def _configure_engine_logging(
-    lock_path: Path,
-) -> tuple[logging.Logger, logging.FileHandler]:
-    log_path = lock_path.parent / ENGINE_LOG_DIR / ENGINE_LOG_FILENAME
+def _configure_engine_logging(project_root: Path) -> tuple[logging.Logger, logging.FileHandler]:
+    log_path = engine_log_path(project_root)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger(ENGINE_LOGGER_NAME)
     handler = logging.FileHandler(log_path)

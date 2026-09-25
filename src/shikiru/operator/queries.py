@@ -15,6 +15,7 @@ from shikiru.domain.runs import Run
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
+from shikiru.paths import turns_dir
 from shikiru.store.escalations import Escalation
 from shikiru.workspace.reports import load_turn_report
 
@@ -246,11 +247,11 @@ class OperatorQueries:
             raise OperatorQueryError(message) from error
 
     def _reports(self, task_id: str) -> list[dict[str, object]]:
-        turns_dir = self._project_root / ".shikiru" / "runs" / task_id / "turns"
-        if not turns_dir.is_dir():
+        task_turns_dir = turns_dir(self._project_root, task_id)
+        if not task_turns_dir.is_dir():
             return []
         reports: list[dict[str, object]] = []
-        for turn_dir in sorted(path for path in turns_dir.iterdir() if path.is_dir()):
+        for turn_dir in sorted(path for path in task_turns_dir.iterdir() if path.is_dir()):
             loaded = load_turn_report(turn_dir)
             if loaded is None:
                 continue

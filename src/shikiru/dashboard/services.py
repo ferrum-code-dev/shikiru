@@ -1,21 +1,19 @@
 """Real `WidgetServices` implementations, wired by `bootstrap` (docs/design/06-operator.md §5.4).
 
-`engine_up` mirrors 02 §1's liveness check: a non-blocking `flock` attempt on
-`.shikiru/engine.lock`, held by the engine for its lifetime. `GitRepoStatusService` is the
-`header` widget's only source of git data, cached for `REPO_STATUS_CACHE_TTL_SECONDS` so a
-0.5 s dashboard refresh never spawns a git process on every tick.
+`GitRepoStatusService` is the `header` widget's only source of git data, cached for
+`REPO_STATUS_CACHE_TTL_SECONDS` so a 0.5 s dashboard refresh never spawns a git process on
+every tick.
 """
 
 from __future__ import annotations
 
-import fcntl
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.dashboard.contract import RepoStatus
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
     from pathlib import Path
 
@@ -23,22 +21,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import RepoConfig
     from shikiru.workspace.git import Git
 
-ENGINE_LOCK_RELATIVE_PATH = f"{SHIKIRU_DIR_NAME}/engine.lock"
 REPO_STATUS_CACHE_TTL_SECONDS = 10.0
-
-
-def engine_is_running(project_dir: Path) -> bool:
-    """Return whether another process holds an exclusive lock on `project_dir`'s engine lock."""
-    lock_path = project_dir / ENGINE_LOCK_RELATIVE_PATH
-    if not lock_path.exists():
-        return False
-    with lock_path.open("a+") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            return True
-        fcntl.flock(handle, fcntl.LOCK_UN)
-        return False
 
 
 @dataclass(frozen=True)
@@ -84,15 +67,17 @@ class GitRepoStatusService:
 class DashboardServices:
     """The `WidgetServices` bootstrap wires into every `dash` process (06 §5.4)."""
 
-    def __init__(self, repo_status_service: GitRepoStatusService, project_dir: Path) -> None:
-        """Delegate `repo_status` to `repo_status_service`, `engine_up` to `project_dir`'s lock."""
+    def __init__(
+        self, repo_status_service: GitRepoStatusService, engine_up: Callable[[], bool]
+    ) -> None:
+        """Delegate repository and engine state reads to their injected services."""
         self._repo_status_service = repo_status_service
-        self._project_dir = project_dir
+        self._engine_up = engine_up
 
     async def repo_status(self) -> RepoStatus:
         """See `GitRepoStatusService.repo_status`."""
         return await self._repo_status_service.repo_status()
 
     def engine_up(self) -> bool:
-        """See `engine_is_running`."""
-        return engine_is_running(self._project_dir)
+        """Return whether the engine holds its liveness lock."""
+        return self._engine_up()

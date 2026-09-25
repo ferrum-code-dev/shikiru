@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.reports import ImplementationReport, PlanReport, Report, Verdict
 from shikiru.engine.integration import IntegrationMetadata
-from shikiru.engine.turns import TURNS_DIR_NAME, read_turn_report
+from shikiru.engine.turns import read_turn_report
+from shikiru.paths import turns_dir
 from shikiru.workspace.reports import InvalidTurnReportError
-from shikiru.workspace.roots import run_dir
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -32,8 +32,7 @@ class ReportHistory:
 
     def load(self, task_id: str) -> list[tuple[str, Report]]:
         """Load valid reports for `task_id`, logging and omitting invalid reports."""
-        task_run_dir = run_dir(self._project_root, task_id)
-        turns_root = task_run_dir / TURNS_DIR_NAME
+        turns_root = turns_dir(self._project_root, task_id)
         if not turns_root.is_dir():
             return []
         turn_dirs = sorted(

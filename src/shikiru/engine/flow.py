@@ -51,9 +51,9 @@ from shikiru.engine.history import ENGINE_VERDICT_FILENAME, ReportHistory
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
 from shikiru.engine.turns import TurnRequest
 from shikiru.errors import ShikiruError, UsageError
+from shikiru.paths import run_dir, task_root
 from shikiru.prompts.renderer import PromptName
 from shikiru.workspace.facts import render_facts
-from shikiru.workspace.roots import run_dir, task_root
 
 _LOGGER = logging.getLogger(__name__)
 

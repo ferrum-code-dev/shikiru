@@ -27,9 +27,6 @@ if TYPE_CHECKING:
     from shikiru.store.tasks import TaskStore
 
 COMMAND_POLL_SECONDS = 0.25
-ENGINE_LOCK_FILENAME = "engine.lock"
-ENGINE_LOG_DIR = "logs"
-ENGINE_LOG_FILENAME = "engine.log"
 ENGINE_LOGGER_NAME = "shikiru"
 
 
@@ -74,6 +71,8 @@ class EngineLock:
 
 def engine_is_running(lock_path: Path) -> bool:
     """Return whether another process currently holds `lock_path`."""
+    if not lock_path.exists():
+        return False
     lock = EngineLock(lock_path)
     try:
         lock.acquire()

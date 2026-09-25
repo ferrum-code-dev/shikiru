@@ -6,8 +6,8 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.domain.tasks import RepoState
+from shikiru.paths import EXCLUDE_LINE, run_dir, task_root
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -16,10 +16,8 @@ if TYPE_CHECKING:
     from shikiru.workspace.caches import CacheCloner
     from shikiru.workspace.git import Git
 
-WORKTREES_DIR_NAME = "worktrees"
-RUNS_DIR_NAME = "runs"
 BRANCH_PREFIX = "shikiru/"
-EXCLUDE_LINE = f"/{SHIKIRU_DIR_NAME}/"
+__all__ = ["EXCLUDE_LINE", "TaskRootBuilder", "branch_name", "run_dir", "slugify", "task_root"]
 
 _SLUG_MAX_LENGTH = 40
 _NON_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
@@ -39,16 +37,6 @@ def slugify(title: str) -> str:
 def branch_name(task_id: str, title: str) -> str:
     """Build the deterministic task branch name `shikiru/T-n-<slug>`."""
     return f"{BRANCH_PREFIX}{task_id}-{slugify(title)}"
-
-
-def run_dir(project_root: Path, task_id: str) -> Path:
-    """Return `task_id`'s run directory `.shikiru/runs/T-n/` (02 §5)."""
-    return project_root / SHIKIRU_DIR_NAME / RUNS_DIR_NAME / task_id
-
-
-def task_root(project_root: Path, task_id: str) -> Path:
-    """Return `task_id`'s task root directory `.shikiru/worktrees/T-n/` (03 §5)."""
-    return project_root / SHIKIRU_DIR_NAME / WORKTREES_DIR_NAME / task_id
 
 
 class TaskRootBuilder:

@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.errors import ConfigError
+from shikiru.paths import EXCLUDE_LINE, SHIKIRU_DIR_NAME, project_config_path
 
 if TYPE_CHECKING:
     from shikiru.operator.plugin_checks import PluginChecks
@@ -26,7 +26,6 @@ CACHE_NAMES = (
     ".gradle",
     ".pytest_cache",
 )
-EXCLUDE_LINE = f"/{SHIKIRU_DIR_NAME}/"
 DEFAULT_MODEL = "default"
 EXCLUDED_DIRECTORIES = frozenset({SHIKIRU_DIR_NAME, ".git"})
 
@@ -77,7 +76,7 @@ class ProjectDetectors:
 
     async def initialize(self) -> Path:
         """Detect facts, write config and exclude `.shikiru/` in the repository."""
-        config_path = self._root / SHIKIRU_DIR_NAME / "config.toml"
+        config_path = project_config_path(self._root)
         if await asyncio.to_thread(config_path.is_file):
             return config_path
         project = await self.detect()

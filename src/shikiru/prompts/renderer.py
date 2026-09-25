@@ -15,8 +15,8 @@ from jinja2 import (
 )
 
 from shikiru.agents.contracts import shikiru_command
-from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.domain.fencing import fence
+from shikiru.paths import PROMPT_OVERRIDES_RELATIVE_PATH
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 TEMPLATES_PACKAGE = "shikiru.prompts"
 TEMPLATES_PACKAGE_PATH = "templates"
-PROMPT_OVERRIDES_RELATIVE_PATH = f"{SHIKIRU_DIR_NAME}/prompts"
 TEMPLATE_FILENAME_SUFFIX = ".md.j2"
 
 REPORT_INSTRUCTION = (

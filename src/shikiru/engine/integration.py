@@ -10,7 +10,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
 from shikiru.errors import CommandFailed, ShikiruError
-from shikiru.workspace.roots import task_root
+from shikiru.paths import task_root
 
 if TYPE_CHECKING:
     import asyncio

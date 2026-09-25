@@ -37,8 +37,8 @@ from shikiru.domain.reports import (
 from shikiru.errors import ShikiruError
 from shikiru.helper.helper import FailureClassification
 from shikiru.helper.models import Unrecoverable
+from shikiru.paths import run_dir, task_root, turns_dir
 from shikiru.workspace.reports import InvalidTurnReportError, load_turn_report
-from shikiru.workspace.roots import run_dir, task_root
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -55,7 +55,6 @@ if TYPE_CHECKING:
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
 
-TURNS_DIR_NAME = "turns"
 NUDGE_LIMIT = 2
 CLASSIFY_CONFIDENCE = 0.8
 _TURN_NUMBER_WIDTH = 2
@@ -122,7 +121,7 @@ class TurnRunner:
         """Run one workflow turn and any resumed nudge turns to a normalized result."""
         task_run_dir = run_dir(self._project_root, task.id)
         task_root_dir = task_root(self._project_root, task.id)
-        turn_dir = self._prepare_turn_dir(task_run_dir, role, request)
+        turn_dir = self._prepare_turn_dir(task_run_dir, task.id, role, request)
         prompt_path = turn_dir / PROMPT_FILENAME
         prompt = f"Read {prompt_path} and follow it exactly."
         nudges = 0
@@ -176,8 +175,10 @@ class TurnRunner:
             prompt = _NUDGE_MESSAGE.format(prompt_path=prompt_path)
             selection = self._sessions.session_for(task, role)
 
-    def _prepare_turn_dir(self, task_run_dir: Path, role: Role, request: TurnRequest) -> Path:
-        turns_root = task_run_dir / TURNS_DIR_NAME
+    def _prepare_turn_dir(
+        self, task_run_dir: Path, task_id: str, role: Role, request: TurnRequest
+    ) -> Path:
+        turns_root = turns_dir(self._project_root, task_id)
         turns_root.mkdir(parents=True, exist_ok=True)
         number = sum(1 for entry in turns_root.iterdir() if entry.is_dir()) + 1
         turn_dir = (

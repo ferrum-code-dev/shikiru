@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Role, Task
 from shikiru.errors import ShikiruError
+from shikiru.paths import task_root
 from shikiru.tmux.client import FORMAT_PANE_ID
 from shikiru.tmux.decorator import PaneDecorator, render_title
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView
-from shikiru.workspace.roots import task_root
 
 if TYPE_CHECKING:
     from pathlib import Path

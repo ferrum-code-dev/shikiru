@@ -282,6 +282,13 @@ def test_engine_lock_is_exclusive(tmp_path: Path) -> None:
     assert not engine_is_running(lock_path)
 
 
+def test_liveness_check_does_not_create_a_missing_lock_path(tmp_path: Path) -> None:
+    lock_path = tmp_path / ".shikiru" / "engine.lock"
+
+    assert not engine_is_running(lock_path)
+    assert not lock_path.exists()
+
+
 async def test_engine_log_captures_child_errors_and_detaches_on_shutdown(tmp_path: Path) -> None:
     engine = build_engine(tmp_path, _settings(), registry=build_registry())
     log_path = tmp_path / ".shikiru" / "logs" / "engine.log"

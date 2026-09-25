@@ -19,7 +19,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason
 from shikiru.errors import ShikiruError
-from shikiru.workspace.roots import run_dir
+from shikiru.paths import run_dir
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

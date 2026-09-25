@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.runs import Run, RunStatus
 from shikiru.errors import ShikiruError
+from shikiru.paths import turns_dir
 from shikiru.workspace.reports import load_turn_report
-from shikiru.workspace.roots import run_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -77,11 +77,11 @@ class SessionManager:
                 self._runs.close(run.id)
 
     def _has_reports(self, task_id: str) -> bool:
-        turns_dir = run_dir(self._project_root, task_id) / "turns"
-        if not turns_dir.is_dir():
+        task_turns_dir = turns_dir(self._project_root, task_id)
+        if not task_turns_dir.is_dir():
             return False
         return any(
             load_turn_report(turn_dir) is not None
-            for turn_dir in turns_dir.iterdir()
+            for turn_dir in task_turns_dir.iterdir()
             if turn_dir.is_dir()
         )

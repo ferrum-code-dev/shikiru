@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from shikiru.config.settings import Settings
 from shikiru.errors import ConfigError
+from shikiru.paths import PROJECT_CONFIG_RELATIVE_PATH, project_config_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -18,8 +19,6 @@ if TYPE_CHECKING:
 
     from pydantic_core import ErrorDetails
 
-SHIKIRU_DIR_NAME = ".shikiru"
-PROJECT_CONFIG_RELATIVE_PATH = f"{SHIKIRU_DIR_NAME}/config.toml"
 _PACKAGED_DEFAULTS_SOURCE = "defaults.toml"
 _SET_OVERRIDE_SOURCE = "--set"
 _BARE_WORD = re.compile(r"[A-Za-z0-9_-]+\Z")
@@ -28,7 +27,7 @@ _BARE_WORD = re.compile(r"[A-Za-z0-9_-]+\Z")
 def load_settings(project_dir: Path, overrides: Sequence[str] = ()) -> Settings:
     """Merge packaged defaults, `config.toml` and `--set` overrides into `Settings`."""
     merged, sources = _load_defaults()
-    project_file = project_dir / PROJECT_CONFIG_RELATIVE_PATH
+    project_file = project_config_path(project_dir)
     if project_file.is_file():
         project_data = _parse_toml(project_file, PROJECT_CONFIG_RELATIVE_PATH)
         merged = _deep_merge(merged, project_data)
