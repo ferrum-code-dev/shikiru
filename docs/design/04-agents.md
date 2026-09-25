@@ -9,7 +9,7 @@ Agents are **code plugins**. The engine depends only on this module, and each pl
 - error mapping
 - context compaction
 
-Rungs select only `{agent, model, effort}`. The Operator configures access in the agent's native project or user files and environment. Shikiru does not select an access mode, read credentials, or rewrite access-related environment variables; plugins pass the Operator's environment to their child processes.
+Rungs select only `{agent, model, effort}`. Agent options are a plugin-owned extension point, including access options when a plugin has a concrete agent-specific need for them. Core Shikiru has no provider-access configuration or credential handling. For the current Claude and Codex plugins, the Operator configures access through each agent's native project or user files and environment, and the plugins pass the Operator's environment to their child processes.
 
 **Turn model (D1).** Every turn is one agent process running headless on a session: the first turn creates the session, every later turn resumes it, also after a model change, a stall, a quota wait, an operator take-over or an engine restart. The process reads nothing from stdin (it is closed), shows no dialogs, and exits when the turn ends. Its structured output stream is the only signal source: no hooks, no screen.
 

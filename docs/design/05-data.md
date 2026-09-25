@@ -7,7 +7,7 @@
 2. `.shikiru/config.toml`
 3. `--set key.path=value` (value parsed as TOML)
 
-`doctor --json` prints the merged result. Core keys are validated by pydantic (`extra="forbid"`). Each `[agents.<name>.options]` table is validated by that plugin's factory at `start` and `doctor`. Shikiru configuration selects agent, model and effort; Operators configure provider access through agent-native files and environment.
+`doctor --json` prints the merged result. Core keys are validated by pydantic (`extra="forbid"`). Each `[agents.<name>.options]` table is a plugin-owned extension point validated by that plugin's factory at `start` and `doctor`; a plugin may define agent-specific access options when its provider requires them. Core Shikiru has no provider-access configuration or credential handling. For the current Claude and Codex plugins, Operators configure provider access through agent-native files and environment, which those plugins pass through to their child processes.
 
 The full reference (this is also what `init` writes):
 

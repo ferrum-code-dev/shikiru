@@ -70,7 +70,7 @@
 
 ## 4. Agent samples
 
-Plugin offline checks replay real recorded streams committed under `tests/fixtures/agents/<agent>/`: per sample the stdout JSONL, stderr, exit code and expected signals, plus session-log excerpts where the plugin reads them (Codex rollout `token_count`). Samples cover a first turn, a resumed turn with a model change, tool calls, rate-limit and usage-limit errors, auth errors, unknown models and priced/unpriced usage (e.g. Claude via OpenRouter). They are captured from real runs — a turn's `<role>.stream.jsonl` and `<role>.stderr.log` are already in that form. When an agent CLI changes format, add new samples next to the old ones.
+Plugin offline checks replay protocol fixtures committed under `tests/fixtures/agents/<agent>/`: per sample the stdout JSONL, stderr, exit code and expected signals, plus session-log excerpts where the plugin reads them (Codex rollout `token_count`). The fixture set includes genuine redacted captures and synthetic behavior cases. Fixture documentation identifies which evidence is genuine; synthetic cases exercise parser and recovery paths that have not been captured from a live run. Genuine captures preserve the relevant CLI stream shape while removing secrets and private content. When an agent CLI changes format, add new samples next to old ones.
 
 ## 5. E2E scenarios (`poe e2e`, `SHIKIRU_E2E=1`)
 
