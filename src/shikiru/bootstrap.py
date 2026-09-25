@@ -155,6 +155,7 @@ def build_lifecycle() -> ProjectLifecycle:
     ) -> None:
         dashboard_app_module = import_module("shikiru.dashboard.app")
         dashboard_services_module = import_module("shikiru.dashboard.services")
+        dashboard_views_module = import_module("shikiru.dashboard.views")
         settings = load_settings(project_root, overrides)
         services = build_operator(
             project_root,
@@ -170,12 +171,16 @@ def build_lifecycle() -> ProjectLifecycle:
                 ),
                 project_root,
             )
-            app_instance = dashboard_app_module.DashboardApp(
-                state=services.reader,
-                project_dir=project_root,
+            views = dashboard_views_module.StateDashboardViews(
+                services.reader,
                 focus_task=focus_task,
-                services=dashboard_services,
                 settings=settings,
+                sources=dashboard_services,
+            )
+            app_instance = dashboard_app_module.DashboardApp(
+                focus_task=focus_task,
+                views=views,
+                on_change=services.reader.watch,
                 widget_names=settings.dashboard.widgets,
             )
             await app_instance.run_async()

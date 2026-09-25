@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from shikiru.agents.contracts import QuotaWindow
 from shikiru.domain.events import Event
 from shikiru.domain.runs import Run
-from shikiru.domain.scheduling import dispatch_sort_key
+from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
 from shikiru.store.escalations import Escalation
@@ -167,17 +167,10 @@ class OperatorQueries:
         usage = _aggregate_usage(runs)
         agents = sorted({run.agent for run in runs} | set(self._reader.list_quota_agents()))
         task_detail = self.get_task(task_id) if task_id is not None else None
-        active_slots = len(
-            {
-                task.slot
-                for task in tasks
-                if task.status in (Status.RUNNING, Status.INTEGRATING) and task.slot is not None
-            }
-        )
         return StatusView(
             project=self._project,
             engine_up=self._engine_up(),
-            slots=SlotView(active=active_slots, maximum=self._max_parallel),
+            slots=SlotView(active=len(occupied_slot_ids(tasks)), maximum=self._max_parallel),
             tasks=summaries,
             active_tasks=active,
             queued_tasks=queued,

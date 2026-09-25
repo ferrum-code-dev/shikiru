@@ -9,9 +9,10 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.glyphs import GLYPH_ENGINE
 from shikiru.ui.status import status_visual
-from shikiru.ui.strip import TaskStrip, task_strip_data
+from shikiru.ui.strip import TaskStrip
 from shikiru.ui.tokens import ALERT_COLOR, ENGINE_COLOR, STYLE_BOLD
 
 if TYPE_CHECKING:

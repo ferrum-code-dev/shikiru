@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.text import Text
 
-from shikiru.domain.ladder import pick_rung
-from shikiru.domain.steps import ACTING_ROLE, Step
-from shikiru.domain.tasks import Hold, Mode, Role, Status, Task
+from shikiru.domain.tasks import Mode, Role
 from shikiru.ui.glyphs import (
     GLYPH_DONE,
     GLYPH_ESCALATED,
@@ -23,7 +20,6 @@ from shikiru.ui.glyphs import (
     GLYPH_STALLED,
     PANEL_KANJI,
     ROLE_GLYPHS,
-    SPINNER_FRAMES,
     STAGE_IMPLEMENT,
     STAGE_MERGE,
     STAGE_PLAN,
@@ -42,9 +38,6 @@ from shikiru.ui.tokens import (
     STYLE_REVERSE,
     SUCCESS_COLOR,
 )
-
-if TYPE_CHECKING:
-    from shikiru.config.settings import Settings
 
 STRIP_WIDE_MIN_COLUMNS = 60
 
@@ -169,110 +162,6 @@ class TaskStripData:
     title: str
     panels: tuple[PanelView, ...] = ()
     stamp: StripStamp | None = None
-
-
-_PANEL_INDEX: dict[Step, int] = {
-    Step.TRIAGE: 0,
-    Step.PLAN: 1,
-    Step.IMPLEMENT: 1,
-    Step.CONSULT: 1,
-    Step.VERIFY: 2,
-    Step.INTEGRATE: 3,
-}
-
-
-def task_strip_data(task: Task, settings: Settings) -> TaskStripData:
-    """Build shared strip data for `task` using the configured role ladder."""
-    if task.step is None:
-        if task.status not in (Status.QUEUED, Status.DONE, Status.CANCELLED):
-            message = f"task {task.id} is active but has no step recorded"
-            raise ValueError(message)
-        return _unstarted_strip_data(task)
-    return TaskStripData(
-        task_id=task.id,
-        title=task.title,
-        panels=_panels_for(task, settings),
-        stamp=_stamp_for(task),
-    )
-
-
-def _unstarted_strip_data(task: Task) -> TaskStripData:
-    if task.status is Status.QUEUED:
-        state = PanelState.PENDING
-        glyph = GLYPH_PENDING
-    elif task.status is Status.DONE:
-        state = PanelState.DONE
-        glyph = GLYPH_DONE
-    else:
-        state = PanelState.ESCALATED
-        glyph = GLYPH_ESCALATED
-    panel = PanelView(label=task.status.value.title(), stage_glyph=glyph, state=state)
-    return TaskStripData(task_id=task.id, title=task.title, panels=(panel,))
-
-
-def _active_panel_state(task: Task) -> PanelState:
-    if task.status is Status.ESCALATED or task.status is Status.CANCELLED:
-        return PanelState.ESCALATED
-    if task.status is Status.DONE:
-        return PanelState.DONE
-    return PanelState.ACTIVE
-
-
-def _panel_view(
-    label: str, glyph: str, state: PanelState, *, step: Step, task: Task, settings: Settings
-) -> PanelView:
-    if state not in (PanelState.ACTIVE, PanelState.ESCALATED):
-        return PanelView(label=label, stage_glyph=glyph, state=state)
-    role = ACTING_ROLE[step]
-    rung = pick_rung(task, role, settings)
-    detail = f"iter {task.iteration}" if task.iteration else ""
-    role_line = f"{ROLE_GLYPHS[role]} {rung.agent}/{rung.model}"
-    spinner_frame = SPINNER_FRAMES[0] if state is PanelState.ACTIVE else ""
-    return PanelView(
-        label=label,
-        stage_glyph=glyph,
-        state=state,
-        detail=detail,
-        role_line=role_line,
-        spinner_frame=spinner_frame,
-        role=role if state is PanelState.ACTIVE else None,
-    )
-
-
-def _panels_for(task: Task, settings: Settings) -> tuple[PanelView, ...]:
-    if task.step is None:
-        message = f"task {task.id} is active but has no step recorded"
-        raise ValueError(message)
-    step = task.step
-    active_state = _active_panel_state(task)
-    if task.mode is None:
-        if step is not Step.TRIAGE:
-            message = f"task {task.id} has no mode yet but is at step {step!r}, not triage"
-            raise ValueError(message)
-        panel = _panel_view(
-            "Triage", STAGE_TRIAGE, active_state, step=step, task=task, settings=settings
-        )
-        return (panel,)
-    specs = panel_specs_for_mode(task.mode)
-    current_index = _PANEL_INDEX[step]
-    panels: list[PanelView] = []
-    for index, (label, glyph) in enumerate(specs):
-        if index < current_index:
-            state = PanelState.DONE
-        elif index == current_index:
-            state = active_state
-        else:
-            state = PanelState.PENDING
-        panels.append(_panel_view(label, glyph, state, step=step, task=task, settings=settings))
-    return tuple(panels)
-
-
-def _stamp_for(task: Task) -> StripStamp | None:
-    if Hold.PAUSED in task.holds:
-        return StripStamp(StampKind.PAUSED)
-    if Hold.INTERVENTION in task.holds:
-        return StripStamp(StampKind.OPERATOR)
-    return None
 
 
 def _fit(text: str, width: int) -> str:

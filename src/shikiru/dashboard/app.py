@@ -12,13 +12,10 @@ from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from textual.app import ComposeResult
 
-    from shikiru.config.settings import Settings
-    from shikiru.dashboard.contract import DashboardWidget, WidgetServices
-    from shikiru.store.reader import StateReader
+    from shikiru.dashboard.contract import DashboardViews, DashboardWidget, OnChangeRegistration
 
 _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
 
@@ -41,30 +38,24 @@ class DashboardApp(App[None]):
     def __init__(
         self,
         *,
-        state: StateReader,
-        project_dir: Path,
         focus_task: str | None,
-        services: WidgetServices,
-        settings: Settings,
+        views: DashboardViews,
+        on_change: OnChangeRegistration,
         widget_names: Sequence[str],
     ) -> None:
         """Build the system pane for `focus_task` (`None` means the home window)."""
         super().__init__()
-        self._state = state
-        self._project_dir = project_dir
         self._focus_task = focus_task
-        self._services = services
-        self._settings = settings
+        self._views = views
+        self._on_change = on_change
         self._widget_names = tuple(widget_names)
 
     def compose(self) -> ComposeResult:
         """Yield one mounted `Widget` per configured widget name, in order."""
         context = WidgetContext(
-            state=self._state,
-            project_dir=self._project_dir,
+            views=self._views,
             focus_task=self._focus_task,
-            services=self._services,
-            settings=self._settings,
+            on_change=self._on_change,
         )
         for name in self._widget_names:
             yield _load_widget(name).create(context)

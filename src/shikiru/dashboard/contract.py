@@ -1,25 +1,19 @@
-"""The dashboard widget plugin contract (docs/design/06-operator.md §5.4).
-
-A widget is a plugin registered under the `shikiru.widgets` entry point group. `DashboardApp`
-loads one per name in `dashboard.widgets` (05 §1) and builds it from a `WidgetContext`, so a
-widget never reaches the state DB, tmux or git directly: it reads `context.state` and calls
-`context.services` for anything else.
-"""
+"""Stable view models and plugin protocols for dashboard widgets (06 §5.4)."""
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from textual.widget import Widget
 
-    from shikiru.config.settings import Settings
-    from shikiru.store.reader import StateReader
+    from shikiru.ui.strip import TaskStripData
 
 WIDGET_ENTRY_POINT_GROUP = "shikiru.widgets"
+OnChange = Callable[[], Awaitable[None]]
+OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -32,27 +26,42 @@ class RepoStatus:
     dirty: int
 
 
-class WidgetServices(Protocol):
-    """Services `WidgetContext` supplies beyond `StateReader`, wired by `bootstrap` (06 §5.4)."""
+@dataclass(frozen=True)
+class HeaderView:
+    """Project and engine summary rendered by the header widget."""
 
-    async def repo_status(self) -> RepoStatus:
-        """Return the project checkout's state, cached for at most 10 s."""
-        ...
-
-    def engine_up(self) -> bool:
-        """Return whether the engine currently holds `.shikiru/engine.lock`."""
-        ...
+    project: str
+    engine_up: bool
+    occupied_slots: int
+    maximum_slots: int
+    repo: RepoStatus
 
 
 @dataclass(frozen=True)
-class WidgetContext:
-    """Everything a `DashboardWidget` needs to build its `Widget` (06 §5.4)."""
+class QueueRow:
+    """One queued task row, already ordered by the scheduler's dispatch rules."""
 
-    state: StateReader
-    project_dir: Path
-    focus_task: str | None
-    services: WidgetServices
-    settings: Settings
+    task_id: str
+    title: str
+    priority: int
+    dependencies: tuple[str, ...]
+    wait_reason: str | None
+
+
+class DashboardViews(Protocol):
+    """Ready-to-render data; widget plugins never receive state or configuration objects."""
+
+    async def header(self) -> HeaderView:
+        """Return the project, engine, slots and repository view."""
+        ...
+
+    def strips(self) -> list[TaskStripData]:
+        """Return active task strips, with the focused task first."""
+        ...
+
+    def queue(self) -> list[QueueRow]:
+        """Return queued tasks in dispatch order."""
+        ...
 
 
 class DashboardWidget(Protocol):
@@ -61,5 +70,14 @@ class DashboardWidget(Protocol):
     name: str
 
     def create(self, context: WidgetContext) -> Widget:
-        """Build this widget's `textual.widget.Widget` from `context`."""
+        """Build this widget from its views and update subscription."""
         ...
+
+
+@dataclass(frozen=True)
+class WidgetContext:
+    """Data and update subscription supplied to a `DashboardWidget`."""
+
+    views: DashboardViews
+    focus_task: str | None
+    on_change: OnChangeRegistration

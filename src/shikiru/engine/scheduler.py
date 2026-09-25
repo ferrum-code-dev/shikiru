@@ -14,6 +14,7 @@ from shikiru.domain.scheduling import (
     ReadySchedule,
     SchedulingGates,
     TaskAgents,
+    occupied_slot_ids,
     pick_ready,
 )
 from shikiru.domain.steps import ACTING_ROLE, Transition
@@ -92,12 +93,9 @@ class Scheduler:
         return dataclasses.replace(schedule, dispatches=tuple(successful_dispatches))
 
     def _gates(self, tasks: list[Task]) -> SchedulingGates:
-        active_slots = {
-            task.slot
-            for task in tasks
-            if task.status in (Status.RUNNING, Status.INTEGRATING) and task.slot is not None
-        }
-        slots = frozenset(range(self._settings.orchestration.max_parallel)) - active_slots
+        slots = frozenset(range(self._settings.orchestration.max_parallel)) - occupied_slot_ids(
+            tasks
+        )
         blocked = frozenset(block.agent for block in self._quotas.active_blocks(self._clock.now()))
         agents = {
             task.id: TaskAgents(

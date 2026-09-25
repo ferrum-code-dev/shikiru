@@ -9,8 +9,9 @@ from textual.app import App, ComposeResult
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import RepoStatus, WidgetContext
+from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.scheduling import WaitReason
-from shikiru.domain.steps import first_step
+from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import Hold, Mode, Status
 from shikiru.plugins.widgets.header import HeaderPanel, HeaderWidget
 from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
@@ -62,6 +63,7 @@ def _submit_task(
 ) -> str:
     task = seed_task(connection, clock, title="Add retry", mode=mode)
     store = TaskStore(connection, clock)
+    store.set_slot(task.id, 0)
     store.apply_transition(task.id, first_step(task))
     return task.id
 
@@ -70,11 +72,14 @@ def _context(
     reader: StateReader, project_dir: Path, *, services: _StubServices | None = None
 ) -> WidgetContext:
     return WidgetContext(
-        state=reader,
-        project_dir=project_dir,
+        views=StateDashboardViews(
+            reader,
+            focus_task=None,
+            settings=load_settings(project_dir),
+            sources=services or _StubServices(),
+        ),
         focus_task=None,
-        services=services or _StubServices(),
-        settings=load_settings(project_dir),
+        on_change=reader.watch,
     )
 
 
@@ -95,6 +100,24 @@ async def test_header_shows_project_name_engine_state_and_slots(
         assert "slots 1/2" in text
         assert "+1/-0" in text
         assert "2 dirty" in text
+
+
+async def test_header_does_not_count_an_escalated_slot_as_occupied(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="escalated")
+    store = TaskStore(connection, clock)
+    store.set_slot(task.id, 0)
+    store.apply_transition(task.id, Transition.stay(task, step=task.step, status=Status.ESCALATED))
+
+    context = _context(reader, project_dir)
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with _WidgetHostApp(widget).run_test() as pilot:
+        await pilot.pause()
+
+        assert "slots 0/2" in cast("str", widget.content)
 
 
 async def test_header_refreshes_when_the_writer_commits(

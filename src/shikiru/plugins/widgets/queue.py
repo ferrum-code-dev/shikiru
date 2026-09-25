@@ -6,22 +6,19 @@ from typing import TYPE_CHECKING
 
 from textual.widgets import Static
 
-from shikiru.domain.scheduling import dispatch_sort_key
-from shikiru.domain.tasks import Status, Task
-
 if TYPE_CHECKING:
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import WidgetContext
+    from shikiru.dashboard.contract import QueueRow, WidgetContext
 
 _NO_WAIT_REASON = "-"
 _NO_DEPENDENCIES = "-"
 
 
-def _queue_line(task: Task) -> str:
-    deps = ", ".join(task.depends_on) if task.depends_on else _NO_DEPENDENCIES
+def _queue_line(task: QueueRow) -> str:
+    deps = ", ".join(task.dependencies) if task.dependencies else _NO_DEPENDENCIES
     reason = task.wait_reason or _NO_WAIT_REASON
-    return f"{task.id} {task.title} · priority {task.priority} · deps {deps} · {reason}"
+    return f"{task.task_id} {task.title} · priority {task.priority} · deps {deps} · {reason}"
 
 
 class QueuePanel(Static):
@@ -33,16 +30,12 @@ class QueuePanel(Static):
         self._widget_context = context
 
     async def on_mount(self) -> None:
-        """Render the current queue, then refresh on every `StateReader.watch` change."""
+        """Render the current queue, then refresh on every state change."""
         await self._refresh()
-        self.run_worker(self._widget_context.state.watch(self._refresh), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
 
     async def _refresh(self) -> None:
-        queued = sorted(
-            self._widget_context.state.list_tasks(statuses=(Status.QUEUED,)),
-            key=dispatch_sort_key,
-        )
-        lines = [_queue_line(task) for task in queued]
+        lines = [_queue_line(task) for task in self._widget_context.views.queue()]
         self.update("\n".join(lines) if lines else "queue empty")
 
 

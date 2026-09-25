@@ -5,7 +5,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.domain.scheduling import SchedulingGates, TaskAgents, WaitReason, pick_ready
+from shikiru.domain.scheduling import (
+    SchedulingGates,
+    TaskAgents,
+    WaitReason,
+    occupied_slot_ids,
+    pick_ready,
+)
 from shikiru.domain.tasks import Hold, Status
 from tests.support.factories import make_task
 
@@ -13,6 +19,19 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 _DEFAULT_AGENTS = TaskAgents(leader="claude", implementer="codex")
+
+
+def test_occupied_slots_only_include_distinct_running_and_integrating_slots() -> None:
+    tasks = [
+        make_task(id="T-1", seq=1, status=Status.RUNNING, slot=0),
+        make_task(id="T-2", seq=2, status=Status.INTEGRATING, slot=1),
+        make_task(id="T-3", seq=3, status=Status.ESCALATED, slot=2),
+        make_task(id="T-4", seq=4, status=Status.RUNNING, slot=1),
+        make_task(id="T-5", seq=5, status=Status.RUNNING),
+        make_task(id="T-6", seq=6, status=Status.QUEUED, slot=3),
+    ]
+
+    assert occupied_slot_ids(tasks) == frozenset({0, 1})
 
 
 def _agents_for(*task_ids: str) -> dict[str, TaskAgents]:

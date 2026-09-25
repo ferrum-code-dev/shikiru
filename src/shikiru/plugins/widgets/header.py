@@ -6,16 +6,20 @@ from typing import TYPE_CHECKING
 
 from textual.widgets import Static
 
-from shikiru.domain.tasks import ACTIVE_STATUSES
-
 if TYPE_CHECKING:
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import RepoStatus, WidgetContext
+    from shikiru.dashboard.contract import HeaderView, WidgetContext
 
 
-def _repo_line(status: RepoStatus) -> str:
-    return f"{status.branch} · +{status.ahead}/-{status.behind} · {status.dirty} dirty"
+def _header_text(view: HeaderView) -> str:
+    engine_state = "up" if view.engine_up else "down"
+    summary = (
+        f"{view.project} · engine {engine_state} · slots {view.occupied_slots}/{view.maximum_slots}"
+    )
+    repo = view.repo
+    repo_line = f"{repo.branch} · +{repo.ahead}/-{repo.behind} · {repo.dirty} dirty"
+    return f"{summary}\n{repo_line}"
 
 
 class HeaderPanel(Static):
@@ -27,18 +31,12 @@ class HeaderPanel(Static):
         self._widget_context = context
 
     async def on_mount(self) -> None:
-        """Render the current state, then refresh on every `StateReader.watch` change."""
+        """Render the current view, then refresh on every state change."""
         await self._refresh()
-        self.run_worker(self._widget_context.state.watch(self._refresh), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
 
     async def _refresh(self) -> None:
-        settings = self._widget_context.settings
-        active = len(self._widget_context.state.list_tasks(statuses=ACTIVE_STATUSES))
-        max_parallel = settings.orchestration.max_parallel
-        engine_state = "up" if self._widget_context.services.engine_up() else "down"
-        repo_status = await self._widget_context.services.repo_status()
-        summary = f"{settings.project.name} · engine {engine_state} · slots {active}/{max_parallel}"
-        self.update(f"{summary}\n{_repo_line(repo_status)}")
+        self.update(_header_text(await self._widget_context.views.header()))
 
 
 class HeaderWidget:

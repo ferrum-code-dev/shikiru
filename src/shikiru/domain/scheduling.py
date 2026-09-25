@@ -64,6 +64,15 @@ def dispatch_sort_key(task: Task) -> tuple[bool, int, int]:
     return (task.requeued_at is None, -task.priority, task.seq)
 
 
+def occupied_slot_ids(tasks: Sequence[Task]) -> frozenset[int]:
+    """Return distinct slots held by running or integrating tasks (03 §1.2, §10)."""
+    return frozenset(
+        task.slot
+        for task in tasks
+        if task.status in (Status.RUNNING, Status.INTEGRATING) and task.slot is not None
+    )
+
+
 def _group_queued_tasks(
     tasks: Sequence[Task], by_id: Mapping[str, Task]
 ) -> tuple[list[Task], dict[str, WaitReason], list[str]]:

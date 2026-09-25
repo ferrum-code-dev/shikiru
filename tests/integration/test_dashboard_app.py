@@ -9,6 +9,7 @@ from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import RepoStatus
+from shikiru.dashboard.views import StateDashboardViews
 from shikiru.store.reader import StateReader
 from tests.support.config import write_minimal_project
 
@@ -35,11 +36,14 @@ async def test_dashboard_app_rejects_an_unregistered_widget_name(
     reader = StateReader(database, SystemClock())
     try:
         app = DashboardApp(
-            state=reader,
-            project_dir=project_dir,
             focus_task=None,
-            services=_StubServices(),
-            settings=load_settings(project_dir),
+            views=StateDashboardViews(
+                reader,
+                focus_task=None,
+                settings=load_settings(project_dir),
+                sources=_StubServices(),
+            ),
+            on_change=reader.watch,
             widget_names=["no-such-widget"],
         )
         with pytest.raises(WidgetPluginError):
@@ -58,11 +62,14 @@ async def test_dashboard_mounts_the_default_widgets(
     settings = load_settings(project_dir)
     try:
         app = DashboardApp(
-            state=reader,
-            project_dir=project_dir,
             focus_task=None,
-            services=_StubServices(),
-            settings=settings,
+            views=StateDashboardViews(
+                reader,
+                focus_task=None,
+                settings=settings,
+                sources=_StubServices(),
+            ),
+            on_change=reader.watch,
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test():
@@ -104,11 +111,14 @@ async def test_dashboard_app_rejects_an_ambiguous_widget_name(
     reader = StateReader(database, SystemClock())
     try:
         app = DashboardApp(
-            state=reader,
-            project_dir=project_dir,
             focus_task=None,
-            services=_StubServices(),
-            settings=load_settings(project_dir),
+            views=StateDashboardViews(
+                reader,
+                focus_task=None,
+                settings=load_settings(project_dir),
+                sources=_StubServices(),
+            ),
+            on_change=reader.watch,
             widget_names=["dup"],
         )
         with pytest.raises(WidgetPluginError, match="dist-one") as excinfo:

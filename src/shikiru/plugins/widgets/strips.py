@@ -7,28 +7,13 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 from textual.widgets import Static
 
-from shikiru.domain.tasks import ACTIVE_STATUSES
-from shikiru.ui.strip import (
-    STRIP_WIDE_MIN_COLUMNS,
-    TaskStrip,
-    task_strip_data,
-)
+from shikiru.ui.strip import STRIP_WIDE_MIN_COLUMNS, TaskStrip
 
 if TYPE_CHECKING:
     from textual import events
     from textual.widget import Widget
 
-    from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import WidgetContext
-    from shikiru.store.reader import StateReader
-
-
-def _strips(
-    state: StateReader, focus_task: str | None, settings: Settings, width: int
-) -> list[Text]:
-    active = state.list_tasks(statuses=ACTIVE_STATUSES)
-    active.sort(key=lambda task: task.id != focus_task)
-    return [TaskStrip(task_strip_data(task, settings)).render(width) for task in active]
 
 
 class StripsPanel(Static):
@@ -40,9 +25,9 @@ class StripsPanel(Static):
         self._widget_context = context
 
     async def on_mount(self) -> None:
-        """Render the current strips, then refresh on every `StateReader.watch` change."""
+        """Render the current strips, then refresh on every state change."""
         await self._refresh()
-        self.run_worker(self._widget_context.state.watch(self._refresh), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
 
     async def on_resize(self, event: events.Resize) -> None:
         """Re-render at the new width: a narrower pane switches every strip to its one-line form."""
@@ -51,12 +36,7 @@ class StripsPanel(Static):
 
     async def _refresh(self) -> None:
         width = self.size.width or STRIP_WIDE_MIN_COLUMNS
-        strips = _strips(
-            self._widget_context.state,
-            self._widget_context.focus_task,
-            self._widget_context.settings,
-            width,
-        )
+        strips = [TaskStrip(data).render(width) for data in self._widget_context.views.strips()]
         if not strips:
             self.update("no active tasks")
             return

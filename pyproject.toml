@@ -174,10 +174,18 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Widget plugins (02 §2): plugins.widgets imports only dashboard.contract, ui and store.reader"
+name = "Widget plugins (02 §2): plugins.widgets imports only dashboard.contract and ui"
 type = "forbidden"
 source_modules = ["shikiru.plugins.widgets"]
 forbidden_modules = [
+  "shikiru.config",
+  "shikiru.domain",
+  "shikiru.store",
+  "shikiru.operator",
+  "shikiru.bootstrap",
+  "shikiru.dashboard.app",
+  "shikiru.dashboard.services",
+  "shikiru.dashboard.views",
   "shikiru.config.loader",
   "shikiru.store.database",
   "shikiru.store.tasks",
