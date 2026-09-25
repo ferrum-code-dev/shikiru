@@ -1,17 +1,18 @@
 # Claude turn stream scenarios
 
-The `turn_*.jsonl` and matching stderr files in this directory are synthetic
-protocol scenarios used for offline parser and process-sequence checks. They
-are not captured Claude Code sessions. Claude's login check reported `not
-authenticated` while Task 33 was implemented, and the repository contained no
-genuine headless stream-json captures to reuse. The recorded-sample and live
-verification acceptance criteria remain open until real captures and an
-authenticated Claude Code session are available.
+The `turn_*.jsonl` files are synthetic protocol scenarios except
+`turn_openrouter_live_redacted.jsonl`, a genuine successful stream-json capture
+from Claude Code 2.1.281 through the configured OpenRouter environment. That
+capture keeps protocol and usage fields, while redacting session and model
+identifiers, response text, timing data, and exact cost. It contains no prompt,
+credentials, or raw headers.
 
-On 2026-09-25, an auth-configured live attempt loaded the OpenRouter environment
-from the local `.claude/settings.local.json.bak` through a temporary launcher.
-Claude Code 2.1.281 emitted seven `system/api_retry` events without an HTTP
-status or a terminal result; the live report check timed out after 60 seconds.
-No genuine capture was added. Live contract and compaction checks remain
-unverified, and context-overflow compaction was not attempted because a basic
-turn did not complete.
+On 2026-09-25, the default sandbox could not resolve the OpenRouter host
+(`gaierror`). A host-only probe with network escalation returned HTTP 200. One
+short turn using the configured Haiku model then emitted `SessionStarted`,
+`Message`, `UsageReported` with non-zero tokens, and `TurnEnded`. This attributes
+the earlier retry-only timeout to the sandbox network restriction; no auth,
+model, or stream-protocol failure was reproduced after escalation.
+
+The remaining genuine sample cases, full live contract suite, and `/compact`
+after context overflow remain unverified. Context overflow was not attempted.

@@ -49,6 +49,8 @@ _ROLE = "implementer"
 _MODEL = "claude-haiku-4-5-20251001"
 _OTHER_MODEL = "claude-sonnet-4-5-20250929"
 _OPENROUTER_MODEL = "anthropic/claude-haiku-4-5"
+_OPENROUTER_LIVE_SESSION_ID = "session-openrouter-live-redacted"
+_OPENROUTER_LIVE_RESPONSE = "[redacted live response]"
 _SESSION_RESUMED = "session-resumed"
 _API_KEY_ENV = "SHIKIRU_CLAUDE_CAPTURE_KEY"
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
@@ -166,6 +168,19 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     TurnEnded("OpenRouter response."),
                 ],
                 session_id="session-openrouter",
+            ),
+            RecordedStream(
+                name="turn_openrouter_live_redacted.jsonl",
+                stdout=_FIXTURES_DIR / "turn_openrouter_live_redacted.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted(_OPENROUTER_LIVE_SESSION_ID),
+                    Message(_OPENROUTER_LIVE_RESPONSE),
+                    UsageReported(Usage(17094, 2, 0, 0, None, "unknown", None)),
+                    TurnEnded(_OPENROUTER_LIVE_RESPONSE),
+                ],
+                session_id=_OPENROUTER_LIVE_SESSION_ID,
             ),
             RecordedStream(
                 name="turn_compact_process.jsonl",
