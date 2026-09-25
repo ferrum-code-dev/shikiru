@@ -121,6 +121,7 @@ runtime-evaluated-decorators = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/shikiru/domain/steps.py" = ["PLR0911"] # one return per step/outcome match arm (03 §2, §6)
+"src/shikiru/mcp/server.py" = ["TC001"] # FastMCP inspects registered tool annotations at runtime
 "src/shikiru/agents/contracts.py" = ["PLR0917"] # HeadlessAgent.ask is 04 §1's exact signature
 "tests/fake_agent/src/fake_agent/headless.py" = ["ARG002", "PLR0917"] # HeadlessAgent.ask's exact signature (04 §1); the fake ignores every argument but serves canned answers
 "src/shikiru/plugins/agents/claude/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature (04 §1)

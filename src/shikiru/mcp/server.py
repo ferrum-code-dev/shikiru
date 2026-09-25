@@ -8,9 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict
 
 from shikiru.agents.contracts import parse_rung
-from shikiru.config import settings as config_settings
-from shikiru.domain import events as domain_events
-from shikiru.domain import tasks as domain_tasks
+from shikiru.config.settings import ComplexityName
 from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
@@ -19,25 +17,20 @@ from shikiru.domain.commands import (
     ResolutionKind,
     RetryResolution,
 )
-from shikiru.operator import commands as operator_commands
-from shikiru.operator import queries as operator_queries
+from shikiru.domain.events import Event, EventKind
+from shikiru.domain.tasks import Mode, Role, Status
+from shikiru.operator.commands import Ack
 from shikiru.operator.events import MAX_WAIT_SECONDS
+from shikiru.operator.queries import (
+    EscalationView,
+    PeekView,
+    StatusView,
+    TaskDetail,
+    TaskSummary,
+)
 
 if TYPE_CHECKING:
     from shikiru.operator.services import OperatorServices
-
-ComplexityName = config_settings.ComplexityName
-Event = domain_events.Event
-EventKind = domain_events.EventKind
-Mode = domain_tasks.Mode
-Role = domain_tasks.Role
-Status = domain_tasks.Status
-Ack = operator_commands.Ack
-EscalationView = operator_queries.EscalationView
-PeekView = operator_queries.PeekView
-StatusView = operator_queries.StatusView
-TaskDetail = operator_queries.TaskDetail
-TaskSummary = operator_queries.TaskSummary
 
 SERVER_NAME = "shikiru"
 
