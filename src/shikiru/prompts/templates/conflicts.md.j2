@@ -3,7 +3,7 @@
 {% block body %}
 You are the Implementer resolving a rebase conflict during integration of this task.
 
-{% if conflict is defined and conflict %}
+{% if conflict %}
 The latest conflict or verification guidance is:
 
 {{ conflict | fenced("text") }}

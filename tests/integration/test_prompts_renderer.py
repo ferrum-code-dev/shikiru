@@ -40,6 +40,8 @@ def _full_context(name: PromptName, *, report_json: str = _REPORT_JSON) -> dict[
         context["facts"] = "git log --oneline base..HEAD"
         context["base"] = _BASE
         context["final_round"] = False
+    if name is PromptName.CONFLICTS:
+        context["conflict"] = ""
     if name in (PromptName.CONFLICTS, PromptName.HANDOFF):
         context["facts"] = "git status --porcelain"
     return context

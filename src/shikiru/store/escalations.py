@@ -126,8 +126,6 @@ class EscalationStore:
         packet_path: str,
         options: tuple[EscalationOption, ...],
     ) -> None:
-        if not packet_path:
-            raise ValueError
         self._connection.execute(
             """
             INSERT INTO escalations (
