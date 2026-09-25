@@ -15,15 +15,11 @@ from shikiru.ui.glyphs import (
     GLYPH_OPERATOR,
     GLYPH_PAUSED,
     GLYPH_PENDING,
-    GLYPH_QUOTA,
-    GLYPH_REWORK,
-    GLYPH_STALLED,
     PANEL_KANJI,
     ROLE_GLYPHS,
     STAGE_IMPLEMENT,
     STAGE_MERGE,
     STAGE_PLAN,
-    STAGE_PR,
     STAGE_TRIAGE,
     STAGE_VERIFY,
 )
@@ -31,7 +27,6 @@ from shikiru.ui.tokens import (
     ALERT_COLOR,
     ENGINE_COLOR,
     IDLE_COLOR,
-    REWORK_COLOR,
     ROLE_COLORS,
     STYLE_BOLD,
     STYLE_DIM,
@@ -48,7 +43,6 @@ class PanelState(StrEnum):
     PENDING = auto()
     ACTIVE = auto()
     DONE = auto()
-    REWORK = auto()
     ESCALATED = auto()
 
 
@@ -57,33 +51,25 @@ class StampKind(StrEnum):
 
     PAUSED = auto()
     OPERATOR = auto()
-    QUOTA = auto()
-    STALLED = auto()
 
 
 _STATE_GLYPHS: dict[PanelState, str] = {
     PanelState.PENDING: GLYPH_PENDING,
     PanelState.DONE: GLYPH_DONE,
-    PanelState.REWORK: GLYPH_REWORK,
     PanelState.ESCALATED: GLYPH_ESCALATED,
 }
 _STATE_STYLES: dict[PanelState, str] = {
     PanelState.PENDING: f"{STYLE_DIM} {IDLE_COLOR}",
     PanelState.DONE: f"{STYLE_BOLD} {SUCCESS_COLOR}",
-    PanelState.REWORK: f"{STYLE_BOLD} {REWORK_COLOR}",
     PanelState.ESCALATED: f"{STYLE_REVERSE} {ALERT_COLOR}",
 }
 _STAMP_GLYPHS: dict[StampKind, str] = {
     StampKind.PAUSED: GLYPH_PAUSED,
     StampKind.OPERATOR: GLYPH_OPERATOR,
-    StampKind.QUOTA: GLYPH_QUOTA,
-    StampKind.STALLED: GLYPH_STALLED,
 }
 _STAMP_WORDS: dict[StampKind, str] = {
     StampKind.PAUSED: "PAUSED",
     StampKind.OPERATOR: "OPERATOR",
-    StampKind.QUOTA: "QUOTA",
-    StampKind.STALLED: "STALLED",
 }
 
 _NARROW_SEPARATOR = " "
@@ -114,12 +100,9 @@ _MODE_PANEL_LABELS: dict[Mode, tuple[tuple[str, str], ...]] = {
 }
 
 
-def panel_specs_for_mode(mode: Mode, *, pull_request: bool = False) -> tuple[tuple[str, str], ...]:
-    """Return this mode's `(label, stage glyph)` panels (06 §6.2): implement, plan, or PR."""
-    specs = _MODE_PANEL_LABELS[mode]
-    if mode is Mode.IMPLEMENT and pull_request:
-        specs = (*specs[:3], ("PR", STAGE_PR))
-    return specs
+def panel_specs_for_mode(mode: Mode) -> tuple[tuple[str, str], ...]:
+    """Return this mode's `(label, stage glyph)` panels (06 §6.2)."""
+    return _MODE_PANEL_LABELS[mode]
 
 
 @dataclass(frozen=True)
@@ -127,8 +110,7 @@ class PanelView:
     """One panel of a task strip (06 §6.2).
 
     `role` is the acting role, shown as the panel colour while `state` is `ACTIVE`; other
-    states carry a fixed colour regardless of role. `rework_count` annotates a panel that
-    reached its current state after one or more rejected iterations (e.g. `✔ ↺1 41m`).
+    states carry a fixed colour regardless of role.
     """
 
     label: str
@@ -138,7 +120,6 @@ class PanelView:
     role_line: str = ""
     spinner_frame: str = ""
     role: Role | None = None
-    rework_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -195,8 +176,7 @@ def _body_cell(panel: PanelView) -> str:
         role_glyph = ROLE_GLYPHS[panel.role] if panel.role is not None else ""
         pieces = (panel.spinner_frame or GLYPH_PENDING, role_glyph, panel.detail)
     else:
-        rework = f"{GLYPH_REWORK}{panel.rework_count}" if panel.rework_count else ""
-        pieces = (_STATE_GLYPHS[panel.state], rework, panel.detail)
+        pieces = (_STATE_GLYPHS[panel.state], panel.detail)
     return " ".join(piece for piece in pieces if piece)
 
 

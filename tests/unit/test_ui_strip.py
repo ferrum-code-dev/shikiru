@@ -17,7 +17,6 @@ from shikiru.ui.strip import (
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     IDLE_COLOR,
-    REWORK_COLOR,
     ROLE_COLORS,
     STYLE_BOLD,
     STYLE_DIM,
@@ -90,7 +89,6 @@ _MONOCHROME_ATTRIBUTES = (STYLE_DIM, STYLE_BOLD, STYLE_REVERSE)
     [
         (PanelState.PENDING, None, IDLE_COLOR),
         (PanelState.DONE, None, SUCCESS_COLOR),
-        (PanelState.REWORK, None, REWORK_COLOR),
         (PanelState.ESCALATED, None, ALERT_COLOR),
         (PanelState.ACTIVE, Role.LEADER, ROLE_COLORS[Role.LEADER]),
         (PanelState.ACTIVE, Role.IMPLEMENTER, ROLE_COLORS[Role.IMPLEMENTER]),
