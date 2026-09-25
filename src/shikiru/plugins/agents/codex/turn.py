@@ -194,6 +194,8 @@ class CodexTurnParser:
         self._terminal = True
         if self._malformed:
             return [TurnFailed(FailureKind.UNKNOWN, _MALFORMED_STREAM_MESSAGE, None)]
+        if self._rollout is None:
+            self._rollout = _rollout_path(self._home, self._session_id)
         entries = _read_rollout(self._rollout)
         signals: list[AgentSignal] = list(
             _compaction_signals(entries, self._initial_compaction_count)
