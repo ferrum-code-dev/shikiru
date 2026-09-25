@@ -2,45 +2,27 @@
 
 from __future__ import annotations
 
-import asyncio
 import fcntl
 import logging
-from contextlib import suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Self
 
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import Status, StatusReason
-from shikiru.engine.handlers import (
-    CancelHandler,
-    HandlerContext,
-    HandlerRegistry,
-    PauseHandler,
-    PrioritizeHandler,
-    ResolveHandler,
-    ResumeHandler,
-    RetryHandler,
-    SetRungHandler,
-    StopHandler,
-    SubmitHandler,
-)
 from shikiru.errors import CommandRejectedError, ShikiruError
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Callable
     from pathlib import Path
     from typing import TextIO
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
-    from shikiru.domain.tasks import Task
-    from shikiru.engine.flow import TaskFlow
+    from shikiru.engine.handlers import HandlerRegistry
     from shikiru.engine.layout_guard import LayoutGuard
-    from shikiru.engine.lifecycle import TaskFinisher
     from shikiru.engine.notifier import Notifier
     from shikiru.engine.scheduler import Scheduler
+    from shikiru.engine.supervisor import TaskSupervisor
     from shikiru.store.commands import CommandQueue
-    from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
 
@@ -109,63 +91,32 @@ class Engine:
         lock_path: Path,
         command_queue: CommandQueue,
         tasks: TaskStore,
-        escalations: EscalationStore,
         events: EventLog,
         scheduler: Scheduler,
-        flow: TaskFlow,
-        task_finisher: TaskFinisher,
+        task_supervisor: TaskSupervisor,
+        handlers: HandlerRegistry,
         layout: LayoutGuard,
         notifier: Notifier,
         settings: Settings,
-        project_root: Path,
         clock: Clock,
         close_state: Callable[[], None],
-        refresh_titles: Callable[[Task], Awaitable[None]],
     ) -> None:
-        """Wire the engine's stores, orchestration components and lifecycle callbacks."""
+        """Wire the daemon loop to its stores and bootstrap-built command registry."""
         self._lock = EngineLock(lock_path)
         self._commands = command_queue
         self._tasks = tasks
-        self._escalations = escalations
         self._events = events
         self._scheduler = scheduler
-        self._flow = flow
-        self._task_finisher = task_finisher
+        self._task_supervisor = task_supervisor
+        self._handlers = handlers
         self._layout = layout
         self._notifier = notifier
         self._settings = settings
-        self._project_root = project_root
         self._clock = clock
         self._close_state = close_state
-        self._stop = asyncio.Event()
-        self._flow_tasks: dict[str, asyncio.Task[None]] = {}
         self._last_notified_event = 0
         self._last_scheduled_event = 0
         self._logger = logging.getLogger("shikiru")
-        context = HandlerContext(
-            tasks=tasks,
-            escalations=escalations,
-            events=events,
-            project_root=project_root,
-            cancel_task=self.cancel_task,
-            start_task=self.start_task,
-            finish_task=self.finish_task,
-            stop_engine=self.request_stop,
-            refresh_titles=refresh_titles,
-        )
-        self._handlers = HandlerRegistry(
-            [
-                SubmitHandler(context),
-                PrioritizeHandler(context),
-                PauseHandler(context),
-                ResumeHandler(context),
-                CancelHandler(context),
-                RetryHandler(context),
-                SetRungHandler(context),
-                ResolveHandler(context),
-                StopHandler(context),
-            ]
-        )
         self._log_handler = self._configure_logging(lock_path)
 
     async def run(self) -> None:
@@ -180,10 +131,10 @@ class Engine:
             self._last_notified_event = self._events.latest_id()
             self._events.append(EventKind.ENGINE_STARTED, message="engine started")
             next_tick = self._clock.now()
-            while not self._stop.is_set():
-                await self._supervise_flows()
+            while not self._task_supervisor.stop_requested:
+                await self._task_supervisor.supervise(self._logger)
                 commands_changed = await self._process_commands()
-                if self._stop.is_set():
+                if self._task_supervisor.stop_requested:
                     break
                 now = self._clock.now()
                 events_changed = self._events.since(self._last_scheduled_event)
@@ -193,7 +144,7 @@ class Engine:
                     await self._layout.restore(self._tasks.list_active())
                     schedule = await self._scheduler.run_once()
                     for dispatch in schedule.dispatches:
-                        await self.start_task(dispatch.task_id)
+                        await self._task_supervisor.start_task(dispatch.task_id)
                     await self._layout.restore(self._tasks.list_active())
                     scheduled_events = self._events.since(self._last_scheduled_event)
                     if scheduled_events:
@@ -201,34 +152,13 @@ class Engine:
                     next_tick = now + timedelta(seconds=self._settings.orchestration.poll_seconds)
                 await self._notify_events()
                 await self._clock.sleep(COMMAND_POLL_SECONDS)
-            await self._supervise_flows()
+            await self._task_supervisor.supervise(self._logger)
         finally:
             await self._shutdown()
 
     def request_stop(self) -> None:
         """Ask the command loop to stop after acknowledging the current command."""
-        self._stop.set()
-
-    async def start_task(self, task_id: str) -> None:
-        """Schedule a task flow once, leaving supervision in this engine."""
-        existing = self._flow_tasks.get(task_id)
-        if existing is not None and not existing.done():
-            return
-        self._flow_tasks[task_id] = asyncio.create_task(self._run_flow(task_id))
-
-    async def cancel_task(self, task_id: str) -> None:
-        """Interrupt and await one supervised flow coroutine, if present."""
-        current = self._flow_tasks.get(task_id)
-        if current is None:
-            return
-        current.cancel()
-        with suppress(asyncio.CancelledError):
-            await current
-        self._flow_tasks.pop(task_id, None)
-
-    async def finish_task(self, task: Task) -> None:
-        """Release task resources after a handler or integration reaches terminal state."""
-        await self._task_finisher.finish_task(task)
+        self._task_supervisor.request_stop()
 
     async def _process_commands(self) -> bool:
         changed = False
@@ -246,31 +176,6 @@ class Engine:
             changed = True
         return changed
 
-    async def _run_flow(self, task_id: str) -> None:
-        try:
-            await self._flow.run(task_id)
-        finally:
-            current = self._tasks.get(task_id)
-            if current is not None and (
-                current.status is Status.DONE or current.status_reason is StatusReason.SUPERSEDED
-            ):
-                await self.finish_task(current)
-
-    async def _supervise_flows(self) -> None:
-        for task_id, flow_task in tuple(self._flow_tasks.items()):
-            if not flow_task.done():
-                continue
-            self._flow_tasks.pop(task_id, None)
-            if flow_task.cancelled():
-                continue
-            error = flow_task.exception()
-            if error is not None:
-                self._logger.error(
-                    "task flow %s failed",
-                    task_id,
-                    exc_info=(type(error), error, error.__traceback__),
-                )
-
     async def _notify_events(self) -> None:
         for event in self._events.since(self._last_notified_event):
             self._last_notified_event = event.id
@@ -279,11 +184,7 @@ class Engine:
     async def _shutdown(self) -> None:
         try:
             self._events.append(EventKind.ENGINE_STOPPED, message="engine stopped")
-            for task in tuple(self._flow_tasks.values()):
-                task.cancel()
-            if self._flow_tasks:
-                await asyncio.gather(*self._flow_tasks.values(), return_exceptions=True)
-            self._flow_tasks.clear()
+            await self._task_supervisor.shutdown()
         finally:
             try:
                 self._lock.release()

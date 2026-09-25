@@ -15,6 +15,19 @@ from shikiru.engine.daemon import Engine, engine_is_running
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.flow import TaskFlow
+from shikiru.engine.handlers import (
+    CancelHandler,
+    HandlerContext,
+    HandlerRegistry,
+    PauseHandler,
+    PrioritizeHandler,
+    ResolveHandler,
+    ResumeHandler,
+    RetryHandler,
+    SetRungHandler,
+    StopHandler,
+    SubmitHandler,
+)
 from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import Integrator, LocalMerge
 from shikiru.engine.integration_turns import IntegrationTurns
@@ -24,6 +37,7 @@ from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notifier import Notifier
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.sessions import SessionManager
+from shikiru.engine.supervisor import TaskSupervisor
 from shikiru.engine.titles import TaskTitles
 from shikiru.engine.turns import TurnRunner
 from shikiru.errors import ConfigError
@@ -356,6 +370,31 @@ def build_engine(
         history=history,
         runs=runs,
     )
+    task_supervisor = TaskSupervisor(tasks, flow, task_finisher)
+    handler_context = HandlerContext(
+        tasks=tasks,
+        escalations=escalations_store,
+        events=events,
+        project_root=project_root,
+        cancel_task=task_supervisor.cancel_task,
+        start_task=task_supervisor.start_task,
+        finish_task=task_finisher.finish_task,
+        stop_engine=task_supervisor.request_stop,
+        refresh_titles=titles.refresh,
+    )
+    handlers = HandlerRegistry(
+        [
+            SubmitHandler(handler_context),
+            PrioritizeHandler(handler_context),
+            PauseHandler(handler_context),
+            ResumeHandler(handler_context),
+            CancelHandler(handler_context),
+            RetryHandler(handler_context),
+            SetRungHandler(handler_context),
+            ResolveHandler(handler_context),
+            StopHandler(handler_context),
+        ]
+    )
     sampler = ResourceSampler(resolved_clock, layout.process_ids)
     notifier = Notifier(
         resolved_tmux,
@@ -381,18 +420,15 @@ def build_engine(
         lock_path=state_dir / "engine.lock",
         command_queue=command_queue,
         tasks=tasks,
-        escalations=escalations_store,
         events=events,
         scheduler=scheduler,
-        flow=flow,
-        task_finisher=task_finisher,
+        task_supervisor=task_supervisor,
+        handlers=handlers,
         layout=layout,
         notifier=notifier,
         settings=resolved_settings,
-        project_root=project_root,
         clock=resolved_clock,
         close_state=connection.close,
-        refresh_titles=titles.refresh,
     )
 
 
