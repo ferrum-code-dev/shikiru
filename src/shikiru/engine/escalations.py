@@ -219,7 +219,7 @@ class DispatchFailureEscalator:
 
     async def __call__(self, task: Task, error: Exception) -> None:
         """Mark `task` escalated and record the dispatch error for the operator."""
-        transition = Transition.escalate(task, EscalationReason.ENGINE_ERROR, step=task.step)
+        transition = Transition.escalate_current(task, EscalationReason.ENGINE_ERROR)
         self._tasks.apply_transition(task.id, transition)
         self._tasks.set_wait_reason(task.id, None)
         current = self._tasks.get(task.id)

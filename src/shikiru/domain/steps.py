@@ -73,10 +73,18 @@ class Transition:
         )
 
     @staticmethod
-    def escalate(task: Task, reason: EscalationReason, *, step: Step | None) -> Transition:
+    def escalate(task: Task, reason: EscalationReason, *, step: Step) -> Transition:
         """Build an escalation transition while preserving the task's other state."""
         base = Transition.stay(task, step=step, status=Status.ESCALATED)
         return dataclasses.replace(base, escalation_reason=reason)
+
+    @staticmethod
+    def escalate_current(task: Task, reason: EscalationReason) -> Transition:
+        """Escalate at the current step, preserving a missing step for an unstarted task."""
+        if task.step is None:
+            base = Transition.stay(task, step=None, status=Status.ESCALATED)
+            return dataclasses.replace(base, escalation_reason=reason)
+        return Transition.escalate(task, reason, step=task.step)
 
 
 def first_step(task: Task) -> Transition:
@@ -109,10 +117,15 @@ def _from_plan(task: Task) -> Transition:
 def _from_implement(task: Task, outcome: ImplementationReport) -> Transition:
     if outcome.status == "completed":
         return Transition.stay(task, step=Step.VERIFY)
+    return _consult_or_escalate(task, Status.RUNNING)
+
+
+def _consult_or_escalate(task: Task, status: Status) -> Transition:
     if task.counters.consults >= CONSULT_LIMIT:
         return Transition.escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
     counters = task.counters.model_copy(update={"consults": task.counters.consults + 1})
-    return dataclasses.replace(Transition.stay(task, step=Step.CONSULT), counters=counters)
+    base = Transition.stay(task, step=Step.CONSULT, status=status)
+    return dataclasses.replace(base, counters=counters)
 
 
 def _from_consult(task: Task, outcome: ConsultAnswer) -> Transition:
@@ -203,11 +216,7 @@ def _from_integrate(task: Task, outcome: Verdict) -> Transition:
 def _from_integrate_conflicts(task: Task, outcome: ImplementationReport) -> Transition:
     if outcome.status == "completed":
         return Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
-    if task.counters.consults >= CONSULT_LIMIT:
-        return Transition.escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
-    counters = task.counters.model_copy(update={"consults": task.counters.consults + 1})
-    base = Transition.stay(task, step=Step.CONSULT, status=Status.INTEGRATING)
-    return dataclasses.replace(base, counters=counters)
+    return _consult_or_escalate(task, Status.INTEGRATING)
 
 
 def next_step(task: Task, outcome: Outcome, settings: Settings) -> Transition:

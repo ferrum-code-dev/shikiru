@@ -61,9 +61,7 @@ def options_for(reason: EscalationReason) -> tuple[EscalationOption, ...]:
 
 def reset_for_resolution(counters: Counters, reason: EscalationReason) -> Counters:
     """Reset the persisted counter represented by `reason` when it is resolved (03 §8)."""
-    if reason is EscalationReason.DECISION_REQUIRED:
-        return counters.model_copy(update={"consults": 0})
-    if reason is EscalationReason.ITERATIONS_EXHAUSTED:
+    if reason in (EscalationReason.DECISION_REQUIRED, EscalationReason.ITERATIONS_EXHAUSTED):
         return counters.model_copy(update={"consults": 0})
     if reason in (
         EscalationReason.INTEGRATION_CONFLICT,

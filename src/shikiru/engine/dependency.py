@@ -26,9 +26,7 @@ class DependencyEscalator:
 
     async def __call__(self, task: Task) -> None:
         """Escalate `task` after the scheduler finds a cancelled dependency."""
-        transition = Transition.escalate(
-            task, EscalationReason.DEPENDENCY_CANCELLED, step=task.step
-        )
+        transition = Transition.escalate_current(task, EscalationReason.DEPENDENCY_CANCELLED)
         self._tasks.apply_transition(task.id, transition)
         self._tasks.set_wait_reason(task.id, None)
         current = self._tasks.get(task.id)

@@ -854,7 +854,7 @@ class TaskFlow:
         self._emit_scope_change(task, outcome, [child.id for child in children])
 
     async def _escalate_engine_error(self, task: Task, error: Exception) -> None:
-        transition = Transition.escalate(task, EscalationReason.ENGINE_ERROR, step=task.step)
+        transition = Transition.escalate_current(task, EscalationReason.ENGINE_ERROR)
         await self._escalate(task, transition, None, question=str(error))
 
     async def _escalate_scope_change_protocol(
