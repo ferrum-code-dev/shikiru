@@ -114,7 +114,7 @@ async def create_running_task(
     """Insert a task at the running implement step with its real pane id recorded."""
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
-    queued = queue.append(Submit(task_id="", title=title, request=title))
+    queued = queue.append(Submit(title=title, request=title))
     assert isinstance(queued.command, Submit)
     submitted = tasks.insert_from_submit(queued.command)
     transition = dataclasses.replace(

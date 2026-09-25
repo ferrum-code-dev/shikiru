@@ -17,7 +17,7 @@ def main(db_path: str, count: str) -> None:
     try:
         queue = CommandQueue(connection, SystemClock())
         for _ in range(int(count)):
-            queued = queue.append(Submit(task_id="", title="t", request="r"))
+            queued = queue.append(Submit(title="t", request="r"))
             assert isinstance(queued.command, Submit)
             print(queued.command.task_id)
     finally:

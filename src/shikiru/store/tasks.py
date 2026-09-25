@@ -148,7 +148,11 @@ class TaskStore:
 
     def insert_from_submit(self, submit: Submit) -> Task:
         """Insert the task a `Submit` command already allocated an id for (principle 3)."""
-        seq = int(submit.task_id.removeprefix(TASK_ID_PREFIX))
+        task_id = submit.task_id
+        if task_id is None:
+            message = "submit command has no allocated task id"
+            raise ValueError(message)
+        seq = int(task_id.removeprefix(TASK_ID_PREFIX))
         overrides: dict[Role, Rung] = {}
         if submit.leader is not None:
             overrides[Role.LEADER] = submit.leader
@@ -156,7 +160,7 @@ class TaskStore:
             overrides[Role.IMPLEMENTER] = submit.implementer
         with transaction(self._connection):
             self._insert_row(
-                task_id=submit.task_id,
+                task_id=task_id,
                 seq=seq,
                 parent_id=None,
                 origin=TaskOrigin.OPERATOR,
@@ -168,7 +172,7 @@ class TaskStore:
                 depends_on=submit.depends_on,
                 overrides=overrides,
             )
-        return self._fetch_or_raise(submit.task_id)
+        return self._fetch_or_raise(task_id)
 
     def apply_scope_change(
         self,

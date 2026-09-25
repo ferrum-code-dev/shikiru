@@ -53,11 +53,20 @@ def test_submit_allocates_sequential_task_ids(connection: Connection) -> None:
 
     ids: list[str] = []
     for _ in range(3):
-        queued = queue.append(Submit(task_id="", title="t", request="r"))
+        queued = queue.append(Submit(title="t", request="r"))
         assert isinstance(queued.command, Submit)
+        assert queued.command.task_id is not None
         ids.append(queued.command.task_id)
 
     assert ids == ["T-1", "T-2", "T-3"]
+
+
+def test_unqueued_submit_cannot_be_inserted_as_a_task(connection: Connection) -> None:
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+
+    with pytest.raises(ValueError, match="no allocated task id"):
+        store.insert_from_submit(Submit(title="t", request="r"))
 
 
 async def test_concurrent_command_append_allocates_unique_task_ids(tmp_path: Path) -> None:

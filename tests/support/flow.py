@@ -75,7 +75,7 @@ async def build_flow_task(
     """Insert a queued task with real leader/implementer panes and a git worktree."""
     tasks = env.tasks
     queue = CommandQueue(env.connection, env.clock)
-    queued = queue.append(Submit(task_id="", title=title, request=title, mode=mode))
+    queued = queue.append(Submit(title=title, request=title, mode=mode))
     assert isinstance(queued.command, Submit)
     submitted = tasks.insert_from_submit(queued.command)
     leader_pane = await env.new_pane()

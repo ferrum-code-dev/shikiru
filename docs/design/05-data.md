@@ -190,7 +190,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `pane_restored`, `engine_started`, `engine_stopped`
 
 **Commands** are pydantic models in `domain.commands`, stored as `kind` plus a JSON `payload`:
-- `Submit` (carries the task id allocated from `sequences` at insert)
+- `Submit` (the command queue allocates its task id from `sequences` when appending)
 - `Prioritize`, `Pause`, `Resume`, `Cancel`, `Retry`, `SetRung`, `Say`, `TakeOver`, `HandBack`, `Resolve`, `Stop`
 
 ## 3. Run files

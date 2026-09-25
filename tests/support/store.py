@@ -68,7 +68,6 @@ def seed_task(
     """Submit and insert a task in one step, the way `submit "<request>"` would (03 §1.1)."""
     queued = CommandQueue(connection, clock).append(
         Submit(
-            task_id="",
             title=title,
             request=request if request is not None else title,
             mode=mode,

@@ -75,7 +75,7 @@ async def _task_window(
         events=events,
     )
     queued = CommandQueue(connection, clock).append(
-        Submit(task_id="", title="restore panes", request="restore panes")
+        Submit(title="restore panes", request="restore panes")
     )
     assert isinstance(queued.command, Submit)
     task = tasks.insert_from_submit(queued.command)

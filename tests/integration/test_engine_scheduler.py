@@ -109,7 +109,6 @@ def _submit(
 ) -> Task:
     queued = CommandQueue(connection, clock).append(
         Submit(
-            task_id="",
             title=title,
             request=title,
             priority=priority,

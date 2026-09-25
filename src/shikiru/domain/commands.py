@@ -35,10 +35,10 @@ class CommandKind(StrEnum):
 
 
 class Submit(DomainModel):
-    """`submit "<request>" [flags]`: the task id is already allocated from `sequences`."""
+    """`submit "<request>" [flags]`: the queue allocates the task id when appending it."""
 
     kind: Literal[CommandKind.SUBMIT] = CommandKind.SUBMIT
-    task_id: str
+    task_id: str | None = None
     title: str
     request: str
     mode: Mode | None = None

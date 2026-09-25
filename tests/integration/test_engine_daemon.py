@@ -141,7 +141,7 @@ async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch
     queue = CommandQueue(connection, clock)
     engine_task = asyncio.create_task(engine.run())
 
-    submitted = queue.append(Submit(task_id="", title="queued task", request="queued task"))
+    submitted = queue.append(Submit(title="queued task", request="queued task"))
     outcome = await _wait_for_command(submitted, queue, clock)
     assert outcome.status is CommandStatus.DONE
     task_id = str(outcome.result["task_id"]) if outcome.result is not None else ""
@@ -185,7 +185,7 @@ async def test_unexpected_flow_error_escalates_without_stopping_engine(
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
-    submitted = queue.append(Submit(task_id="", title="corrupt history", request="run"))
+    submitted = queue.append(Submit(title="corrupt history", request="run"))
     assert isinstance(submitted.command, Submit)
     task = tasks.insert_from_submit(submitted.command)
     queue.mark_done(submitted.id, {"task_id": task.id})
@@ -253,7 +253,7 @@ async def test_stop_before_first_pass_prevents_same_batch_dispatch(
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     queue = CommandQueue(connection, clock)
-    submitted = queue.append(Submit(task_id="", title="stop batch", request="stop batch"))
+    submitted = queue.append(Submit(title="stop batch", request="stop batch"))
     stopped = queue.append(Stop())
     engine_task = asyncio.create_task(engine.run())
 
@@ -315,7 +315,7 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
-    submitted = queue.append(Submit(task_id="", title="broken root", request="broken root"))
+    submitted = queue.append(Submit(title="broken root", request="broken root"))
     assert isinstance(submitted.command, Submit)
     task = tasks.insert_from_submit(submitted.command)
     queue.mark_done(submitted.id, {"task_id": task.id})
@@ -358,7 +358,7 @@ async def test_queued_resolution_is_acknowledged_by_the_daemon(
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
-    submitted = queue.append(Submit(task_id="", title="resolve me", request="resolve me"))
+    submitted = queue.append(Submit(title="resolve me", request="resolve me"))
     assert isinstance(submitted.command, Submit)
     task = tasks.insert_from_submit(submitted.command)
     tasks.apply_transition(
@@ -421,7 +421,6 @@ async def test_superseded_task_uses_shared_terminal_cleanup(
     try:
         submitted = queue.append(
             Submit(
-                task_id="",
                 title="replace this task",
                 request="replace this task",
                 mode=Mode.IMPLEMENT,
@@ -467,12 +466,8 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     queue = CommandQueue(connection, clock)
-    first = queue.append(
-        Submit(task_id="", title="parallel one", request="parallel one", mode=Mode.IMPLEMENT)
-    )
-    second = queue.append(
-        Submit(task_id="", title="parallel two", request="parallel two", mode=Mode.IMPLEMENT)
-    )
+    first = queue.append(Submit(title="parallel one", request="parallel one", mode=Mode.IMPLEMENT))
+    second = queue.append(Submit(title="parallel two", request="parallel two", mode=Mode.IMPLEMENT))
     engine_task = asyncio.create_task(engine.run())
 
     first_outcome = await _wait_for_command(first, queue, clock)

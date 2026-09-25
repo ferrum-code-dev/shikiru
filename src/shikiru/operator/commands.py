@@ -114,7 +114,6 @@ class OperatorCommands:
         task_title = title if title is not None else _title_from_request(request)
         return await self.send(
             Submit(
-                task_id="",
                 title=task_title,
                 request=request,
                 mode=mode,

@@ -147,7 +147,6 @@ def _queued(
 ) -> Task:
     queued = CommandQueue(environment.connection, environment.clock).append(
         Submit(
-            task_id="",
             title=title,
             request=title,
             leader=_FAKE_RUNG,
@@ -207,7 +206,7 @@ async def test_handlers_cover_submit_priority_pause_resume_rung_and_stop(
     handler_env: HandlerFixture,
 ) -> None:
     queued = CommandQueue(handler_env.connection, handler_env.clock).append(
-        Submit(task_id="", title="queue me", request="queue me")
+        Submit(title="queue me", request="queue me")
     )
     assert isinstance(queued.command, Submit)
 
