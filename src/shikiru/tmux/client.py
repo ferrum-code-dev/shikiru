@@ -21,7 +21,6 @@ _PRIVATE_SOCKET_SUFFIX_LENGTH = 8
 
 FORMAT_PANE_ID = "#{pane_id}"
 FORMAT_PANE_DEAD = "#{pane_dead}"
-FORMAT_PANE_PID = "#{pane_pid}"
 FORMAT_WINDOW_ID = "#{window_id}"
 FORMAT_SOCKET_PATH = "#{socket_path}"
 
@@ -256,10 +255,6 @@ class Tmux:
             "display-message", "-p", "-t", target, "-F", FORMAT_PANE_ID, check=False
         )
         return result.returncode == 0 and result.stdout.strip() == target
-
-    async def pane_pid(self, target: str) -> int:
-        """Return the process id currently running in pane `target`."""
-        return int(await self.display(target, FORMAT_PANE_PID))
 
     async def window_id(self, target: str) -> str:
         """Return the stable window id for pane or window target `target`."""

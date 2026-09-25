@@ -50,7 +50,6 @@ class LayoutGuard:
         self._view = SessionView(tmux)
         self._builder = LayoutBuilder(tmux)
         self._special_panes: dict[str, dict[str, str]] = {}
-        self._pane_pids: dict[str, set[int]] = {}
 
     async def ensure(self, task: Task) -> Task:
         """Create `task`'s window or restore missing panes, returning fresh task state."""
@@ -79,11 +78,6 @@ class LayoutGuard:
         if task.window_id is not None and await self._tmux.target_exists(task.window_id):
             await self._view.close_task_window(task.window_id)
         self._special_panes.pop(task.id, None)
-        self._pane_pids.pop(task.id, None)
-
-    def process_ids(self) -> tuple[int, ...]:
-        """Return the last known process id for every pane in active task windows."""
-        return tuple(pid for pids in self._pane_pids.values() for pid in pids)
 
     async def _create(self, task: Task) -> Task:
         root = task_root(self._project_root, task.id)
@@ -117,7 +111,6 @@ class LayoutGuard:
         if refreshed is None:
             message = f"{task_id} vanished while refreshing its task window"
             raise ShikiruError(message)
-        await self._cache_pane_processes(refreshed)
         return refreshed
 
     async def _missing_agent_roles(self, task: Task) -> set[Role]:
@@ -185,16 +178,6 @@ class LayoutGuard:
                 continue
             await self._tmux.respawn_pane(pane_id, _SHELL_ARGV, env={}, cwd=root)
             self._record_restored(task.id, name)
-
-    async def _cache_pane_processes(self, task: Task) -> None:
-        pane_ids = set(task.panes.values()) | set(self._special_panes.get(task.id, {}).values())
-        pids: set[int] = set()
-        for pane_id in pane_ids:
-            if await self._tmux.pane_exists(pane_id):
-                pid = await self._tmux.pane_pid(pane_id)
-                if pid > 0:
-                    pids.add(pid)
-        self._pane_pids[task.id] = pids
 
     async def _configure_formats(self, window_id: str) -> None:
         await PaneDecorator(self._tmux).configure_formats(window_id)

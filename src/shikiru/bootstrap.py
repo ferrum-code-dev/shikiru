@@ -383,7 +383,7 @@ def build_engine(
             StopHandler(handler_context),
         ]
     )
-    sampler = ResourceSampler(resolved_clock, layout.process_ids)
+    sampler = ResourceSampler(resolved_clock)
     notifier = Notifier(
         resolved_tmux,
         resolved_runner,
