@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"session-resumed"}
+{"type":"result","is_error":true,"terminal_reason":"prompt_too_long","result":"Prompt is too long for the context window"}

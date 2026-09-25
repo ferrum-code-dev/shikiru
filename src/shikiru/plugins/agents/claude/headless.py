@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from shikiru.errors import ConfigError
+from shikiru.errors import HeadlessOutputError
 from shikiru.plugins.agents.claude.options import CLAUDE_COMMAND
 
 if TYPE_CHECKING:
@@ -80,11 +80,11 @@ class ClaudeHeadless:
         try:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError as error:
-            raise ConfigError(_INVALID_JSON_MESSAGE) from error
+            raise HeadlessOutputError(_INVALID_JSON_MESSAGE) from error
         if not isinstance(payload, Mapping):
-            raise ConfigError(_INVALID_OBJECT_MESSAGE)
+            raise HeadlessOutputError(_INVALID_OBJECT_MESSAGE)
         typed_payload = cast("Mapping[str, Any]", payload)
         structured = typed_payload.get(_STRUCTURED_OUTPUT_FIELD)
         if not isinstance(structured, Mapping):
-            raise ConfigError(_MISSING_STRUCTURED_OUTPUT_MESSAGE)
+            raise HeadlessOutputError(_MISSING_STRUCTURED_OUTPUT_MESSAGE)
         return cast("Mapping[str, Any]", structured)

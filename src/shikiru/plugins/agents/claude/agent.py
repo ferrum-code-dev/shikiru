@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, shikiru_command
 from shikiru.agents.sdk.reset_time import ResetTimeParser
+from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.claude.headless import ClaudeHeadless
 from shikiru.plugins.agents.claude.options import (
@@ -32,8 +33,10 @@ from shikiru.plugins.agents.claude.options import (
 )
 from shikiru.plugins.agents.claude.quota import ClaudeQuotaProbe
 from shikiru.plugins.agents.claude.session import ClaudeSession, hook_file_size, restored_session
+from shikiru.plugins.agents.claude.turn import ClaudeTurnSequence
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from shikiru.agents.contracts import (
@@ -42,6 +45,8 @@ if TYPE_CHECKING:
         HeadlessAgent,
         LaunchSpec,
         PaneHandle,
+        Turn,
+        TurnSpec,
     )
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
@@ -101,10 +106,44 @@ class ClaudeAgent:
             self._reset_time,
             self._subprocess_environment,
         )
+        self._run_dirs: dict[str, Path] = {}
+
+    async def start_turn(self, spec: TurnSpec) -> Turn:
+        """Start one process-per-turn Claude Code exchange."""
+        sequence = self.process_sequence(spec)
+        return await StreamingTurn.start(spec, self._runner, sequence)
+
+    def process_sequence(self, spec: TurnSpec) -> ClaudeTurnSequence:
+        """Build the compact, prompt and retry sequence for `spec`."""
+        sequence = ClaudeTurnSequence(
+            spec,
+            clock=self._clock,
+            reset_time=self._reset_time,
+            compact_at_pct=self._options.compact_at_pct,
+            auth=self._options.auth,
+            args=self._options.args,
+            environment=self._turn_environment,
+        )
+        self._run_dirs[sequence.session_id] = spec.run_dir
+        return sequence
+
+    def interactive_command(self, session_id: str, cwd: Path) -> Sequence[str]:
+        """Return Claude's interactive resume command for a headless session."""
+        del cwd
+        run_dir = self._run_dirs[session_id]
+        return (
+            CLAUDE_COMMAND,
+            RESUME_FLAG,
+            session_id,
+            ADD_DIR_FLAG,
+            str(run_dir),
+            *self._options.args,
+        )
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
         """Launch a Claude Code session in `pane` and return once its first hook arrives."""
         session_id = spec.resume_session_id or str(uuid.uuid4())
+        self._run_dirs[session_id] = spec.run_dir
         hook_offset = await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role)
         await pane.respawn(
             self._argv(spec, session_id),
@@ -211,7 +250,7 @@ class ClaudeAgent:
     def _pane_environment(self, base: Mapping[str, str]) -> dict[str, str | None]:
         environment: dict[str, str | None] = dict(base)
         if self._options.auth == AUTH_API_KEY:
-            environment[ANTHROPIC_API_KEY_ENV] = self._api_key()
+            environment[ANTHROPIC_API_KEY_ENV] = self._api_key(base)
             environment[ANTHROPIC_AUTH_TOKEN_ENV] = None
         else:
             environment[ANTHROPIC_API_KEY_ENV] = None
@@ -219,17 +258,26 @@ class ClaudeAgent:
         return environment
 
     def _subprocess_environment(self) -> dict[str, str]:
+        return self._authenticated_environment(os.environ)
+
+    def _turn_environment(self, spec: TurnSpec) -> dict[str, str]:
         environment = dict(os.environ)
+        environment.update(spec.env)
+        return self._authenticated_environment(environment)
+
+    def _authenticated_environment(self, base: Mapping[str, str]) -> dict[str, str]:
+        environment = dict(base)
         if self._options.auth == AUTH_API_KEY:
-            environment[ANTHROPIC_API_KEY_ENV] = self._api_key()
+            environment[ANTHROPIC_API_KEY_ENV] = self._api_key(environment)
             environment.pop(ANTHROPIC_AUTH_TOKEN_ENV, None)
         else:
             environment.pop(ANTHROPIC_API_KEY_ENV, None)
             environment.pop(ANTHROPIC_AUTH_TOKEN_ENV, None)
         return environment
 
-    def _api_key(self) -> str:
-        value = os.environ.get(self._options.api_key_env)
+    def _api_key(self, environment: Mapping[str, str] | None = None) -> str:
+        source = environment if environment is not None else os.environ
+        value = source.get(self._options.api_key_env) or os.environ.get(self._options.api_key_env)
         if not value:
             message = f"Claude API key environment variable {self._options.api_key_env!r} is unset"
             raise ConfigError(message)

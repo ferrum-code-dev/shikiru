@@ -236,9 +236,11 @@ Refs: 04 §1–3, 02 §2, 07 §3–4.
 
 ### Task 33: Claude Code headless plugin
 Refs: 04 §4.
-- [ ] Turn argv (new, resume, model change, auth modes), stream-json parser, failure mapping incl. stderr tags, usage and context rules, `QuotaReported` from `rate_limit_event`, `interactive_command`, `headless`, `doctor`.
+- [x] Turn argv (new, resume, model change, auth modes), stream-json parser, failure mapping incl. stderr tags, usage and context rules, `QuotaReported` from `rate_limit_event`, `interactive_command`, `headless`, `doctor`.
 - [ ] Compaction per 04 §4: `/compact` before a turn at `compact_at_pct`, compact-and-rerun on `CONTEXT` (verify `/compact` on an overflowed session), `Compacted` from `compact_boundary`.
 - [ ] Recorded samples under `tests/fixtures/agents/claude/` (subscription, API key, OpenRouter, rate limit, unrecognised model); offline checks pass; live checks pass.
+
+Task 33 verification note (2026-09-25): `uv run poe check` passes (687 passed, 20 skipped). Claude Code 2.1.281 is installed, but the sanitized doctor login check reports `ok=False`, `detail="not authenticated"`. No genuine Claude headless stream-json captures were present in the repository; the new `turn_*.jsonl` files are synthetic protocol scenarios. Keep the live overflow verification and recorded-sample/live-check acceptance criteria open.
 
 ### Task 34: Codex headless plugin
 Refs: 04 §5.

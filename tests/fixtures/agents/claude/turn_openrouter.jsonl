@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"session-openrouter","model":"anthropic/claude-haiku-4-5"}
+{"type":"assistant","message":{"id":"msg-openrouter","model":"anthropic/claude-haiku-4-5","usage":{"input_tokens":70,"output_tokens":12,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"OpenRouter response."}]}}
+{"type":"result","subtype":"success","result":"OpenRouter response.","usage":{"input_tokens":70,"output_tokens":12,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"total_cost_usd":0.0003,"modelUsage":{"anthropic/claude-haiku-4-5":{"costBasis":"openrouter","contextWindow":200000}}}

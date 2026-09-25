@@ -1,0 +1,532 @@
+"""Exercise Claude Code's headless contract with stream-json fixture scenarios."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
+import pytest
+from pydantic import BaseModel
+
+from shikiru.agents.contracts import (
+    Agent,
+    AgentContext,
+    AgentFactory,
+    Compacted,
+    FailureKind,
+    Message,
+    QuotaReported,
+    QuotaWindow,
+    Rung,
+    SessionStarted,
+    ToolFinished,
+    ToolStarted,
+    TurnEnded,
+    TurnFailed,
+    TurnSpec,
+    Usage,
+    UsageReported,
+)
+from shikiru.agents.sdk.reset_time import ResetTimeParser
+from shikiru.agents.testing import AgentContractSuite, InvocationCase, RecordedStream
+from shikiru.clock import SystemClock
+from shikiru.plugins.agents.claude.agent import ClaudeAgent, create
+from shikiru.plugins.agents.claude.options import DEFAULT_ARGS
+from shikiru.plugins.agents.claude.turn import ClaudeTurnParser
+from shikiru.process import SubprocessRunner
+from tests.support.clock import FakeClock
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from shikiru.agents.sdk.turn import TurnParser, TurnProcessSequence
+
+_FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "agents" / "claude"
+_ROLE = "implementer"
+_MODEL = "claude-haiku-4-5-20251001"
+_OTHER_MODEL = "claude-sonnet-4-5-20250929"
+_OPENROUTER_MODEL = "anthropic/claude-haiku-4-5"
+_SESSION_RESUMED = "session-resumed"
+_API_KEY_ENV = "SHIKIRU_CLAUDE_CAPTURE_KEY"
+_SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
+_COMPACTION_THRESHOLD = 80.0
+_LOW_COMPACTION_THRESHOLD = 0.0
+_RESET_FIVE_HOUR = datetime(2030, 1, 1, 1, tzinfo=UTC)
+_RESET_SEVEN_DAY = datetime(2030, 1, 5, tzinfo=UTC)
+_COST = 0.00001
+_LIVE_ASK_PROMPT = "Return the JSON object with ok set to true."
+
+
+class _AskResult(BaseModel):
+    ok: bool
+
+
+class TestClaudeHeadlessContract(AgentContractSuite):
+    """Exercise Claude's stream scenarios and the six optional live checks."""
+
+    runs_live_checks_in_default_gate = False
+
+    def agent_factory(self) -> AgentFactory:
+        return create
+
+    def agent_options(self) -> Mapping[str, object]:
+        return {"compact_at_pct": _LOW_COMPACTION_THRESHOLD}
+
+    def build_spec(
+        self,
+        tmp_path: Path,
+        *,
+        resume_session_id: str | None,
+        usage: Usage | None = None,
+        model: str | None = None,
+    ) -> TurnSpec:
+        repo = tmp_path / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+        run_dir = tmp_path / "run"
+        turn_dir = tmp_path / "turns" / ("01-turn" if resume_session_id is None else "02-turn")
+        return TurnSpec(
+            rung=Rung(agent="claude", model=model or _MODEL, effort="low"),
+            role=_ROLE,
+            prompt="complete the requested turn",
+            cwd=repo,
+            run_dir=run_dir,
+            turn_dir=turn_dir,
+            add_dirs=(),
+            env={"SHIKIRU_RUN_DIR": str(run_dir), "SHIKIRU_ROLE": _ROLE},
+            session_id=resume_session_id,
+            usage=usage,
+        )
+
+    def parser_for(self, sample: RecordedStream) -> TurnParser:
+        auth = "api_key" if "api_key" in sample.name else "subscription"
+        model = _OPENROUTER_MODEL if "openrouter" in sample.name else _MODEL
+        return ClaudeTurnParser(
+            session_id=sample.session_id or "missing-session",
+            model=model,
+            auth=auth,
+            initial_usage=None,
+            clock=FakeClock(_SAMPLE_NOW),
+            reset_time=ResetTimeParser(FakeClock(_SAMPLE_NOW)),
+            compact_process="compact_process" in sample.name,
+        )
+
+    def recorded_streams(self) -> Sequence[RecordedStream]:
+        subscription_usage = Usage(100, 5, 12, 3, _COST, "api_equivalent", 115 / 200000 * 100)
+        api_key_usage = Usage(40, 8, 4, 1, 0.00002, "billed", 0.0225)
+        openrouter_usage = Usage(70, 12, 0, 0, None, "unknown", None)
+        compact_usage = Usage(20, 8, 0, 0, 0.00003, "api_equivalent", 0.01)
+        empty_stderr = _FIXTURES_DIR / "turn_rate_limit.stderr.log"
+        return [
+            RecordedStream(
+                name="turn_subscription.jsonl",
+                stdout=_FIXTURES_DIR / "turn_subscription.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted("session-subscription"),
+                    ToolStarted("Read", '{"file_path":"README.md"}'),
+                    ToolFinished("Read"),
+                    Message("Ready."),
+                    QuotaReported(
+                        (
+                            QuotaWindow("five_hour", 12.5, _RESET_FIVE_HOUR, _SAMPLE_NOW),
+                            QuotaWindow("seven_day", 4, _RESET_SEVEN_DAY, _SAMPLE_NOW),
+                        )
+                    ),
+                    UsageReported(subscription_usage),
+                    TurnEnded("Ready."),
+                ],
+                session_id="session-subscription",
+            ),
+            RecordedStream(
+                name="turn_api_key.jsonl",
+                stdout=_FIXTURES_DIR / "turn_api_key.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted("session-api-key"),
+                    Message("API key response."),
+                    UsageReported(api_key_usage),
+                    TurnEnded("API key response."),
+                ],
+                session_id="session-api-key",
+            ),
+            RecordedStream(
+                name="turn_openrouter.jsonl",
+                stdout=_FIXTURES_DIR / "turn_openrouter.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted("session-openrouter"),
+                    Message("OpenRouter response."),
+                    UsageReported(openrouter_usage),
+                    TurnEnded("OpenRouter response."),
+                ],
+                session_id="session-openrouter",
+            ),
+            RecordedStream(
+                name="turn_compact_process.jsonl",
+                stdout=_FIXTURES_DIR / "turn_compact_process.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted(_SESSION_RESUMED),
+                    Compacted(12000, 1100),
+                    Message("Context compacted."),
+                    UsageReported(compact_usage),
+                    TurnEnded("Context compacted."),
+                ],
+                session_id=_SESSION_RESUMED,
+            ),
+        ]
+
+    def error_streams(self) -> Sequence[RecordedStream]:
+        empty_stderr = _FIXTURES_DIR / "turn_rate_limit.stderr.log"
+        return [
+            RecordedStream(
+                name="turn_rate_limit.jsonl",
+                stdout=_FIXTURES_DIR / "turn_rate_limit.jsonl",
+                stderr=empty_stderr,
+                exit_code=1,
+                expected_signals=[
+                    SessionStarted("session-rate-limit"),
+                    QuotaReported(
+                        (
+                            QuotaWindow("five_hour", 100, _RESET_FIVE_HOUR, _SAMPLE_NOW),
+                            QuotaWindow("seven_day", 22, _RESET_SEVEN_DAY, _SAMPLE_NOW),
+                        )
+                    ),
+                    TurnFailed(
+                        FailureKind.QUOTA,
+                        "You've hit your usage limit",
+                        _RESET_FIVE_HOUR,
+                    ),
+                ],
+                session_id="session-rate-limit",
+            ),
+            RecordedStream(
+                name="turn_unrecognized_model.jsonl",
+                stdout=_FIXTURES_DIR / "turn_unrecognized_model.jsonl",
+                stderr=_FIXTURES_DIR / "turn_unrecognized_model.stderr.log",
+                exit_code=1,
+                expected_signals=[
+                    SessionStarted("session-unrecognized-model"),
+                    TurnFailed(
+                        FailureKind.UNAVAILABLE,
+                        "Unknown model: not-a-model; unrecognized_model",
+                        None,
+                    ),
+                ],
+                session_id="session-unrecognized-model",
+            ),
+            RecordedStream(
+                name="turn_context_failure.jsonl",
+                stdout=_FIXTURES_DIR / "turn_context_failure.jsonl",
+                stderr=_FIXTURES_DIR / "turn_context_failure.stderr.log",
+                exit_code=1,
+                expected_signals=[
+                    SessionStarted(_SESSION_RESUMED),
+                    TurnFailed(
+                        FailureKind.CONTEXT,
+                        "Prompt is too long for the context window",
+                        None,
+                    ),
+                ],
+                session_id=_SESSION_RESUMED,
+            ),
+            RecordedStream(
+                name="turn_unknown_error.jsonl",
+                stdout=_FIXTURES_DIR / "turn_unknown_error.jsonl",
+                stderr=_FIXTURES_DIR / "turn_unknown_error.stderr.log",
+                exit_code=1,
+                expected_signals=[
+                    SessionStarted("session-unknown"),
+                    TurnFailed(
+                        FailureKind.UNKNOWN,
+                        "Claude reported an unclassified failure",
+                        None,
+                    ),
+                ],
+                session_id="session-unknown",
+            ),
+        ]
+
+    def invocation_cases(self, tmp_path: Path) -> Sequence[InvocationCase]:
+        repo = tmp_path / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+        run_dir = tmp_path / "run"
+        extra_dir = tmp_path / "additional"
+        resumed = TurnSpec(
+            rung=Rung("claude", _MODEL, "low"),
+            role=_ROLE,
+            prompt="resume with the changed model",
+            cwd=repo,
+            run_dir=run_dir,
+            turn_dir=tmp_path / "turns" / "resume",
+            add_dirs=(extra_dir,),
+            env={"SHIKIRU_RUN_DIR": str(run_dir), "SHIKIRU_ROLE": _ROLE},
+            session_id=_SESSION_RESUMED,
+            usage=None,
+        )
+        changed_model = replace(resumed, rung=Rung("claude", _OTHER_MODEL, "high"))
+        key_spec = replace(resumed, env={**resumed.env, _API_KEY_ENV: "fixture-key"})
+        compact_usage = Usage(1000, 500, 100, 20, None, "unknown", 85.0)
+        compact_spec = replace(resumed, usage=compact_usage)
+        retry_spec = replace(resumed, usage=None)
+        run_dir_arg = str(run_dir)
+        extra_dir_arg = str(extra_dir)
+        common_tail = (
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--model",
+            _MODEL,
+            "--effort",
+            "low",
+            "--add-dir",
+            run_dir_arg,
+            "--add-dir",
+            extra_dir_arg,
+            *DEFAULT_ARGS,
+        )
+        context_failure = _record(
+            "turn_context_failure.jsonl",
+            "turn_context_failure.stderr.log",
+            _SESSION_RESUMED,
+        )
+        compact_process = _record(
+            "turn_compact_process.jsonl",
+            "turn_rate_limit.stderr.log",
+            _SESSION_RESUMED,
+        )
+        retry_success = _record(
+            "turn_subscription.jsonl",
+            "turn_rate_limit.stderr.log",
+            "session-subscription",
+        )
+        return [
+            InvocationCase(
+                name="resumes the existing session with the selected model and effort",
+                options={},
+                spec=resumed,
+                expected_argv=[
+                    (
+                        "claude",
+                        "-p",
+                        resumed.prompt,
+                        "--resume",
+                        _SESSION_RESUMED,
+                        *common_tail,
+                    )
+                ],
+                expected_env=[{"SHIKIRU_ROLE": _ROLE}],
+                interactive_session_id=_SESSION_RESUMED,
+                expected_interactive_command=(
+                    "claude",
+                    "--resume",
+                    _SESSION_RESUMED,
+                    "--add-dir",
+                    run_dir_arg,
+                    *DEFAULT_ARGS,
+                ),
+            ),
+            InvocationCase(
+                name="a model change resumes the same session",
+                options={},
+                spec=changed_model,
+                expected_argv=[
+                    (
+                        "claude",
+                        "-p",
+                        changed_model.prompt,
+                        "--resume",
+                        _SESSION_RESUMED,
+                        "--output-format",
+                        "stream-json",
+                        "--verbose",
+                        "--model",
+                        _OTHER_MODEL,
+                        "--effort",
+                        "high",
+                        "--add-dir",
+                        run_dir_arg,
+                        "--add-dir",
+                        extra_dir_arg,
+                        *DEFAULT_ARGS,
+                    )
+                ],
+                expected_env=[{"SHIKIRU_ROLE": _ROLE}],
+            ),
+            InvocationCase(
+                name="API-key auth sets its configured key",
+                options={"auth": "api_key", "api_key_env": _API_KEY_ENV, "args": []},
+                spec=key_spec,
+                expected_argv=[
+                    (
+                        "claude",
+                        "-p",
+                        key_spec.prompt,
+                        "--resume",
+                        _SESSION_RESUMED,
+                        "--output-format",
+                        "stream-json",
+                        "--verbose",
+                        "--model",
+                        _MODEL,
+                        "--effort",
+                        "low",
+                        "--add-dir",
+                        run_dir_arg,
+                        "--add-dir",
+                        extra_dir_arg,
+                    )
+                ],
+                expected_env=[{"ANTHROPIC_API_KEY": "fixture-key"}],
+            ),
+            InvocationCase(
+                name="pre-turn compaction runs before a resumed prompt at the threshold",
+                options={"compact_at_pct": _COMPACTION_THRESHOLD},
+                spec=compact_spec,
+                expected_argv=[
+                    (
+                        "claude",
+                        "-p",
+                        "/compact",
+                        "--resume",
+                        _SESSION_RESUMED,
+                        *common_tail,
+                    ),
+                    (
+                        "claude",
+                        "-p",
+                        compact_spec.prompt,
+                        "--resume",
+                        _SESSION_RESUMED,
+                        *common_tail,
+                    ),
+                ],
+                expected_env=[{"SHIKIRU_ROLE": _ROLE}, {"SHIKIRU_ROLE": _ROLE}],
+                outcome_streams=[compact_process],
+            ),
+            InvocationCase(
+                name="context failure compacts and reruns the prompt once",
+                options={"compact_at_pct": _COMPACTION_THRESHOLD},
+                spec=retry_spec,
+                expected_argv=[
+                    (
+                        "claude",
+                        "-p",
+                        retry_spec.prompt,
+                        "--resume",
+                        _SESSION_RESUMED,
+                        *common_tail,
+                    ),
+                    (
+                        "claude",
+                        "-p",
+                        "/compact",
+                        "--resume",
+                        _SESSION_RESUMED,
+                        *common_tail,
+                    ),
+                    (
+                        "claude",
+                        "-p",
+                        retry_spec.prompt,
+                        "--resume",
+                        _SESSION_RESUMED,
+                        *common_tail,
+                    ),
+                ],
+                expected_env=[
+                    {"SHIKIRU_ROLE": _ROLE},
+                    {"SHIKIRU_ROLE": _ROLE},
+                    {"SHIKIRU_ROLE": _ROLE},
+                ],
+                outcome_streams=[context_failure, compact_process, retry_success],
+                expected_final_signals=[
+                    SessionStarted(_SESSION_RESUMED),
+                    Compacted(12000, 1100),
+                    UsageReported(Usage(20, 8, 0, 0, 0.00003, "api_equivalent", 0.01)),
+                    TurnEnded("Ready."),
+                ],
+            ),
+        ]
+
+    def process_sequence(self, agent: Agent, spec: TurnSpec) -> TurnProcessSequence:
+        return cast("ClaudeAgent", agent).process_sequence(spec)
+
+    def headless_ask_schema_model(self) -> type[BaseModel]:
+        return _AskResult
+
+    def headless_ask_model(self) -> str:
+        return "haiku"
+
+    def headless_ask_prompt(self) -> str:
+        return _LIVE_ASK_PROMPT
+
+    def test_new_turn_uses_a_uuid_and_starts_a_session(self, tmp_path: Path) -> None:
+        spec = self.build_spec(tmp_path, resume_session_id=None)
+        agent = create(
+            AgentContext(
+                options={},
+                runner=SubprocessRunner(),
+                clock=SystemClock(),
+            )
+        )
+        command = agent.process_sequence(spec).start(spec)
+        session_index = command.argv.index("--session-id")
+
+        assert command.argv[:3] == ("claude", "-p", spec.prompt)
+        assert re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            command.argv[session_index + 1],
+        )
+        assert command.argv[-2:] == DEFAULT_ARGS
+
+    def test_init_without_a_session_id_does_not_hide_malformed_stream(self) -> None:
+        clock = FakeClock(_SAMPLE_NOW)
+        parser = ClaudeTurnParser(
+            session_id="expected-session",
+            model=_MODEL,
+            auth="subscription",
+            initial_usage=None,
+            clock=clock,
+            reset_time=ResetTimeParser(clock),
+        )
+
+        assert parser.feed('{"type":"system","subtype":"init"}') == []
+
+    @pytest.mark.parametrize("malformed_line", ["not-json", "[]"])
+    def test_malformed_stream_before_success_remains_unknown(self, malformed_line: str) -> None:
+        clock = FakeClock(_SAMPLE_NOW)
+        parser = ClaudeTurnParser(
+            session_id="expected-session",
+            model=_MODEL,
+            auth="subscription",
+            initial_usage=None,
+            clock=clock,
+            reset_time=ResetTimeParser(clock),
+        )
+        parser.feed('{"type":"system","subtype":"init","session_id":"expected-session"}')
+        parser.feed(malformed_line)
+
+        signals = parser.feed('{"type":"result","subtype":"success","result":"Should not succeed"}')
+
+        assert signals == [
+            TurnFailed(FailureKind.UNKNOWN, "Claude emitted malformed stream-json", None)
+        ]
+
+
+def _record(name: str, stderr: str, session_id: str) -> RecordedStream:
+    return RecordedStream(
+        name=name,
+        stdout=_FIXTURES_DIR / name,
+        stderr=_FIXTURES_DIR / stderr,
+        exit_code=0,
+        expected_signals=[],
+        session_id=session_id,
+    )

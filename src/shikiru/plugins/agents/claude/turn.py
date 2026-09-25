@@ -1,0 +1,706 @@
+"""Claude Code stream-json turn parser and process sequence."""
+
+from __future__ import annotations
+
+import json
+import re
+import uuid
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, cast
+
+from shikiru.agents.contracts import (
+    AgentSignal,
+    Compacted,
+    FailureKind,
+    Message,
+    QuotaReported,
+    QuotaWindow,
+    SessionStarted,
+    ToolFinished,
+    ToolStarted,
+    TurnEnded,
+    TurnFailed,
+    TurnSpec,
+    Usage,
+    UsageReported,
+)
+from shikiru.agents.sdk.turn import TurnProcess, TurnProcessResult, TurnProcessSequence
+from shikiru.plugins.agents.claude.options import (
+    ADD_DIR_FLAG,
+    AUTH_API_KEY,
+    CLAUDE_COMMAND,
+    EFFORT_FLAG,
+    MODEL_FLAG,
+    RESUME_FLAG,
+    SESSION_ID_FLAG,
+    STATUS_FORBIDDEN,
+    STATUS_PAYMENT_REQUIRED,
+    STATUS_TOO_MANY_REQUESTS,
+    STATUS_UNAUTHORIZED,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from datetime import datetime
+    from pathlib import Path
+
+    from shikiru.agents.sdk.reset_time import ResetTimeParser
+    from shikiru.clock import Clock
+
+_PRINT_FLAG = "-p"
+_OUTPUT_FORMAT_FLAG = "--output-format"
+_STREAM_JSON = "stream-json"
+_VERBOSE_FLAG = "--verbose"
+_COMPACT_PROMPT = "/compact"
+_SYSTEM_TYPE = "system"
+_ASSISTANT_TYPE = "assistant"
+_USER_TYPE = "user"
+_RESULT_TYPE = "result"
+_RATE_LIMIT_TYPE = "rate_limit_event"
+_INIT_SUBTYPE = "init"
+_COMPACT_BOUNDARY_SUBTYPE = "compact_boundary"
+_SUCCESS_SUBTYPE = "success"
+_ERROR_TERMINAL_REASONS = (
+    "error",
+    "api_error",
+    "prompt_too_long",
+    "context_length_exceeded",
+)
+_LIST_COST_BASIS = "list"
+_TEXT_BLOCK_TYPE = "text"
+_TOOL_USE_BLOCK_TYPE = "tool_use"
+_TOOL_RESULT_BLOCK_TYPE = "tool_result"
+_TEXT_FIELD = "text"
+_CONTENT_FIELD = "content"
+_MESSAGE_FIELD = "message"
+_USAGE_FIELD = "usage"
+_INPUT_TOKENS_FIELD = "input_tokens"
+_OUTPUT_TOKENS_FIELD = "output_tokens"
+_CACHE_READ_TOKENS_FIELD = "cache_read_input_tokens"
+_CACHE_WRITE_TOKENS_FIELD = "cache_creation_input_tokens"
+_SESSION_ID_FIELD = "session_id"
+_MODEL_FIELD = "model"
+_MODEL_USAGE_FIELD = "modelUsage"
+_CONTEXT_WINDOW_FIELD = "contextWindow"
+_COST_BASIS_FIELD = "costBasis"
+_TOTAL_COST_FIELD = "total_cost_usd"
+_COMPACT_METADATA_FIELD = "compact_metadata"
+_PRE_TOKENS_FIELD = "pre_tokens"
+_POST_TOKENS_FIELD = "post_tokens"
+_RATE_LIMIT_INFO_FIELD = "rate_limit_info"
+_UNIFIED_WINDOWS_FIELD = "unifiedWindows"
+_FIVE_HOUR_WINDOW = "five_hour"
+_SEVEN_DAY_WINDOW = "seven_day"
+_UTILIZATION_FIELD = "utilization"
+_RESETS_AT_FIELD = "resetsAt"
+_API_ERROR_STATUS_FIELD = "api_error_status"
+_STATUS_FIELD = "status"
+_IS_ERROR_FIELD = "is_error"
+_TERMINAL_REASON_FIELD = "terminal_reason"
+_RESULT_FIELD = "result"
+_ERROR_FIELD = "error"
+_ERRORS_FIELD = "errors"
+_TOOL_NAME_FIELD = "name"
+_TOOL_ID_FIELD = "id"
+_TOOL_USE_ID_FIELD = "tool_use_id"
+_TOOL_INPUT_FIELD = "input"
+_TYPE_FIELD = "type"
+_SUBTYPE_FIELD = "subtype"
+_MESSAGE_TEXT_FIELD = "message"
+_ERROR_TAG_PATTERN = re.compile(r"\[claude-code:(?P<code>[a-z0-9_-]+)\]", re.IGNORECASE)
+_ERROR_STATUSES = (
+    STATUS_UNAUTHORIZED,
+    STATUS_PAYMENT_REQUIRED,
+    STATUS_FORBIDDEN,
+    STATUS_TOO_MANY_REQUESTS,
+)
+_UNAVAILABLE_STATUS_MIN = 500
+_UNAVAILABLE_STATUS_MAX = 599
+_CONTEXT_ERROR_TEXTS = ("prompt is too long", "context length", "context window")
+_QUOTA_ERROR_TEXTS = ("usage limit", "rate limit", "too many requests")
+_UNAVAILABLE_ERROR_TEXTS = ("overloaded", "unrecognized_model", "unrecognized model")
+_AUTH_ERROR_TEXTS = ("authentication", "unauthorized", "invalid api key")
+_TOOL_DETAIL_MAX_CHARS = 160
+_UNKNOWN_ERROR_MESSAGE = "Claude stream ended without a result"
+_INVALID_COMPACTION_MESSAGE = "Claude compaction ended without compact_boundary"
+_MALFORMED_STREAM_MESSAGE = "Claude emitted malformed stream-json"
+_STATUS_MESSAGE = "Claude returned API status {status}"
+_STDERR_MESSAGE = "Claude exited with status {exit_code}: {message}"
+_EMPTY_MESSAGE = "(empty)"
+
+
+class ClaudeTurnParser:
+    """Map Claude's stream-json records and process exit to agent signals."""
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        model: str,
+        auth: str,
+        initial_usage: Usage | None,
+        clock: Clock,
+        reset_time: ResetTimeParser,
+        compact_process: bool = False,
+    ) -> None:
+        self._session_id = session_id
+        self._model = model
+        self._auth = auth
+        self._initial_usage = initial_usage or _empty_usage()
+        self._clock = clock
+        self._reset_time = reset_time
+        self._compact_process = compact_process
+        self._tool_names: dict[str, str] = {}
+        self._tool_ids: list[str] = []
+        self._latest_assistant_usage: Mapping[str, Any] | None = None
+        self._latest_model_usage: Mapping[str, Any] | None = None
+        self._latest_cost_basis: str | None = None
+        self._latest_cost: float | None = None
+        self._latest_message = ""
+        self._latest_quota: tuple[QuotaWindow, ...] = ()
+        self._terminal = False
+        self._malformed_line: str | None = None
+        self._did_compact = False
+        self._failure_payload: Mapping[str, Any] | None = None
+
+    def feed(self, line: str) -> list[AgentSignal]:
+        if self._terminal:
+            return []
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            self._malformed_line = self._malformed_line or line
+            return []
+        if not isinstance(raw, Mapping):
+            self._malformed_line = self._malformed_line or line
+            return []
+        payload = cast("Mapping[str, Any]", raw)
+        handlers = {
+            _SYSTEM_TYPE: self._system,
+            _ASSISTANT_TYPE: self._assistant,
+            _USER_TYPE: self._user,
+            _RATE_LIMIT_TYPE: self._rate_limit,
+            _RESULT_TYPE: self._result,
+        }
+        handler = handlers.get(cast("str", payload.get(_TYPE_FIELD)))
+        return handler(payload) if handler is not None else []
+
+    def finish(self, exit_code: int, stderr: str) -> list[AgentSignal]:
+        if self._terminal:
+            return []
+        if self._malformed_line is not None:
+            self._terminal = True
+            return [
+                TurnFailed(
+                    FailureKind.UNKNOWN,
+                    _stderr_message(exit_code, stderr, _MALFORMED_STREAM_MESSAGE),
+                    None,
+                )
+            ]
+        if self._failure_payload is not None:
+            self._terminal = True
+            return self._fail(self._failure_payload, stderr)
+        failure = self._classify_failure(None, stderr)
+        if failure is None:
+            message = _UNKNOWN_ERROR_MESSAGE
+        else:
+            kind, message, resets_at = failure
+            self._terminal = True
+            return [TurnFailed(kind, _stderr_message(exit_code, stderr, message), resets_at)]
+        self._terminal = True
+        return [
+            TurnFailed(
+                FailureKind.UNKNOWN,
+                _stderr_message(exit_code, stderr, message),
+                None,
+            )
+        ]
+
+    def _system(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        subtype = payload.get(_SUBTYPE_FIELD)
+        if subtype == _INIT_SUBTYPE:
+            raw_session_id = payload.get(_SESSION_ID_FIELD)
+            if not isinstance(raw_session_id, str) or not raw_session_id.strip():
+                return []
+            session_id = raw_session_id
+            model = payload.get(_MODEL_FIELD)
+            if isinstance(model, str):
+                self._model = model
+            return [SessionStarted(session_id)]
+        if subtype == _COMPACT_BOUNDARY_SUBTYPE:
+            self._did_compact = True
+            metadata = payload.get(_COMPACT_METADATA_FIELD)
+            typed_metadata = _mapping(metadata)
+            return [
+                Compacted(
+                    _optional_integer(typed_metadata, _PRE_TOKENS_FIELD),
+                    _optional_integer(typed_metadata, _POST_TOKENS_FIELD),
+                )
+            ]
+        return []
+
+    def _assistant(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        message = _mapping(payload.get(_MESSAGE_FIELD))
+        if message is not None:
+            self._latest_assistant_usage = _mapping(message.get(_USAGE_FIELD))
+            blocks = message.get(_CONTENT_FIELD)
+        else:
+            blocks = payload.get(_CONTENT_FIELD)
+        if not isinstance(blocks, list):
+            return []
+        signals: list[AgentSignal] = []
+        for block in cast("list[object]", blocks):
+            item = _mapping(block)
+            if item is None:
+                continue
+            if item.get(_TYPE_FIELD) == _TEXT_BLOCK_TYPE:
+                text = item.get(_TEXT_FIELD)
+                if isinstance(text, str) and text:
+                    self._latest_message = text
+                    signals.append(Message(text))
+            elif item.get(_TYPE_FIELD) == _TOOL_USE_BLOCK_TYPE:
+                name = item.get(_TOOL_NAME_FIELD)
+                tool_id = item.get(_TOOL_ID_FIELD)
+                if isinstance(name, str):
+                    detail = _tool_detail(item.get(_TOOL_INPUT_FIELD))
+                    signals.append(ToolStarted(name, detail))
+                    if isinstance(tool_id, str):
+                        self._tool_names[tool_id] = name
+                        self._tool_ids.append(tool_id)
+        return signals
+
+    def _user(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        blocks = payload.get(_CONTENT_FIELD)
+        if not isinstance(blocks, list):
+            return []
+        signals: list[AgentSignal] = []
+        for block in cast("list[object]", blocks):
+            item = _mapping(block)
+            if item is None or item.get(_TYPE_FIELD) != _TOOL_RESULT_BLOCK_TYPE:
+                continue
+            tool_id = item.get(_TOOL_USE_ID_FIELD)
+            if not isinstance(tool_id, str) and self._tool_ids:
+                tool_id = self._tool_ids[0]
+            if isinstance(tool_id, str):
+                name = self._tool_names.pop(tool_id, None)
+                if tool_id in self._tool_ids:
+                    self._tool_ids.remove(tool_id)
+                if name is not None:
+                    signals.append(ToolFinished(name))
+        return signals
+
+    def _rate_limit(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        if self._auth == AUTH_API_KEY:
+            return []
+        info = _mapping(payload.get(_RATE_LIMIT_INFO_FIELD))
+        if info is None:
+            return []
+        windows = _mapping(info.get(_UNIFIED_WINDOWS_FIELD)) or info
+        observed_at = self._clock.now()
+        reported = tuple(
+            self._quota_window(name, raw, observed_at)
+            for name in (_FIVE_HOUR_WINDOW, _SEVEN_DAY_WINDOW)
+            if (raw := _mapping(windows.get(name))) is not None
+            and isinstance(raw.get(_UTILIZATION_FIELD), int | float)
+        )
+        if not reported:
+            return []
+        self._latest_quota = reported
+        return [QuotaReported(reported)]
+
+    def _quota_window(
+        self, name: str, raw: Mapping[str, Any], observed_at: datetime
+    ) -> QuotaWindow:
+        reset_value = raw.get(_RESETS_AT_FIELD)
+        resets_at = self._reset_time.parse(str(reset_value)) if reset_value is not None else None
+        return QuotaWindow(
+            name=name,
+            used_pct=float(cast("int | float", raw[_UTILIZATION_FIELD])),
+            resets_at=resets_at,
+            observed_at=observed_at,
+        )
+
+    def _result(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        if self._malformed_line is not None:
+            self._terminal = True
+            return [TurnFailed(FailureKind.UNKNOWN, _MALFORMED_STREAM_MESSAGE, None)]
+        if _is_error_result(payload):
+            self._failure_payload = payload
+            return []
+        if self._compact_process and not self._has_compaction_boundary:
+            self._terminal = True
+            return [TurnFailed(FailureKind.CONTEXT, _INVALID_COMPACTION_MESSAGE, None)]
+        usage = _mapping(payload.get(_USAGE_FIELD))
+        model_usage = _mapping(payload.get(_MODEL_USAGE_FIELD))
+        selected_model_usage = _select_model_usage(model_usage, self._model)
+        if selected_model_usage is not None:
+            self._latest_model_usage = selected_model_usage
+            cost_basis = selected_model_usage.get(_COST_BASIS_FIELD)
+            self._latest_cost_basis = cost_basis if isinstance(cost_basis, str) else None
+        total_cost = payload.get(_TOTAL_COST_FIELD)
+        self._latest_cost = float(total_cost) if isinstance(total_cost, int | float) else None
+        reported_usage = self._reported_usage(usage)
+        result_text = payload.get(_RESULT_FIELD)
+        last_message = result_text if isinstance(result_text, str) else self._latest_message
+        self._terminal = True
+        return [UsageReported(reported_usage), TurnEnded(last_message)]
+
+    def _reported_usage(self, turn_usage: Mapping[str, Any] | None) -> Usage:
+        source = turn_usage or self._latest_assistant_usage
+        input_tokens = self._initial_usage.input_tokens + _integer(source, _INPUT_TOKENS_FIELD)
+        output_tokens = self._initial_usage.output_tokens + _integer(source, _OUTPUT_TOKENS_FIELD)
+        cache_read_tokens = self._initial_usage.cache_read_tokens + _integer(
+            source, _CACHE_READ_TOKENS_FIELD
+        )
+        cache_write_tokens = self._initial_usage.cache_write_tokens + _integer(
+            source, _CACHE_WRITE_TOKENS_FIELD
+        )
+        priced = self._latest_cost_basis == _LIST_COST_BASIS and self._latest_cost is not None
+        context_window = (
+            self._latest_model_usage.get(_CONTEXT_WINDOW_FIELD)
+            if self._latest_model_usage is not None
+            else None
+        )
+        context_tokens = _context_tokens(self._latest_assistant_usage)
+        context_pct = (
+            context_tokens / context_window * 100
+            if priced and isinstance(context_window, int | float) and context_window > 0
+            else None
+        )
+        return Usage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            cost_usd=self._latest_cost if priced else None,
+            cost_basis=("api_equivalent" if self._auth != AUTH_API_KEY else "billed")
+            if priced
+            else "unknown",
+            context_used_pct=context_pct,
+        )
+
+    def _fail(self, payload: Mapping[str, Any], stderr: str) -> list[AgentSignal]:
+        failure = self._classify_failure(payload, stderr)
+        if failure is None:
+            failure = (FailureKind.UNKNOWN, _UNKNOWN_ERROR_MESSAGE, None)
+        kind, message, resets_at = failure
+        if kind is FailureKind.QUOTA and resets_at is None:
+            resets_at = _latest_reset(self._latest_quota)
+        if kind is FailureKind.QUOTA and resets_at is None:
+            resets_at = self._reset_time.parse(message)
+        return [TurnFailed(kind, message, resets_at)]
+
+    def _classify_failure(
+        self, payload: Mapping[str, Any] | None, stderr: str
+    ) -> tuple[FailureKind, str, datetime | None] | None:
+        status = _api_error_status(payload)
+        message = _error_message(payload, stderr)
+        lowered = f"{message} {stderr}".lower()
+        tag_match = _ERROR_TAG_PATTERN.search(stderr)
+        code = tag_match.group("code").lower() if tag_match is not None else ""
+        terminal_reason = payload.get(_TERMINAL_REASON_FIELD) if payload is not None else None
+        lowered = f"{lowered} {terminal_reason or ''} {code}"
+        classified = _classify_status(status, message, self._reset_time)
+        if status == STATUS_PAYMENT_REQUIRED:
+            return classified
+        if classified is None:
+            classified = _classify_text(lowered, message, stderr, status)
+        if classified is not None and classified[0] is FailureKind.QUOTA:
+            kind, failure_message, resets_at = classified
+            return kind, failure_message, resets_at or self._reset_time.parse(message)
+        return classified
+
+    @property
+    def _has_compaction_boundary(self) -> bool:
+        return self._did_compact
+
+
+class ClaudeTurnSequence(TurnProcessSequence):
+    """Build Claude compact and prompt processes for one session turn."""
+
+    def __init__(
+        self,
+        spec: TurnSpec,
+        *,
+        clock: Clock,
+        reset_time: ResetTimeParser,
+        compact_at_pct: float,
+        auth: str,
+        args: Sequence[str],
+        environment: Callable[[TurnSpec], Mapping[str, str]],
+        session_id: str | None = None,
+    ) -> None:
+        self._spec = spec
+        self._clock = clock
+        self._reset_time = reset_time
+        self._compact_at_pct = compact_at_pct
+        self._auth = auth
+        self._args = tuple(args)
+        self._environment = environment
+        self._session_id = spec.session_id or session_id or str(uuid.uuid4())
+        self._phase = "start"
+        self._usage = spec.usage
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    def start(self, spec: TurnSpec) -> TurnProcess:
+        needs_compaction = (
+            spec.session_id is not None
+            and spec.usage is not None
+            and spec.usage.context_used_pct is not None
+            and spec.usage.context_used_pct >= self._compact_at_pct
+        )
+        if needs_compaction:
+            self._phase = "precompact"
+            return self._process(spec, compact=True)
+        self._phase = "prompt"
+        return self._process(spec, compact=False)
+
+    def advance(self, spec: TurnSpec, previous: TurnProcessResult) -> TurnProcess | None:
+        self._remember_usage(previous.signals)
+        terminal = _terminal(previous.signals)
+        compacted = any(isinstance(signal, Compacted) for signal in previous.signals)
+        transitions = {
+            "precompact": self._advance_precompact,
+            "prompt": self._advance_prompt,
+            "failure_compact": self._advance_failure_compact,
+        }
+        transition = transitions.get(self._phase)
+        return transition(spec, terminal, compacted) if transition is not None else None
+
+    def _advance_precompact(
+        self, spec: TurnSpec, terminal: TurnEnded | TurnFailed | None, compacted: bool
+    ) -> TurnProcess | None:
+        if isinstance(terminal, TurnEnded) and compacted:
+            self._phase = "prompt"
+            return self._process(spec, compact=False)
+        return None
+
+    def _advance_prompt(
+        self, spec: TurnSpec, terminal: TurnEnded | TurnFailed | None, _compacted: bool
+    ) -> TurnProcess | None:
+        if isinstance(terminal, TurnFailed) and terminal.kind is FailureKind.CONTEXT:
+            self._phase = "failure_compact"
+            return self._process(spec, compact=True)
+        return None
+
+    def _advance_failure_compact(
+        self, spec: TurnSpec, terminal: TurnEnded | TurnFailed | None, compacted: bool
+    ) -> TurnProcess | None:
+        if isinstance(terminal, TurnEnded) and compacted:
+            self._phase = "retry"
+            return self._process(spec, compact=False)
+        return None
+
+    def _process(self, spec: TurnSpec, *, compact: bool) -> TurnProcess:
+        prompt = _COMPACT_PROMPT if compact else spec.prompt
+        argv: list[str] = [CLAUDE_COMMAND, _PRINT_FLAG, prompt]
+        argv.extend(
+            [RESUME_FLAG, self._session_id]
+            if spec.session_id is not None or self._phase != "prompt" or compact
+            else [SESSION_ID_FLAG, self._session_id]
+        )
+        argv.extend([_OUTPUT_FORMAT_FLAG, _STREAM_JSON, _VERBOSE_FLAG, MODEL_FLAG, spec.rung.model])
+        if spec.rung.effort is not None:
+            argv.extend([EFFORT_FLAG, spec.rung.effort])
+        for directory in _unique_paths((spec.run_dir, *spec.add_dirs)):
+            argv.extend([ADD_DIR_FLAG, str(directory)])
+        argv.extend(self._args)
+        parser = ClaudeTurnParser(
+            session_id=self._session_id,
+            model=spec.rung.model,
+            auth=self._auth,
+            initial_usage=self._usage,
+            clock=self._clock,
+            reset_time=self._reset_time,
+            compact_process=compact,
+        )
+        return TurnProcess(
+            tuple(argv),
+            spec.cwd,
+            self._environment(spec),
+            parser,
+        )
+
+    def _remember_usage(self, signals: Sequence[AgentSignal]) -> None:
+        usages = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
+        if usages:
+            self._usage = usages[-1]
+
+
+def _empty_usage() -> Usage:
+    return Usage(0, 0, 0, 0, None, "unknown", None)
+
+
+def _mapping(value: object) -> Mapping[str, Any] | None:
+    return cast("Mapping[str, Any]", value) if isinstance(value, Mapping) else None
+
+
+def _optional_integer(payload: Mapping[str, Any] | None, key: str) -> int | None:
+    if payload is None:
+        return None
+    value = payload.get(key)
+    return value if isinstance(value, int) else None
+
+
+def _tool_detail(value: object) -> str:
+    if isinstance(value, str):
+        detail = value
+    elif isinstance(value, Mapping):
+        detail = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    else:
+        detail = ""
+    return detail[:_TOOL_DETAIL_MAX_CHARS]
+
+
+def _is_error_result(payload: Mapping[str, Any]) -> bool:
+    if payload.get(_IS_ERROR_FIELD) is True:
+        return True
+    if _api_error_status(payload) is not None:
+        return True
+    terminal_reason = payload.get(_TERMINAL_REASON_FIELD)
+    if isinstance(terminal_reason, str) and terminal_reason.lower() in _ERROR_TERMINAL_REASONS:
+        return True
+    return payload.get(_SUBTYPE_FIELD) not in (None, _SUCCESS_SUBTYPE) and isinstance(
+        payload.get(_SUBTYPE_FIELD), str
+    )
+
+
+def _api_error_status(payload: Mapping[str, Any] | None) -> int | None:
+    if payload is None:
+        return None
+    value = payload.get(_API_ERROR_STATUS_FIELD)
+    if (isinstance(value, int) and value in _ERROR_STATUSES) or (
+        isinstance(value, int) and _UNAVAILABLE_STATUS_MIN <= value <= _UNAVAILABLE_STATUS_MAX
+    ):
+        return value
+    error = _mapping(payload.get(_ERROR_FIELD))
+    nested = error.get(_API_ERROR_STATUS_FIELD, error.get(_STATUS_FIELD)) if error else None
+    return nested if isinstance(nested, int) else None
+
+
+def _error_message(payload: Mapping[str, Any] | None, stderr: str) -> str:
+    if payload is None:
+        tag = _ERROR_TAG_PATTERN.search(stderr)
+        return tag.group("code") if tag is not None else stderr.strip()
+    parts: list[str] = []
+    for key in (_RESULT_FIELD, _ERROR_FIELD):
+        value = payload.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, Mapping):
+            typed_value = cast("Mapping[str, object]", value)
+            nested_message = typed_value.get(_MESSAGE_TEXT_FIELD)
+            if isinstance(nested_message, str):
+                parts.append(nested_message)
+    errors = payload.get(_ERRORS_FIELD)
+    if isinstance(errors, list):
+        parts.extend(
+            error
+            for item in cast("list[object]", errors)
+            if isinstance((error := _error_message_from_item(item)), str)
+        )
+    tag = _ERROR_TAG_PATTERN.search(stderr)
+    if tag is not None:
+        parts.append(tag.group("code"))
+    return "; ".join(part for part in parts if part)
+
+
+def _error_message_from_item(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    payload = _mapping(value)
+    if payload is None:
+        return None
+    message = payload.get(_MESSAGE_TEXT_FIELD)
+    return message if isinstance(message, str) else None
+
+
+def _contains(value: str, fragments: Sequence[str]) -> bool:
+    return any(fragment in value for fragment in fragments)
+
+
+def _classify_status(
+    status: int | None, message: str, reset_time: ResetTimeParser
+) -> tuple[FailureKind, str, datetime | None] | None:
+    detail = message or _STATUS_MESSAGE.format(status=status)
+    if status == STATUS_PAYMENT_REQUIRED:
+        return FailureKind.QUOTA, detail, None
+    if status == STATUS_TOO_MANY_REQUESTS:
+        return FailureKind.QUOTA, detail, reset_time.parse(message)
+    if isinstance(status, int) and _UNAVAILABLE_STATUS_MIN <= status <= _UNAVAILABLE_STATUS_MAX:
+        return FailureKind.UNAVAILABLE, detail, None
+    if status in (STATUS_UNAUTHORIZED, STATUS_FORBIDDEN):
+        return FailureKind.AUTH, detail, None
+    return None
+
+
+def _classify_text(
+    lowered: str, message: str, stderr: str, status: int | None
+) -> tuple[FailureKind, str, datetime | None] | None:
+    if _contains(lowered, _QUOTA_ERROR_TEXTS):
+        return FailureKind.QUOTA, message or stderr.strip(), None
+    if _contains(lowered, _UNAVAILABLE_ERROR_TEXTS):
+        return FailureKind.UNAVAILABLE, message or stderr.strip(), None
+    if _contains(lowered, _AUTH_ERROR_TEXTS):
+        return FailureKind.AUTH, message or stderr.strip(), None
+    if _contains(lowered, _CONTEXT_ERROR_TEXTS):
+        return FailureKind.CONTEXT, message or stderr.strip(), None
+    if status is not None or message or stderr:
+        return FailureKind.UNKNOWN, message or stderr.strip(), None
+    return None
+
+
+def _stderr_message(exit_code: int, stderr: str, message: str) -> str:
+    detail = message.strip() or stderr.strip() or _EMPTY_MESSAGE
+    return _STDERR_MESSAGE.format(exit_code=exit_code, message=detail)
+
+
+def _integer(payload: Mapping[str, Any] | None, key: str) -> int:
+    value = payload.get(key, 0) if payload is not None else 0
+    return int(value) if isinstance(value, int | float) else 0
+
+
+def _context_tokens(usage: Mapping[str, Any] | None) -> int:
+    return sum(
+        _integer(usage, key)
+        for key in (_INPUT_TOKENS_FIELD, _CACHE_READ_TOKENS_FIELD, _CACHE_WRITE_TOKENS_FIELD)
+    )
+
+
+def _select_model_usage(
+    model_usage: Mapping[str, Any] | None, model: str
+) -> Mapping[str, Any] | None:
+    if model_usage is None:
+        return None
+    exact = _mapping(model_usage.get(model))
+    if exact is not None:
+        return exact
+    if len(model_usage) == 1:
+        return _mapping(next(iter(model_usage.values())))
+    return None
+
+
+def _latest_reset(windows: Sequence[QuotaWindow]) -> datetime | None:
+    resets = [window.resets_at for window in windows if window.resets_at is not None]
+    return min(resets) if resets else None
+
+
+def _terminal(signals: Sequence[AgentSignal]) -> TurnEnded | TurnFailed | None:
+    return next(
+        (signal for signal in reversed(signals) if isinstance(signal, (TurnEnded, TurnFailed))),
+        None,
+    )
+
+
+def _unique_paths(paths: Sequence[Path]) -> tuple[Path, ...]:
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        normalized = path.resolve()
+        if normalized not in seen:
+            seen.add(normalized)
+            unique.append(path)
+    return tuple(unique)

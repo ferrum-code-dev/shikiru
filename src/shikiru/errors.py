@@ -41,6 +41,10 @@ class ConfigError(ShikiruError):
     """Project or default configuration is missing or invalid."""
 
 
+class HeadlessOutputError(ShikiruError):
+    """An agent's headless response did not contain valid structured output."""
+
+
 class DatabaseError(ShikiruError):
     """The state database could not be opened, migrated or queried."""
 

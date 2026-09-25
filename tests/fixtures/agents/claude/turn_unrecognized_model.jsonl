@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"session-unrecognized-model","model":"not-a-model"}
+{"type":"result","is_error":true,"api_error_status":404,"terminal_reason":"error","result":"Unknown model: not-a-model"}

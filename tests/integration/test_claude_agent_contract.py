@@ -40,6 +40,7 @@ from shikiru.agents.testing import (
 )
 from shikiru.clock import SystemClock
 from shikiru.plugins.agents.claude.agent import create
+from shikiru.plugins.agents.claude.options import PERMISSION_MODE_BYPASS, PERMISSION_MODE_FLAG
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -240,7 +241,7 @@ class TestClaudeAgentContract(LegacyAgentContractSuite):
         assert call.argv[:2] == ("claude", "--session-id")
         uuid.UUID(call.argv[2])
         assert call.argv[3:7] == ("--model", _MODEL, "--effort", "high")
-        assert call.argv[-2:] == ("--permission-mode", "auto")
+        assert call.argv[-2:] == (PERMISSION_MODE_FLAG, PERMISSION_MODE_BYPASS)
         settings = json.loads(call.argv[call.argv.index("--settings") + 1])
         assert set(settings["hooks"]) == {
             "SessionStart",

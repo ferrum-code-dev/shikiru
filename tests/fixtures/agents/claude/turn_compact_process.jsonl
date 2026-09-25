@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"session-resumed"}
+{"type":"system","subtype":"compact_boundary","compact_metadata":{"pre_tokens":12000,"post_tokens":1100}}
+{"type":"assistant","message":{"id":"msg-compact","usage":{"input_tokens":20,"output_tokens":8,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Context compacted."}]}}
+{"type":"result","subtype":"success","result":"Context compacted.","usage":{"input_tokens":20,"output_tokens":8,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"total_cost_usd":0.00003,"modelUsage":{"claude-haiku-4-5-20251001":{"costBasis":"list","contextWindow":200000}}}

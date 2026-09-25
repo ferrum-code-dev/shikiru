@@ -15,6 +15,7 @@ from shikiru.agents.contracts import (
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.clock import SystemClock
+from shikiru.errors import HeadlessOutputError
 from shikiru.plugins.agents.claude.agent import STARTUP_DIALOGS, create
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import Tmux
@@ -49,6 +50,7 @@ def _install_fake_claude(
         'printf "%s\\n" "$SHIKIRU_CLAUDE_AUTH_PAYLOAD"; '
         'else printf "{\\"loggedIn\\":%s}\\n" "$SHIKIRU_CLAUDE_LOGGED_IN"; fi; '
         'exit "$SHIKIRU_CLAUDE_AUTH_EXIT"; fi\n'
+        'if [ "${SHIKIRU_CLAUDE_MALFORMED-}" = "1" ]; then printf "not-json\\n"; exit 0; fi\n'
         'printf "{\\"structured_output\\":{\\"ok\\":true}}\\n"\n',
         encoding="utf-8",
     )
@@ -114,6 +116,32 @@ async def test_api_key_auth_removes_parent_token_from_headless_and_doctor(
     )
     calls = calls_path.read_text(encoding="utf-8").splitlines()
     assert calls.count("auth status --json") == 1
+
+
+async def test_headless_malformed_output_raises_a_dedicated_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _bin_dir, _calls_path, _environment_path = _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setenv("SHIKIRU_CLAUDE_MALFORMED", "1")
+    agent = create(
+        AgentContext(
+            options={},
+            runner=SubprocessRunner(),
+            clock=SystemClock(),
+        )
+    )
+    headless = agent.headless()
+    assert headless is not None
+
+    with pytest.raises(HeadlessOutputError):
+        await headless.ask(
+            "ping",
+            {"type": "object"},
+            "haiku",
+            None,
+            tmp_path,
+            timedelta(seconds=5),
+        )
 
 
 @pytest.mark.parametrize(
