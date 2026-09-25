@@ -69,6 +69,8 @@ _OTHER_MODEL = "claude-sonnet-4-5-20250929"
 _OPENROUTER_MODEL = "anthropic/claude-haiku-4-5"
 _OPENROUTER_LIVE_SESSION_ID = "session-openrouter-live-redacted"
 _OPENROUTER_LIVE_RESPONSE = "[redacted live response]"
+_OPENROUTER_REPORT_LIVE_SESSION_ID = "session-openrouter-report-live-redacted"
+_OPENROUTER_REPORT_LIVE_RESPONSE = "[redacted live report response]"
 _SESSION_RESUMED = "session-resumed"
 _API_KEY_ENV = "SHIKIRU_CLAUDE_CAPTURE_KEY"
 _LIVE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_MODEL"
@@ -226,6 +228,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         subscription_usage = Usage(100, 5, 12, 3, _COST, "api_equivalent", 115 / 200000 * 100)
         api_key_usage = Usage(40, 8, 4, 1, 0.00002, "billed", 0.0225)
         openrouter_usage = Usage(70, 12, 0, 0, None, "unknown", None)
+        openrouter_report_usage = Usage(2509, 238, 19865, 10067, None, "unknown", None)
         compact_usage = Usage(20, 8, 0, 0, 0.00003, "api_equivalent", 0.01)
         empty_stderr = _FIXTURES_DIR / "turn_rate_limit.stderr.log"
         return [
@@ -288,6 +291,25 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     TurnEnded(_OPENROUTER_LIVE_RESPONSE),
                 ],
                 session_id=_OPENROUTER_LIVE_SESSION_ID,
+            ),
+            RecordedStream(
+                name="turn_openrouter_report_live_redacted.jsonl",
+                stdout=_FIXTURES_DIR / "turn_openrouter_report_live_redacted.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted(_OPENROUTER_REPORT_LIVE_SESSION_ID),
+                    Message(_OPENROUTER_REPORT_LIVE_RESPONSE),
+                    ToolStarted("Read", '{"file_path":"[redacted scratch prompt path]"}'),
+                    ToolFinished("Read"),
+                    Message(_OPENROUTER_REPORT_LIVE_RESPONSE),
+                    ToolStarted("Bash", '{"command":"[redacted shikiru report command]"}'),
+                    ToolFinished("Bash"),
+                    Message(_OPENROUTER_REPORT_LIVE_RESPONSE),
+                    UsageReported(openrouter_report_usage),
+                    TurnEnded(_OPENROUTER_REPORT_LIVE_RESPONSE),
+                ],
+                session_id=_OPENROUTER_REPORT_LIVE_SESSION_ID,
             ),
             RecordedStream(
                 name="turn_compact_process.jsonl",

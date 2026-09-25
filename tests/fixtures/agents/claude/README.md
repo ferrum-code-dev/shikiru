@@ -14,5 +14,17 @@ short turn using the configured Haiku model then emitted `SessionStarted`,
 the earlier retry-only timeout to the sandbox network restriction; no auth,
 model, or stream-protocol failure was reproduced after escalation.
 
-The remaining genuine sample cases, full live contract suite, and `/compact`
-after context overflow remain unverified. Context overflow was not attempted.
+`turn_openrouter_report_live_redacted.jsonl` is a normalized replay excerpt from
+a successful first-turn report contract test through OpenRouter. The live test
+observed `Read` and `Bash`, confirmed that Bash invoked `shikiru report`, and
+validated the resulting report before `TurnEnded`. The excerpt preserves event
+order, tool names, usage counts, and the successful terminal event. Session and
+tool IDs, model IDs, message text, paths, command details, tool output, and cost
+are redacted. Tool-result envelopes are normalized to the parser's replay
+format; this is not a byte-for-byte provider stream capture. OpenRouter key
+usage increased by $0.01826925 for the attempt after its aggregate usage settled;
+Claude Code's separate cost estimate had an unknown cost basis.
+
+The remaining subscription, direct API-key, rate-limit, and unrecognised-model
+sample cases, other live checks, and `/compact` after context overflow remain
+unverified. Context overflow was not attempted.
