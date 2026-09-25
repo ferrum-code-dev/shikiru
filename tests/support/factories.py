@@ -79,7 +79,7 @@ def make_settings(
     agents: dict[str, AgentConfig] | None = None,
 ) -> Settings:
     return Settings(
-        project=ProjectConfig(name="demo"),
+        project=ProjectConfig(name="demo", trackers=[]),
         agents={**DEFAULT_AGENTS, **(agents or {})},
         orchestration=OrchestrationConfig(
             max_parallel=2,
@@ -105,7 +105,6 @@ def make_settings(
             helper=RoleConfig(ladder=helper_ladder or [HELPER_RUNG]),
         ),
         dashboard=DashboardConfig(
-            animations=True,
             widgets=["header"],
             layout=LayoutSplit(split="h", panes=[PaneLeaf(pane="system")]),
             titles=TitlesConfig(window="", leader="", implementer="", system="", shell=""),

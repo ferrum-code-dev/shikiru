@@ -20,6 +20,7 @@ def test_project_file_overrides_packaged_defaults(tmp_path: Path) -> None:
 
     assert settings.orchestration.max_parallel == 4
     assert settings.orchestration.max_iterations == 5
+    assert settings.project.trackers == []
 
 
 def test_deep_merge_keeps_sibling_keys_from_lower_sources(tmp_path: Path) -> None:

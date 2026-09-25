@@ -100,7 +100,7 @@ def _settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
         }
     )
     update: dict[str, Any] = {
-        "project": ProjectConfig(name="test"),
+        "project": ProjectConfig(name="test", trackers=[]),
         "orchestration": orchestration,
         "dashboard": settings.dashboard.model_copy(update={"layout": _LAYOUT}),
     }

@@ -19,7 +19,6 @@ trackers = ["tasks/plan.md", "tasks/todo.md"]
 [repo]                                          # the project root is the repository root (D20)
 base = "main"                                   # omit = branch checked out at task start
 caches = ["node_modules", "**/node_modules", ".venv", "target"]
-remote = "origin"                               # used by integration = "pr"
 
 [orchestration]
 max_parallel = 2
@@ -36,6 +35,7 @@ stall = 1200                                    # no stream event while no tool 
 tool = 7200                                     # no stream event while a tool runs
 max_quota_wait = 28800
 integration_wait = 1800
+helper = 300                                    # maximum duration for helper turns
 
 [agents.claude]                                 # table name = plugin entry point
 [agents.claude.options]                         # plugin-owned (04 §4)
@@ -70,7 +70,6 @@ ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
 # `roles.helper.ladder` must contain exactly one rung until helper fallback is implemented.
 
 [dashboard]
-animations = true
 widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
 layout = { split = "h", panes = [
   { pane = "system", size = 30 },

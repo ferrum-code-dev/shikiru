@@ -24,7 +24,7 @@ class ProjectConfig(ConfigModel):
     """`[project]`."""
 
     name: str
-    trackers: list[str] = Field(default_factory=list)
+    trackers: list[str]
 
 
 class RepoConfig(ConfigModel):
@@ -32,7 +32,6 @@ class RepoConfig(ConfigModel):
 
     base: str | None = None
     caches: list[str] = Field(default_factory=list)
-    remote: str = "origin"
 
 
 class ResourcesConfig(ConfigModel):
@@ -131,7 +130,6 @@ class TitlesConfig(ConfigModel):
 class DashboardConfig(ConfigModel):
     """`[dashboard]`."""
 
-    animations: bool
     widgets: list[str]
     layout: LayoutSplit
     titles: TitlesConfig

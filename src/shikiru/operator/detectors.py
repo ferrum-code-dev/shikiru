@@ -130,7 +130,6 @@ def render_config(project: DetectedProject) -> str:
             "[repo]",
             f"base = {json.dumps(project.base)}",
             f"caches = {json.dumps(list(project.caches))}",
-            'remote = "origin"',
             "",
         )
     )

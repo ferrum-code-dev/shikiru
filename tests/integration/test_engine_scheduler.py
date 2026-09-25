@@ -92,7 +92,7 @@ def _settings(*, max_parallel: int = 2, max_cpu_pct: int = 100) -> Settings:
     dashboard = settings.dashboard.model_copy(update={"layout": _LAYOUT})
     return settings.model_copy(
         update={
-            "project": ProjectConfig(name="test"),
+            "project": ProjectConfig(name="test", trackers=[]),
             "orchestration": orchestration,
             "dashboard": dashboard,
         }

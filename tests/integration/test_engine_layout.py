@@ -49,7 +49,7 @@ def _settings() -> Settings:
     )
     return settings.model_copy(
         update={
-            "project": ProjectConfig(name="test"),
+            "project": ProjectConfig(name="test", trackers=[]),
             "dashboard": settings.dashboard.model_copy(update={"layout": _LAYOUT}),
         }
     )

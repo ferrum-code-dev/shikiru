@@ -45,7 +45,6 @@ def _titled_settings(*, max_iterations: int = 5) -> Settings:
     return settings.model_copy(
         update={
             "dashboard": DashboardConfig(
-                animations=False,
                 widgets=[],
                 layout=LayoutSplit(split="h", panes=[PaneLeaf(pane="system")]),
                 titles=_TITLES,
