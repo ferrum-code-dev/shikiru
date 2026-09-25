@@ -6,18 +6,14 @@ import asyncio
 import json
 import os
 from dataclasses import dataclass
-from importlib.metadata import entry_points
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import AgentContext, AgentFactory
-from shikiru.agents.registry import AGENT_ENTRY_POINT_GROUP, load_unique_entry_point
 from shikiru.config.loader import SHIKIRU_DIR_NAME
-from shikiru.errors import ConfigError, ShikiruError
+from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
-    from shikiru.clock import Clock
-    from shikiru.process import SubprocessRunner
+    from shikiru.operator.plugin_checks import PluginChecks
     from shikiru.workspace.git import Git
 
 MAX_SCAN_DEPTH = 4
@@ -57,12 +53,11 @@ class DetectedProject:
 class ProjectDetectors:
     """Detect the repository base, trackers, installed agents and caches for `init`."""
 
-    def __init__(self, root: Path, *, git: Git, runner: SubprocessRunner, clock: Clock) -> None:
-        """Inspect `root` through injected git, process and clock boundaries."""
+    def __init__(self, root: Path, *, git: Git, plugin_checks: PluginChecks) -> None:
+        """Inspect `root` through injected git and agent-plugin check boundaries."""
         self._root = root.resolve()
-        self._runner = runner
         self._git = git
-        self._clock = clock
+        self._plugin_checks = plugin_checks
 
     async def detect(self) -> DetectedProject:
         """Return deterministic project facts, or an actionable config error."""
@@ -108,22 +103,18 @@ class ProjectDetectors:
         return sorted(path.name for path in ignored if path.name in CACHE_NAMES)
 
     async def _agents(self) -> tuple[str, ...]:
-        names: list[str] = []
-        for entry in sorted(entry_points(group="shikiru.agents"), key=lambda item: item.name):
-            try:
-                factory = load_unique_entry_point(
-                    AGENT_ENTRY_POINT_GROUP, entry.name, ConfigError, "agent plugin"
-                )
-                agent_factory = cast("AgentFactory", factory)
-                agent = agent_factory(
-                    AgentContext(options={}, runner=self._runner, clock=self._clock)
-                )
-                checks = await agent.doctor()
-            except ShikiruError, OSError:
-                continue
-            if all(check.ok for check in checks):
-                names.append(entry.name)
-        return tuple(names)
+        results = [
+            await self._plugin_checks.check(name, {}) for name in self._plugin_checks.names()
+        ]
+        names = tuple(result.name for result in results if result.ok)
+        if names:
+            return names
+        if not results:
+            message = "no shikiru.agents plugin is installed"
+        else:
+            details = "; ".join(f"{result.name}: {result.detail}" for result in results)
+            message = f"no installed agent plugin passed doctor(): {details}"
+        raise ConfigError(message)
 
 
 def render_config(project: DetectedProject) -> str:

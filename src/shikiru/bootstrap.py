@@ -7,7 +7,6 @@ import logging
 from importlib import import_module
 from typing import TYPE_CHECKING, cast
 
-from shikiru.agents.contracts import AgentContext
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_settings
@@ -55,6 +54,7 @@ from shikiru.operator.detectors import ProjectDetectors
 from shikiru.operator.doctor import Doctor
 from shikiru.operator.events import EventFeed
 from shikiru.operator.lifecycle import ProjectLifecycle
+from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.queries import OperatorQueries
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
@@ -93,23 +93,25 @@ def build_clock() -> Clock:
 def build_project_detectors(project_root: Path) -> ProjectDetectors:
     """Build the detector with one injected process, clock and git boundary."""
     runner = SubprocessRunner()
+    plugins = PluginChecks(AgentRegistry(), runner, build_clock())
     return ProjectDetectors(
         project_root,
         git=Git(runner),
-        runner=runner,
-        clock=build_clock(),
+        plugin_checks=plugins,
     )
 
 
 def build_doctor(project_root: Path) -> Doctor:
     """Build environment diagnostics with one injected process, clock and registry."""
     runner = SubprocessRunner()
+    clock = build_clock()
+    plugins = PluginChecks(AgentRegistry(), runner, clock)
     return Doctor(
         project_root,
         git=Git(runner),
         runner=runner,
-        clock=build_clock(),
-        registry=AgentRegistry(),
+        clock=clock,
+        plugin_checks=plugins,
     )
 
 
@@ -121,6 +123,7 @@ def build_lifecycle() -> ProjectLifecycle:
     session = SessionView(tmux)
     git = Git(runner)
     registry = AgentRegistry()
+    plugin_checks = PluginChecks(registry, runner, clock)
 
     def operator_factory(project_root: Path, settings: Settings) -> OperatorServices:
         return build_operator(
@@ -132,21 +135,15 @@ def build_lifecycle() -> ProjectLifecycle:
         )
 
     async def plugin_validator(settings: Settings) -> None:
-        for name, agent_config in settings.agents.items():
-            agent = registry.create(
-                name,
-                AgentContext(
-                    options=agent_config.options,
-                    runner=runner,
-                    clock=clock,
-                ),
-            )
-            checks = await agent.doctor()
-            failures = [check for check in checks if not check.ok]
-            if failures:
-                detail = "; ".join(f"{check.name}: {check.detail}" for check in failures)
-                message = f"agent plugin {name!r} doctor failed: {detail}"
-                raise ConfigError(message)
+        results = [
+            await plugin_checks.check(name, config.options)
+            for name, config in sorted(settings.agents.items())
+        ]
+        failures = [result for result in results if not result.ok]
+        if failures:
+            detail = "; ".join(f"{result.name}: {result.detail}" for result in failures)
+            message = f"agent plugin checks failed: {detail}"
+            raise ConfigError(message)
 
     async def dashboard_runner(
         project_root: Path,

@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-from shikiru.agents.contracts import AgentContext
 from shikiru.config.loader import PROJECT_CONFIG_RELATIVE_PATH, SHIKIRU_DIR_NAME, load_settings
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import not_repository_root
@@ -25,9 +24,9 @@ from shikiru.workspace.caches import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from shikiru.agents.registry import AgentRegistry
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.operator.plugin_checks import PluginChecks
     from shikiru.process import ProcessResult, SubprocessRunner
     from shikiru.workspace.git import Git
 
@@ -86,14 +85,14 @@ class Doctor:
         git: Git,
         runner: SubprocessRunner,
         clock: Clock,
-        registry: AgentRegistry,
+        plugin_checks: PluginChecks,
     ) -> None:
         """Store the project and injected git, process, clock and plugin boundaries."""
         self._project_root = project_root.resolve()
         self._git = git
         self._runner = runner
         self._clock = clock
-        self._registry = registry
+        self._plugins = plugin_checks
 
     async def run(self, overrides: Sequence[str] = (), *, probe: bool = False) -> DoctorReport:
         """Run core checks and configured plugin diagnostics."""
@@ -237,47 +236,25 @@ class Doctor:
     async def _plugin_checks(self, settings: Settings) -> list[DoctorCheck]:
         checks: list[DoctorCheck] = []
         for name, agent_config in sorted(settings.agents.items()):
-            try:
-                agent = self._registry.create(
-                    name,
-                    AgentContext(
-                        options=agent_config.options,
-                        runner=self._runner,
-                        clock=self._clock,
-                    ),
-                )
-                results = await agent.doctor()
-            except (
-                AttributeError,
-                OSError,
-                ShikiruError,
-                RuntimeError,
-                TypeError,
-                ValueError,
-                TimeoutError,
-            ) as error:
+            result = await self._plugins.check(name, agent_config.options)
+            if result.error is not None:
                 checks.append(
-                    DoctorCheck(
-                        name=_plugin_check_name(name), ok=False, detail=_error_detail(error)
-                    )
+                    DoctorCheck(name=_plugin_check_name(name), ok=False, detail=result.detail)
                 )
                 continue
-            plugin_ok = True
-            for result in results:
-                plugin_ok = plugin_ok and result.ok
-                checks.append(
+            checks.extend(
+                [
                     DoctorCheck(
-                        name=_plugin_result_name(name, result.name),
-                        ok=result.ok,
-                        detail=result.detail,
+                        name=_plugin_result_name(name, plugin_result.name),
+                        ok=plugin_result.ok,
+                        detail=plugin_result.detail,
                     )
-                )
-            if not results:
-                plugin_ok = False
-                detail = "plugin returned no checks"
-            else:
-                detail = "all checks passed" if plugin_ok else "one or more checks failed"
-            checks.append(DoctorCheck(name=_plugin_check_name(name), ok=plugin_ok, detail=detail))
+                    for plugin_result in result.checks
+                ]
+            )
+            checks.append(
+                DoctorCheck(name=_plugin_check_name(name), ok=result.ok, detail=result.detail)
+            )
         return checks
 
 

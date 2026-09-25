@@ -58,6 +58,13 @@ class AgentRegistry:
         """Register `factory` under `name`, taking precedence over any entry point of that name."""
         self._factories[name] = factory
 
+    def names(self) -> tuple[str, ...]:
+        """Return every installed or directly registered agent name in stable order."""
+        installed = (
+            entry_point.name for entry_point in entry_points(group=AGENT_ENTRY_POINT_GROUP)
+        )
+        return tuple(sorted(set(installed) | self._factories.keys()))
+
     def create(self, name: str, context: AgentContext) -> Agent:
         """Build the `name` agent from `context`, naming it in any `AgentPluginError` raised."""
         factory = self._factories.get(name)
