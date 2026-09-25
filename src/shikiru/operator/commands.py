@@ -33,7 +33,9 @@ if TYPE_CHECKING:
 COMMAND_ACK_WAIT_SECONDS = 10.0
 COMMAND_POLL_SECONDS = 0.25
 QUEUED_MESSAGE = "applies when the engine starts"
-ACK_TIMEOUT_MESSAGE = "engine did not acknowledge the command within 10 seconds"
+ACK_TIMEOUT_MESSAGE = (
+    f"engine did not acknowledge the command within {COMMAND_ACK_WAIT_SECONDS:g} seconds"
+)
 TASK_TITLE_MAX_LENGTH = 60
 
 EngineState = Callable[[], bool]
@@ -77,10 +79,7 @@ class OperatorCommands:
         """Queue `command`, returning done/rejected or queued when the engine is down."""
         queued = self._queue.append(command)
         if not self._engine_up():
-            result = (
-                {"task_id": queued.command.task_id} if isinstance(queued.command, Submit) else None
-            )
-            return Ack(id=queued.id, status=AckStatus.QUEUED, result=result, message=QUEUED_MESSAGE)
+            return _queued_ack(queued.id, queued.command, QUEUED_MESSAGE)
         deadline = self._clock.now() + timedelta(seconds=COMMAND_ACK_WAIT_SECONDS)
         while True:
             outcome = self._queue.status(queued.id)
@@ -96,17 +95,7 @@ class OperatorCommands:
                     message=message,
                 )
             if self._clock.now() >= deadline:
-                result = (
-                    {"task_id": queued.command.task_id}
-                    if isinstance(queued.command, Submit)
-                    else None
-                )
-                return Ack(
-                    id=queued.id,
-                    status=AckStatus.QUEUED,
-                    result=result,
-                    message=ACK_TIMEOUT_MESSAGE,
-                )
+                return _queued_ack(queued.id, queued.command, ACK_TIMEOUT_MESSAGE)
             await self._clock.sleep(COMMAND_POLL_SECONDS)
 
     async def submit_task(
@@ -173,6 +162,11 @@ class OperatorCommands:
 def _title_from_request(request: str) -> str:
     first_line = request.splitlines()[0] if request.splitlines() else request
     return first_line[:TASK_TITLE_MAX_LENGTH]
+
+
+def _queued_ack(command_id: int, command: Command, message: str) -> Ack:
+    result = {"task_id": command.task_id} if isinstance(command, Submit) else None
+    return Ack(id=command_id, status=AckStatus.QUEUED, result=result, message=message)
 
 
 def _result_message(result: dict[str, Any] | None) -> str | None:
