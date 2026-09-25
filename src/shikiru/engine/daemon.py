@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fcntl
-import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Self
 
@@ -12,6 +11,7 @@ from shikiru.errors import CommandRejectedError, ShikiruError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from logging import FileHandler, Logger
     from pathlib import Path
     from typing import TextIO
 
@@ -30,6 +30,7 @@ COMMAND_POLL_SECONDS = 0.25
 ENGINE_LOCK_FILENAME = "engine.lock"
 ENGINE_LOG_DIR = "logs"
 ENGINE_LOG_FILENAME = "engine.log"
+ENGINE_LOGGER_NAME = "shikiru"
 
 
 class EngineAlreadyRunningError(ShikiruError):
@@ -100,6 +101,8 @@ class Engine:
         settings: Settings,
         clock: Clock,
         close_state: Callable[[], None],
+        logger: Logger,
+        log_handler: FileHandler,
     ) -> None:
         """Wire the daemon loop to its stores and bootstrap-built command registry."""
         self._lock = EngineLock(lock_path)
@@ -116,8 +119,8 @@ class Engine:
         self._close_state = close_state
         self._last_notified_event = 0
         self._last_scheduled_event = 0
-        self._logger = logging.getLogger("shikiru")
-        self._log_handler = self._configure_logging(lock_path)
+        self._logger = logger
+        self._log_handler = log_handler
 
     async def run(self) -> None:
         """Hold liveness, process commands and schedule tasks until `Stop` or cancellation."""
@@ -191,15 +194,6 @@ class Engine:
             finally:
                 self._close_logging()
                 self._close_state()
-
-    def _configure_logging(self, lock_path: Path) -> logging.FileHandler:
-        log_path = lock_path.parent / ENGINE_LOG_DIR / ENGINE_LOG_FILENAME
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(log_path)
-        self._logger.addHandler(handler)
-        self._logger.setLevel(logging.INFO)
-        self._logger.propagate = False
-        return handler
 
     def _close_logging(self) -> None:
         handler = self._log_handler

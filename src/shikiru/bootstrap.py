@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from importlib import import_module
 from typing import TYPE_CHECKING, cast
 
@@ -11,7 +12,14 @@ from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.engine.agents import AgentPool
-from shikiru.engine.daemon import Engine, engine_is_running
+from shikiru.engine.daemon import (
+    ENGINE_LOCK_FILENAME,
+    ENGINE_LOG_DIR,
+    ENGINE_LOG_FILENAME,
+    ENGINE_LOGGER_NAME,
+    Engine,
+    engine_is_running,
+)
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.flow import TaskFlow
@@ -416,8 +424,10 @@ def build_engine(
         on_dispatch_failure=DispatchFailureEscalator(tasks, escalation_raiser, titles),
         titles=titles,
     )
+    lock_path = state_dir / ENGINE_LOCK_FILENAME
+    logger, log_handler = _configure_engine_logging(lock_path)
     return Engine(
-        lock_path=state_dir / "engine.lock",
+        lock_path=lock_path,
         command_queue=command_queue,
         tasks=tasks,
         events=events,
@@ -429,6 +439,8 @@ def build_engine(
         settings=resolved_settings,
         clock=resolved_clock,
         close_state=connection.close,
+        logger=logger,
+        log_handler=log_handler,
     )
 
 
@@ -455,3 +467,16 @@ def _build_integrator(
         events=events,
         finish_task=task_finisher.finish_task,
     )
+
+
+def _configure_engine_logging(
+    lock_path: Path,
+) -> tuple[logging.Logger, logging.FileHandler]:
+    log_path = lock_path.parent / ENGINE_LOG_DIR / ENGINE_LOG_FILENAME
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger(ENGINE_LOGGER_NAME)
+    handler = logging.FileHandler(log_path)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger, handler

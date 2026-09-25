@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -281,12 +282,18 @@ def test_engine_lock_is_exclusive(tmp_path: Path) -> None:
     assert not engine_is_running(lock_path)
 
 
-async def test_build_engine_creates_engine_log(tmp_path: Path) -> None:
+async def test_engine_log_captures_child_errors_and_detaches_on_shutdown(tmp_path: Path) -> None:
     engine = build_engine(tmp_path, _settings(), registry=build_registry())
+    log_path = tmp_path / ".shikiru" / "logs" / "engine.log"
+    child_logger = logging.getLogger("shikiru.engine.test")
+    child_logger.error("child module failure")
     engine.request_stop()
     await engine.run()
+    child_logger.error("after engine shutdown")
 
-    assert (tmp_path / ".shikiru" / "logs" / "engine.log").is_file()
+    log_contents = log_path.read_text()
+    assert "child module failure" in log_contents
+    assert "after engine shutdown" not in log_contents
 
 
 async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_running(
