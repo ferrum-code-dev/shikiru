@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"session-openrouter-live"}
+{"type":"item.completed","item":{"id":"item-openrouter-live","type":"agent_message","text":"OK"}}
+{"type":"turn.completed","usage":{"input_tokens":12340,"cached_input_tokens":0,"cache_write_input_tokens":12272,"output_tokens":5,"reasoning_output_tokens":0}}

@@ -99,9 +99,24 @@ _COMPACTION_ROLLOUT = "rollout_compaction.jsonl"
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 _SESSION_FIRST = "session-first"
 _SESSION_RESUMED = "session-resume_model_change"
+_SESSION_OPENROUTER_LIVE = "session-openrouter-live"
 _CONTEXT_WINDOW = 258_400
 _USAGE_FIRST = Usage(55_675, 330, 52_096, 0, None, "unknown", 5.506578947368421)
 _USAGE_RESUMED = Usage(129_393, 608, 105_344, 0, None, "unknown", 7.201238390092879)
+_OPENROUTER_LIVE_CONTEXT_WINDOW = 997_500
+_OPENROUTER_LIVE_INPUT_TOKENS = 12_340
+_OPENROUTER_LIVE_OUTPUT_TOKENS = 5
+_OPENROUTER_LIVE_CACHE_WRITE_TOKENS = 12_272
+_OPENROUTER_LIVE_MESSAGE = "OK"
+_OPENROUTER_LIVE_USAGE = Usage(
+    _OPENROUTER_LIVE_INPUT_TOKENS,
+    _OPENROUTER_LIVE_OUTPUT_TOKENS,
+    0,
+    _OPENROUTER_LIVE_CACHE_WRITE_TOKENS,
+    None,
+    "unknown",
+    _OPENROUTER_LIVE_INPUT_TOKENS / _OPENROUTER_LIVE_CONTEXT_WINDOW * 100,
+)
 _FIRST_SIGNALS = [
     SessionStarted(_SESSION_FIRST),
     Message("Working on the change."),
@@ -139,6 +154,12 @@ _RESUMED_SIGNALS = [
     ),
     UsageReported(_USAGE_RESUMED),
     TurnEnded("Change committed."),
+]
+_OPENROUTER_LIVE_SIGNALS = [
+    SessionStarted(_SESSION_OPENROUTER_LIVE),
+    Message(_OPENROUTER_LIVE_MESSAGE),
+    UsageReported(_OPENROUTER_LIVE_USAGE),
+    TurnEnded(_OPENROUTER_LIVE_MESSAGE),
 ]
 
 
@@ -219,6 +240,13 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 session_id=_SESSION_RESUMED,
                 expected_signals=_RESUMED_SIGNALS,
                 stderr_name="turn_resume_model_change.stderr.log",
+            ),
+            _record(
+                "turn_openrouter_live_redacted.jsonl",
+                "rollout_openrouter_live_redacted.jsonl",
+                session_id=_SESSION_OPENROUTER_LIVE,
+                expected_signals=_OPENROUTER_LIVE_SIGNALS,
+                stderr_name="turn_openrouter_live_redacted.stderr.log",
             ),
         ]
 

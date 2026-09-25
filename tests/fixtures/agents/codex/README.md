@@ -34,9 +34,21 @@ shape and the top-level `compacted` event with its nested payload, plus the
 token counts needed to exercise compaction parsing. Other rollout fields and
 identifiers are omitted.
 
-No genuine headless usage-limit failure or API-key turn with null `rate_limits`
-was available: the live environment had subscription credentials only, and its
-captured turns had quota windows. Error-classification cases and null-rate-limit
-handling are synthetic offline coverage; they are not presented as recorded
-headless samples. The older `rollout_quota_error.jsonl` is a genuine 0.155.0
-legacy hook-era sample, not a headless `turn.failed` capture.
+## OpenRouter custom-provider capture
+
+`turn_openrouter_live_redacted.jsonl`, `rollout_openrouter_live_redacted.jsonl`
+and its stderr file are a genuine Codex CLI 0.156.1 API-key turn through
+OpenRouter's Responses endpoint on 2026-09-25. It used a disposable user-level
+Codex configuration, an isolated `CODEX_HOME`, an empty scratch Git repository,
+and the content-free prompt `Return only OK. Do not use tools.` No Shikiru or
+project files were available to the process. The model was
+`openai/gpt-6-luna` with low reasoning effort. Session and item IDs and unrelated
+rollout metadata are redacted; token counts, model context window, message, and
+null primary and secondary quota windows are retained. This is OpenRouter API
+key evidence, not a direct OpenAI API-key sample.
+
+No genuine headless usage-limit failure or direct OpenAI API-key turn was
+available. Error-classification cases and null-rate-limit handling remain
+synthetic offline coverage for those cases. The older
+`rollout_quota_error.jsonl` is a genuine 0.155.0 legacy hook-era sample, not a
+headless `turn.failed` capture.
