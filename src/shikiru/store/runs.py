@@ -123,11 +123,11 @@ class RunStore:
 
     def mark_taken_over(self, run_id: int) -> None:
         """Mark `run_id` taken over: its session runs interactively in the Operator's pane."""
-        self._set_active_status(run_id, RunStatus.TAKEN_OVER)
+        self._set_status_keeping_open(run_id, RunStatus.TAKEN_OVER)
 
     def mark_live(self, run_id: int) -> None:
         """Mark a taken-over `run_id` live again: the engine drives its session."""
-        self._set_active_status(run_id, RunStatus.LIVE)
+        self._set_status_keeping_open(run_id, RunStatus.LIVE)
 
     def _get_with_status(self, task_id: str, role: Role, status: RunStatus) -> Run | None:
         row = self._connection.execute(
@@ -136,7 +136,7 @@ class RunStore:
         ).fetchone()
         return _row_to_run(row) if row is not None else None
 
-    def _set_active_status(self, run_id: int, status: RunStatus) -> None:
+    def _set_status_keeping_open(self, run_id: int, status: RunStatus) -> None:
         self._connection.execute("UPDATE runs SET status = ? WHERE id = ?", (status.value, run_id))
 
     def for_task(self, task_id: str) -> list[Run]:
