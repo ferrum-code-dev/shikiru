@@ -105,6 +105,7 @@ command = ""                                    # optional; event JSON on stdin 
 | Command poll | 250 ms |
 | Dashboard change poll | 500 ms |
 | `TURN_STOP_GRACE` | 10 s |
+| `NOTIFY_TIMEOUT_SECONDS` | 7200 s |
 | Escalation evidence | 60 view lines per role |
 | Command ack wait | 10 s |
 | `QUOTA_MARGIN` | 60 s |

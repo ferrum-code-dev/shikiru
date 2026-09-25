@@ -38,7 +38,7 @@ from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.lifecycle import TaskFinisher
 from shikiru.engine.monitor import TurnMonitor
-from shikiru.engine.notifier import Notifier
+from shikiru.engine.notifier import NOTIFY_TIMEOUT_SECONDS, Notifier
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.supervisor import TaskSupervisor
@@ -389,7 +389,7 @@ def build_engine(
         resolved_runner,
         session_target=target,
         command=resolved_settings.notify.command,
-        timeout_seconds=resolved_settings.orchestration.timeouts.tool,
+        timeout_seconds=NOTIFY_TIMEOUT_SECONDS,
     )
     scheduler = Scheduler(
         tasks=tasks,

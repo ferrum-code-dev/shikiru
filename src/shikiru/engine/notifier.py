@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from shikiru.tmux.client import Tmux
 
 _NOTIFIABLE = frozenset({EventKind.ESCALATION, EventKind.TASK_DONE})
+NOTIFY_TIMEOUT_SECONDS = 7200.0
 
 
 class Notifier:
