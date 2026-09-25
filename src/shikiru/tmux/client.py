@@ -132,19 +132,9 @@ class Tmux:
         """Set window option `name` on `target`."""
         await self._run("set-option", "-w", "-t", target, name, value)
 
-    async def show_window_option(self, target: str, name: str) -> str:
-        """Read window option `name` on `target`."""
-        result = await self._run("show-options", "-w", "-v", "-t", target, name)
-        return result.stdout.strip()
-
     async def set_pane_option(self, target: str, name: str, value: str) -> None:
         """Set pane option `name` on `target`."""
         await self._run("set-option", "-p", "-t", target, name, value)
-
-    async def show_pane_option(self, target: str, name: str) -> str:
-        """Read pane option `name` on `target`."""
-        result = await self._run("show-options", "-p", "-v", "-t", target, name)
-        return result.stdout.strip()
 
     async def rename_window(self, target: str, name: str) -> None:
         """Rename window `target` to `name`."""
@@ -254,11 +244,6 @@ class Tmux:
             return True
         result = await self.display(target, FORMAT_PANE_DEAD)
         return result == "1"
-
-    async def list_windows(self, target: str, fmt: str) -> list[str]:
-        """List every window of session `target`, one formatted line per window."""
-        result = await self._run("list-windows", "-t", target, "-F", fmt)
-        return result.stdout.splitlines()
 
     async def list_panes(self, target: str, fmt: str) -> list[str]:
         """List every pane of `target`, one formatted line per pane."""

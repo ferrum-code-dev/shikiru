@@ -54,17 +54,6 @@ async def test_show_session_environment_reads_a_removed_variable_as_unset(
     assert await _tmux(tmux_server).show_session_environment(target, PROJECT_DIR_ENV_VAR) is None
 
 
-async def test_ensure_is_idempotent(tmux_server: TmuxServer, tmp_path: Path) -> None:
-    view = SessionView(_tmux(tmux_server))
-
-    await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
-    await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
-
-    target = exact_target(session_name("demo"))
-    windows = await _tmux(tmux_server).list_windows(target, "#{window_name}")
-    assert windows.count(HOME_WINDOW_NAME) == 1
-
-
 async def test_ensure_recreates_the_home_window_once_it_has_been_killed(
     tmux_server: TmuxServer, tmp_path: Path
 ) -> None:

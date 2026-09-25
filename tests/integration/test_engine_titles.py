@@ -69,8 +69,8 @@ async def test_a_task_reaching_integrate_shows_the_implementer_stage_on_its_wind
     assert final.step is Step.INTEGRATE
     window_target = final.window_id
     assert window_target is not None
-    color = await engine_env.tmux.show_window_option(window_target, WINDOW_STATE_COLOR_OPTION)
-    glyph = await engine_env.tmux.show_window_option(window_target, WINDOW_STATE_GLYPH_OPTION)
+    color = await engine_env.tmux.display(window_target, f"#{{{WINDOW_STATE_COLOR_OPTION}}}")
+    glyph = await engine_env.tmux.display(window_target, f"#{{{WINDOW_STATE_GLYPH_OPTION}}}")
     assert color == ROLE_COLORS[Role.IMPLEMENTER]
     assert glyph == STAGE_MERGE
     window_title = await engine_env.tmux.display(window_target, "#{window_name}")
@@ -93,8 +93,8 @@ async def test_an_escalated_task_shows_the_escalated_window_state_and_flag(
     assert final.status is Status.ESCALATED
     window_target = final.window_id
     assert window_target is not None
-    color = await engine_env.tmux.show_window_option(window_target, WINDOW_STATE_COLOR_OPTION)
-    glyph = await engine_env.tmux.show_window_option(window_target, WINDOW_STATE_GLYPH_OPTION)
+    color = await engine_env.tmux.display(window_target, f"#{{{WINDOW_STATE_COLOR_OPTION}}}")
+    glyph = await engine_env.tmux.display(window_target, f"#{{{WINDOW_STATE_GLYPH_OPTION}}}")
     assert color == ALERT_COLOR
     assert glyph == GLYPH_ESCALATED
     leader_pane = final.panes[Role.LEADER]
@@ -149,10 +149,10 @@ async def test_hold_and_rung_changes_update_titles_on_the_isolated_tmux_server(
     window_target = paused.window_id
     assert window_target is not None
     assert (
-        await engine_env.tmux.show_window_option(window_target, WINDOW_STATE_COLOR_OPTION)
+        await engine_env.tmux.display(window_target, f"#{{{WINDOW_STATE_COLOR_OPTION}}}")
         == HOLD_COLOR
     )
     assert (
-        await engine_env.tmux.show_window_option(window_target, WINDOW_STATE_GLYPH_OPTION)
+        await engine_env.tmux.display(window_target, f"#{{{WINDOW_STATE_GLYPH_OPTION}}}")
         == GLYPH_PAUSED
     )

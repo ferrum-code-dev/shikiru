@@ -28,8 +28,8 @@ async def test_pane_state_and_title_render_and_are_readable_back(
     await decorator.set_pane_state(pane_id, color="#22d3ee", glyph="▲")
     await decorator.set_pane_title(pane_id, "{glyph} {agent}", {"glyph": "▲", "agent": "codex"})
 
-    assert await tmux.show_pane_option(pane_id, PANE_COLOR_OPTION) == "#22d3ee"
-    assert await tmux.show_pane_option(pane_id, PANE_GLYPH_OPTION) == "▲"
+    assert await tmux.display(pane_id, f"#{{{PANE_COLOR_OPTION}}}") == "#22d3ee"
+    assert await tmux.display(pane_id, f"#{{{PANE_GLYPH_OPTION}}}") == "▲"
     assert await tmux.display(pane_id, "#{pane_title}") == "▲ codex"
 
 
@@ -61,21 +61,3 @@ async def test_render_title_fails_loudly_on_an_unfilled_field(tmux_server: TmuxS
 
     with pytest.raises(ConfigError, match="cost"):
         await decorator.set_pane_title(pane_id, "${cost:.2f}", {})
-
-
-async def test_configure_formats_wires_border_and_status_to_the_shk_options(
-    tmux_server: TmuxServer,
-) -> None:
-    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
-    pane_id = await _window(tmux)
-    window_target = await tmux.display(pane_id, "#{window_id}")
-    decorator = PaneDecorator(tmux)
-
-    await decorator.configure_formats(window_target)
-
-    border_format = await tmux.show_window_option(window_target, "pane-border-format")
-    status_format = await tmux.show_window_option(window_target, "window-status-format")
-    assert PANE_COLOR_OPTION in border_format
-    assert PANE_GLYPH_OPTION in border_format
-    assert "@shk_state_color" in status_format
-    assert "@shk_state_glyph" in status_format

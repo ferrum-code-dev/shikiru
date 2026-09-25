@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 AUTH_SUBSCRIPTION = "subscription"
 AUTH_API_KEY = "api_key"
-DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
 ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
 ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_" + "AUTH_TOKEN"
 CLAUDE_COMMAND = "claude"
@@ -18,8 +17,7 @@ STATUS_TOO_MANY_REQUESTS = 429
 STATUS_UNAUTHORIZED = 401
 STATUS_FORBIDDEN = 403
 PERMISSION_MODE_FLAG = "--permission-mode"
-PERMISSION_MODE_BYPASS = "bypassPermissions"
-DEFAULT_ARGS = (PERMISSION_MODE_FLAG, PERMISSION_MODE_BYPASS)
+DEFAULT_ARGS = (PERMISSION_MODE_FLAG, "bypassPermissions")
 SESSION_ID_FLAG = "--session-id"
 RESUME_FLAG = "--resume"
 MODEL_FLAG = "--model"
@@ -34,6 +32,6 @@ class ClaudeOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     auth: Literal["subscription", "api_key"] = AUTH_SUBSCRIPTION
-    api_key_env: str = DEFAULT_API_KEY_ENV
+    api_key_env: str = ANTHROPIC_API_KEY_ENV
     args: list[str] = Field(default_factory=lambda: list(DEFAULT_ARGS))
     compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=100)
