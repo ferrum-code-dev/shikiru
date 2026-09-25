@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shikiru.agents.contracts import QuotaWindow
+from shikiru.agents.contracts import CostBasis, QuotaWindow
 from shikiru.domain.events import Event
 from shikiru.domain.runs import Run
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
@@ -102,7 +102,7 @@ class UsageView(OperatorView):
     cache_read_tokens: int
     cache_write_tokens: int
     cost_usd: float | None
-    cost_basis: str
+    cost_basis: CostBasis | Literal["mixed"]
 
 
 class StatusView(OperatorView):
@@ -268,8 +268,15 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
     for agent in sorted(by_agent):
         agent_runs = by_agent[agent]
         costs = [run.usage.cost_usd for run in agent_runs if run.usage.cost_usd is not None]
-        cost_bases = {run.usage.cost_basis for run in agent_runs if run.usage.cost_usd is not None}
-        cost_basis = next(iter(cost_bases), "unknown") if len(cost_bases) <= 1 else "mixed"
+        cost_bases: set[CostBasis] = {
+            run.usage.cost_basis for run in agent_runs if run.usage.cost_usd is not None
+        }
+        if len(cost_bases) > 1:
+            cost_basis: CostBasis | Literal["mixed"] = "mixed"
+        elif cost_bases:
+            cost_basis = next(iter(cost_bases))
+        else:
+            cost_basis = "unknown"
         views.append(
             UsageView(
                 agent=agent,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from rich.console import Group
 from rich.panel import Panel
@@ -18,6 +18,7 @@ from shikiru.ui.tokens import ALERT_COLOR, ENGINE_COLOR, STYLE_BOLD
 if TYPE_CHECKING:
     from rich.console import RenderableType
 
+    from shikiru.agents.contracts import CostBasis
     from shikiru.config.settings import Settings
     from shikiru.operator.commands import Ack
     from shikiru.operator.doctor import DoctorReport
@@ -230,13 +231,16 @@ def _report_summary(report: dict[str, object]) -> str:
     return NO_VALUE
 
 
-def _cost_basis(cost_basis: str) -> str:
-    return {
-        "api_equivalent": "API-equivalent",
-        "billed": "billed",
-        "mixed": "mixed",
-        "unknown": NO_VALUE,
-    }.get(cost_basis, cost_basis)
+def _cost_basis(cost_basis: CostBasis | Literal["mixed"]) -> str:
+    match cost_basis:
+        case "api_equivalent":
+            return "API-equivalent"
+        case "billed":
+            return "billed"
+        case "unknown":
+            return NO_VALUE
+        case "mixed":
+            return "mixed"
 
 
 def _slot(task: TaskSummary) -> str:
