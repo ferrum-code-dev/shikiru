@@ -8,11 +8,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, TypedDict, cast
 
 from fake_agent.agent import EXIT_INPUT, SESSION_ID_ENV_VAR
 from fake_agent.script import (
@@ -38,7 +39,7 @@ from fake_agent.signals import (
     turn_failed_payload,
     turn_tokens,
 )
-from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir
+from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir, shikiru_command
 from shikiru.agents.sdk.hooks import HookRecorder
 from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
 from shikiru.cli.report import resolve_current_turn_dir
@@ -102,6 +103,10 @@ class ReplContext:
     script_path: Path
 
 
+class _FakeAgentState(TypedDict):
+    prompts: list[str]
+
+
 def _require_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -110,7 +115,8 @@ def _require_env(name: str) -> str:
     return value
 
 
-def _build_context() -> ReplContext:
+def build_context() -> ReplContext:
+    """Create the fake CLI context from Shikiru's environment."""
     run_dir = Path(_require_env(RUN_DIR_ENV_VAR))
     role = _require_env(ROLE_ENV_VAR)
     session_id = _require_env(SESSION_ID_ENV_VAR)
@@ -136,9 +142,12 @@ def _load_prompts(state_path: Path) -> list[str]:
 
 
 def _remember_prompt(state_path: Path, prompt_text: str) -> None:
-    prompts = _load_prompts(state_path)
-    prompts.append(prompt_text)
-    state_path.write_text(json.dumps({"prompts": prompts}))
+    if state_path.is_file():
+        state = cast("_FakeAgentState", json.loads(state_path.read_text()))
+    else:
+        state: _FakeAgentState = {"prompts": []}
+    state["prompts"].append(prompt_text)
+    state_path.write_text(json.dumps(state))
 
 
 def _first_remembered_prompt(state_path: Path) -> str:
@@ -146,13 +155,15 @@ def _first_remembered_prompt(state_path: Path) -> str:
     return prompts[0] if prompts else ""
 
 
-def _script_index(script_path: Path) -> int:
+def script_index(script_path: Path) -> int:
+    """Return the current fake script step index."""
     if not script_path.is_file():
         return 0
     return json.loads(script_path.read_text())["index"]
 
 
-def _save_script_index(script_path: Path, index: int) -> None:
+def save_script_index(script_path: Path, index: int) -> None:
+    """Store the fake script step index for the next process."""
     script_path.write_text(json.dumps({"index": index}))
 
 
@@ -314,7 +325,8 @@ def _write_report_file(role_dir: Path, report: Report) -> Path:
     return report_path
 
 
-async def _submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text: str) -> None:
+async def submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text: str) -> None:
+    """Write the report produced by one scripted turn."""
     turn_dir = resolve_current_turn_dir(os.environ)
     kind = await asyncio.to_thread(_current_report_kind, turn_dir)
     if (
@@ -335,7 +347,7 @@ async def _submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text:
     report_path = await asyncio.to_thread(_write_report_file, role_path, report)
     try:
         await ctx.runner.run(
-            ["shikiru", "report", "--file", str(report_path)],
+            shlex.split(shikiru_command("report", "--file", str(report_path))),
             timeout=_REPORT_TIMEOUT_SECONDS,
             cwd=ctx.cwd,
             check=True,
@@ -368,7 +380,7 @@ async def _apply_step(ctx: ReplContext, step: TurnStep, prompt_text: str) -> boo
             turn_ended_payload(ctx.session_id, f"no_report: {prompt_text}", tokens=turn_tokens())
         )
         return True
-    await _submit_scripted_report(ctx, step, prompt_text)
+    await submit_scripted_report(ctx, step, prompt_text)
     ctx.recorder.record(
         turn_ended_payload(ctx.session_id, f"{step.kind}: {prompt_text}", tokens=turn_tokens())
     )
@@ -384,17 +396,18 @@ async def _handle_line(ctx: ReplContext, script: Script, prompt_text: str) -> bo
         return True
     _remember_prompt(ctx.state_path, prompt_text)
     step = script.next_step()
-    _save_script_index(ctx.script_path, script.index)
+    save_script_index(ctx.script_path, script.index)
     return await _apply_step(ctx, step, prompt_text)
 
 
-def _script_raw_for(role: str) -> str | None:
+def script_raw_for(role: str) -> str | None:
+    """Return the script configured for `role`, when one is set."""
     return os.environ.get(role_script_env_var(role)) or os.environ.get(SCRIPT_ENV_VAR)
 
 
 async def _run() -> None:
-    ctx = _build_context()
-    script = Script.from_env(_script_raw_for(ctx.role), start_index=_script_index(ctx.script_path))
+    ctx = build_context()
+    script = Script.from_env(script_raw_for(ctx.role), start_index=script_index(ctx.script_path))
     ctx.recorder.record(session_started_payload(ctx.session_id))
     loop = asyncio.get_running_loop()
     while True:

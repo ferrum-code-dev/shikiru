@@ -1,0 +1,3 @@
+{"event":"session_started","session_id":"resumed-session-id"}
+{"event":"compacted","pre_tokens":2000,"post_tokens":400}
+{"event":"turn_ended","last_message":"context compacted"}

@@ -15,11 +15,11 @@ from shikiru.agents.contracts import (
     ROLE_ENV_VAR,
     RUN_DIR_ENV_VAR,
     Activity,
-    AgentFactory,
     AttentionNeeded,
     Compacted,
     FailureKind,
     LaunchSpec,
+    LegacyAgentFactory,
     PromptSubmitted,
     Rung,
     SessionEnded,
@@ -32,8 +32,8 @@ from shikiru.agents.contracts import (
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.testing import (
-    AgentContractSuite,
     LaunchCase,
+    LegacyAgentContractSuite,
     RecordingPaneHandle,
     SampleCase,
     TmuxSocket,
@@ -92,12 +92,12 @@ class _AskResult(BaseModel):
     ok: bool
 
 
-class TestClaudeAgentContract(AgentContractSuite):
+class TestClaudeAgentContract(LegacyAgentContractSuite):
     """Exercise Claude's offline contract and gate live checks behind SHIKIRU_E2E."""
 
     runs_live_checks_in_default_gate: ClassVar[bool] = False
 
-    def agent_factory(self) -> AgentFactory:
+    def agent_factory(self) -> LegacyAgentFactory:
         return create
 
     def agent_options(self) -> dict[str, object]:

@@ -20,9 +20,9 @@ from shikiru.agents.contracts import (
     ROLE_ENV_VAR,
     RUN_DIR_ENV_VAR,
     Activity,
-    AgentFactory,
     FailureKind,
     LaunchSpec,
+    LegacyAgentFactory,
     PromptSubmitted,
     Rung,
     SessionEnded,
@@ -34,8 +34,8 @@ from shikiru.agents.contracts import (
 )
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.testing import (
-    AgentContractSuite,
     LaunchCase,
+    LegacyAgentContractSuite,
     RecordingPaneHandle,
     SampleCase,
     TmuxSocket,
@@ -109,7 +109,7 @@ class _AskResult(BaseModel):
     ok: bool
 
 
-class TestCodexAgentContract(AgentContractSuite):
+class TestCodexAgentContract(LegacyAgentContractSuite):
     """Exercise Codex's offline contract and gate live checks behind SHIKIRU_E2E."""
 
     runs_live_checks_in_default_gate: ClassVar[bool] = False
@@ -118,7 +118,7 @@ class TestCodexAgentContract(AgentContractSuite):
     _live_path: str | None = None
     _live_prompt: str | None = None
 
-    def agent_factory(self) -> AgentFactory:
+    def agent_factory(self) -> LegacyAgentFactory:
         return create
 
     def agent_options(self) -> Mapping[str, Any]:

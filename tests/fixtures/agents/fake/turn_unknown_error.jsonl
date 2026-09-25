@@ -1,0 +1,2 @@
+{"event":"session_started","session_id":"session-unknown"}
+{"event":"turn_failed","kind":"unknown","message":"an unrecognized structured failure","resets_at":null}

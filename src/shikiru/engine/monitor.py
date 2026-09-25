@@ -21,11 +21,16 @@ from shikiru.agents.contracts import (
     Activity,
     AttentionNeeded,
     Compacted,
+    Message,
     PromptSubmitted,
+    QuotaReported,
     SessionEnded,
     SessionStarted,
+    ToolFinished,
+    ToolStarted,
     TurnEnded,
     TurnFailed,
+    UsageReported,
 )
 from shikiru.domain.activity import is_operator_prompt, is_stalled
 from shikiru.domain.events import EventKind
@@ -289,6 +294,8 @@ class SessionMonitor:
                 self._publish_stalled(message)
             case SessionEnded():
                 return _STOP
+            case Message() | ToolStarted() | ToolFinished() | UsageReported() | QuotaReported():
+                self._mark_activity(now)
         return None
 
     async def _handle_prompt_submitted(self, text: str) -> None:

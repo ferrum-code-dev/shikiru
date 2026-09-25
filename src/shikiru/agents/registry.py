@@ -10,7 +10,7 @@ from shikiru.errors import ConfigError
 if TYPE_CHECKING:
     from importlib.metadata import EntryPoint
 
-    from shikiru.agents.contracts import AgentContext, AgentFactory, InteractiveAgent
+    from shikiru.agents.contracts import AgentContext, InteractiveAgent, LegacyAgentFactory
 
 AGENT_ENTRY_POINT_GROUP = "shikiru.agents"
 
@@ -52,9 +52,9 @@ class AgentRegistry:
 
     def __init__(self) -> None:
         """Start with no directly registered factories; entry points are resolved lazily."""
-        self._factories: dict[str, AgentFactory] = {}
+        self._factories: dict[str, LegacyAgentFactory] = {}
 
-    def register(self, name: str, factory: AgentFactory) -> None:
+    def register(self, name: str, factory: LegacyAgentFactory) -> None:
         """Register `factory` under `name`, taking precedence over any entry point of that name."""
         self._factories[name] = factory
 
@@ -69,8 +69,8 @@ class AgentRegistry:
             message = f"agent plugin {name!r} failed: {error}"
             raise AgentPluginError(message) from error
 
-    def _load_entry_point(self, name: str) -> AgentFactory:
+    def _load_entry_point(self, name: str) -> LegacyAgentFactory:
         loaded = load_unique_entry_point(
             AGENT_ENTRY_POINT_GROUP, name, AgentPluginError, "agent plugin"
         )
-        return cast("AgentFactory", loaded)
+        return cast("LegacyAgentFactory", loaded)

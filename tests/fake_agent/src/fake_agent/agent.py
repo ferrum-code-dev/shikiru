@@ -5,19 +5,20 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fake_agent.headless import FakeHeadlessAgent
 from fake_agent.session import FakeSession
+from fake_agent.turns import FakeHeadlessTurnAgent, FakeTurnSequence
 from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, role_dir
 from shikiru.agents.sdk.hooks import HOOKS_FILENAME
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from shikiru.agents.contracts import (
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
         HeadlessAgent,
         LaunchSpec,
         PaneHandle,
+        Turn,
+        TurnSpec,
     )
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
@@ -55,6 +58,8 @@ class FakeOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     asks: list[dict[str, Any]] = Field(default_factory=list)
+    compact_at_pct: float = 80.0
+    auth: Literal["none"] = "none"
     new_session_id: str | None = None
     quota: list[FakeQuotaWindow] = Field(default_factory=list)
     quota_sequence: list[list[FakeQuotaWindow]] = Field(default_factory=list)
@@ -79,6 +84,21 @@ class FakeAgent:
         self._options = options
         self._reset_time = ResetTimeParser(clock)
         self._quota_index = 0
+        self._headless = FakeHeadlessTurnAgent(
+            runner, options.asks, options.compact_at_pct, options.new_session_id
+        )
+
+    async def start_turn(self, spec: TurnSpec) -> Turn:
+        """Start one process-per-turn fake CLI run."""
+        return await self._headless.start_turn(spec)
+
+    def process_sequence(self, spec: TurnSpec) -> FakeTurnSequence:
+        """Return the process sequence the fake agent uses for `spec`."""
+        return self._headless.process_sequence(spec)
+
+    def interactive_command(self, session_id: str, cwd: Path) -> Sequence[str]:
+        """Return the fake REPL command for an operator take-over."""
+        return self._headless.interactive_command(session_id, cwd)
 
     async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
         """Respawn `pane` into a fresh REPL, reusing `spec.resume_session_id` when set."""

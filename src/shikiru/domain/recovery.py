@@ -250,6 +250,8 @@ def _decide_failed(failed: Failed, counters: TurnCounters, policy: RecoveryPolic
             return Escalate(EscalationReason.AGENT_AUTH)
         case FailureKind.OTHER:
             return _decide_other(counters)
+        case FailureKind.UNKNOWN:
+            return Escalate(EscalationReason.AGENT_ERROR)
 
 
 def decide(result: TurnResult, counters: TurnCounters, policy: RecoveryPolicy) -> Action:

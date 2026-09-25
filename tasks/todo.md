@@ -37,7 +37,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 ## Phase 4b — Headless agents
 - [x] Task 31: Usage rules and price-table removal
 - [ ] Task 38: Code health from the 2026-09-25 review
-- [ ] Task 32: Headless contract, SDK, contract kit and fake agent
+- [x] Task 32: Headless contract, SDK, contract kit and fake agent
 - [ ] Task 33: Claude Code headless plugin
 - [ ] Task 34: Codex headless plugin
 - [ ] Task 35: Engine on process-per-turn; screen machinery removed

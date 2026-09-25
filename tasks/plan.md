@@ -228,10 +228,10 @@ Do the fixes marked _After/With Task N_ inside or after those tasks. Findings on
 
 ### Task 32: Headless contract, SDK, contract kit and fake agent
 Refs: 04 §1–3, 02 §2, 07 §3–4.
-- [ ] `agents/contracts.py` per 04 §1 (`Agent`, `Turn`, `TurnSpec`, signals incl. `Compacted`, `FailureKind.UNKNOWN`, obligation 8), with docstrings.
-- [ ] `SubprocessRunner.spawn` (stdin closed, stdout lines, stderr captured, terminate with `TURN_STOP_GRACE`); SDK `TurnParser` and `StreamingTurn` (raw stream and stderr copied to the turn dir, obligations 1 and 3 enforced, a process sequence per turn for compaction).
-- [ ] `AgentContractSuite` offline checks 1–4 replay recorded streams (04 §3); live checks 1–6.
-- [ ] Fake agent rewritten as a per-turn fake CLI with session resume by id and a REPL `interactive_command`; passes the suite.
+- [x] `agents/contracts.py` per 04 §1 (`Agent`, `Turn`, `TurnSpec`, signals incl. `Compacted`, `FailureKind.UNKNOWN`, obligation 8), with docstrings.
+- [x] `SubprocessRunner.spawn` (stdin closed, stdout lines, stderr captured, terminate with `TURN_STOP_GRACE`); SDK `TurnParser` and `StreamingTurn` (raw stream and stderr copied to the turn dir, obligations 1 and 3 enforced, a process sequence per turn for compaction).
+- [x] `AgentContractSuite` offline checks 1–4 replay recorded streams (04 §3); live checks 1–6.
+- [x] Fake agent rewritten as a per-turn fake CLI with session resume by id and a REPL `interactive_command`; passes the suite.
 - Tests: unit for obligation enforcement over synthetic parsers; integration for `spawn`/`stop` with a real child process.
 
 ### Task 33: Claude Code headless plugin

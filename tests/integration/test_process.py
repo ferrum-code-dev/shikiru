@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
 from typing import TYPE_CHECKING
 
@@ -110,5 +111,44 @@ async def test_cancellation_kills_and_reaps_the_process(tmp_path: Path) -> None:
         await task
 
     pid = int(pid_file.read_text().strip())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+async def test_spawn_closes_stdin_streams_long_stdout_lines_and_captures_stderr() -> None:
+    runner = SubprocessRunner()
+    long_line = b"x" * 200_000 + b"\n"
+    program = (
+        "import sys; "
+        "value = sys.stdin.read(); "
+        "print('eof' if value == '' else 'input', flush=True); "
+        "sys.stdout.buffer.write(b'x' * 200000 + b'\\n'); sys.stdout.flush(); "
+        "sys.stderr.write('child warning\\n')"
+    )
+
+    process = await runner.spawn([sys.executable, "-c", program])
+    lines = [line async for line in process.stdout_lines()]
+    returncode = await process.wait()
+
+    assert returncode == 0
+    assert lines == [b"eof\n", long_line]
+    assert process.stderr_bytes == b"child warning\n"
+
+
+async def test_spawn_stop_sends_sigterm_then_sigkill_and_reaps_child() -> None:
+    runner = SubprocessRunner()
+    program = (
+        "import signal, sys, threading; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "print('ready', flush=True); threading.Event().wait()"
+    )
+
+    process = await runner.spawn([sys.executable, "-c", program])
+    output = process.stdout_lines()
+    assert await anext(output) == b"ready\n"
+    pid = process.pid
+    await process.stop(grace=0.01)
+
+    assert process.returncode == -signal.SIGKILL
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)

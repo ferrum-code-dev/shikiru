@@ -1,11 +1,4 @@
-"""The agent plugin contract (docs/design/04-agents.md §1).
-
-Agents are code plugins. The engine depends only on this module, and each plugin owns
-everything agent-specific: CLI argv and auth, hooks and transcripts, reported usage and context
-windows, quota sources, error mapping and compaction policy. The contract doesn't require
-hooks: a plugin must deliver `AgentSignal`s by whatever means its agent allows, and prove it
-with the contract test kit (`shikiru.agents.testing`, 04 §3).
-"""
+"""The headless agent plugin contract (docs/design/04-agents.md §1)."""
 
 from __future__ import annotations
 
@@ -61,6 +54,7 @@ class FailureKind(StrEnum):
     CONTEXT = auto()
     AUTH = auto()
     OTHER = auto()
+    UNKNOWN = auto()
 
 
 @dataclass(frozen=True)
@@ -85,7 +79,7 @@ class SessionKeys:
 
 @dataclass(frozen=True)
 class SessionStarted:
-    """A session was launched or attached. `session_id` is `None` when it can't be resumed."""
+    """A new or resumed agent session started."""
 
     session_id: str | None
 
@@ -122,7 +116,46 @@ class TurnFailed:
 
 @dataclass(frozen=True)
 class Compacted:
-    """The agent compacted its context."""
+    """The agent compacted its context, with token counts when reported."""
+
+    pre_tokens: int | None = None
+    post_tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class Message:
+    """Text emitted by the agent while it works."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class ToolStarted:
+    """A named agent tool started with a short description."""
+
+    name: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class ToolFinished:
+    """A named agent tool finished."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class UsageReported:
+    """The agent's cumulative usage for this session."""
+
+    usage: Usage
+
+
+@dataclass(frozen=True)
+class QuotaReported:
+    """The quota windows reported by the agent."""
+
+    windows: tuple[QuotaWindow, ...]
 
 
 @dataclass(frozen=True)
@@ -139,11 +172,16 @@ class SessionEnded:
 
 type AgentSignal = (
     SessionStarted
-    | PromptSubmitted
-    | Activity
+    | Message
+    | ToolStarted
+    | ToolFinished
+    | UsageReported
+    | QuotaReported
+    | Compacted
     | TurnEnded
     | TurnFailed
-    | Compacted
+    | PromptSubmitted
+    | Activity
     | AttentionNeeded
     | SessionEnded
 )
@@ -174,7 +212,7 @@ class QuotaWindow:
 
 @dataclass(frozen=True)
 class CheckResult:
-    """One named check from `InteractiveAgent.doctor()`, e.g. binary, version or login."""
+    """One named check from `Agent.doctor()`, such as binary, version or login."""
 
     name: str
     ok: bool
@@ -292,15 +330,71 @@ class InteractiveAgent(Protocol):
 
 
 @dataclass(frozen=True)
+class TurnSpec:
+    """Everything an agent needs to run one headless turn (04 §1)."""
+
+    rung: Rung
+    role: str
+    prompt: str
+    cwd: Path
+    run_dir: Path
+    turn_dir: Path
+    add_dirs: tuple[Path, ...]
+    env: Mapping[str, str]
+    session_id: str | None
+    usage: Usage | None
+
+
+class Turn(Protocol):
+    """One headless agent turn, which may run several processes to compact context."""
+
+    @property
+    def pid(self) -> int:
+        """Return the operating system id for the process running now."""
+        ...
+
+    def signals(self) -> AsyncIterator[AgentSignal]:
+        """Yield this turn's normalized signals to its single reader."""
+        ...
+
+    async def stop(self) -> None:
+        """Stop the current process while leaving the agent session resumable."""
+        ...
+
+
+class Agent(Protocol):
+    """A headless agent CLI plugin."""
+
+    name: str
+
+    async def start_turn(self, spec: TurnSpec) -> Turn:
+        """Start one new or resumed agent turn."""
+        ...
+
+    def interactive_command(self, session_id: str, cwd: Path) -> Sequence[str]:
+        """Return the command that resumes `session_id` for an operator take-over."""
+        ...
+
+    async def doctor(self) -> list[CheckResult]:
+        """Run this agent's binary, version and login checks."""
+        ...
+
+    def headless(self) -> HeadlessAgent | None:
+        """Return this agent's one-shot, schema-constrained caller when available."""
+        ...
+
+
+@dataclass(frozen=True)
 class AgentContext:
-    """What an `AgentFactory` needs to validate its options and build its `InteractiveAgent`."""
+    """What an agent factory needs to validate options and build its plugin."""
 
     options: Mapping[str, Any]
     runner: SubprocessRunner
     clock: Clock
 
 
-type AgentFactory = Callable[[AgentContext], InteractiveAgent]
+type AgentFactory = Callable[[AgentContext], Agent]
+type LegacyAgentFactory = Callable[[AgentContext], InteractiveAgent]
 
 
 def parse_rung(text: str) -> Rung:

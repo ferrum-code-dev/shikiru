@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import signal
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
@@ -17,8 +18,13 @@ from shikiru.errors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import AsyncIterator, Mapping, Sequence
     from pathlib import Path
+
+TURN_STOP_GRACE = 10.0
+_STDERR_READ_SIZE = 65536
+_STDOUT_READ_SIZE = 65536
+_STDERR_TAIL_CHARS = 4000
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +35,93 @@ class ProcessResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+class SpawnedProcess:
+    """A long-running child process with closed stdin and streamed stdout."""
+
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
+        self._process = process
+        self._stderr_task = asyncio.create_task(self._read_stderr())
+        self._stdout_read = False
+        self._stop_lock = asyncio.Lock()
+        self._stderr = ""
+        self._stderr_bytes = b""
+
+    @property
+    def pid(self) -> int:
+        """Return this child process's operating system id."""
+        return self._process.pid
+
+    @property
+    def returncode(self) -> int | None:
+        """Return the exit status when this process has exited."""
+        return self._process.returncode
+
+    @property
+    def stderr(self) -> str:
+        """Return all stderr captured after `wait()` completes."""
+        return self._stderr
+
+    @property
+    def stderr_bytes(self) -> bytes:
+        """Return the exact stderr bytes captured after `wait()` completes."""
+        return self._stderr_bytes
+
+    @property
+    def stderr_tail(self) -> str:
+        """Return a bounded stderr tail for failure messages."""
+        return self._stderr[-_STDERR_TAIL_CHARS:]
+
+    async def stdout_lines(self) -> AsyncIterator[bytes]:
+        """Yield stdout lines as original bytes, including line endings, exactly once."""
+        if self._stdout_read:
+            message = "stdout_lines() can only be consumed once"
+            raise RuntimeError(message)
+        self._stdout_read = True
+        if self._process.stdout is None:
+            message = "spawned process has no stdout pipe"
+            raise RuntimeError(message)
+        pending = bytearray()
+        while chunk := await self._process.stdout.read(_STDOUT_READ_SIZE):
+            pending.extend(chunk)
+            while (newline_index := pending.find(b"\n")) >= 0:
+                line_end = newline_index + 1
+                yield bytes(pending[:line_end])
+                del pending[:line_end]
+        if pending:
+            yield bytes(pending)
+
+    async def wait(self) -> int:
+        """Wait for process exit and finish capturing stderr."""
+        returncode = await self._process.wait()
+        stderr_bytes = await self._stderr_task
+        self._stderr_bytes = stderr_bytes
+        self._stderr = stderr_bytes.decode(errors="replace")
+        return returncode
+
+    async def stop(self, *, grace: float = TURN_STOP_GRACE) -> None:
+        """Send SIGTERM, then SIGKILL after `grace`, and reap the child."""
+        async with self._stop_lock:
+            if self._process.returncode is None:
+                with suppress(ProcessLookupError):
+                    self._process.send_signal(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(self._process.wait(), timeout=grace)
+                except TimeoutError:
+                    with suppress(ProcessLookupError):
+                        self._process.kill()
+                    await self._process.wait()
+            await self.wait()
+
+    async def _read_stderr(self) -> bytes:
+        if self._process.stderr is None:
+            message = "spawned process has no stderr pipe"
+            raise RuntimeError(message)
+        chunks: list[bytes] = []
+        while chunk := await self._process.stderr.read(_STDERR_READ_SIZE):
+            chunks.append(chunk)
+        return b"".join(chunks)
 
 
 class SubprocessRunner:
@@ -78,6 +171,24 @@ class SubprocessRunner:
         if check and result.returncode != 0:
             raise CommandFailed(argv_tuple, result.returncode, result.stderr)
         return result
+
+    async def spawn(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> SpawnedProcess:
+        """Start `argv` with stdin closed and stdout and stderr captured as streams."""
+        process = await asyncio.create_subprocess_exec(
+            *tuple(argv),
+            cwd=cwd,
+            env=env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        return SpawnedProcess(process)
 
     def spawn_detached(
         self,
