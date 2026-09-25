@@ -87,7 +87,7 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from shikiru.config.settings import Settings
-    from shikiru.domain.tasks import Role, Task
+    from shikiru.domain.tasks import Task
 
 
 def build_clock() -> Clock:
@@ -287,9 +287,6 @@ def build_engine(
         refresh_titles=refresh_titles,
     )
 
-    async def hand_back(task: Task, role: Role) -> None:
-        await takeover.hand_back(task, role)
-
     target = exact_target(session_name(resolved_settings.project.name))
     layout = LayoutGuard(
         tmux=resolved_tmux,
@@ -302,7 +299,7 @@ def build_engine(
         project_root=project_root,
         events=events,
         runs=runs,
-        on_operator_exit=hand_back,
+        commands=command_queue,
     )
     roots = TaskRootBuilder(
         Git(resolved_runner),

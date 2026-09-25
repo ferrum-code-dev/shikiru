@@ -250,9 +250,3 @@ async def engine_env(tmux_server: TmuxServer, connection: Connection, tmp_path: 
         clock=clock,
         turn_system=turn_system,
     )
-
-
-async def no_operator_exit(task: Task, role: Role) -> None:
-    """Fail a test whose layout restore meets a taken-over pane it never set up."""
-    message = f"{task.id} {role.value} was never taken over"
-    raise AssertionError(message)

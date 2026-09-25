@@ -33,7 +33,7 @@ from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
-from tests.support.engine import build_decorator, build_tmux, no_operator_exit
+from tests.support.engine import build_decorator, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.workspace import task_root_builder
@@ -167,7 +167,7 @@ async def scheduler_env(
         project_root=tmp_path,
         events=events,
         runs=RunStore(connection, clock),
-        on_operator_exit=no_operator_exit,
+        commands=CommandQueue(connection, clock),
     )
     roots = task_root_builder(SubprocessRunner(), tmp_path, settings.repo)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))

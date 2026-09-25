@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
-from shikiru.domain.commands import Submit
+from shikiru.domain.commands import HandBack, Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Role
 from shikiru.engine.layout_guard import LayoutGuard
@@ -19,7 +19,7 @@ from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
-from tests.support.engine import build_tmux, no_operator_exit
+from tests.support.engine import build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.waiting import wait_until
 
@@ -80,7 +80,7 @@ async def _task_window(
         project_root=tmp_path,
         events=events,
         runs=RunStore(connection, clock),
-        on_operator_exit=no_operator_exit,
+        commands=CommandQueue(connection, clock),
     )
     queued = CommandQueue(connection, clock).append(
         Submit(title="restore panes", request="restore panes")
@@ -138,6 +138,33 @@ async def test_dead_view_pane_is_respawned_in_place(
     assert not await tmux.is_pane_dead(view)
     pane_events = events.since(0, kinds=[EventKind.PANE_RESTORED], task_id=task_id)
     assert [event.data.get("pane") for event in pane_events] == ["implementer"]
+
+
+async def test_exited_taken_over_pane_queues_one_hand_back_and_stays_down(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    layout, tasks, events, task_id = await _task_window(connection, clock, tmux_server, tmp_path)
+    task = tasks.get(task_id)
+    assert task is not None
+    runs = RunStore(connection, clock)
+    runs.mark_taken_over(runs.start(task_id, Role.IMPLEMENTER, _FAKE_RUNG).id)
+    operator_pane = task.panes[Role.IMPLEMENTER]
+    tmux = build_tmux(tmux_server)
+    await tmux.respawn_pane(operator_pane, ("/bin/sh", "-c", "exit"), env={}, cwd=tmp_path)
+
+    async def dead() -> bool:
+        return await tmux.is_pane_dead(operator_pane)
+
+    await wait_until(dead, timeout=10)
+    await layout.ensure(task)
+    await layout.ensure(task)
+
+    pending = [queued.command for queued in CommandQueue(connection, clock).pending()]
+    hand_backs = [command for command in pending if isinstance(command, HandBack)]
+    assert hand_backs == [HandBack(task_id=task_id, role=Role.IMPLEMENTER)]
+    assert await tmux.is_pane_dead(operator_pane)
+    assert not events.since(0, kinds=[EventKind.PANE_RESTORED], task_id=task_id)
 
 
 async def test_dead_special_pane_is_respawned_in_place(

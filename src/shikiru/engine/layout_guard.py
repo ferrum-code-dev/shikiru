@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import view_argv
+from shikiru.domain.commands import HandBack
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Role, Task
 from shikiru.errors import ShikiruError
@@ -13,10 +14,10 @@ from shikiru.tmux.client import FORMAT_PANE_ID
 from shikiru.tmux.decorator import render_title
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from shikiru.config.settings import Settings
+    from shikiru.store.commands import CommandQueue
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
@@ -47,9 +48,12 @@ class LayoutGuard:
         project_root: Path,
         events: EventLog,
         runs: RunStore,
-        on_operator_exit: Callable[[Task, Role], Awaitable[None]],
+        commands: CommandQueue,
     ) -> None:
-        """Create windows through `tmux`, storing pane ids through `tasks`."""
+        """Create windows through `tmux`, storing pane ids through `tasks`.
+
+        A taken-over role's pane exiting is queued as a `HandBack` on `commands` (03 §9).
+        """
         self._tmux = tmux
         self._session_target = session_target
         self._tasks = tasks
@@ -60,7 +64,7 @@ class LayoutGuard:
         self._builder = builder
         self._decorator = decorator
         self._runs = runs
-        self._on_operator_exit = on_operator_exit
+        self._commands = commands
         self._special_panes: dict[str, dict[str, str]] = {}
 
     async def ensure(self, task: Task) -> Task:
@@ -200,10 +204,14 @@ class LayoutGuard:
             if not await self._tmux.is_pane_dead(pane_id):
                 continue
             if self._runs.get_taken_over(task.id, role) is not None:
-                await self._on_operator_exit(task, role)
+                self._queue_hand_back(HandBack(task_id=task.id, role=role))
                 continue
             await self.start_view(task.id, role, pane_id)
             self._record_restored(task.id, role.value)
+
+    def _queue_hand_back(self, command: HandBack) -> None:
+        if all(queued.command != command for queued in self._commands.pending()):
+            self._commands.append(command)
 
     async def start_view(self, task_id: str, role: Role, pane_id: str) -> None:
         """Run `role`'s streaming view of `task_id` in `pane_id`."""
