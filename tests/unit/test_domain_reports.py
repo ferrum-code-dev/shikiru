@@ -16,7 +16,6 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
     model_for,
-    schema_for,
 )
 
 
@@ -183,10 +182,7 @@ _EXAMPLES: dict[ReportKind, dict[str, Any]] = {
 
 
 @pytest.mark.parametrize("kind", list(ReportKind))
-def test_every_report_kind_maps_to_a_model_whose_schema_validates_an_example(
-    kind: ReportKind,
-) -> None:
-    schema_for(kind)
+def test_every_report_kind_maps_to_a_model_that_validates_an_example(kind: ReportKind) -> None:
     model = model_for(kind)
 
     model(**_EXAMPLES[kind])

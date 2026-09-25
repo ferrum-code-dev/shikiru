@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shlex
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,8 @@ from tests.support.factories import TASK_CREATED_AT
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -74,7 +77,10 @@ async def test_notifier_keeps_external_delivery_when_tmux_display_fails(
 
 
 async def test_notifier_isolates_external_command_failure(
-    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+    connection: Connection,
+    tmux_server: TmuxServer,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     tmux = build_tmux(tmux_server)
@@ -83,8 +89,16 @@ async def test_notifier_isolates_external_command_failure(
         tmux,
         SubprocessRunner(),
         session_target=exact_target(session_name("test")),
-        command="false",
+        command=str(tmp_path / "missing-notification-command"),
         timeout_seconds=5,
     )
 
-    await notifier.notify(EventLog(connection, clock).append(EventKind.ESCALATION, message="help"))
+    event = EventLog(connection, clock).append(EventKind.ESCALATION, message="help")
+    with caplog.at_level(logging.ERROR, logger="shikiru.engine.notifier"):
+        await notifier.notify(event)
+
+    failure = next(
+        record for record in caplog.records if "external notification failed" in record.getMessage()
+    )
+    assert str(event.id) in failure.getMessage()
+    assert failure.exc_info is not None

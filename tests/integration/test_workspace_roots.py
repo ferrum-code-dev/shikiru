@@ -194,6 +194,16 @@ async def test_cleanup_is_idempotent_and_tolerates_an_already_removed_worktree(
     await builder.cleanup(_TASK_ID, state)
     await builder.cleanup(_TASK_ID, state)
 
+    assert not task_root(project_root, _TASK_ID).exists()
+    assert state.branch not in await _local_branches(SubprocessRunner(), project_root)
+    worktrees = await SubprocessRunner().run(
+        ["git", "worktree", "list", "--porcelain"],
+        timeout=10,
+        cwd=project_root,
+        check=True,
+    )
+    assert worktrees.stdout.splitlines().count(f"worktree {project_root}") == 1
+
 
 async def _local_branches(runner: SubprocessRunner, repo_dir: Path) -> list[str]:
     result = await runner.run(
