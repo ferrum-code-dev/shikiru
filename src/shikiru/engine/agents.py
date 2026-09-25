@@ -1,4 +1,4 @@
-"""`AgentPool`: builds and caches one `InteractiveAgent` per name (04 §1-2).
+"""`AgentPool`: builds and caches one headless `Agent` per name (04 §1-2).
 
 Builds through an injected `create` callable rather than an `AgentRegistry` directly, so the
 engine imports only `agents.contracts` (`AGENTS.md`'s boundary rule): callers pass
@@ -15,18 +15,18 @@ from shikiru.errors import ConfigError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from shikiru.agents.contracts import InteractiveAgent
+    from shikiru.agents.contracts import Agent
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.process import SubprocessRunner
 
 
 class AgentPool:
-    """Resolves a rung's agent name to its `InteractiveAgent`, built once and cached."""
+    """Resolves a rung's agent name to its `Agent`, built once and cached."""
 
     def __init__(
         self,
-        create: Callable[[str, AgentContext], InteractiveAgent],
+        create: Callable[[str, AgentContext], Agent],
         runner: SubprocessRunner,
         settings: Settings,
         clock: Clock,
@@ -36,10 +36,10 @@ class AgentPool:
         self._runner = runner
         self._settings = settings
         self._clock = clock
-        self._agents: dict[str, InteractiveAgent] = {}
+        self._agents: dict[str, Agent] = {}
 
-    def get(self, name: str) -> InteractiveAgent:
-        """Return `name`'s `InteractiveAgent`, building and caching it on first use.
+    def get(self, name: str) -> Agent:
+        """Return `name`'s headless `Agent`, building and caching it on first use.
 
         Raises `ConfigError` if `name` has no `[agents.<name>]` table: a rung naming an agent
         the project never configured is a configuration mistake, not a default to paper over.

@@ -10,11 +10,10 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-from shikiru.agents.contracts import AgentContext, Rung
+from shikiru.agents.contracts import AgentContext
 from shikiru.config.loader import PROJECT_CONFIG_RELATIVE_PATH, SHIKIRU_DIR_NAME, load_settings
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import not_repository_root
-from shikiru.operator.probe import AgentProbe
 from shikiru.store.database import Database
 from shikiru.tmux.client import Tmux, private_socket_name
 from shikiru.workspace.caches import (
@@ -49,7 +48,7 @@ PLUGIN_CONFIG_CHECK_NAME = "config.plugins"
 COW_CHECK_NAME = "cow"
 DATABASE_CHECK_NAME = "db"
 STATE_DB_FILENAME = "state.db"
-PROBE_CHECK_SUFFIX = "probe"
+_PROBE_DEFERRED_MESSAGE = "doctor --probe is deferred to Task 37's headless probe"
 
 
 class DoctorCheck(BaseModel):
@@ -97,7 +96,9 @@ class Doctor:
         self._registry = registry
 
     async def run(self, overrides: Sequence[str] = (), *, probe: bool = False) -> DoctorReport:
-        """Run core checks, configured plugin checks and optional live contract probes."""
+        """Run core checks and configured plugin diagnostics."""
+        if probe:
+            raise ConfigError(_PROBE_DEFERRED_MESSAGE)
         checks: list[DoctorCheck] = []
         checks.append(await self._tmux_check())
         checks.append(await self._git_check())
@@ -127,8 +128,6 @@ class Doctor:
                 ),
             )
         )
-        if probe:
-            checks.extend(await self._probe_checks(settings, plugin_checks))
         return DoctorReport.from_checks(checks)
 
     async def _tmux_check(self) -> DoctorCheck:
@@ -281,61 +280,6 @@ class Doctor:
             checks.append(DoctorCheck(name=_plugin_check_name(name), ok=plugin_ok, detail=detail))
         return checks
 
-    async def _probe_checks(
-        self, settings: Settings, plugin_checks: Sequence[DoctorCheck]
-    ) -> list[DoctorCheck]:
-        checks: list[DoctorCheck] = []
-        for name, rung in sorted(_probe_rungs(settings).items()):
-            agent_config = settings.agents[name]
-            plugin_check = next(
-                (check for check in plugin_checks if check.name == _plugin_check_name(name)),
-                None,
-            )
-            if plugin_check is None or not plugin_check.ok:
-                checks.append(
-                    DoctorCheck(
-                        name=_probe_check_name(name),
-                        ok=False,
-                        detail="skipped because plugin doctor failed",
-                    )
-                )
-                continue
-            try:
-                agent = self._registry.create(
-                    name,
-                    AgentContext(
-                        options=agent_config.options,
-                        runner=self._runner,
-                        clock=self._clock,
-                    ),
-                )
-                await AgentProbe(
-                    self._project_root,
-                    agent,
-                    self._runner,
-                    self._clock,
-                    rung,
-                ).run()
-            except (
-                AttributeError,
-                OSError,
-                ShikiruError,
-                RuntimeError,
-                TypeError,
-                ValueError,
-                TimeoutError,
-            ) as error:
-                checks.append(
-                    DoctorCheck(name=_probe_check_name(name), ok=False, detail=_error_detail(error))
-                )
-            else:
-                checks.append(
-                    DoctorCheck(
-                        name=_probe_check_name(name), ok=True, detail="session and turn passed"
-                    )
-                )
-        return checks
-
 
 def _process_detail(result: ProcessResult) -> str:
     return result.stdout.strip() or result.stderr.strip() or f"exit {result.returncode}"
@@ -351,22 +295,3 @@ def _plugin_check_name(name: str) -> str:
 
 def _plugin_result_name(name: str, result: str) -> str:
     return f"plugin:{name}:{result}"
-
-
-def _probe_check_name(name: str) -> str:
-    return f"plugin:{name}:{PROBE_CHECK_SUFFIX}"
-
-
-def _probe_rungs(settings: Settings) -> dict[str, Rung]:
-    roles = settings.roles
-    ladders = [
-        roles.leader.ladder,
-        roles.implementer.ladder,
-        *(override.ladder for override in roles.implementer.complexity.values()),
-        roles.helper.ladder,
-    ]
-    rungs: dict[str, Rung] = {}
-    for ladder in ladders:
-        for rung in ladder:
-            rungs.setdefault(rung.agent, rung)
-    return rungs

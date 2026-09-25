@@ -88,7 +88,6 @@ def make_settings(
             poll_seconds=2,
             resources=ResourcesConfig(max_cpu_pct=85, min_free_ram_gb=4),
             timeouts=TimeoutsConfig(
-                launch=90,
                 stall=1200,
                 tool=7200,
                 max_quota_wait=28800,

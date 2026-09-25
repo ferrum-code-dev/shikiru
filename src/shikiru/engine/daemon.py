@@ -20,7 +20,6 @@ from shikiru.engine.handlers import (
     ResolveHandler,
     ResumeHandler,
     RetryHandler,
-    SayHandler,
     SetRungHandler,
     StopHandler,
     SubmitHandler,
@@ -38,15 +37,11 @@ if TYPE_CHECKING:
     from shikiru.engine.flow import TaskFlow
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.notifier import Notifier
-    from shikiru.engine.quota_poller import QuotaPoller
     from shikiru.engine.scheduler import Scheduler
     from shikiru.engine.sessions import SessionManager
     from shikiru.store.commands import CommandQueue
     from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
-    from shikiru.store.messages import MessageStore
-    from shikiru.store.quotas import QuotaStore
-    from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
     from shikiru.workspace.roots import TaskRootBuilder
 
@@ -115,17 +110,13 @@ class Engine:
         lock_path: Path,
         command_queue: CommandQueue,
         tasks: TaskStore,
-        runs: RunStore,
         escalations: EscalationStore,
         events: EventLog,
-        quotas: QuotaStore,
-        messages: MessageStore,
         scheduler: Scheduler,
         sessions: SessionManager,
         flow: TaskFlow,
         roots: TaskRootBuilder,
         layout: LayoutGuard,
-        quota_poller: QuotaPoller,
         notifier: Notifier,
         settings: Settings,
         project_root: Path,
@@ -137,17 +128,13 @@ class Engine:
         self._lock = EngineLock(lock_path)
         self._commands = command_queue
         self._tasks = tasks
-        self._runs = runs
         self._escalations = escalations
         self._events = events
-        self._quotas = quotas
-        self._messages = messages
         self._scheduler = scheduler
         self._sessions = sessions
         self._flow = flow
         self._roots = roots
         self._layout = layout
-        self._quota_poller = quota_poller
         self._notifier = notifier
         self._settings = settings
         self._project_root = project_root
@@ -158,14 +145,11 @@ class Engine:
         self._finished_tasks: set[str] = set()
         self._last_notified_event = 0
         self._last_scheduled_event = 0
-        self._last_quota_event = 0
         self._logger = logging.getLogger("shikiru")
         context = HandlerContext(
             tasks=tasks,
             escalations=escalations,
             events=events,
-            messages=messages,
-            sessions=sessions,
             project_root=project_root,
             cancel_task=self.cancel_task,
             start_task=self.start_task,
@@ -183,7 +167,6 @@ class Engine:
                 CancelHandler(context),
                 RetryHandler(context),
                 SetRungHandler(context),
-                SayHandler(context),
                 ResolveHandler(context),
                 StopHandler(context),
             ]
@@ -198,10 +181,8 @@ class Engine:
             self._close_logging()
             self._close_state()
             raise
-        poller_task: asyncio.Task[None] | None = None
         try:
             self._last_notified_event = self._events.latest_id()
-            poller_task = self._quota_poller.start()
             self._events.append(EventKind.ENGINE_STARTED, message="engine started")
             next_tick = self._clock.now()
             while not self._stop.is_set():
@@ -209,7 +190,6 @@ class Engine:
                 commands_changed = await self._process_commands()
                 if self._stop.is_set():
                     break
-                await self._poll_after_quota_failure()
                 now = self._clock.now()
                 events_changed = self._events.since(self._last_scheduled_event)
                 if events_changed:
@@ -228,7 +208,7 @@ class Engine:
                 await self._clock.sleep(COMMAND_POLL_SECONDS)
             await self._supervise_flows()
         finally:
-            await self._shutdown(poller_task)
+            await self._shutdown()
 
     def request_stop(self) -> None:
         """Ask the command loop to stop after acknowledging the current command."""
@@ -255,7 +235,7 @@ class Engine:
         """Close sessions/window and clean the task root after terminal cancellation."""
         if task.id in self._finished_tasks:
             return
-        await self._sessions.exit_task(task)
+        self._sessions.close_task(task.id)
         await self._layout.close(task)
         await self._roots.cleanup(task.id, task.repo)
         self._finished_tasks.add(task.id)
@@ -275,13 +255,6 @@ class Engine:
             self._commands.mark_done(queued.id, result)
             changed = True
         return changed
-
-    async def _poll_after_quota_failure(self) -> None:
-        events = self._events.since(self._last_quota_event)
-        if events:
-            self._last_quota_event = max(event.id for event in events)
-        if any(event.kind is EventKind.QUOTA_BLOCKED for event in events):
-            await self._quota_poller.poll_once()
 
     async def _run_flow(self, task_id: str) -> None:
         try:
@@ -314,20 +287,14 @@ class Engine:
             self._last_notified_event = event.id
             await self._notifier.notify(event)
 
-    async def _shutdown(self, poller_task: asyncio.Task[None] | None) -> None:
+    async def _shutdown(self) -> None:
         try:
             self._events.append(EventKind.ENGINE_STOPPED, message="engine stopped")
-            await self._quota_poller.stop()
-            if poller_task is not None:
-                poller_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await poller_task
             for task in tuple(self._flow_tasks.values()):
                 task.cancel()
             if self._flow_tasks:
                 await asyncio.gather(*self._flow_tasks.values(), return_exceptions=True)
             self._flow_tasks.clear()
-            await self._sessions.shutdown()
         finally:
             try:
                 self._lock.release()

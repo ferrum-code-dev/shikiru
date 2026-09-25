@@ -200,7 +200,7 @@ class StreamingTurn:
             return None, None
         if self._signal_count:
             return None, "agent stream emitted a signal before SessionStarted"
-        if signal.session_id is None or not signal.session_id.strip():
+        if not signal.session_id.strip():
             return None, "agent stream emitted an empty session id"
         if self._spec.session_id is not None and signal.session_id != self._spec.session_id:
             return None, "resumed turn emitted a different session id"

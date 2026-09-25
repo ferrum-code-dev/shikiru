@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.agents.contracts import Rung
+from shikiru.agents.contracts import Rung, role_dir
+from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
-from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
+from shikiru.workspace.roots import run_dir
+from tests.support.engine import FAKE_AGENT_ALIAS, FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
 from tests.support.flow import (
     FlowEnv,
     build_flow,
@@ -143,6 +146,58 @@ async def test_changes_requested_persists_iteration_rung_and_counter_resets(
     assert final.iteration == 2
     assert final.rung_index[Role.IMPLEMENTER] == 1
     assert final.counters.rejections_on_rung == 0
+    implementer_runs = [
+        run for run in engine_env.runs.for_task(task.id) if run.role is Role.IMPLEMENTER
+    ]
+    assert len(implementer_runs) == 1
+    assert implementer_runs[0].model == "fake-2"
+    assert implementer_runs[0].session_id is not None
+    view_path = (
+        role_dir(run_dir(engine_env.project_root, task.id), Role.IMPLEMENTER.value) / "view.jsonl"
+    )
+    starts = [
+        json.loads(line)["session_id"]
+        for line in view_path.read_text().splitlines()
+        if json.loads(line)["signal"] == "SessionStarted"
+    ]
+    assert starts == [implementer_runs[0].session_id, implementer_runs[0].session_id]
+
+
+async def test_different_agent_rung_hands_off_prior_reports_in_a_fresh_session(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings(escalate_after=1)
+    next_rung = Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None)
+    implementer = settings.roles.implementer.model_copy(update={"ladder": [FAKE_RUNG, next_rung]})
+    roles = settings.roles.model_copy(update={"implementer": implementer})
+    agents = dict(settings.agents)
+    agents[FAKE_AGENT_ALIAS] = AgentConfig()
+    settings = settings.model_copy(update={"roles": roles, "agents": agents})
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "accept"}, {"kind": "accept"}],
+    )
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "changes_requested"}, {"kind": "accept"}],
+    )
+
+    await _run_flow(engine_env, task.id, settings)
+
+    implementer_runs = sorted(
+        (run for run in engine_env.runs.for_task(task.id) if run.role is Role.IMPLEMENTER),
+        key=lambda run: run.id,
+    )
+    assert [run.agent for run in implementer_runs] == [FAKE_AGENT_NAME, FAKE_AGENT_ALIAS]
+    assert implementer_runs[0].session_id != implementer_runs[1].session_id
+    current = role_dir(run_dir(engine_env.project_root, task.id), Role.IMPLEMENTER.value)
+    handoff_turn = current / "current_turn"
+    assert "fresh session" in handoff_turn.resolve().joinpath("prompt.md").read_text()
+    assert "fake-agent" in handoff_turn.resolve().joinpath("prompt.md").read_text()
 
 
 async def test_a_final_round_still_requesting_changes_raises_iterations_exhausted(

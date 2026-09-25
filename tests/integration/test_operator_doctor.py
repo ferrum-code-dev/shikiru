@@ -144,35 +144,6 @@ async def test_doctor_names_invalid_configuration_and_keeps_diagnostics_json_saf
     assert "broken" not in stdout
 
 
-async def test_doctor_probe_reports_each_configured_plugin(tmp_path: Path) -> None:
-    root = await _project(tmp_path)
-
-    code, stdout, stderr = await _cli(root, "--json", "doctor", "--probe")
-
-    report = json.loads(stdout)
-    probe_checks = [check for check in report["checks"] if check["name"] == "plugin:fake:probe"]
-    assert len(probe_checks) == 1
-    assert code == 0
-    assert stderr == ""
-    assert report["ok"] is True
-    assert all(check["ok"] for check in report["checks"])
-    assert probe_checks[0]["ok"] is True
-    assert probe_checks[0]["detail"]
-
-
-async def test_doctor_probe_reuses_the_project_probe_repository(tmp_path: Path) -> None:
-    root = await _project(tmp_path)
-    repo_git = root / ".shikiru" / "probe" / "repo" / ".git"
-
-    first_code, _, _ = await _cli(root, "--json", "doctor", "--probe")
-    first_inode = repo_git.stat().st_ino
-    second_code, stdout, _ = await _cli(root, "--json", "doctor", "--probe")
-
-    assert (first_code, second_code) == (0, 0)
-    assert json.loads(stdout)["ok"] is True
-    assert repo_git.stat().st_ino == first_inode
-
-
 async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

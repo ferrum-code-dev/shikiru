@@ -1,18 +1,15 @@
-"""Claude Code `InteractiveAgent` plugin."""
+"""Claude Code headless turn plugin."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import uuid
-from collections.abc import Mapping
-from datetime import timedelta
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import CheckResult, QuotaWindow, SessionKeys, shikiru_command
+from shikiru.agents.contracts import CheckResult
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
@@ -23,98 +20,43 @@ from shikiru.plugins.agents.claude.options import (
     ANTHROPIC_AUTH_TOKEN_ENV,
     AUTH_API_KEY,
     CLAUDE_COMMAND,
-    EFFORT_FLAG,
-    HOOK_SUBCOMMAND,
-    MODEL_FLAG,
     RESUME_FLAG,
-    SESSION_ID_FLAG,
-    SETTINGS_FLAG,
     ClaudeOptions,
 )
-from shikiru.plugins.agents.claude.quota import ClaudeQuotaProbe
-from shikiru.plugins.agents.claude.session import ClaudeSession, hook_file_size, restored_session
 from shikiru.plugins.agents.claude.turn import ClaudeTurnSequence
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from pathlib import Path
 
-    from shikiru.agents.contracts import (
-        AgentContext,
-        AgentSession,
-        HeadlessAgent,
-        LaunchSpec,
-        PaneHandle,
-        Turn,
-        TurnSpec,
-    )
+    from shikiru.agents.contracts import AgentContext, HeadlessAgent, Turn, TurnSpec
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
 CLAUDE_VERSION_ARGV = (CLAUDE_COMMAND, "--version")
 AUTH_STATUS_ARGV = (CLAUDE_COMMAND, "auth", "status", "--json")
 DOCTOR_TIMEOUT_SECONDS = 60.0
-HOOK_EVENTS = (
-    "SessionStart",
-    "UserPromptSubmit",
-    "PreToolUse",
-    "PostToolUse",
-    "Stop",
-    "StopFailure",
-    "Notification",
-    "PostCompact",
-    "SessionEnd",
-)
-_HOOKS_FIELD = "hooks"
-_HOOKS_LIST_FIELD = "hooks"
-_HOOK_TYPE_FIELD = "type"
-_HOOK_COMMAND_FIELD = "command"
-_HOOK_TYPE_COMMAND = "command"
 _AUTH_STATUS_LOGGED_IN_FIELD = "loggedIn"
 _INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
-STARTUP_TIMEOUT_SECONDS = 45.0
-STARTUP_POLL_SECONDS = 0.1
-STARTUP_STABILITY_COUNT = 10
-STARTUP_DIALOGS = (
-    ("Yes, I trust this folder", "Enter to confirm"),
-    ("Claude Code'll be able to read, edit, and execute", "Enter to confirm"),
-    ("WARNING: Claude Code running in Bypass Permissions mode", "Yes, I accept"),
-    ("Allow external CLAUDE.md file imports?", "Yes, allow external imports"),
-)
-ACCEPT_DIALOG_KEYS = ("Down", "Enter")
 
 
 class ClaudeAgent:
-    """A Claude Code plugin that normalizes hooks, transcripts and quota."""
+    """Build Claude Code turn processes, authentication and health checks."""
 
     name = "claude"
-    keys = SessionKeys(
-        interrupt=("Escape",),
-        exit_input="/exit",
-        safe=("Enter", "Escape", "Down", "1", "2"),
-    )
 
     def __init__(self, runner: SubprocessRunner, clock: Clock, options: ClaudeOptions) -> None:
-        """Hold validated options and injected process and clock boundaries."""
         self._runner = runner
         self._clock = clock
         self._options = options
         self._reset_time = ResetTimeParser(clock)
-        self._quota_probe = ClaudeQuotaProbe(
-            runner,
-            clock,
-            self._reset_time,
-            self._subprocess_environment,
-        )
         self._run_dirs: dict[str, Path] = {}
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one process-per-turn Claude Code exchange."""
-        sequence = self.process_sequence(spec)
-        return await StreamingTurn.start(spec, self._runner, sequence)
+        return await StreamingTurn.start(spec, self._runner, self.process_sequence(spec))
 
     def process_sequence(self, spec: TurnSpec) -> ClaudeTurnSequence:
-        """Build the compact, prompt and retry sequence for `spec`."""
+        """Build the compact, prompt and retry process sequence for `spec`."""
         sequence = ClaudeTurnSequence(
             spec,
             clock=self._clock,
@@ -140,53 +82,6 @@ class ClaudeAgent:
             *self._options.args,
         )
 
-    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
-        """Launch a Claude Code session in `pane` and return once its first hook arrives."""
-        session_id = spec.resume_session_id or str(uuid.uuid4())
-        self._run_dirs[session_id] = spec.run_dir
-        hook_offset = await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role)
-        await pane.respawn(
-            self._argv(spec, session_id),
-            env=self._pane_environment(spec.env),
-            cwd=spec.cwd,
-        )
-        await self._await_ready(spec, pane, hook_offset)
-        return self._session(spec, session_id, hook_offset)
-
-    async def _await_ready(self, spec: LaunchSpec, pane: PaneHandle, hook_offset: int) -> None:
-        deadline = self._clock.now() + timedelta(seconds=STARTUP_TIMEOUT_SECONDS)
-        dialog_observations = 0
-        while self._clock.now() < deadline and await pane.is_alive():
-            if await asyncio.to_thread(hook_file_size, spec.run_dir, spec.role) > hook_offset:
-                return
-            if _is_startup_dialog(await pane.capture_visible()):
-                dialog_observations += 1
-                if dialog_observations >= STARTUP_STABILITY_COUNT:
-                    await pane.send_keys(*ACCEPT_DIALOG_KEYS)
-                    dialog_observations = 0
-            else:
-                dialog_observations = 0
-            await self._clock.sleep(STARTUP_POLL_SECONDS)
-
-    async def attach(
-        self, spec: LaunchSpec, pane: PaneHandle, state: Mapping[str, object]
-    ) -> AgentSession:
-        """Attach to a running Claude Code pane using persisted file offsets."""
-        del pane
-        return restored_session(
-            spec,
-            state=state,
-            clock=self._clock,
-            reset_time=self._reset_time,
-            invalidate_quota=self._quota_probe.invalidate,
-        )
-
-    async def quota(self) -> list[QuotaWindow]:
-        """Return cached subscription quota windows, or no windows for API-key auth."""
-        if self._options.auth == AUTH_API_KEY:
-            return []
-        return await self._quota_probe.get()
-
     async def doctor(self) -> list[CheckResult]:
         """Check Claude's binary, version and authentication."""
         binary = await self._check_binary()
@@ -197,65 +92,11 @@ class ClaudeAgent:
                 CheckResult("version", False, unavailable),
                 CheckResult("login", False, unavailable),
             ]
-        version = await self._check_version()
-        login = await self._check_login()
-        return [binary, version, login]
-
-    def resume_command(self, session_id: str, cwd: Path) -> str | None:
-        """Return the command that resumes a Claude conversation by id."""
-        del cwd
-        return f"{CLAUDE_COMMAND} --resume {session_id}"
+        return [binary, await self._check_version(), await self._check_login()]
 
     def headless(self) -> HeadlessAgent | None:
         """Return Claude's schema-constrained headless client."""
         return ClaudeHeadless(self._runner, self._subprocess_environment())
-
-    def _session(self, spec: LaunchSpec, session_id: str, hook_offset: int) -> ClaudeSession:
-        return ClaudeSession(
-            spec.run_dir,
-            spec.role,
-            session_id,
-            hook_offset,
-            clock=self._clock,
-            reset_time=self._reset_time,
-            invalidate_quota=self._quota_probe.invalidate,
-        )
-
-    def _argv(self, spec: LaunchSpec, session_id: str) -> tuple[str, ...]:
-        resume = spec.resume_session_id is not None
-        argv = [CLAUDE_COMMAND, RESUME_FLAG if resume else SESSION_ID_FLAG, session_id]
-        argv.extend([MODEL_FLAG, spec.rung.model])
-        if spec.rung.effort is not None:
-            argv.extend([EFFORT_FLAG, spec.rung.effort])
-        argv.extend([SETTINGS_FLAG, self._settings_json()])
-        for directory in (spec.run_dir, *spec.add_dirs):
-            argv.extend([ADD_DIR_FLAG, str(directory)])
-        argv.extend(self._options.args)
-        return tuple(argv)
-
-    def _settings_json(self) -> str:
-        hook = {
-            _HOOKS_LIST_FIELD: [
-                {
-                    _HOOK_TYPE_FIELD: _HOOK_TYPE_COMMAND,
-                    _HOOK_COMMAND_FIELD: shikiru_command(HOOK_SUBCOMMAND),
-                }
-            ]
-        }
-        return json.dumps(
-            {_HOOKS_FIELD: {event: [hook] for event in HOOK_EVENTS}},
-            separators=(",", ":"),
-        )
-
-    def _pane_environment(self, base: Mapping[str, str]) -> dict[str, str | None]:
-        environment: dict[str, str | None] = dict(base)
-        if self._options.auth == AUTH_API_KEY:
-            environment[ANTHROPIC_API_KEY_ENV] = self._api_key(base)
-            environment[ANTHROPIC_AUTH_TOKEN_ENV] = None
-        else:
-            environment[ANTHROPIC_API_KEY_ENV] = None
-            environment[ANTHROPIC_AUTH_TOKEN_ENV] = None
-        return environment
 
     def _subprocess_environment(self) -> dict[str, str]:
         return self._authenticated_environment(os.environ)
@@ -327,8 +168,9 @@ class ClaudeAgent:
         if not isinstance(payload, Mapping):
             return CheckResult("login", False, _INVALID_AUTH_STATUS_MESSAGE)
         typed_payload = cast("Mapping[str, object]", payload)
-        logged_in = typed_payload.get(_AUTH_STATUS_LOGGED_IN_FIELD)
-        authenticated = result.returncode == 0 and logged_in is True
+        authenticated = (
+            result.returncode == 0 and typed_payload.get(_AUTH_STATUS_LOGGED_IN_FIELD) is True
+        )
         detail = "authenticated" if authenticated else "not authenticated"
         return CheckResult("login", authenticated, detail)
 
@@ -341,7 +183,3 @@ def create(context: AgentContext) -> ClaudeAgent:
         message = f"invalid options for the Claude agent: {error}"
         raise ConfigError(message) from error
     return ClaudeAgent(context.runner, context.clock, options)
-
-
-def _is_startup_dialog(visible: str) -> bool:
-    return any(question in visible and answer in visible for question, answer in STARTUP_DIALOGS)

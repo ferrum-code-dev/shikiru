@@ -1,518 +1,187 @@
-"""`SessionMonitor`: stall detection, launch timeout and intervention scoping (03 §4.2, §9)."""
-
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from datetime import timedelta
+from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import (
-    Activity,
-    PromptSubmitted,
-    SessionEnded,
-    SessionStarted,
-    TurnEnded,
-    Usage,
-)
+import psutil
+
+from shikiru.clock import SystemClock
+from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
-from shikiru.domain.recovery import PaneDied
-from shikiru.domain.runs import NO_USAGE
-from shikiru.domain.tasks import Hold, Role
-from shikiru.engine.monitor import Stalled
-from shikiru.errors import CommandFailed
-from shikiru.store.events import EventLog
+from shikiru.domain.tasks import Mode, Role, Status, Step
+from shikiru.store.quotas import QuotaStore
+from shikiru.workspace.roots import run_dir
 from tests.support.clock import FakeClock
-from tests.support.engine import FAKE_RUNG, fake_engine_settings, make_monitor, set_script
+from tests.support.engine import set_role_script
 from tests.support.factories import TASK_CREATED_AT
+from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator, Mapping
-
-    from shikiru.agents.contracts import AgentSignal
-    from shikiru.engine.monitor import MonitorSignal
     from tests.support.engine import EngineEnv
     from tests.support.tmux import TmuxServer
 
-_SIGNAL_TIMEOUT = 15.0
+_FLOW_TIMEOUT_SECONDS = 60
+_SHORT_STALL_SECONDS = 2
 
 
-async def _refresh_titles(_task: object) -> None:
-    return
+async def test_monitor_records_quota_compaction_usage_and_turn_view(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    observed_at = TASK_CREATED_AT.isoformat()
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [
+            {
+                "kind": "needs_decision",
+                "quota_windows": [
+                    {
+                        "name": "weekly",
+                        "used_pct": 47,
+                        "resets_at": (TASK_CREATED_AT + timedelta(hours=1)).isoformat(),
+                        "observed_at": observed_at,
+                    }
+                ],
+            },
+            {"kind": "accept"},
+        ],
+    )
+    flow_env = build_flow(engine_env, flow_settings())
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+
+    [quota] = QuotaStore(engine_env.connection).quotas_for("fake")
+    assert quota.name == "weekly"
+    assert quota.used_pct == 47
+    events = flow_env.events.since(0, kinds=[EventKind.COMPACTED], task_id=task.id)
+    assert {event.data["role"] for event in events} == {"implementer", "leader"}
+    assert all(event.data["pre_tokens"] == 2000 for event in events)
+    assert all(event.data["post_tokens"] == 400 for event in events)
+    role_path = run_dir(engine_env.project_root, task.id) / "implementer"
+    rows = [json.loads(line) for line in (role_path / "view.jsonl").read_text().splitlines()]
+    signals = [row["signal"] for row in rows]
+    assert "QuotaReported" in signals
+    assert "Compacted" in signals
+    assert "UsageReported" in signals
+    assert "TurnEnded" in signals
+    assert not (role_path / "turn.pid").exists()
 
 
-async def _next_stalled(queue: asyncio.Queue[MonitorSignal]) -> Stalled:
-    while True:
-        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
-        if isinstance(signal, Stalled):
-            return signal
-
-
-async def _next_prompt_submitted(queue: asyncio.Queue[MonitorSignal]) -> PromptSubmitted:
-    while True:
-        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
-        if isinstance(signal, PromptSubmitted):
-            return signal
-
-
-class _SilentSession:
-    """An `AgentSession` double that never emits a signal (04 §1)."""
-
-    async def signals(self) -> AsyncGenerator[AgentSignal]:
-        while True:
-            await asyncio.Event().wait()
-            yield SessionEnded()
-
-    async def before_turn(self) -> list[str]:
-        return []
-
-    async def usage(self) -> Usage:
-        return NO_USAGE
-
-    def snapshot(self) -> Mapping[str, Any]:
-        return {}
-
-
-class _AlwaysAlivePane:
-    """A `PaneHandle` double whose process never dies (04 §1)."""
-
-    async def respawn(self, argv: object, env: object, cwd: object) -> None:
-        del argv, env, cwd
-
-    async def capture_visible(self) -> str:
-        return "stub screen"
-
-    async def is_alive(self) -> bool:
-        return True
-
-    async def send_keys(self, *keys: str) -> None:
-        del keys
-
-
-class _MissingPane(_AlwaysAlivePane):
-    """A `PaneHandle` whose liveness command reports a missing pane."""
-
-    async def is_alive(self) -> bool:
-        raise CommandFailed(("tmux", "is-pane-dead"), 1, "missing pane")
-
-
-class _FailingSession:
-    """An `AgentSession` whose signal stream fails unexpectedly."""
-
-    def signals(self) -> AsyncIterator[AgentSignal]:
-        return _FailingSignals()
-
-    async def before_turn(self) -> list[str]:
-        return []
-
-    async def usage(self) -> Usage:
-        return NO_USAGE
-
-    def snapshot(self) -> Mapping[str, Any]:
-        return {}
-
-
-class _FailingSignals:
-    def __aiter__(self) -> _FailingSignals:
-        return self
-
-    async def __anext__(self) -> AgentSignal:
-        message = "signal stream failed"
-        raise RuntimeError(message)
-
-
-class _ClosedSession:
-    """An `AgentSession` whose signal stream ends without a session-ended signal."""
-
-    def signals(self) -> AsyncIterator[AgentSignal]:
-        return _ClosedSignals()
-
-    async def before_turn(self) -> list[str]:
-        return []
-
-    async def usage(self) -> Usage:
-        return NO_USAGE
-
-    def snapshot(self) -> Mapping[str, Any]:
-        return {}
-
-
-class _ClosedSignals:
-    def __aiter__(self) -> _ClosedSignals:
-        return self
-
-    async def __anext__(self) -> AgentSignal:
-        raise StopAsyncIteration
-
-
-class _ScriptedSession:
-    """An `AgentSession` double fed one signal at a time, with mutable usage/snapshot (04 §1)."""
-
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[AgentSignal] = asyncio.Queue()
-        self.usage_value: Usage = NO_USAGE
-        self.snapshot_value: dict[str, Any] = {}
-
-    def push(self, signal: AgentSignal) -> None:
-        self._queue.put_nowait(signal)
-
-    def idle(self) -> bool:
-        """Return whether every pushed signal has been picked up by the monitor's consumer."""
-        return self._queue.empty()
-
-    async def signals(self) -> AsyncGenerator[AgentSignal]:
-        while True:
-            yield await self._queue.get()
-
-    async def before_turn(self) -> list[str]:
-        return []
-
-    async def usage(self) -> Usage:
-        return self.usage_value
-
-    def snapshot(self) -> Mapping[str, Any]:
-        return self.snapshot_value
-
-
-async def test_stall_is_published_after_the_configured_timeout(
+async def test_stalled_turn_is_stopped_then_resumed_with_continue(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = fake_engine_settings()
-    manager = engine_env.build_manager(settings, clock=clock)
-    task = await engine_env.build_task()
-    await set_script(tmux_server, [{"kind": "stall"}])
+    settings = flow_settings()
+    timeouts = settings.orchestration.timeouts.model_copy(update={"stall": _SHORT_STALL_SECONDS})
+    orchestration = settings.orchestration.model_copy(update={"timeouts": timeouts})
+    settings = settings.model_copy(update={"orchestration": orchestration})
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}, {"kind": "accept"}])
+    turn_clock = FakeClock(TASK_CREATED_AT)
+    flow_env = build_flow(engine_env, settings, clock=clock, turn_clock=turn_clock)
+    flow_task = asyncio.create_task(flow_env.flow.run(task.id))
+    role_path = run_dir(engine_env.project_root, task.id) / "implementer"
 
-    await manager.ensure(task, Role.IMPLEMENTER)
-    queue = manager.subscribe(task.id, Role.IMPLEMENTER)
+    async def first_session_started() -> bool:
+        run = engine_env.runs.get_live(task.id, Role.IMPLEMENTER)
+        return (role_path / "turn.pid").is_file() and run is not None and run.session_id is not None
 
-    pane_id = task.panes[Role.IMPLEMENTER]
-    await engine_env.pane(pane_id).paste_line("go")
+    await wait_until(first_session_started, timeout=10)
+    turn_clock.advance(_SHORT_STALL_SECONDS + 1)
+    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
-    await _next_prompt_submitted(queue)
-    await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-    clock.advance(settings.orchestration.timeouts.stall + 1)
-
-    async def _stall_seen() -> bool:
-        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
-        return isinstance(signal, Stalled)
-
-    await wait_until(_stall_seen, timeout=_SIGNAL_TIMEOUT)
-
-
-async def test_launch_timeout_publishes_stalled(engine_env: EngineEnv) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    task = await engine_env.build_task()
-    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    settings = fake_engine_settings()
-    monitor = make_monitor(
-        _SilentSession(),
-        _AlwaysAlivePane(),
-        task=task,
-        run=run,
-        run_dir=engine_env.project_root / "run",
-        tasks=engine_env.tasks,
-        runs=engine_env.runs,
-        clock=clock,
-        settings=settings,
-        expects_started=True,
-        events=EventLog(engine_env.connection, clock),
-        refresh_titles=_refresh_titles,
-    )
-    queue = monitor.subscribe()
-    run_task = asyncio.ensure_future(monitor.run())
-    try:
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.timeouts.launch + 1)
-        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
-        assert isinstance(signal, Stalled)
-    finally:
-        run_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await run_task
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.step is Step.INTEGRATE
+    assert final.status is Status.INTEGRATING
+    rows = [json.loads(line) for line in (role_path / "view.jsonl").read_text().splitlines()]
+    starts = [row["session_id"] for row in rows if row["signal"] == "SessionStarted"]
+    assert len(starts) == 2
+    assert starts[0] == starts[1]
+    task_turns = run_dir(engine_env.project_root, task.id) / "turns"
+    continue_prompts = [
+        path / "prompt.md"
+        for path in task_turns.iterdir()
+        if path.is_dir()
+        and "continue this task's current turn" in (path / "prompt.md").read_text().lower()
+    ]
+    assert len(continue_prompts) == 1
+    assert not (role_path / "turn.pid").exists()
 
 
-async def test_missing_pane_publishes_pane_died(engine_env: EngineEnv) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    task = await engine_env.build_task()
-    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    settings = fake_engine_settings()
-    monitor = make_monitor(
-        _SilentSession(),
-        _MissingPane(),
-        task=task,
-        run=run,
-        run_dir=engine_env.project_root / "run",
-        tasks=engine_env.tasks,
-        runs=engine_env.runs,
-        clock=clock,
-        settings=settings,
-        expects_started=False,
-        events=EventLog(engine_env.connection, clock),
-        refresh_titles=_refresh_titles,
-    )
-    queue = monitor.subscribe()
-    run_task = asyncio.ensure_future(monitor.run())
-    try:
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.poll_seconds)
-        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
-        assert isinstance(signal, PaneDied)
-        await asyncio.wait_for(run_task, timeout=_SIGNAL_TIMEOUT)
-    finally:
-        if not run_task.done():
-            run_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await run_task
-
-
-async def test_monitor_exception_publishes_pane_died(engine_env: EngineEnv) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    task = await engine_env.build_task()
-    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    settings = fake_engine_settings()
-    monitor = make_monitor(
-        _FailingSession(),
-        _AlwaysAlivePane(),
-        task=task,
-        run=run,
-        run_dir=engine_env.project_root / "run",
-        tasks=engine_env.tasks,
-        runs=engine_env.runs,
-        clock=clock,
-        settings=settings,
-        expects_started=False,
-        events=EventLog(engine_env.connection, clock),
-        refresh_titles=_refresh_titles,
-    )
-    queue = monitor.subscribe()
-    run_task = asyncio.ensure_future(monitor.run())
-    try:
-        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
-        assert isinstance(signal, PaneDied)
-        await asyncio.wait_for(run_task, timeout=_SIGNAL_TIMEOUT)
-    finally:
-        if not run_task.done():
-            run_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await run_task
-
-
-async def test_closed_monitor_stream_publishes_pane_died(engine_env: EngineEnv) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    task = await engine_env.build_task()
-    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    settings = fake_engine_settings()
-    monitor = make_monitor(
-        _ClosedSession(),
-        _AlwaysAlivePane(),
-        task=task,
-        run=run,
-        run_dir=engine_env.project_root / "run",
-        tasks=engine_env.tasks,
-        runs=engine_env.runs,
-        clock=clock,
-        settings=settings,
-        expects_started=False,
-        events=EventLog(engine_env.connection, clock),
-        refresh_titles=_refresh_titles,
-    )
-    queue = monitor.subscribe()
-    run_task = asyncio.ensure_future(monitor.run())
-    try:
-        signal = await asyncio.wait_for(queue.get(), timeout=_SIGNAL_TIMEOUT)
-        assert isinstance(signal, PaneDied)
-        await asyncio.wait_for(run_task, timeout=_SIGNAL_TIMEOUT)
-    finally:
-        if not run_task.done():
-            run_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await run_task
-
-
-async def test_stall_is_published_once_per_episode(engine_env: EngineEnv) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    task = await engine_env.build_task()
-    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    settings = fake_engine_settings()
-    session = _ScriptedSession()
-    monitor = make_monitor(
-        session,
-        _AlwaysAlivePane(),
-        task=task,
-        run=run,
-        run_dir=engine_env.project_root / "run",
-        tasks=engine_env.tasks,
-        runs=engine_env.runs,
-        clock=clock,
-        settings=settings,
-        expects_started=True,
-        events=EventLog(engine_env.connection, clock),
-        refresh_titles=_refresh_titles,
-    )
-    queue = monitor.subscribe()
-    run_task = asyncio.ensure_future(monitor.run())
-    try:
-        session.push(SessionStarted(session_id="s1"))
-
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.timeouts.stall + 1)
-        first = await _next_stalled(queue)
-        assert isinstance(first, Stalled)
-
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.poll_seconds)
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        assert queue.empty()
-
-        session.push(Activity(tool_running=False))
-        await wait_until(session.idle, timeout=_SIGNAL_TIMEOUT)
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.timeouts.stall + 1)
-        second = await _next_stalled(queue)
-        assert isinstance(second, Stalled)
-    finally:
-        run_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await run_task
-
-
-async def test_tick_persists_changed_usage_snapshot_and_last_message(
-    engine_env: EngineEnv,
-) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    task = await engine_env.build_task()
-    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    settings = fake_engine_settings()
-    session = _ScriptedSession()
-    monitor = make_monitor(
-        session,
-        _AlwaysAlivePane(),
-        task=task,
-        run=run,
-        run_dir=engine_env.project_root / "run",
-        tasks=engine_env.tasks,
-        runs=engine_env.runs,
-        clock=clock,
-        settings=settings,
-        expects_started=True,
-        events=EventLog(engine_env.connection, clock),
-        refresh_titles=_refresh_titles,
-    )
-    run_task = asyncio.ensure_future(monitor.run())
-    try:
-        session.push(SessionStarted(session_id="s1"))
-        first_usage = Usage(
-            input_tokens=11,
-            output_tokens=7,
-            cache_read_tokens=3,
-            cache_write_tokens=0,
-            cost_usd=None,
-            cost_basis="unknown",
-            context_used_pct=None,
-        )
-        session.usage_value = first_usage
-        session.snapshot_value = {"offset": 42}
-        session.push(PromptSubmitted(text="first"))
-        session.push(TurnEnded(last_message="first"))
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.poll_seconds)
-        await wait_until(
-            lambda: (
-                (persisted := engine_env.runs.for_task(task.id))[0].usage == first_usage
-                and persisted[0].agent_state == {"offset": 42}
-                and persisted[0].last_message == "first"
-            ),
-            timeout=_SIGNAL_TIMEOUT,
-        )
-
-        second_usage = Usage(
-            input_tokens=23,
-            output_tokens=19,
-            cache_read_tokens=5,
-            cache_write_tokens=0,
-            cost_usd=None,
-            cost_basis="unknown",
-            context_used_pct=None,
-        )
-        session.usage_value = second_usage
-        session.snapshot_value = {"offset": 84}
-        session.push(PromptSubmitted(text="second"))
-        session.push(TurnEnded(last_message="second"))
-        await wait_until(session.idle, timeout=_SIGNAL_TIMEOUT)
-        await wait_until(clock.has_pending_sleep, timeout=_SIGNAL_TIMEOUT)
-        clock.advance(settings.orchestration.poll_seconds)
-        await wait_until(
-            lambda: (
-                (persisted := engine_env.runs.for_task(task.id))[0].usage == second_usage
-                and persisted[0].agent_state == {"offset": 84}
-                and persisted[0].last_message == "second"
-            ),
-            timeout=_SIGNAL_TIMEOUT,
-        )
-    finally:
-        run_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await run_task
-
-
-async def test_intervention_hold_from_a_typed_prompt_is_scoped_to_its_own_task(
+async def test_cancelling_a_turn_stops_its_child_process(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
-    task_a = await engine_env.build_task(title="a")
-    task_b = await engine_env.build_task(title="b")
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}])
+    flow_env = build_flow(engine_env, flow_settings())
+    flow_task = asyncio.create_task(flow_env.flow.run(task.id))
+    role_path = run_dir(engine_env.project_root, task.id) / "implementer"
 
-    await set_script(tmux_server, [{"kind": "no_report"}])
-    await engine_env.manager.ensure(task_a, Role.IMPLEMENTER)
-    await engine_env.manager.ensure(task_b, Role.IMPLEMENTER)
+    async def process_started() -> bool:
+        run = engine_env.runs.get_live(task.id, Role.IMPLEMENTER)
+        return (role_path / "turn.pid").is_file() and run is not None and run.session_id is not None
 
-    pane_a = task_a.panes[Role.IMPLEMENTER]
-    await engine_env.pane(pane_a).paste_line("hello from the operator")
+    await wait_until(process_started, timeout=10)
+    pid = int((role_path / "turn.pid").read_text())
+    flow_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await flow_task
 
-    def _has_intervention(task_id: str) -> bool:
-        task = engine_env.tasks.get(task_id)
-        return task is not None and Hold.INTERVENTION in task.holds
-
-    await wait_until(lambda: _has_intervention(task_a.id), timeout=_SIGNAL_TIMEOUT)
-    assert not _has_intervention(task_b.id)
+    assert await asyncio.to_thread(psutil.pid_exists, pid) is False
+    assert not (role_path / "turn.pid").exists()
 
 
-async def test_intervention_prompt_emits_an_event(
-    engine_env: EngineEnv,
+async def test_turn_pid_tracks_prompt_process_after_precompaction(
+    engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    task = await engine_env.build_task()
-    run = engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    session = _ScriptedSession()
-    events = EventLog(engine_env.connection, clock)
-    monitor = make_monitor(
-        session,
-        _AlwaysAlivePane(),
-        task=task,
-        run=run,
-        run_dir=engine_env.project_root / "run",
-        tasks=engine_env.tasks,
-        runs=engine_env.runs,
-        clock=clock,
-        settings=fake_engine_settings(),
-        expects_started=False,
-        events=events,
-        refresh_titles=_refresh_titles,
+    base_settings = flow_settings()
+    settings = base_settings.model_copy(
+        update={
+            "agents": {"fake": AgentConfig(options={"compact_at_pct": 1})},
+            "orchestration": base_settings.orchestration.model_copy(update={"poll_seconds": 1}),
+        }
     )
-    queue = monitor.subscribe()
-    run_task = asyncio.ensure_future(monitor.run())
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}, {"kind": "stall"}])
+    await set_role_script(tmux_server, Role.LEADER, [{"kind": "changes_requested"}])
+    flow_env = build_flow(engine_env, settings, turn_clock=SystemClock())
+    flow_task = asyncio.create_task(flow_env.flow.run(task.id))
+    role_path = run_dir(engine_env.project_root, task.id) / "implementer"
+    pid_path = role_path / "turn.pid"
 
-    def _has_intervention(task_id: str) -> bool:
-        current = engine_env.tasks.get(task_id)
-        return current is not None and Hold.INTERVENTION in current.holds
+    async def prompt_is_active_after_compaction() -> bool:
+        compactions = flow_env.events.since(0, kinds=[EventKind.COMPACTED], task_id=task.id)
+        if not compactions or not pid_path.is_file():
+            return False
+        pid = int(pid_path.read_text())
+        if not await asyncio.to_thread(psutil.pid_exists, pid):
+            return False
+        try:
+            command = await asyncio.to_thread(psutil.Process(pid).cmdline)
+        except psutil.Error:
+            return False
+        return "turn" in command
 
     try:
-        session.push(PromptSubmitted(text="operator input"))
-        await wait_until(lambda: _has_intervention(task.id), timeout=5)
-        event = events.since(0, kinds=[EventKind.INTERVENTION], task_id=task.id)[0]
-        assert event.data["text"] == "operator input"
-        assert isinstance(await queue.get(), PromptSubmitted)
+        await wait_until(prompt_is_active_after_compaction, timeout=20)
+        pid = int(pid_path.read_text())
+        command = await asyncio.to_thread(psutil.Process(pid).cmdline)
+        assert "turn" in command
+        assert await asyncio.to_thread(psutil.pid_exists, pid)
     finally:
-        run_task.cancel()
+        flow_task.cancel()
         with suppress(asyncio.CancelledError):
-            await run_task
+            await flow_task
+
+    assert not pid_path.exists()
+    assert await asyncio.to_thread(psutil.pid_exists, pid) is False

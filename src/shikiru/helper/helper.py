@@ -1,56 +1,53 @@
-"""Calls a rung's `HeadlessAgent` to rebuild a report or classify a stalled screen (04 §6)."""
+"""Calls the helper rung's headless agent and validates every answer (04 §6)."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from shikiru.agents.contracts import FailureKind
 from shikiru.domain.fencing import fence
-from shikiru.domain.recovery import ScreenClassification
 from shikiru.domain.reports import ReportKind, model_for, schema_for
 from shikiru.errors import ConfigError
 from shikiru.helper.models import Unrecoverable
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
     from datetime import timedelta
     from pathlib import Path
 
-    from shikiru.agents.contracts import InteractiveAgent
+    from shikiru.agents.contracts import Agent
     from shikiru.domain.reports import Report
 
 _REBUILD_PROMPT = (
     "The agent's turn ended without a valid report. Reconstruct the report for this {kind} "
-    "turn from its last message (or the visible screen, if the message is empty) and the "
-    "facts below. If you cannot determine the report with confidence, respond instead with "
-    '{{"unrecoverable": "<reason>"}}.\n\n'
-    "## Last message or screen\n\n{last_message}\n\n"
-    "## Facts\n\n{facts}\n"
+    "turn from its last message and the facts below. If you cannot determine the report with "
+    'confidence, respond instead with \'{{"unrecoverable": "<reason>"}}.\n\n'
+    "## Last message\n\n{last_message}\n\n## Facts\n\n{facts}\n"
+)
+_CLASSIFY_PROMPT = (
+    "Classify this unrecognised agent failure into QUOTA, UNAVAILABLE, CONTEXT, AUTH or OTHER. "
+    "Give confidence from 0 to 1 and a reset time only when known. If the text is ambiguous, "
+    "return UNKNOWN with low confidence.\n\n## Failure\n\n{failure}\n"
 )
 
-_CLASSIFY_PROMPT = (
-    "An agent session has stalled. Classify its visible screen as one of `working` (it is "
-    "still doing something), `dialog` (a prompt only these keys can answer: {safe_keys}), "
-    "`question` (it is asking the operator something), `quota` (a usage limit) or `error` "
-    "(anything else blocking progress). For `dialog`, `keys` must be a non-empty subset of "
-    "the safe keys above. Include `text` for `question` or `error`, and `resets_at` for "
-    "`quota` when known. If you cannot classify it with confidence, respond instead with "
-    '{{"unrecoverable": "<reason>"}}.\n\n'
-    "## Screen\n\n{screen}\n"
-)
+
+class FailureClassification(BaseModel):
+    """The Helper's structured classification of an unrecognised agent failure."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: FailureKind
+    confidence: float = Field(ge=0, le=1)
+    resets_at: datetime | None = None
 
 
 class Helper:
-    """Calls the helper rung's `HeadlessAgent`, validating every answer with pydantic (04 §6).
+    """Call the one configured headless helper and validate its reports and classifications."""
 
-    The caller resolves the helper rung (`domain.ladder.pick_rung` with `Role.HELPER`) into
-    `model`/`effort`, and the call `timeout`; `Helper` itself only talks to the agent it is
-    given.
-    """
-
-    def __init__(self, agent: InteractiveAgent) -> None:
-        """Hold `agent`'s `HeadlessAgent`, raising `ConfigError` when it has none (04 §6)."""
+    def __init__(self, agent: Agent) -> None:
         headless = agent.headless()
         if headless is None:
             message = f"agent {agent.name!r} has no headless support required by roles.helper"
@@ -68,7 +65,7 @@ class Helper:
         cwd: Path,
         timeout: timedelta,
     ) -> Report | Unrecoverable:
-        """Reconstruct the missing report of `kind` from `last_message` and `facts` (04 §6)."""
+        """Reconstruct a missing report from the turn's final message and facts (04 §6)."""
         schema = {"oneOf": [schema_for(kind), Unrecoverable.model_json_schema()]}
         prompt = _REBUILD_PROMPT.format(
             kind=kind.value,
@@ -78,29 +75,25 @@ class Helper:
         raw = await self._headless.ask(prompt, schema, model, effort, cwd, timeout)
         return self._validate(raw, model_for(kind))
 
-    async def classify_screen(
+    async def classify_failure(
         self,
-        screen: str,
-        safe_keys: Sequence[str],
+        failure: str,
         *,
         model: str,
         effort: str | None,
         cwd: Path,
         timeout: timedelta,
-    ) -> ScreenClassification | Unrecoverable:
-        """Classify a stalled `screen`, telling the agent which keys count as `safe` (04 §6).
-
-        Whether a `dialog`'s `keys` are safe to send is a recovery decision, not the
-        Helper's: `domain.recovery.decide_stall` is the one place that checks them against
-        `safe_keys`.
-        """
-        classification_schema = ScreenClassification.model_json_schema()
-        schema = {"oneOf": [classification_schema, Unrecoverable.model_json_schema()]}
-        prompt = _CLASSIFY_PROMPT.format(
-            screen=fence(screen, "text"), safe_keys=", ".join(safe_keys)
-        )
+    ) -> FailureClassification | Unrecoverable:
+        """Classify only the plugin's unrecognised failure text (04 §6)."""
+        schema = {
+            "oneOf": [
+                FailureClassification.model_json_schema(),
+                Unrecoverable.model_json_schema(),
+            ]
+        }
+        prompt = _CLASSIFY_PROMPT.format(failure=fence(failure, "text"))
         raw = await self._headless.ask(prompt, schema, model, effort, cwd, timeout)
-        return self._validate(raw, ScreenClassification)
+        return self._validate(raw, FailureClassification)
 
     @staticmethod
     def _validate[ResultT: BaseModel](

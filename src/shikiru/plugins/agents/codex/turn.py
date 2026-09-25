@@ -25,6 +25,7 @@ from shikiru.agents.contracts import (
     UsageReported,
 )
 from shikiru.agents.sdk.turn import TurnProcess, TurnProcessResult, TurnProcessSequence
+from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import (
     ADD_DIR_FLAG,
     CODEX_COMMAND,
@@ -40,7 +41,6 @@ from shikiru.plugins.agents.codex.options import (
     WORKSPACE_WRITE_SANDBOX,
 )
 from shikiru.plugins.agents.codex.quota import CodexQuotaProbe
-from shikiru.plugins.agents.codex.session import codex_home
 from shikiru.plugins.agents.codex.usage import latest_token_count, rollout_usage
 
 if TYPE_CHECKING:

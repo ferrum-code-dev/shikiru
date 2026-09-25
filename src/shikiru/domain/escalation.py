@@ -45,7 +45,6 @@ _OPTIONS_BY_REASON: dict[EscalationReason, tuple[EscalationOption, ...]] = {
     EscalationReason.PR_CLOSED: _RETRY_OR_CANCEL,
     EscalationReason.AGENT_AUTH: _RETRY_OR_CANCEL,
     EscalationReason.AGENT_ERROR: _RETRY_OR_CANCEL,
-    EscalationReason.AGENT_CRASH: _RETRY_OR_CANCEL,
     EscalationReason.AGENT_STUCK: _RETRY_OR_CANCEL,
     EscalationReason.AGENT_PROTOCOL: _RETRY_OR_CANCEL,
     EscalationReason.LADDER_EXHAUSTED: _RETRY_OR_CANCEL,

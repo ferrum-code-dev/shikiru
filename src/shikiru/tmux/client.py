@@ -45,10 +45,17 @@ def _session_scoped(target: str) -> str:
 class Tmux:
     """Small, intention-revealing wrapper over the tmux CLI for one server (socket)."""
 
-    def __init__(self, runner: SubprocessRunner, *, socket: str | None = None) -> None:
+    def __init__(
+        self,
+        runner: SubprocessRunner,
+        *,
+        socket: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         """Use `runner` for every call, scoped to `socket` when one is given (tests only)."""
         self._runner = runner
         self._socket = socket
+        self._env = env
 
     async def new_session(
         self,
@@ -278,18 +285,6 @@ class Tmux:
         result = await self._run("display-message", "-p", "-t", target, "-F", fmt)
         return result.stdout.strip()
 
-    async def send_keys(self, target: str, *keys: str) -> None:
-        """Send `keys` to pane `target`."""
-        await self._run("send-keys", "-t", target, *keys)
-
-    async def load_buffer(self, name: str, text: str) -> None:
-        """Load `text` into paste buffer `name`."""
-        await self._run("load-buffer", "-b", name, "-", input_text=text)
-
-    async def paste_buffer(self, target: str, name: str) -> None:
-        """Paste buffer `name` into pane `target`, in bracketed-paste mode."""
-        await self._run("paste-buffer", "-p", "-b", name, "-t", target)
-
     async def bind_key(self, key: str, *command: str, table: str = "prefix") -> None:
         """Bind `key` in key table `table` to run `command` (a single tmux command line)."""
         await self._run("bind-key", "-T", table, key, *command)
@@ -308,5 +303,9 @@ class Tmux:
             argv += [_SOCKET_FLAG, self._socket]
         argv += list(args)
         return await self._runner.run(
-            argv, timeout=_COMMAND_TIMEOUT_SECONDS, input_text=input_text, check=check
+            argv,
+            timeout=_COMMAND_TIMEOUT_SECONDS,
+            env=self._env,
+            input_text=input_text,
+            check=check,
         )

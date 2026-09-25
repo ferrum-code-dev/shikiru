@@ -792,7 +792,7 @@ def _with_prompt(spec: TurnSpec, prompt: str) -> TurnSpec:
 def _latest_usage(signals: Sequence[AgentSignal]) -> tuple[str, Usage]:
     session = next(signal for signal in signals if isinstance(signal, SessionStarted))
     usage = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
-    if session.session_id is None or not usage:
+    if not usage:
         raise AssertionError(_STATUS_MESSAGE)
     return session.session_id, usage[-1]
 

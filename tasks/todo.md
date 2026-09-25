@@ -40,7 +40,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 32: Headless contract, SDK, contract kit and fake agent
 - [ ] Task 33: Claude Code headless plugin
 - [ ] Task 34: Codex headless plugin
-- [ ] Task 35: Engine on process-per-turn; screen machinery removed
+- [x] Task 35: Engine on process-per-turn; screen machinery removed
 - [ ] Task 36: Pane views, take over / hand back, queued `say`
 - [ ] Task 37: Probe and real E2E on headless turns
 

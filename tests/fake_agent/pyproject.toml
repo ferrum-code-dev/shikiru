@@ -1,12 +1,9 @@
 [project]
 name = "fake-agent"
 version = "0.1.0"
-description = "Test-only scripted InteractiveAgent plugin and REPL for Shikiru's contract test kit (04 §3, 07 §3)."
+description = "Test-only process-per-turn fake agent for Shikiru's integration tests."
 requires-python = ">=3.14"
 dependencies = ["shikiru"]
-
-[project.scripts]
-fake-agent-repl = "fake_agent.repl:main"
 
 [project.entry-points."shikiru.agents"]
 fake = "fake_agent.agent:create"

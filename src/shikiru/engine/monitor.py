@@ -1,375 +1,238 @@
-"""`SessionMonitor`: the sole consumer of `AgentSession.signals()` (03 §4.2, §9).
-
-It fans every signal out to subscriber queues (`subscribe()`), so nothing else ever reads
-`session.signals()` directly. Alongside the agent's own `AgentSignal`s, the fan-out also
-carries four signals the monitor derives itself: `PaneDied` (pane process gone), `Stalled`
-(no activity within the configured timeout, or a launch that never reached `SessionStarted`),
-`InterventionSet` and `InterventionCleared` (the intervention hold transitions).
-`engine.decorations` subscribes to the same fan-out (06 §5.3); the monitor itself knows nothing
-about colours or glyphs.
-"""
+"""Consumes one headless turn stream and records its facts and live view (03 §4.2)."""
 
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
-from dataclasses import dataclass
-from datetime import timedelta
+import json
+from dataclasses import asdict
+from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import (
-    Activity,
-    AttentionNeeded,
+    AgentSignal,
     Compacted,
     Message,
-    PromptSubmitted,
     QuotaReported,
-    SessionEnded,
     SessionStarted,
     ToolFinished,
     ToolStarted,
+    Turn,
     TurnEnded,
     TurnFailed,
     UsageReported,
+    role_dir,
 )
-from shikiru.domain.activity import is_operator_prompt, is_stalled
 from shikiru.domain.events import EventKind
-from shikiru.domain.recovery import PaneDied, Stalled
-from shikiru.domain.tasks import Hold
-from shikiru.errors import CommandFailed
+from shikiru.domain.recovery import ProtocolError, Stalled
+from shikiru.ui.glyphs import GLYPH_STALLED, ROLE_GLYPHS
+from shikiru.ui.tokens import HOLD_COLOR, ROLE_COLORS
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterator, Mapping
-    from datetime import datetime
+    from collections.abc import AsyncIterator, Awaitable, Callable
     from pathlib import Path
-    from typing import Any
 
-    from shikiru.agents.contracts import AgentSession, AgentSignal, PaneHandle, Usage
+    from shikiru.agents.contracts import Agent
     from shikiru.clock import Clock
-    from shikiru.config.settings import TimeoutsConfig
-    from shikiru.domain.tasks import Task
+    from shikiru.config.settings import Settings
+    from shikiru.domain.tasks import Role, Task
+    from shikiru.engine.sessions import SessionManager
     from shikiru.store.events import EventLog
+    from shikiru.store.quotas import QuotaStore
     from shikiru.store.runs import RunStore
-    from shikiru.store.tasks import TaskStore
+    from shikiru.tmux.decorator import PaneDecorator
+
+_VIEW_LOG_NAME = "view.jsonl"
+_TURN_PID_NAME = "turn.pid"
+_LINE_ENDING = "\n"
 
 
-@dataclass(frozen=True)
-class InterventionSet:
-    """A typed, non-injected prompt set the intervention hold on this session's task (03 §9)."""
-
-
-@dataclass(frozen=True)
-class InterventionCleared:
-    """A task intervention hold was cleared by a valid report or operator resume (03 §9)."""
-
-
-type MonitorSignal = AgentSignal | PaneDied | Stalled | InterventionSet | InterventionCleared
-
-_STOP = object()
-
-
-async def wait_for_signal(
-    signals: asyncio.Queue[MonitorSignal], clock: Clock, timeout_seconds: float | None
-) -> MonitorSignal | None:
-    """Wait for one monitor signal, or return `None` after `timeout_seconds`."""
-    if timeout_seconds is None:
-        return await signals.get()
-    get_task = asyncio.ensure_future(signals.get())
-    sleep_task = asyncio.ensure_future(clock.sleep(timeout_seconds))
-    try:
-        await asyncio.wait({get_task, sleep_task}, return_when=asyncio.FIRST_COMPLETED)
-        if get_task.done():
-            return get_task.result()
-        return None
-    finally:
-        if not get_task.done():
-            get_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await get_task
-        if not sleep_task.done():
-            sleep_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await sleep_task
-
-
-class InjectedLines:
-    """Lines a `TurnRunner` is currently injecting into one session's pane (03 §9).
-
-    `SessionManager` creates one per live session and hands it to that session's
-    `SessionMonitor`, which consumes each matching `PromptSubmitted`. A line remains pending
-    after a caller's bounded wait until the agent accepts it or the session terminates.
-    """
-
-    def __init__(self) -> None:
-        self._lines: dict[str, int] = {}
-
-    def add(self, line: str) -> None:
-        """Record `line` as currently being injected."""
-        self._lines[line] = self._lines.get(line, 0) + 1
-
-    def discard(self, line: str) -> None:
-        """Stop recording one pending `line`, if it was recorded."""
-        count = self._lines.get(line)
-        if count is None:
-            return
-        if count == 1:
-            del self._lines[line]
-        else:
-            self._lines[line] = count - 1
-
-    def consume(self, text: str) -> bool:
-        """Consume one pending line when the agent confirms its exact text."""
-        if text not in self._lines:
-            return False
-        self.discard(text)
-        return True
-
-    def clear(self) -> None:
-        """Forget every pending line when its session terminates."""
-        self._lines.clear()
-
-    def __contains__(self, line: object) -> bool:
-        return line in self._lines
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._lines)
-
-    def __len__(self) -> int:
-        return len(self._lines)
-
-
-class SessionMonitor:
-    """Polls and fans out one live session's signals, persists its facts, and flags holds.
-
-    `pending_lines` is the `InjectedLines` of whichever `TurnRunner` turn is currently live on
-    this session, so a typed prompt matching a line it is injecting isn't mistaken for
-    operator input.
-    """
+class TurnMonitor:
+    """Read a turn's signals once, persist run facts and stop a stalled process."""
 
     def __init__(
         self,
-        session: AgentSession,
-        pane: PaneHandle,
         *,
-        task_id: str,
-        run_id: int,
-        run_dir: Path,
-        tasks: TaskStore,
+        sessions: SessionManager,
         runs: RunStore,
-        clock: Clock,
-        timeouts: TimeoutsConfig,
-        poll_seconds: int,
-        expects_started: bool,
-        on_session_started: Callable[[str | None], None],
-        pending_lines: InjectedLines | None = None,
+        quotas: QuotaStore,
         events: EventLog,
+        clock: Clock,
+        settings: Settings,
+        decorator: PaneDecorator,
         refresh_titles: Callable[[Task], Awaitable[None]],
     ) -> None:
-        """Monitor `session` in `pane`, persisting facts for `run_id` under `tasks`/`runs`."""
-        self._session = session
-        self._pane = pane
-        self._task_id = task_id
-        self._run_id = run_id
-        self._run_dir = run_dir
-        self._tasks = tasks
+        self._sessions = sessions
         self._runs = runs
-        self._clock = clock
-        self._timeouts = timeouts
-        self._poll_seconds = poll_seconds
-        self._expects_started = expects_started
-        self._on_session_started = on_session_started
-        self._pending_lines = pending_lines if pending_lines is not None else InjectedLines()
+        self._quotas = quotas
         self._events = events
+        self._clock = clock
+        self._settings = settings
+        self._decorator = decorator
         self._refresh_titles = refresh_titles
-        self._subscribers: list[asyncio.Queue[MonitorSignal]] = []
-        self._last_activity: datetime = clock.now()
-        self._tool_running = False
-        self._started = False
-        self._stalled = False
-        self._last_message: str | None = None
-        self._persisted_usage: Usage | None = None
-        self._persisted_snapshot: Mapping[str, Any] | None = None
-        self._persisted_message: str | None = None
 
-    def subscribe(self) -> asyncio.Queue[MonitorSignal]:
-        """Register a new subscriber queue and return it."""
-        queue: asyncio.Queue[MonitorSignal] = asyncio.Queue()
-        self._subscribers.append(queue)
-        return queue
-
-    def unsubscribe(self, queue: asyncio.Queue[MonitorSignal]) -> None:
-        """Stop fanning signals out to `queue`."""
-        self._subscribers.remove(queue)
-
-    def rearm_stall_detection(self) -> None:
-        """Start a fresh stall deadline from the clock's current time."""
-        self._last_activity = self._clock.now()
-        self._stalled = False
-
-    def clear_intervention(self) -> None:
-        """Publish the transition back to the role decoration after an intervention clears."""
-        self._publish(InterventionCleared())
-
-    @property
-    def launch_pending(self) -> bool:
-        """Return whether this monitor is still waiting for `SessionStarted`."""
-        return self._expects_started and not self._started
-
-    async def run(self) -> None:
-        """Consume `session.signals()` and tick until the pane dies or the session ends."""
-        consume = asyncio.ensure_future(self._consume_signals())
-        tick = asyncio.ensure_future(self._tick_loop())
+    async def run(
+        self,
+        turn: Turn,
+        *,
+        agent: Agent,
+        task: Task,
+        role: Role,
+        run_id: int,
+        turn_dir: Path,
+        run_dir: Path,
+        cwd: Path,
+    ) -> TurnEnded | TurnFailed | Stalled | ProtocolError:
+        """Consume `turn` through its terminal signal, or stop it when it stalls."""
+        pid_path = role_dir(run_dir, role.value) / _TURN_PID_NAME
+        pid_path.parent.mkdir(parents=True, exist_ok=True)
+        iterator = turn.signals()
+        last_signal_at = self._clock.now()
+        tool_running = False
+        pending_signal = asyncio.create_task(_next_signal(iterator))
         try:
-            done, pending = await asyncio.wait({consume, tick}, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-            for task in done:
-                try:
-                    task.result()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001
-                    self._publish_pane_died()
-                    return
+            pid_path.write_text(str(turn.pid))
+            await self._decorator.set_pane_state(
+                task.panes[role], color=ROLE_COLORS[role], glyph=ROLE_GLYPHS[role]
+            )
+            while True:
+                timeout = (
+                    self._settings.orchestration.timeouts.tool
+                    if tool_running
+                    else self._settings.orchestration.timeouts.stall
+                )
+                elapsed = (self._clock.now() - last_signal_at).total_seconds()
+                remaining = timeout - elapsed
+                if remaining <= 0:
+                    await turn.stop()
+                    await self._decorator.set_pane_state(
+                        task.panes[role], color=HOLD_COLOR, glyph=GLYPH_STALLED
+                    )
+                    return Stalled()
+                poll_timeout = min(
+                    self._settings.orchestration.poll_seconds,
+                    remaining,
+                )
+                signal_ready = await self._wait_for_signal(pending_signal, poll_timeout)
+                pid_path.write_text(str(turn.pid))
+                if not signal_ready:
+                    continue
+                signal = pending_signal.result()
+                pending_signal = asyncio.create_task(_next_signal(iterator))
+                last_signal_at = self._clock.now()
+                self._append_view(run_dir, turn_dir, role, signal)
+                tool_running, terminal = await self._record_signal(
+                    signal,
+                    agent=agent,
+                    task=task,
+                    role=role,
+                    run_id=run_id,
+                    cwd=cwd,
+                    tool_running=tool_running,
+                )
+                if terminal is not None:
+                    return terminal
+        except StopAsyncIteration:
+            return ProtocolError()
         except asyncio.CancelledError:
-            consume.cancel()
-            tick.cancel()
-            with suppress(asyncio.CancelledError):
-                await asyncio.gather(consume, tick)
+            await turn.stop()
             raise
-        except Exception:  # noqa: BLE001
-            self._publish_pane_died()
+        except Exception:
+            await turn.stop()
+            raise
+        finally:
+            if not pending_signal.done():
+                pending_signal.cancel()
+            await asyncio.gather(pending_signal, return_exceptions=True)
+            pid_path.unlink(missing_ok=True)
 
-    def _publish(self, signal: MonitorSignal) -> None:
-        for queue in self._subscribers:
-            queue.put_nowait(signal)
-
-    def _publish_pane_died(self) -> None:
-        self._pending_lines.clear()
-        self._publish(PaneDied())
-
-    def _publish_stalled(self, screen: str) -> None:
-        if self._stalled:
-            return
-        self._stalled = True
-        self._publish(Stalled(screen=screen))
-
-    def _mark_activity(self, now: datetime) -> None:
-        self._last_activity = now
-        self._stalled = False
-
-    async def _consume_signals(self) -> None:
-        async for signal in self._session.signals():
-            self._publish(signal)
-            if await self._handle_signal(signal, self._clock.now()) is _STOP:
-                self._publish_pane_died()
-                return
-        self._publish_pane_died()
-
-    async def _handle_signal(self, signal: AgentSignal, now: datetime) -> object:
-        match signal:
-            case SessionStarted():
-                self._started = True
-                self._expects_started = False
-                self._mark_activity(now)
-                self._on_session_started(signal.session_id)
-            case Activity(tool_running=tool_running):
-                self._tool_running = tool_running
-                self._mark_activity(now)
-            case PromptSubmitted(text=text):
-                self._mark_activity(now)
-                await self._handle_prompt_submitted(text)
-            case TurnEnded(last_message=last_message):
-                self._mark_activity(now)
-                self._tool_running = False
-                self._last_message = last_message
-            case TurnFailed():
-                self._mark_activity(now)
-                self._tool_running = False
-            case Compacted():
-                self._mark_activity(now)
-            case AttentionNeeded(message=message):
-                self._publish_stalled(message)
-            case SessionEnded():
-                return _STOP
-            case Message() | ToolStarted() | ToolFinished() | UsageReported() | QuotaReported():
-                self._mark_activity(now)
-        return None
-
-    async def _handle_prompt_submitted(self, text: str) -> None:
-        if self._pending_lines.consume(text):
-            return
-        if not is_operator_prompt(text, self._run_dir, self._pending_lines):
-            return
-        await self._set_intervention(text)
-        self._publish(InterventionSet())
-
-    async def _tick_loop(self) -> None:
-        launch_deadline = self._clock.now() + timedelta(seconds=self._timeouts.launch)
-        while True:
-            await self._clock.sleep(self._poll_seconds)
-            try:
-                pane_alive = await self._pane.is_alive()
-            except CommandFailed:
-                self._publish_pane_died()
-                return
-            if not pane_alive:
-                self._publish_pane_died()
-                return
-            now = self._clock.now()
-            if self._expects_started and not self._started and now >= launch_deadline:
-                try:
-                    screen = await self._pane.capture_visible()
-                except CommandFailed:
-                    self._publish_pane_died()
-                    return
-                self._publish_stalled(screen)
-                continue
-            await self._persist_facts()
-            if is_stalled(self._last_activity, self._tool_running, now, self._timeouts):
-                try:
-                    screen = await self._pane.capture_visible()
-                except CommandFailed:
-                    self._publish_pane_died()
-                    return
-                self._publish_stalled(screen)
-
-    async def _persist_facts(self) -> None:
-        usage = await self._session.usage()
-        if usage != self._persisted_usage:
-            self._runs.record_usage(self._run_id, usage)
-            self._persisted_usage = usage
-            task = self._tasks.get(self._task_id)
-            if task is None:
-                message = f"{self._task_id} disappeared while refreshing titles"
-                raise RuntimeError(message)
+    async def _record_signal(
+        self,
+        signal: AgentSignal,
+        *,
+        agent: Agent,
+        task: Task,
+        role: Role,
+        run_id: int,
+        cwd: Path,
+        tool_running: bool,
+    ) -> tuple[bool, TurnEnded | TurnFailed | None]:
+        if isinstance(signal, SessionStarted):
+            self._sessions.record_session_started(
+                run_id=run_id, agent=agent, session_id=signal.session_id, cwd=cwd
+            )
             await self._refresh_titles(task)
-        snapshot = dict(self._session.snapshot())
-        if snapshot != self._persisted_snapshot:
-            self._runs.set_agent_state(self._run_id, snapshot)
-            self._persisted_snapshot = snapshot
-        if self._last_message is not None and self._last_message != self._persisted_message:
-            self._runs.set_last_message(self._run_id, self._last_message)
-            self._persisted_message = self._last_message
+        elif isinstance(signal, Message):
+            self._runs.set_last_message(run_id, signal.text)
+        elif isinstance(signal, UsageReported):
+            self._runs.record_usage(run_id, signal.usage)
+            await self._refresh_titles(task)
+        elif isinstance(signal, ToolStarted):
+            tool_running = True
+        elif isinstance(signal, ToolFinished):
+            tool_running = False
+        elif isinstance(signal, TurnEnded):
+            self._runs.set_last_message(run_id, signal.last_message)
+            return tool_running, signal
+        elif isinstance(signal, TurnFailed):
+            return tool_running, signal
+        else:
+            await self._record_auxiliary_signal(signal, agent=agent, task=task, role=role)
+        return tool_running, None
 
-    async def _set_intervention(self, text: str) -> None:
-        task = self._tasks.get(self._task_id)
-        if task is None:
-            message = f"{self._task_id} has a live session but no task row"
-            raise RuntimeError(message)
-        if Hold.INTERVENTION in task.holds:
-            return
-        self._tasks.set_holds(self._task_id, task.holds | {Hold.INTERVENTION})
-        self._events.append(
-            EventKind.INTERVENTION,
-            task_id=self._task_id,
-            message=f"{self._task_id} operator intervention detected",
-            data={"text": text},
-        )
-        updated = self._tasks.get(self._task_id)
-        if updated is None:
-            message = f"{self._task_id} disappeared while refreshing titles"
-            raise RuntimeError(message)
-        await self._refresh_titles(updated)
+    async def _record_auxiliary_signal(
+        self, signal: AgentSignal, *, agent: Agent, task: Task, role: Role
+    ) -> None:
+        if isinstance(signal, QuotaReported):
+            for window in signal.windows:
+                self._quotas.record(agent.name, window)
+        elif isinstance(signal, Compacted):
+            self._events.append(
+                EventKind.COMPACTED,
+                task_id=task.id,
+                message=f"{task.id} {role.value} compacted context",
+                data={
+                    "role": role.value,
+                    "pre_tokens": signal.pre_tokens,
+                    "post_tokens": signal.post_tokens,
+                },
+            )
+
+    async def _wait_for_signal(
+        self, signal_task: asyncio.Task[AgentSignal], timeout: float
+    ) -> bool:
+        timer_task = asyncio.create_task(self._clock.sleep(timeout))
+        try:
+            done, _ = await asyncio.wait(
+                {signal_task, timer_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            return signal_task in done
+        finally:
+            if not timer_task.done():
+                timer_task.cancel()
+            await asyncio.gather(timer_task, return_exceptions=True)
+
+    def _append_view(self, run_dir: Path, turn_dir: Path, role: Role, signal: AgentSignal) -> None:
+        path = role_dir(run_dir, role.value) / _VIEW_LOG_NAME
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "ts": self._clock.now().isoformat(),
+            "turn": turn_dir.name,
+            "signal": type(signal).__name__,
+            **asdict(signal),
+        }
+        with path.open("a") as handle:
+            handle.write(json.dumps(row, default=_json_value) + _LINE_ENDING)
+
+
+def _json_value(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return str(value.value)
+    message = f"cannot encode {type(value).__name__} in a turn view"
+    raise TypeError(message)
+
+
+async def _next_signal(signals: AsyncIterator[AgentSignal]) -> AgentSignal:
+    return await signals.__anext__()

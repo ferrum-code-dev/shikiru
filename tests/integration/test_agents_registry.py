@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 
 import shikiru.agents.registry as registry_module
-from shikiru.agents.contracts import AgentContext, InteractiveAgent
+from shikiru.agents.contracts import Agent, AgentContext
 from shikiru.agents.registry import AgentPluginError, AgentRegistry
 from shikiru.clock import SystemClock
 from shikiru.process import SubprocessRunner
@@ -40,7 +40,7 @@ def test_create_names_the_plugin_when_none_is_registered_or_installed() -> None:
 def test_create_names_the_plugin_when_its_factory_raises() -> None:
     registry = AgentRegistry()
 
-    def _broken_factory(_context: AgentContext) -> InteractiveAgent:
+    def _broken_factory(_context: AgentContext) -> Agent:
         message = "bad option"
         raise RuntimeError(message)
 
@@ -73,9 +73,9 @@ def test_create_names_the_plugin_and_every_distribution_when_ambiguous(
 
 def test_directly_registered_factory_takes_precedence_over_an_entry_point() -> None:
     registry = AgentRegistry()
-    sentinel = cast("InteractiveAgent", object())
+    sentinel = cast("Agent", object())
 
-    def _sentinel_factory(_context: AgentContext) -> InteractiveAgent:
+    def _sentinel_factory(_context: AgentContext) -> Agent:
         return sentinel
 
     registry.register("sentinel", _sentinel_factory)

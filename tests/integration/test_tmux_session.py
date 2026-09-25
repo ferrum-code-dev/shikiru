@@ -150,7 +150,7 @@ async def test_task_window_survives_its_process_exiting(
     window_target = f"{target}:T-1"
     pane_id = await view.create_task_window(target, window_name="T-1", cwd=tmp_path)
 
-    await tmux.send_keys(pane_id, "exit", "Enter")
+    await tmux.respawn_pane(pane_id, ("/bin/sh", "-c", "exit"), env={}, cwd=tmp_path)
 
     await wait_until(lambda: tmux.is_pane_dead(pane_id), 5.0)
     assert await tmux.target_exists(window_target)

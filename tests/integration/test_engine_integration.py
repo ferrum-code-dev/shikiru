@@ -7,7 +7,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 import pytest
-from fake_agent.repl import FAKE_CHANGE_FILENAME
+from fake_agent.scripted import FAKE_CHANGE_FILENAME
 
 from shikiru.clock import SystemClock
 from shikiru.config.settings import RepoConfig

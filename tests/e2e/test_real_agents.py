@@ -13,11 +13,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from shikiru.bootstrap import build_operator
-from shikiru.config.loader import load_settings
-from shikiru.domain.tasks import Role, Status, Step
+from shikiru.domain.tasks import Status
 from shikiru.errors import ShikiruError
-from shikiru.operator.commands import AckStatus
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import session_name
@@ -51,24 +48,6 @@ pytestmark = [
     pytest.mark.timeout(OUTER_TIMEOUT_SECONDS),
 ]
 E1_REQUEST = "Implement task A1 from tasks/plan.md"
-E2_MESSAGE = (
-    "Operator requirement: parse_count must raise ValueError for whitespace-only input such as "
-    '"   ". Request changes if the implementation does not.'
-)
-E2_MESSAGE_ROLE = Role.LEADER
-E2_MESSAGE_STEP = Step.VERIFY
-E2_REQUEST = "Implement task A2 from tasks/plan.md"
-A2_EDGE_CASE_CHECK = """
-from sample_project import parse_count
-assert parse_count("alpha, beta") == 2
-assert parse_count("") == 0
-try:
-    parse_count("   ")
-except ValueError:
-    pass
-else:
-    raise AssertionError("whitespace-only input was accepted")
-"""
 
 
 FIXTURE_NAME = "sample-project"
@@ -183,16 +162,6 @@ async def _status(
     if code != 0:
         return None
     value = json.loads(stdout)
-    return cast("dict[str, object]", value) if isinstance(value, dict) else None
-
-
-def _task(status: dict[str, object] | None) -> dict[str, object] | None:
-    if status is None:
-        return None
-    detail = status.get("task")
-    if not isinstance(detail, dict):
-        return None
-    value = cast("dict[str, object]", detail).get("task")
     return cast("dict[str, object]", value) if isinstance(value, dict) else None
 
 
@@ -348,28 +317,6 @@ async def _assert_a1_implementation(project: PreparedProject) -> None:
     _require(result.returncode == 0, f"A1 tests failed: {result.stdout}")
 
 
-async def _assert_a2_implementation(project: PreparedProject) -> None:
-    repository = project.root
-    source = repository / "sample_project" / "__init__.py"
-    _require("def parse_count" in await _read_text(source), "A2 implementation missing")
-    tests = list((repository / "tests").glob("test_*.py"))
-    _require(
-        any("parse_count" in test.read_text() for test in tests),
-        "A2 tests missing",
-    )
-    result = await SubprocessRunner().run(
-        [
-            sys.executable,
-            "-c",
-            A2_EDGE_CASE_CHECK,
-        ],
-        timeout=CLI_TIMEOUT_SECONDS,
-        cwd=repository,
-        check=False,
-    )
-    _require(result.returncode == 0, f"A2 edge case failed: {result.stdout}{result.stderr}")
-
-
 async def _assert_window_closed(project: PreparedProject, tmux_server: TmuxServer) -> None:
     target = exact_target(session_name(project.root.name))
     windows = await tmux_server.run(
@@ -388,167 +335,6 @@ async def _assert_window_closed(project: PreparedProject, tmux_server: TmuxServe
 
 async def _read_text(path: Path) -> str:
     return await asyncio.to_thread(path.read_text)
-
-
-async def _send_e2_message(project: PreparedProject, environment: dict[str, str]) -> None:
-    async def verify_turn_started() -> bool:
-        status = await _status(project.root, environment)
-        return _live_session(status, E2_MESSAGE_ROLE) and _has_turn_started(
-            status, E2_MESSAGE_ROLE, E2_MESSAGE_STEP
-        )
-
-    await wait_until(verify_turn_started, timeout=ATTEMPT_TIMEOUT_SECONDS)
-    settings = load_settings(project.root, REAL_OVERRIDES[1::2])
-    services = build_operator(project.root, settings)
-    try:
-        ack = await services.commands.send_message(TASK_ID, E2_MESSAGE_ROLE, E2_MESSAGE)
-    finally:
-        services.close()
-    _require(
-        ack.status in {AckStatus.DONE, AckStatus.QUEUED},
-        f"operator message was rejected: {ack.message}",
-    )
-
-    async def message_delivered() -> bool:
-        return _has_operator_message(await _status(project.root, environment))
-
-    await wait_until(message_delivered, timeout=CLI_TIMEOUT_SECONDS)
-
-
-def _live_session(status: dict[str, object] | None, role: Role) -> bool:
-    _require(
-        status is not None and status.get("engine_up") is True,
-        f"engine stopped before the {role.value} turn started",
-    )
-    task = _task(status)
-    detail = _task_detail(status)
-    _require(
-        task is not None and detail is not None,
-        f"task detail missing before the {role.value} turn started",
-    )
-    if task is None or detail is None:
-        return False
-    _require(
-        task.get("status")
-        not in {Status.ESCALATED.value, Status.CANCELLED.value, Status.DONE.value},
-        f"task ended before the {role.value} turn started: {task.get('status')}",
-    )
-    sessions = detail.get("sessions")
-    _require(isinstance(sessions, list), "task sessions missing")
-    if not isinstance(sessions, list):
-        return False
-    session = next(
-        (
-            cast("dict[str, object]", value)
-            for value in cast("list[object]", sessions)
-            if isinstance(value, dict)
-            and cast("dict[str, object]", value).get("role") == role.value
-        ),
-        None,
-    )
-    if session is None:
-        return False
-    _require(
-        session.get("status") == RUN_STATUS_LIVE,
-        f"{role.value} session exited before its turn started: {session.get('status')}",
-    )
-    return True
-
-
-def _has_turn_started(status: dict[str, object] | None, role: Role, step: Step) -> bool:
-    detail = _task_detail(status)
-    if detail is None:
-        return False
-    events = detail.get("events")
-    if not isinstance(events, list):
-        return False
-    return any(
-        event.get("kind") == "turn_started"
-        and _event_data(event).get("role") == role.value
-        and _event_data(event).get("step") == step.value
-        for event in _event_dicts(cast("list[object]", events))
-    )
-
-
-def _has_operator_message(status: dict[str, object] | None) -> bool:
-    detail = _task_detail(status)
-    if detail is None:
-        return False
-    events = detail.get("events")
-    if not isinstance(events, list):
-        return False
-    return any(
-        event.get("kind") == "operator_message"
-        and event.get("message") == E2_MESSAGE
-        and _event_data(event).get("role") == E2_MESSAGE_ROLE.value
-        for event in _event_dicts(cast("list[object]", events))
-    )
-
-
-def _event_dicts(events: list[object]) -> list[dict[str, object]]:
-    return [cast("dict[str, object]", event) for event in events if isinstance(event, dict)]
-
-
-def _event_data(event: dict[str, object]) -> dict[str, object]:
-    data = event.get("data")
-    return cast("dict[str, object]", data) if isinstance(data, dict) else {}
-
-
-def _assert_e2_events(status: dict[str, object] | None) -> None:
-    detail = _task_detail(status)
-    _require(detail is not None, "task detail missing")
-    if detail is None:
-        return
-    events = detail.get("events")
-    _require(isinstance(events, list), "task events missing")
-    if not isinstance(events, list):
-        return
-    event_values = _event_dicts(cast("list[object]", events))
-    event_kinds = [event.get("kind") for event in event_values]
-    verdicts = [
-        (index, _event_data(event).get("decision"))
-        for index, event in enumerate(event_values)
-        if event.get("kind") == "verdict"
-    ]
-    changes_requested = next(
-        (index for index, decision in verdicts if decision == "changes_requested"), None
-    )
-    accepted_after = next(
-        (
-            index
-            for index, decision in verdicts
-            if decision == "accept" and changes_requested is not None and index > changes_requested
-        ),
-        None,
-    )
-    task = _task(status)
-    _require(
-        changes_requested is not None and accepted_after is not None,
-        "changes-requested verdict was not followed by final accept",
-    )
-    message_index = next(
-        (
-            index
-            for index, event in enumerate(event_values)
-            if event.get("kind") == "operator_message"
-            and _event_data(event).get("role") == E2_MESSAGE_ROLE.value
-        ),
-        None,
-    )
-    _require(message_index is not None, f"{E2_MESSAGE_ROLE.value} did not receive the message")
-    if message_index is not None and changes_requested is not None:
-        started = [
-            index
-            for index, event in enumerate(event_values)
-            if event.get("kind") == "turn_started"
-            and _event_data(event).get("role") == E2_MESSAGE_ROLE.value
-        ]
-        _require(
-            any(start < message_index < changes_requested for start in started),
-            "operator message was not delivered during the verify turn that requested changes",
-        )
-    _require("intervention" not in event_kinds, "operator intervention was observed")
-    _require(task is not None and task.get("status") == "done", "task did not finish")
 
 
 async def _run_e1(
@@ -609,26 +395,6 @@ async def test_real_agents_e1_completes_and_integrates(
             return
 
 
-async def _run_e2(
-    tmp_path: Path,
-    tmux_server: TmuxServer,
-    record_cost: Callable[[float | None], None],
-) -> None:
-    project = await _prepare_project(tmp_path)
-    environment = _environment(project.root, tmux_server)
-    state = AttemptState()
-    try:
-        await asyncio.wait_for(
-            _execute_e2(project, environment, tmux_server, record_cost, state),
-            timeout=ATTEMPT_TIMEOUT_SECONDS,
-        )
-    except AssertionError, OSError, ShikiruError, TimeoutError:
-        await _record_observed_cost(project, environment, record_cost)
-        raise
-    finally:
-        await _cleanup_attempt(project, environment, state)
-
-
 async def _record_observed_cost(
     project: PreparedProject,
     environment: dict[str, str],
@@ -640,27 +406,6 @@ async def _record_observed_cost(
         return
     if status is not None:
         record_cost(_cost(status))
-
-
-async def _execute_e2(
-    project: PreparedProject,
-    environment: dict[str, str],
-    tmux_server: TmuxServer,
-    record_cost: Callable[[float | None], None],
-    state: AttemptState,
-) -> None:
-    await _initialize(project, environment)
-    await _start(project, environment, state)
-    await _submit(project, environment, E2_REQUEST)
-    await _send_e2_message(project, environment)
-    await _wait_done(project, environment)
-    status = await _status(project.root, environment)
-    _assert_e2_events(status)
-    _assert_both_agents_used(status)
-    await _assert_git_and_tracker(project, "A2")
-    await _assert_a2_implementation(project)
-    await _assert_window_closed(project, tmux_server)
-    record_cost(_cost(status))
 
 
 def _task_summaries(status: dict[str, object] | None) -> dict[str, dict[str, object]]:
@@ -746,20 +491,3 @@ async def _cleanup_attempt(
     except TimeoutError as error:
         _require(False, "real-agent cleanup timed out")
         raise AssertionError from error
-
-
-async def test_real_agents_e2_handles_message_and_rework(
-    tmp_path: Path,
-    tmux_server: TmuxServer,
-    record_e2e_cost: Callable[[float | None], None],
-) -> None:
-    if os.environ.get(REAL_E2E_ENV_VAR) != REAL_E2E_ENABLED:
-        pytest.skip(f"set {REAL_E2E_ENV_VAR}=1 to run real-agent E2E")
-    for attempt in range(AUTOMATIC_RERUNS + 1):
-        try:
-            await _run_e2(tmp_path / f"attempt-{attempt}", tmux_server, record_e2e_cost)
-        except AssertionError, OSError, ShikiruError, TimeoutError:
-            if attempt == AUTOMATIC_RERUNS:
-                raise
-        else:
-            return

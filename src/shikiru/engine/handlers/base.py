@@ -13,10 +13,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.domain.commands import Command
-    from shikiru.engine.sessions import SessionManager
     from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
-    from shikiru.store.messages import MessageStore
     from shikiru.store.tasks import TaskStore
 
 
@@ -33,8 +31,6 @@ class HandlerContext:
     tasks: TaskStore
     escalations: EscalationStore
     events: EventLog
-    messages: MessageStore
-    sessions: SessionManager
     project_root: Path
     cancel_task: TaskCallback
     start_task: TaskCallback

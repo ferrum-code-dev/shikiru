@@ -34,7 +34,7 @@ def test_every_reason_has_exactly_one_recommended_option(reason: EscalationReaso
     [
         (EscalationReason.DECISION_REQUIRED, ResolutionKind.ANSWER),
         (EscalationReason.ITERATIONS_EXHAUSTED, ResolutionKind.ANSWER),
-        (EscalationReason.AGENT_CRASH, ResolutionKind.RETRY),
+        (EscalationReason.AGENT_ERROR, ResolutionKind.RETRY),
     ],
     ids=["decision", "exhausted", "retry-family"],
 )

@@ -17,8 +17,8 @@ from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaise
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.integration import IntegrationSummary, Integrator, LocalMerge
 from shikiru.engine.layout_guard import LayoutGuard
+from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notifier import Notifier
-from shikiru.engine.quota_poller import QuotaPoller
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.titles import TaskTitles
@@ -37,7 +37,6 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
-from shikiru.store.messages import MessageStore
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
@@ -45,7 +44,6 @@ from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.decorator import PaneDecorator
-from shikiru.tmux.pane import TmuxPane
 from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.facts import GitFacts
@@ -276,12 +274,8 @@ def build_engine(
     runs = RunStore(connection, resolved_clock)
     events = EventLog(connection, resolved_clock)
     quotas = QuotaStore(connection)
-    messages = MessageStore(connection)
     escalations_store = EscalationStore(connection, resolved_clock)
     command_queue = CommandQueue(connection, resolved_clock)
-
-    def pane_factory(pane_id: str) -> TmuxPane:
-        return TmuxPane(resolved_tmux, pane_id, resolved_clock)
 
     decorator = PaneDecorator(resolved_tmux)
     titles = TaskTitles(decorator, runs, resolved_settings)
@@ -289,16 +283,15 @@ def build_engine(
     async def refresh_titles(task: Task) -> None:
         await titles.refresh(task)
 
-    sessions = SessionManager(
-        agent_pool,
-        pane_factory,
-        tasks=tasks,
+    sessions = SessionManager(runs=runs, project_root=project_root, settings=resolved_settings)
+    monitor = TurnMonitor(
+        sessions=sessions,
         runs=runs,
-        project_root=project_root,
-        settings=resolved_settings,
-        clock=resolved_clock,
-        decorator=decorator,
+        quotas=quotas,
         events=events,
+        clock=resolved_clock,
+        settings=resolved_settings,
+        decorator=decorator,
         refresh_titles=refresh_titles,
     )
     target = exact_target(session_name(resolved_settings.project.name))
@@ -309,7 +302,6 @@ def build_engine(
         settings=resolved_settings,
         project_root=project_root,
         events=events,
-        clock=resolved_clock,
     )
     roots = TaskRootBuilder(
         Git(resolved_runner),
@@ -333,14 +325,21 @@ def build_engine(
         tasks=tasks,
         events=events,
         sessions=sessions,
-        turns=TurnRunner(PromptRenderer(project_root), resolved_clock),
+        turns=TurnRunner(
+            agents=agent_pool,
+            sessions=sessions,
+            monitor=monitor,
+            helper=helper,
+            renderer=PromptRenderer(project_root),
+            events=events,
+            runs=runs,
+            project_root=project_root,
+            settings=resolved_settings,
+        ),
         git_facts=GitFacts(git),
         escalations=escalation_raiser,
         titles=titles,
         settings=resolved_settings,
-        agent_pool=agent_pool,
-        helper=helper,
-        pane_factory=pane_factory,
         project_root=project_root,
         quota=quotas,
         clock=resolved_clock,
@@ -355,8 +354,6 @@ def build_engine(
         command=resolved_settings.notify.command,
         timeout_seconds=resolved_settings.orchestration.timeouts.tool,
     )
-    poller = QuotaPoller(agent_pool, runs, quotas, resolved_clock)
-
     scheduler = Scheduler(
         tasks=tasks,
         settings=resolved_settings,
@@ -374,17 +371,13 @@ def build_engine(
         lock_path=state_dir / "engine.lock",
         command_queue=command_queue,
         tasks=tasks,
-        runs=runs,
         escalations=escalations_store,
         events=events,
-        quotas=quotas,
-        messages=messages,
         scheduler=scheduler,
         sessions=sessions,
         flow=flow,
         roots=roots,
         layout=layout,
-        quota_poller=poller,
         notifier=notifier,
         settings=resolved_settings,
         project_root=project_root,
@@ -408,7 +401,7 @@ def _build_integrator(
 ) -> Integrator:
 
     async def finalizer(task: Task, _summary: IntegrationSummary) -> None:
-        await sessions.exit_task(task)
+        sessions.close_task(task.id)
         await roots.cleanup(task.id, task.repo)
 
     async def close_window(task: Task) -> None:

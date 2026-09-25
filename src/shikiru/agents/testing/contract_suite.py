@@ -307,9 +307,9 @@ class AgentContractSuite:
         turn = await agent.start_turn(_with_prompt(spec, "wait for the next instruction"))
         signals = turn.signals()
         started = await asyncio.wait_for(signals.__anext__(), _TURN_TIMEOUT_SECONDS)
-        if not isinstance(started, SessionStarted) or started.session_id is None:
+        if not isinstance(started, SessionStarted):
             message = "live turn did not report a resumable session id"
-            raise AssertionError(message)
+            raise TypeError(message)
         await turn.stop()
         resumed = self.build_spec(tmp_path, resume_session_id=started.session_id)
         resumed_signals = await self._run_turn(resumed)
@@ -532,9 +532,6 @@ def _with_prompt(spec: TurnSpec, prompt: str) -> TurnSpec:
 def _latest_usage(signals: Sequence[AgentSignal]) -> tuple[str, Usage]:
     session = next(signal for signal in signals if isinstance(signal, SessionStarted))
     usage = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
-    if session.session_id is None:
-        message = "live turn returned no session id"
-        raise AssertionError(message)
     _expect(bool(usage), "live turn reported no usage")
     return session.session_id, usage[-1]
 

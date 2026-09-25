@@ -45,29 +45,6 @@ def test_a_fresh_run_reports_unknown_cost_basis_before_any_usage_is_recorded(
     assert run.usage.cost_basis == "unknown"
 
 
-def test_an_empty_cost_basis_is_not_rewritten_to_unknown(connection: Connection) -> None:
-    store, task_id = _make_store(connection)
-    run = store.start(task_id, Role.IMPLEMENTER, RUNG)
-    connection.execute("UPDATE runs SET cost_basis = ? WHERE id = ?", ("", run.id))
-
-    reloaded = store.get_live(task_id, Role.IMPLEMENTER)
-
-    assert reloaded is not None
-    assert reloaded.usage.cost_basis == ""
-
-
-def test_exit_removes_a_run_from_get_live_but_keeps_it_in_history(connection: Connection) -> None:
-    store, task_id = _make_store(connection)
-    run = store.start(task_id, Role.IMPLEMENTER, RUNG)
-
-    store.exit(run.id)
-
-    assert store.get_live(task_id, Role.IMPLEMENTER) is None
-    [only_run] = store.for_task(task_id)
-    assert only_run.status is RunStatus.EXITED
-    assert only_run.ended_at is not None
-
-
 def test_close_removes_a_run_from_get_live_and_marks_it_closed(connection: Connection) -> None:
     store, task_id = _make_store(connection)
     run = store.start(task_id, Role.IMPLEMENTER, RUNG)
@@ -92,12 +69,11 @@ def test_set_session_accepts_a_session_that_cannot_be_resumed(connection: Connec
     assert reloaded.resume_command is None
 
 
-def test_session_agent_state_message_and_usage_round_trip(connection: Connection) -> None:
+def test_session_message_and_usage_round_trip(connection: Connection) -> None:
     store, task_id = _make_store(connection)
     run = store.start(task_id, Role.IMPLEMENTER, RUNG)
 
     store.set_session(run.id, "session-1", "codex resume session-1")
-    store.set_agent_state(run.id, {"turns": 2})
     store.set_last_message(run.id, "Working on it")
     store.record_usage(
         run.id,
@@ -116,7 +92,6 @@ def test_session_agent_state_message_and_usage_round_trip(connection: Connection
     assert reloaded is not None
     assert reloaded.session_id == "session-1"
     assert reloaded.resume_command == "codex resume session-1"
-    assert reloaded.agent_state == {"turns": 2}
     assert reloaded.last_message == "Working on it"
     assert reloaded.usage.input_tokens == 100
     assert reloaded.usage.output_tokens == 50

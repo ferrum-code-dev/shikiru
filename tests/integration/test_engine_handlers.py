@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.agents.contracts import Rung, role_dir
-from shikiru.agents.sdk.hooks import HookRecorder
+from shikiru.agents.contracts import Rung
 from shikiru.clock import SystemClock
 from shikiru.domain.commands import (
     AcceptResolution,
@@ -24,7 +21,6 @@ from shikiru.domain.commands import (
     Resume,
     Retry,
     RetryResolution,
-    Say,
     SetRung,
     Stop,
     Submit,
@@ -32,7 +28,7 @@ from shikiru.domain.commands import (
 from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Counters, EscalationReason, Hold, Mode, Role, Status, Step, Task
+from shikiru.domain.tasks import Counters, EscalationReason, Hold, Role, Status, Step, Task
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.handlers import (
     CancelHandler,
@@ -43,7 +39,6 @@ from shikiru.engine.handlers import (
     ResolveHandler,
     ResumeHandler,
     RetryHandler,
-    SayHandler,
     SetRungHandler,
     StopHandler,
     SubmitHandler,
@@ -52,11 +47,6 @@ from shikiru.errors import CommandRejectedError
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
-from shikiru.store.messages import MessageStore
-from shikiru.workspace.roots import run_dir
-from tests.support.flow import build_flow_task as build_task_with_panes
-from tests.support.flow import init_project_repo
-from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from shikiru.clock import Clock
@@ -121,8 +111,6 @@ def handler_env(engine_env: EngineEnv) -> HandlerFixture:
         tasks=tasks,
         escalations=escalations,
         events=events,
-        messages=MessageStore(engine_env.connection),
-        sessions=engine_env.manager,
         project_root=engine_env.project_root,
         cancel_task=cancel_task,
         start_task=start_task,
@@ -140,7 +128,6 @@ def handler_env(engine_env: EngineEnv) -> HandlerFixture:
             CancelHandler(context),
             RetryHandler(context),
             SetRungHandler(context),
-            SayHandler(context),
             ResolveHandler(context),
             StopHandler(context),
         ]
@@ -218,7 +205,7 @@ async def _escalated(
         attempted="The handler test raised an escalation.",
         reports=(),
         facts="",
-        pane_tail="",
+        view_tail="",
     )
     return task, escalation.id
 
@@ -302,38 +289,6 @@ async def test_retry_requeues_current_step_and_preserves_previous_slot(
     assert retried.slot == 1
     assert retried.counters == Counters(rejections_on_rung=2)
     assert handler_env.cancelled == [task.id]
-
-
-async def test_say_writes_a_message_and_injects_the_live_agent(
-    handler_env: HandlerFixture, engine_env: EngineEnv
-) -> None:
-    await init_project_repo(engine_env.project_root)
-    task = await build_task_with_panes(engine_env, mode=Mode.IMPLEMENT)
-    handler_env.tasks.apply_transition(
-        task.id, Transition.stay(task, step=Step.IMPLEMENT, status=Status.RUNNING)
-    )
-    current = handler_env.tasks.get(task.id)
-    assert current is not None
-    await engine_env.manager.ensure(current, Role.IMPLEMENTER)
-
-    result = await handler_env.registry.handle(
-        Say(task_id=task.id, role=Role.IMPLEMENTER, text="please inspect the edge case")
-    )
-
-    path = Path(str(result["path"]))
-    assert await asyncio.to_thread(path.read_text) == "please inspect the edge case"
-    assert handler_env.events.since(0, kinds=[EventKind.OPERATOR_MESSAGE], task_id=task.id)
-
-    run = engine_env.runs.get_live(task.id, Role.IMPLEMENTER)
-    assert run is not None
-    hooks = role_dir(run_dir(engine_env.project_root, task.id), Role.IMPLEMENTER.value)
-    expected_line = f"Operator message: read {path} and take it into account."
-
-    async def received() -> bool:
-        entries = await asyncio.to_thread(lambda: tuple(HookRecorder(hooks).tail()))
-        return any(entry.value.get("text") == expected_line for entry in entries)
-
-    await wait_until(received, timeout=10)
 
 
 async def test_answer_resolution_queues_a_consult_turn(

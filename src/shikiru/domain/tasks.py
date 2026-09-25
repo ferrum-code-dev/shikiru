@@ -82,7 +82,6 @@ class EscalationReason(StrEnum):
     PR_CLOSED = auto()
     AGENT_AUTH = auto()
     AGENT_ERROR = auto()
-    AGENT_CRASH = auto()
     AGENT_STUCK = auto()
     AGENT_PROTOCOL = auto()
     LADDER_EXHAUSTED = auto()

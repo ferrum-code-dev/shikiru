@@ -10,14 +10,12 @@ from shikiru.errors import ShikiruError
 from shikiru.tmux.client import FORMAT_PANE_ID
 from shikiru.tmux.decorator import PaneDecorator, render_title
 from shikiru.tmux.layout import LayoutBuilder
-from shikiru.tmux.pane import TmuxPane
 from shikiru.tmux.session import SessionView
 from shikiru.workspace.roots import task_root
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
@@ -41,7 +39,6 @@ class LayoutGuard:
         settings: Settings,
         project_root: Path,
         events: EventLog,
-        clock: Clock,
     ) -> None:
         """Create windows through `tmux`, storing pane ids through `tasks`."""
         self._tmux = tmux
@@ -50,7 +47,6 @@ class LayoutGuard:
         self._settings = settings
         self._project_root = project_root
         self._events = events
-        self._clock = clock
         self._view = SessionView(tmux)
         self._builder = LayoutBuilder(tmux)
         self._special_panes: dict[str, dict[str, str]] = {}
@@ -185,10 +181,9 @@ class LayoutGuard:
         special = self._special_panes.get(task.id, {})
         root = task_root(self._project_root, task.id)
         for name, pane_id in special.items():
-            pane = TmuxPane(self._tmux, pane_id, self._clock)
-            if await pane.is_alive():
+            if not await self._tmux.is_pane_dead(pane_id):
                 continue
-            await pane.respawn(_SHELL_ARGV, {}, root)
+            await self._tmux.respawn_pane(pane_id, _SHELL_ARGV, env={}, cwd=root)
             self._record_restored(task.id, name)
 
     async def _cache_pane_processes(self, task: Task) -> None:

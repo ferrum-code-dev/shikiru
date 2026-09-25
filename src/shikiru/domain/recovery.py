@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import StrEnum, auto
 from typing import TYPE_CHECKING
 
-from pydantic import Field
-
 from shikiru.agents.contracts import FailureKind
-from shikiru.domain.tasks import DomainModel, EscalationReason, Role
+from shikiru.domain.tasks import EscalationReason
 
 if TYPE_CHECKING:
     from shikiru.domain.reports import Report
@@ -20,7 +17,6 @@ BACKOFF_SCHEDULE: tuple[timedelta, ...] = (
     timedelta(minutes=2),
     timedelta(minutes=5),
 )
-MAX_RELAUNCHES_PER_TURN = 2
 MAX_STALL_RECOVERIES_PER_TURN = 2
 CONTEXT_HANDOFFS_PER_TURN = 1
 OTHER_RETRIES_PER_TURN = 1
@@ -38,23 +34,17 @@ class Completed:
 
 @dataclass(frozen=True)
 class Failed:
-    """A turn the agent reported as failed, with the kind its plugin mapped the error to."""
+    """A turn the agent reported as failed, with its normalized failure kind."""
 
     kind: FailureKind
     resets_at: datetime | None
     message: str
-
-
-@dataclass(frozen=True)
-class PaneDied:
-    """The agent's pane process is gone."""
+    unclassified: bool = False
 
 
 @dataclass(frozen=True)
 class Stalled:
-    """No activity within the configured timeout; `screen` is the captured pane text."""
-
-    screen: str
+    """No stream signal arrived within the configured timeout."""
 
 
 @dataclass(frozen=True)
@@ -62,14 +52,13 @@ class ProtocolError:
     """The turn ended without a report even after nudges and a Helper rebuild attempt."""
 
 
-TurnResult = Completed | Failed | PaneDied | Stalled | ProtocolError
+TurnResult = Completed | Failed | Stalled | ProtocolError
 
 
 @dataclass(frozen=True)
 class TurnCounters:
     """In-memory counters for the current turn only; a restart resets them (03 §1.1)."""
 
-    relaunches: int = 0
     stall_recoveries: int = 0
     unavailable_retries: int = 0
     other_retries: int = 0
@@ -89,7 +78,7 @@ class RecoveryPolicy:
 
 @dataclass(frozen=True)
 class WaitForQuota:
-    """Block the agent in `agent_blocks` until `until`, then re-inject `continue`."""
+    """Block the agent until `until`, then resume the step on the same session."""
 
     until: datetime
 
@@ -109,8 +98,8 @@ class NextRung:
 
 
 @dataclass(frozen=True)
-class Relaunch:
-    """Relaunch the session with resume on the same rung."""
+class ResumeTurn:
+    """Resume the same agent session with the continue prompt."""
 
 
 @dataclass(frozen=True)
@@ -124,66 +113,13 @@ class RetryTurn:
 
 
 @dataclass(frozen=True)
-class ClassifyScreen:
-    """Ask the Helper to classify the stalled screen before deciding further."""
-
-
-@dataclass(frozen=True)
-class KeepWaiting:
-    """The agent is still working; take no action."""
-
-
-@dataclass(frozen=True)
-class SendKeys:
-    """Send `keys` into the pane; every key was verified to be in `keys.safe`."""
-
-    keys: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class Consult:
-    """Route the Implementer's stalled question through a consult turn."""
-
-
-@dataclass(frozen=True)
 class Escalate:
     """Raise an escalation with `reason`."""
 
     reason: EscalationReason
 
 
-Action = (
-    WaitForQuota
-    | Backoff
-    | NextRung
-    | Relaunch
-    | Handoff
-    | RetryTurn
-    | ClassifyScreen
-    | KeepWaiting
-    | SendKeys
-    | Consult
-    | Escalate
-)
-
-
-class ScreenState(StrEnum):
-    """What a stalled screen shows, as `Helper.classify_screen` names it (04 §6, 03 §7)."""
-
-    WORKING = auto()
-    DIALOG = auto()
-    QUESTION = auto()
-    QUOTA = auto()
-    ERROR = auto()
-
-
-class ScreenClassification(DomainModel):
-    """The Helper's classification of a stalled agent screen (04 §6, 03 §7)."""
-
-    state: ScreenState
-    keys: list[str] = Field(default_factory=list)
-    text: str = ""
-    resets_at: datetime | None = None
+Action = WaitForQuota | Backoff | NextRung | ResumeTurn | Handoff | RetryTurn | Escalate
 
 
 def quota_block_until(resets_at: datetime | None, now: datetime) -> datetime:
@@ -212,86 +148,37 @@ def _decide_unavailable(counters: TurnCounters, policy: RecoveryPolicy) -> Actio
     return Escalate(EscalationReason.LADDER_EXHAUSTED)
 
 
-def _decide_context(counters: TurnCounters) -> Action:
-    if counters.context_handoffs < CONTEXT_HANDOFFS_PER_TURN:
-        return Handoff()
-    return Escalate(EscalationReason.AGENT_ERROR)
-
-
-def _decide_other(counters: TurnCounters) -> Action:
-    if counters.other_retries < OTHER_RETRIES_PER_TURN:
-        return RetryTurn()
-    return Escalate(EscalationReason.AGENT_ERROR)
-
-
-def _decide_pane_died(counters: TurnCounters, policy: RecoveryPolicy) -> Action:
-    if counters.relaunches < MAX_RELAUNCHES_PER_TURN:
-        return Relaunch()
-    if policy.has_next_rung:
-        return NextRung(different_agent=False)
-    return Escalate(EscalationReason.AGENT_CRASH)
-
-
-def _decide_stalled(counters: TurnCounters) -> Action:
-    if counters.stall_recoveries >= MAX_STALL_RECOVERIES_PER_TURN:
-        return Escalate(EscalationReason.AGENT_STUCK)
-    return ClassifyScreen()
-
-
-def _decide_failed(failed: Failed, counters: TurnCounters, policy: RecoveryPolicy) -> Action:
-    match failed.kind:
-        case FailureKind.QUOTA:
-            return _quota_action(failed.resets_at, policy)
-        case FailureKind.UNAVAILABLE:
-            return _decide_unavailable(counters, policy)
-        case FailureKind.CONTEXT:
-            return _decide_context(counters)
-        case FailureKind.AUTH:
-            return Escalate(EscalationReason.AGENT_AUTH)
-        case FailureKind.OTHER:
-            return _decide_other(counters)
-        case FailureKind.UNKNOWN:
-            return Escalate(EscalationReason.AGENT_ERROR)
+def _decide_failure(result: Failed, counters: TurnCounters, policy: RecoveryPolicy) -> Action:
+    action: Action
+    if result.unclassified:
+        action = Escalate(EscalationReason.AGENT_ERROR)
+    elif result.kind is FailureKind.QUOTA:
+        action = _quota_action(result.resets_at, policy)
+    elif result.kind is FailureKind.UNAVAILABLE:
+        action = _decide_unavailable(counters, policy)
+    elif result.kind is FailureKind.CONTEXT:
+        if counters.context_handoffs < CONTEXT_HANDOFFS_PER_TURN:
+            action = Handoff()
+        else:
+            action = Escalate(EscalationReason.AGENT_ERROR)
+    elif result.kind is FailureKind.AUTH:
+        action = Escalate(EscalationReason.AGENT_AUTH)
+    elif result.kind is FailureKind.OTHER and counters.other_retries < OTHER_RETRIES_PER_TURN:
+        action = RetryTurn()
+    else:
+        action = Escalate(EscalationReason.AGENT_ERROR)
+    return action
 
 
 def decide(result: TurnResult, counters: TurnCounters, policy: RecoveryPolicy) -> Action:
     """Map a non-`Completed` turn result to the action recovery should take (03 §7)."""
-    match result:
-        case Failed():
-            return _decide_failed(result, counters, policy)
-        case PaneDied():
-            return _decide_pane_died(counters, policy)
-        case Stalled():
-            return _decide_stalled(counters)
-        case ProtocolError():
-            return Escalate(EscalationReason.AGENT_PROTOCOL)
-        case Completed():
-            message = "recovery.decide is only for non-Completed turn results"
-            raise ValueError(message)
-
-
-def decide_stall(
-    classification: ScreenClassification,
-    role: Role,
-    keys_safe: frozenset[str],
-    counters: TurnCounters,
-    policy: RecoveryPolicy,
-) -> Action:
-    """Map a classified stalled screen to the action recovery should take (03 §7)."""
-    match classification.state:
-        case ScreenState.WORKING:
-            return KeepWaiting()
-        case ScreenState.DIALOG:
-            if classification.keys and set(classification.keys) <= keys_safe:
-                return SendKeys(tuple(classification.keys))
-            return Escalate(EscalationReason.AGENT_STUCK)
-        case ScreenState.QUESTION:
-            return (
-                Consult()
-                if role is Role.IMPLEMENTER
-                else Escalate(EscalationReason.DECISION_REQUIRED)
-            )
-        case ScreenState.QUOTA:
-            return _quota_action(classification.resets_at, policy)
-        case ScreenState.ERROR:
-            return _decide_other(counters)
+    if isinstance(result, Failed):
+        return _decide_failure(result, counters, policy)
+    if isinstance(result, Stalled):
+        if counters.stall_recoveries < MAX_STALL_RECOVERIES_PER_TURN:
+            return ResumeTurn()
+        return Escalate(EscalationReason.AGENT_STUCK)
+    if isinstance(result, ProtocolError):
+        return Escalate(EscalationReason.AGENT_PROTOCOL)
+    message = "recovery.decide is only for non-Completed turn results"
+    raise ValueError(message)

@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
+from importlib import resources
 from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.store.database import format_timestamp
+from shikiru.store.database import Database, format_timestamp
 
 if TYPE_CHECKING:
-    from shikiru.store.database import Database
+    from pathlib import Path
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -31,6 +32,47 @@ def test_connect_migrates_a_fresh_db_and_is_idempotent(database: Database) -> No
         assert version_after_second_open == version_after_first_open
     finally:
         second.close()
+
+
+def test_headless_migration_keeps_sessions_and_removes_agent_state(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(path)
+    try:
+        initial = resources.files("shikiru.store.migrations").joinpath("001_initial.sql")
+        legacy.executescript(initial.read_text(encoding="utf-8"))
+        legacy.execute(
+            "INSERT INTO tasks (id, seq, origin, title, request, status, created_at) "
+            "VALUES ('T-1', 1, 'operator', 'legacy', 'legacy', 'running', ?)",
+            (format_timestamp(START),),
+        )
+        legacy.execute(
+            "INSERT INTO runs (task_id, role, agent, model, session_id, resume_command, "
+            "agent_state, status, cost_basis, started_at) "
+            "VALUES ('T-1', 'implementer', 'codex', 'sol', 'session-1', 'codex resume session-1', "
+            "'{\"turns\":2}', 'exited', NULL, ?)",
+            (format_timestamp(START),),
+        )
+        legacy.execute("PRAGMA user_version = 1")
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    migrated = Database(path).connect()
+    try:
+        columns = {row[1] for row in migrated.execute("PRAGMA table_info(runs)")}
+        run = migrated.execute("SELECT * FROM runs WHERE id = 1").fetchone()
+
+        assert "agent_state" not in columns
+        assert run["session_id"] == "session-1"
+        assert run["resume_command"] == "codex resume session-1"
+        assert run["status"] == "closed"
+        assert run["cost_basis"] == "unknown"
+        with pytest.raises(sqlite3.IntegrityError):
+            migrated.execute("UPDATE runs SET cost_basis = NULL WHERE id = 1")
+    finally:
+        migrated.close()
 
 
 def test_connect_readonly_cannot_write(database: Database) -> None:

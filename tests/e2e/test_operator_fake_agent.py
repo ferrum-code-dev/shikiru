@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from fake_agent.repl import TICK_A1_ENABLED_VALUE, TICK_A1_ENV_VAR
+from fake_agent.scripted import TICK_A1_ENABLED_VALUE, TICK_A1_ENV_VAR
 
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import exact_target

@@ -10,29 +10,22 @@ from shikiru.domain.recovery import (
     QUOTA_MARGIN,
     QUOTA_PROBE,
     Backoff,
-    ClassifyScreen,
     Completed,
-    Consult,
     Escalate,
     Failed,
     Handoff,
-    KeepWaiting,
     NextRung,
-    PaneDied,
     ProtocolError,
     RecoveryPolicy,
-    Relaunch,
+    ResumeTurn,
     RetryTurn,
-    ScreenClassification,
-    ScreenState,
-    SendKeys,
     Stalled,
     TurnCounters,
+    TurnResult,
     WaitForQuota,
     decide,
-    decide_stall,
 )
-from shikiru.domain.tasks import EscalationReason, Role
+from shikiru.domain.tasks import EscalationReason
 from tests.support.factories import make_verdict
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -53,199 +46,137 @@ def _policy(
     )
 
 
-def test_quota_failure_with_a_known_reset_waits_until_reset_plus_margin() -> None:
-    resets_at = _NOW + timedelta(minutes=10)
-
-    action = decide(Failed(FailureKind.QUOTA, resets_at, ""), TurnCounters(), _policy())
-
-    assert action == WaitForQuota(until=resets_at + QUOTA_MARGIN)
-
-
-def test_quota_failure_with_an_unknown_reset_probes_after_quota_probe() -> None:
-    action = decide(Failed(FailureKind.QUOTA, None, ""), TurnCounters(), _policy())
-
-    assert action == WaitForQuota(until=_NOW + QUOTA_PROBE)
-
-
-def test_quota_failure_beyond_max_wait_moves_to_a_different_agent() -> None:
-    resets_at = _NOW + timedelta(hours=9)
-    policy = _policy(has_next_rung_different_agent=True)
-
-    action = decide(Failed(FailureKind.QUOTA, resets_at, ""), TurnCounters(), policy)
-
-    assert action == NextRung(different_agent=True)
-
-
-def test_quota_failure_beyond_max_wait_with_no_other_agent_exhausts_quota() -> None:
-    resets_at = _NOW + timedelta(hours=9)
-
-    action = decide(Failed(FailureKind.QUOTA, resets_at, ""), TurnCounters(), _policy())
-
-    assert action == Escalate(EscalationReason.QUOTA_EXHAUSTED)
-
-
-@pytest.mark.parametrize("attempt", range(len(BACKOFF_SCHEDULE)))
-def test_unavailable_failure_backs_off_on_the_configured_schedule(attempt: int) -> None:
-    counters = TurnCounters(unavailable_retries=attempt)
-
-    action = decide(Failed(FailureKind.UNAVAILABLE, None, ""), counters, _policy())
-
-    assert action == Backoff(delay=BACKOFF_SCHEDULE[attempt])
-
-
-def test_unavailable_failure_after_the_schedule_moves_to_the_next_rung() -> None:
-    counters = TurnCounters(unavailable_retries=len(BACKOFF_SCHEDULE))
-    policy = _policy(has_next_rung=True)
-
-    action = decide(Failed(FailureKind.UNAVAILABLE, None, ""), counters, policy)
-
-    assert action == NextRung(different_agent=False)
-
-
-def test_unavailable_failure_with_no_more_rungs_exhausts_the_ladder() -> None:
-    counters = TurnCounters(unavailable_retries=len(BACKOFF_SCHEDULE))
-
-    action = decide(Failed(FailureKind.UNAVAILABLE, None, ""), counters, _policy())
-
-    assert action == Escalate(EscalationReason.LADDER_EXHAUSTED)
-
-
-def test_context_failure_hands_off_once() -> None:
-    action = decide(Failed(FailureKind.CONTEXT, None, ""), TurnCounters(), _policy())
-
-    assert action == Handoff()
-
-
-def test_context_failure_after_a_handoff_raises_agent_error() -> None:
-    counters = TurnCounters(context_handoffs=1)
-
-    action = decide(Failed(FailureKind.CONTEXT, None, ""), counters, _policy())
-
-    assert action == Escalate(EscalationReason.AGENT_ERROR)
-
-
-def test_auth_failure_raises_agent_auth() -> None:
-    action = decide(Failed(FailureKind.AUTH, None, ""), TurnCounters(), _policy())
-
-    assert action == Escalate(EscalationReason.AGENT_AUTH)
-
-
-def test_other_failure_retries_once() -> None:
-    action = decide(Failed(FailureKind.OTHER, None, ""), TurnCounters(), _policy())
-
-    assert action == RetryTurn()
-
-
-def test_other_failure_after_a_retry_raises_agent_error() -> None:
-    counters = TurnCounters(other_retries=1)
-
-    action = decide(Failed(FailureKind.OTHER, None, ""), counters, _policy())
-
-    assert action == Escalate(EscalationReason.AGENT_ERROR)
-
-
-def test_pane_died_relaunches_up_to_the_per_turn_limit() -> None:
-    action = decide(PaneDied(), TurnCounters(relaunches=1), _policy())
-
-    assert action == Relaunch()
-
-
-def test_pane_died_after_the_limit_moves_to_the_next_rung() -> None:
-    counters = TurnCounters(relaunches=2)
-    policy = _policy(has_next_rung=True)
-
-    action = decide(PaneDied(), counters, policy)
-
-    assert action == NextRung(different_agent=False)
-
-
-def test_pane_died_after_the_limit_with_no_more_rungs_crashes() -> None:
-    counters = TurnCounters(relaunches=2)
-
-    action = decide(PaneDied(), counters, _policy())
-
-    assert action == Escalate(EscalationReason.AGENT_CRASH)
-
-
-def test_stalled_asks_the_helper_to_classify_the_screen() -> None:
-    action = decide(Stalled("some screen"), TurnCounters(), _policy())
-
-    assert action == ClassifyScreen()
-
-
-def test_stalled_beyond_the_per_turn_limit_gets_stuck() -> None:
-    counters = TurnCounters(stall_recoveries=2)
-
-    action = decide(Stalled("some screen"), counters, _policy())
-
-    assert action == Escalate(EscalationReason.AGENT_STUCK)
-
-
-def test_protocol_error_raises_agent_protocol() -> None:
-    action = decide(ProtocolError(), TurnCounters(), _policy())
-
-    assert action == Escalate(EscalationReason.AGENT_PROTOCOL)
-
-
-def test_working_classification_keeps_waiting() -> None:
-    classification = ScreenClassification(state=ScreenState.WORKING)
-
-    action = decide_stall(classification, Role.IMPLEMENTER, frozenset(), TurnCounters(), _policy())
-
-    assert action == KeepWaiting()
+@pytest.mark.parametrize(
+    ("kind", "resets_at", "policy", "counters", "expected"),
+    [
+        (
+            FailureKind.QUOTA,
+            _NOW + timedelta(minutes=10),
+            _policy(),
+            TurnCounters(),
+            WaitForQuota(_NOW + timedelta(minutes=10) + QUOTA_MARGIN),
+        ),
+        (
+            FailureKind.QUOTA,
+            None,
+            _policy(),
+            TurnCounters(),
+            WaitForQuota(_NOW + QUOTA_PROBE),
+        ),
+        (
+            FailureKind.QUOTA,
+            _NOW + timedelta(hours=9),
+            _policy(has_next_rung_different_agent=True),
+            TurnCounters(),
+            NextRung(different_agent=True),
+        ),
+        (
+            FailureKind.QUOTA,
+            _NOW + timedelta(hours=9),
+            _policy(),
+            TurnCounters(),
+            Escalate(EscalationReason.QUOTA_EXHAUSTED),
+        ),
+        (
+            FailureKind.UNAVAILABLE,
+            None,
+            _policy(),
+            TurnCounters(),
+            Backoff(BACKOFF_SCHEDULE[0]),
+        ),
+        (
+            FailureKind.UNAVAILABLE,
+            None,
+            _policy(has_next_rung=True),
+            TurnCounters(unavailable_retries=len(BACKOFF_SCHEDULE)),
+            NextRung(different_agent=False),
+        ),
+        (
+            FailureKind.CONTEXT,
+            None,
+            _policy(),
+            TurnCounters(),
+            Handoff(),
+        ),
+        (
+            FailureKind.AUTH,
+            None,
+            _policy(),
+            TurnCounters(),
+            Escalate(EscalationReason.AGENT_AUTH),
+        ),
+        (
+            FailureKind.OTHER,
+            None,
+            _policy(),
+            TurnCounters(),
+            RetryTurn(),
+        ),
+        (
+            FailureKind.OTHER,
+            None,
+            _policy(),
+            TurnCounters(other_retries=1),
+            Escalate(EscalationReason.AGENT_ERROR),
+        ),
+        (
+            FailureKind.OTHER,
+            None,
+            _policy(),
+            TurnCounters(),
+            Escalate(EscalationReason.AGENT_ERROR),
+        ),
+    ],
+    ids=[
+        "quota-reset-margin",
+        "quota-unknown-reset",
+        "quota-next-agent",
+        "quota-exhausted",
+        "unavailable-backoff",
+        "unavailable-next-rung",
+        "context-handoff",
+        "auth-escalates",
+        "other-retries",
+        "other-retry-exhausted",
+        "unclassified-fails-fast",
+    ],
+)
+def test_failure_recovery_actions(
+    kind: FailureKind,
+    resets_at: datetime | None,
+    policy: RecoveryPolicy,
+    counters: TurnCounters,
+    expected: object,
+) -> None:
+    failure = Failed(
+        kind, resets_at, "", unclassified=kind is FailureKind.OTHER and expected != RetryTurn()
+    )
+
+    assert decide(failure, counters, policy) == expected
 
 
 @pytest.mark.parametrize(
-    ("keys", "safe_keys", "action"),
+    ("counters", "expected"),
     [
-        (["Enter"], {"Enter", "Escape"}, SendKeys(("Enter",))),
-        ([], {"Enter"}, Escalate(EscalationReason.AGENT_STUCK)),
-        (["Enter", "y"], {"Enter"}, Escalate(EscalationReason.AGENT_STUCK)),
+        (TurnCounters(stall_recoveries=0), ResumeTurn()),
+        (TurnCounters(stall_recoveries=2), Escalate(EscalationReason.AGENT_STUCK)),
     ],
-    ids=["subset-of-safe-keys", "empty-keys", "key-outside-safe-keys"],
 )
-def test_dialog_classification_sends_keys_only_when_all_are_safe(
-    keys: list[str], safe_keys: set[str], action: object
+def test_stall_resumes_then_escalates_after_the_limit(
+    counters: TurnCounters, expected: object
 ) -> None:
-    classification = ScreenClassification(state=ScreenState.DIALOG, keys=keys)
-
-    result = decide_stall(
-        classification, Role.IMPLEMENTER, frozenset(safe_keys), TurnCounters(), _policy()
-    )
-
-    assert result == action
+    assert decide(Stalled(), counters, _policy()) == expected
 
 
-def test_question_classification_consults_for_the_implementer() -> None:
-    classification = ScreenClassification(state=ScreenState.QUESTION)
-
-    action = decide_stall(classification, Role.IMPLEMENTER, frozenset(), TurnCounters(), _policy())
-
-    assert action == Consult()
-
-
-def test_question_classification_escalates_for_the_leader() -> None:
-    classification = ScreenClassification(state=ScreenState.QUESTION)
-
-    action = decide_stall(classification, Role.LEADER, frozenset(), TurnCounters(), _policy())
-
-    assert action == Escalate(EscalationReason.DECISION_REQUIRED)
-
-
-def test_quota_classification_behaves_like_a_quota_failure() -> None:
-    classification = ScreenClassification(state=ScreenState.QUOTA, resets_at=None)
-
-    action = decide_stall(classification, Role.LEADER, frozenset(), TurnCounters(), _policy())
-
-    assert action == WaitForQuota(until=_NOW + QUOTA_PROBE)
-
-
-def test_error_classification_behaves_like_an_other_failure() -> None:
-    classification = ScreenClassification(state=ScreenState.ERROR)
-
-    action = decide_stall(classification, Role.LEADER, frozenset(), TurnCounters(), _policy())
-
-    assert action == RetryTurn()
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (ProtocolError(), Escalate(EscalationReason.AGENT_PROTOCOL)),
+        (Failed(FailureKind.CONTEXT, None, ""), Handoff()),
+    ],
+)
+def test_terminal_recovery_outcomes(result: TurnResult, expected: object) -> None:
+    assert decide(result, TurnCounters(), _policy()) == expected
 
 
 def test_decide_rejects_a_completed_result() -> None:

@@ -35,7 +35,7 @@ def _context_for(reason: EscalationReason) -> PacketContext:
         attempted="Implement and verify cycled once.",
         reports="**verify**\n\n{}",
         facts="### .\n\n#### Commits\n\nabc123 do the thing",
-        pane_tail="$ shikiru report --file report.json\nturn ended",
+        view_tail='{"signal":"TurnEnded","last_message":"turn ended"}',
         sessions="- leader: fake session `abc` — resume abc",
         question="What should happen next?",
         options=options_for(reason),
@@ -60,7 +60,7 @@ def test_every_reason_renders_a_packet_with_every_section_and_exactly_one_star(
     )
     for heading in headings:
         assert heading in packet
-    evidence = (context.reports, context.facts, context.pane_tail, context.sessions)
+    evidence = (context.reports, context.facts, context.view_tail, context.sessions)
     for section in evidence:
         assert section
         assert section in packet
@@ -87,7 +87,7 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
         attempted="Implement and verify cycled to the iteration limit.",
         reports=[{"label": "01-verify-i1", "json": '{"decision": "changes_requested"}'}],
         facts="### .\n\n#### Commits\n\nabc123 do the thing",
-        pane_tail="$ shikiru report --file report.json\nturn ended",
+        view_tail='{"signal":"TurnEnded","last_message":"turn ended"}',
     )
 
     assert escalation.status is EscalationStatus.OPEN
@@ -128,7 +128,7 @@ async def test_packet_creation_failure_does_not_open_an_empty_escalation(
             attempted="Nothing yet.",
             reports=(),
             facts="",
-            pane_tail="",
+            view_tail="",
         )
 
     assert escalations_store.list_open() == []

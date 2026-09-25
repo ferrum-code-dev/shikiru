@@ -46,5 +46,5 @@ class DependencyEscalator:
             attempted="The scheduler found a cancelled dependency before dispatch.",
             reports=(),
             facts="",
-            pane_tail="",
+            view_tail="",
         )

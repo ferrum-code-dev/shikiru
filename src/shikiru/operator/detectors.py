@@ -10,7 +10,7 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from shikiru.agents.contracts import AgentContext, LegacyAgentFactory
+from shikiru.agents.contracts import AgentContext, AgentFactory
 from shikiru.agents.registry import AGENT_ENTRY_POINT_GROUP, load_unique_entry_point
 from shikiru.config.loader import SHIKIRU_DIR_NAME
 from shikiru.errors import ConfigError, ShikiruError
@@ -114,7 +114,7 @@ class ProjectDetectors:
                 factory = load_unique_entry_point(
                     AGENT_ENTRY_POINT_GROUP, entry.name, ConfigError, "agent plugin"
                 )
-                agent_factory = cast("LegacyAgentFactory", factory)
+                agent_factory = cast("AgentFactory", factory)
                 agent = agent_factory(
                     AgentContext(options={}, runner=self._runner, clock=self._clock)
                 )

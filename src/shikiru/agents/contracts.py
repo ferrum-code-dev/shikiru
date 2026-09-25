@@ -34,7 +34,7 @@ _MODULE_FLAG = "-m"
 
 
 def shikiru_command(*arguments: str) -> str:
-    """Return a shell command running this Shikiru installation, independent of the agent's PATH."""
+    """Return a shell command running this Shikiru installation, independent of PATH."""
     return shlex.join([sys.executable, _SAFE_PATH_FLAG, _MODULE_FLAG, SHIKIRU_MODULE, *arguments])
 
 
@@ -69,57 +69,42 @@ class Rung:
 
 
 @dataclass(frozen=True)
-class SessionKeys:
-    """The key sequences an `InteractiveAgent` sends to control its pane (04 §1)."""
+class Usage:
+    """A session's cumulative token and priced cost usage, as reported by its agent."""
 
-    interrupt: tuple[str, ...]
-    exit_input: str
-    safe: tuple[str, ...]
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float | None
+    cost_basis: CostBasis
+    context_used_pct: float | None
+
+
+@dataclass(frozen=True)
+class QuotaWindow:
+    """One quota window an agent plugin reports (04 §1)."""
+
+    name: str
+    used_pct: float
+    resets_at: datetime | None
+    observed_at: datetime
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """One named check from `Agent.doctor()`, such as binary, version or login."""
+
+    name: str
+    ok: bool
+    detail: str
 
 
 @dataclass(frozen=True)
 class SessionStarted:
     """A new or resumed agent session started."""
 
-    session_id: str | None
-
-
-@dataclass(frozen=True)
-class PromptSubmitted:
-    """A prompt was accepted by the agent, whether injected or typed by the operator."""
-
-    text: str
-
-
-@dataclass(frozen=True)
-class Activity:
-    """The agent is working; `tool_running` is true while a tool call is in flight."""
-
-    tool_running: bool
-
-
-@dataclass(frozen=True)
-class TurnEnded:
-    """A turn finished; `last_message` is the agent's final message for it."""
-
-    last_message: str
-
-
-@dataclass(frozen=True)
-class TurnFailed:
-    """A turn failed. `resets_at` is set only when `kind` is `QUOTA` and it is known."""
-
-    kind: FailureKind
-    message: str
-    resets_at: datetime | None
-
-
-@dataclass(frozen=True)
-class Compacted:
-    """The agent compacted its context, with token counts when reported."""
-
-    pre_tokens: int | None = None
-    post_tokens: int | None = None
+    session_id: str
 
 
 @dataclass(frozen=True)
@@ -159,15 +144,27 @@ class QuotaReported:
 
 
 @dataclass(frozen=True)
-class AttentionNeeded:
-    """The agent is waiting on something the operator or Helper must resolve."""
+class Compacted:
+    """The agent compacted its context, with token counts when reported."""
 
-    message: str
+    pre_tokens: int | None = None
+    post_tokens: int | None = None
 
 
 @dataclass(frozen=True)
-class SessionEnded:
-    """The session's process exited."""
+class TurnEnded:
+    """A turn finished; `last_message` is the agent's final message for it."""
+
+    last_message: str
+
+
+@dataclass(frozen=True)
+class TurnFailed:
+    """A turn failed; `resets_at` is set only for a known quota reset."""
+
+    kind: FailureKind
+    message: str
+    resets_at: datetime | None
 
 
 type AgentSignal = (
@@ -180,153 +177,7 @@ type AgentSignal = (
     | Compacted
     | TurnEnded
     | TurnFailed
-    | PromptSubmitted
-    | Activity
-    | AttentionNeeded
-    | SessionEnded
 )
-
-
-@dataclass(frozen=True)
-class Usage:
-    """A session's cumulative token and cost usage, as `AgentSession.usage()` reports it (04 §1)."""
-
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
-    cost_usd: float | None
-    cost_basis: CostBasis
-    context_used_pct: float | None
-
-
-@dataclass(frozen=True)
-class QuotaWindow:
-    """One quota window an agent plugin's `quota()` reports (04 §1)."""
-
-    name: str
-    used_pct: float
-    resets_at: datetime | None
-    observed_at: datetime
-
-
-@dataclass(frozen=True)
-class CheckResult:
-    """One named check from `Agent.doctor()`, such as binary, version or login."""
-
-    name: str
-    ok: bool
-    detail: str
-
-
-@dataclass(frozen=True)
-class LaunchSpec:
-    """Everything an `InteractiveAgent` needs to launch or attach a session (04 §1).
-
-    `env` already carries the full launch environment (03 §4.1): `RUN_DIR_ENV_VAR`,
-    `ROLE_ENV_VAR`, `PROJECT_ENV_VAR`, `TASK_ENV_VAR` and `SLOT_ENV_VAR`. A plugin's
-    `respawn()` call passes it straight through; it is the one source for these variables.
-    """
-
-    rung: Rung
-    role: str
-    cwd: Path
-    run_dir: Path
-    add_dirs: tuple[Path, ...]
-    env: Mapping[str, str]
-    resume_session_id: str | None
-
-
-class PaneHandle(Protocol):
-    """The single tmux pane an agent session lives in (04 §1)."""
-
-    async def respawn(self, argv: Sequence[str], env: Mapping[str, str | None], cwd: Path) -> None:
-        """Restart the pane's process with `argv`, `env` and `cwd`."""
-        ...
-
-    async def capture_visible(self) -> str:
-        """Return the pane's currently visible text."""
-        ...
-
-    async def is_alive(self) -> bool:
-        """Return whether the pane's process is still running."""
-        ...
-
-    async def send_keys(self, *keys: str) -> None:
-        """Send `keys` to the pane, e.g. to answer the agent's own startup dialog."""
-        ...
-
-
-class AgentSession(Protocol):
-    """A live interactive agent session. `signals()` must be consumed by exactly one reader."""
-
-    def signals(self) -> AsyncIterator[AgentSignal]:
-        """Yield this session's signals, in order, for its single consumer."""
-        ...
-
-    async def before_turn(self) -> list[str]:
-        """Return lines to inject before the next turn, e.g. a compaction command."""
-        ...
-
-    async def usage(self) -> Usage:
-        """Return this session's cumulative usage, which must never decrease."""
-        ...
-
-    def snapshot(self) -> Mapping[str, Any]:
-        """Return opaque state this session's `attach()` call can later resume from."""
-        ...
-
-
-class HeadlessAgent(Protocol):
-    """One-shot, schema-constrained, non-interactive calls."""
-
-    async def ask(
-        self,
-        prompt: str,
-        schema: Mapping[str, Any],
-        model: str,
-        effort: str | None,
-        cwd: Path,
-        timeout: timedelta,
-    ) -> Mapping[str, Any]:
-        """Run one schema-constrained prompt and return its structured output."""
-        ...
-
-
-class InteractiveAgent(Protocol):
-    """An agent CLI plugin: launches sessions, reports quota and health, resumes and asks."""
-
-    name: str
-    keys: SessionKeys
-
-    async def launch(self, spec: LaunchSpec, pane: PaneHandle) -> AgentSession:
-        """Start a session for `spec` in `pane` and return once the agent accepts input."""
-        ...
-
-    async def attach(
-        self,
-        spec: LaunchSpec,
-        pane: PaneHandle,
-        state: Mapping[str, Any],
-    ) -> AgentSession:
-        """Resume a session already running in `pane`, from a prior `snapshot()`."""
-        ...
-
-    async def quota(self) -> list[QuotaWindow]:
-        """Return known quota windows, or `[]` when unknown; the plugin owns caching and probing."""
-        ...
-
-    async def doctor(self) -> list[CheckResult]:
-        """Run this agent's binary, version and login checks."""
-        ...
-
-    def resume_command(self, session_id: str, cwd: Path) -> str | None:
-        """Return the shell command that resumes `session_id`, or `None` if it can't be resumed."""
-        ...
-
-    def headless(self) -> HeadlessAgent | None:
-        """Return this agent's `HeadlessAgent`, or `None` when it has no headless support."""
-        ...
 
 
 @dataclass(frozen=True)
@@ -346,7 +197,7 @@ class TurnSpec:
 
 
 class Turn(Protocol):
-    """One headless agent turn, which may run several processes to compact context."""
+    """One headless agent turn, with one consumer for its normalized signal stream."""
 
     @property
     def pid(self) -> int:
@@ -358,7 +209,23 @@ class Turn(Protocol):
         ...
 
     async def stop(self) -> None:
-        """Stop the current process while leaving the agent session resumable."""
+        """Terminate the process while leaving the session resumable."""
+        ...
+
+
+class HeadlessAgent(Protocol):
+    """One-shot, schema-constrained calls without a session."""
+
+    async def ask(
+        self,
+        prompt: str,
+        schema: Mapping[str, Any],
+        model: str,
+        effort: str | None,
+        cwd: Path,
+        timeout: timedelta,
+    ) -> Mapping[str, Any]:
+        """Run one schema-constrained prompt and return its structured output."""
         ...
 
 
@@ -394,11 +261,10 @@ class AgentContext:
 
 
 type AgentFactory = Callable[[AgentContext], Agent]
-type LegacyAgentFactory = Callable[[AgentContext], InteractiveAgent]
 
 
 def parse_rung(text: str) -> Rung:
-    """Parse `agent:model` or `agent:model:effort`, raising `ConfigError` on malformed input."""
+    """Parse `agent:model` or `agent:model:effort`, raising `ConfigError` if malformed."""
     parts = text.split(_RUNG_SEPARATOR)
     if len(parts) not in _VALID_RUNG_PART_COUNTS or not all(parts):
         message = f"{text!r} is not a valid rung; expected agent:model or agent:model:effort"

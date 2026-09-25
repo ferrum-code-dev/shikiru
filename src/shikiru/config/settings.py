@@ -45,7 +45,6 @@ class ResourcesConfig(ConfigModel):
 class TimeoutsConfig(ConfigModel):
     """`[orchestration.timeouts]`, all values in seconds."""
 
-    launch: int
     stall: int
     tool: int
     max_quota_wait: int
@@ -67,7 +66,6 @@ class OrchestrationConfig(ConfigModel):
 class AgentConfig(ConfigModel):
     """`[agents.<name>]`. `options` is validated by that plugin's factory, not here."""
 
-    prompt_prefix: str = ""
     options: dict[str, Any] = Field(default_factory=dict)
 
 

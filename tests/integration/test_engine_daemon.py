@@ -10,8 +10,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from fake_agent.agent import FakeAgent, FakeOptions
 
-from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung, role_dir
-from shikiru.agents.sdk.hooks import HookRecorder
+from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import (
@@ -22,7 +21,6 @@ from shikiru.domain.commands import (
     Resolve,
     Resume,
     Retry,
-    Say,
     SetRung,
     Stop,
     Submit,
@@ -74,7 +72,7 @@ class _NoHeadlessFakeAgent(FakeAgent):
 
 
 def _create_no_headless_agent(context: AgentContext) -> FakeAgent:
-    return _NoHeadlessFakeAgent(context.runner, context.clock, FakeOptions())
+    return _NoHeadlessFakeAgent(context.runner, FakeOptions())
 
 
 def _settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
@@ -358,7 +356,7 @@ async def test_queued_resolution_is_acknowledged_by_the_daemon(
         attempted="test",
         reports=(),
         facts="",
-        pane_tail="",
+        view_tail="",
     )
     resolve = queue.append(Resolve(escalation_id=escalation.id, resolution=CancelResolution()))
     stop = queue.append(Stop())
@@ -380,10 +378,10 @@ async def test_queued_resolution_is_acknowledged_by_the_daemon(
 
 
 async def test_engine_observes_two_in_process_flows_in_parallel(
-    tmp_path: Path, tmux_server: TmuxServer
+    tmp_path: Path, tmux_server: TmuxServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     await init_project_repo(tmp_path)
-    await set_script(tmux_server, [{"kind": "stall"}])
+    set_script(monkeypatch, [{"kind": "stall"}])
     clock = FakeClock(TASK_CREATED_AT)
     settings = _settings(max_cpu_pct=100, max_parallel=2)
     tmux = build_tmux(tmux_server)
@@ -425,63 +423,3 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
     assert stop_outcome.status is CommandStatus.DONE
     await engine_task
     connection.close()
-
-
-async def test_queued_say_reaches_the_live_agent_through_the_engine(
-    tmp_path: Path, tmux_server: TmuxServer
-) -> None:
-    await init_project_repo(tmp_path)
-    await set_script(tmux_server, [{"kind": "stall"}, {"kind": "stall"}])
-    clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=100)
-    tmux = build_tmux(tmux_server)
-    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
-    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
-    runs = RunStore(connection, clock)
-    queue = CommandQueue(connection, clock)
-    engine_task = asyncio.create_task(engine.run())
-    try:
-        submitted = queue.append(
-            Submit(task_id="", title="say to agent", request="say to agent", mode=Mode.IMPLEMENT)
-        )
-        submitted_outcome = await _wait_for_command(submitted, queue, clock)
-        task_id = (
-            str(submitted_outcome.result["task_id"]) if submitted_outcome.result is not None else ""
-        )
-
-        async def live() -> bool:
-            if clock.has_pending_sleep():
-                clock.advance(0.25)
-            hooks = role_dir(run_dir(tmp_path, task_id), Role.IMPLEMENTER.value)
-            entries = await asyncio.to_thread(lambda: tuple(HookRecorder(hooks).tail()))
-            return any("text" in entry.value for entry in entries)
-
-        await wait_until(live, timeout=10)
-        assert runs.get_live(task_id, Role.IMPLEMENTER) is not None
-        say = queue.append(
-            Say(task_id=task_id, role=Role.IMPLEMENTER, text="inspect this operator note")
-        )
-        say_outcome = await _wait_for_command(say, queue, clock)
-        assert say_outcome.status is CommandStatus.DONE
-        result_path = str(say_outcome.result["path"]) if say_outcome.result is not None else ""
-        expected_line = f"Operator message: read {result_path} and take it into account."
-        run = runs.get_live(task_id, Role.IMPLEMENTER)
-        assert run is not None
-        hooks = role_dir(run_dir(tmp_path, task_id), Role.IMPLEMENTER.value)
-
-        async def received() -> bool:
-            entries = await asyncio.to_thread(lambda: tuple(HookRecorder(hooks).tail()))
-            return any(entry.value.get("text") == expected_line for entry in entries)
-
-        await wait_until(received, timeout=10)
-        stopped = queue.append(Stop())
-        stop_outcome = await _wait_for_command(stopped, queue, clock)
-        assert stop_outcome.status is CommandStatus.DONE
-        await engine_task
-    finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
-        connection.close()

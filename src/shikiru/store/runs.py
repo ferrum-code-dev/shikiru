@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from pydantic import TypeAdapter
+from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import Usage
 from shikiru.domain.runs import Run, RunStatus
 from shikiru.domain.tasks import Role
 from shikiru.store.database import (
-    dump_json,
     format_timestamp,
-    load_json,
     parse_required_timestamp,
     parse_timestamp,
     require_after_insert,
@@ -24,12 +20,8 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
     from shikiru.clock import Clock
 
-_DEFAULT_COST_BASIS = "unknown"
-
-_AGENT_STATE_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
-
 _RUN_COLUMNS = (
-    "id, task_id, role, agent, model, effort, session_id, resume_command, agent_state, "
+    "id, task_id, role, agent, model, effort, session_id, resume_command, "
     "last_message, status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
     "cost_usd, cost_basis, context_used_pct, started_at, ended_at"
 )
@@ -45,7 +37,6 @@ def _row_to_run(row: sqlite3.Row) -> Run:
         effort=row["effort"],
         session_id=row["session_id"],
         resume_command=row["resume_command"],
-        agent_state=load_json(_AGENT_STATE_ADAPTER, row["agent_state"]),
         last_message=row["last_message"],
         status=RunStatus(row["status"]),
         usage=Usage(
@@ -54,7 +45,7 @@ def _row_to_run(row: sqlite3.Row) -> Run:
             cache_read_tokens=row["cache_read_tokens"],
             cache_write_tokens=row["cache_write_tokens"],
             cost_usd=row["cost_usd"],
-            cost_basis=row["cost_basis"] if row["cost_basis"] is not None else _DEFAULT_COST_BASIS,
+            cost_basis=row["cost_basis"],
             context_used_pct=row["context_used_pct"],
         ),
         started_at=parse_required_timestamp(row["started_at"]),
@@ -97,8 +88,8 @@ class RunStore:
         """Start a new live run for `task_id`'s `role` on `rung`."""
         cursor = self._connection.execute(
             """
-            INSERT INTO runs (task_id, role, agent, model, effort, agent_state, status, started_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO runs (task_id, role, agent, model, effort, status, started_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -106,7 +97,6 @@ class RunStore:
                 rung.agent,
                 rung.model,
                 rung.effort,
-                dump_json(_AGENT_STATE_ADAPTER, {}),
                 RunStatus.LIVE.value,
                 format_timestamp(self._clock.now()),
             ),
@@ -144,11 +134,11 @@ class RunStore:
             (session_id, resume_command, run_id),
         )
 
-    def set_agent_state(self, run_id: int, agent_state: dict[str, Any]) -> None:
-        """Persist `run_id`'s plugin-private `agent_state`."""
+    def set_rung(self, run_id: int, rung: Rung) -> None:
+        """Record a same-agent model or effort change on an existing session."""
         self._connection.execute(
-            "UPDATE runs SET agent_state = ? WHERE id = ?",
-            (dump_json(_AGENT_STATE_ADAPTER, agent_state), run_id),
+            "UPDATE runs SET model = ?, effort = ? WHERE id = ?",
+            (rung.model, rung.effort, run_id),
         )
 
     def set_last_message(self, run_id: int, message: str) -> None:
@@ -174,10 +164,6 @@ class RunStore:
                 run_id,
             ),
         )
-
-    def exit(self, run_id: int) -> None:
-        """Mark `run_id` exited: the agent process is gone but the session is resumable."""
-        self._set_status(run_id, RunStatus.EXITED)
 
     def close(self, run_id: int) -> None:
         """Mark `run_id` closed: the task ended, the session is not resumable."""

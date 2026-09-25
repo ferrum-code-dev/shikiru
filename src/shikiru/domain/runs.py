@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum, auto
-from typing import Any
-
-from pydantic import Field
 
 from shikiru.agents.contracts import Usage
 from shikiru.domain.tasks import DomainModel, Role
@@ -26,7 +23,6 @@ class RunStatus(StrEnum):
     """A run's lifecycle (05 §2)."""
 
     LIVE = auto()
-    EXITED = auto()
     CLOSED = auto()
 
 
@@ -41,7 +37,6 @@ class Run(DomainModel):
     effort: str | None = None
     session_id: str | None = None
     resume_command: str | None = None
-    agent_state: dict[str, Any] = Field(default_factory=dict)
     last_message: str | None = None
     status: RunStatus
     usage: Usage = NO_USAGE

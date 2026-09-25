@@ -73,7 +73,6 @@ async def _task_window(
         settings=settings,
         project_root=tmp_path,
         events=events,
-        clock=clock,
     )
     queued = CommandQueue(connection, clock).append(
         Submit(task_id="", title="restore panes", request="restore panes")
@@ -119,7 +118,7 @@ async def test_dead_agent_pane_is_left_for_session_recovery(
     assert task is not None
     agent = task.panes[Role.IMPLEMENTER]
     tmux = build_tmux(tmux_server)
-    await tmux.send_keys(agent, "exit", "Enter")
+    await tmux.respawn_pane(agent, ("/bin/sh", "-c", "exit"), env={}, cwd=tmp_path)
 
     async def dead() -> bool:
         return await tmux.is_pane_dead(agent)
@@ -144,7 +143,7 @@ async def test_dead_special_pane_is_respawned_in_place(
     tmux = build_tmux(tmux_server)
     all_panes = await tmux.list_panes(task.window_id, FORMAT_PANE_ID)
     special = next(pane for pane in all_panes if pane not in task.panes.values())
-    await tmux.send_keys(special, "exit", "Enter")
+    await tmux.respawn_pane(special, ("/bin/sh", "-c", "exit"), env={}, cwd=tmp_path)
 
     async def dead() -> bool:
         return await tmux.is_pane_dead(special)

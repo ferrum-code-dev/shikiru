@@ -9,19 +9,21 @@ import os
 import sys
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from fake_agent.repl import (
-    build_context,
-    save_script_index,
-    script_index,
-    script_raw_for,
-    submit_scripted_report,
-)
 from fake_agent.script import (
+    AcceptStep,
     CrashStep,
     FailStep,
     NoReportStep,
     Script,
     StallStep,
+)
+from fake_agent.scripted import (
+    build_context,
+    first_remembered_prompt,
+    save_script_index,
+    script_index,
+    script_raw_for,
+    submit_scripted_report,
 )
 from fake_agent.turns import (
     CACHE_READ_TOKENS_PER_TURN,
@@ -36,18 +38,19 @@ from fake_agent.turns import (
 )
 from shikiru.agents.contracts import role_dir
 from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
-from shikiru.domain.reports import CURRENT_TURN_LINK_NAME
+from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from fake_agent.repl import ReplContext
+    from fake_agent.scripted import ScriptContext
 
 _EVENT_SESSION_STARTED = "session_started"
 _EVENT_MESSAGE = "message"
 _EVENT_TOOL_STARTED = "tool_started"
 _EVENT_TOOL_FINISHED = "tool_finished"
 _EVENT_USAGE_REPORTED = "usage_reported"
+_EVENT_QUOTA_REPORTED = "quota_reported"
 _EVENT_COMPACTED = "compacted"
 _EVENT_TURN_ENDED = "turn_ended"
 _EVENT_TURN_FAILED = "turn_failed"
@@ -83,7 +86,7 @@ def _emit(entry: Mapping[str, object]) -> None:
     sys.stdout.flush()
 
 
-def _state(context: ReplContext) -> _SessionState:
+def _state(context: ScriptContext) -> _SessionState:
     if not context.state_path.is_file():
         return {
             "prompts": [],
@@ -96,7 +99,7 @@ def _state(context: ReplContext) -> _SessionState:
     return cast("_SessionState", json.loads(context.state_path.read_text()))
 
 
-def _save_state(context: ReplContext, state: _SessionState) -> None:
+def _save_state(context: ScriptContext, state: _SessionState) -> None:
     context.state_path.write_text(json.dumps(state))
 
 
@@ -110,6 +113,7 @@ def _failure(step: FailStep) -> None:
             "event": _EVENT_TURN_FAILED,
             "kind": step.failure_kind.value,
             "message": f"scripted {step.failure_kind.value} failure",
+            "resets_at": step.resets_at,
         }
     )
 
@@ -120,10 +124,12 @@ async def _run_turn(session_id: str, prompt: str) -> int:
     _session_started(session_id)
     if prompt == _WAIT_PROMPT:
         await asyncio.Event().wait()
-    prompts: list[str] = list(state["prompts"])
-    response: str = (
-        prompts[0] if prompt == RESUME_RECALL_PROMPT and prompts else f"accepted: {prompt}"
+    response = (
+        first_remembered_prompt(context.state_path)
+        if prompt == RESUME_RECALL_PROMPT
+        else f"accepted: {prompt}"
     )
+    prompts = list(state["prompts"])
     prompts.append(prompt)
     state["prompts"] = prompts
     _save_state(context, state)
@@ -132,6 +138,13 @@ async def _run_turn(session_id: str, prompt: str) -> int:
     )
     step = script.next_step()
     save_script_index(context.script_path, script.index)
+    if step.quota_windows:
+        _emit(
+            {
+                "event": _EVENT_QUOTA_REPORTED,
+                "windows": [window.model_dump() for window in step.quota_windows],
+            }
+        )
     if isinstance(step, CrashStep):
         return 1
     if isinstance(step, StallStep):
@@ -144,7 +157,7 @@ async def _run_turn(session_id: str, prompt: str) -> int:
     _emit({"event": _EVENT_MESSAGE, "text": response})
     role_path = role_dir(context.run_dir, context.role)
     current_turn = role_path / CURRENT_TURN_LINK_NAME
-    if current_turn.is_symlink():
+    if current_turn.is_symlink() and not isinstance(step, NoReportStep):
         _emit(
             {
                 "event": _EVENT_TOOL_STARTED,
@@ -153,6 +166,8 @@ async def _run_turn(session_id: str, prompt: str) -> int:
             }
         )
         await submit_scripted_report(context, step, prompt)
+        if isinstance(step, AcceptStep) and step.corrupt_report:
+            (current_turn.resolve() / REPORT_FILENAME).write_text("{")
         _emit({"event": _EVENT_TOOL_FINISHED, "name": _REPORT_TOOL_NAME})
     state[_INPUT_TOKENS_FIELD] = int(state[_INPUT_TOKENS_FIELD]) + INPUT_TOKENS_PER_TURN
     state[_OUTPUT_TOKENS_FIELD] = int(state[_OUTPUT_TOKENS_FIELD]) + OUTPUT_TOKENS_PER_TURN
@@ -194,7 +209,6 @@ async def _run_compaction(session_id: str) -> int:
             "post_tokens": COMPACTION_POST_TOKENS,
         }
     )
-    _emit({"event": _EVENT_TURN_ENDED, "last_message": "context compacted"})
     return 0
 
 

@@ -44,7 +44,6 @@ _HEADLINE_SENTENCES: dict[EscalationReason, str] = {
     EscalationReason.PR_CLOSED: "The pull request was closed without merging.",
     EscalationReason.AGENT_AUTH: "The agent's authentication failed.",
     EscalationReason.AGENT_ERROR: "The agent kept failing after every automatic retry.",
-    EscalationReason.AGENT_CRASH: "The agent's pane kept dying after every automatic relaunch.",
     EscalationReason.AGENT_STUCK: "The agent's screen stayed stuck after every automatic recovery.",
     EscalationReason.AGENT_PROTOCOL: "The turn never produced a report, even with a Helper rebuild",
     EscalationReason.LADDER_EXHAUSTED: "Every rung on the ladder was tried without success.",
@@ -73,7 +72,7 @@ class PacketContext:
     attempted: str
     reports: str
     facts: str
-    pane_tail: str
+    view_tail: str
     sessions: str
     question: str
     options: tuple[EscalationOption, ...]
@@ -107,7 +106,7 @@ def render_packet(context: PacketContext) -> str:
         f"## Evidence\n\n"
         f"### Reports\n\n{context.reports or '(none)'}\n\n"
         f"### Facts\n\n{context.facts or '(none)'}\n\n"
-        f"### Recent pane output\n\n{context.pane_tail or '(none)'}\n\n"
+        f"### Recent turn signals\n\n{context.view_tail or '(none)'}\n\n"
         f"### Sessions\n\n{context.sessions or '(none)'}\n\n"
         f"## Question\n\n{context.question}\n\n"
         f"## Options\n\n{_options_section(context.options)}\n"
@@ -140,7 +139,7 @@ class EscalationRaiser:
         attempted: str,
         reports: Sequence[dict[str, str]],
         facts: str,
-        pane_tail: str,
+        view_tail: str,
     ) -> Escalation:
         """Build the packet for `task`, write it, and open its `Escalation` row (03 §8)."""
         options = options_for(reason)
@@ -153,7 +152,7 @@ class EscalationRaiser:
             attempted=attempted,
             reports=self._reports_evidence(reports),
             facts=facts,
-            pane_tail=pane_tail,
+            view_tail=view_tail,
             sessions=self._sessions_evidence(task.id),
             question=question,
             options=options,
@@ -239,5 +238,5 @@ class DispatchFailureEscalator:
             attempted="Workspace or pane setup failed after scheduler retries.",
             reports=(),
             facts="",
-            pane_tail="",
+            view_tail="",
         )

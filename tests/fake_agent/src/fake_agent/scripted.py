@@ -1,7 +1,4 @@
-"""The fake agent's REPL: reads prompts from stdin, scripted by `SHIKIRU_FAKE_SCRIPT`.
-
-See the `fake_agent` package docstring for the full script format and the resume protocol.
-"""
+"""Script state and report submission for the fake agent CLI."""
 
 from __future__ import annotations
 
@@ -9,39 +6,21 @@ import asyncio
 import json
 import os
 import shlex
-import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn, TypedDict, cast
 
-from fake_agent.agent import EXIT_INPUT, SESSION_ID_ENV_VAR
 from fake_agent.script import (
     AcceptStep,
     ChangesRequestedStep,
-    CrashStep,
-    DialogStep,
-    FailStep,
     NeedsDecisionStep,
     NewTaskSpec,
-    NoReportStep,
-    Script,
-    StallStep,
     SupersedeStep,
     TurnStep,
 )
-from fake_agent.signals import (
-    attention_needed_payload,
-    prompt_submitted_payload,
-    session_ended_payload,
-    session_started_payload,
-    turn_ended_payload,
-    turn_failed_payload,
-    turn_tokens,
-)
+from fake_agent.turns import FAKE_SESSION_ID_ENV_VAR
 from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir, shikiru_command
-from shikiru.agents.sdk.hooks import HookRecorder
-from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
 from shikiru.cli.report import resolve_current_turn_dir
 from shikiru.domain.reports import (
     REPORT_KIND_FILENAME,
@@ -62,72 +41,60 @@ from shikiru.process import SubprocessRunner
 SCRIPT_ENV_VAR = "SHIKIRU_FAKE_SCRIPT"
 TICK_A1_ENV_VAR = "SHIKIRU_FAKE_TICK_A1"
 TICK_A1_ENABLED_VALUE = "1"
-
-
-def role_script_env_var(role: str) -> str:
-    """The env var scripting `role`'s own REPL.
-
-    Two roles sharing one tmux server each advance their own `Script` independently, so
-    scripting them through the single `SHIKIRU_FAKE_SCRIPT` list would have them race through
-    the same list in lockstep instead.
-    """
-    return f"{SCRIPT_ENV_VAR}_{role.upper()}"
-
-
-STATE_DIRNAME = "fake_state"
+_STATE_DIRNAME = "fake_state"
 FAKE_CHANGE_FILENAME = "fake-agent-changes.txt"
-REPORT_FILENAME_PREFIX = "fake-agent-report-"
-TODO_FILENAME = "todo.md"
-A1_UNCHECKED = "- [ ] A1"
-A1_CHECKED = "- [x] A1"
-
+_REPORT_FILENAME_PREFIX = "fake-agent-report-"
+_TODO_FILENAME = "todo.md"
+_A1_UNCHECKED = "- [ ] A1"
+_A1_CHECKED = "- [x] A1"
 _GIT_TIMEOUT_SECONDS = 10.0
 _REPORT_TIMEOUT_SECONDS = 10.0
 _MAX_COMMIT_SUBJECT_LENGTH = 72
 _COMMIT_IDENTITY_ARGS = ("-c", "user.name=Fake Agent", "-c", "user.email=fake-agent@shikiru.test")
-
 _KINDS_WITH_COMMITS = (ReportKind.IMPLEMENTATION, ReportKind.PLAN)
 
 
-@dataclass(frozen=True, slots=True)
-class ReplContext:
-    """Everything the REPL's turn loop needs, resolved once at startup."""
-
-    run_dir: Path
-    role: str
-    session_id: str
-    recorder: HookRecorder
-    runner: SubprocessRunner
-    cwd: Path
-    state_path: Path
-    script_path: Path
+def role_script_env_var(role: str) -> str:
+    """Return the environment variable scripting one role's turns."""
+    return f"{SCRIPT_ENV_VAR}_{role.upper()}"
 
 
 class _FakeAgentState(TypedDict):
     prompts: list[str]
 
 
+@dataclass(frozen=True)
+class ScriptContext:
+    """The paths and process boundary used by one fake turn."""
+
+    run_dir: Path
+    role: str
+    session_id: str
+    runner: SubprocessRunner
+    cwd: Path
+    state_path: Path
+    script_path: Path
+
+
 def _require_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
-        message = f"fake-agent-repl needs {name} set; it must be launched by a Shikiru session"
+        message = f"fake agent turn needs {name} set; Shikiru must launch it"
         raise SystemExit(message)
     return value
 
 
-def build_context() -> ReplContext:
-    """Create the fake CLI context from Shikiru's environment."""
+def build_context() -> ScriptContext:
+    """Build fake turn paths from the environment passed by the engine."""
     run_dir = Path(_require_env(RUN_DIR_ENV_VAR))
     role = _require_env(ROLE_ENV_VAR)
-    session_id = _require_env(SESSION_ID_ENV_VAR)
-    role_path = role_dir(run_dir, role)
-    state_dir = role_path / STATE_DIRNAME
+    session_id = _require_env(FAKE_SESSION_ID_ENV_VAR)
+    state_dir = role_dir(run_dir, role) / _STATE_DIRNAME
     state_dir.mkdir(parents=True, exist_ok=True)
-    return ReplContext(
+    return ScriptContext(
         run_dir=run_dir,
         role=role,
         session_id=session_id,
-        recorder=HookRecorder(role_path),
         runner=SubprocessRunner(),
         cwd=Path.cwd(),
         state_path=state_dir / f"{session_id}.json",
@@ -141,7 +108,8 @@ def _load_prompts(state_path: Path) -> list[str]:
     return json.loads(state_path.read_text())["prompts"]
 
 
-def _remember_prompt(state_path: Path, prompt_text: str) -> None:
+def remember_prompt(state_path: Path, prompt_text: str) -> None:
+    """Persist one prompt in the fake session's resume history."""
     if state_path.is_file():
         state = cast("_FakeAgentState", json.loads(state_path.read_text()))
     else:
@@ -150,37 +118,38 @@ def _remember_prompt(state_path: Path, prompt_text: str) -> None:
     state_path.write_text(json.dumps(state))
 
 
-def _first_remembered_prompt(state_path: Path) -> str:
+def first_remembered_prompt(state_path: Path) -> str:
+    """Return the first prompt observed for a fake session."""
     prompts = _load_prompts(state_path)
     return prompts[0] if prompts else ""
 
 
 def script_index(script_path: Path) -> int:
-    """Return the current fake script step index."""
+    """Return the index of the next fake behavior."""
     if not script_path.is_file():
         return 0
     return json.loads(script_path.read_text())["index"]
 
 
 def save_script_index(script_path: Path, index: int) -> None:
-    """Store the fake script step index for the next process."""
+    """Persist the index of the next fake behavior."""
     script_path.write_text(json.dumps({"index": index}))
 
 
-def _append_change(marker: Path, prompt_text: str) -> None:
-    previous = marker.read_text() if marker.is_file() else ""
-    marker.write_text(previous + prompt_text + "\n")
+def script_raw_for(role: str) -> str | None:
+    """Return the script for `role`, falling back to the shared fake script."""
+    return os.environ.get(role_script_env_var(role)) or os.environ.get(SCRIPT_ENV_VAR)
 
 
 def _tick_a1(cwd: Path) -> None:
-    tracker = cwd / "tasks" / TODO_FILENAME
+    tracker = cwd / "tasks" / _TODO_FILENAME
     contents = tracker.read_text()
-    if A1_CHECKED in contents:
+    if _A1_CHECKED in contents:
         return
-    if A1_UNCHECKED not in contents:
+    if _A1_UNCHECKED not in contents:
         message = f"fake agent could not find the A1 checkbox in {tracker}"
         raise RuntimeError(message)
-    tracker.write_text(contents.replace(A1_UNCHECKED, A1_CHECKED, 1))
+    tracker.write_text(contents.replace(_A1_UNCHECKED, _A1_CHECKED, 1))
 
 
 def _repository_directories(cwd: Path) -> tuple[Path, ...]:
@@ -200,21 +169,16 @@ async def _commit_changes(runner: SubprocessRunner, cwd: Path, prompt_text: str)
     commits: list[Commit] = []
     for repository in await asyncio.to_thread(_repository_directories, cwd):
         marker = repository / FAKE_CHANGE_FILENAME
-        await asyncio.to_thread(_append_change, marker, prompt_text)
-        await runner.run(
-            ["git", "add", "-A"], timeout=_GIT_TIMEOUT_SECONDS, cwd=repository, check=True
-        )
+        previous = marker.read_text() if marker.is_file() else ""
+        marker.write_text(previous + prompt_text + "\n")
+        await runner.run(["git", "add", "-A"], timeout=_GIT_TIMEOUT_SECONDS, cwd=repository)
         await runner.run(
             ["git", *_COMMIT_IDENTITY_ARGS, "commit", "-m", subject],
             timeout=_GIT_TIMEOUT_SECONDS,
             cwd=repository,
-            check=True,
         )
         result = await runner.run(
-            ["git", "rev-parse", "HEAD"],
-            timeout=_GIT_TIMEOUT_SECONDS,
-            cwd=repository,
-            check=True,
+            ["git", "rev-parse", "HEAD"], timeout=_GIT_TIMEOUT_SECONDS, cwd=repository
         )
         commits.append(Commit(repo=repository.name, sha=result.stdout.strip(), subject=subject))
     return commits
@@ -315,9 +279,9 @@ def _current_report_kind(turn_dir: Path) -> ReportKind:
     return ReportKind((turn_dir / REPORT_KIND_FILENAME).read_text().strip())
 
 
-def _write_report_file(role_dir: Path, report: Report) -> Path:
+def _write_report_file(role_path: Path, report: Report) -> Path:
     descriptor, temp_name = tempfile.mkstemp(
-        dir=role_dir, prefix=REPORT_FILENAME_PREFIX, suffix=".json"
+        dir=role_path, prefix=_REPORT_FILENAME_PREFIX, suffix=".json"
     )
     report_path = Path(temp_name)
     with os.fdopen(descriptor, "w") as handle:
@@ -325,8 +289,8 @@ def _write_report_file(role_dir: Path, report: Report) -> Path:
     return report_path
 
 
-async def submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text: str) -> None:
-    """Write the report produced by one scripted turn."""
+async def submit_scripted_report(ctx: ScriptContext, step: TurnStep, prompt_text: str) -> None:
+    """Write a report for the fake turn and submit it through the installed command."""
     turn_dir = resolve_current_turn_dir(os.environ)
     kind = await asyncio.to_thread(_current_report_kind, turn_dir)
     if (
@@ -350,80 +314,6 @@ async def submit_scripted_report(ctx: ReplContext, step: TurnStep, prompt_text: 
             shlex.split(shikiru_command("report", "--file", str(report_path))),
             timeout=_REPORT_TIMEOUT_SECONDS,
             cwd=ctx.cwd,
-            check=True,
         )
     finally:
         await asyncio.to_thread(report_path.unlink, missing_ok=True)
-
-
-async def _apply_step(ctx: ReplContext, step: TurnStep, prompt_text: str) -> bool:
-    if isinstance(step, StallStep):
-        return True
-    if isinstance(step, CrashStep):
-        return False
-    if isinstance(step, DialogStep):
-        message = step.message or f"dialog: {prompt_text}"
-        ctx.recorder.record(attention_needed_payload(ctx.session_id, message))
-        return True
-    if isinstance(step, FailStep):
-        ctx.recorder.record(
-            turn_failed_payload(
-                ctx.session_id,
-                step.failure_kind,
-                message=f"fail: {prompt_text}",
-                resets_at=step.resets_at,
-            )
-        )
-        return True
-    if isinstance(step, NoReportStep):
-        ctx.recorder.record(
-            turn_ended_payload(ctx.session_id, f"no_report: {prompt_text}", tokens=turn_tokens())
-        )
-        return True
-    await submit_scripted_report(ctx, step, prompt_text)
-    ctx.recorder.record(
-        turn_ended_payload(ctx.session_id, f"{step.kind}: {prompt_text}", tokens=turn_tokens())
-    )
-    return True
-
-
-async def _handle_line(ctx: ReplContext, script: Script, prompt_text: str) -> bool:
-    ctx.recorder.record(prompt_submitted_payload(ctx.session_id, prompt_text))
-    if prompt_text == RESUME_RECALL_PROMPT:
-        recalled = _first_remembered_prompt(ctx.state_path)
-        ctx.recorder.record(turn_ended_payload(ctx.session_id, recalled, tokens=turn_tokens()))
-        _remember_prompt(ctx.state_path, prompt_text)
-        return True
-    _remember_prompt(ctx.state_path, prompt_text)
-    step = script.next_step()
-    save_script_index(ctx.script_path, script.index)
-    return await _apply_step(ctx, step, prompt_text)
-
-
-def script_raw_for(role: str) -> str | None:
-    """Return the script configured for `role`, when one is set."""
-    return os.environ.get(role_script_env_var(role)) or os.environ.get(SCRIPT_ENV_VAR)
-
-
-async def _run() -> None:
-    ctx = build_context()
-    script = Script.from_env(script_raw_for(ctx.role), start_index=script_index(ctx.script_path))
-    ctx.recorder.record(session_started_payload(ctx.session_id))
-    loop = asyncio.get_running_loop()
-    while True:
-        line = await loop.run_in_executor(None, sys.stdin.readline)
-        if not line:
-            break
-        prompt_text = line.rstrip("\n")
-        if prompt_text == EXIT_INPUT:
-            ctx.recorder.record(session_ended_payload(ctx.session_id))
-            return
-        keep_running = await _handle_line(ctx, script, prompt_text)
-        if not keep_running:
-            sys.exit(1)
-    ctx.recorder.record(session_ended_payload(ctx.session_id))
-
-
-def main() -> None:
-    """Run the fake agent's REPL until stdin closes, `/exit` is read, or a `crash` exits it."""
-    asyncio.run(_run())

@@ -8,7 +8,6 @@ the integrating state to the injected coordinator.
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import logging
 from dataclasses import dataclass
@@ -22,33 +21,22 @@ from shikiru.domain.recovery import (
     QUOTA_MARGIN,
     Action,
     Backoff,
-    ClassifyScreen,
     Completed,
-    Consult,
-    Escalate,
     Failed,
     Handoff,
-    KeepWaiting,
     NextRung,
-    PaneDied,
     ProtocolError,
     RecoveryPolicy,
-    Relaunch,
+    ResumeTurn,
     RetryTurn,
-    ScreenClassification,
-    ScreenState,
-    SendKeys,
     Stalled,
     TurnCounters,
     TurnResult,
     WaitForQuota,
     decide,
-    decide_stall,
     quota_block_until,
 )
 from shikiru.domain.reports import (
-    CURRENT_TURN_LINK_NAME,
-    PROMPT_FILENAME,
     ConsultAnswer,
     ImplementationReport,
     Issue,
@@ -65,9 +53,8 @@ from shikiru.engine.integration import (
     IntegrationCoordinator,
     IntegrationMetadata,
 )
-from shikiru.engine.turns import TURNS_DIR_NAME, TurnSpec, read_turn_report
-from shikiru.errors import CommandFailed, ShikiruError, UsageError
-from shikiru.helper.models import Unrecoverable
+from shikiru.engine.turns import TURNS_DIR_NAME, TurnRequest, read_turn_report
+from shikiru.errors import ShikiruError, UsageError
 from shikiru.prompts.renderer import PromptName
 from shikiru.workspace.facts import render_facts
 from shikiru.workspace.reports import InvalidTurnReportError
@@ -79,31 +66,25 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
-    from shikiru.agents.contracts import AgentSession, Rung, Usage
+    from shikiru.agents.contracts import Rung, Usage
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.reports import Report
     from shikiru.domain.steps import Outcome
     from shikiru.domain.tasks import RepoState, Task
-    from shikiru.engine.agents import AgentPool
     from shikiru.engine.escalations import EscalationRaiser
-    from shikiru.engine.monitor import InjectedLines, MonitorSignal
     from shikiru.engine.sessions import SessionManager
     from shikiru.engine.titles import TaskTitles
     from shikiru.engine.turns import TurnRunner
-    from shikiru.helper.helper import Helper
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
-    from shikiru.tmux.pane import TmuxPane
     from shikiru.workspace.facts import GitFacts
 
 
 ESCALATION_PANE_TAIL_LINES = 60
 """Lines of pane scrollback captured as escalation evidence (03 §8)."""
-
-CONTINUE_INPUT = "continue"
 
 ENGINE_VERDICT_FILENAME = "engine-verdict.json"
 """The engine's verdict replacing an accept on a dirty workspace (03 §6)."""
@@ -119,23 +100,6 @@ _QUOTA_WAIT_EXHAUSTED_MESSAGE = "quota wait exceeded"
 
 class _IntegrationTurnStopped(Exception):
     pass
-
-
-def clear_intervention(tasks: TaskStore, events: EventLog, task_id: str) -> None:
-    """Clear `task_id`'s intervention hold: on a valid report, or an operator resume (03 §9)."""
-    task = tasks.get(task_id)
-    if task is None:
-        message = f"{task_id} has no task row; clear_intervention needs a running task"
-        raise ShikiruError(message)
-    if Hold.INTERVENTION not in task.holds:
-        return
-    tasks.set_holds(task_id, task.holds - {Hold.INTERVENTION})
-    events.append(
-        EventKind.HOLD_CLEARED,
-        task_id=task_id,
-        message=f"{task_id} intervention hold cleared",
-        data={"hold": Hold.INTERVENTION.value},
-    )
 
 
 def _template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKind]:
@@ -260,7 +224,7 @@ def _escalation_narrative(
         question = result.message
         attempted = f"The agent reported a {result.kind.value} failure."
     elif isinstance(result, Stalled):
-        question = "The agent's screen stopped progressing."
+        question = "The agent's turn stream stopped progressing."
         attempted = "Automatic stall recovery was exhausted."
     elif isinstance(result, ProtocolError):
         question = "The agent did not produce a valid report."
@@ -284,20 +248,10 @@ class _TurnExecution:
     result: TurnResult
     task_id: str
     role: Role
-    pane: TmuxPane
-    signals: asyncio.Queue[MonitorSignal]
     turn_dir: Path
-    spec: TurnSpec
-    helper: Helper
-    session: AgentSession
-    prompt_path: Path
-    injected: InjectedLines
-    intervention_active: Callable[[], bool]
     rung: Rung
     usage_before: Usage
     usage_after: Usage
-    on_nudge: Callable[[], None]
-    closed: bool = False
     quota_wait_exhausted: bool = False
 
 
@@ -315,9 +269,6 @@ class TaskFlow:
         escalations: EscalationRaiser,
         titles: TaskTitles,
         settings: Settings,
-        agent_pool: AgentPool,
-        helper: Helper,
-        pane_factory: Callable[[str], TmuxPane],
         project_root: Path,
         quota: QuotaStore,
         clock: Clock,
@@ -333,9 +284,6 @@ class TaskFlow:
         self._escalations = escalations
         self._titles = titles
         self._settings = settings
-        self._agent_pool = agent_pool
-        self._helper = helper
-        self._pane_factory = pane_factory
         self._project_root = project_root
         self._quota = quota
         self._clock = clock
@@ -343,6 +291,7 @@ class TaskFlow:
         self._runs = runs
         self._recovery_questions: dict[str, str] = {}
         self._force_handoff: set[str] = set()
+        self._continue_next: set[str] = set()
         self._integration_context: dict[str, str] = {}
 
     async def run(self, task_id: str) -> None:
@@ -496,49 +445,25 @@ class TaskFlow:
         template: PromptName,
         kind: ReportKind,
     ) -> tuple[Task, ImplementationReport | Verdict]:
-        execution: _TurnExecution | None = None
-        current = task
-        counters = TurnCounters()
-        try:
-            execution = await self._run_turn(
-                current,
-                Step.INTEGRATE,
-                role_override=role,
-                template_override=template,
-                kind_override=kind,
-            )
-            while True:
-                if isinstance(execution.result, Completed):
-                    await self._close_execution(execution)
-                    await self._clear_intervention(current.id, role)
-                    report = execution.result.report
-                    if isinstance(report, ImplementationReport | Verdict):
-                        self._emit_turn_completed(current, report, execution)
-                        return current, report
-                    message = f"{current.id} integration turn returned an unexpected report"
-                    raise ShikiruError(message)
-                current, counters, stopped, continued = await self._recover(
-                    current,
-                    Step.INTEGRATE,
-                    execution,
-                    counters,
-                    role_override=role,
-                )
-                if stopped:
-                    raise _IntegrationTurnStopped
-                if continued is not None:
-                    execution = continued
-                    continue
-                execution = await self._run_turn(
-                    current,
-                    Step.INTEGRATE,
-                    role_override=role,
-                    template_override=template,
-                    kind_override=kind,
-                )
-        finally:
-            if execution is not None:
-                await self._close_execution(execution)
+        current, _, execution, stopped = await self._run_until_completed(
+            task,
+            Step.INTEGRATE,
+            TurnCounters(),
+            role_override=role,
+            template_override=template,
+            kind_override=kind,
+        )
+        if stopped or execution is None:
+            raise _IntegrationTurnStopped
+        if not isinstance(execution.result, Completed):
+            message = f"{current.id} integration turn completed without a report"
+            raise ShikiruError(message)
+        report = execution.result.report
+        if isinstance(report, ImplementationReport | Verdict):
+            self._emit_turn_completed(current, report, execution)
+            return current, report
+        message = f"{current.id} integration turn returned an unexpected report"
+        raise ShikiruError(message)
 
     def _integration_metadata(self, task: Task) -> IntegrationMetadata:
         history = load_history(run_dir(self._project_root, task.id))
@@ -557,15 +482,6 @@ class TaskFlow:
         history = load_history(run_dir(self._project_root, task.id))
         return history[-1][1] if history else None
 
-    async def _clear_intervention(self, task_id: str, role: Role) -> None:
-        clear_intervention(self._tasks, self._events, task_id)
-        self._sessions.clear_intervention(task_id, role)
-        await self._titles.refresh(self._require_task(task_id))
-
-    def _intervention_active(self, task_id: str) -> bool:
-        task = self._tasks.get(task_id)
-        return task is not None and Hold.INTERVENTION in task.holds
-
     async def _run_step(
         self, task: Task, step: Step, counters: TurnCounters
     ) -> tuple[Task, TurnCounters, bool]:
@@ -581,35 +497,62 @@ class TaskFlow:
     async def _run_step_turn(
         self, task: Task, step: Step, counters: TurnCounters
     ) -> tuple[Task, TurnCounters, bool]:
-        execution: _TurnExecution | None = None
-        try:
-            execution = await self._run_turn(task, step)
-            while True:
-                result = execution.result
-                if not isinstance(result, Completed):
-                    task, counters, should_return, continued = await self._recover(
-                        task, step, execution, counters
-                    )
-                    if should_return:
-                        return task, counters, True
-                    if continued is not None:
-                        execution = continued
-                    else:
-                        recovery_step = task.step
-                        if recovery_step is None:
-                            message = f"{task.id} recovery left the task with no step"
-                            raise ShikiruError(message)
-                        task = self._require_task(task.id)
-                        if self._step_blocked(task):
-                            return task, counters, True
-                        step = recovery_step
-                        execution = await self._run_turn(task, step)
-                    continue
-                await self._close_execution(execution)
-                return await self._complete_step_turn(task, step, execution)
-        finally:
-            if execution is not None:
-                await self._close_execution(execution)
+        task, counters, execution, stopped = await self._run_until_completed(task, step, counters)
+        if stopped:
+            return task, counters, True
+        if execution is None:
+            message = f"{task.id} turn loop completed without an execution"
+            raise ShikiruError(message)
+        return await self._complete_step_turn(task, step, execution)
+
+    async def _run_until_completed(
+        self,
+        task: Task,
+        step: Step,
+        counters: TurnCounters,
+        *,
+        role_override: Role | None = None,
+        template_override: PromptName | None = None,
+        kind_override: ReportKind | None = None,
+    ) -> tuple[Task, TurnCounters, _TurnExecution | None, bool]:
+        current = task
+        current_step = step
+        execution = await self._run_turn(
+            current,
+            current_step,
+            role_override=role_override,
+            template_override=template_override,
+            kind_override=kind_override,
+        )
+        while not isinstance(execution.result, Completed):
+            current, counters, stopped, continued = await self._recover(
+                current,
+                current_step,
+                execution,
+                counters,
+                role_override=role_override,
+            )
+            if stopped:
+                return current, counters, None, True
+            if continued is not None:
+                execution = continued
+                continue
+            next_step = current.step
+            if next_step is None:
+                message = f"{current.id} recovery left the task with no step"
+                raise ShikiruError(message)
+            current = self._require_task(current.id)
+            if self._step_blocked(current):
+                return current, counters, None, True
+            current_step = next_step
+            execution = await self._run_turn(
+                current,
+                current_step,
+                role_override=role_override,
+                template_override=template_override,
+                kind_override=kind_override,
+            )
+        return current, counters, execution, False
 
     async def _complete_step_turn(
         self, task: Task, step: Step, execution: _TurnExecution
@@ -619,7 +562,6 @@ class TaskFlow:
             message = f"{task.id} completed-step handler received {type(result).__name__}"
             raise ShikiruError(message)
         outcome = result.report
-        await self._clear_intervention(task.id, ACTING_ROLE[step])
         self._emit_turn_completed(task, outcome, execution)
         if step is Step.VERIFY and isinstance(outcome, Verdict) and outcome.decision == "accept":
             outcome = await self._reject_uncommitted(task, outcome, execution.turn_dir)
@@ -649,36 +591,13 @@ class TaskFlow:
         role_override: Role | None = None,
     ) -> tuple[Task, TurnCounters, bool, _TurnExecution | None]:
         result = execution.result
-        if isinstance(result, Stalled) and self._intervention_active(task.id):
-            return self._require_task(task.id), counters, True, None
         self._emit_turn_failed(task, step, result)
         role = role_override if role_override is not None else ACTING_ROLE[step]
         policy = self._recovery_policy(
             task, role, quota_wait_exhausted=execution.quota_wait_exhausted
         )
         action = decide(result, counters, policy)
-        if isinstance(action, ClassifyScreen):
-            classification = await self._classify_screen(task, role, result)
-            counters = dataclasses.replace(counters, stall_recoveries=counters.stall_recoveries + 1)
-            if isinstance(classification, Unrecoverable):
-                action = Escalate(EscalationReason.AGENT_STUCK)
-            else:
-                self._emit_helper_action(task, classification)
-                policy = self._recovery_policy(task, role)
-                action = decide_stall(
-                    classification,
-                    role,
-                    frozenset(
-                        self._agent_pool.get(pick_rung(task, role, self._settings).agent).keys.safe
-                    ),
-                    counters,
-                    policy,
-                )
-                if isinstance(action, Consult):
-                    self._recovery_questions[task.id] = classification.text
-                if classification.state is ScreenState.QUOTA:
-                    self._block_quota(task, role, classification.resets_at)
-        elif isinstance(result, Failed) and result.kind is FailureKind.QUOTA:
+        if isinstance(result, Failed) and result.kind is FailureKind.QUOTA:
             self._block_quota(task, role, result.resets_at)
         updated, should_return, counters = await self._apply_recovery(
             task,
@@ -725,50 +644,36 @@ class TaskFlow:
                 updated = dataclasses.replace(
                     execution,
                     result=terminal,
-                    quota_wait_exhausted=(
-                        isinstance(terminal, Failed) and terminal.kind is FailureKind.QUOTA
-                    ),
+                    quota_wait_exhausted=True,
                 )
             else:
-                updated = await self._resume_execution(execution)
+                self._continue_next.add(task.id)
+                updated = self._require_task(task.id)
         elif isinstance(action, Backoff):
-            await self._close_execution(execution)
             await self._clock.sleep(action.delay.total_seconds())
             updated = self._require_task(task.id)
             next_counters = dataclasses.replace(
                 counters, unavailable_retries=counters.unavailable_retries + 1
             )
         elif isinstance(action, RetryTurn):
-            await self._close_execution(execution)
             next_counters = dataclasses.replace(counters, other_retries=counters.other_retries + 1)
-        elif isinstance(action, Relaunch):
-            await self._close_execution(execution)
-            await self._sessions.ensure(task, role)
+        elif isinstance(action, ResumeTurn):
+            self._continue_next.add(task.id)
             updated = self._require_task(task.id)
-            next_counters = dataclasses.replace(counters, relaunches=counters.relaunches + 1)
+            next_counters = dataclasses.replace(
+                counters,
+                stall_recoveries=counters.stall_recoveries + 1,
+            )
         elif isinstance(action, Handoff):
-            await self._close_execution(execution)
             self._force_handoff.add(task.id)
-            await self._sessions.handoff(task, role)
             updated = self._require_task(task.id)
             next_counters = dataclasses.replace(
                 counters, context_handoffs=counters.context_handoffs + 1
             )
         elif isinstance(action, NextRung):
-            await self._close_execution(execution)
             return await self._apply_next_rung(task, step, role, result, action)
         else:
-            if not isinstance(action, KeepWaiting | SendKeys):
-                await self._close_execution(execution)
-            return await self._apply_recovery_secondary(
-                task,
-                step,
-                role,
-                execution=execution,
-                result=result,
-                counters=counters,
-                action=action,
-            )
+            return await self._raise_recovery_escalation(task, step, role, action.reason, result)
         return updated, False, next_counters
 
     async def _apply_next_rung(
@@ -785,62 +690,6 @@ class TaskFlow:
             else EscalationReason.LADDER_EXHAUSTED
         )
         return await self._raise_recovery_escalation(task, step, role, reason, result)
-
-    async def _apply_recovery_secondary(
-        self,
-        task: Task,
-        step: Step,
-        role: Role,
-        *,
-        execution: _TurnExecution,
-        result: TurnResult,
-        counters: TurnCounters,
-        action: Action,
-    ) -> tuple[Task | _TurnExecution, bool, TurnCounters]:
-        if isinstance(action, ClassifyScreen):
-            message = f"{task.id} recovery classification was not resolved"
-            raise ShikiruError(message)
-        if isinstance(action, KeepWaiting):
-            self._sessions.rearm_stall_detection(task.id, role)
-            await self._clock.sleep(self._settings.orchestration.poll_seconds)
-            if self._sessions.launch_pending(task.id, role):
-                await self._close_execution(execution)
-                return self._require_task(task.id), False, counters
-            return await self._resume_execution(execution), False, counters
-        if isinstance(action, SendKeys):
-            return await self._apply_recovery_keys(task, role, execution, counters, action.keys)
-        if isinstance(action, Consult):
-            self._recovery_questions.setdefault(task.id, "")
-            base = Transition.stay(task, step=Step.CONSULT, status=task.status)
-            self._tasks.apply_transition(task.id, base)
-            updated = self._require_task(task.id)
-            await self._titles.refresh(updated)
-            return updated, False, counters
-        if isinstance(action, Escalate):
-            return await self._raise_recovery_escalation(task, step, role, action.reason, result)
-        message = f"unsupported recovery action {action!r}"
-        raise ShikiruError(message)
-
-    async def _apply_recovery_keys(
-        self,
-        task: Task,
-        role: Role,
-        execution: _TurnExecution,
-        counters: TurnCounters,
-        keys: tuple[str, ...],
-    ) -> tuple[Task | _TurnExecution, bool, TurnCounters]:
-        pane_id = task.panes.get(role)
-        if pane_id is None:
-            message = f"{task.id} has no pane assigned for {role.value} recovery"
-            raise ShikiruError(message)
-        try:
-            await self._pane_factory(pane_id).send_keys(*keys)
-        except CommandFailed:
-            return dataclasses.replace(execution, result=PaneDied()), False, counters
-        if self._sessions.launch_pending(task.id, role):
-            await self._close_execution(execution)
-            return self._require_task(task.id), False, counters
-        return await self._resume_execution(execution), False, counters
 
     async def _raise_recovery_escalation(
         self, task: Task, step: Step, role: Role, reason: EscalationReason, result: TurnResult
@@ -902,9 +751,7 @@ class TaskFlow:
             data={"agent": agent, "until": until.isoformat(), "reason": "quota"},
         )
 
-    async def _wait_for_quota(
-        self, task: Task, role: Role, until: datetime
-    ) -> Failed | PaneDied | Stalled | None:
+    async def _wait_for_quota(self, task: Task, role: Role, until: datetime) -> Failed | None:
         agent = pick_rung(task, role, self._settings).agent
         deadline = self._clock.now() + timedelta(
             seconds=self._settings.orchestration.timeouts.max_quota_wait
@@ -930,54 +777,7 @@ class TaskFlow:
                 message=f"{agent} quota block cleared",
                 data={"agent": agent},
             )
-            return await self._send_injected_line(task, role, CONTINUE_INPUT)
-
-    async def _send_injected_line(
-        self, task: Task, role: Role, line: str
-    ) -> PaneDied | Stalled | None:
-        try:
-            return await self._sessions.inject_line(task, role, line)
-        except ShikiruError:
-            return PaneDied()
-
-    async def _classify_screen(
-        self, task: Task, role: Role, result: TurnResult
-    ) -> ScreenClassification | Unrecoverable:
-        if not isinstance(result, Stalled):
-            message = f"{task.id} received a non-stalled result for screen classification"
-            raise ShikiruError(message)
-        helper_rung = pick_rung(task, Role.HELPER, self._settings)
-        keys = self._agent_pool.get(pick_rung(task, role, self._settings).agent).keys.safe
-        try:
-            return await self._helper.classify_screen(
-                result.screen,
-                keys,
-                model=helper_rung.model,
-                effort=helper_rung.effort,
-                cwd=task_root(self._project_root, task.id),
-                timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:  # noqa: BLE001
-            return Unrecoverable(unrecoverable=str(error))
-
-    def _emit_helper_action(self, task: Task, classification: ScreenClassification) -> None:
-        self._events.append(
-            EventKind.HELPER_ACTION,
-            task_id=task.id,
-            message=f"screen classified as {classification.state.value}",
-            data={
-                "state": classification.state.value,
-                "keys": classification.keys,
-                "text": classification.text,
-                "resets_at": (
-                    classification.resets_at.isoformat()
-                    if classification.resets_at is not None
-                    else None
-                ),
-            },
-        )
+            return None
 
     def _emit_turn_failed(self, task: Task, step: Step, result: TurnResult) -> None:
         if isinstance(result, Failed):
@@ -985,7 +785,7 @@ class TaskFlow:
             data = {"kind": result.kind.value, "resets_at": result.resets_at}
         elif isinstance(result, Stalled):
             message = "agent stalled"
-            data = {"screen": result.screen}
+            data = {}
         elif isinstance(result, ProtocolError):
             message = "agent protocol error"
             data = {}
@@ -1022,7 +822,7 @@ class TaskFlow:
             attempted=attempted,
             reports=_history_context(history),
             facts=await self._escalation_facts(task),
-            pane_tail=await self._pane_tail(task, step, role_override=role),
+            view_tail=await self._view_tail(task, step, role_override=role),
         )
 
     async def _escalation_facts(self, task: Task) -> str:
@@ -1033,17 +833,18 @@ class TaskFlow:
         except ShikiruError as error:
             return FACTS_UNAVAILABLE.format(error=error)
 
-    async def _pane_tail(
+    async def _view_tail(
         self, task: Task, step: Step | None, *, role_override: Role | None = None
     ) -> str:
         role = role_override
         if role is None and step is not None:
             role = ACTING_ROLE[step]
-        pane_id = task.panes.get(role) if role is not None else None
-        if pane_id is None:
+        if role is None:
             return ""
-        pane = self._pane_factory(pane_id)
-        return await pane.capture_tail(ESCALATION_PANE_TAIL_LINES)
+        path = role_dir(run_dir(self._project_root, task.id), role.value) / "view.jsonl"
+        if not path.is_file():
+            return ""
+        return "\n".join(path.read_text().splitlines()[-ESCALATION_PANE_TAIL_LINES:])
 
     async def _run_turn(
         self,
@@ -1055,126 +856,70 @@ class TaskFlow:
         kind_override: ReportKind | None = None,
     ) -> _TurnExecution:
         role = role_override if role_override is not None else ACTING_ROLE[step]
-        session = await self._sessions.ensure(task, role)
-        fresh = self._sessions.launched_fresh(task.id, role)
-
-        def intervention_active() -> bool:
-            return self._intervention_active(task.id)
+        force_new = task.id in self._force_handoff
+        selection = self._sessions.session_for(task, role, force_new=force_new)
 
         task_run_dir = run_dir(self._project_root, task.id)
         history = load_history(task_run_dir)
+        continue_turn = task.id in self._continue_next
+        if continue_turn:
+            template_override = PromptName.CONTINUE
         plan = await self._plan_turn(
             task,
             step,
             history,
-            fresh=fresh,
+            fresh=selection.handoff and not continue_turn,
             template_override=template_override,
             kind_override=kind_override,
         )
-        rung = pick_rung(task, role, self._settings)
-        run = self._runs.get_live(task.id, role)
-        if run is None:
-            message = f"{task.id} has no live {role.value} run"
-            raise ShikiruError(message)
-        usage_before = await session.usage()
-        helper_rung = pick_rung(task, Role.HELPER, self._settings)
-        spec = TurnSpec(
+        if continue_turn:
+            self._continue_next.discard(task.id)
+        turn_request = TurnRequest(
             step=step,
             iteration=task.iteration,
             kind=plan.kind,
             template=plan.template,
             context=plan.context,
-            prompt_prefix=self._settings.agents[rung.agent].prompt_prefix,
             facts=plan.facts,
-            cwd=task_root(self._project_root, task.id),
-            helper_model=helper_rung.model,
-            helper_effort=helper_rung.effort,
-            helper_timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
         )
-        pane = self._pane_factory(task.panes[role])
-        queue = self._sessions.subscribe(task.id, role)
-        try:
-            injected = self._sessions.injected_lines(task.id, role)
+        usage_before = selection.run.usage
+        self._events.append(
+            EventKind.TURN_STARTED,
+            task_id=task.id,
+            message=f"{task.id} {role.value} turn started",
+            data={
+                "step": step.value,
+                "role": role.value,
+                "iteration": task.iteration,
+                "agent": selection.rung.agent,
+                "model": selection.rung.model,
+            },
+        )
 
-            def on_nudge() -> None:
-                self._events.append(
-                    EventKind.NUDGE,
-                    task_id=task.id,
-                    message=f"{task.id} {role.value} nudge",
-                    data={"step": step.value, "role": role.value},
-                )
-
+        def on_nudge() -> None:
             self._events.append(
-                EventKind.TURN_STARTED,
+                EventKind.NUDGE,
                 task_id=task.id,
-                message=f"{task.id} {role.value} turn started",
-                data={
-                    "step": step.value,
-                    "role": role.value,
-                    "iteration": task.iteration,
-                    "agent": rung.agent,
-                    "model": rung.model,
-                },
+                message=f"{task.id} {role.value} nudge",
+                data={"step": step.value, "role": role.value},
             )
-            result = await self._turns.run(
-                session,
-                pane,
-                queue,
-                run_dir=task_run_dir,
-                role=role,
-                spec=spec,
-                helper=self._helper,
-                injected=injected,
-                intervention_active=intervention_active,
-                on_nudge=on_nudge,
-            )
-            usage_after = await session.usage()
-            turn_dir = (role_dir(task_run_dir, role.value) / CURRENT_TURN_LINK_NAME).resolve()
-            return _TurnExecution(
-                result=result,
-                task_id=task.id,
-                role=role,
-                pane=pane,
-                signals=queue,
-                turn_dir=turn_dir,
-                spec=spec,
-                helper=self._helper,
-                session=session,
-                prompt_path=turn_dir / PROMPT_FILENAME,
-                injected=injected,
-                intervention_active=intervention_active,
-                rung=rung,
-                usage_before=usage_before,
-                usage_after=usage_after,
-                on_nudge=on_nudge,
-            )
-        except asyncio.CancelledError:
-            self._sessions.unsubscribe(task.id, role, queue)
-            raise
-        except Exception:
-            self._sessions.unsubscribe(task.id, role, queue)
-            raise
 
-    async def _resume_execution(self, execution: _TurnExecution) -> _TurnExecution:
-        result = await self._turns.resume(
-            execution.pane,
-            execution.signals,
-            turn_dir=execution.turn_dir,
-            spec=execution.spec,
-            helper=execution.helper,
-            prompt_path=execution.prompt_path,
-            injected=execution.injected,
-            intervention_active=execution.intervention_active,
-            on_nudge=execution.on_nudge,
+        result, turn_dir, selection = await self._turns.run(
+            task, role, selection, turn_request, on_nudge=on_nudge
         )
-        usage_after = await execution.session.usage()
-        return dataclasses.replace(execution, result=result, usage_after=usage_after)
-
-    async def _close_execution(self, execution: _TurnExecution) -> None:
-        if execution.closed:
-            return
-        self._sessions.unsubscribe(execution.task_id, execution.role, execution.signals)
-        execution.closed = True
+        live_run = self._runs.get_live(task.id, role)
+        if live_run is None:
+            message = f"{task.id} {role.value} run disappeared after its turn"
+            raise ShikiruError(message)
+        return _TurnExecution(
+            result=result,
+            task_id=task.id,
+            role=role,
+            turn_dir=turn_dir,
+            rung=selection.rung,
+            usage_before=usage_before,
+            usage_after=live_run.usage,
+        )
 
     async def _plan_turn(
         self,

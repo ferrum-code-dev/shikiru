@@ -14,7 +14,7 @@ from shikiru.domain.commands import (
     Submit,
 )
 from shikiru.domain.events import EventKind
-from shikiru.domain.steps import ACTING_ROLE, Transition
+from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Status
 from shikiru.engine.handlers.base import (
     HandlerContext,
@@ -27,8 +27,6 @@ from shikiru.errors import CommandRejectedError
 
 if TYPE_CHECKING:
     from shikiru.domain.commands import Command
-
-CONTINUE_INPUT = "continue"
 
 
 class SubmitHandler:
@@ -85,7 +83,6 @@ class PauseHandler:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
         if command.now and task.status in (Status.RUNNING, Status.INTEGRATING):
-            await self._context.sessions.interrupt(task)
             await self._context.cancel_task(task.id)
         if Hold.PAUSED not in task.holds:
             self._context.tasks.set_holds(task.id, task.holds | {Hold.PAUSED})
@@ -100,7 +97,7 @@ class PauseHandler:
 
 
 class ResumeHandler:
-    """Clear task holds and continue an operator-interrupted live session."""
+    """Clear task holds and resume the task flow."""
 
     command_type: ClassVar[object] = Resume
 
@@ -121,10 +118,6 @@ class ResumeHandler:
                 message=f"{task.id} {hold.value} hold cleared",
                 data={"hold": hold.value},
             )
-        if Hold.INTERVENTION in holds and task.step is not None:
-            role = ACTING_ROLE[task.step]
-            self._context.sessions.clear_intervention(task.id, role)
-            await self._context.sessions.inject_line(task, role, CONTINUE_INPUT)
         if holds & {Hold.PAUSED, Hold.INTERVENTION} and task.status in (
             Status.RUNNING,
             Status.INTEGRATING,
@@ -148,7 +141,6 @@ class CancelHandler:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
         if task.status in (Status.RUNNING, Status.INTEGRATING):
-            await self._context.sessions.interrupt(task)
             await self._context.cancel_task(task.id)
         current = self._context.tasks.get(task.id)
         if current is None:
@@ -190,7 +182,6 @@ class RetryHandler:
             message = f"{task.id} is already {task.status.value}"
             raise CommandRejectedError(message)
         if task.status in (Status.RUNNING, Status.INTEGRATING):
-            await self._context.sessions.interrupt(task)
             await self._context.cancel_task(task.id)
         current = self._context.tasks.get(task.id)
         if current is None:

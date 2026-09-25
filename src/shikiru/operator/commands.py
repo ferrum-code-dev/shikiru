@@ -17,7 +17,6 @@ from shikiru.domain.commands import (
     Resolve,
     Resume,
     Retry,
-    Say,
     SetRung,
     Stop,
     Submit,
@@ -161,10 +160,6 @@ class OperatorCommands:
     async def set_rung(self, task_id: str, role: Role, rung: Rung) -> Ack:
         """Queue a `SetRung` command."""
         return await self.send(SetRung(task_id=task_id, role=role, rung=rung))
-
-    async def send_message(self, task_id: str, role: Role, text: str) -> Ack:
-        """Queue a `Say` command for one live role session."""
-        return await self.send(Say(task_id=task_id, role=role, text=text))
 
     async def resolve_escalation(self, escalation_id: str, resolution: Resolution) -> Ack:
         """Queue a `Resolve` command for one open escalation."""

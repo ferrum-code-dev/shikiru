@@ -43,10 +43,9 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 1. **Repository**: the project root must be a git repository root (`git rev-parse --show-toplevel` equals it); otherwise `init` fails naming the path (D20). `base` = the current branch.
 2. **Agents**: installed plugins whose `doctor()` passes. Choose ladders for leader, implementer and helper.
 3. **Trackers**: glob `tasks/*.md`, `**/plan*.md`, `**/todo*.md`.
-4. **Prompt prefix per agent** (suggested when a `using-*` skill is found).
-5. **Caches**: existing ignored dirs among common cache names, plus a CoW support check.
-6. **Parallelism and integration mode.**
-7. **Finish**: write `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor`.
+4. **Caches**: existing ignored dirs among common cache names, plus a CoW support check.
+5. **Parallelism and integration mode.**
+6. **Finish**: write `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor`.
 
 ## 4. MCP (`shikiru mcp`)
 

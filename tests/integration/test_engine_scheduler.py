@@ -162,7 +162,6 @@ async def scheduler_env(
         settings=settings,
         project_root=tmp_path,
         events=events,
-        clock=clock,
     )
     roots = task_root_builder(SubprocessRunner(), tmp_path)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))

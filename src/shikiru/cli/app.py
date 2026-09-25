@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from rich.console import Console
 
 from shikiru.agents.contracts import parse_rung
-from shikiru.agents.sdk.hook_cli import hook_command
 from shikiru.bootstrap import (
     OperatorServices,
     build_doctor,
@@ -51,7 +50,6 @@ PROBE_OPTION = typer.Option("--probe", help="Run live agent contract checks.")
 
 app = typer.Typer(name=PACKAGE_NAME, no_args_is_help=True)
 app.command(name="report", hidden=True)(report_command)
-app.command(name="hook", hidden=True)(hook_command)
 
 
 def _print_version(*, show: bool) -> None:

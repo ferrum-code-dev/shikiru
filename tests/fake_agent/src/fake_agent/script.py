@@ -9,8 +9,19 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from shikiru.agents.contracts import FailureKind
 
 
+class QuotaWindowStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    used_pct: float
+    resets_at: str | None = None
+    observed_at: str
+
+
 class _StepModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    quota_windows: list[QuotaWindowStep] = Field(default_factory=list)
 
 
 class NewTaskSpec(_StepModel):
@@ -31,6 +42,7 @@ class AcceptStep(_StepModel):
     kind: Literal["accept"] = "accept"
     new_tasks: list[NewTaskSpec] = Field(default_factory=list)
     uncommitted: str = ""
+    corrupt_report: bool = False
 
 
 class SupersedeStep(_StepModel):
