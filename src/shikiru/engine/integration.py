@@ -230,8 +230,6 @@ class Integrator:
             base_sha = await self._git.rev_parse(task_dir, repo.base)
             branch_sha = await self._git.rev_parse(task_dir, repo.branch)
             if base_sha != branch_sha and await self._try_rebase(task_dir, repo.base):
-                await self._git.rebase_abort(task_dir)
-                await self._try_rebase(task_dir, repo.base)
                 current = await resolve_conflicts(current, lambda: self._continue_rebase(task_dir))
                 await self._continue_rebase(task_dir)
             raw_summary = await self._strategy.merge(self._project_root, task_dir, repo)

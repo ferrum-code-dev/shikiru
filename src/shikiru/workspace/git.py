@@ -131,10 +131,6 @@ class Git:
         """Rebase the current branch onto `base`, raising when git reports a conflict."""
         await self._run(repo_dir, "rebase", base)
 
-    async def rebase_abort(self, repo_dir: Path) -> None:
-        """Abort the current rebase, preserving the branch before the attempt."""
-        await self._run(repo_dir, "rebase", "--abort")
-
     async def rebase_continue(self, repo_dir: Path) -> None:
         """Continue a rebase after its conflicts have been resolved and staged."""
         await self._run(repo_dir, "-c", "core.editor=true", "rebase", "--continue")
