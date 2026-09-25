@@ -282,9 +282,8 @@ def test_transaction_composes_so_a_later_failure_rolls_back_nested_writes(
     assert reloaded_dependent.depends_on == [old.id]
 
 
-@pytest.mark.parametrize("reference", ["#0", "#3", "T-999"])
-def test_scope_change_rejects_invalid_dependencies_before_mutating(
-    connection: Connection, reference: str
+def test_scope_change_rejects_missing_task_dependency_before_mutating(
+    connection: Connection,
 ) -> None:
     clock = FakeClock(START)
     store = TaskStore(connection, clock)
@@ -308,7 +307,7 @@ def test_scope_change_rejects_invalid_dependencies_before_mutating(
             transition,
             [
                 NewTask(title="first", request="first"),
-                NewTask(title="second", request="second", depends_on=[reference]),
+                NewTask(title="second", request="second", depends_on=["T-999"]),
             ],
             origin=TaskOrigin.LEADER,
         )

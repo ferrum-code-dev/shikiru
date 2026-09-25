@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import TypeAdapter
 
 from shikiru.agents.contracts import Rung
+from shikiru.domain.reports import SIBLING_REFERENCE_PREFIX, resolve_dependency
 from shikiru.domain.tasks import (
     ACTIVE_STATUSES,
     Counters,
@@ -110,12 +111,6 @@ def _fetch_depends_on(
 def _rows_to_tasks(connection: sqlite3.Connection, rows: Sequence[sqlite3.Row]) -> list[Task]:
     deps = _fetch_depends_on(connection, [row["id"] for row in rows])
     return [_row_to_task(row, deps[row["id"]]) for row in rows]
-
-
-def _resolve_dependency(reference: str, child_ids: Sequence[str]) -> str:
-    if reference.startswith("#"):
-        return child_ids[int(reference[1:]) - 1]
-    return reference
 
 
 def fetch_task(connection: sqlite3.Connection, task_id: str) -> Task | None:
@@ -226,7 +221,7 @@ class TaskStore:
                 self.set_slot(task_id, None)
             child_ids = [self._next_task_id() for _ in new_tasks]
             resolved_dependencies = [
-                [_resolve_dependency(ref, child_ids) for ref in new_task.depends_on]
+                [resolve_dependency(ref, child_ids) for ref in new_task.depends_on]
                 for new_task in new_tasks
             ]
             child_dependencies: list[tuple[str, str]] = []
@@ -300,9 +295,11 @@ class TaskStore:
         return f"{TASK_ID_PREFIX}{next_sequence(self._connection, TASK_SEQUENCE)}"
 
     def _validate_scope_references(self, new_tasks: Sequence[NewTask]) -> None:
-        sibling_count = len(new_tasks)
         existing_references = {
-            ref for new_task in new_tasks for ref in new_task.depends_on if not ref.startswith("#")
+            ref
+            for new_task in new_tasks
+            for ref in new_task.depends_on
+            if not ref.startswith(SIBLING_REFERENCE_PREFIX)
         }
         if existing_references:
             placeholders = ", ".join("?" for _ in existing_references)
@@ -316,17 +313,6 @@ class TaskStore:
                 reference = min(missing)
                 message = f"scope change dependency {reference!r} does not exist"
                 raise UsageError(message)
-        for new_task in new_tasks:
-            for ref in new_task.depends_on:
-                if not ref.startswith("#"):
-                    continue
-                sibling_index = int(ref[1:])
-                if sibling_index < 1 or sibling_index > sibling_count:
-                    message = (
-                        f"scope change report-local reference {ref!r} is outside the "
-                        "report's new_tasks list"
-                    )
-                    raise UsageError(message)
 
     def set_mode(self, task_id: str, mode: Mode) -> None:
         """Persist the mode selected by a completed triage turn."""

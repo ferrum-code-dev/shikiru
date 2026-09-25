@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from enum import StrEnum, auto
-from typing import Annotated, Any, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
 
 from pydantic import Field, StringConstraints, model_validator
 
 from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import DomainModel, Mode
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 TRIAGE_TITLE_MAX_LENGTH = 60
 
@@ -21,9 +24,16 @@ REPORT_FILENAME = "report.json"
 HELPER_REPORT_FILENAME = "helper.json"
 
 SIBLING_REFERENCE_PREFIX = "#"
-DEPENDS_ON_PATTERN = r"^(T-\d+|#\d+)$"
+DEPENDS_ON_PATTERN = rf"^(T-\d+|{SIBLING_REFERENCE_PREFIX}\d+)$"
 
 _TaskReference = Annotated[str, StringConstraints(pattern=DEPENDS_ON_PATTERN)]
+
+
+def resolve_dependency(reference: str, sibling_ids: Sequence[str]) -> str:
+    """Replace a report-local sibling reference with the assigned task id."""
+    if reference.startswith(SIBLING_REFERENCE_PREFIX):
+        return sibling_ids[int(reference.removeprefix(SIBLING_REFERENCE_PREFIX)) - 1]
+    return reference
 
 
 def _require_iff(*, condition: bool, present: bool, field: str, rule: str) -> None:

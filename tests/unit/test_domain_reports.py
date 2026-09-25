@@ -102,6 +102,11 @@ _INVALID_CASES: list[tuple[type[BaseModel], dict[str, Any], str]] = [
         "new_tasks",
     ),
     (
+        PlanReport,
+        {"summary": "P", "commits": [], "new_tasks": [_new_task(depends_on=["#0"])]},
+        "new_tasks",
+    ),
+    (
         Verdict,
         _verdict(decision="supersede", new_tasks=[_new_task(depends_on=["#3"])]),
         "new_tasks",
