@@ -9,9 +9,7 @@ from shikiru.domain.tasks import Role, Task
 from shikiru.errors import ShikiruError
 from shikiru.paths import task_root
 from shikiru.tmux.client import FORMAT_PANE_ID
-from shikiru.tmux.decorator import PaneDecorator, render_title
-from shikiru.tmux.layout import LayoutBuilder
-from shikiru.tmux.session import SessionView
+from shikiru.tmux.decorator import render_title
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -20,6 +18,9 @@ if TYPE_CHECKING:
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
     from shikiru.tmux.client import Tmux
+    from shikiru.tmux.decorator import PaneDecorator
+    from shikiru.tmux.layout import LayoutBuilder
+    from shikiru.tmux.session import SessionView
 
 _SHELL_ARGV = ("/bin/sh",)
 _LAYOUT_ROLE_NAMES = (Role.LEADER.value, Role.IMPLEMENTER.value)
@@ -34,6 +35,9 @@ class LayoutGuard:
         self,
         *,
         tmux: Tmux,
+        view: SessionView,
+        builder: LayoutBuilder,
+        decorator: PaneDecorator,
         session_target: str,
         tasks: TaskStore,
         settings: Settings,
@@ -47,8 +51,9 @@ class LayoutGuard:
         self._settings = settings
         self._project_root = project_root
         self._events = events
-        self._view = SessionView(tmux)
-        self._builder = LayoutBuilder(tmux)
+        self._view = view
+        self._builder = builder
+        self._decorator = decorator
         self._special_panes: dict[str, dict[str, str]] = {}
 
     async def ensure(self, task: Task) -> Task:
@@ -97,7 +102,7 @@ class LayoutGuard:
         self._special_panes[task.id] = {
             name: pane_id for name, pane_id in panes.items() if name in _SPECIAL_PANE_NAMES
         }
-        await self._configure_formats(window_id)
+        await self._decorator.configure_formats(window_id)
         self._tasks.set_window(task.id, window_id)
         self._tasks.set_panes(task.id, role_panes)
         updated = self._tasks.get(task.id)
@@ -178,9 +183,6 @@ class LayoutGuard:
                 continue
             await self._tmux.respawn_pane(pane_id, _SHELL_ARGV, env={}, cwd=root)
             self._record_restored(task.id, name)
-
-    async def _configure_formats(self, window_id: str) -> None:
-        await PaneDecorator(self._tmux).configure_formats(window_id)
 
     def _record_restored(self, task_id: str, pane: str) -> None:
         self._events.append(

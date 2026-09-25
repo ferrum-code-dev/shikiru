@@ -68,6 +68,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.decorator import PaneDecorator
+from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.facts import GitFacts
@@ -302,6 +303,9 @@ def build_engine(
     target = exact_target(session_name(resolved_settings.project.name))
     layout = LayoutGuard(
         tmux=resolved_tmux,
+        view=SessionView(resolved_tmux),
+        builder=LayoutBuilder(resolved_tmux),
+        decorator=decorator,
         session_target=target,
         tasks=tasks,
         settings=resolved_settings,

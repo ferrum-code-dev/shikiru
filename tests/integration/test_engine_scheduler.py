@@ -29,6 +29,8 @@ from shikiru.store.tasks import TaskStore
 from shikiru.telemetry import resources as resources_module
 from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import exact_target
+from shikiru.tmux.decorator import PaneDecorator
+from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
 from tests.support.engine import build_decorator, build_tmux
@@ -156,6 +158,9 @@ async def scheduler_env(
     tmux = build_tmux(tmux_server)
     layout = LayoutGuard(
         tmux=tmux,
+        view=SessionView(tmux),
+        builder=LayoutBuilder(tmux),
+        decorator=PaneDecorator(tmux),
         session_target=exact_target(session_name("test")),
         tasks=tasks,
         settings=settings,

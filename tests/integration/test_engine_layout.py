@@ -14,6 +14,8 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, exact_target
+from shikiru.tmux.decorator import PaneDecorator
+from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
 from tests.support.engine import build_tmux
@@ -68,6 +70,9 @@ async def _task_window(
     events = EventLog(connection, clock)
     layout = LayoutGuard(
         tmux=tmux,
+        view=SessionView(tmux),
+        builder=LayoutBuilder(tmux),
+        decorator=PaneDecorator(tmux),
         session_target=exact_target(session_name("test")),
         tasks=tasks,
         settings=settings,
