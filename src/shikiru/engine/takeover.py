@@ -63,6 +63,9 @@ class Takeover:
 
     async def take_over(self, task: Task, role: Role) -> None:
         """Stop `task`'s turn, hold it and run `role`'s session interactively in its pane."""
+        if self._runs.get_taken_over(task.id, role) is not None:
+            message = f"{task.id} {role.value} is already taken over"
+            raise CommandRejectedError(message)
         run = self._runs.get_live(task.id, role)
         if run is None or run.session_id is None:
             message = f"{task.id} has no {role.value} session to take over"

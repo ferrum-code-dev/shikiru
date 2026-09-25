@@ -150,6 +150,12 @@ async def _append_and_wait(
     return await _wait_for_command(queue.append(command), queue, clock)
 
 
+async def _submit(command: Submit, queue: CommandQueue, clock: FakeClock) -> str:
+    outcome = await _append_and_wait(command, queue, clock)
+    assert outcome.result is not None
+    return str(outcome.result["task_id"])
+
+
 def _required_task(tasks: TaskStore, task_id: str) -> Task:
     task = tasks.get(task_id)
     assert task is not None
@@ -734,14 +740,14 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
     runs = RunStore(connection, clock)
     events = EventLog(connection, clock)
     queue = CommandQueue(connection, clock)
-    first = queue.append(Submit(title="take me", request="take me", mode=Mode.IMPLEMENT))
-    second = queue.append(Submit(title="leave me", request="leave me", mode=Mode.IMPLEMENT))
     engine_task = asyncio.create_task(engine.run())
     try:
-        first_outcome = await _wait_for_command(first, queue, clock)
-        second_outcome = await _wait_for_command(second, queue, clock)
-        task_id = str(first_outcome.result["task_id"]) if first_outcome.result else ""
-        other_id = str(second_outcome.result["task_id"]) if second_outcome.result else ""
+        task_id = await _submit(
+            Submit(title="take me", request="take me", mode=Mode.IMPLEMENT), queue, clock
+        )
+        other_id = await _submit(
+            Submit(title="leave me", request="leave me", mode=Mode.IMPLEMENT), queue, clock
+        )
 
         run = await _wait_for_session(runs, clock, task_id)
         session_id = run.session_id
@@ -758,6 +764,11 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
         assert taken_run is not None
         assert taken_run.session_id == session_id
         assert events.since(0, kinds=[EventKind.TAKEN_OVER], task_id=task_id)
+        again = await _append_and_wait(
+            TakeOver(task_id=task_id, role=Role.IMPLEMENTER), queue, clock
+        )
+        assert again.status is CommandStatus.REJECTED
+        assert runs.get_taken_over(task_id, Role.IMPLEMENTER) == taken_run
 
         pane = _required_task(tasks, task_id).panes[Role.IMPLEMENTER]
         await tmux_server.run("send-keys", "-t", pane, "/exit", "Enter")
