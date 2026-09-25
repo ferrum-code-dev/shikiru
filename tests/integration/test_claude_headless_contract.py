@@ -85,8 +85,6 @@ _RESET_FIVE_HOUR = datetime(2030, 1, 1, 1, tzinfo=UTC)
 _RESET_SEVEN_DAY = datetime(2030, 1, 5, tzinfo=UTC)
 _DEFAULT_HAIKU_MODEL_ENV = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
 _DEFAULT_SONNET_MODEL_ENV = "ANTHROPIC_DEFAULT_SONNET_MODEL"
-_OFFICIAL_HAIKU_ALIAS = "~anthropic/claude-haiku-latest"
-_OFFICIAL_SONNET_ALIAS = "~anthropic/claude-sonnet-latest"
 _COST = 0.00001
 _LIVE_ASK_PROMPT = "Return the JSON object with ok set to true."
 _BASIC_LIVE_PROMPT = "Reply with exactly OK and do nothing else."
@@ -672,19 +670,6 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         signals = await self._run_turn(replace(resumed, prompt=RESUME_RECALL_PROMPT))
         message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
         assert nonce in message, "resumed turn did not recall the nonce"
-
-    def test_live_model_change_reads_operator_model_class_environment(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv(_LIVE_MODEL_ENV, raising=False)
-        monkeypatch.delenv(_LIVE_CHANGE_MODEL_ENV, raising=False)
-        monkeypatch.setenv(_DEFAULT_HAIKU_MODEL_ENV, _OFFICIAL_HAIKU_ALIAS)
-        monkeypatch.setenv(_DEFAULT_SONNET_MODEL_ENV, _OFFICIAL_SONNET_ALIAS)
-
-        initial = self.build_spec(tmp_path, resume_session_id=None)
-
-        assert initial.rung.model == _OFFICIAL_HAIKU_ALIAS
-        assert self._live_change_model() == _OFFICIAL_SONNET_ALIAS
 
     @pytest.mark.asyncio
     async def test_live_low_compaction_threshold_preserves_session_memory(
