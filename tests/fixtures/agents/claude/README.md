@@ -3,7 +3,10 @@
 Most `turn_*.jsonl` files are synthetic protocol scenarios. The genuine
 OpenRouter evidence is described below: a successful stream-json capture and a
 normalized replay excerpt from the report-contract check. Both redact private
-content and credentials.
+content and credentials. OpenRouter's [Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration)
+documents its native Anthropic-compatible API setup and Claude model aliases.
+The report check therefore counts as a successful Claude Code API-access live
+check; a direct Anthropic API key capture is not a separate requirement.
 
 On 2026-09-25, the default sandbox could not resolve the OpenRouter host
 (`gaierror`). A host-only probe with network escalation returned HTTP 200. One
@@ -16,7 +19,11 @@ model, or stream-protocol failure was reproduced after escalation.
 capture from Claude Code 2.1.281 through the configured OpenRouter environment.
 It keeps protocol and usage fields while redacting session and model
 identifiers, response text, timing data, and exact cost. It contains no prompt,
-credentials, or raw headers.
+credentials, or raw headers. A separate content-free alias test produced a
+generation record identifying Amazon Bedrock as the serving provider.
+OpenRouter's guide says Claude Code is only guaranteed to work with the
+Anthropic first-party provider, so these captures establish the observed
+requests only and do not establish that all routes behave the same way.
 
 `turn_openrouter_report_live_redacted.jsonl` is a normalized replay excerpt from
 a successful first-turn report contract test through OpenRouter. The live test
@@ -39,9 +46,13 @@ subprocess `stream-json` capture. It records a real manual compaction in a
 Claude session; it does not verify Shikiru `/compact` after context overflow.
 
 The remaining `turn_*.jsonl` fixtures are synthetic protocol scenarios. They
-cover provider-reported quota, list-priced usage, OpenRouter's unpriced basis,
-rate limiting, credit exhaustion, and an unrecognised model. Their names
-describe stream behavior, not Shikiru access modes. Other live checks and
-`/compact` after context overflow remain unverified. Genuine subscription and
-direct Anthropic API captures also remain unavailable. Context overflow was
-not attempted.
+cover quota windows, list-priced usage, an unknown cost basis, rate limiting,
+credit exhaustion, and an unrecognised model. The quota-window fixture is not
+evidence that subscription-style windows are emitted during API access; no
+genuine `rate_limit_event` capture is present. Their names describe stream
+behavior, not Shikiru access modes. The genuine OpenRouter capture reports
+`contextWindow=200000` with `costBasis=unknown`, and Shikiru leaves
+`context_used_pct` unset. OpenRouter's guide says Claude Code assumes a 200k
+window unless `[1m]` is selected, so the captured value does not establish a
+provider-measured context window. Other live checks and `/compact` after
+context overflow remain unverified. Context overflow was not attempted.

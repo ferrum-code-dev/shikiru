@@ -81,7 +81,7 @@ Prompts call Shikiru back only through `shikiru_command`. Agent shells may be lo
 2. `Message`, `ToolStarted` and `ToolFinished` as the agent works; a tool runs between its `ToolStarted` and `ToolFinished`.
 3. Every stream ends with exactly one `TurnEnded` or `TurnFailed`, and then the process has exited. A process that exits without a structured result yields `TurnFailed(UNKNOWN)` with the exit status and the stderr tail.
 4. `UsageReported` carries session totals; its token counts never decrease (`context_used_pct` drops after `Compacted`).
-5. **Usage is only what the agent reports** (D21): tokens always; `cost_usd` only when the agent marks its cost as priced, else `None` with `cost_basis = "unknown"`; `context_used_pct` only from a context window the agent reports reliably, else `None`; `QuotaReported` only when the agent reports windows. `cost_basis` is `api_equivalent` for priced subscription usage and `billed` for priced API-key usage.
+5. **Usage is only what the agent reports** (D21): tokens always; `cost_usd` only when the agent marks its cost as priced, else `None` with `cost_basis = "unknown"`; `context_used_pct` only from a context window the agent reports reliably, else `None`; `QuotaReported` only when the agent reports windows. A provider's list-price estimate has `cost_basis = "api_equivalent"`; `billed` requires a provider-reported charge; otherwise use `unknown`. Plugins must not derive the basis from how access was configured.
 6. The process never waits for input: stdin is closed and no flag it is given can open a dialog.
 7. `stop()` ends the process within `TURN_STOP_GRACE` (SIGTERM, then SIGKILL); the next turn on the same `session_id` resumes the session.
 8. **Compaction.** Headless turns never compact reliably on their own, so the plugin keeps the session's context below its `compact_at_pct` option (default 80):
@@ -164,8 +164,8 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 
 **Usage**:
 - Tokens: `spec.usage` plus the turn's `result.usage`.
-- Cost: `result.total_cost_usd` (cumulative per session) only when `modelUsage.<m>.costBasis` is `"list"`; report it as `api_equivalent`, independent of how access is configured. Other bases (e.g. OpenRouter or other non-Anthropic-priced models, where the list-price estimate is wrong) → `None`, `unknown`.
-- Context: the last assistant message's input and cache tokens ÷ `modelUsage.<m>.contextWindow`, only when the cost basis is `"list"` (other providers report a fixed 200000 default).
+- Cost: `result.total_cost_usd` (cumulative per session) only when `modelUsage.<m>.costBasis` is `"list"`; report it as `api_equivalent`, independent of how access is configured. For any other cost basis, where the list-price estimate does not represent a reliable provider price, report `None`, `unknown`.
+- Context: the last assistant message's input and cache tokens ÷ `modelUsage.<m>.contextWindow` only when the cost basis is `"list"`. A CLI-assumed 200000 default is not a reliable provider-reported context window.
 
 **Compaction** (obligation 8):
 - Before a resumed turn whose `spec.usage.context_used_pct` ≥ `compact_at_pct`, the plugin first runs `claude -p "/compact" --resume <id>` with the same model and flags. Verified: a headless `/compact` emits `compact_boundary` (47,571 → 1,949 tokens), and the next turn still recalls earlier context.
