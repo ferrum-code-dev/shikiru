@@ -163,7 +163,7 @@ async def scheduler_env(
         project_root=tmp_path,
         events=events,
     )
-    roots = task_root_builder(SubprocessRunner(), tmp_path)
+    roots = task_root_builder(SubprocessRunner(), tmp_path, settings.repo)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
 
     raiser = EscalationRaiser(

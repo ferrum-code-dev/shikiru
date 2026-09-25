@@ -42,27 +42,27 @@ def branch_name(task_id: str, title: str) -> str:
 class TaskRootBuilder:
     """Builds and tears down `.shikiru/worktrees/T-n/` for a task (03 §5)."""
 
-    def __init__(self, git: Git, project_root: Path, cache_cloner: CacheCloner) -> None:
-        """Build task roots with `git` and clone configured caches through `cache_cloner`."""
+    def __init__(
+        self, git: Git, project_root: Path, repo: RepoConfig, cache_cloner: CacheCloner
+    ) -> None:
+        """Build task roots with the project's repo settings and clone its configured caches."""
         self._git = git
         self._project_root = project_root
+        self._repo = repo
         self._cache_cloner = cache_cloner
         self._warned_cow_unsupported = False
 
-    def task_root(self, task_id: str) -> Path:
-        """Return the task root directory for `task_id`."""
-        return task_root(self._project_root, task_id)
-
-    async def build(self, task_id: str, title: str, repo: RepoConfig) -> RepoState:
+    async def build(self, task_id: str, title: str) -> RepoState:
         """Build (or reuse) `task_id`'s task root: one worktree of the project repository.
 
         Idempotent: calling this again with the same arguments creates nothing twice, whether
         the branch, the worktree or both already exist.
         """
-        root = self.task_root(task_id)
+        root = task_root(self._project_root, task_id)
         root.parent.mkdir(parents=True, exist_ok=True)
         branch = branch_name(task_id, title)
         project = self._project_root
+        repo = self._repo
         base = repo.base if repo.base is not None else await self._git.current_branch(project)
         await self._git.append_to_exclude(project, EXCLUDE_LINE)
         if not await self._git.worktree_exists(project, root):
@@ -88,7 +88,7 @@ class TaskRootBuilder:
         if repo is None:
             return
         project = self._project_root
-        root = self.task_root(task_id)
+        root = task_root(project, task_id)
         if await self._git.worktree_exists(project, root):
             await self._git.worktree_remove(project, root)
         if await self._git.branch_exists(

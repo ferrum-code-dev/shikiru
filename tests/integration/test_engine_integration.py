@@ -65,8 +65,8 @@ async def _task_with_worktree(
     tasks = TaskStore(connection, SystemClock())
     transition = Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
     tasks.apply_transition(task.id, transition)
-    state = await task_root_builder(_RUNNER, project_root).build(
-        task.id, task.title, RepoConfig(base=base)
+    state = await task_root_builder(_RUNNER, project_root, RepoConfig(base=base)).build(
+        task.id, task.title
     )
     tasks.set_repo(task.id, state)
     current = tasks.get(task.id)
@@ -246,7 +246,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     task = tasks.get(task.id)
     assert task is not None
     order: list[str] = []
-    builder = task_root_builder(_RUNNER, project_root)
+    builder = task_root_builder(_RUNNER, project_root, RepoConfig())
 
     async def finish_task(task_value: Task) -> None:
         terminal = tasks.get(task_value.id)

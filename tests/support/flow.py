@@ -83,8 +83,8 @@ async def build_flow_task(
     tasks.set_slot(submitted.id, 1)
     tasks.set_panes(submitted.id, {Role.LEADER: leader_pane, Role.IMPLEMENTER: implementer_pane})
     tasks.set_window(submitted.id, leader_pane)
-    builder = task_root_builder(SubprocessRunner(), env.project_root)
-    repo = await builder.build(submitted.id, submitted.title, RepoConfig())
+    builder = task_root_builder(SubprocessRunner(), env.project_root, RepoConfig())
+    repo = await builder.build(submitted.id, submitted.title)
     tasks.set_repo(submitted.id, repo)
     task = tasks.get(submitted.id)
     assert task is not None
@@ -116,7 +116,7 @@ def build_flow(
     escalations = EscalationRaiser(escalations_store, system.events, env.runs, env.project_root)
     coordinator = _NoOpIntegrationCoordinator()
     if local_integration:
-        builder = task_root_builder(SubprocessRunner(), env.project_root)
+        builder = task_root_builder(SubprocessRunner(), env.project_root, settings.repo)
 
         async def finish_task(task: Task) -> None:
             system.sessions.close_task(task.id)

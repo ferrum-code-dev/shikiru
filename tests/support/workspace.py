@@ -9,10 +9,13 @@ from shikiru.workspace.roots import TaskRootBuilder
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shikiru.config.settings import RepoConfig
     from shikiru.process import SubprocessRunner
 
 
-def task_root_builder(runner: SubprocessRunner, project_root: Path) -> TaskRootBuilder:
+def task_root_builder(
+    runner: SubprocessRunner, project_root: Path, repo: RepoConfig
+) -> TaskRootBuilder:
     return TaskRootBuilder(
-        Git(runner), project_root, CacheCloner(runner, cow_args=default_cow_args())
+        Git(runner), project_root, repo, CacheCloner(runner, cow_args=default_cow_args())
     )

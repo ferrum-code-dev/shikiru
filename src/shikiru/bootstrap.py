@@ -308,6 +308,7 @@ def build_engine(
     roots = TaskRootBuilder(
         Git(resolved_runner),
         project_root,
+        resolved_settings.repo,
         CacheCloner(resolved_runner, cow_args=default_cow_args()),
     )
     task_finisher = TaskFinisher(sessions, layout, roots)

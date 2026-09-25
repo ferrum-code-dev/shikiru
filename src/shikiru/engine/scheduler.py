@@ -135,7 +135,7 @@ class Scheduler:
             )
             current = self._require_task(task.id, "slot assignment")
             if current.repo is None:
-                repo = await self._roots.build(current.id, current.title, self._settings.repo)
+                repo = await self._roots.build(current.id, current.title)
                 self._tasks.set_repo(current.id, repo)
                 current = self._require_task(task.id, "task-root creation")
             await self._layout.ensure(current)
