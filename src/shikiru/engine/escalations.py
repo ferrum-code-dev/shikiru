@@ -162,9 +162,9 @@ class EscalationRaiser:
         try:
             packet_path.parent.mkdir(parents=True, exist_ok=True)
             packet_path.write_text(packet)
-            escalation = self._escalations.open_reserved(
-                escalation_id,
+            escalation = self._escalations.open(
                 task.id,
+                escalation_id=escalation_id,
                 step=step,
                 reason=reason,
                 headline=headline,

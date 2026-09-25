@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import QuotaWindow
-from shikiru.store.quotas import QuotaStore
+from shikiru.store.quotas import QuotaStore, fetch_quotas
 
 if TYPE_CHECKING:
     from tests.support.store import Connection
@@ -76,5 +76,5 @@ def test_record_keeps_the_plugin_supplied_observed_at(connection: Connection) ->
 
     store.record("claude", window)
 
-    [reloaded] = store.quotas_for("claude")
+    [reloaded] = fetch_quotas(connection, "claude")
     assert reloaded == window

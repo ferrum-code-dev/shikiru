@@ -12,7 +12,7 @@ from shikiru.clock import SystemClock
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Mode, Role, Status, Step
-from shikiru.store.quotas import QuotaStore
+from shikiru.store.quotas import fetch_quotas
 from shikiru.workspace.roots import run_dir
 from tests.support.clock import FakeClock
 from tests.support.engine import set_role_script
@@ -56,7 +56,7 @@ async def test_monitor_records_quota_compaction_usage_and_turn_view(
 
     await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
-    [quota] = QuotaStore(engine_env.connection).quotas_for("fake")
+    [quota] = fetch_quotas(engine_env.connection, "fake")
     assert quota.name == "weekly"
     assert quota.used_pct == 47
     events = flow_env.events.since(0, kinds=[EventKind.COMPACTED], task_id=task.id)

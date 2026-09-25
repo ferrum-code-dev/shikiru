@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -92,7 +92,6 @@ def test_reader_serves_every_query_seeded_through_the_writer(
     QuotaStore(connection).record(
         "codex", QuotaWindow(name="5h", used_pct=10.0, resets_at=None, observed_at=START)
     )
-    QuotaStore(connection).block("codex", START + timedelta(hours=1), "quota")
 
     event = EventLog(connection, clock).append(
         EventKind.TASK_QUEUED, message="queued", task_id=task.id
@@ -110,11 +109,8 @@ def test_reader_serves_every_query_seeded_through_the_writer(
     assert reader.get_escalation("E-does-not-exist") is None
     assert [e.id for e in reader.list_open_escalations()] == [escalation.id]
 
-    assert [w.name for w in reader.quotas_for("codex")] == ["5h"]
+    assert [w.name for w in reader.list_quotas(["codex"])["codex"]] == ["5h"]
     assert reader.list_quota_agents() == ["codex"]
-
-    assert [b.agent for b in reader.active_agent_blocks(START)] == ["codex"]
-    assert reader.active_agent_blocks(START + timedelta(hours=2)) == []
 
     all_events = reader.events_since(0)
     assert [e.message for e in all_events] == ["queued", "started", "other task"]

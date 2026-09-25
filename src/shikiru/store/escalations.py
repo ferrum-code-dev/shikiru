@@ -84,15 +84,17 @@ class EscalationStore:
         self,
         task_id: str,
         *,
+        escalation_id: str | None = None,
         step: Step | None,
         reason: EscalationReason,
         headline: str,
         packet_path: str,
         options: tuple[EscalationOption, ...],
     ) -> Escalation:
-        """Allocate an `E-n` id and record a new open escalation."""
+        """Record a new escalation, allocating an id unless one was reserved for its packet."""
         with transaction(self._connection):
-            escalation_id = self._next_id()
+            if escalation_id is None:
+                escalation_id = self._next_id()
             self._insert(
                 escalation_id,
                 task_id=task_id,
@@ -108,30 +110,6 @@ class EscalationStore:
         """Reserve the next escalation id before creating its packet file."""
         with transaction(self._connection):
             return self._next_id()
-
-    def open_reserved(
-        self,
-        escalation_id: str,
-        task_id: str,
-        *,
-        step: Step | None,
-        reason: EscalationReason,
-        headline: str,
-        packet_path: str,
-        options: tuple[EscalationOption, ...],
-    ) -> Escalation:
-        """Record an open escalation using an id reserved before packet creation."""
-        with transaction(self._connection):
-            self._insert(
-                escalation_id,
-                task_id=task_id,
-                step=step,
-                reason=reason,
-                headline=headline,
-                packet_path=packet_path,
-                options=options,
-            )
-        return self._require_opened(escalation_id)
 
     def _next_id(self) -> str:
         seq = next_sequence(self._connection, ESCALATION_SEQUENCE)
@@ -173,14 +151,6 @@ class EscalationStore:
         escalation = fetch_escalation(self._connection, escalation_id)
         return require_after_insert(
             escalation, f"escalation {escalation_id} vanished immediately after insert"
-        )
-
-    def set_packet_path(self, escalation_id: str, packet_path: str) -> None:
-        """Record `escalation_id`'s packet path once its file has been written (03 §8)."""
-        if not packet_path:
-            raise ValueError
-        self._connection.execute(
-            "UPDATE escalations SET packet_path = ? WHERE id = ?", (packet_path, escalation_id)
         )
 
     def get(self, escalation_id: str) -> Escalation | None:

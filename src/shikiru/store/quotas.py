@@ -96,10 +96,6 @@ class QuotaStore:
             ),
         )
 
-    def quotas_for(self, agent: str) -> list[QuotaWindow]:
-        """Read every quota window recorded for `agent`."""
-        return fetch_quotas(self._connection, agent)
-
     def block(self, agent: str, until: datetime, reason: str) -> None:
         """Block `agent` from dispatch until the later of the current and requested deadlines."""
         self._connection.execute(

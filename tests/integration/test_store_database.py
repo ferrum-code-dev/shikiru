@@ -34,6 +34,35 @@ def test_connect_migrates_a_fresh_db_and_is_idempotent(database: Database) -> No
         second.close()
 
 
+def test_command_migration_removes_unused_timestamp_and_preserves_commands(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "commands.db"
+    legacy = sqlite3.connect(path)
+    try:
+        initial = resources.files("shikiru.store.migrations").joinpath("001_initial.sql")
+        legacy.executescript(initial.read_text(encoding="utf-8"))
+        legacy.execute(
+            "INSERT INTO commands (ts, kind, payload, status, result, handled_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (format_timestamp(START), "stop", "{}", "done", "null", format_timestamp(START)),
+        )
+        legacy.execute("PRAGMA user_version = 2")
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    migrated = Database(path).connect()
+    try:
+        columns = {row[1] for row in migrated.execute("PRAGMA table_info(commands)")}
+        [command] = migrated.execute("SELECT id, kind, payload, status, result FROM commands")
+
+        assert "handled_at" not in columns
+        assert tuple(command) == (1, "stop", "{}", "done", "null")
+    finally:
+        migrated.close()
+
+
 def test_headless_migration_keeps_sessions_and_removes_agent_state(
     tmp_path: Path,
 ) -> None:

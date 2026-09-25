@@ -7,13 +7,12 @@ from typing import TYPE_CHECKING
 
 from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
 from shikiru.store.events import fetch_events_since
-from shikiru.store.quotas import fetch_active_agent_blocks, fetch_quota_agents, fetch_quotas
+from shikiru.store.quotas import fetch_quota_agents, fetch_quotas
 from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task
 from shikiru.store.tasks import fetch_task, fetch_tasks
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import datetime
 
     from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
@@ -22,7 +21,6 @@ if TYPE_CHECKING:
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Status, Task
     from shikiru.store.database import Database
-    from shikiru.store.quotas import AgentBlock
 
 DASHBOARD_CHANGE_POLL_SECONDS = 0.5
 
@@ -61,21 +59,13 @@ class StateReader:
         """See `shikiru.store.escalations.fetch_open_escalations`."""
         return fetch_open_escalations(self._connection)
 
-    def quotas_for(self, agent: str) -> list[QuotaWindow]:
-        """See `shikiru.store.quotas.fetch_quotas`."""
-        return fetch_quotas(self._connection, agent)
-
     def list_quotas(self, agents: Sequence[str]) -> dict[str, list[QuotaWindow]]:
         """Read quota windows for each requested agent."""
-        return {agent: self.quotas_for(agent) for agent in agents}
+        return {agent: fetch_quotas(self._connection, agent) for agent in agents}
 
     def list_quota_agents(self) -> list[str]:
         """Read every agent with persisted quota windows."""
         return fetch_quota_agents(self._connection)
-
-    def active_agent_blocks(self, now: datetime) -> list[AgentBlock]:
-        """See `shikiru.store.quotas.fetch_active_agent_blocks`."""
-        return fetch_active_agent_blocks(self._connection, now)
 
     def events_since(
         self,

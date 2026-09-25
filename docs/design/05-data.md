@@ -174,7 +174,7 @@ CREATE TABLE events (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, task_id TEXT, kin
 
 CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',        -- pending | done | rejected
-  result TEXT, handled_at TEXT);
+  result TEXT);
 ```
 
 **`EventKind`** (in `domain.events`; `events.data` carries typed fields):

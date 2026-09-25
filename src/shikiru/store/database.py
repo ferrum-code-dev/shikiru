@@ -77,10 +77,8 @@ class Database:
 def transaction(connection: sqlite3.Connection) -> Generator[sqlite3.Connection]:
     """Run a block as one transaction: commits on success, rolls back on any exception.
 
-    Composes with an already-open transaction: if `connection` is mid-transaction, this joins
-    it (a plain `yield`, with no `BEGIN`/`COMMIT`/`ROLLBACK` of its own) so callers such as
-    `TaskStore.insert_child` and `TaskStore.repoint_dependents` can be combined by an outer
-    `transaction()` into one atomic unit, instead of failing on a nested `BEGIN`.
+    Composes with an already-open transaction by joining it, so multiple store operations can
+    participate in one atomic unit without attempting a nested `BEGIN`.
     """
     if connection.in_transaction:
         yield connection

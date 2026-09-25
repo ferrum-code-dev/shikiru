@@ -13,7 +13,6 @@ from shikiru.store.database import (
     format_timestamp,
     load_json,
     next_sequence,
-    parse_timestamp,
     require_after_insert,
     transaction,
 )
@@ -21,7 +20,6 @@ from shikiru.store.tasks import TASK_ID_PREFIX, TASK_SEQUENCE
 
 if TYPE_CHECKING:
     import sqlite3
-    from datetime import datetime
 
     from shikiru.clock import Clock
 
@@ -44,7 +42,6 @@ class CommandOutcome:
     id: int
     status: CommandStatus
     result: dict[str, Any] | None
-    handled_at: datetime | None
 
 
 class CommandQueue:
@@ -99,11 +96,10 @@ class CommandQueue:
         self, command_id: int, status: CommandStatus, result: dict[str, Any] | None
     ) -> None:
         self._connection.execute(
-            "UPDATE commands SET status = ?, result = ?, handled_at = ? WHERE id = ?",
+            "UPDATE commands SET status = ?, result = ? WHERE id = ?",
             (
                 status.value,
                 dump_json(_RESULT_ADAPTER, result),
-                format_timestamp(self._clock.now()),
                 command_id,
             ),
         )
@@ -111,7 +107,7 @@ class CommandQueue:
     def status(self, command_id: int) -> CommandOutcome | None:
         """Read `command_id`'s current lifecycle status, or `None` if it doesn't exist."""
         row = self._connection.execute(
-            "SELECT id, status, result, handled_at FROM commands WHERE id = ?", (command_id,)
+            "SELECT id, status, result FROM commands WHERE id = ?", (command_id,)
         ).fetchone()
         if row is None:
             return None
@@ -120,5 +116,4 @@ class CommandQueue:
             id=row["id"],
             status=CommandStatus(row["status"]),
             result=load_json(_RESULT_ADAPTER, result) if result is not None else None,
-            handled_at=parse_timestamp(row["handled_at"]),
         )

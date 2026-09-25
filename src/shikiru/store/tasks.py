@@ -170,37 +170,6 @@ class TaskStore:
             )
         return self._fetch_or_raise(submit.task_id)
 
-    def insert_child(
-        self,
-        new_task: NewTask,
-        *,
-        depends_on: Sequence[str],
-        parent_id: str,
-        origin: TaskOrigin,
-    ) -> Task:
-        """Insert a task enqueued from a plan or verdict report (03 §2, §6; D4).
-
-        `depends_on` is the caller's already-resolved dependency ids; `new_task.depends_on`
-        (raw `T-n`/`#k` references) is not read here.
-        """
-        with transaction(self._connection):
-            seq = next_sequence(self._connection, TASK_SEQUENCE)
-            task_id = f"{TASK_ID_PREFIX}{seq}"
-            self._insert_row(
-                task_id=task_id,
-                seq=seq,
-                parent_id=parent_id,
-                origin=origin,
-                title=new_task.title,
-                request=new_task.request,
-                mode=None,
-                complexity="normal",
-                priority=new_task.priority,
-                depends_on=depends_on,
-                overrides={},
-            )
-        return self._fetch_or_raise(task_id)
-
     def apply_scope_change(
         self,
         task_id: str,
@@ -326,10 +295,6 @@ class TaskStore:
         """Read one task by id, or `None` if it doesn't exist."""
         return fetch_task(self._connection, task_id)
 
-    def list_queued(self) -> list[Task]:
-        """Read every `queued` task, ordered by `seq`."""
-        return fetch_tasks(self._connection, statuses=(Status.QUEUED,))
-
     def list_active(self) -> list[Task]:
         """Read every task holding a slot: `running`, `integrating` or `escalated`."""
         return fetch_tasks(self._connection, statuses=ACTIVE_STATUSES)
@@ -432,11 +397,6 @@ class TaskStore:
                 "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)",
                 [(task_id, dep) for dep in depends_on],
             )
-
-    def repoint_dependents(self, old_task_id: str, new_task_ids: Sequence[str]) -> None:
-        """Repoint every dependency on `old_task_id` onto each of `new_task_ids` (03 §2, §6)."""
-        with transaction(self._connection):
-            self._repoint_dependents(old_task_id, new_task_ids)
 
     def _repoint_dependents(self, old_task_id: str, new_task_ids: Sequence[str]) -> None:
         dependents = [
