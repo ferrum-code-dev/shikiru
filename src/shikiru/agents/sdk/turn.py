@@ -27,6 +27,16 @@ _LINE_ENDINGS = "\r\n"
 _MISSING_STDERR = "(empty)"
 
 
+def stream_log_path(turn_dir: Path, role: str) -> Path:
+    """Return where a turn keeps `role`'s raw stdout stream."""
+    return turn_dir / f"{role}{STREAM_FILENAME_SUFFIX}"
+
+
+def stderr_log_path(turn_dir: Path, role: str) -> Path:
+    """Return where a turn keeps `role`'s captured stderr."""
+    return turn_dir / f"{role}{STDERR_FILENAME_SUFFIX}"
+
+
 def _append_raw(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("ab") as handle:
@@ -237,11 +247,11 @@ class StreamingTurn:
 
     @property
     def _stream_path(self) -> Path:
-        return self._spec.turn_dir / f"{self._spec.role}{STREAM_FILENAME_SUFFIX}"
+        return stream_log_path(self._spec.turn_dir, self._spec.role)
 
     @property
     def _stderr_path(self) -> Path:
-        return self._spec.turn_dir / f"{self._spec.role}{STDERR_FILENAME_SUFFIX}"
+        return stderr_log_path(self._spec.turn_dir, self._spec.role)
 
 
 class _ProcessExecution:

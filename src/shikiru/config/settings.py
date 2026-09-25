@@ -152,13 +152,17 @@ class Settings(ConfigModel):
     dashboard: DashboardConfig
     notify: NotifyConfig
 
+    def ladder_rungs(self) -> list[Rung]:
+        """Return every configured rung: leader, implementer, complexity overrides, helper."""
+        rungs = [*self.roles.leader.ladder, *self.roles.implementer.ladder]
+        for override in self.roles.implementer.complexity.values():
+            rungs.extend(override.ladder)
+        rungs.extend(self.roles.helper.ladder)
+        return rungs
+
     @model_validator(mode="after")
     def _every_ladder_agent_has_a_table(self) -> Settings:
-        wanted = {rung.agent for rung in self.roles.leader.ladder}
-        wanted.update(rung.agent for rung in self.roles.implementer.ladder)
-        for override in self.roles.implementer.complexity.values():
-            wanted.update(rung.agent for rung in override.ladder)
-        wanted.update(rung.agent for rung in self.roles.helper.ladder)
+        wanted = {rung.agent for rung in self.ladder_rungs()}
         missing = sorted(wanted - self.agents.keys())
         if missing:
             names = ", ".join(missing)
