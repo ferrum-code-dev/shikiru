@@ -45,7 +45,6 @@ def _summary(
 def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None:
     active = _summary("T-active", Status.RUNNING, slot=0)
     queued = _summary("T-queued", Status.QUEUED, priority=5, wait_reason="dependency")
-    historical = _summary("T-history", Status.DONE)
     detail = TaskDetail(
         task=make_task(
             id="T-detail",
@@ -65,7 +64,6 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
         project="demo",
         engine_up=True,
         slots=SlotView(active=1, maximum=2),
-        tasks=[active, queued, historical],
         active_tasks=[active],
         queued_tasks=[queued],
         escalations=[],

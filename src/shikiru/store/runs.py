@@ -67,6 +67,12 @@ def fetch_runs_for_task(connection: sqlite3.Connection, task_id: str) -> list[Ru
     return [_row_to_run(row) for row in rows]
 
 
+def fetch_all_runs(connection: sqlite3.Connection) -> list[Run]:
+    """Read every run, most recently started first."""
+    rows = connection.execute(f"SELECT {_RUN_COLUMNS} FROM runs ORDER BY id DESC").fetchall()
+    return [_row_to_run(row) for row in rows]
+
+
 def fetch_live_runs(connection: sqlite3.Connection) -> list[Run]:
     """Read every live agent run, most recently started first."""
     rows = connection.execute(

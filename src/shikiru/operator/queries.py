@@ -111,7 +111,6 @@ class StatusView(OperatorView):
     project: str
     engine_up: bool
     slots: SlotView
-    tasks: list[TaskSummary]
     active_tasks: list[TaskSummary]
     queued_tasks: list[TaskSummary]
     escalations: list[EscalationView]
@@ -160,11 +159,8 @@ class OperatorQueries:
         summaries = [TaskSummary.from_task(task) for task in tasks]
         active = [summary for summary in summaries if summary.status in ACTIVE_STATUSES]
         queued = [TaskSummary.from_task(task) for task in queued_tasks]
-        open_escalations = [
-            EscalationView(escalation=escalation, packet=self._packet_text(escalation))
-            for escalation in self._reader.list_open_escalations()
-        ]
-        runs = [run for task in tasks for run in self._reader.list_runs(task.id)]
+        open_escalations = self.list_escalations()
+        runs = self._reader.list_all_runs()
         usage = _aggregate_usage(runs)
         agents = sorted({run.agent for run in runs} | set(self._reader.list_quota_agents()))
         task_detail = self.get_task(task_id) if task_id is not None else None
@@ -172,7 +168,6 @@ class OperatorQueries:
             project=self._project,
             engine_up=self._engine_up(),
             slots=SlotView(active=len(occupied_slot_ids(tasks)), maximum=self._max_parallel),
-            tasks=summaries,
             active_tasks=active,
             queued_tasks=queued,
             escalations=open_escalations,

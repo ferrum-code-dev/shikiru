@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
 from shikiru.store.events import fetch_events_since
 from shikiru.store.quotas import fetch_active_agent_blocks, fetch_quota_agents, fetch_quotas
-from shikiru.store.runs import fetch_runs_for_task
+from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task
 from shikiru.store.tasks import fetch_task, fetch_tasks
 
 if TYPE_CHECKING:
@@ -48,6 +48,10 @@ class StateReader:
     def list_runs(self, task_id: str) -> list[Run]:
         """See `shikiru.store.runs.fetch_runs_for_task`."""
         return fetch_runs_for_task(self._connection, task_id)
+
+    def list_all_runs(self) -> list[Run]:
+        """See `shikiru.store.runs.fetch_all_runs`."""
+        return fetch_all_runs(self._connection)
 
     def get_escalation(self, escalation_id: str) -> Escalation | None:
         """See `shikiru.store.escalations.fetch_escalation`."""
