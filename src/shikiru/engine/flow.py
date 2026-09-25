@@ -265,12 +265,6 @@ class TaskFlow:
         task = self.require_task(task_id)
         if task.step is None:
             task = await self.apply(task, first_step(task), None)
-        if task.status is Status.RUNNING and task.step is Step.INTEGRATE:
-            task = await self.apply(
-                task,
-                Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING),
-                None,
-            )
         recovery_counters = TurnCounters()
         while task.status is Status.RUNNING:
             step = task.step
@@ -841,7 +835,7 @@ class TaskFlow:
                 Status.INTEGRATING,
             )
         ):
-            self._emit_step_started(updated)
+            emit_step_started(self._events, updated, self._settings)
         await self._titles.refresh(updated)
         return updated
 
@@ -876,9 +870,6 @@ class TaskFlow:
             message=f"{task.id} scope changed: {len(new_ids)} new task(s)",
             data={"new_task_ids": new_ids, "scope_changes": list(outcome.scope_changes)},
         )
-
-    def _emit_step_started(self, task: Task) -> None:
-        emit_step_started(self._events, task, self._settings)
 
     def _emit_turn_completed(self, task: Task, outcome: Outcome, execution: _TurnExecution) -> None:
         summary = _turn_summary(outcome)

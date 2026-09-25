@@ -82,7 +82,7 @@ class Scheduler:
             if task is None:
                 message = f"{task_id} vanished before dependency cancellation"
                 raise ShikiruError(message)
-            await self._cancel_dependency(task)
+            await self._on_dependency_cancelled(task)
         successful_dispatches: list[Dispatch] = []
         for dispatch in schedule.dispatches:
             task = self._tasks.get(dispatch.task_id)
@@ -121,9 +121,6 @@ class Scheduler:
             reason = reasons.get(task.id)
             if task.wait_reason != (reason.value if reason is not None else None):
                 self._tasks.set_wait_reason(task.id, reason)
-
-    async def _cancel_dependency(self, task: Task) -> None:
-        await self._on_dependency_cancelled(task)
 
     async def _dispatch(self, task: Task, slot: int) -> bool:
         current = task
