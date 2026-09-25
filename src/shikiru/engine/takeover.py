@@ -70,7 +70,7 @@ class Takeover:
         pane_id = _role_pane(task, role)
         if task.status in _ACTIVE_STATUSES:
             await self._cancel_task(task.id)
-        self._tasks.set_holds(task.id, task.holds | {Hold.INTERVENTION})
+        self._tasks.set_holds(task.id, self._current(task.id).holds | {Hold.INTERVENTION})
         self._runs.mark_taken_over(run.id)
         root = task_root(self._project_root, task.id)
         argv = self._agents.get(run.agent).interactive_command(run.session_id, root)
@@ -92,7 +92,8 @@ class Takeover:
             raise CommandRejectedError(message)
         await self._layout.start_view(task.id, role, _role_pane(task, role))
         self._runs.mark_live(run.id)
-        self._tasks.set_holds(task.id, task.holds - {Hold.INTERVENTION})
+        current = self._current(task.id)
+        self._tasks.set_holds(task.id, current.holds - {Hold.INTERVENTION})
         path = self._messages.queue(task.id, role, HAND_BACK_MESSAGE)
         self._events.append(
             EventKind.HANDED_BACK,
@@ -100,7 +101,7 @@ class Takeover:
             message=f"{task.id} {role.value} handed back",
             data={"role": role.value, "path": str(path)},
         )
-        if task.status in _ACTIVE_STATUSES and Hold.PAUSED not in task.holds:
+        if current.status in _ACTIVE_STATUSES and Hold.PAUSED not in current.holds:
             await self._start_task(task.id)
         await self._refresh_titles(self._current(task.id))
 
