@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import re
 import uuid
@@ -31,6 +33,7 @@ from shikiru.agents.contracts import (
     TurnSpec,
     Usage,
     UsageReported,
+    shikiru_command,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.testing import (
@@ -41,6 +44,13 @@ from shikiru.agents.testing import (
     RecordedStream,
 )
 from shikiru.clock import SystemClock
+from shikiru.domain.reports import (
+    CURRENT_TURN_LINK_NAME,
+    REPORT_KIND_FILENAME,
+    REPORT_SCHEMA_FILENAME,
+    ReportKind,
+    schema_for,
+)
 from shikiru.plugins.agents.claude.agent import ClaudeAgent, create
 from shikiru.plugins.agents.claude.options import DEFAULT_ARGS
 from shikiru.plugins.agents.claude.turn import ClaudeTurnParser
@@ -63,6 +73,8 @@ _SESSION_RESUMED = "session-resumed"
 _API_KEY_ENV = "SHIKIRU_CLAUDE_CAPTURE_KEY"
 _LIVE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_MODEL"
 _LIVE_CHANGE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL"
+_CLAUDE_HOME_DIRNAME = "claude-home"
+_CLAUDE_CONFIG_DIRNAME = "claude-config"
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 _COMPACTION_THRESHOLD = 80.0
 _LOW_COMPACTION_THRESHOLD = 0.0
@@ -117,6 +129,85 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             session_id=resume_session_id,
             usage=usage,
         )
+
+    def _live_report_environment(self, spec: TurnSpec) -> Mapping[str, str]:
+        home_dir = spec.cwd.parent / _CLAUDE_HOME_DIRNAME
+        config_dir = spec.cwd.parent / _CLAUDE_CONFIG_DIRNAME
+        home_dir.mkdir(parents=True, exist_ok=True)
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return {
+            **spec.env,
+            "HOME": str(home_dir),
+            "CLAUDE_CONFIG_DIR": str(config_dir),
+        }
+
+    @pytest.mark.asyncio
+    async def test_live_report_payload_is_confined_to_scratch_inputs(self, tmp_path: Path) -> None:
+        spec = await self._prepare_live_report_spec(
+            self.build_spec(tmp_path, resume_session_id=None)
+        )
+        project_root = Path.cwd().resolve()
+        prompt_path = Path(spec.prompt)
+        report_input = spec.run_dir / "contract-report-input.json"
+        role_dir = spec.run_dir / spec.role
+        turn_link = role_dir / CURRENT_TURN_LINK_NAME
+        schema_path = spec.turn_dir / REPORT_SCHEMA_FILENAME
+        isolated_home = tmp_path / "claude-home"
+        isolated_config = tmp_path / "claude-config"
+
+        assert project_root not in spec.cwd.resolve().parents
+        assert project_root not in spec.run_dir.resolve().parents
+        assert project_root not in isolated_home.resolve().parents
+        assert project_root not in isolated_config.resolve().parents
+        assert spec.add_dirs == ()
+        assert not any(isolated_home.iterdir())
+        assert not any(isolated_config.iterdir())
+        assert {path.name for path in spec.cwd.iterdir()} == {".git", prompt_path.name}
+        assert {path.name for path in spec.run_dir.iterdir()} == {report_input.name, spec.role}
+        assert {path.name for path in role_dir.iterdir()} == {CURRENT_TURN_LINK_NAME}
+        assert turn_link.is_symlink()
+        assert turn_link.resolve() == spec.turn_dir.resolve()
+        assert {path.name for path in spec.turn_dir.iterdir()} == {
+            REPORT_KIND_FILENAME,
+            REPORT_SCHEMA_FILENAME,
+        }
+        report_kind = await asyncio.to_thread((spec.turn_dir / REPORT_KIND_FILENAME).read_text)
+        schema_json = await asyncio.to_thread(schema_path.read_text)
+        report_input_json = await asyncio.to_thread(report_input.read_text)
+        prompt = await asyncio.to_thread(prompt_path.read_text)
+        assert report_kind == ReportKind.IMPLEMENTATION
+        assert json.loads(schema_json) == schema_for(ReportKind.IMPLEMENTATION)
+        assert json.loads(report_input_json) == {
+            "status": "completed",
+            "summary": "Isolated live report contract.",
+            "commits": [],
+            "tests": [],
+            "trackers_updated": False,
+            "risks": [],
+        }
+        assert prompt == (
+            "Use Bash to run exactly this report command once:\n"
+            f"{shikiru_command('report', '--file')} "
+            '"$SHIKIRU_RUN_DIR/contract-report-input.json"\n'
+            "Do not inspect or edit other files or run any other commands. "
+            "After the command succeeds, reply exactly REPORT_OK."
+        )
+
+        command = self.process_sequence(self._build_agent(), spec).start(spec)
+        add_dirs = [
+            Path(command.argv[index + 1])
+            for index, argument in enumerate(command.argv[:-1])
+            if argument == "--add-dir"
+        ]
+        assert command.cwd == spec.cwd
+        assert command.argv[:3] == ("claude", "-p", str(prompt_path))
+        assert add_dirs == [spec.run_dir]
+        assert command.env["HOME"] == str(isolated_home)
+        assert command.env["CLAUDE_CONFIG_DIR"] == str(isolated_config)
+        assert command.env["SHIKIRU_RUN_DIR"] == str(spec.run_dir)
+        assert command.env["SHIKIRU_ROLE"] == spec.role
+        assert "ANTHROPIC_AUTH_TOKEN" not in command.env
+        assert "ANTHROPIC_API_KEY" not in command.env
 
     def parser_for(self, sample: RecordedStream) -> TurnParser:
         auth = "api_key" if "api_key" in sample.name else "subscription"

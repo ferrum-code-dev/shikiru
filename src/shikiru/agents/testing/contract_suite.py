@@ -28,6 +28,7 @@ from shikiru.agents.contracts import (
     TurnSpec,
     Usage,
     UsageReported,
+    shikiru_command,
 )
 from shikiru.agents.sdk.turn import (
     StreamingTurn,
@@ -60,8 +61,22 @@ if TYPE_CHECKING:
 E2E_ENV_VAR = "SHIKIRU_E2E"
 _GIT_INIT_TIMEOUT_SECONDS = 10.0
 _TURN_TIMEOUT_SECONDS = 60.0
-_LIVE_REPORT_PROMPT = "Submit a completed implementation report using shikiru report."
+_REPORT_INPUT_FILENAME = "contract-report-input.json"
 _REPORT_PROMPT_FILENAME = "contract-prompt.md"
+_LIVE_REPORT_DATA: dict[str, object] = {
+    "status": "completed",
+    "summary": "Isolated live report contract.",
+    "commits": [],
+    "tests": [],
+    "trackers_updated": False,
+    "risks": [],
+}
+_LIVE_REPORT_PROMPT = (
+    "Use Bash to run exactly this report command once:\n"
+    f'{shikiru_command("report", "--file")} "$SHIKIRU_RUN_DIR/{_REPORT_INPUT_FILENAME}"\n'
+    "Do not inspect or edit other files or run any other commands. "
+    "After the command succeeds, reply exactly REPORT_OK."
+)
 _SYNTHETIC_SESSION_ID = "synthetic-session"
 
 
@@ -252,19 +267,38 @@ class AgentContractSuite:
     @pytest.mark.asyncio
     async def test_live_first_turn_writes_a_valid_report(self, tmp_path: Path) -> None:
         self._require_live()
-        spec = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(spec.cwd)
-        _prepare_report_turn(spec)
-        await asyncio.to_thread(
-            (spec.cwd / _REPORT_PROMPT_FILENAME).write_text,
-            _LIVE_REPORT_PROMPT,
+        spec = await self._prepare_live_report_spec(
+            self.build_spec(tmp_path, resume_session_id=None)
         )
-        spec = _with_prompt(spec, str(spec.cwd / _REPORT_PROMPT_FILENAME))
         signals = await self._run_turn(spec)
         _expect(isinstance(signals[0], SessionStarted), "live turn omitted SessionStarted")
         _expect(isinstance(signals[-1], TurnEnded), "live turn omitted TurnEnded")
+        report_commands = [
+            signal
+            for signal in signals
+            if isinstance(signal, ToolStarted)
+            and (
+                signal.name == "shikiru report"
+                or (
+                    shikiru_command("report", "--file") in signal.detail
+                    and _REPORT_INPUT_FILENAME in signal.detail
+                )
+            )
+        ]
+        _expect(bool(report_commands), "live turn did not invoke shikiru report")
         _expect((spec.turn_dir / REPORT_FILENAME).is_file(), "live turn wrote no report")
         await asyncio.to_thread(_validate_written_report, spec.turn_dir)
+
+    async def _prepare_live_report_spec(self, spec: TurnSpec) -> TurnSpec:
+        await _init_scratch_repo(spec.cwd)
+        _prepare_report_turn(spec)
+        await asyncio.to_thread(
+            (spec.run_dir / _REPORT_INPUT_FILENAME).write_text,
+            json.dumps(_LIVE_REPORT_DATA),
+        )
+        prompt_path = spec.cwd / _REPORT_PROMPT_FILENAME
+        await asyncio.to_thread(prompt_path.write_text, _LIVE_REPORT_PROMPT)
+        return _with_prompt(spec, str(prompt_path), env=self._live_report_environment(spec))
 
     @pytest.mark.asyncio
     async def test_live_usage_reports_session_tokens(self, tmp_path: Path) -> None:
@@ -373,6 +407,9 @@ class AgentContractSuite:
                 clock=SystemClock(),
             )
         )
+
+    def _live_report_environment(self, spec: TurnSpec) -> Mapping[str, str]:
+        return spec.env
 
     async def _run_turn(self, spec: TurnSpec) -> list[AgentSignal]:
         turn = await self._build_agent().start_turn(spec)
@@ -514,7 +551,7 @@ def _validate_written_report(turn_dir: Path) -> None:
     model_for(kind).model_validate_json((turn_dir / REPORT_FILENAME).read_text())
 
 
-def _with_prompt(spec: TurnSpec, prompt: str) -> TurnSpec:
+def _with_prompt(spec: TurnSpec, prompt: str, *, env: Mapping[str, str] | None = None) -> TurnSpec:
     return TurnSpec(
         rung=spec.rung,
         role=spec.role,
@@ -523,7 +560,7 @@ def _with_prompt(spec: TurnSpec, prompt: str) -> TurnSpec:
         run_dir=spec.run_dir,
         turn_dir=spec.turn_dir,
         add_dirs=spec.add_dirs,
-        env=spec.env,
+        env=spec.env if env is None else env,
         session_id=spec.session_id,
         usage=spec.usage,
     )
