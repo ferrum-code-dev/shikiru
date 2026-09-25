@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import options_for
 from shikiru.domain.tasks import EscalationReason
 from shikiru.store.escalations import EscalationStore
@@ -64,3 +65,17 @@ def test_get_of_an_unknown_escalation_is_none(connection: Connection) -> None:
     store, _ = _make_store(connection)
 
     assert store.get("E-does-not-exist") is None
+
+
+def test_latest_answer_uses_the_newest_resolved_answer(connection: Connection) -> None:
+    store, task_id = _make_store(connection)
+    first = _open(store, task_id)
+
+    assert store.latest_answer(task_id) is None
+    store.resolve(first.id, f"{ResolutionKind.ANSWER.value} first guidance")
+    retry = _open(store, task_id)
+    store.resolve(retry.id, ResolutionKind.RETRY.value)
+    latest = _open(store, task_id)
+    store.resolve(latest.id, f"{ResolutionKind.ANSWER.value} latest guidance")
+
+    assert store.latest_answer(task_id) == "latest guidance"

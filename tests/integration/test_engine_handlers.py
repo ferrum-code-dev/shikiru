@@ -72,7 +72,6 @@ class HandlerFixture:
     cancelled: list[str]
     started: list[str]
     finished: list[str]
-    consult_questions: dict[str, str]
     stopped: list[bool]
 
 
@@ -86,7 +85,6 @@ def handler_env(engine_env: EngineEnv) -> HandlerFixture:
     cancelled: list[str] = []
     started: list[str] = []
     finished: list[str] = []
-    consult_questions: dict[str, str] = {}
     stopped: list[bool] = []
 
     async def cancel_task(task_id: str) -> None:
@@ -97,9 +95,6 @@ def handler_env(engine_env: EngineEnv) -> HandlerFixture:
 
     async def finish_task(task: Task) -> None:
         finished.append(task.id)
-
-    def set_consult_question(task_id: str, question: str) -> None:
-        consult_questions[task_id] = question
 
     def stop_engine() -> None:
         stopped.append(True)
@@ -115,7 +110,6 @@ def handler_env(engine_env: EngineEnv) -> HandlerFixture:
         cancel_task=cancel_task,
         start_task=start_task,
         finish_task=finish_task,
-        set_consult_question=set_consult_question,
         stop_engine=stop_engine,
         refresh_titles=refresh_titles,
     )
@@ -144,7 +138,6 @@ def handler_env(engine_env: EngineEnv) -> HandlerFixture:
         cancelled,
         started,
         finished,
-        consult_questions,
         stopped,
     )
 
@@ -312,11 +305,12 @@ async def test_answer_resolution_queues_a_consult_turn(
     assert updated.step is Step.CONSULT
     assert updated.status is Status.QUEUED
     assert updated.slot == 1
-    assert handler_env.consult_questions == {task.id: "use the safer parser"}
     assert handler_env.cancelled == []
     resolved = handler_env.escalations.get(escalation_id)
     assert resolved is not None
     assert resolved.status is EscalationStatus.RESOLVED
+    assert resolved.resolution == "answer use the safer parser"
+    assert handler_env.escalations.latest_answer(task.id) == "use the safer parser"
 
 
 async def test_accept_resolution_queues_integration(

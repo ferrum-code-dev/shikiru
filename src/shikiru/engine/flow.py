@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     from shikiru.engine.sessions import SessionManager
     from shikiru.engine.titles import TaskTitles
     from shikiru.engine.turns import TurnRunner
+    from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.runs import RunStore
@@ -215,6 +216,7 @@ class TaskFlow:
         turns: TurnRunner,
         git_facts: GitFacts,
         escalations: EscalationRaiser,
+        escalation_store: EscalationStore,
         titles: TaskTitles,
         settings: Settings,
         project_root: Path,
@@ -231,6 +233,7 @@ class TaskFlow:
         self._turns = turns
         self._git_facts = git_facts
         self._escalations = escalations
+        self._escalation_store = escalation_store
         self._titles = titles
         self._settings = settings
         self._project_root = project_root
@@ -239,7 +242,6 @@ class TaskFlow:
         self._integration_turns = integration_turns
         self._history = history
         self._runs = runs
-        self._recovery_questions: dict[str, str] = {}
         self._force_handoff: set[str] = set()
         self._continue_next: set[str] = set()
 
@@ -646,9 +648,7 @@ class TaskFlow:
         """Build and persist the escalation packet for a task flow."""
         narrative_question, attempted = _escalation_narrative(reason, outcome, result)
         if question is None:
-            question = self._recovery_questions.pop(task.id, narrative_question)
-        else:
-            self._recovery_questions.pop(task.id, None)
+            question = narrative_question
         try:
             history = self._history.load(task.id)
         except Exception:
@@ -786,8 +786,9 @@ class TaskFlow:
             "reports": self._history.context(history),
         }
         if template is PromptName.CONSULT:
-            context["question"] = self._recovery_questions.pop(
-                task.id, self._history.latest_question(history)
+            answer = self._escalation_store.latest_answer(task.id)
+            context["question"] = (
+                answer if answer is not None else self._history.latest_question(history)
             )
         handoff = (fresh and bool(history)) or force_handoff
         needs_facts = template in (PromptName.VERIFY, PromptName.CONFLICTS) or handoff
@@ -992,10 +993,6 @@ class TaskFlow:
             role=role,
         )
         return updated
-
-    def set_consult_question(self, task_id: str, question: str) -> None:
-        """Set the Operator's answer consumed by the next consult turn."""
-        self._recovery_questions[task_id] = question
 
 
 def _require_repo(task: Task) -> RepoState:

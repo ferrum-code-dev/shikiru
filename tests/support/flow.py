@@ -150,6 +150,7 @@ def build_flow(
         turns=system.turns,
         git_facts=GitFacts(Git(SubprocessRunner())),
         escalations=escalations,
+        escalation_store=escalations_store,
         titles=system.titles,
         settings=settings,
         project_root=env.project_root,

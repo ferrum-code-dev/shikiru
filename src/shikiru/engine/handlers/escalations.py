@@ -8,6 +8,7 @@ from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
     CancelResolution,
+    ResolutionKind,
     Resolve,
     RetryResolution,
 )
@@ -43,9 +44,7 @@ class ResolveHandler:
         escalation = self._open_escalation(command)
         task = require_task(self._context, escalation.task_id)
         transition = self._transition(task, escalation, command)
-        if isinstance(command.resolution, AnswerResolution):
-            self._context.set_consult_question(task.id, command.resolution.text)
-        else:
+        if not isinstance(command.resolution, AnswerResolution):
             await self._context.cancel_task(task.id)
         self._apply_transition(task, escalation, command, transition)
         await refresh_titles(self._context, task.id)
@@ -138,7 +137,7 @@ class ResolveHandler:
     def _resolution_text(command: Resolve) -> str:
         resolution = command.resolution
         if isinstance(resolution, AnswerResolution):
-            return f"answer {resolution.text}"
+            return f"{ResolutionKind.ANSWER.value} {resolution.text}"
         if isinstance(resolution, RetryResolution):
             rung = resolution.rung
             return "retry" + (f" {rung.agent}:{rung.model}" if rung else "")

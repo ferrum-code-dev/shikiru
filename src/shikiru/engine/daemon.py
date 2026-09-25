@@ -154,7 +154,6 @@ class Engine:
             cancel_task=self.cancel_task,
             start_task=self.start_task,
             finish_task=self.finish_task,
-            set_consult_question=flow.set_consult_question,
             stop_engine=self.request_stop,
             refresh_titles=refresh_titles,
         )

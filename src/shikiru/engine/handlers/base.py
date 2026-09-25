@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 
 TaskCallback = Callable[[str], Awaitable[None]]
 TerminalCallback = Callable[[Task], Awaitable[None]]
-ConsultCallback = Callable[[str, str], None]
 RefreshCallback = Callable[[Task], Awaitable[None]]
 
 
@@ -35,7 +34,6 @@ class HandlerContext:
     cancel_task: TaskCallback
     start_task: TaskCallback
     finish_task: TerminalCallback
-    set_consult_question: ConsultCallback
     stop_engine: Callable[[], None]
     refresh_titles: RefreshCallback
 

@@ -341,6 +341,7 @@ def build_engine(
         ),
         git_facts=GitFacts(git),
         escalations=escalation_raiser,
+        escalation_store=escalations_store,
         titles=titles,
         settings=resolved_settings,
         project_root=project_root,

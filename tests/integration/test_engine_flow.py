@@ -11,7 +11,10 @@ import pytest
 
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.config.settings import AgentConfig
+from shikiru.domain.commands import ResolutionKind
+from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
+from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_ALIAS, FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
@@ -114,6 +117,36 @@ async def test_flow_events_mark_step_turn_and_verdict_boundaries(
     assert usage_delta["output_tokens"] == 120
     assert usage_delta["cache_read_tokens"] == 40
     assert usage_delta["cache_write_tokens"] == 20
+
+
+async def test_consult_reads_operator_answer_after_flow_restarts(
+    engine_env: EngineEnv,
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    before_restart = build_flow(engine_env, settings)
+    escalation = before_restart.escalations.open(
+        task.id,
+        step=Step.IMPLEMENT,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="Operator guidance needed",
+        packet_path="operator-guidance.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+    answer = "keep the parser strict after restart"
+    before_restart.escalations.resolve(escalation.id, f"{ResolutionKind.ANSWER.value} {answer}")
+    engine_env.tasks.apply_transition(
+        task.id, Transition.stay(task, step=Step.CONSULT, status=Status.RUNNING)
+    )
+    after_restart = build_flow(engine_env, settings)
+
+    await asyncio.wait_for(after_restart.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+
+    consult_prompt = next(
+        (run_dir(engine_env.project_root, task.id) / "turns").glob("*-consult-*/prompt.md")
+    )
+    assert answer in consult_prompt.read_text()
 
 
 async def test_changes_requested_persists_iteration_rung_and_counter_resets(

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
+from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import Escalation, EscalationOption, EscalationStatus
 from shikiru.domain.tasks import EscalationReason, Step
 from shikiru.store.database import (
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
 ESCALATION_ID_PREFIX = "E-"
 ESCALATION_SEQUENCE = "escalation"
+ANSWER_RESOLUTION_PREFIX = f"{ResolutionKind.ANSWER.value} "
 
 _OPTIONS_ADAPTER: TypeAdapter[tuple[EscalationOption, ...]] = TypeAdapter(
     tuple[EscalationOption, ...]
@@ -188,6 +190,26 @@ class EscalationStore:
     def list_open(self) -> list[Escalation]:
         """Read every open escalation, oldest first."""
         return fetch_open_escalations(self._connection)
+
+    def latest_answer(self, task_id: str) -> str | None:
+        """Return the newest persisted Operator answer for `task_id`, if any."""
+        row = self._connection.execute(
+            """
+            SELECT resolution FROM escalations
+            WHERE task_id = ? AND status = ? AND substr(resolution, 1, ?) = ?
+            ORDER BY resolved_at DESC, CAST(substr(id, 3) AS INTEGER) DESC
+            LIMIT 1
+            """,
+            (
+                task_id,
+                EscalationStatus.RESOLVED.value,
+                len(ANSWER_RESOLUTION_PREFIX),
+                ANSWER_RESOLUTION_PREFIX,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        return row["resolution"][len(ANSWER_RESOLUTION_PREFIX) :]
 
     def resolve(self, escalation_id: str, resolution: str) -> None:
         """Mark `escalation_id` resolved, recording `resolution`'s summary text."""
