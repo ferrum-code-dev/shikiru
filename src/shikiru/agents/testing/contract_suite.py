@@ -28,7 +28,6 @@ from shikiru.agents.contracts import (
     TurnSpec,
     Usage,
     UsageReported,
-    shikiru_command,
 )
 from shikiru.agents.sdk.turn import (
     StreamingTurn,
@@ -39,15 +38,7 @@ from shikiru.agents.sdk.turn import (
 )
 from shikiru.agents.testing.resume import RESUME_NONCE_PROMPT, RESUME_RECALL_PROMPT
 from shikiru.clock import SystemClock
-from shikiru.domain.reports import (
-    CURRENT_TURN_LINK_NAME,
-    REPORT_FILENAME,
-    REPORT_KIND_FILENAME,
-    REPORT_SCHEMA_FILENAME,
-    ReportKind,
-    model_for,
-    schema_for,
-)
+from shikiru.operator.probe import init_scratch_repo, live_report_problem, prepare_live_report
 from shikiru.process import SubprocessRunner
 
 if TYPE_CHECKING:
@@ -59,24 +50,7 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import Agent, AgentFactory
 
 E2E_ENV_VAR = "SHIKIRU_E2E"
-_GIT_INIT_TIMEOUT_SECONDS = 10.0
 _TURN_TIMEOUT_SECONDS = 60.0
-_REPORT_INPUT_FILENAME = "contract-report-input.json"
-_REPORT_PROMPT_FILENAME = "contract-prompt.md"
-_LIVE_REPORT_DATA: dict[str, object] = {
-    "status": "completed",
-    "summary": "Isolated live report contract.",
-    "commits": [],
-    "tests": [],
-    "trackers_updated": False,
-    "risks": [],
-}
-_LIVE_REPORT_PROMPT = (
-    "Use Bash to run exactly this report command once:\n"
-    f'{shikiru_command("report", "--file")} "$SHIKIRU_RUN_DIR/{_REPORT_INPUT_FILENAME}"\n'
-    "Do not inspect or edit other files or run any other commands. "
-    "After the command succeeds, reply exactly REPORT_OK."
-)
 _SYNTHETIC_SESSION_ID = "synthetic-session"
 
 
@@ -271,33 +245,11 @@ class AgentContractSuite:
             self.build_spec(tmp_path, resume_session_id=None)
         )
         signals = await self._run_turn(spec)
-        _expect(isinstance(signals[0], SessionStarted), "live turn omitted SessionStarted")
-        _expect(isinstance(signals[-1], TurnEnded), "live turn omitted TurnEnded")
-        report_commands = [
-            signal
-            for signal in signals
-            if isinstance(signal, ToolStarted)
-            and (
-                signal.name == "shikiru report"
-                or (
-                    shikiru_command("report", "--file") in signal.detail
-                    and _REPORT_INPUT_FILENAME in signal.detail
-                )
-            )
-        ]
-        _expect(bool(report_commands), "live turn did not invoke shikiru report")
-        _expect((spec.turn_dir / REPORT_FILENAME).is_file(), "live turn wrote no report")
-        await asyncio.to_thread(_validate_written_report, spec.turn_dir)
+        problem = await asyncio.to_thread(live_report_problem, spec, signals)
+        _expect(problem is None, problem or "")
 
     async def _prepare_live_report_spec(self, spec: TurnSpec) -> TurnSpec:
-        await _init_scratch_repo(spec.cwd)
-        _prepare_report_turn(spec)
-        await asyncio.to_thread(
-            (spec.run_dir / _REPORT_INPUT_FILENAME).write_text,
-            json.dumps(_LIVE_REPORT_DATA),
-        )
-        prompt_path = spec.cwd / _REPORT_PROMPT_FILENAME
-        await asyncio.to_thread(prompt_path.write_text, _LIVE_REPORT_PROMPT)
+        prompt_path = await prepare_live_report(SubprocessRunner(), spec)
         return _with_prompt(spec, str(prompt_path), env=self._live_report_environment(spec))
 
     @pytest.mark.asyncio
@@ -527,28 +479,7 @@ def _expect(condition: bool, message: str) -> None:
 
 
 async def _init_scratch_repo(path: Path) -> None:
-    await asyncio.to_thread(path.mkdir, parents=True, exist_ok=True)
-    await SubprocessRunner().run(
-        ["git", "init"], timeout=_GIT_INIT_TIMEOUT_SECONDS, cwd=path, check=True
-    )
-
-
-def _prepare_report_turn(spec: TurnSpec) -> None:
-    spec.turn_dir.mkdir(parents=True, exist_ok=True)
-    (spec.turn_dir / REPORT_KIND_FILENAME).write_text(ReportKind.IMPLEMENTATION.value)
-    (spec.turn_dir / REPORT_SCHEMA_FILENAME).write_text(
-        json.dumps(schema_for(ReportKind.IMPLEMENTATION))
-    )
-    role_path = spec.run_dir / spec.role
-    role_path.mkdir(parents=True, exist_ok=True)
-    link = role_path / CURRENT_TURN_LINK_NAME
-    link.unlink(missing_ok=True)
-    link.symlink_to(spec.turn_dir)
-
-
-def _validate_written_report(turn_dir: Path) -> None:
-    kind = ReportKind((turn_dir / REPORT_KIND_FILENAME).read_text().strip())
-    model_for(kind).model_validate_json((turn_dir / REPORT_FILENAME).read_text())
+    await init_scratch_repo(SubprocessRunner(), path)
 
 
 def _with_prompt(spec: TurnSpec, prompt: str, *, env: Mapping[str, str] | None = None) -> TurnSpec:
