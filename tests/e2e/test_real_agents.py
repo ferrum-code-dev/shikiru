@@ -5,7 +5,6 @@ import json
 import os
 import shlex
 import shutil
-import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,16 +12,21 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from shikiru.domain.tasks import Status
+from shikiru.bootstrap import build_operator
+from shikiru.domain.reports import REPORT_FILENAME, Verdict
+from shikiru.domain.tasks import Role, Status, Step
 from shikiru.errors import ShikiruError
+from shikiru.operator.commands import AckStatus
+from shikiru.paths import MESSAGES_DIR_NAME, run_dir, turns_dir
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import session_name
+from shikiru.view_log import view_log_path
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from tests.support.tmux import TmuxServer
 
@@ -39,8 +43,6 @@ OUTER_TIMEOUT_SECONDS = (AUTOMATIC_RERUNS + 1) * (
     ATTEMPT_TIMEOUT_SECONDS + CLEANUP_TIMEOUT_SECONDS
 ) + CLI_TIMEOUT_SECONDS
 RUN_STATUS_LIVE = "live"
-PRIVATE_DIRECTORY_MODE = stat.S_IRWXU
-PRIVATE_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.e2e,
@@ -48,6 +50,18 @@ pytestmark = [
     pytest.mark.timeout(OUTER_TIMEOUT_SECONDS),
 ]
 E1_REQUEST = "Implement task A1 from tasks/plan.md"
+E2_REQUEST = "Implement task A2 from tasks/plan.md"
+E2_EDGE_CASE_CALL = 'parse_count("a;b, c")'
+E2_EDGE_CASE_RESULT = 3
+E2_EDGE_CASE_MARKER = "semicolon"
+E2_MESSAGE = (
+    "Additional Operator requirement for A2: names may also be separated by semicolons, "
+    f"so {E2_EDGE_CASE_CALL} must return {E2_EDGE_CASE_RESULT}. Do not accept an "
+    "implementation that does not handle semicolons and test this case."
+)
+VERIFY_TURN_PATTERN = f"*-{Step.VERIFY.value}-i*"
+FIRST_IMPLEMENT_TURN_PATTERN = f"*-{Step.IMPLEMENT.value}-i1"
+ACTING_ROLES = (Role.LEADER, Role.IMPLEMENTER)
 
 
 FIXTURE_NAME = "sample-project"
@@ -84,8 +98,6 @@ REAL_OVERRIDES = (
     'roles.implementer.ladder=[{agent="codex",model="gpt-5.6-luna",effort="low"}]',
     "--set",
     'roles.helper.ladder=[{agent="claude",model="haiku",effort="low"}]',
-    "--set",
-    'agents.claude.options.args=["--permission-mode","bypassPermissions"]',
 )
 
 
@@ -115,29 +127,14 @@ def _environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
         f'{shlex.quote(tmux_server.socket_name)} "$@"\n'
     )
     shim.chmod(0o755)
-    codex_home = project_root.parent / "codex-home"
-    _copy_codex_auth(codex_home)
     environment = dict(os.environ)
     environment.pop("TMUX", None)
     environment.pop("TMUX_PANE", None)
-    environment["CODEX_HOME"] = str(codex_home)
     environment["NO_COLOR"] = "1"
     environment["PATH"] = os.pathsep.join(
         (str(shim_dir), str(Path(sys.executable).parent), environment.get("PATH", os.defpath))
     )
     return environment
-
-
-def _copy_codex_auth(destination: Path) -> None:
-    source_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
-    source = source_home / "auth.json"
-    if not source.is_file():
-        _require(False, f"Codex auth file is missing at {source}")
-        raise AssertionError
-    destination.mkdir(mode=PRIVATE_DIRECTORY_MODE)
-    auth_destination = destination / "auth.json"
-    shutil.copyfile(source, auth_destination)
-    auth_destination.chmod(PRIVATE_FILE_MODE)
 
 
 async def _cli(
@@ -308,13 +305,73 @@ async def _assert_a1_implementation(project: PreparedProject) -> None:
     )
     test_sources = list((repository / "tests").glob("test_*.py"))
     _require(any("double(21)" in source.read_text() for source in test_sources), "A1 test missing")
+    await _assert_project_tests_pass(project)
+
+
+async def _assert_project_tests_pass(project: PreparedProject) -> None:
     result = await SubprocessRunner().run(
         [sys.executable, "-m", "pytest", "-q"],
         timeout=CLI_TIMEOUT_SECONDS,
-        cwd=repository,
+        cwd=project.root,
         check=False,
     )
-    _require(result.returncode == 0, f"A1 tests failed: {result.stdout}")
+    _require(result.returncode == 0, f"project tests failed: {result.stdout}")
+
+
+async def _assert_edge_case_handled(project: PreparedProject) -> None:
+    check = (
+        "from sample_project import parse_count; "
+        f"assert {E2_EDGE_CASE_CALL} == {E2_EDGE_CASE_RESULT}"
+    )
+    result = await SubprocessRunner().run(
+        [sys.executable, "-c", check], timeout=CLI_TIMEOUT_SECONDS, cwd=project.root, check=False
+    )
+    _require(result.returncode == 0, f"edge case not handled: {result.stderr[-1000:]}")
+    await _assert_project_tests_pass(project)
+
+
+def _verify_turns(project: PreparedProject) -> list[Path]:
+    return sorted(turns_dir(project.root, TASK_ID).glob(VERIFY_TURN_PATTERN))
+
+
+def _verdict(turn_dir: Path) -> Verdict:
+    return Verdict.model_validate_json((turn_dir / REPORT_FILENAME).read_text())
+
+
+def _assert_message_drove_review(project: PreparedProject) -> None:
+    verify_turns = _verify_turns(project)
+    _require(bool(verify_turns), "no verify turn ran")
+    first, last = verify_turns[0], verify_turns[-1]
+    delivered = [path.read_text() for path in (first / MESSAGES_DIR_NAME).glob("*")]
+    _require(E2_MESSAGE in delivered, f"message not delivered with {first.name}")
+    requested = _verdict(first)
+    cited = " ".join(issue.description for issue in requested.issues)
+    _require(
+        requested.decision == "changes_requested" and E2_EDGE_CASE_MARKER in cited.lower(),
+        f"first verdict did not request the edge case: {requested.model_dump_json()}",
+    )
+    _require(_verdict(last).decision == "accept", f"final verdict {last.name} was not accept")
+
+
+def _assert_views_recorded(project: PreparedProject) -> None:
+    task_run_dir = run_dir(project.root, TASK_ID)
+    for role in ACTING_ROLES:
+        view = view_log_path(task_run_dir, role.value)
+        _require(view.is_file() and view.stat().st_size > 0, f"{role.value} view log is empty")
+
+
+async def _send_edge_case_during_first_implementation(project: PreparedProject) -> None:
+    def implementing() -> bool:
+        _require(not _verify_turns(project), "implementation finished before the message was sent")
+        return any(turns_dir(project.root, TASK_ID).glob(FIRST_IMPLEMENT_TURN_PATTERN))
+
+    await wait_until(implementing, timeout=ATTEMPT_TIMEOUT_SECONDS)
+    services = build_operator(project.root)
+    try:
+        ack = await services.commands.send_message(TASK_ID, Role.LEADER, E2_MESSAGE)
+    finally:
+        services.close()
+    _require(ack.status is not AckStatus.REJECTED, f"send_message rejected: {ack.message}")
 
 
 async def _assert_window_closed(project: PreparedProject, tmux_server: TmuxServer) -> None:
@@ -337,45 +394,81 @@ async def _read_text(path: Path) -> str:
     return await asyncio.to_thread(path.read_text)
 
 
-async def _run_e1(
+type ScenarioBody = Callable[[PreparedProject, dict[str, str], TmuxServer], Awaitable[None]]
+
+
+async def _run_attempt(
     tmp_path: Path,
     tmux_server: TmuxServer,
     record_cost: Callable[[float | None], None],
+    body: ScenarioBody,
 ) -> None:
     project = await _prepare_project(tmp_path)
     environment = _environment(project.root, tmux_server)
     state = AttemptState()
     try:
         await asyncio.wait_for(
-            _execute_e1(project, environment, tmux_server, record_cost=record_cost, state=state),
+            _execute(project, environment, tmux_server, state, body),
             timeout=ATTEMPT_TIMEOUT_SECONDS,
         )
-    except AssertionError, OSError, ShikiruError, TimeoutError:
-        await _record_observed_cost(project, environment, record_cost)
-        raise
     finally:
+        await _record_observed_cost(project, environment, record_cost)
         await _cleanup_attempt(project, environment, state)
 
 
-async def _execute_e1(
+async def _execute(
     project: PreparedProject,
     environment: dict[str, str],
     tmux_server: TmuxServer,
-    *,
-    record_cost: Callable[[float | None], None],
     state: AttemptState,
+    body: ScenarioBody,
 ) -> None:
     await _initialize(project, environment)
     await _start(project, environment, state)
-    await _submit(project, environment, E1_REQUEST)
-    await _wait_done(project, environment)
+    await body(project, environment, tmux_server)
     task_statuses = await _task_tree_statuses(project.root, environment)
     _assert_both_agents_used(task_statuses)
-    await _assert_git_and_tracker(project)
+    _assert_views_recorded(project)
     await _assert_live_checkout_untouched(project)
-    await _assert_a1_implementation(project)
     await _assert_window_closed(project, tmux_server)
-    record_cost(_cost(task_statuses))
+
+
+async def _run_with_reruns(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    record_cost: Callable[[float | None], None],
+    body: ScenarioBody,
+) -> None:
+    if os.environ.get(REAL_E2E_ENV_VAR) != REAL_E2E_ENABLED:
+        pytest.skip(f"set {REAL_E2E_ENV_VAR}=1 to run real-agent E2E")
+    for attempt in range(AUTOMATIC_RERUNS + 1):
+        try:
+            await _run_attempt(tmp_path / f"attempt-{attempt}", tmux_server, record_cost, body)
+        except AssertionError, OSError, ShikiruError, TimeoutError:
+            if attempt == AUTOMATIC_RERUNS:
+                raise
+        else:
+            return
+
+
+async def _e1_body(
+    project: PreparedProject, environment: dict[str, str], _tmux_server: TmuxServer
+) -> None:
+    await _submit(project, environment, E1_REQUEST)
+    await _wait_done(project, environment)
+    await _assert_git_and_tracker(project, "A1")
+    await _assert_a1_implementation(project)
+
+
+async def _e2_body(
+    project: PreparedProject, environment: dict[str, str], _tmux_server: TmuxServer
+) -> None:
+    await _submit(project, environment, E2_REQUEST)
+    await _send_edge_case_during_first_implementation(project)
+    await _wait_done(project, environment)
+    _assert_message_drove_review(project)
+    await _assert_git_and_tracker(project, "A2")
+    await _assert_edge_case_handled(project)
 
 
 async def test_real_agents_e1_completes_and_integrates(
@@ -383,16 +476,15 @@ async def test_real_agents_e1_completes_and_integrates(
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    if os.environ.get(REAL_E2E_ENV_VAR) != REAL_E2E_ENABLED:
-        pytest.skip(f"set {REAL_E2E_ENV_VAR}=1 to run real-agent E2E")
-    for attempt in range(AUTOMATIC_RERUNS + 1):
-        try:
-            await _run_e1(tmp_path / f"attempt-{attempt}", tmux_server, record_e2e_cost)
-        except AssertionError, OSError, ShikiruError, TimeoutError:
-            if attempt == AUTOMATIC_RERUNS:
-                raise
-        else:
-            return
+    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e1_body)
+
+
+async def test_real_agents_e2_delivers_operator_message_to_verify(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    record_e2e_cost: Callable[[float | None], None],
+) -> None:
+    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e2_body)
 
 
 async def _record_observed_cost(
@@ -401,11 +493,10 @@ async def _record_observed_cost(
     record_cost: Callable[[float | None], None],
 ) -> None:
     try:
-        status = await _status(project.root, environment)
+        statuses = await _task_tree_statuses(project.root, environment)
     except OSError, ShikiruError, json.JSONDecodeError:
         return
-    if status is not None:
-        record_cost(_cost(status))
+    record_cost(_cost(statuses))
 
 
 def _task_summaries(status: dict[str, object] | None) -> dict[str, dict[str, object]]:
