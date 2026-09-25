@@ -65,7 +65,6 @@ class PacketContext:
     """Everything `render_packet` needs to assemble one escalation packet (03 §8)."""
 
     task_id: str
-    title: str
     step: Step | None
     reason: EscalationReason
     timeline: Sequence[str]
@@ -145,7 +144,6 @@ class EscalationRaiser:
         options = options_for(reason)
         context = PacketContext(
             task_id=task.id,
-            title=task.title,
             step=step,
             reason=reason,
             timeline=self._timeline(task.id),
@@ -183,7 +181,7 @@ class EscalationRaiser:
             message=headline,
             data={"escalation_id": escalation.id, "reason": reason.value},
         )
-        return escalation.model_copy(update={"packet_path": str(packet_path)})
+        return escalation
 
     def _packet_path(self, task_id: str, escalation_id: str) -> Path:
         return (

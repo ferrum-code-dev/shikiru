@@ -28,7 +28,6 @@ _STAR = "★"
 def _context_for(reason: EscalationReason) -> PacketContext:
     return PacketContext(
         task_id="T-1",
-        title="Add retries",
         step=Step.VERIFY,
         reason=reason,
         timeline=["2026-01-01T00:00:00+00:00 turn_completed: implemented"],
