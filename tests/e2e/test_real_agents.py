@@ -6,7 +6,7 @@ import os
 import shlex
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -43,6 +43,7 @@ OUTER_TIMEOUT_SECONDS = (AUTOMATIC_RERUNS + 1) * (
     ATTEMPT_TIMEOUT_SECONDS + CLEANUP_TIMEOUT_SECONDS
 ) + CLI_TIMEOUT_SECONDS
 RUN_STATUS_LIVE = "live"
+TASK_LIST_KEYS = ("active_tasks", "queued_tasks")
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.e2e,
@@ -76,6 +77,7 @@ class PreparedProject:
 @dataclass(slots=True)
 class AttemptState:
     lifecycle_started: bool = False
+    task_ids: list[str] = field(default_factory=lambda: [TASK_ID])
 
 
 def _require(condition: bool, message: str) -> None:
@@ -169,6 +171,12 @@ def _task_detail(status: dict[str, object] | None) -> dict[str, object] | None:
     return cast("dict[str, object]", value) if isinstance(value, dict) else None
 
 
+def _task_status(status: dict[str, object] | None) -> object:
+    detail = _task_detail(status)
+    task = None if detail is None else detail.get("task")
+    return cast("dict[str, object]", task).get("status") if isinstance(task, dict) else None
+
+
 async def _stop(project: PreparedProject, environment: dict[str, str]) -> None:
     code, _stdout, _stderr = await _cli(
         project.root,
@@ -182,21 +190,23 @@ async def _stop(project: PreparedProject, environment: dict[str, str]) -> None:
         raise AssertionError(message)
 
 
-async def _wait_done(project: PreparedProject, environment: dict[str, str]) -> None:
+async def _wait_done(
+    project: PreparedProject, environment: dict[str, str], state: AttemptState
+) -> None:
     async def done() -> bool:
-        status = await _status(project.root, environment, task_id=None)
-        task_ids = _task_tree_ids(status, TASK_ID)
-        tasks = _task_summaries(status)
-        tree = [tasks[task_id] for task_id in task_ids if task_id in tasks]
-        if tree and all(task.get("status") == Status.DONE.value for task in tree):
+        statuses = [
+            _task_status(status)
+            for status in await _task_tree_statuses(project.root, environment, state)
+        ]
+        if all(status == Status.DONE.value for status in statuses):
             return True
         _require(
             not any(
-                task.get("status") in {Status.ESCALATED.value, Status.CANCELLED.value}
-                for task in tree
+                status in {Status.ESCALATED.value, Status.CANCELLED.value} for status in statuses
             ),
-            f"task tree ended before completion: {[task.get('status') for task in tree]}",
+            f"task tree ended before completion: {statuses}",
         )
+        status = await _status(project.root, environment, task_id=None)
         _require(
             status is not None and status.get("engine_up") is True,
             "engine stopped before task completed",
@@ -394,7 +404,9 @@ async def _read_text(path: Path) -> str:
     return await asyncio.to_thread(path.read_text)
 
 
-type ScenarioBody = Callable[[PreparedProject, dict[str, str], TmuxServer], Awaitable[None]]
+type ScenarioBody = Callable[
+    [PreparedProject, dict[str, str], TmuxServer, AttemptState], Awaitable[None]
+]
 
 
 async def _run_attempt(
@@ -412,7 +424,7 @@ async def _run_attempt(
             timeout=ATTEMPT_TIMEOUT_SECONDS,
         )
     finally:
-        await _record_observed_cost(project, environment, record_cost)
+        await _record_observed_cost(project, environment, state, record_cost)
         await _cleanup_attempt(project, environment, state)
 
 
@@ -425,8 +437,8 @@ async def _execute(
 ) -> None:
     await _initialize(project, environment)
     await _start(project, environment, state)
-    await body(project, environment, tmux_server)
-    task_statuses = await _task_tree_statuses(project.root, environment)
+    await body(project, environment, tmux_server, state)
+    task_statuses = await _task_tree_statuses(project.root, environment, state)
     _assert_both_agents_used(task_statuses)
     _assert_views_recorded(project)
     await _assert_live_checkout_untouched(project)
@@ -452,20 +464,26 @@ async def _run_with_reruns(
 
 
 async def _e1_body(
-    project: PreparedProject, environment: dict[str, str], _tmux_server: TmuxServer
+    project: PreparedProject,
+    environment: dict[str, str],
+    _tmux_server: TmuxServer,
+    state: AttemptState,
 ) -> None:
     await _submit(project, environment, E1_REQUEST)
-    await _wait_done(project, environment)
+    await _wait_done(project, environment, state)
     await _assert_git_and_tracker(project, "A1")
     await _assert_a1_implementation(project)
 
 
 async def _e2_body(
-    project: PreparedProject, environment: dict[str, str], _tmux_server: TmuxServer
+    project: PreparedProject,
+    environment: dict[str, str],
+    _tmux_server: TmuxServer,
+    state: AttemptState,
 ) -> None:
     await _submit(project, environment, E2_REQUEST)
     await _send_edge_case_during_first_implementation(project)
-    await _wait_done(project, environment)
+    await _wait_done(project, environment, state)
     _assert_message_drove_review(project)
     await _assert_git_and_tracker(project, "A2")
     await _assert_edge_case_handled(project)
@@ -490,10 +508,11 @@ async def test_real_agents_e2_delivers_operator_message_to_verify(
 async def _record_observed_cost(
     project: PreparedProject,
     environment: dict[str, str],
+    state: AttemptState,
     record_cost: Callable[[float | None], None],
 ) -> None:
     try:
-        statuses = await _task_tree_statuses(project.root, environment)
+        statuses = await _task_tree_statuses(project.root, environment, state)
     except OSError, ShikiruError, json.JSONDecodeError:
         return
     record_cost(_cost(statuses))
@@ -502,11 +521,13 @@ async def _record_observed_cost(
 def _task_summaries(status: dict[str, object] | None) -> dict[str, dict[str, object]]:
     if status is None:
         return {}
-    values = status.get("tasks")
-    if not isinstance(values, list):
-        return {}
+    values: list[object] = []
+    for key in TASK_LIST_KEYS:
+        listed = status.get(key)
+        if isinstance(listed, list):
+            values.extend(cast("list[object]", listed))
     summaries: dict[str, dict[str, object]] = {}
-    for value in cast("list[object]", values):
+    for value in values:
         if not isinstance(value, dict):
             continue
         summary = cast("dict[str, object]", value)
@@ -516,28 +537,21 @@ def _task_summaries(status: dict[str, object] | None) -> dict[str, dict[str, obj
     return summaries
 
 
-def _task_tree_ids(status: dict[str, object] | None, root_id: str) -> list[str]:
+def _track_task_tree(status: dict[str, object] | None, task_ids: list[str]) -> None:
     tasks = _task_summaries(status)
-    if root_id not in tasks:
-        return []
-    result = [root_id]
-    for task_id in result:
-        result.extend(
+    for task_id in task_ids:
+        task_ids.extend(
             child_id
             for child_id, task in tasks.items()
-            if task.get("parent_id") == task_id and child_id not in result
+            if task.get("parent_id") == task_id and child_id not in task_ids
         )
-    return result
 
 
 async def _task_tree_statuses(
-    project_root: Path, environment: dict[str, str]
+    project_root: Path, environment: dict[str, str], state: AttemptState
 ) -> list[dict[str, object] | None]:
-    status = await _status(project_root, environment, task_id=None)
-    return [
-        await _status(project_root, environment, task_id)
-        for task_id in _task_tree_ids(status, TASK_ID)
-    ]
+    _track_task_tree(await _status(project_root, environment, task_id=None), state.task_ids)
+    return [await _status(project_root, environment, task_id) for task_id in state.task_ids]
 
 
 async def _initialize(project: PreparedProject, environment: dict[str, str]) -> None:
