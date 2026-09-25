@@ -199,7 +199,7 @@ Do the fixes marked _After/With Task N_ inside or after those tasks. Findings on
   - T1 (the FakeClock drive pattern runs an extra turn)
   - T2 (ordinary runs overwrite E2E results)
   - T4 (a missing pane counts as alive)
-- [ ] Design debts:
+- [x] Design debts:
   - E1 (one escalate sequence)
   - E3 (the consult answer is persisted, not held in memory)
   - E6 (the conflict rebase matches 03 §6)
