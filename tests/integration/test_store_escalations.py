@@ -75,6 +75,7 @@ def test_latest_answer_uses_the_newest_resolved_answer(connection: Connection) -
     store.resolve(first.id, f"{ResolutionKind.ANSWER.value} first guidance")
     retry = _open(store, task_id)
     store.resolve(retry.id, ResolutionKind.RETRY.value)
+    assert store.latest_answer(task_id) is None
     latest = _open(store, task_id)
     store.resolve(latest.id, f"{ResolutionKind.ANSWER.value} latest guidance")
 

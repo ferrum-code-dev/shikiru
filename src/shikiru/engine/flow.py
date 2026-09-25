@@ -786,7 +786,11 @@ class TaskFlow:
             "reports": self._history.context(history),
         }
         if template is PromptName.CONSULT:
-            answer = self._escalation_store.latest_answer(task.id)
+            answer = (
+                self._escalation_store.latest_answer(task.id)
+                if task.counters.consults == 0
+                else None
+            )
             context["question"] = (
                 answer if answer is not None else self._history.latest_question(history)
             )

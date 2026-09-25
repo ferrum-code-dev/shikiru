@@ -192,24 +192,25 @@ class EscalationStore:
         return fetch_open_escalations(self._connection)
 
     def latest_answer(self, task_id: str) -> str | None:
-        """Return the newest persisted Operator answer for `task_id`, if any."""
+        """Return the latest resolved Operator answer for `task_id`, if it was an answer."""
         row = self._connection.execute(
             """
             SELECT resolution FROM escalations
-            WHERE task_id = ? AND status = ? AND substr(resolution, 1, ?) = ?
+            WHERE task_id = ? AND status = ?
             ORDER BY resolved_at DESC, CAST(substr(id, 3) AS INTEGER) DESC
             LIMIT 1
             """,
             (
                 task_id,
                 EscalationStatus.RESOLVED.value,
-                len(ANSWER_RESOLUTION_PREFIX),
-                ANSWER_RESOLUTION_PREFIX,
             ),
         ).fetchone()
         if row is None:
             return None
-        return row["resolution"][len(ANSWER_RESOLUTION_PREFIX) :]
+        resolution = row["resolution"]
+        if resolution is None or not resolution.startswith(ANSWER_RESOLUTION_PREFIX):
+            return None
+        return resolution[len(ANSWER_RESOLUTION_PREFIX) :]
 
     def resolve(self, escalation_id: str, resolution: str) -> None:
         """Mark `escalation_id` resolved, recording `resolution`'s summary text."""
