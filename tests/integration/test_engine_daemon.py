@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +17,8 @@ from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import (
+    AcceptResolution,
+    AnswerResolution,
     Cancel,
     CancelResolution,
     Pause,
@@ -22,6 +26,7 @@ from shikiru.domain.commands import (
     Resolve,
     Resume,
     Retry,
+    RetryResolution,
     SetRung,
     Stop,
     Submit,
@@ -30,13 +35,16 @@ from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import (
+    Counters,
     EscalationReason,
+    Hold,
     Mode,
     RepoState,
     Role,
     Status,
     StatusReason,
     Step,
+    Task,
 )
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
 from shikiru.engine.escalations import EscalationRaiser
@@ -73,6 +81,18 @@ _LAYOUT = LayoutSplit(
         PaneLeaf(pane="shell"),
     ],
 )
+
+
+@dataclass(frozen=True)
+class _ResolutionCase:
+    reason: EscalationReason
+    step: Step
+    resolution: AnswerResolution | RetryResolution | AcceptResolution | CancelResolution
+    expected_step: Step
+    expected_status: Status
+    expected_command_status: CommandStatus
+    expected_escalation_status: EscalationStatus
+    expected_override: Rung | None = None
 
 
 class _NoHeadlessFakeAgent(FakeAgent):
@@ -128,6 +148,12 @@ async def _append_and_wait(
     return await _wait_for_command(queue.append(command), queue, clock)
 
 
+def _required_task(tasks: TaskStore, task_id: str) -> Task:
+    task = tasks.get(task_id)
+    assert task is not None
+    return task
+
+
 async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
@@ -138,6 +164,7 @@ async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch
     registry: AgentRegistry = build_registry()
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=registry)
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
     engine_task = asyncio.create_task(engine.run())
 
@@ -151,14 +178,32 @@ async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch
     assert prioritized.status is CommandStatus.DONE
     paused = await _append_and_wait(Pause(task_id=task_id), queue, clock)
     assert paused.status is CommandStatus.DONE
+    task = _required_task(tasks, task_id)
+    assert task.priority == 9
+    assert Hold.PAUSED in task.holds
     resumed = await _append_and_wait(Resume(task_id=task_id), queue, clock)
     assert resumed.status is CommandStatus.DONE
+    task = _required_task(tasks, task_id)
+    assert Hold.PAUSED not in task.holds
     rung = await _append_and_wait(
         SetRung(task_id=task_id, role=Role.IMPLEMENTER, rung=_SECOND_RUNG), queue, clock
     )
     assert rung.status is CommandStatus.DONE
+    task = _required_task(tasks, task_id)
+    assert task.overrides[Role.IMPLEMENTER] == _SECOND_RUNG
+    task = _required_task(tasks, task_id)
+    tasks.apply_transition(
+        task_id,
+        dataclasses.replace(
+            Transition.stay(task, step=task.step, status=task.status),
+            counters=Counters(rejections_on_rung=2, consults=3, conflict_rounds=4),
+        ),
+    )
     retried = await _append_and_wait(Retry(task_id=task_id), queue, clock)
     assert retried.status is CommandStatus.DONE
+    task = _required_task(tasks, task_id)
+    assert task.status is Status.QUEUED
+    assert task.counters == Counters(rejections_on_rung=2)
     cancelled = await _append_and_wait(Cancel(task_id=task_id), queue, clock)
     assert cancelled.status is CommandStatus.DONE
     stopped = await _append_and_wait(Stop(), queue, clock)
@@ -166,10 +211,10 @@ async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch
 
     await engine_task
     events = EventLog(connection, clock).since(0, task_id=task_id)
-    task = TaskStore(connection, clock).get(task_id)
-    assert task is not None
+    task = _required_task(tasks, task_id)
     assert task.status is Status.CANCELLED
     assert not any(event.kind is EventKind.TASK_STARTED for event in events)
+    assert any(event.kind is EventKind.TASK_CANCELLED for event in events)
     connection.close()
 
 
@@ -347,8 +392,74 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
         connection.close()
 
 
-async def test_queued_resolution_is_acknowledged_by_the_daemon(
-    tmp_path: Path, tmux_server: TmuxServer
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            _ResolutionCase(
+                EscalationReason.DECISION_REQUIRED,
+                Step.IMPLEMENT,
+                AnswerResolution(text="use the safer parser"),
+                Step.CONSULT,
+                Status.QUEUED,
+                CommandStatus.DONE,
+                EscalationStatus.RESOLVED,
+            ),
+            id="answer-queues-consult",
+        ),
+        pytest.param(
+            _ResolutionCase(
+                EscalationReason.ITERATIONS_EXHAUSTED,
+                Step.VERIFY,
+                AcceptResolution(),
+                Step.INTEGRATE,
+                Status.QUEUED,
+                CommandStatus.DONE,
+                EscalationStatus.RESOLVED,
+            ),
+            id="accept-queues-integration",
+        ),
+        pytest.param(
+            _ResolutionCase(
+                EscalationReason.AGENT_ERROR,
+                Step.IMPLEMENT,
+                RetryResolution(rung=_SECOND_RUNG),
+                Step.IMPLEMENT,
+                Status.QUEUED,
+                CommandStatus.DONE,
+                EscalationStatus.RESOLVED,
+                expected_override=_SECOND_RUNG,
+            ),
+            id="retry-keeps-step-and-applies-rung",
+        ),
+        pytest.param(
+            _ResolutionCase(
+                EscalationReason.DECISION_REQUIRED,
+                Step.IMPLEMENT,
+                CancelResolution(),
+                Step.IMPLEMENT,
+                Status.CANCELLED,
+                CommandStatus.DONE,
+                EscalationStatus.RESOLVED,
+            ),
+            id="cancel-finishes-task",
+        ),
+        pytest.param(
+            _ResolutionCase(
+                EscalationReason.AGENT_ERROR,
+                Step.IMPLEMENT,
+                AcceptResolution(),
+                Step.IMPLEMENT,
+                Status.ESCALATED,
+                CommandStatus.REJECTED,
+                EscalationStatus.OPEN,
+            ),
+            id="invalid-resolution-keeps-escalation-open",
+        ),
+    ],
+)
+async def test_resolution_commands_persist_task_and_escalation_outcomes(
+    tmp_path: Path, tmux_server: TmuxServer, case: _ResolutionCase
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     settings = _settings()
@@ -361,9 +472,10 @@ async def test_queued_resolution_is_acknowledged_by_the_daemon(
     submitted = queue.append(Submit(title="resolve me", request="resolve me"))
     assert isinstance(submitted.command, Submit)
     task = tasks.insert_from_submit(submitted.command)
+    queue.mark_done(submitted.id, {"task_id": task.id})
     tasks.apply_transition(
         task.id,
-        Transition.stay(task, step=Step.IMPLEMENT, status=Status.ESCALATED),
+        Transition.stay(task, step=case.step, status=Status.ESCALATED),
     )
     tasks.set_slot(task.id, 1)
     events = EventLog(connection, clock)
@@ -372,31 +484,125 @@ async def test_queued_resolution_is_acknowledged_by_the_daemon(
         escalation_store, events, RunStore(connection, clock), tmp_path
     ).raise_escalation(
         task,
-        step=Step.IMPLEMENT,
-        reason=EscalationReason.DECISION_REQUIRED,
+        step=case.step,
+        reason=case.reason,
         question="choose",
         attempted="test",
         reports=(),
         facts="",
         view_tail="",
     )
-    resolve = queue.append(Resolve(escalation_id=escalation.id, resolution=CancelResolution()))
+    resolve = queue.append(Resolve(escalation_id=escalation.id, resolution=case.resolution))
     stop = queue.append(Stop())
     engine_task = asyncio.create_task(engine.run())
+    try:
+        resolve_outcome = await _wait_for_command(resolve, queue, clock)
+        stop_outcome = await _wait_for_command(stop, queue, clock)
+        assert resolve_outcome.status is case.expected_command_status
+        assert stop_outcome.status is CommandStatus.DONE
+        await engine_task
 
-    resolve_outcome = await _wait_for_command(resolve, queue, clock)
-    stop_outcome = await _wait_for_command(stop, queue, clock)
-    assert resolve_outcome.status is CommandStatus.DONE
-    assert stop_outcome.status is CommandStatus.DONE
-    await engine_task
+        updated = tasks.get(task.id)
+        assert updated is not None
+        assert updated.status is case.expected_status
+        assert updated.step is case.expected_step
+        assert updated.overrides.get(Role.IMPLEMENTER) == case.expected_override
+        persisted_escalation = escalation_store.get(escalation.id)
+        assert persisted_escalation is not None
+        assert persisted_escalation.status is case.expected_escalation_status
+        task_events = events.since(0, task_id=task.id)
+        resolved_events = [
+            event for event in task_events if event.kind is EventKind.ESCALATION_RESOLVED
+        ]
+        assert bool(resolved_events) is (
+            case.expected_escalation_status is EscalationStatus.RESOLVED
+        )
+        cancelled_events = [
+            event for event in task_events if event.kind is EventKind.TASK_CANCELLED
+        ]
+        assert bool(cancelled_events) is (case.expected_status is Status.CANCELLED)
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()
 
-    updated = tasks.get(task.id)
-    assert updated is not None
-    assert updated.status is Status.CANCELLED
-    resolved = escalation_store.get(escalation.id)
-    assert resolved is not None
-    assert resolved.status is EscalationStatus.RESOLVED
-    connection.close()
+
+async def test_retry_resolution_drops_only_cancelled_dependencies(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings()
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    queue = CommandQueue(connection, clock)
+    tasks = TaskStore(connection, clock)
+
+    def insert_task(title: str, dependencies: list[str] | None = None) -> Task:
+        queued = queue.append(Submit(title=title, request=title, depends_on=dependencies or []))
+        assert isinstance(queued.command, Submit)
+        task = tasks.insert_from_submit(queued.command)
+        queue.mark_done(queued.id, {"task_id": task.id})
+        return task
+
+    cancelled_dependency = insert_task("cancelled dependency")
+    completed_dependency = insert_task("completed dependency")
+    tasks.apply_transition(
+        cancelled_dependency.id,
+        Transition.stay(cancelled_dependency, step=Step.IMPLEMENT, status=Status.CANCELLED),
+    )
+    tasks.apply_transition(
+        completed_dependency.id,
+        Transition.stay(completed_dependency, step=Step.IMPLEMENT, status=Status.DONE),
+    )
+    task = insert_task(
+        "retry task", dependencies=[cancelled_dependency.id, completed_dependency.id]
+    )
+    tasks.apply_transition(
+        task.id, Transition.stay(task, step=Step.IMPLEMENT, status=Status.ESCALATED)
+    )
+    tasks.set_slot(task.id, 1)
+    events = EventLog(connection, clock)
+    escalations = EscalationStore(connection, clock)
+    escalation = await EscalationRaiser(
+        escalations, events, RunStore(connection, clock), tmp_path
+    ).raise_escalation(
+        task,
+        step=Step.IMPLEMENT,
+        reason=EscalationReason.DEPENDENCY_CANCELLED,
+        question="retry?",
+        attempted="a dependency was cancelled",
+        reports=(),
+        facts="",
+        view_tail="",
+    )
+    resolve = queue.append(Resolve(escalation_id=escalation.id, resolution=RetryResolution()))
+    stop = queue.append(Stop())
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        resolve_outcome = await _wait_for_command(resolve, queue, clock)
+        stop_outcome = await _wait_for_command(stop, queue, clock)
+        assert resolve_outcome.status is CommandStatus.DONE
+        assert stop_outcome.status is CommandStatus.DONE
+        await engine_task
+
+        retried = tasks.get(task.id)
+        assert retried is not None
+        assert retried.depends_on == [completed_dependency.id]
+        assert retried.step is Step.IMPLEMENT
+        assert retried.status is Status.QUEUED
+        persisted_escalation = escalations.get(escalation.id)
+        assert persisted_escalation is not None
+        assert persisted_escalation.status is EscalationStatus.RESOLVED
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()
 
 
 async def test_superseded_task_uses_shared_terminal_cleanup(
