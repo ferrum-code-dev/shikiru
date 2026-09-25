@@ -31,6 +31,7 @@ REPORT_INSTRUCTION = (
     f"`{shikiru_command('report', '--file')} <file>`. If it exits non-zero, fix it and run it "
     "again. Then end your turn."
 )
+OPERATOR_MESSAGES_KEY = "operator_messages"
 ALREADY_DONE_SENTENCE = "If this work is already done in the workspace, verify it and report."
 
 

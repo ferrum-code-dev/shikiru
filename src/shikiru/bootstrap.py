@@ -28,6 +28,7 @@ from shikiru.engine.handlers import (
     ResolveHandler,
     ResumeHandler,
     RetryHandler,
+    SayHandler,
     SetRungHandler,
     StopHandler,
     SubmitHandler,
@@ -73,6 +74,7 @@ from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
+from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import TaskRootBuilder
 
 if TYPE_CHECKING:
@@ -312,6 +314,7 @@ def build_engine(
         task_finisher=task_finisher,
     )
     history = ReportHistory(project_root)
+    messages = OperatorMessages(project_root)
     flow = TaskFlow(
         tasks=tasks,
         events=events,
@@ -322,6 +325,7 @@ def build_engine(
             monitor=monitor,
             helper=helper,
             renderer=PromptRenderer(project_root),
+            messages=messages,
             events=events,
             runs=runs,
             project_root=project_root,
@@ -365,6 +369,7 @@ def build_engine(
             CancelHandler(handler_context),
             RetryHandler(handler_context),
             SetRungHandler(handler_context),
+            SayHandler(handler_context, messages),
             ResolveHandler(handler_context),
             StopHandler(handler_context),
         ]

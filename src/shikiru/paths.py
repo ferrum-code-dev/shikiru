@@ -17,6 +17,7 @@ ENGINE_LOG_FILENAME = "engine.log"
 WORKTREES_DIR_NAME = "worktrees"
 RUNS_DIR_NAME = "runs"
 TURNS_DIR_NAME = "turns"
+MESSAGES_DIR_NAME = "messages"
 EXCLUDE_LINE = f"/{SHIKIRU_DIR_NAME}/"
 
 
@@ -58,3 +59,8 @@ def turns_dir(project_root: Path, task_id: str) -> Path:
 def task_root(project_root: Path, task_id: str) -> Path:
     """Return `task_id`'s `.shikiru/worktrees/` directory."""
     return project_state_dir(project_root) / WORKTREES_DIR_NAME / task_id
+
+
+def queued_messages_dir(project_root: Path, task_id: str, role: str) -> Path:
+    """Return the directory holding `role`'s queued operator messages for `task_id`."""
+    return run_dir(project_root, task_id) / MESSAGES_DIR_NAME / role

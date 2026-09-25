@@ -33,6 +33,7 @@ def _full_context(name: PromptName, *, report_json: str = _REPORT_JSON) -> dict[
         "trackers": ["tasks/plan.md", "tasks/todo.md"],
         "reports": [{"label": "Implementation", "json": report_json}],
         "required_mode": "",
+        "operator_messages": [],
     }
     if name is PromptName.CONSULT:
         context["question"] = "Which retry library should I use?"

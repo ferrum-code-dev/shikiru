@@ -11,6 +11,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.reports import HELPER_REPORT_FILENAME, REPORT_FILENAME
 from shikiru.domain.tasks import Mode, Role, Status, Step
 from shikiru.engine.turns import NUDGE_LIMIT
+from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_NAME, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
@@ -137,3 +138,30 @@ async def test_helper_rebuilds_after_both_report_nudges(
     rebuilt = json.loads((turn_dir / HELPER_REPORT_FILENAME).read_text())
     assert rebuilt["summary"] == "rebuilt by helper"
     assert not (turn_dir / REPORT_FILENAME).exists()
+
+
+async def test_queued_operator_message_reaches_only_its_roles_next_prompt(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
+    messages = OperatorMessages(engine_env.project_root)
+    for_implementer = messages.queue(task.id, Role.IMPLEMENTER, "use the new helper")
+    for_leader = messages.queue(task.id, Role.LEADER, "keep scope small")
+    flow_env = build_flow(engine_env, flow_settings())
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+
+    turns = run_dir(engine_env.project_root, task.id) / "turns"
+    for role_message, text, step in (
+        (for_implementer, "use the new helper", "-implement-i1"),
+        (for_leader, "keep scope small", "-verify-i1"),
+    ):
+        [turn_dir] = [path for path in turns.iterdir() if path.name.endswith(step)]
+        [delivered] = (turn_dir / "messages").iterdir()
+        assert delivered.read_text() == text
+        assert not role_message.exists()
+        prompt = (turn_dir / "prompt.md").read_text()
+        assert "Operator messages — read these first" in prompt
+        assert str(delivered) in prompt

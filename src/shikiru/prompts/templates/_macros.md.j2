@@ -24,3 +24,13 @@ Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif
 
 {{ facts | fenced("text") }}
 {%- endmacro %}
+
+{% macro operator_messages_section(paths) -%}
+{% if paths %}
+## Operator messages — read these first
+
+{% for path in paths %}
+- `{{ path }}`
+{% endfor %}
+{% endif -%}
+{%- endmacro %}

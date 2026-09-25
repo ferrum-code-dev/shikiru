@@ -30,6 +30,7 @@ class CommandKind(StrEnum):
     CANCEL = auto()
     RETRY = auto()
     SET_RUNG = auto()
+    SAY = auto()
     RESOLVE = auto()
     STOP = auto()
 
@@ -95,6 +96,15 @@ class SetRung(DomainModel):
     rung: Rung
 
 
+class Say(DomainModel):
+    """`say T-n <role> "<text>"`: queues a message for the role's next turn."""
+
+    kind: Literal[CommandKind.SAY] = CommandKind.SAY
+    task_id: str
+    role: Role
+    text: str
+
+
 class ResolutionKind(StrEnum):
     """The `resolve` answer's discriminator."""
 
@@ -151,6 +161,6 @@ class Stop(DomainModel):
 
 
 Command = Annotated[
-    Submit | Prioritize | Pause | Resume | Cancel | Retry | SetRung | Resolve | Stop,
+    Submit | Prioritize | Pause | Resume | Cancel | Retry | SetRung | Say | Resolve | Stop,
     Field(discriminator="kind"),
 ]

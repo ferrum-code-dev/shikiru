@@ -38,6 +38,7 @@ from shikiru.errors import ShikiruError
 from shikiru.helper.helper import FailureClassification
 from shikiru.helper.models import Unrecoverable
 from shikiru.paths import run_dir, task_root, turns_dir
+from shikiru.prompts.renderer import OPERATOR_MESSAGES_KEY
 from shikiru.workspace.reports import InvalidTurnReportError, load_turn_report
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
     from shikiru.prompts.renderer import PromptName, PromptRenderer
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
+    from shikiru.workspace.messages import OperatorMessages
 
 NUDGE_LIMIT = 2
 CLASSIFY_CONFIDENCE = 0.8
@@ -94,6 +96,7 @@ class TurnRunner:
         monitor: TurnMonitor,
         helper: Helper,
         renderer: PromptRenderer,
+        messages: OperatorMessages,
         events: EventLog,
         runs: RunStore,
         project_root: Path,
@@ -104,6 +107,7 @@ class TurnRunner:
         self._monitor = monitor
         self._helper = helper
         self._renderer = renderer
+        self._messages = messages
         self._events = events
         self._runs = runs
         self._project_root = project_root
@@ -189,9 +193,9 @@ class TurnRunner:
         turn_dir.mkdir(parents=True, exist_ok=True)
         (turn_dir / REPORT_FILENAME).unlink(missing_ok=True)
         (turn_dir / HELPER_REPORT_FILENAME).unlink(missing_ok=True)
-        (turn_dir / PROMPT_FILENAME).write_text(
-            self._renderer.render(request.template, request.context)
-        )
+        delivered = self._messages.deliver(task_id, role, turn_dir)
+        context = {**request.context, OPERATOR_MESSAGES_KEY: [str(path) for path in delivered]}
+        (turn_dir / PROMPT_FILENAME).write_text(self._renderer.render(request.template, context))
         (turn_dir / REPORT_SCHEMA_FILENAME).write_text(
             json.dumps(schema_for(request.kind), indent=2)
         )

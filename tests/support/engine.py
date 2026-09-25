@@ -34,6 +34,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.session import SessionView
+from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import task_root
 from tests.support.clock import FakeClock
 from tests.support.factories import TASK_CREATED_AT, make_settings
@@ -172,6 +173,7 @@ def build_turn_system(
         monitor=monitor,
         helper=helper,
         renderer=PromptRenderer(project_root),
+        messages=OperatorMessages(project_root),
         events=events,
         runs=runs,
         project_root=project_root,

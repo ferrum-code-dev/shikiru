@@ -156,6 +156,11 @@ def _register_command_tools(server: FastMCP, services: OperatorServices) -> None
         return await services.commands.set_rung(task_id, role, parse_rung(rung))
 
     @server.tool()
+    async def send_message(task_id: str, role: Role, text: str) -> Ack:
+        """Queue a message the role reads at the start of its next turn."""
+        return await services.commands.send_message(task_id, role, text)
+
+    @server.tool()
     async def resolve_escalation(escalation_id: str, resolution: ResolutionInput) -> Ack:
         """Resolve an open escalation with an answer, retry, accept or cancel decision."""
         return await services.commands.resolve_escalation(escalation_id, resolution.to_domain())
