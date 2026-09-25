@@ -154,7 +154,6 @@ class Settings(ConfigModel):
 
     @model_validator(mode="after")
     def _every_ladder_agent_has_a_table(self) -> Settings:
-        """Fail fast, naming every ladder agent with no `[agents.<name>]` table."""
         wanted = {rung.agent for rung in self.roles.leader.ladder}
         wanted.update(rung.agent for rung in self.roles.implementer.ladder)
         for override in self.roles.implementer.complexity.values():

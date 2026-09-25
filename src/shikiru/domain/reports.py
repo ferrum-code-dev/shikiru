@@ -37,7 +37,6 @@ def resolve_dependency(reference: str, sibling_ids: Sequence[str]) -> str:
 
 
 def _require_iff(*, condition: bool, present: bool, field: str, rule: str) -> None:
-    """Enforce one "required iff `rule`" field, raising a message naming `field` and `rule`."""
     if condition and not present:
         message = f"{field}: required when {rule}"
         raise ValueError(message)
@@ -47,7 +46,6 @@ def _require_iff(*, condition: bool, present: bool, field: str, rule: str) -> No
 
 
 def _require_sibling_references_in_range(new_tasks: list[NewTask], field: str) -> None:
-    """Reject a `#k` reference that doesn't name one of the report's own `new_tasks`."""
     for new_task in new_tasks:
         for reference in new_task.depends_on:
             if reference.startswith(SIBLING_REFERENCE_PREFIX) and not (
