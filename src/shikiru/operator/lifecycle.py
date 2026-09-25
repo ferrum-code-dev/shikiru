@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     OperatorFactory = Callable[[Path, Settings], OperatorServices]
     PluginValidator = Callable[[Settings], Awaitable[None]]
     EngineState = Callable[[Path], bool]
-    DashboardRunner = Callable[[Path, Sequence[str], str | None], Awaitable[None]]
 
 PACKAGE_NAME = "shikiru"
 CLI_ENGINE_COMMAND = "engine"
@@ -49,7 +48,6 @@ class ProjectLifecycle:
         operator_factory: OperatorFactory,
         plugin_validator: PluginValidator,
         engine_up: EngineState,
-        dashboard_runner: DashboardRunner,
     ) -> None:
         """Store process, tmux, state-service and validation boundaries."""
         self._runner = runner
@@ -59,7 +57,6 @@ class ProjectLifecycle:
         self._operator_factory = operator_factory
         self._plugin_validator = plugin_validator
         self._engine_up = engine_up
-        self._dashboard_runner = dashboard_runner
 
     async def start(
         self,
@@ -136,15 +133,6 @@ class ProjectLifecycle:
         if kill_session and ack.status is AckStatus.DONE and await self._tmux.target_exists(target):
             await self._tmux.kill_session(target)
         return ack
-
-    async def dashboard(
-        self,
-        root: Path,
-        overrides: Sequence[str],
-        focus_task: str | None,
-    ) -> None:
-        """Run the configured dashboard through its injected adapter."""
-        await self._dashboard_runner(root, overrides, focus_task)
 
     async def _wait_for_engine(self, root: Path) -> None:
         deadline = self._clock.now().timestamp() + ENGINE_START_WAIT_SECONDS

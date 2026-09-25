@@ -20,6 +20,7 @@ from shikiru.bootstrap import (
     build_mcp_server,
     build_operator,
     build_project_detectors,
+    run_dashboard,
 )
 from shikiru.cli.context import CliState, project_root, state_from
 from shikiru.cli.render import ack_renderable, doctor_renderable, status_renderable
@@ -242,7 +243,7 @@ def dash(
         if home == (task is not None):
             message = "dash requires exactly one of --home or --task"
             raise UsageError(message)
-        _run(build_lifecycle().dashboard(root, state.overrides, None if home else task))
+        _run(run_dashboard(root, state.overrides, None if home else task))
     except ShikiruError as error:
         _fail(error)
 

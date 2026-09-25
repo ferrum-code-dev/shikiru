@@ -115,12 +115,11 @@ def build_doctor(project_root: Path) -> Doctor:
 
 
 def build_lifecycle() -> ProjectLifecycle:
-    """Build the detached engine and dashboard lifecycle service."""
+    """Build the detached engine lifecycle service."""
     clock = build_clock()
     runner = SubprocessRunner()
     tmux = Tmux(runner)
     session = SessionView(tmux)
-    git = Git(runner)
     registry = AgentRegistry()
     plugin_checks = PluginChecks(registry, runner, clock)
 
@@ -144,45 +143,6 @@ def build_lifecycle() -> ProjectLifecycle:
             message = f"agent plugin checks failed: {detail}"
             raise ConfigError(message)
 
-    async def dashboard_runner(
-        project_root: Path,
-        overrides: Sequence[str],
-        focus_task: str | None,
-    ) -> None:
-        dashboard_app_module = import_module("shikiru.dashboard.app")
-        dashboard_services_module = import_module("shikiru.dashboard.services")
-        dashboard_views_module = import_module("shikiru.dashboard.views")
-        settings = load_settings(project_root, overrides)
-        services = build_operator(
-            project_root,
-            settings,
-            clock=clock,
-            runner=runner,
-            tmux=tmux,
-        )
-        try:
-            dashboard_services = dashboard_services_module.DashboardServices(
-                dashboard_services_module.GitRepoStatusService(
-                    git, settings.repo, project_root, clock
-                ),
-                lambda: engine_is_running(engine_lock_path(project_root)),
-            )
-            views = dashboard_views_module.StateDashboardViews(
-                services.reader,
-                focus_task=focus_task,
-                settings=settings,
-                sources=dashboard_services,
-            )
-            app_instance = dashboard_app_module.DashboardApp(
-                focus_task=focus_task,
-                views=views,
-                on_change=services.reader.watch,
-                widget_names=settings.dashboard.widgets,
-            )
-            await app_instance.run_async()
-        finally:
-            services.close()
-
     def engine_up(project_root: Path) -> bool:
         return engine_is_running(engine_lock_path(project_root))
 
@@ -194,8 +154,50 @@ def build_lifecycle() -> ProjectLifecycle:
         operator_factory=operator_factory,
         plugin_validator=plugin_validator,
         engine_up=engine_up,
-        dashboard_runner=dashboard_runner,
     )
+
+
+async def run_dashboard(
+    project_root: Path,
+    overrides: Sequence[str],
+    focus_task: str | None,
+) -> None:
+    """Run the configured dashboard for one project entry point."""
+    dashboard_app_module = import_module("shikiru.dashboard.app")
+    dashboard_services_module = import_module("shikiru.dashboard.services")
+    dashboard_views_module = import_module("shikiru.dashboard.views")
+    clock = build_clock()
+    runner = SubprocessRunner()
+    tmux = Tmux(runner)
+    git = Git(runner)
+    settings = load_settings(project_root, overrides)
+    services = build_operator(
+        project_root,
+        settings,
+        clock=clock,
+        runner=runner,
+        tmux=tmux,
+    )
+    try:
+        dashboard_services = dashboard_services_module.DashboardServices(
+            dashboard_services_module.GitRepoStatusService(git, settings.repo, project_root, clock),
+            lambda: engine_is_running(engine_lock_path(project_root)),
+        )
+        views = dashboard_views_module.StateDashboardViews(
+            services.reader,
+            focus_task=focus_task,
+            settings=settings,
+            sources=dashboard_services,
+        )
+        app_instance = dashboard_app_module.DashboardApp(
+            focus_task=focus_task,
+            views=views,
+            on_change=services.reader.watch,
+            widget_names=settings.dashboard.widgets,
+        )
+        await app_instance.run_async()
+    finally:
+        services.close()
 
 
 def build_operator(
