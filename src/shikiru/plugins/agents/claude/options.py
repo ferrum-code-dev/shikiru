@@ -2,14 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field
 
-AUTH_SUBSCRIPTION = "subscription"
-AUTH_API_KEY = "api_key"
-ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
-ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_" + "AUTH_TOKEN"
 CLAUDE_COMMAND = "claude"
 DEFAULT_COMPACT_AT_PCT = 80.0
 STATUS_PAYMENT_REQUIRED = 402
@@ -31,7 +25,5 @@ class ClaudeOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    auth: Literal["subscription", "api_key"] = AUTH_SUBSCRIPTION
-    api_key_env: str = ANTHROPIC_API_KEY_ENV
     args: list[str] = Field(default_factory=lambda: list(DEFAULT_ARGS))
     compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=100)

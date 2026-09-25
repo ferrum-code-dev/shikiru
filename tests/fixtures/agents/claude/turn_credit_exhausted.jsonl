@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"session-credit-exhausted","model":"claude-haiku-4-5-20251001"}
+{"type":"result","is_error":true,"api_error_status":402,"terminal_reason":"error","result":"API credits are exhausted"}

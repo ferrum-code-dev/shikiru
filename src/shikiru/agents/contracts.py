@@ -47,7 +47,7 @@ CostBasis = Literal["billed", "api_equivalent", "unknown"]
 
 
 class FailureKind(StrEnum):
-    """Why a turn failed, as mapped by the agent plugin from its own error format (04 §1)."""
+    """Why a turn failed; `AUTH` includes provider access refusals needing operator action."""
 
     QUOTA = auto()
     UNAVAILABLE = auto()

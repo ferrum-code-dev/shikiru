@@ -27,7 +27,6 @@ from shikiru.agents.contracts import (
 from shikiru.agents.sdk.turn import TurnProcess, TurnProcessResult, TurnProcessSequence
 from shikiru.plugins.agents.claude.options import (
     ADD_DIR_FLAG,
-    AUTH_API_KEY,
     CLAUDE_COMMAND,
     EFFORT_FLAG,
     MODEL_FLAG,
@@ -137,7 +136,6 @@ class ClaudeTurnParser:
         *,
         session_id: str,
         model: str,
-        auth: str,
         initial_usage: Usage | None,
         clock: Clock,
         reset_time: ResetTimeParser,
@@ -145,7 +143,6 @@ class ClaudeTurnParser:
     ) -> None:
         self._session_id = session_id
         self._model = model
-        self._auth = auth
         self._initial_usage = initial_usage or _empty_usage()
         self._clock = clock
         self._reset_time = reset_time
@@ -290,8 +287,6 @@ class ClaudeTurnParser:
         return signals
 
     def _rate_limit(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
-        if self._auth == AUTH_API_KEY:
-            return []
         info = _mapping(payload.get(_RATE_LIMIT_INFO_FIELD))
         if info is None:
             return []
@@ -373,9 +368,7 @@ class ClaudeTurnParser:
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
             cost_usd=self._latest_cost if priced else None,
-            cost_basis=("api_equivalent" if self._auth != AUTH_API_KEY else "billed")
-            if priced
-            else "unknown",
+            cost_basis="api_equivalent" if priced else "unknown",
             context_used_pct=context_pct,
         )
 
@@ -425,7 +418,6 @@ class ClaudeTurnSequence(TurnProcessSequence):
         clock: Clock,
         reset_time: ResetTimeParser,
         compact_at_pct: float,
-        auth: str,
         args: Sequence[str],
         environment: Callable[[TurnSpec], Mapping[str, str]],
         session_id: str | None = None,
@@ -434,7 +426,6 @@ class ClaudeTurnSequence(TurnProcessSequence):
         self._clock = clock
         self._reset_time = reset_time
         self._compact_at_pct = compact_at_pct
-        self._auth = auth
         self._args = tuple(args)
         self._environment = environment
         self._session_id = spec.session_id or session_id or str(uuid.uuid4())
@@ -511,7 +502,6 @@ class ClaudeTurnSequence(TurnProcessSequence):
         parser = ClaudeTurnParser(
             session_id=self._session_id,
             model=spec.rung.model,
-            auth=self._auth,
             initial_usage=self._usage,
             clock=self._clock,
             reset_time=self._reset_time,
@@ -627,7 +617,7 @@ def _classify_status(
 ) -> tuple[FailureKind, str, datetime | None] | None:
     detail = message or _STATUS_MESSAGE.format(status=status)
     if status == STATUS_PAYMENT_REQUIRED:
-        return FailureKind.QUOTA, detail, None
+        return FailureKind.AUTH, detail, None
     if status == STATUS_TOO_MANY_REQUESTS:
         return FailureKind.QUOTA, detail, reset_time.parse(message)
     if isinstance(status, int) and _UNAVAILABLE_STATUS_MIN <= status <= _UNAVAILABLE_STATUS_MAX:

@@ -3,11 +3,13 @@
 ## 1. Contract (`shikiru.agents.contracts`)
 
 Agents are **code plugins**. The engine depends only on this module, and each plugin owns everything agent-specific:
-- CLI argv, flags and auth
+- CLI argv and flags
 - stream and session-log formats
 - usage, context window and quota extraction
 - error mapping
 - context compaction
+
+Rungs select only `{agent, model, effort}`. The Operator configures access in the agent's native project or user files and environment. Shikiru does not select an access mode, read credentials, or rewrite access-related environment variables; plugins pass the Operator's environment to their child processes.
 
 **Turn model (D1).** Every turn is one agent process running headless on a session: the first turn creates the session, every later turn resumes it, also after a model change, a stall, a quota wait, an operator take-over or an engine restart. The process reads nothing from stdin (it is closed), shows no dialogs, and exits when the turn ends. Its structured output stream is the only signal source: no hooks, no screen.
 
@@ -108,7 +110,7 @@ Small, tested building blocks for plugins:
 1. Each recorded stream (stdout lines, stderr, exit code, plus session-log excerpts when the plugin reads them) replays through the parser to the expected signal sequence and satisfies obligations 1–5.
 2. Recorded error streams map to the expected `FailureKind` and `resets_at`; unmapped text yields `UNKNOWN`.
 3. Recorded compaction output yields `Compacted`; a context failure followed by a compaction and a rerun yields one `Turn` ending in `TurnEnded`, and a second context failure yields `TurnFailed(CONTEXT)`.
-4. Argv and env for a new turn, a resumed turn, a model change, each auth mode and compaction; `interactive_command`.
+4. Argv for a new turn, a resumed turn, a model change and compaction; Operator-provided environment pass-through; `interactive_command`.
 
 **Live checks** (`SHIKIRU_E2E=1`, scratch repository):
 1. A first turn whose prompt points at a prompt file → `SessionStarted`, a valid report through `shikiru report`, `TurnEnded`.
@@ -124,10 +126,10 @@ Small, tested building blocks for plugins:
 
 **Options** (`ClaudeOptions`):
 
+Claude reads access from the Operator's native Claude settings and environment. The plugin does not configure access modes, choose key variables, or remove variables. Turn and headless child processes inherit the Operator's environment; turn-specific Shikiru variables are added from `TurnSpec.env`.
+
 | Key | Default | Meaning |
 |---|---|---|
-| `auth` | `subscription` | `subscription` unsets `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`; `api_key` sets `ANTHROPIC_API_KEY` from `api_key_env` |
-| `api_key_env` | `ANTHROPIC_API_KEY` | Env var holding the key |
 | `args` | `["--permission-mode", "bypassPermissions"]` | Extra CLI args; must keep the turn unattended |
 | `compact_at_pct` | `80` | Context use that triggers compaction (obligation 8) |
 
@@ -149,20 +151,20 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 | `assistant` `tool_use` block | `ToolStarted(name, input summary)` |
 | `user` `tool_result` block | `ToolFinished` |
 | `system/compact_boundary` | `Compacted(compact_metadata.pre_tokens, post_tokens)` |
-| `rate_limit_event` | `QuotaReported` (`five_hour`, `seven_day`: utilization, `resetsAt`); subscription auth only |
+| `rate_limit_event` | `QuotaReported` (`five_hour`, `seven_day`: utilization, `resetsAt`) |
 | `result`, not `is_error` | `UsageReported`, then `TurnEnded(result)` |
 | `result` with `is_error`, `api_error_status` or an error `terminal_reason`; stderr tags such as `[claude-code:unrecognized_model]` | `TurnFailed` |
 
 **Failures**:
-- 429 or a usage-limit message → `QUOTA`, `resets_at` from the latest `rate_limit_event` or the message (`ResetTimeParser`); 402 → `QUOTA` without `resets_at`
+- 429 or a provider-reported usage-limit window → `QUOTA`, `resets_at` from the latest `rate_limit_event` or the message (`ResetTimeParser`); 402 payment/credit exhaustion → `AUTH` for immediate operator escalation
 - 5xx / 529, `unrecognized_model` → `UNAVAILABLE`
 - 401 / 403 → `AUTH`
 - prompt too long / context terminal reason → `CONTEXT`
 - else → `UNKNOWN`
 
-**Usage** (verified against billing):
+**Usage**:
 - Tokens: `spec.usage` plus the turn's `result.usage`.
-- Cost: `result.total_cost_usd` (cumulative per session) only when `modelUsage.<m>.costBasis` is `"list"`; `api_equivalent` under subscription, `billed` with `api_key`. Any other basis (e.g. OpenRouter or other non-Anthropic-priced models, where the list-price estimate is wrong) → `None`, `unknown`.
+- Cost: `result.total_cost_usd` (cumulative per session) only when `modelUsage.<m>.costBasis` is `"list"`; report it as `api_equivalent`, independent of how access is configured. Other bases (e.g. OpenRouter or other non-Anthropic-priced models, where the list-price estimate is wrong) → `None`, `unknown`.
 - Context: the last assistant message's input and cache tokens ÷ `modelUsage.<m>.contextWindow`, only when the cost basis is `"list"` (other providers report a fixed 200000 default).
 
 **Compaction** (obligation 8):
@@ -181,10 +183,10 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 
 | Key | Default | Meaning |
 |---|---|---|
-| `auth` | `subscription` | `subscription` unsets `OPENAI_API_KEY`/`CODEX_API_KEY`; `api_key` sets `CODEX_API_KEY` |
-| `api_key_env` | `OPENAI_API_KEY` | Env var holding the key |
 | `args` | `[]` | Extra CLI args |
 | `compact_at_pct` | `80` | Context use that triggers compaction (obligation 8) |
+
+Codex reads access from the Operator's native Codex settings and environment. The plugin must not configure access modes, choose key variables, or remove variables.
 
 **Turn** (cwd = task root, stdin closed — `codex exec` waits on an open stdin):
 
@@ -211,7 +213,7 @@ codex exec resume <thread_id> --json -m <m> -c model_reasoning_effort="<e>" <arg
 After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thread_id>.jsonl` (`JsonlTail`) for the latest `token_count`: `info.model_context_window` and `info.last_token_usage` give context, and non-null `rate_limits.primary`/`secondary` (`used_percent`, `window_minutes`, `resets_at`; ChatGPT plans only) give `QuotaReported`.
 
 **Failures**: `turn.failed.error.message` is JSON in a string carrying `status`/`code`:
-- 429, `usage_limit_reached` → `QUOTA`, `resets_at` from the latest `rate_limits` or the message; 402 → `QUOTA` without `resets_at`
+- 429, `usage_limit_reached` → `QUOTA`, `resets_at` from the latest `rate_limits` or the message; 402 payment/credit exhaustion → `AUTH` for immediate operator escalation
 - 5xx, overloaded → `UNAVAILABLE`
 - 401 → `AUTH`
 - `context_length_exceeded` → `CONTEXT` (after the compact-and-rerun of obligation 8)

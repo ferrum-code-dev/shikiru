@@ -7,7 +7,7 @@
 2. `.shikiru/config.toml`
 3. `--set key.path=value` (value parsed as TOML)
 
-`doctor --json` prints the merged result. Core keys are validated by pydantic (`extra="forbid"`). Each `[agents.<name>.options]` table is validated by that plugin's factory at `start` and `doctor`.
+`doctor --json` prints the merged result. Core keys are validated by pydantic (`extra="forbid"`). Each `[agents.<name>.options]` table is validated by that plugin's factory at `start` and `doctor`. Shikiru configuration selects agent, model and effort; Operators configure provider access through agent-native files and environment.
 
 The full reference (this is also what `init` writes):
 
@@ -38,12 +38,7 @@ integration_wait = 1800
 helper = 300                                    # maximum duration for helper turns
 
 [agents.claude]                                 # table name = plugin entry point
-[agents.claude.options]                         # plugin-owned (04 §4)
-auth = "subscription"
-
 [agents.codex]
-[agents.codex.options]                          # plugin-owned (04 §5)
-auth = "subscription"
 
 [roles.leader]
 ladder = [

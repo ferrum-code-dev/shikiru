@@ -149,7 +149,7 @@ class AgentContractSuite:
         raise NotImplementedError
 
     def invocation_cases(self, tmp_path: Path) -> Sequence[InvocationCase]:
-        """Return new, resume, model-change, auth and compaction argv/env cases."""
+        """Return new, resume, model-change, environment and compaction cases."""
         raise NotImplementedError
 
     def process_sequence(self, agent: Agent, spec: TurnSpec) -> TurnProcessSequence:

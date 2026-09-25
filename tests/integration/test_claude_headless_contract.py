@@ -8,7 +8,7 @@ import os
 import re
 import uuid
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -44,6 +44,7 @@ from shikiru.agents.testing import (
     RecordedStream,
 )
 from shikiru.clock import SystemClock
+from shikiru.domain.recovery import Escalate, Failed, RecoveryPolicy, TurnCounters, decide
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     REPORT_KIND_FILENAME,
@@ -51,6 +52,7 @@ from shikiru.domain.reports import (
     ReportKind,
     schema_for,
 )
+from shikiru.domain.tasks import EscalationReason
 from shikiru.plugins.agents.claude.agent import ClaudeAgent, create
 from shikiru.plugins.agents.claude.options import DEFAULT_ARGS
 from shikiru.plugins.agents.claude.turn import ClaudeTurnParser
@@ -72,7 +74,6 @@ _OPENROUTER_LIVE_RESPONSE = "[redacted live response]"
 _OPENROUTER_REPORT_LIVE_SESSION_ID = "session-openrouter-report-live-redacted"
 _OPENROUTER_REPORT_LIVE_RESPONSE = "[redacted live report response]"
 _SESSION_RESUMED = "session-resumed"
-_API_KEY_ENV = "SHIKIRU_CLAUDE_CAPTURE_KEY"
 _LIVE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_MODEL"
 _LIVE_CHANGE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL"
 _CLAUDE_HOME_DIRNAME = "claude-home"
@@ -208,16 +209,14 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         assert command.env["CLAUDE_CONFIG_DIR"] == str(isolated_config)
         assert command.env["SHIKIRU_RUN_DIR"] == str(spec.run_dir)
         assert command.env["SHIKIRU_ROLE"] == spec.role
-        assert "ANTHROPIC_AUTH_TOKEN" not in command.env
-        assert "ANTHROPIC_API_KEY" not in command.env
+        for name in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"):
+            assert command.env.get(name) == os.environ.get(name)
 
     def parser_for(self, sample: RecordedStream) -> TurnParser:
-        auth = "api_key" if "api_key" in sample.name else "subscription"
         model = _OPENROUTER_MODEL if "openrouter" in sample.name else _MODEL
         return ClaudeTurnParser(
             session_id=sample.session_id or "missing-session",
             model=model,
-            auth=auth,
             initial_usage=None,
             clock=FakeClock(_SAMPLE_NOW),
             reset_time=ResetTimeParser(FakeClock(_SAMPLE_NOW)),
@@ -226,7 +225,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
 
     def recorded_streams(self) -> Sequence[RecordedStream]:
         subscription_usage = Usage(100, 5, 12, 3, _COST, "api_equivalent", 115 / 200000 * 100)
-        api_key_usage = Usage(40, 8, 4, 1, 0.00002, "billed", 0.0225)
+        list_cost_usage = Usage(40, 8, 4, 1, 0.00002, "api_equivalent", 0.0225)
         openrouter_usage = Usage(70, 12, 0, 0, None, "unknown", None)
         openrouter_report_usage = Usage(2509, 238, 19865, 10067, None, "unknown", None)
         compact_usage = Usage(20, 8, 0, 0, 0.00003, "api_equivalent", 0.01)
@@ -254,17 +253,17 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 session_id="session-subscription",
             ),
             RecordedStream(
-                name="turn_api_key.jsonl",
-                stdout=_FIXTURES_DIR / "turn_api_key.jsonl",
+                name="turn_list_cost.jsonl",
+                stdout=_FIXTURES_DIR / "turn_list_cost.jsonl",
                 stderr=empty_stderr,
                 exit_code=0,
                 expected_signals=[
-                    SessionStarted("session-api-key"),
-                    Message("API key response."),
-                    UsageReported(api_key_usage),
-                    TurnEnded("API key response."),
+                    SessionStarted("session-list-cost"),
+                    Message("Provider list-cost response."),
+                    UsageReported(list_cost_usage),
+                    TurnEnded("Provider list-cost response."),
                 ],
-                session_id="session-api-key",
+                session_id="session-list-cost",
             ),
             RecordedStream(
                 name="turn_openrouter.jsonl",
@@ -352,6 +351,17 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 session_id="session-rate-limit",
             ),
             RecordedStream(
+                name="turn_credit_exhausted.jsonl",
+                stdout=_FIXTURES_DIR / "turn_credit_exhausted.jsonl",
+                stderr=empty_stderr,
+                exit_code=1,
+                expected_signals=[
+                    SessionStarted("session-credit-exhausted"),
+                    TurnFailed(FailureKind.AUTH, "API credits are exhausted", None),
+                ],
+                session_id="session-credit-exhausted",
+            ),
+            RecordedStream(
                 name="turn_unrecognized_model.jsonl",
                 stdout=_FIXTURES_DIR / "turn_unrecognized_model.jsonl",
                 stderr=_FIXTURES_DIR / "turn_unrecognized_model.stderr.log",
@@ -416,7 +426,15 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             usage=None,
         )
         changed_model = replace(resumed, rung=Rung("claude", _OTHER_MODEL, "high"))
-        key_spec = replace(resumed, env={**resumed.env, _API_KEY_ENV: "fixture-key"})
+        operator_access_spec = replace(
+            resumed,
+            env={
+                **resumed.env,
+                "ANTHROPIC_API_KEY": "synthetic-api-key",
+                "ANTHROPIC_AUTH_TOKEN": "synthetic-auth-token",
+                "ANTHROPIC_BASE_URL": "https://provider.invalid",
+            },
+        )
         compact_usage = Usage(1000, 500, 100, 20, None, "unknown", 85.0)
         compact_spec = replace(resumed, usage=compact_usage)
         retry_spec = replace(resumed, usage=None)
@@ -505,14 +523,14 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 expected_env=[{"SHIKIRU_ROLE": _ROLE}],
             ),
             InvocationCase(
-                name="API-key auth sets its configured key",
-                options={"auth": "api_key", "api_key_env": _API_KEY_ENV, "args": []},
-                spec=key_spec,
+                name="turn preserves operator provider environment",
+                options={"args": []},
+                spec=operator_access_spec,
                 expected_argv=[
                     (
                         "claude",
                         "-p",
-                        key_spec.prompt,
+                        operator_access_spec.prompt,
                         "--resume",
                         _SESSION_RESUMED,
                         "--output-format",
@@ -528,7 +546,13 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                         extra_dir_arg,
                     )
                 ],
-                expected_env=[{"ANTHROPIC_API_KEY": "fixture-key"}],
+                expected_env=[
+                    {
+                        "ANTHROPIC_API_KEY": "synthetic-api-key",
+                        "ANTHROPIC_AUTH_TOKEN": "synthetic-auth-token",
+                        "ANTHROPIC_BASE_URL": "https://provider.invalid",
+                    }
+                ],
             ),
             InvocationCase(
                 name="pre-turn compaction runs before a resumed prompt at the threshold",
@@ -707,7 +731,6 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         parser = ClaudeTurnParser(
             session_id="expected-session",
             model=_MODEL,
-            auth="subscription",
             initial_usage=None,
             clock=clock,
             reset_time=ResetTimeParser(clock),
@@ -721,7 +744,6 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         parser = ClaudeTurnParser(
             session_id="expected-session",
             model=_MODEL,
-            auth="subscription",
             initial_usage=None,
             clock=clock,
             reset_time=ResetTimeParser(clock),
@@ -733,6 +755,79 @@ class TestClaudeHeadlessContract(AgentContractSuite):
 
         assert signals == [
             TurnFailed(FailureKind.UNKNOWN, "Claude emitted malformed stream-json", None)
+        ]
+
+    def test_credit_exhaustion_escalates_without_quota_probe(self) -> None:
+        sample = next(
+            stream
+            for stream in self.error_streams()
+            if stream.name == "turn_credit_exhausted.jsonl"
+        )
+        parser = self.parser_for(sample)
+        signals = [
+            signal
+            for line in sample.stdout.read_text().splitlines()
+            for signal in parser.feed(line)
+        ]
+        signals.extend(parser.finish(sample.exit_code, sample.stderr.read_text()))
+        failure = next(signal for signal in signals if isinstance(signal, TurnFailed))
+        action = decide(
+            Failed(failure.kind, failure.resets_at, failure.message),
+            TurnCounters(),
+            RecoveryPolicy(
+                now=_SAMPLE_NOW,
+                max_quota_wait=timedelta(hours=8),
+                has_next_rung=False,
+                has_next_rung_different_agent=False,
+            ),
+        )
+
+        assert action == Escalate(EscalationReason.AGENT_AUTH)
+
+    @pytest.mark.asyncio
+    async def test_headless_ask_preserves_operator_provider_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executable_directory = tmp_path / "bin"
+        executable_directory.mkdir()
+        executable = executable_directory / "claude"
+        capture_path = tmp_path / "provider-environment.txt"
+        executable.write_text(
+            "#!/bin/sh\n"
+            'printf \'%s\\n\' "$ANTHROPIC_API_KEY" "$ANTHROPIC_AUTH_TOKEN" '
+            '"$ANTHROPIC_BASE_URL" > "$SHIKIRU_TEST_ENV_CAPTURE"\n'
+            "printf '%s\\n' '{\"structured_output\":{\"ok\":true}}'\n"
+        )
+        executable.chmod(0o755)
+        monkeypatch.setenv("PATH", str(executable_directory))
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-api-key")
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "synthetic-auth-token")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://provider.invalid")
+        monkeypatch.setenv("SHIKIRU_TEST_ENV_CAPTURE", str(capture_path))
+        agent = create(
+            AgentContext(
+                options={},
+                runner=SubprocessRunner(),
+                clock=SystemClock(),
+            )
+        )
+        headless = agent.headless()
+        assert headless is not None
+
+        result = await headless.ask(
+            "return true",
+            _AskResult.model_json_schema(),
+            "haiku",
+            None,
+            tmp_path,
+            timedelta(seconds=10),
+        )
+
+        assert result == {"ok": True}
+        assert capture_path.read_text().splitlines() == [
+            "synthetic-api-key",
+            "synthetic-auth-token",
+            "https://provider.invalid",
         ]
 
 

@@ -25,6 +25,9 @@ format; this is not a byte-for-byte provider stream capture. OpenRouter key
 usage increased by $0.01826925 for the attempt after its aggregate usage settled;
 Claude Code's separate cost estimate had an unknown cost basis.
 
-The remaining subscription, direct API-key, rate-limit, and unrecognised-model
-sample cases, other live checks, and `/compact` after context overflow remain
-unverified. Context overflow was not attempted.
+The other fixtures are synthetic protocol scenarios. They cover provider-reported
+quota, list-priced usage, OpenRouter's unpriced basis, rate limiting, credit
+exhaustion, and an unrecognised model. Their names describe stream behavior, not
+Shikiru access modes. Other live checks and `/compact` after context overflow
+remain unverified. Genuine subscription and direct Anthropic API captures also
+remain unavailable. Context overflow was not attempted.

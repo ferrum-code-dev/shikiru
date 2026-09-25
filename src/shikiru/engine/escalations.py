@@ -42,7 +42,9 @@ _HEADLINE_SENTENCES: dict[EscalationReason, str] = {
     EscalationReason.INTEGRATION_CONFLICT: "Rebase conflicts could not be resolved automatically.",
     EscalationReason.INTEGRATION_BLOCKED: "The main checkout stayed blocked past the wait budget.",
     EscalationReason.PR_CLOSED: "The pull request was closed without merging.",
-    EscalationReason.AGENT_AUTH: "The agent's authentication failed.",
+    EscalationReason.AGENT_AUTH: (
+        "The agent cannot access its provider; check credentials, billing, or account status."
+    ),
     EscalationReason.AGENT_ERROR: "The agent kept failing after every automatic retry.",
     EscalationReason.AGENT_STUCK: "The agent's screen stayed stuck after every automatic recovery.",
     EscalationReason.AGENT_PROTOCOL: "The turn never produced a report, even with a Helper rebuild",

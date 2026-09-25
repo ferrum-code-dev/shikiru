@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
@@ -16,9 +16,6 @@ from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.claude.headless import ClaudeHeadless
 from shikiru.plugins.agents.claude.options import (
     ADD_DIR_FLAG,
-    ANTHROPIC_API_KEY_ENV,
-    ANTHROPIC_AUTH_TOKEN_ENV,
-    AUTH_API_KEY,
     CLAUDE_COMMAND,
     RESUME_FLAG,
     ClaudeOptions,
@@ -26,6 +23,7 @@ from shikiru.plugins.agents.claude.options import (
 from shikiru.plugins.agents.claude.turn import ClaudeTurnSequence
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from shikiru.agents.contracts import AgentContext, HeadlessAgent, Turn, TurnSpec
@@ -40,7 +38,7 @@ _INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
 
 
 class ClaudeAgent:
-    """Build Claude Code turn processes, authentication and health checks."""
+    """Build Claude Code turn processes and health checks."""
 
     name = "claude"
 
@@ -62,7 +60,6 @@ class ClaudeAgent:
             clock=self._clock,
             reset_time=self._reset_time,
             compact_at_pct=self._options.compact_at_pct,
-            auth=self._options.auth,
             args=self._options.args,
             environment=self._turn_environment,
         )
@@ -99,30 +96,12 @@ class ClaudeAgent:
         return ClaudeHeadless(self._runner, self._subprocess_environment())
 
     def _subprocess_environment(self) -> dict[str, str]:
-        return self._authenticated_environment(os.environ)
+        return dict(os.environ)
 
     def _turn_environment(self, spec: TurnSpec) -> dict[str, str]:
         environment = dict(os.environ)
         environment.update(spec.env)
-        return self._authenticated_environment(environment)
-
-    def _authenticated_environment(self, base: Mapping[str, str]) -> dict[str, str]:
-        environment = dict(base)
-        if self._options.auth == AUTH_API_KEY:
-            environment[ANTHROPIC_API_KEY_ENV] = self._api_key(environment)
-            environment.pop(ANTHROPIC_AUTH_TOKEN_ENV, None)
-        else:
-            environment.pop(ANTHROPIC_API_KEY_ENV, None)
-            environment.pop(ANTHROPIC_AUTH_TOKEN_ENV, None)
         return environment
-
-    def _api_key(self, environment: Mapping[str, str] | None = None) -> str:
-        source = environment if environment is not None else os.environ
-        value = source.get(self._options.api_key_env) or os.environ.get(self._options.api_key_env)
-        if not value:
-            message = f"Claude API key environment variable {self._options.api_key_env!r} is unset"
-            raise ConfigError(message)
-        return value
 
     async def _check_binary(self) -> CheckResult:
         try:

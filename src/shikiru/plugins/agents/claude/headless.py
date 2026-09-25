@@ -35,7 +35,7 @@ class ClaudeHeadless:
     """Runs Claude Code's JSON structured-output mode."""
 
     def __init__(self, runner: SubprocessRunner, environment: Mapping[str, str]) -> None:
-        """Use `runner` and the plugin's resolved authentication environment."""
+        """Use `runner` and the operator's inherited Claude environment."""
         self._runner = runner
         self._environment = dict(environment)
 
