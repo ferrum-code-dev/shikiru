@@ -13,7 +13,6 @@ from shikiru.cli.context import project_root, state_from
 from shikiru.clock import SystemClock
 from shikiru.domain.tasks import Role
 from shikiru.paths import run_dir
-from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS
 from shikiru.ui.stream import StreamLine
 from shikiru.view_log import view_log_path
 
@@ -23,6 +22,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
 
 _LINE_END = b"\n"
+_VIEW_POLL_SECONDS = 0.5
 
 
 class ViewTail:
@@ -40,7 +40,7 @@ class ViewTail:
         """Print rows as they are appended, polling through the clock until cancelled."""
         while True:
             self.drain()
-            await self._clock.sleep(DASHBOARD_CHANGE_POLL_SECONDS)
+            await self._clock.sleep(_VIEW_POLL_SECONDS)
 
     def drain(self) -> None:
         """Print every complete row appended since the last drain."""
