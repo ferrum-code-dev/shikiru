@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from datetime import timedelta
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any
@@ -36,7 +36,7 @@ QUEUED_MESSAGE = "applies when the engine starts"
 ACK_TIMEOUT_MESSAGE = "engine did not acknowledge the command within 10 seconds"
 TASK_TITLE_MAX_LENGTH = 60
 
-EngineState = Callable[[], bool | Awaitable[bool]]
+EngineState = Callable[[], bool]
 
 
 class AckStatus(StrEnum):
@@ -76,7 +76,7 @@ class OperatorCommands:
     async def send(self, command: Command) -> Ack:
         """Queue `command`, returning done/rejected or queued when the engine is down."""
         queued = self._queue.append(command)
-        if not await _resolve_engine_state(self._engine_up):
+        if not self._engine_up():
             result = (
                 {"task_id": queued.command.task_id} if isinstance(queued.command, Submit) else None
             )
@@ -168,11 +168,6 @@ class OperatorCommands:
     async def stop_engine(self) -> Ack:
         """Queue the orderly engine `Stop` command."""
         return await self.send(Stop())
-
-
-async def _resolve_engine_state(state: EngineState) -> bool:
-    value = state()
-    return await value if isinstance(value, Awaitable) else value
 
 
 def _title_from_request(request: str) -> str:
