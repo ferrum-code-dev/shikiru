@@ -275,9 +275,9 @@ Refs: 03 §4, §7, 04 §6, 05 §1–2.
 
 ### Task 36: Pane views, take over / hand back, queued `say`
 Refs: 03 §9, 06 §2, §4, §5.1–5.2.
-- [ ] `shikiru view T-n ROLE` renders `view.jsonl` live (`ui.StreamLine`); role panes run it; `LayoutGuard` respawns dead view panes.
-- [ ] `TakeOver`/`HandBack` commands, handlers and `Takeover` per 03 §9; MCP `take_over`/`hand_back`; a dead taken-over pane hands back; `taken_over`/`handed_back` events.
-- [ ] `Say` queues `messages/<role>/NNN.md`, delivered into the role's next turn dir and listed in its prompt.
+- [x] `shikiru view T-n ROLE` renders `view.jsonl` live (`ui.StreamLine`); role panes run it; `LayoutGuard` respawns dead view panes.
+- [x] `TakeOver`/`HandBack` commands, handlers and `Takeover` per 03 §9; MCP `take_over`/`hand_back`; a dead taken-over pane hands back; `taken_over`/`handed_back` events.
+- [x] `Say` queues `messages/<role>/NNN.md`, delivered into the role's next turn dir and listed in its prompt.
 - Tests: integration on `tmux_server` with the fake agent: the view shows a turn's messages and tool calls; take over stops the turn, holds only that task and runs the REPL; exiting the REPL hands back and the step completes on the same session; a message sent mid-turn appears in the next prompt of that role only.
 
 ### Task 37: Probe and real E2E on headless turns
