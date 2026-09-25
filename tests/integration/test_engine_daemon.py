@@ -28,7 +28,15 @@ from shikiru.domain.commands import (
 from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Mode, RepoState, Role, Status, Step
+from shikiru.domain.tasks import (
+    EscalationReason,
+    Mode,
+    RepoState,
+    Role,
+    Status,
+    StatusReason,
+    Step,
+)
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.errors import ConfigError
@@ -41,7 +49,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.session import SessionView
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
-from tests.support.engine import build_registry, build_tmux, set_script
+from tests.support.engine import build_registry, build_tmux, set_role_script, set_script
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until
@@ -375,6 +383,62 @@ async def test_queued_resolution_is_acknowledged_by_the_daemon(
     assert resolved is not None
     assert resolved.status is EscalationStatus.RESOLVED
     connection.close()
+
+
+async def test_superseded_task_uses_shared_terminal_cleanup(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(tmp_path)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "supersede", "new_tasks": [{"title": "replacement", "request": "redo"}]}],
+    )
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _settings(max_cpu_pct=100)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    queue = CommandQueue(connection, clock)
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        submitted = queue.append(
+            Submit(
+                task_id="",
+                title="replace this task",
+                request="replace this task",
+                mode=Mode.IMPLEMENT,
+            )
+        )
+        outcome = await _wait_for_command(submitted, queue, clock)
+        task_id = str(outcome.result["task_id"]) if outcome.result is not None else ""
+        assert task_id
+
+        async def cleaned() -> bool:
+            if clock.has_pending_sleep():
+                clock.advance(0.25)
+            task = tasks.get(task_id)
+            if task is None or task.status_reason is not StatusReason.SUPERSEDED:
+                return False
+            window_closed = task.window_id is None or not await tmux.target_exists(task.window_id)
+            return window_closed and not task_root(tmp_path, task_id).exists()
+
+        await wait_until(cleaned, timeout=40)
+        superseded = tasks.get(task_id)
+        assert superseded is not None
+        assert superseded.status is Status.CANCELLED
+        assert superseded.status_reason is StatusReason.SUPERSEDED
+        assert superseded.window_id is not None
+        assert not await tmux.target_exists(superseded.window_id)
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()
 
 
 async def test_engine_observes_two_in_process_flows_in_parallel(

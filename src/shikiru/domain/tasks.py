@@ -132,7 +132,7 @@ class Task(DomainModel):
     depends_on: list[str] = Field(default_factory=list)
     status: Status
     step: Step | None = None
-    status_reason: str | None = None
+    status_reason: StatusReason | None = None
     holds: frozenset[Hold] = Field(default_factory=frozenset)
     iteration: int = 0
     counters: Counters = Field(default_factory=Counters)

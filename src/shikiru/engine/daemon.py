@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Self
 
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import Status
+from shikiru.domain.tasks import Status, StatusReason
 from shikiru.engine.handlers import (
     CancelHandler,
     HandlerContext,
@@ -36,14 +36,13 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from shikiru.engine.flow import TaskFlow
     from shikiru.engine.layout_guard import LayoutGuard
+    from shikiru.engine.lifecycle import TaskFinisher
     from shikiru.engine.notifier import Notifier
     from shikiru.engine.scheduler import Scheduler
-    from shikiru.engine.sessions import SessionManager
     from shikiru.store.commands import CommandQueue
     from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
-    from shikiru.workspace.roots import TaskRootBuilder
 
 COMMAND_POLL_SECONDS = 0.25
 ENGINE_LOCK_FILENAME = "engine.lock"
@@ -113,9 +112,8 @@ class Engine:
         escalations: EscalationStore,
         events: EventLog,
         scheduler: Scheduler,
-        sessions: SessionManager,
         flow: TaskFlow,
-        roots: TaskRootBuilder,
+        task_finisher: TaskFinisher,
         layout: LayoutGuard,
         notifier: Notifier,
         settings: Settings,
@@ -131,9 +129,8 @@ class Engine:
         self._escalations = escalations
         self._events = events
         self._scheduler = scheduler
-        self._sessions = sessions
         self._flow = flow
-        self._roots = roots
+        self._task_finisher = task_finisher
         self._layout = layout
         self._notifier = notifier
         self._settings = settings
@@ -142,7 +139,6 @@ class Engine:
         self._close_state = close_state
         self._stop = asyncio.Event()
         self._flow_tasks: dict[str, asyncio.Task[None]] = {}
-        self._finished_tasks: set[str] = set()
         self._last_notified_event = 0
         self._last_scheduled_event = 0
         self._logger = logging.getLogger("shikiru")
@@ -231,13 +227,8 @@ class Engine:
         self._flow_tasks.pop(task_id, None)
 
     async def finish_task(self, task: Task) -> None:
-        """Close sessions/window and clean the task root after terminal cancellation."""
-        if task.id in self._finished_tasks:
-            return
-        self._sessions.close_task(task.id)
-        await self._layout.close(task)
-        await self._roots.cleanup(task.id, task.repo)
-        self._finished_tasks.add(task.id)
+        """Release task resources after a handler or integration reaches terminal state."""
+        await self._task_finisher.finish_task(task)
 
     async def _process_commands(self) -> bool:
         changed = False
@@ -261,8 +252,7 @@ class Engine:
         finally:
             current = self._tasks.get(task_id)
             if current is not None and (
-                current.status is Status.CANCELLED
-                or (current.status is Status.DONE and current.status_reason is not None)
+                current.status is Status.DONE or current.status_reason is StatusReason.SUPERSEDED
             ):
                 await self.finish_task(current)
 

@@ -79,8 +79,7 @@ type ContinueRebase = Callable[[], Awaitable[None]]
 type ConflictResolver = Callable[
     [Task, ContinueRebase], Awaitable[tuple[Task, IntegrationMetadata]]
 ]
-type Finalizer = Callable[[Task], Awaitable[None]]
-type WindowCloser = Callable[[Task], Awaitable[None]]
+type TaskFinisher = Callable[[Task], Awaitable[None]]
 
 
 class IntegrationStrategy(Protocol):
@@ -194,8 +193,7 @@ class Integrator:
         project_root: Path,
         tasks: TaskStore,
         events: EventLog,
-        finalizer: Finalizer,
-        close_window: WindowCloser,
+        finish_task: TaskFinisher,
     ) -> None:
         """Inject every state, cleanup and repository boundary required by integration."""
         self._git = git
@@ -204,8 +202,7 @@ class Integrator:
         self._project_root = project_root
         self._tasks = tasks
         self._events = events
-        self._finalizer = finalizer
-        self._close_window = close_window
+        self._finish_task = finish_task
 
     async def run(
         self,
@@ -241,7 +238,6 @@ class Integrator:
                 commits=commits,
                 residual_risks=current_metadata.residual_risks,
             )
-            await self._finalizer(current)
             self._tasks.set_summary(current.id, summary.summary)
             updated = self._tasks.get(current.id)
             if updated is None:
@@ -253,7 +249,7 @@ class Integrator:
                 message = f"{current.id} vanished after integration completed"
                 raise ShikiruError(message)
             self._tasks.set_slot(done.id, None)
-            await self._close_window(done)
+            await self._finish_task(done)
             self._events.append(
                 EventKind.TASK_DONE,
                 task_id=current.id,

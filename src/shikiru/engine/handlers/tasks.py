@@ -18,6 +18,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Status
 from shikiru.engine.handlers.base import (
     HandlerContext,
+    interrupt_task,
     refresh_titles,
     reject_terminal,
     reject_wrong_command,
@@ -82,8 +83,8 @@ class PauseHandler:
             reject_wrong_command("PauseHandler", command)
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
-        if command.now and task.status in (Status.RUNNING, Status.INTEGRATING):
-            await self._context.cancel_task(task.id)
+        if command.now:
+            await interrupt_task(self._context, task)
         if Hold.PAUSED not in task.holds:
             self._context.tasks.set_holds(task.id, task.holds | {Hold.PAUSED})
             self._context.events.append(
@@ -140,8 +141,7 @@ class CancelHandler:
             reject_wrong_command("CancelHandler", command)
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
-        if task.status in (Status.RUNNING, Status.INTEGRATING):
-            await self._context.cancel_task(task.id)
+        await interrupt_task(self._context, task)
         current = self._context.tasks.get(task.id)
         if current is None:
             message = f"task {task.id} disappeared while cancelling"
@@ -181,8 +181,7 @@ class RetryHandler:
         if task.status in (Status.DONE, Status.CANCELLED):
             message = f"{task.id} is already {task.status.value}"
             raise CommandRejectedError(message)
-        if task.status in (Status.RUNNING, Status.INTEGRATING):
-            await self._context.cancel_task(task.id)
+        await interrupt_task(self._context, task)
         current = self._context.tasks.get(task.id)
         if current is None:
             message = f"task {task.id} disappeared while retrying"

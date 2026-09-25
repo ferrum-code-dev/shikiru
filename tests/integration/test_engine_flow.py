@@ -15,7 +15,7 @@ from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
+from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, StatusReason, Step
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_ALIAS, FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
 from tests.support.flow import (
@@ -367,6 +367,6 @@ async def test_a_supersede_verdict_cancels_the_task_and_enqueues_new_tasks(
     final = engine_env.tasks.get(task.id)
     assert final is not None
     assert final.status is Status.CANCELLED
-    assert final.status_reason == "superseded"
+    assert final.status_reason is StatusReason.SUPERSEDED
     children = [t for t in engine_env.tasks.list_all() if t.parent_id == task.id]
     assert [child.title for child in children] == ["redo it properly"]

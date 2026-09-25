@@ -19,6 +19,7 @@ from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import Integrator, LocalMerge
 from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.layout_guard import LayoutGuard
+from shikiru.engine.lifecycle import TaskFinisher
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notifier import Notifier
 from shikiru.engine.scheduler import Scheduler
@@ -310,6 +311,7 @@ def build_engine(
         project_root,
         CacheCloner(resolved_runner, cow_args=default_cow_args()),
     )
+    task_finisher = TaskFinisher(sessions, layout, roots)
     escalation_raiser = EscalationRaiser(escalations_store, events, runs, project_root)
     git = Git(resolved_runner)
     integrator = _build_integrator(
@@ -317,11 +319,9 @@ def build_engine(
         settings=resolved_settings,
         clock=resolved_clock,
         git=git,
-        roots=roots,
         tasks=tasks,
         events=events,
-        sessions=sessions,
-        layout=layout,
+        task_finisher=task_finisher,
     )
     history = ReportHistory(project_root)
     flow = TaskFlow(
@@ -384,9 +384,8 @@ def build_engine(
         escalations=escalations_store,
         events=events,
         scheduler=scheduler,
-        sessions=sessions,
         flow=flow,
-        roots=roots,
+        task_finisher=task_finisher,
         layout=layout,
         notifier=notifier,
         settings=resolved_settings,
@@ -403,20 +402,10 @@ def _build_integrator(
     settings: Settings,
     clock: Clock,
     git: Git,
-    roots: TaskRootBuilder,
     tasks: TaskStore,
     events: EventLog,
-    sessions: SessionManager,
-    layout: LayoutGuard,
+    task_finisher: TaskFinisher,
 ) -> Integrator:
-
-    async def finalizer(task: Task) -> None:
-        sessions.close_task(task.id)
-        await roots.cleanup(task.id, task.repo)
-
-    async def close_window(task: Task) -> None:
-        await layout.close(task)
-
     return Integrator(
         git=git,
         strategy=LocalMerge(
@@ -428,6 +417,5 @@ def _build_integrator(
         project_root=project_root,
         tasks=tasks,
         events=events,
-        finalizer=finalizer,
-        close_window=close_window,
+        finish_task=task_finisher.finish_task,
     )

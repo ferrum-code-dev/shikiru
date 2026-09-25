@@ -99,7 +99,7 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(
         counters=Counters(consults=1, rejections_on_rung=1),
         rung_index={Role.LEADER: 1},
         overrides={Role.IMPLEMENTER: Rung(agent="codex", model="sol", effort="high")},
-        status_reason=StatusReason.SUPERSEDED.value,
+        status_reason=StatusReason.SUPERSEDED,
     )
     store.apply_transition(task.id, transition)
 
@@ -112,7 +112,7 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(
     assert reloaded.rung_index == transition.rung_index
     assert reloaded.overrides == transition.overrides
     assert reloaded.started_at == clock.now()
-    assert reloaded.status_reason == StatusReason.SUPERSEDED.value
+    assert reloaded.status_reason is StatusReason.SUPERSEDED
 
 
 def test_apply_transition_sets_finished_at_once_for_a_terminal_status(
@@ -297,7 +297,7 @@ def test_scope_change_rejects_invalid_dependencies_before_mutating(
         counters=Counters(),
         rung_index={},
         overrides={},
-        status_reason=StatusReason.SUPERSEDED.value,
+        status_reason=StatusReason.SUPERSEDED,
         repoint_dependents=True,
         enqueue_new_tasks=True,
     )
@@ -335,7 +335,7 @@ def test_scope_change_resolves_forward_sibling_dependencies_atomically(
         counters=Counters(),
         rung_index={},
         overrides={},
-        status_reason=StatusReason.SUPERSEDED.value,
+        status_reason=StatusReason.SUPERSEDED,
         enqueue_new_tasks=True,
     )
 

@@ -93,3 +93,11 @@ async def refresh_titles(context: HandlerContext, task_id: str) -> None:
         message = f"task {task_id} disappeared while refreshing titles"
         raise CommandRejectedError(message)
     await context.refresh_titles(task)
+
+
+async def interrupt_task(
+    context: HandlerContext, task: Task, *, even_if_inactive: bool = False
+) -> None:
+    """Stop a task flow before a handler changes its current step or status."""
+    if even_if_inactive or task.status in (Status.RUNNING, Status.INTEGRATING):
+        await context.cancel_task(task.id)

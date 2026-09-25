@@ -118,11 +118,9 @@ def build_flow(
     if local_integration:
         builder = task_root_builder(SubprocessRunner(), env.project_root)
 
-        async def finalizer(task: Task) -> None:
+        async def finish_task(task: Task) -> None:
             system.sessions.close_task(task.id)
             await builder.cleanup(task.id, task.repo)
-
-        async def close_window(task: Task) -> None:
             if task.window_id is None:
                 raise AssertionError
             await SessionView(env.tmux).close_task_window(task.window_id)
@@ -139,8 +137,7 @@ def build_flow(
             project_root=env.project_root,
             tasks=env.tasks,
             events=system.events,
-            finalizer=finalizer,
-            close_window=close_window,
+            finish_task=finish_task,
         )
     history = ReportHistory(env.project_root)
     flow = TaskFlow(

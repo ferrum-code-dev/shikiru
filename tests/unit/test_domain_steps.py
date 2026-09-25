@@ -280,7 +280,7 @@ def test_verify_supersede_cancels_and_enqueues_new_tasks() -> None:
     transition = _next(task, make_verdict(decision="supersede"))
 
     assert transition.status is Status.CANCELLED
-    assert transition.status_reason == StatusReason.SUPERSEDED.value
+    assert transition.status_reason is StatusReason.SUPERSEDED
     assert transition.enqueue_new_tasks is True
     assert transition.repoint_dependents is True
 

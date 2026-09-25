@@ -248,16 +248,13 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     order: list[str] = []
     builder = task_root_builder(_RUNNER, project_root)
 
-    async def finalizer(task_value: Task) -> None:
+    async def finish_task(task_value: Task) -> None:
+        terminal = tasks.get(task_value.id)
+        assert terminal is not None
+        assert terminal.status is Status.DONE
         order.append("sessions_exited")
         await builder.cleanup(task_value.id, state)
         order.append("worktrees_cleaned")
-
-    async def close_window(task_value: Task) -> None:
-        done = tasks.get(task_value.id)
-        assert done is not None
-        assert done.status is Status.DONE
-        assert done.summary == "accepted summary"
         order.append("window_closed")
 
     async def resolve(
@@ -277,8 +274,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
         project_root=project_root,
         tasks=tasks,
         events=events,
-        finalizer=finalizer,
-        close_window=close_window,
+        finish_task=finish_task,
     ).run(task, resolve, IntegrationMetadata("stale summary"))
 
     final = TaskStore(connection, SystemClock()).get(task.id)

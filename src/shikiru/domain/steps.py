@@ -55,7 +55,7 @@ class Transition:
     counters: Counters
     rung_index: dict[Role, int]
     overrides: dict[Role, Rung]
-    status_reason: str | None = None
+    status_reason: StatusReason | None = None
     escalation_reason: EscalationReason | None = None
     repoint_dependents: bool = False
     enqueue_new_tasks: bool = False
@@ -179,7 +179,7 @@ def _from_verify(task: Task, outcome: Verdict, settings: Settings) -> Transition
             base = Transition.stay(task, step=None, status=Status.CANCELLED)
             return dataclasses.replace(
                 base,
-                status_reason=StatusReason.SUPERSEDED.value,
+                status_reason=StatusReason.SUPERSEDED,
                 repoint_dependents=True,
                 enqueue_new_tasks=True,
             )
