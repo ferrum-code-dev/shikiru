@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from shikiru.domain.reports import (
+    ConsultAnswer,
+    ImplementationReport,
+    PlanReport,
+    TriageReport,
+    Verdict,
+)
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.glyphs import GLYPH_ENGINE
 from shikiru.ui.status import status_visual
@@ -201,34 +208,26 @@ def _reports_table(detail: TaskDetail) -> Table:
     table.add_column("Kind")
     table.add_column("Summary")
     for report in detail.reports:
-        table.add_row(
-            str(report.get("turn", NO_VALUE)),
-            str(report.get("kind", NO_VALUE)),
-            _report_summary(report),
-        )
+        table.add_row(report.turn, report.kind.value, _report_summary(report.data))
     if not detail.reports:
         table.add_row(NO_ROWS, NO_VALUE, NO_VALUE)
     return table
 
 
-def _report_summary(report: dict[str, object]) -> str:
-    raw_data = report.get("data")
-    if not isinstance(raw_data, dict):
-        return NO_VALUE
-    data = cast("dict[str, object]", raw_data)
-    summary = data.get("summary")
-    decision = data.get("decision")
-    title = data.get("title")
-    pieces = [
-        str(value) for value in (decision, summary or title) if isinstance(value, str) and value
-    ]
-    if pieces:
-        return ": ".join(pieces)
-    for key in ("status", "question", "answer"):
-        value = data.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return NO_VALUE
+def _report_summary(
+    report: TriageReport | ImplementationReport | PlanReport | ConsultAnswer | Verdict,
+) -> str:
+    match report:
+        case TriageReport(title=title):
+            return title or NO_VALUE
+        case ImplementationReport(status=status, summary=summary):
+            return summary or status
+        case PlanReport(summary=summary):
+            return summary or NO_VALUE
+        case ConsultAnswer(decision=decision):
+            return decision
+        case Verdict(decision=decision, summary=summary):
+            return f"{decision}: {summary}" if summary else decision
 
 
 def _cost_basis(cost_basis: CostBasis | Literal["mixed"]) -> str:

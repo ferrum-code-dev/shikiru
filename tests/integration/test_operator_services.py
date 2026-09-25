@@ -160,7 +160,7 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
 
     assert detail is not None
     assert len(detail.events) == 1
-    assert detail.reports == [
+    assert detail.model_dump(mode="json")["reports"] == [
         {
             "turn": "01-triage-i0",
             "kind": "triage",
@@ -194,7 +194,7 @@ async def test_task_detail_uses_a_valid_helper_rebuild_when_agent_report_is_inva
     detail = _queries(tmp_path, reader).get_task(task.id)
 
     assert detail is not None
-    assert detail.reports == [
+    assert detail.model_dump(mode="json")["reports"] == [
         {
             "turn": "01-consult-i0",
             "kind": "consult",

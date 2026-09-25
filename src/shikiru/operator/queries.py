@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from shikiru.agents.contracts import CostBasis, QuotaWindow
 from shikiru.domain.events import Event
+from shikiru.domain.reports import Report, ReportKind
 from shikiru.domain.runs import Run
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
@@ -62,12 +63,20 @@ class TaskSummary(OperatorView):
         )
 
 
+class ReportRow(OperatorView):
+    """A turn's validated report in a task detail view."""
+
+    turn: str
+    kind: ReportKind
+    data: Report
+
+
 class TaskDetail(OperatorView):
     """A task with its runs and event timeline."""
 
     task: Task
     events: list[Event] = Field(default_factory=list)
-    reports: list[dict[str, object]] = Field(default_factory=list)
+    reports: list[ReportRow] = Field(default_factory=list)
     branches: list[str] = Field(default_factory=list)
     sessions: list[Run] = Field(default_factory=list)
 
@@ -241,22 +250,16 @@ class OperatorQueries:
             message = f"cannot read escalation packet {packet_path}: {error}"
             raise OperatorQueryError(message) from error
 
-    def _reports(self, task_id: str) -> list[dict[str, object]]:
+    def _reports(self, task_id: str) -> list[ReportRow]:
         task_turns_dir = turns_dir(self._project_root, task_id)
         if not task_turns_dir.is_dir():
             return []
-        reports: list[dict[str, object]] = []
+        reports: list[ReportRow] = []
         for turn_dir in sorted(path for path in task_turns_dir.iterdir() if path.is_dir()):
             loaded = load_turn_report(turn_dir)
             if loaded is None:
                 continue
-            reports.append(
-                {
-                    "turn": turn_dir.name,
-                    "kind": loaded.kind.value,
-                    "data": loaded.report.model_dump(mode="json"),
-                }
-            )
+            reports.append(ReportRow(turn=turn_dir.name, kind=loaded.kind, data=loaded.report))
         return reports
 
 

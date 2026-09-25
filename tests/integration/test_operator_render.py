@@ -6,9 +6,11 @@ from rich.console import Console
 
 from shikiru.agents.contracts import QuotaWindow
 from shikiru.cli.render import status_renderable
+from shikiru.domain.reports import ReportKind, Verdict
 from shikiru.domain.steps import Step
 from shikiru.domain.tasks import Mode, Status
 from shikiru.operator.queries import (
+    ReportRow,
     SlotView,
     StatusView,
     TaskDetail,
@@ -53,11 +55,11 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
             step=Step.IMPLEMENT,
         ),
         reports=[
-            {
-                "turn": "02-verify-i1",
-                "kind": "verdict",
-                "data": {"decision": "accept", "summary": "Reviewed"},
-            }
+            ReportRow(
+                turn="02-verify-i1",
+                kind=ReportKind.VERDICT,
+                data=Verdict(decision="accept", summary="Reviewed"),
+            )
         ],
     )
     view = StatusView(
