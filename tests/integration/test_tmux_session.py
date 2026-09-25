@@ -81,6 +81,18 @@ async def test_ensure_recreates_the_home_window_once_it_has_been_killed(
     assert await tmux.target_exists(window_target)
 
 
+async def test_missing_pane_is_dead(tmux_server: TmuxServer, tmp_path: Path) -> None:
+    tmux = _tmux(tmux_server)
+    view = SessionView(tmux)
+    target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+    pane_id = await view.create_task_window(target, window_name="T-1", cwd=tmp_path)
+
+    await tmux.kill_pane(pane_id)
+
+    assert not await tmux.pane_exists(pane_id)
+    assert await tmux.is_pane_dead(pane_id)
+
+
 async def test_ensure_applies_session_options_to_a_pre_existing_session(
     tmux_server: TmuxServer, tmp_path: Path
 ) -> None:

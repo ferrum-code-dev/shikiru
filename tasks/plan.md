@@ -187,7 +187,7 @@ Refs: 01 D21, 04 §1–2, 05 §1, 06 §5.3–5.4.
 ### Task 38: Code health from the 2026-09-25 review
 Refs: [review-2026-09-25.md](review-2026-09-25.md), AGENTS.md.
 Do the fixes marked _After/With Task N_ inside or after those tasks. Findings on code that Phase 4b replaces are out of scope. Close each finding, or record in the review file why it was dropped.
-- [ ] Correctness first:
+- [x] Correctness first:
   - E2 (a non-`ShikiruError` still stops the daemon)
   - E4 (dispatch failures are silent)
   - E5 (`integration = "pr"` merges locally without saying so)
