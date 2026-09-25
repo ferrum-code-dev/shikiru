@@ -113,7 +113,8 @@ def start(
         result = _run(build_lifecycle().start(root, state.overrides, attach=attach))
     except ShikiruError as error:
         _fail(error)
-    _emit_value(state, result, "engine started")
+    human = "engine started" if result.started else "engine already running"
+    _emit_value(state, result, human)
 
 
 @app.command()

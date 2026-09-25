@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from shikiru.config.loader import load_settings
 from shikiru.errors import ShikiruError
@@ -64,7 +66,7 @@ class ProjectLifecycle:
         overrides: Sequence[str],
         *,
         attach: bool,
-    ) -> dict[str, object]:
+    ) -> StartResult:
         """Validate a project and start or reuse its engine and tmux session."""
         settings = load_settings(root, overrides)
         await self._plugin_validator(settings)
@@ -104,7 +106,7 @@ class ProjectLifecycle:
             await self._wait_for_engine(root)
         if attach:
             self._runner.replace(("tmux", "attach-session", "-t", target))
-        return {"started": started, "engine": "up", "session": target}
+        return StartResult(started=started, engine="up", session=target)
 
     async def stop(
         self,
@@ -152,3 +154,13 @@ def command_with_overrides(command: tuple[str, ...], overrides: Sequence[str]) -
     )
     override_parts = tuple(part for override in overrides for part in ("--set", override))
     return (*command[:command_index], *override_parts, *command[command_index:])
+
+
+class StartResult(BaseModel):
+    """The started state and tmux target returned by a project start request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    started: bool
+    engine: Literal["up"]
+    session: str

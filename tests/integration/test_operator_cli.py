@@ -4,16 +4,35 @@ import asyncio
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.bootstrap import build_operator
+from shikiru.config.loader import load_settings
+from shikiru.operator.lifecycle import ProjectLifecycle, StartResult
 from shikiru.process import SubprocessRunner
+from shikiru.tmux.client import Tmux, exact_target
+from shikiru.tmux.session import (
+    DETACHED_SIZE,
+    HOME_WINDOW_NAME,
+    PROJECT_DIR_ENV_VAR,
+    SessionView,
+    session_name,
+)
+from tests.support.clock import FakeClock
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shikiru.config.settings import Settings
+    from shikiru.operator.services import OperatorServices
+    from tests.support.tmux import TmuxServer
+
 pytestmark = pytest.mark.asyncio
+
+START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 async def _git_project(root: Path) -> None:
@@ -103,6 +122,73 @@ async def test_cli_json_init_submit_status_and_stop(tmp_path: Path) -> None:
     stop_value = json.loads(stdout)
     assert stop_value["message"]
     assert stop_value["result"] == {"stopped": False}
+
+
+async def test_start_reports_that_an_existing_engine_was_reused(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    await _git_project(tmp_path)
+    config = tmp_path / ".shikiru" / "config.toml"
+    config.parent.mkdir()
+    config.write_text(
+        """
+        [project]
+        name = "demo"
+
+        [agents.fake]
+
+        [roles.leader]
+        ladder = [{agent = "fake", model = "default"}]
+
+        [roles.implementer]
+        escalate_after = 2
+        ladder = [{agent = "fake", model = "default"}]
+
+        [roles.helper]
+        ladder = [{agent = "fake", model = "default"}]
+        """
+    )
+    settings = load_settings(tmp_path)
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
+    await tmux.new_session(
+        session_name(settings.project.name),
+        cwd=tmp_path,
+        env={PROJECT_DIR_ENV_VAR: str(tmp_path)},
+        window_name=HOME_WINDOW_NAME,
+        size=DETACHED_SIZE,
+    )
+
+    async def validate_plugins(_settings: object) -> None:
+        return None
+
+    def build_services(project_root: Path, project_settings: Settings) -> OperatorServices:
+        return build_operator(
+            project_root,
+            project_settings,
+            clock=clock,
+            runner=tmux_server.runner,
+            tmux=tmux,
+        )
+
+    clock = FakeClock(START)
+
+    lifecycle = ProjectLifecycle(
+        runner=tmux_server.runner,
+        tmux=tmux,
+        session=SessionView(tmux),
+        clock=clock,
+        operator_factory=build_services,
+        plugin_validator=validate_plugins,
+        engine_up=lambda _root: True,
+    )
+
+    result = await lifecycle.start(tmp_path, (), attach=False)
+
+    assert isinstance(result, StartResult)
+    assert result.started is False
+    assert result.engine == "up"
+    assert result.session == exact_target(session_name(settings.project.name))
 
 
 @pytest.mark.parametrize("repo_relative", ["child", ".."])
