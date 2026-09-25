@@ -180,7 +180,7 @@ async def _commit_changes(runner: SubprocessRunner, cwd: Path, prompt_text: str)
         result = await runner.run(
             ["git", "rev-parse", "HEAD"], timeout=_GIT_TIMEOUT_SECONDS, cwd=repository
         )
-        commits.append(Commit(repo=repository.name, sha=result.stdout.strip(), subject=subject))
+        commits.append(Commit(sha=result.stdout.strip(), subject=subject))
     return commits
 
 

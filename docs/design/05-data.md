@@ -202,7 +202,7 @@ See 02 §5. `report.kind` names the report model of the turn. `helper.json` exis
 ```python
 class NewTask(BaseModel):      title: str; request: str; priority: int = 0
                                depends_on: list[str] = []   # existing "T-n" or "#k" = k-th task of the same list, 1-based; `shikiru report` rejects an out-of-range "#k"
-class Commit(BaseModel):       repo: str; sha: str; subject: str
+class Commit(BaseModel):       sha: str; subject: str
 class TestRun(BaseModel):      name: str; result: Literal["passed", "failed", "skipped"]; details: str = ""
 class Issue(BaseModel):        severity: Literal["blocker", "major", "minor"]; description: str; location: str = ""
 class Option(BaseModel):       label: str; consequences: str; recommended: bool = False

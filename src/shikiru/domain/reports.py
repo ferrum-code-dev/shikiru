@@ -76,9 +76,8 @@ class NewTask(DomainModel):
 
 
 class Commit(DomainModel):
-    """One commit an agent made during its turn."""
+    """One commit an agent made in the project's repository during its turn."""
 
-    repo: str
     sha: str
     subject: str
 

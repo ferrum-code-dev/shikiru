@@ -40,7 +40,7 @@ class CacheCloneResult:
 
 
 class CacheCloner:
-    """Clones `repos[].caches` globs that are git-ignored, copy-on-write, into a worktree."""
+    """Clone `repo.caches` globs that are git-ignored, copy-on-write, into a worktree."""
 
     def __init__(self, runner: SubprocessRunner, *, cow_args: Sequence[str] | None) -> None:
         """Copy with `cow_args` (the platform's copy-on-write `cp` invocation), via `runner`.
