@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,7 +33,13 @@ from shikiru.agents.contracts import (
     UsageReported,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
-from shikiru.agents.testing import AgentContractSuite, InvocationCase, RecordedStream
+from shikiru.agents.testing import (
+    RESUME_NONCE_PROMPT,
+    RESUME_RECALL_PROMPT,
+    AgentContractSuite,
+    InvocationCase,
+    RecordedStream,
+)
 from shikiru.clock import SystemClock
 from shikiru.plugins.agents.claude.agent import ClaudeAgent, create
 from shikiru.plugins.agents.claude.options import DEFAULT_ARGS
@@ -53,6 +61,8 @@ _OPENROUTER_LIVE_SESSION_ID = "session-openrouter-live-redacted"
 _OPENROUTER_LIVE_RESPONSE = "[redacted live response]"
 _SESSION_RESUMED = "session-resumed"
 _API_KEY_ENV = "SHIKIRU_CLAUDE_CAPTURE_KEY"
+_LIVE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_MODEL"
+_LIVE_CHANGE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL"
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 _COMPACTION_THRESHOLD = 80.0
 _LOW_COMPACTION_THRESHOLD = 0.0
@@ -60,6 +70,8 @@ _RESET_FIVE_HOUR = datetime(2030, 1, 1, 1, tzinfo=UTC)
 _RESET_SEVEN_DAY = datetime(2030, 1, 5, tzinfo=UTC)
 _COST = 0.00001
 _LIVE_ASK_PROMPT = "Return the JSON object with ok set to true."
+_BASIC_LIVE_PROMPT = "Reply with exactly OK and do nothing else."
+_LIVE_REPO_INIT_TIMEOUT_SECONDS = 30.0
 
 
 class _AskResult(BaseModel):
@@ -90,9 +102,13 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         run_dir = tmp_path / "run"
         turn_dir = tmp_path / "turns" / ("01-turn" if resume_session_id is None else "02-turn")
         return TurnSpec(
-            rung=Rung(agent="claude", model=model or _MODEL, effort="low"),
+            rung=Rung(
+                agent="claude",
+                model=model or os.environ.get(_LIVE_MODEL_ENV) or _MODEL,
+                effort="low",
+            ),
             role=_ROLE,
-            prompt="complete the requested turn",
+            prompt=_BASIC_LIVE_PROMPT,
             cwd=repo,
             run_dir=run_dir,
             turn_dir=turn_dir,
@@ -473,6 +489,77 @@ class TestClaudeHeadlessContract(AgentContractSuite):
 
     def process_sequence(self, agent: Agent, spec: TurnSpec) -> TurnProcessSequence:
         return cast("ClaudeAgent", agent).process_sequence(spec)
+
+    @pytest.mark.asyncio
+    async def test_live_model_change_resumes_and_recalls_session_memory(
+        self, tmp_path: Path
+    ) -> None:
+        self._require_live()
+        changed_model = os.environ.get(_LIVE_CHANGE_MODEL_ENV)
+        if not changed_model:
+            pytest.skip("no configured alternate Claude model for the live check")
+        if changed_model == (os.environ.get(_LIVE_MODEL_ENV) or _MODEL):
+            pytest.skip("configured live Claude models are identical")
+        first = self.build_spec(tmp_path, resume_session_id=None)
+        await SubprocessRunner().run(
+            ["git", "init"],
+            timeout=_LIVE_REPO_INIT_TIMEOUT_SECONDS,
+            cwd=first.cwd,
+            check=True,
+        )
+        nonce = uuid.uuid4().hex
+        first_signals = await self._run_turn(
+            replace(first, prompt=RESUME_NONCE_PROMPT.format(nonce=nonce))
+        )
+        session_id = next(
+            signal.session_id for signal in first_signals if isinstance(signal, SessionStarted)
+        )
+        usages = [signal.usage for signal in first_signals if isinstance(signal, UsageReported)]
+        assert usages, "live turn reported no usage"
+        resumed = self.build_spec(
+            tmp_path,
+            resume_session_id=session_id,
+            usage=usages[-1],
+            model=changed_model,
+        )
+        signals = await self._run_turn(replace(resumed, prompt=RESUME_RECALL_PROMPT))
+        message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
+        assert nonce in message, "resumed turn did not recall the nonce"
+
+    @pytest.mark.asyncio
+    async def test_live_low_compaction_threshold_preserves_session_memory(
+        self, tmp_path: Path
+    ) -> None:
+        self._require_live()
+        first = self.build_spec(tmp_path, resume_session_id=None)
+        await SubprocessRunner().run(
+            ["git", "init"],
+            timeout=_LIVE_REPO_INIT_TIMEOUT_SECONDS,
+            cwd=first.cwd,
+            check=True,
+        )
+        nonce = uuid.uuid4().hex
+        first_signals = await self._run_turn(
+            replace(first, prompt=f"Remember this nonce for later in this session: {nonce}")
+        )
+        session_id = next(
+            signal.session_id for signal in first_signals if isinstance(signal, SessionStarted)
+        )
+        usages = [signal.usage for signal in first_signals if isinstance(signal, UsageReported)]
+        assert usages, "live turn reported no usage"
+        if usages[-1].context_used_pct is None:
+            pytest.skip("configured provider does not report a reliable context window")
+        resumed = self.build_spec(
+            tmp_path,
+            resume_session_id=session_id,
+            usage=usages[-1],
+        )
+        signals = await self._run_turn(replace(resumed, prompt=RESUME_RECALL_PROMPT))
+        assert any(isinstance(signal, Compacted) for signal in signals), (
+            "resumed turn did not compact"
+        )
+        message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
+        assert nonce in message, "compacted resumed turn forgot the nonce"
 
     def headless_ask_schema_model(self) -> type[BaseModel]:
         return _AskResult
