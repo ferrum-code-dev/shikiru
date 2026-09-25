@@ -9,8 +9,6 @@ from shikiru.domain.tasks import Hold, Role, Status, Task
 from shikiru.engine.turns import turn_environment
 from shikiru.errors import CommandRejectedError
 from shikiru.paths import run_dir, task_root
-from shikiru.ui.glyphs import GLYPH_OPERATOR
-from shikiru.ui.tokens import OPERATOR_COLOR
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -22,13 +20,11 @@ if TYPE_CHECKING:
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
     from shikiru.tmux.client import Tmux
-    from shikiru.tmux.decorator import PaneDecorator
     from shikiru.workspace.messages import OperatorMessages
 
 HAND_BACK_MESSAGE = (
     "The Operator worked in this session since your last turn; take their changes into account."
 )
-OPERATOR_PANE_TITLE = f"{GLYPH_OPERATOR} operator"
 _ACTIVE_STATUSES = (Status.RUNNING, Status.INTEGRATING)
 
 
@@ -39,7 +35,6 @@ class Takeover:
         self,
         *,
         tmux: Tmux,
-        decorator: PaneDecorator,
         layout: LayoutGuard,
         agents: AgentPool,
         tasks: TaskStore,
@@ -54,7 +49,6 @@ class Takeover:
     ) -> None:
         """Drive panes through `tmux`/`layout` and task flows through the two callbacks."""
         self._tmux = tmux
-        self._decorator = decorator
         self._layout = layout
         self._agents = agents
         self._tasks = tasks
@@ -83,8 +77,6 @@ class Takeover:
         env = turn_environment(task, role, run_dir(self._project_root, task.id), self._project_name)
         await self._tmux.respawn_pane(pane_id, argv, env=env, cwd=root)
         await self._refresh_titles(self._current(task.id))
-        await self._decorator.set_pane_state(pane_id, color=OPERATOR_COLOR, glyph=GLYPH_OPERATOR)
-        await self._decorator.set_pane_title(pane_id, OPERATOR_PANE_TITLE, {})
         self._events.append(
             EventKind.TAKEN_OVER,
             task_id=task.id,

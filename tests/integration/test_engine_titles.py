@@ -13,10 +13,21 @@ from shikiru.config.settings import (
     PaneLeaf,
     TitlesConfig,
 )
+from shikiru.domain.runs import context_title
 from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
-from shikiru.tmux.decorator import WINDOW_STATE_COLOR_OPTION, WINDOW_STATE_GLYPH_OPTION
-from shikiru.ui.glyphs import GLYPH_ESCALATED, GLYPH_PAUSED, ROLE_GLYPHS, STAGE_MERGE
-from shikiru.ui.tokens import ALERT_COLOR, HOLD_COLOR, ROLE_COLORS
+from shikiru.tmux.decorator import (
+    PANE_COLOR_OPTION,
+    WINDOW_STATE_COLOR_OPTION,
+    WINDOW_STATE_GLYPH_OPTION,
+)
+from shikiru.ui.glyphs import (
+    GLYPH_ESCALATED,
+    GLYPH_OPERATOR,
+    GLYPH_PAUSED,
+    ROLE_GLYPHS,
+    STAGE_MERGE,
+)
+from shikiru.ui.tokens import ALERT_COLOR, HOLD_COLOR, OPERATOR_COLOR, ROLE_COLORS
 from tests.support.engine import FAKE_RUNG, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 
@@ -34,7 +45,7 @@ _LEADER_TITLE = (
 _TITLES = TitlesConfig(  # noqa: S604 -- `shell=` is `TitlesConfig`'s field name, not a subprocess flag
     window="{task_id} {title:.24}",
     leader=_LEADER_TITLE,
-    implementer="{glyph} Implementer - {agent}:{model} - iter {iteration} - {flags}",
+    implementer="{glyph} Implementer - {agent}:{model} - iter {iteration} - ctx {context} {flags}",
     system="Shikiru",
     shell="Shell",
 )
@@ -155,3 +166,26 @@ async def test_hold_and_rung_changes_update_titles_on_the_isolated_tmux_server(
         await engine_env.tmux.display(window_target, f"#{{{WINDOW_STATE_GLYPH_OPTION}}}")
         == GLYPH_PAUSED
     )
+
+
+async def test_a_taken_over_pane_shows_the_operator_with_the_runs_usage(
+    engine_env: EngineEnv,
+) -> None:
+    settings = _titled_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    flow_env = build_flow(engine_env, settings)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    run = engine_env.runs.get_live(final.id, Role.IMPLEMENTER)
+    assert run is not None
+
+    engine_env.runs.mark_taken_over(run.id)
+    await flow_env.titles.refresh(final)
+
+    pane = final.panes[Role.IMPLEMENTER]
+    title = await engine_env.tmux.display(pane, "#{pane_title}")
+    assert title.startswith(GLYPH_OPERATOR)
+    assert f"ctx {context_title(run.usage)}" in title
+    assert await engine_env.tmux.display(pane, f"#{{{PANE_COLOR_OPTION}}}") == OPERATOR_COLOR

@@ -368,7 +368,6 @@ def build_engine(
     )
     takeover = Takeover(
         tmux=resolved_tmux,
-        decorator=decorator,
         layout=layout,
         agents=agent_pool,
         tasks=tasks,

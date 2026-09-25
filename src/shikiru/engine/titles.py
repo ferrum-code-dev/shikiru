@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.domain.ladder import pick_rung
-from shikiru.domain.runs import NO_USAGE, context_title, cost_title
+from shikiru.domain.runs import NO_USAGE, RunStatus, context_title, cost_title
 from shikiru.domain.steps import ACTING_ROLE
 from shikiru.domain.tasks import Hold, Role, Status, Step
 from shikiru.ui.glyphs import (
@@ -30,8 +30,8 @@ from shikiru.ui.glyphs import (
 from shikiru.ui.tokens import ALERT_COLOR, ENGINE_COLOR, HOLD_COLOR, OPERATOR_COLOR, ROLE_COLORS
 
 if TYPE_CHECKING:
-    from shikiru.agents.contracts import Usage
     from shikiru.config.settings import Settings
+    from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
     from shikiru.store.runs import RunStore
     from shikiru.tmux.decorator import PaneDecorator
@@ -72,7 +72,10 @@ def _flags(task: Task) -> str:
 
 
 class TaskTitles:
-    """Sets `task`'s window/pane titles and window state from `dashboard.titles` (06 §5.3)."""
+    """Sets `task`'s window/pane titles and window state from `dashboard.titles` (06 §5.3).
+
+    A role's pane taken over by the Operator (03 §9) is titled and coloured as the Operator's.
+    """
 
     def __init__(self, decorator: PaneDecorator, runs: RunStore, settings: Settings) -> None:
         """Decorate through `decorator`, reading live usage from `runs`, titles from `settings`."""
@@ -99,14 +102,16 @@ class TaskTitles:
 
     async def _refresh_pane(self, task: Task, role: Role, pane_id: str) -> None:
         rung = pick_rung(task, role, self._settings)
-        usage = self._latest_usage(task.id, role)
+        run = self._active_run(task.id, role)
+        taken_over = run is not None and run.status is RunStatus.TAKEN_OVER
+        usage = run.usage if run is not None else NO_USAGE
         template = getattr(self._settings.dashboard.titles, role.value)
         fields = {
             "task_id": task.id,
             "title": task.title,
             "project": self._settings.project.name,
             "role": role.value,
-            "glyph": ROLE_GLYPHS[role],
+            "glyph": GLYPH_OPERATOR if taken_over else ROLE_GLYPHS[role],
             "agent": rung.agent,
             "model": rung.model,
             "effort": rung.effort if rung.effort is not None else "",
@@ -118,7 +123,11 @@ class TaskTitles:
             "flags": _flags(task),
         }
         await self._decorator.set_pane_title(pane_id, template, fields)
+        if taken_over:
+            await self._decorator.set_pane_state(
+                pane_id, color=OPERATOR_COLOR, glyph=GLYPH_OPERATOR
+            )
 
-    def _latest_usage(self, task_id: str, role: Role) -> Usage:
-        run = self._runs.get_live(task_id, role)
-        return run.usage if run is not None else NO_USAGE
+    def _active_run(self, task_id: str, role: Role) -> Run | None:
+        live = self._runs.get_live(task_id, role)
+        return live if live is not None else self._runs.get_taken_over(task_id, role)
