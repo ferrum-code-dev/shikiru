@@ -18,6 +18,9 @@ WORKTREES_DIR_NAME = "worktrees"
 RUNS_DIR_NAME = "runs"
 TURNS_DIR_NAME = "turns"
 MESSAGES_DIR_NAME = "messages"
+PROBE_DIR_NAME = "probe"
+PROBE_REPO_DIR_NAME = "repo"
+PROBE_RUN_DIR_NAME = "run"
 EXCLUDE_LINE = f"/{SHIKIRU_DIR_NAME}/"
 
 
@@ -64,3 +67,13 @@ def task_root(project_root: Path, task_id: str) -> Path:
 def queued_messages_dir(project_root: Path, task_id: str, role: str) -> Path:
     """Return the directory holding `role`'s queued operator messages for `task_id`."""
     return run_dir(project_root, task_id) / MESSAGES_DIR_NAME / role
+
+
+def probe_repo_path(project_root: Path) -> Path:
+    """Return the scratch repository `doctor --probe` runs its turns in."""
+    return project_state_dir(project_root) / PROBE_DIR_NAME / PROBE_REPO_DIR_NAME
+
+
+def probe_run_dir(project_root: Path) -> Path:
+    """Return the run directory `doctor --probe` keeps its turn artifacts in."""
+    return project_state_dir(project_root) / PROBE_DIR_NAME / PROBE_RUN_DIR_NAME

@@ -4,18 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
 from shikiru.agents.contracts import (
+    ROLE_ENV_VAR,
+    RUN_DIR_ENV_VAR,
+    AgentContext,
     SessionStarted,
     ToolStarted,
     TurnEnded,
     TurnFailed,
+    TurnSpec,
     role_dir,
     shikiru_command,
 )
+from shikiru.agents.sdk.turn import stderr_log_path, stream_log_path
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     REPORT_FILENAME,
@@ -25,15 +32,24 @@ from shikiru.domain.reports import (
     model_for,
     schema_for,
 )
+from shikiru.engine.turns import TURN_PROMPT
+from shikiru.errors import ShikiruError
+from shikiru.paths import TURNS_DIR_NAME, probe_repo_path, probe_run_dir
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
+    from typing import Any
 
-    from shikiru.agents.contracts import AgentSignal, TurnSpec
+    from shikiru.agents.contracts import AgentSignal, Rung, Turn
+    from shikiru.agents.registry import AgentRegistry
+    from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
 GIT_INIT_TIMEOUT_SECONDS = 10.0
+PROBE_TIMEOUT_SECONDS = 180.0
+PROBE_ROLE = "implementer"
+PROBE_STREAM_TAIL_LINES = 20
 REPORT_INPUT_FILENAME = "contract-report-input.json"
 REPORT_PROMPT_FILENAME = "contract-prompt.md"
 REPORT_TOOL_NAME = "shikiru report"
@@ -53,6 +69,93 @@ LIVE_REPORT_PROMPT = (
     "Do not inspect or edit other files or run any other commands. "
     "After the command succeeds, reply exactly REPORT_OK."
 )
+
+
+@dataclass(frozen=True)
+class ProbeOutcome:
+    """One probe turn's verdict, with the raw stream tail and stderr kept for a failure."""
+
+    problem: str | None
+    stream_tail: str = ""
+    stderr: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.problem is None
+
+    @property
+    def detail(self) -> str:
+        if self.problem is None:
+            return "valid report submitted"
+        return (
+            f"{self.problem}\nstream tail:\n{self.stream_tail or '(empty)'}"
+            f"\nstderr:\n{self.stderr or '(empty)'}"
+        )
+
+
+class AgentProbe:
+    """Run live check 1 for one rung in the project's reusable `.shikiru/probe/` scratch."""
+
+    def __init__(self, registry: AgentRegistry, runner: SubprocessRunner, clock: Clock) -> None:
+        """Use the shared agent registry and runtime boundaries the engine uses."""
+        self._registry = registry
+        self._runner = runner
+        self._clock = clock
+
+    async def run(self, project_root: Path, rung: Rung, options: Mapping[str, Any]) -> ProbeOutcome:
+        """Start one real turn on `rung` that must submit a valid report through the CLI."""
+        run_dir = probe_run_dir(project_root)
+        turn_dir = run_dir / TURNS_DIR_NAME / rung.agent
+        await asyncio.to_thread(shutil.rmtree, turn_dir, ignore_errors=True)
+        spec = TurnSpec(
+            rung=rung,
+            role=PROBE_ROLE,
+            prompt="",
+            cwd=probe_repo_path(project_root),
+            run_dir=run_dir,
+            turn_dir=turn_dir,
+            add_dirs=(),
+            env={RUN_DIR_ENV_VAR: str(run_dir), ROLE_ENV_VAR: PROBE_ROLE},
+            session_id=None,
+            usage=None,
+        )
+        try:
+            problem = await self._run_turn(spec, options)
+        except (ShikiruError, OSError) as error:
+            problem = str(error) or type(error).__name__
+        if problem is None:
+            return ProbeOutcome(problem=None)
+        return await asyncio.to_thread(_failed_outcome, spec, problem)
+
+    async def _run_turn(self, spec: TurnSpec, options: Mapping[str, Any]) -> str | None:
+        agent = self._registry.create(
+            spec.rung.agent, AgentContext(options=options, runner=self._runner, clock=self._clock)
+        )
+        prompt_path = await prepare_live_report(self._runner, spec)
+        spec = replace(spec, prompt=TURN_PROMPT.format(prompt_path=prompt_path))
+        turn = await agent.start_turn(spec)
+        try:
+            signals = await _collect(turn)
+        except TimeoutError:
+            await turn.stop()
+            return f"live turn exceeded {PROBE_TIMEOUT_SECONDS:g}s"
+        return await asyncio.to_thread(live_report_problem, spec, signals)
+
+
+async def _collect(turn: Turn) -> list[AgentSignal]:
+    async with asyncio.timeout(PROBE_TIMEOUT_SECONDS):
+        return [signal async for signal in turn.signals()]
+
+
+def _failed_outcome(spec: TurnSpec, problem: str) -> ProbeOutcome:
+    stream_path = stream_log_path(spec.turn_dir, spec.role)
+    stderr_path = stderr_log_path(spec.turn_dir, spec.role)
+    stream_lines = stream_path.read_text().splitlines() if stream_path.is_file() else []
+    return ProbeOutcome(
+        problem=problem,
+        stream_tail="\n".join(stream_lines[-PROBE_STREAM_TAIL_LINES:]),
+        stderr=stderr_path.read_text().strip() if stderr_path.is_file() else "",
+    )
 
 
 async def init_scratch_repo(runner: SubprocessRunner, path: Path) -> None:

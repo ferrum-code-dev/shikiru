@@ -56,6 +56,7 @@ from shikiru.operator.doctor import Doctor
 from shikiru.operator.events import EventFeed
 from shikiru.operator.lifecycle import ProjectLifecycle
 from shikiru.operator.plugin_checks import PluginChecks
+from shikiru.operator.probe import AgentProbe
 from shikiru.operator.queries import OperatorQueries
 from shikiru.operator.services import OperatorServices
 from shikiru.paths import engine_lock_path, engine_log_path, project_state_dir, state_db_path
@@ -110,14 +111,15 @@ def build_doctor(project_root: Path) -> Doctor:
     """Build environment diagnostics with one injected process, clock and registry."""
     runner = SubprocessRunner()
     clock = build_clock()
-    plugins = PluginChecks(AgentRegistry(), runner, clock)
+    registry = AgentRegistry()
     return Doctor(
         project_root,
         cow_args=default_cow_args(),
         git=Git(runner),
         runner=runner,
         clock=clock,
-        plugin_checks=plugins,
+        plugin_checks=PluginChecks(registry, runner, clock),
+        probe=AgentProbe(registry, runner, clock),
     )
 
 

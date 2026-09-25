@@ -62,6 +62,7 @@ _MODEL_ARGUMENT = "--model"
 _EFFORT_ARGUMENT = "--effort"
 _FAKE_RETRY_ENV_VAR = "SHIKIRU_FAKE_RETRY"
 _WAIT_PROMPT = "wait for the next instruction"
+CRASH_STDERR = "fake agent crashed as scripted"
 _INPUT_TOKENS_FIELD = "input_tokens"
 _OUTPUT_TOKENS_FIELD = "output_tokens"
 _CACHE_READ_TOKENS_FIELD = "cache_read_tokens"
@@ -146,6 +147,7 @@ async def _run_turn(session_id: str, prompt: str) -> int:
             }
         )
     if isinstance(step, CrashStep):
+        sys.stderr.write(CRASH_STDERR + "\n")
         return 1
     if isinstance(step, StallStep):
         await asyncio.Event().wait()

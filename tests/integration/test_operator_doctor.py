@@ -8,11 +8,13 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from fake_agent.turn_cli import CRASH_STDERR
 
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import SystemClock
 from shikiru.operator.doctor import Doctor
 from shikiru.operator.plugin_checks import PluginChecks
+from shikiru.operator.probe import AgentProbe
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.git import Git
 
@@ -161,6 +163,7 @@ async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(
         runner=runner,
         clock=clock,
         plugin_checks=PluginChecks(AgentRegistry(), runner, clock),
+        probe=AgentProbe(AgentRegistry(), runner, clock),
     )
 
     report = await doctor.run()
@@ -168,3 +171,29 @@ async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(
     checks = {check.name: check for check in report.checks}
     assert report.ok is True
     assert checks["cow"].ok is True
+
+
+async def test_doctor_probe_passes_when_each_ladder_agent_submits_a_valid_report(
+    tmp_path: Path,
+) -> None:
+    root = await _project(tmp_path)
+
+    code, stdout, _ = await _cli(root, "--json", "doctor", "--probe")
+
+    checks = {check["name"]: check for check in json.loads(stdout)["checks"]}
+    assert code == 0
+    assert checks["probe:fake"]["ok"] is True
+
+
+async def test_doctor_probe_failure_shows_the_stream_tail_and_stderr(tmp_path: Path) -> None:
+    root = await _project(tmp_path)
+
+    code, stdout, _ = await _cli(
+        root, "--json", "doctor", "--probe", SHIKIRU_FAKE_SCRIPT='[{"kind": "crash"}]'
+    )
+
+    probe = next(check for check in json.loads(stdout)["checks"] if check["name"] == "probe:fake")
+    assert code == 1
+    assert probe["ok"] is False
+    assert '"event":"session_started"' in probe["detail"]
+    assert CRASH_STDERR in probe["detail"]

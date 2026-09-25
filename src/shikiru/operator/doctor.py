@@ -24,9 +24,11 @@ from shikiru.workspace.caches import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from shikiru.agents.contracts import Rung
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.operator.plugin_checks import PluginChecks
+    from shikiru.operator.probe import AgentProbe
     from shikiru.process import ProcessResult, SubprocessRunner
     from shikiru.workspace.git import Git
 
@@ -46,7 +48,6 @@ PLUGINS_CHECK_NAME = "plugins"
 PLUGIN_CONFIG_CHECK_NAME = "config.plugins"
 COW_CHECK_NAME = "cow"
 DATABASE_CHECK_NAME = "db"
-_PROBE_DEFERRED_MESSAGE = "doctor --probe is deferred to Task 37's headless probe"
 
 
 class DoctorCheck(BaseModel):
@@ -86,19 +87,19 @@ class Doctor:
         runner: SubprocessRunner,
         clock: Clock,
         plugin_checks: PluginChecks,
+        probe: AgentProbe,
     ) -> None:
-        """Store the project and injected git, process, clock and plugin boundaries."""
+        """Store the project and injected git, process, clock, plugin and probe boundaries."""
         self._project_root = project_root.resolve()
         self._cow_args = tuple(cow_args) if cow_args is not None else None
         self._git = git
         self._runner = runner
         self._clock = clock
         self._plugins = plugin_checks
+        self._probe = probe
 
     async def run(self, overrides: Sequence[str] = (), *, probe: bool = False) -> DoctorReport:
-        """Run core checks and configured plugin diagnostics."""
-        if probe:
-            raise ConfigError(_PROBE_DEFERRED_MESSAGE)
+        """Run core and plugin checks, plus one live turn per ladder agent with `probe`."""
         checks: list[DoctorCheck] = []
         checks.append(await self._tmux_check())
         checks.append(await self._git_check())
@@ -128,7 +129,22 @@ class Doctor:
                 ),
             )
         )
+        if probe:
+            checks.extend(await self._probe_checks(settings))
         return DoctorReport.from_checks(checks)
+
+    async def _probe_checks(self, settings: Settings) -> list[DoctorCheck]:
+        checks: list[DoctorCheck] = []
+        for rung in _first_rung_per_agent(settings.ladder_rungs()):
+            outcome = await self._probe.run(
+                self._project_root, rung, settings.agents[rung.agent].options
+            )
+            checks.append(
+                DoctorCheck(
+                    name=_probe_check_name(rung.agent), ok=outcome.ok, detail=outcome.detail
+                )
+            )
+        return checks
 
     async def _tmux_check(self) -> DoctorCheck:
         socket_name = private_socket_name(TMUX_SESSION_PREFIX)
@@ -264,6 +280,17 @@ def _process_detail(result: ProcessResult) -> str:
 
 def _error_detail(error: BaseException) -> str:
     return str(error) or type(error).__name__
+
+
+def _first_rung_per_agent(rungs: Sequence[Rung]) -> list[Rung]:
+    first: dict[str, Rung] = {}
+    for rung in rungs:
+        first.setdefault(rung.agent, rung)
+    return list(first.values())
+
+
+def _probe_check_name(name: str) -> str:
+    return f"probe:{name}"
 
 
 def _plugin_check_name(name: str) -> str:
