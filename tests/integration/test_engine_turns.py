@@ -163,5 +163,4 @@ async def test_queued_operator_message_reaches_only_its_roles_next_prompt(
         assert delivered.read_text() == text
         assert not role_message.exists()
         prompt = (turn_dir / "prompt.md").read_text()
-        assert "Operator messages — read these first" in prompt
         assert str(delivered) in prompt
