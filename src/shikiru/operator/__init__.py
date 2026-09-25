@@ -12,6 +12,7 @@ from shikiru.operator.queries import (
     TaskDetail,
     TaskSummary,
 )
+from shikiru.operator.services import OperatorServices
 
 __all__ = [
     "Ack",
@@ -24,6 +25,7 @@ __all__ = [
     "OperatorCommands",
     "OperatorQueries",
     "OperatorQueryError",
+    "OperatorServices",
     "PeekView",
     "StatusView",
     "TaskDetail",

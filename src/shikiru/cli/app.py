@@ -15,7 +15,6 @@ from rich.console import Console
 
 from shikiru.agents.contracts import parse_rung
 from shikiru.bootstrap import (
-    OperatorServices,
     build_doctor,
     build_engine,
     build_lifecycle,
@@ -39,6 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable
 
     from shikiru.config.settings import Settings
+    from shikiru.operator.services import OperatorServices
 
 PROJECT_OPTION = typer.Option("--project", help="Project directory.")
 JSON_OPTION = typer.Option("--json", help="Print JSON output.")

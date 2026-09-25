@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-    from shikiru.bootstrap import OperatorServices
+    from shikiru.operator.services import OperatorServices
 
 
 def run_mcp(server: FastMCP, services: OperatorServices) -> None:

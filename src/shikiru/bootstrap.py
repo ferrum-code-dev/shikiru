@@ -53,6 +53,7 @@ from shikiru.operator.events import EventFeed
 from shikiru.operator.lifecycle import ProjectLifecycle
 from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.queries import OperatorQueries
+from shikiru.operator.services import OperatorServices
 from shikiru.paths import engine_lock_path, engine_log_path, project_state_dir, state_db_path
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
@@ -195,29 +196,6 @@ def build_lifecycle() -> ProjectLifecycle:
         engine_up=engine_up,
         dashboard_runner=dashboard_runner,
     )
-
-
-class OperatorServices:
-    """Concrete operator services and their owned state connections."""
-
-    def __init__(
-        self,
-        reader: StateReader,
-        queries: OperatorQueries,
-        commands: OperatorCommands,
-        events: EventFeed,
-        close: Callable[[], None],
-    ) -> None:
-        """Store the services and close callback assembled by `build_operator`."""
-        self.reader = reader
-        self.queries = queries
-        self.commands = commands
-        self.events = events
-        self._close = close
-
-    def close(self) -> None:
-        """Close the operator's writer and read-only state connections."""
-        self._close()
 
 
 def build_operator(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from shikiru.config.loader import load_settings
 from shikiru.errors import ShikiruError
@@ -17,34 +17,14 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.operator.services import OperatorServices
     from shikiru.process import SubprocessRunner
     from shikiru.tmux.client import Tmux
     from shikiru.tmux.session import SessionView
 
 
-class OperatorCommandsBoundary(Protocol):
-    """The command surface needed to stop an engine."""
-
-    async def stop_engine(self) -> Ack:
-        """Request an orderly engine stop."""
-        ...
-
-
-class OperatorServicesBoundary(Protocol):
-    """The operator bundle lifecycle needs while stopping an engine."""
-
-    @property
-    def commands(self) -> OperatorCommandsBoundary:
-        """Return the command boundary used to stop the engine."""
-        ...
-
-    def close(self) -> None:
-        """Release the operator bundle's state connections."""
-        ...
-
-
 if TYPE_CHECKING:
-    OperatorFactory = Callable[[Path, Settings], OperatorServicesBoundary]
+    OperatorFactory = Callable[[Path, Settings], OperatorServices]
     PluginValidator = Callable[[Settings], Awaitable[None]]
     EngineState = Callable[[Path], bool]
     DashboardRunner = Callable[[Path, Sequence[str], str | None], Awaitable[None]]

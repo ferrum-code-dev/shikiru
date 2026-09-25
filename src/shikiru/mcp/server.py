@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict
@@ -24,7 +24,7 @@ from shikiru.operator import queries as operator_queries
 from shikiru.operator.events import MAX_WAIT_SECONDS
 
 if TYPE_CHECKING:
-    from shikiru.operator.events import EventFeed
+    from shikiru.operator.services import OperatorServices
 
 ComplexityName = config_settings.ComplexityName
 Event = domain_events.Event
@@ -40,14 +40,6 @@ TaskDetail = operator_queries.TaskDetail
 TaskSummary = operator_queries.TaskSummary
 
 SERVER_NAME = "shikiru"
-
-
-class OperatorServiceBundle(Protocol):
-    """The injected operator services exposed through the MCP adapter."""
-
-    queries: operator_queries.OperatorQueries
-    commands: operator_commands.OperatorCommands
-    events: EventFeed
 
 
 class ResolutionInput(BaseModel):
@@ -73,7 +65,7 @@ class ResolutionInput(BaseModel):
         return CancelResolution()
 
 
-def build_server(services: OperatorServiceBundle) -> FastMCP:
+def build_server(services: OperatorServices) -> FastMCP:
     """Build a typed FastMCP server over injected operator services."""
     server = FastMCP(SERVER_NAME)
 
@@ -83,7 +75,7 @@ def build_server(services: OperatorServiceBundle) -> FastMCP:
     return server
 
 
-def _register_query_tools(server: FastMCP, services: OperatorServiceBundle) -> None:
+def _register_query_tools(server: FastMCP, services: OperatorServices) -> None:
     @server.tool()
     def status(task_id: str | None = None) -> StatusView:
         return services.queries.status(task_id)
@@ -109,7 +101,7 @@ def _register_query_tools(server: FastMCP, services: OperatorServiceBundle) -> N
         return await services.queries.peek_session(task_id, role)
 
 
-def _register_command_tools(server: FastMCP, services: OperatorServiceBundle) -> None:
+def _register_command_tools(server: FastMCP, services: OperatorServices) -> None:
     @server.tool()
     async def submit_task(
         *,
@@ -162,7 +154,7 @@ def _register_command_tools(server: FastMCP, services: OperatorServiceBundle) ->
         return await services.commands.resolve_escalation(escalation_id, resolution.to_domain())
 
 
-def _register_event_tools(server: FastMCP, services: OperatorServiceBundle) -> None:
+def _register_event_tools(server: FastMCP, services: OperatorServices) -> None:
     @server.tool()
     async def wait_for_events(
         since_id: int,
