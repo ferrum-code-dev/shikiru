@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn
@@ -213,8 +212,7 @@ def doctor(
     if state.json_output:
         typer.echo(report.model_dump_json())
     else:
-        no_color = bool(os.environ.get("NO_COLOR"))
-        Console(no_color=no_color).print(doctor_renderable(report))
+        Console().print(doctor_renderable(report))
     if not report.ok:
         raise typer.Exit(code=1)
 
@@ -275,8 +273,7 @@ async def _status_loop(
         if state.json_output:
             typer.echo(view.model_dump_json())
         else:
-            no_color = bool(os.environ.get("NO_COLOR"))
-            console = Console(no_color=no_color)
+            console = Console()
             console.print(status_renderable(view, settings=settings, width=console.width))
 
     render()
@@ -293,8 +290,7 @@ def emit_ack(state: CliState, ack: Ack) -> None:
     if state.json_output:
         typer.echo(ack.model_dump_json())
     else:
-        no_color = bool(os.environ.get("NO_COLOR"))
-        Console(no_color=no_color).print(ack_renderable(ack))
+        Console().print(ack_renderable(ack))
     if ack.status is AckStatus.REJECTED:
         raise typer.Exit(code=4)
 
