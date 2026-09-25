@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Self
 
 from shikiru.domain.events import EventKind
-from shikiru.errors import CommandRejectedError, ShikiruError
+from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -166,7 +166,7 @@ class Engine:
         for queued in self._commands.pending():
             try:
                 result = await self._handlers.handle(queued.command)
-            except (CommandRejectedError, ShikiruError) as error:
+            except ShikiruError as error:
                 self._commands.mark_rejected(queued.id, {"error": str(error)})
                 continue
             except Exception as error:
