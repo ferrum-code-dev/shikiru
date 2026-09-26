@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from shikiru.agents.contracts import (
     PROJECT_ENV_VAR,
@@ -65,6 +65,13 @@ _NUDGE_MESSAGE = (
     "at the end of {prompt_path}."
 )
 _LOGGER = logging.getLogger(__name__)
+
+
+class _HelperCall(TypedDict):
+    model: str
+    effort: str | None
+    cwd: Path
+    timeout: timedelta
 
 
 @dataclass(frozen=True)
@@ -250,19 +257,23 @@ class TurnRunner:
             link.unlink()
         link.symlink_to(turn_dir)
 
+    def _helper_call(self, task: Task) -> _HelperCall:
+        rung = self._settings.roles.helper.ladder[0]
+        return _HelperCall(
+            model=rung.model,
+            effort=rung.effort,
+            cwd=task_root(self._project_root, task.id),
+            timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
+        )
+
     async def _classify_unknown(
         self, failure: TurnFailed, task: Task, selection: SessionSelection
     ) -> Failed:
         if failure.kind is not FailureKind.UNKNOWN:
             return Failed(failure.kind, failure.resets_at, failure.message)
-        helper_rung = self._settings.roles.helper.ladder[0]
         try:
             classification = await self._helper.classify_failure(
-                failure.message,
-                model=helper_rung.model,
-                effort=helper_rung.effort,
-                cwd=task_root(self._project_root, task.id),
-                timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
+                failure.message, **self._helper_call(task)
             )
         except (ShikiruError, TimeoutError, OSError) as error:
             _LOGGER.exception("failure classification failed for %s", task.id)
@@ -308,16 +319,9 @@ class TurnRunner:
         request: TurnRequest,
         last_message: str,
     ) -> TurnResult:
-        helper_rung = self._settings.roles.helper.ladder[0]
         try:
             report = await self._helper.rebuild_report(
-                request.kind,
-                last_message,
-                request.facts,
-                model=helper_rung.model,
-                effort=helper_rung.effort,
-                cwd=task_root(self._project_root, task.id),
-                timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
+                request.kind, last_message, request.facts, **self._helper_call(task)
             )
         except (ShikiruError, TimeoutError, OSError) as error:
             _LOGGER.exception("report rebuild failed for %s", task.id)
