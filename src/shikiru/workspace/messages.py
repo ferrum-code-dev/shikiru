@@ -27,7 +27,7 @@ class OperatorMessages:
         directory = queued_messages_dir(self._project_root, task_id, role.value)
         directory.mkdir(parents=True, exist_ok=True)
         number = max((int(path.stem) for path in _messages(directory)), default=0) + 1
-        path = directory / f"{number:0{MESSAGE_NUMBER_WIDTH}d}{MESSAGE_SUFFIX}"
+        path = _message_path(directory, number)
         path.write_text(text)
         return path
 
@@ -41,6 +41,26 @@ class OperatorMessages:
         target.mkdir(parents=True, exist_ok=True)
         return [path.rename(target / path.name) for path in queued]
 
+    def requeue(self, task_id: str, role: Role, turn_dir: Path) -> None:
+        """Return `turn_dir`'s delivered messages to the role's queue, ahead of newer ones."""
+        delivered_dir = turn_dir / MESSAGES_DIR_NAME
+        delivered = _messages(delivered_dir) if delivered_dir.is_dir() else []
+        if not delivered:
+            return
+        directory = queued_messages_dir(self._project_root, task_id, role.value)
+        directory.mkdir(parents=True, exist_ok=True)
+        pending = [*delivered, *_messages(directory)]
+        texts = [path.read_text() for path in pending]
+        for path in pending:
+            path.unlink()
+        delivered_dir.rmdir()
+        for number, text in enumerate(texts, start=1):
+            _message_path(directory, number).write_text(text)
+
 
 def _messages(directory: Path) -> list[Path]:
     return sorted(directory.glob(f"*{MESSAGE_SUFFIX}"))
+
+
+def _message_path(directory: Path, number: int) -> Path:
+    return directory / f"{number:0{MESSAGE_NUMBER_WIDTH}d}{MESSAGE_SUFFIX}"

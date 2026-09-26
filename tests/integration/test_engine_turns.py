@@ -164,3 +164,28 @@ async def test_queued_operator_message_reaches_only_its_roles_next_prompt(
         assert not role_message.exists()
         prompt = (turn_dir / "prompt.md").read_text()
         assert str(delivered) in prompt
+
+
+async def test_operator_message_is_redelivered_when_its_turn_fails(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "fail", "failure_kind": "other"}, {"kind": "accept"}],
+    )
+    OperatorMessages(engine_env.project_root).queue(task.id, Role.IMPLEMENTER, "use the helper")
+    flow_env = build_flow(engine_env, flow_settings())
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+
+    turns = run_dir(engine_env.project_root, task.id) / "turns"
+    failed, retried = sorted(
+        path for path in turns.iterdir() if path.name.endswith("-implement-i1")
+    )
+    assert not (failed / "messages").exists()
+    [delivered] = (retried / "messages").iterdir()
+    assert delivered.read_text() == "use the helper"
+    assert str(delivered) in (retried / "prompt.md").read_text()

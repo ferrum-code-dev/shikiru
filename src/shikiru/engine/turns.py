@@ -139,10 +139,36 @@ class TurnRunner:
         *,
         on_nudge: Callable[[], None],
     ) -> tuple[TurnResult, Path, SessionSelection]:
-        """Run one workflow turn and any resumed nudge turns to a normalized result."""
+        """Run one workflow turn and any resumed nudge turns to a normalized result.
+
+        Operator messages delivered into the turn return to the queue unless it completes.
+        """
+        turn_dir = self._prepare_turn_dir(
+            run_dir(self._project_root, task.id), task.id, role, request
+        )
+        completed = False
+        try:
+            result, selection = await self._attempts(
+                task, role, selection, request, turn_dir, on_nudge=on_nudge
+            )
+            completed = isinstance(result, Completed)
+        finally:
+            if not completed:
+                self._messages.requeue(task.id, role, turn_dir)
+        return result, turn_dir, selection
+
+    async def _attempts(
+        self,
+        task: Task,
+        role: Role,
+        selection: SessionSelection,
+        request: TurnRequest,
+        turn_dir: Path,
+        *,
+        on_nudge: Callable[[], None],
+    ) -> tuple[TurnResult, SessionSelection]:
         task_run_dir = run_dir(self._project_root, task.id)
         task_root_dir = task_root(self._project_root, task.id)
-        turn_dir = self._prepare_turn_dir(task_run_dir, task.id, role, request)
         prompt_path = turn_dir / PROMPT_FILENAME
         prompt = TURN_PROMPT.format(prompt_path=prompt_path)
         nudges = 0
@@ -173,10 +199,9 @@ class TurnRunner:
                 run_dir=task_run_dir,
             )
             if isinstance(terminal, TurnFailed):
-                result = await self._classify_unknown(terminal, task, selection)
-                return result, turn_dir, selection
+                return await self._classify_unknown(terminal, task, selection), selection
             if isinstance(terminal, Stalled | ProtocolError):
-                return terminal, turn_dir, selection
+                return terminal, selection
             last_message = terminal.last_message
             try:
                 report = read_turn_report(turn_dir)
@@ -184,11 +209,10 @@ class TurnRunner:
                 _LOGGER.exception("invalid report in completed turn %s", turn_dir)
                 report = None
             if report is not None:
-                return Completed(report=report), turn_dir, selection
+                return Completed(report=report), selection
             if nudges >= NUDGE_LIMIT:
                 return (
                     await self._rebuild(turn_dir, request, task_root_dir, last_message),
-                    turn_dir,
                     selection,
                 )
             nudges += 1
