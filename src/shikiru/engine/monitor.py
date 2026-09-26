@@ -136,10 +136,7 @@ class TurnMonitor:
                     return terminal
         except StopAsyncIteration:
             return ProtocolError()
-        except asyncio.CancelledError:
-            await turn.stop()
-            raise
-        except Exception:
+        except BaseException:
             await turn.stop()
             raise
         finally:
