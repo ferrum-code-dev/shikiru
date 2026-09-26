@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 _TMUX_BIN = "tmux"
 _SOCKET_FLAG = "-L"
+_CONFIG_FLAG = "-f"
 _COMMAND_TIMEOUT_SECONDS = 5.0
 _END_OF_OPTIONS = "--"
 _ENV_COMMAND = "env"
@@ -50,10 +51,15 @@ class Tmux:
         *,
         socket: str | None = None,
         env: Mapping[str, str] | None = None,
+        config_file: Path | None = None,
     ) -> None:
-        """Use `runner` for every call, scoped to `socket` when one is given (tests only)."""
+        """Use `runner` for every call, scoped to `socket` when one is given.
+
+        A `config_file` replaces the user's tmux configuration when this client starts a server.
+        """
         self._runner = runner
         self._socket = socket
+        self._config_file = config_file
         self._env = env
 
     async def new_session(
@@ -269,6 +275,8 @@ class Tmux:
         argv = [_TMUX_BIN]
         if self._socket is not None:
             argv += [_SOCKET_FLAG, self._socket]
+        if self._config_file is not None:
+            argv += [_CONFIG_FLAG, str(self._config_file)]
         argv += list(args)
         return await self._runner.run(
             argv,

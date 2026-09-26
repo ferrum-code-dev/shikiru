@@ -16,6 +16,7 @@ from shikiru.operator.detectors import not_repository_root
 from shikiru.paths import project_config_path, state_db_path
 from shikiru.store.database import Database
 from shikiru.tmux.client import Tmux, private_socket_name
+from shikiru.tmux.session import DETACHED_SIZE
 from shikiru.workspace.caches import (
     CACHE_COW_UNSUPPORTED_WARNING,
     CacheCloner,
@@ -34,10 +35,10 @@ if TYPE_CHECKING:
 
 
 DOCTOR_TIMEOUT_SECONDS = 60.0
-TMUX_COMMAND = "tmux"
-TMUX_VERSION_ARGS = (TMUX_COMMAND, "-V")
+TMUX_VERSION_ARGS = ("tmux", "-V")
 TMUX_SESSION_PREFIX = "shikiru-doctor-"
 TMUX_SESSION_NAME = "probe"
+_NO_TMUX_CONFIG = Path("/dev/null")
 GIT_COMMAND = "git"
 GIT_VERSION_ARGS = (GIT_COMMAND, "--version")
 GIT_CHECK_NAME = "git"
@@ -116,19 +117,13 @@ class Doctor:
         plugin_checks = await self._plugin_checks(settings)
         checks.extend(plugin_checks)
         plugin_ok = bool(settings.agents) and all(check.ok for check in plugin_checks)
-        checks.append(
-            DoctorCheck(
-                name=PLUGINS_CHECK_NAME,
-                ok=plugin_ok,
-                detail=(
-                    "all configured plugins passed"
-                    if plugin_ok
-                    else "no configured plugins"
-                    if not settings.agents
-                    else "one or more plugins failed"
-                ),
-            )
-        )
+        if plugin_ok:
+            plugins_detail = "all configured plugins passed"
+        elif not settings.agents:
+            plugins_detail = "no configured plugins"
+        else:
+            plugins_detail = "one or more plugins failed"
+        checks.append(DoctorCheck(name=PLUGINS_CHECK_NAME, ok=plugin_ok, detail=plugins_detail))
         if probe:
             checks.extend(await self._probe_checks(settings))
         return DoctorReport.from_checks(checks)
@@ -148,40 +143,28 @@ class Doctor:
 
     async def _tmux_check(self) -> DoctorCheck:
         socket_name = private_socket_name(TMUX_SESSION_PREFIX)
-        session_name = f"{TMUX_SESSION_NAME}-{uuid.uuid4().hex[:8]}"
+        tmux = Tmux(self._runner, socket=socket_name, config_file=_NO_TMUX_CONFIG)
         try:
             version = await self._runner.run(
                 TMUX_VERSION_ARGS,
                 timeout=DOCTOR_TIMEOUT_SECONDS,
                 check=False,
             )
-            if version.returncode != 0:
-                check = DoctorCheck(name=TMUX_CHECK_NAME, ok=False, detail=_process_detail(version))
-            else:
-                started = await self._runner.run(
-                    [
-                        TMUX_COMMAND,
-                        "-L",
-                        socket_name,
-                        "-f",
-                        "/dev/null",
-                        "new-session",
-                        "-d",
-                        "-s",
-                        session_name,
-                    ],
-                    timeout=DOCTOR_TIMEOUT_SECONDS,
-                    check=False,
+            if version.returncode == 0:
+                await tmux.new_session(
+                    f"{TMUX_SESSION_NAME}-{uuid.uuid4().hex[:8]}",
+                    cwd=self._project_root,
+                    env={},
+                    window_name=TMUX_SESSION_NAME,
+                    size=DETACHED_SIZE,
                 )
-                check = DoctorCheck(
-                    name=TMUX_CHECK_NAME,
-                    ok=started.returncode == 0 and not started.stderr.strip(),
-                    detail=_process_detail(started),
-                )
+            check = DoctorCheck(
+                name=TMUX_CHECK_NAME, ok=version.returncode == 0, detail=_process_detail(version)
+            )
         except (OSError, ShikiruError) as error:
             check = DoctorCheck(name=TMUX_CHECK_NAME, ok=False, detail=str(error))
         try:
-            await Tmux(self._runner, socket=socket_name).kill_server()
+            await tmux.kill_server()
         except (OSError, ShikiruError) as error:
             check = DoctorCheck(
                 name=TMUX_CHECK_NAME,
