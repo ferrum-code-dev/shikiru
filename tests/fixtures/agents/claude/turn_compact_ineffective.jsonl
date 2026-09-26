@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"session-hook-live-redacted"}
+{"type":"system","subtype":"compact_boundary","session_id":"session-hook-live-redacted","compact_metadata":{"trigger":"manual","pre_tokens":170000,"post_tokens":165000}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":null,"num_turns":0,"result":"","total_cost_usd":0.08,"local_command":"compact","session_id":"session-hook-live-redacted","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"modelUsage":{"claude-haiku-4-5-20251001":{"costBasis":"list","contextWindow":200000}}}

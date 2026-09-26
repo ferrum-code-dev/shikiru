@@ -156,6 +156,9 @@ _AUTH_ERROR_TEXTS = ("authentication", "unauthorized", "invalid api key")
 _TOOL_DETAIL_MAX_CHARS = 160
 _UNKNOWN_ERROR_MESSAGE = "Claude stream ended without a result"
 _INVALID_COMPACTION_MESSAGE = "Claude compaction ended without compact_boundary"
+_INEFFECTIVE_COMPACTION_MESSAGE = (
+    "Claude compaction left {post_tokens} tokens, not below the {limit}-token compaction limit"
+)
 _MALFORMED_STREAM_MESSAGE = "Claude emitted malformed stream-json"
 _STATUS_MESSAGE = "Claude returned API status {status}"
 _STDERR_MESSAGE = "Claude exited with status {exit_code}: {message}"
@@ -172,14 +175,14 @@ class ClaudeTurnParser:
         initial_usage: Usage | None,
         clock: Clock,
         reset_time: ResetTimeParser,
-        compact_process: bool = False,
+        compact_limit_tokens: int | None = None,
     ) -> None:
         self._session_id = session_id
         self._model = model
         self._initial_usage = initial_usage or _empty_usage()
         self._clock = clock
         self._reset_time = reset_time
-        self._compact_process = compact_process
+        self._compact_limit_tokens = compact_limit_tokens
         self._tool_names: dict[str, str] = {}
         self._tool_ids: list[str] = []
         self._latest_assistant_usage: Mapping[str, Any] | None = None
@@ -191,6 +194,7 @@ class ClaudeTurnParser:
         self._terminal = False
         self._malformed_line: str | None = None
         self._did_compact = False
+        self._post_compaction_tokens: int | None = None
         self._failure_payload: Mapping[str, Any] | None = None
         self._context_exceeded = False
 
@@ -265,12 +269,12 @@ class ClaudeTurnParser:
             return [SessionStarted(session_id)]
         if subtype == _COMPACT_BOUNDARY_SUBTYPE:
             self._did_compact = True
-            metadata = payload.get(_COMPACT_METADATA_FIELD)
-            typed_metadata = _mapping(metadata)
+            metadata = _mapping(payload.get(_COMPACT_METADATA_FIELD))
+            self._post_compaction_tokens = _optional_integer(metadata, _POST_TOKENS_FIELD)
             return [
                 Compacted(
-                    _optional_integer(typed_metadata, _PRE_TOKENS_FIELD),
-                    _optional_integer(typed_metadata, _POST_TOKENS_FIELD),
+                    _optional_integer(metadata, _PRE_TOKENS_FIELD),
+                    self._post_compaction_tokens,
                 )
             ]
         return []
@@ -362,9 +366,10 @@ class ClaudeTurnParser:
         if _is_error_result(payload):
             self._failure_payload = payload
             return []
-        if self._compact_process and not self._has_compaction_boundary:
+        compaction_problem = self._compaction_problem()
+        if compaction_problem is not None:
             self._terminal = True
-            return [TurnFailed(FailureKind.OTHER, _INVALID_COMPACTION_MESSAGE, None)]
+            return [TurnFailed(FailureKind.OTHER, compaction_problem, None)]
         usage = _mapping(payload.get(_USAGE_FIELD))
         model_usage = _mapping(payload.get(_MODEL_USAGE_FIELD))
         selected_model_usage = _select_model_usage(model_usage, self._model)
@@ -448,9 +453,16 @@ class ClaudeTurnParser:
             return kind, failure_message, resets_at or self._reset_time.parse(message)
         return classified
 
-    @property
-    def _has_compaction_boundary(self) -> bool:
-        return self._did_compact
+    def _compaction_problem(self) -> str | None:
+        limit = self._compact_limit_tokens
+        if limit is None:
+            return None
+        if not self._did_compact:
+            return _INVALID_COMPACTION_MESSAGE
+        post_tokens = self._post_compaction_tokens
+        if post_tokens is None or post_tokens >= limit:
+            return _INEFFECTIVE_COMPACTION_MESSAGE.format(post_tokens=post_tokens, limit=limit)
+        return None
 
 
 class ClaudeTurnSequence(TurnProcessSequence):
@@ -526,7 +538,7 @@ class ClaudeTurnSequence(TurnProcessSequence):
             initial_usage=self._usage,
             clock=self._clock,
             reset_time=self._reset_time,
-            compact_process=compact,
+            compact_limit_tokens=self._limit if compact else None,
         )
         return TurnProcess(tuple(argv), spec.cwd, self._environment(spec), self._parser)
 

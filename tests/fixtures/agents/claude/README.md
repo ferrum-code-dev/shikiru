@@ -63,3 +63,8 @@ envelopes, usage, `modelUsage`, cost and compaction metadata are kept. Session,
 message and tool IDs, file paths, tool output, thinking signatures, the
 compaction summary, init metadata, timing fields and `rate_limit_event`
 records are redacted or removed.
+
+`turn_compact_ineffective.jsonl` is a synthetic `/compact` process whose
+`compact_boundary` leaves 165,000 tokens, above the default 160,000-token
+limit; the plugin ends the turn instead of continuing a loop that cannot make
+progress.

@@ -220,7 +220,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             initial_usage=None,
             clock=FakeClock(_SAMPLE_NOW),
             reset_time=ResetTimeParser(FakeClock(_SAMPLE_NOW)),
-            compact_process="compact" in sample.name,
+            compact_limit_tokens=_DEFAULT_LIMIT_TOKENS if "compact" in sample.name else None,
         )
 
     def recorded_streams(self) -> Sequence[RecordedStream]:
@@ -689,6 +689,19 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     recovery("/compact"),
                     recovery(recovery_spec.prompt),
                 ],
+            ),
+            CompactionScenario(
+                name="a compaction that leaves the context at the limit ends the turn",
+                case=CompactionCase.FAILED_RECOVERY,
+                options={},
+                spec=hook_spec,
+                processes=[
+                    stop,
+                    ReplayedProcess(
+                        _record("turn_compact_ineffective.jsonl", _EMPTY_STDERR, _HOOK_SESSION)
+                    ),
+                ],
+                expected_argv=[hook(hook_spec.prompt), hook("/compact")],
             ),
             CompactionScenario(
                 name="a compaction without compact_boundary ends the turn",
