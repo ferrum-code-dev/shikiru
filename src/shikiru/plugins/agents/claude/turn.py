@@ -6,6 +6,7 @@ import json
 import re
 import uuid
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from shikiru.agents.contracts import (
@@ -23,12 +24,18 @@ from shikiru.agents.contracts import (
     TurnSpec,
     Usage,
     UsageReported,
+    module_command,
 )
 from shikiru.agents.sdk.turn import (
     EMPTY_OUTPUT,
     TurnProcess,
     TurnProcessResult,
     TurnProcessSequence,
+)
+from shikiru.plugins.agents.claude.context import (
+    compact_limit_tokens,
+    read_transcript,
+    transcript_context_tokens,
 )
 from shikiru.plugins.agents.claude.options import (
     ADD_DIR_FLAG,
@@ -39,6 +46,7 @@ from shikiru.plugins.agents.claude.options import (
     PRINT_FLAG,
     RESUME_FLAG,
     SESSION_ID_FLAG,
+    SETTINGS_FLAG,
     STATUS_FORBIDDEN,
     STATUS_PAYMENT_REQUIRED,
     STATUS_TOO_MANY_REQUESTS,
@@ -48,7 +56,6 @@ from shikiru.plugins.agents.claude.options import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from datetime import datetime
-    from pathlib import Path
 
     from shikiru.agents.sdk.reset_time import ResetTimeParser
     from shikiru.clock import Clock
@@ -56,6 +63,22 @@ if TYPE_CHECKING:
 _STREAM_JSON = "stream-json"
 _VERBOSE_FLAG = "--verbose"
 _COMPACT_PROMPT = "/compact"
+CONTINUE_PROMPT = "Continue the task exactly where you stopped."
+HOOK_MODULE = "shikiru.plugins.agents.claude.hook"
+COMPACT_MARKER_SUFFIX = ".compact-marker"
+COMPACT_STATE_SUFFIX = ".compact-state"
+CLAUDE_CONFIG_DIR_ENV_VAR = "CLAUDE_CONFIG_DIR"
+HOME_ENV_VAR = "HOME"
+CLAUDE_DIRNAME = ".claude"
+PROJECTS_DIRNAME = "projects"
+TRANSCRIPT_SUFFIX = ".jsonl"
+_HOOKS_FIELD = "hooks"
+_POST_TOOL_USE_EVENT = "PostToolUse"
+_HOOK_MATCHER_FIELD = "matcher"
+_ANY_TOOL_MATCHER = "*"
+_HOOK_TYPE_FIELD = "type"
+_COMMAND_HOOK_TYPE = "command"
+_HOOK_COMMAND_FIELD = "command"
 _SYSTEM_TYPE = "system"
 _ASSISTANT_TYPE = "assistant"
 _USER_TYPE = "user"
@@ -283,7 +306,8 @@ class ClaudeTurnParser:
         return signals
 
     def _user(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
-        blocks = payload.get(_CONTENT_FIELD)
+        message = _mapping(payload.get(_MESSAGE_FIELD))
+        blocks = message.get(_CONTENT_FIELD) if message is not None else None
         if not isinstance(blocks, list):
             return []
         signals: list[AgentSignal] = []
@@ -426,7 +450,7 @@ class ClaudeTurnParser:
 
 
 class ClaudeTurnSequence(TurnProcessSequence):
-    """Build Claude compact and prompt processes for one session turn."""
+    """Build one turn's prompt, `/compact` and continue processes (04 §4, obligation 8)."""
 
     def __init__(
         self,
@@ -439,15 +463,18 @@ class ClaudeTurnSequence(TurnProcessSequence):
         environment: Callable[[TurnSpec], Mapping[str, str]],
         session_id: str | None = None,
     ) -> None:
-        self._spec = spec
         self._clock = clock
         self._reset_time = reset_time
-        self._compact_at_pct = compact_at_pct
+        self._limit = compact_limit_tokens(spec.rung.model, compact_at_pct)
         self._args = tuple(args)
         self._environment = environment
         self._session_id = spec.session_id or session_id or str(uuid.uuid4())
-        self._phase = "start"
+        self._session_exists = spec.session_id is not None
         self._usage = spec.usage
+        self._marker = spec.turn_dir / f"{spec.role}{COMPACT_MARKER_SUFFIX}"
+        self._state = spec.turn_dir / f"{spec.role}{COMPACT_STATE_SUFFIX}"
+        self._then: str | None = None
+        self._recovered = False
         self._parser: ClaudeTurnParser | None = None
 
     @property
@@ -455,73 +482,41 @@ class ClaudeTurnSequence(TurnProcessSequence):
         return self._session_id
 
     def start(self, spec: TurnSpec) -> TurnProcess:
-        needs_compaction = (
-            spec.session_id is not None
-            and spec.usage is not None
-            and spec.usage.context_used_pct is not None
-            and spec.usage.context_used_pct >= self._compact_at_pct
-        )
-        if needs_compaction:
-            self._phase = "precompact"
-            return self._process(spec, compact=True)
-        self._phase = "prompt"
-        return self._process(spec, compact=False)
+        self._marker.unlink(missing_ok=True)
+        if self._session_exists and self._transcript_tokens(spec) >= self._limit:
+            return self._compact(spec, then=spec.prompt)
+        return self._process(spec, spec.prompt)
 
     def advance(self, spec: TurnSpec, previous: TurnProcessResult) -> TurnProcess | None:
         self._remember_usage(previous.signals)
-        terminal = _terminal(previous.signals)
-        compacted = any(isinstance(signal, Compacted) for signal in previous.signals)
-        transitions = {
-            "precompact": self._advance_precompact,
-            "prompt": self._advance_prompt,
-            "failure_compact": self._advance_failure_compact,
-        }
-        transition = transitions.get(self._phase)
-        return transition(spec, terminal, compacted) if transition is not None else None
-
-    def _advance_precompact(
-        self, spec: TurnSpec, terminal: TurnEnded | TurnFailed | None, compacted: bool
-    ) -> TurnProcess | None:
-        if isinstance(terminal, TurnEnded) and compacted:
-            self._phase = "prompt"
-            return self._process(spec, compact=False)
+        if self._then is not None:
+            prompt, self._then = self._then, None
+            compacted = isinstance(_terminal(previous.signals), TurnEnded)
+            return self._process(spec, prompt) if compacted else None
+        if self._marker.exists():
+            self._marker.unlink()
+            return self._compact(spec, then=CONTINUE_PROMPT)
+        if self._parser is not None and self._parser.context_exceeded and not self._recovered:
+            self._recovered = True
+            return self._compact(spec, then=spec.prompt)
         return None
 
-    def _advance_prompt(
-        self, spec: TurnSpec, terminal: TurnEnded | TurnFailed | None, _compacted: bool
-    ) -> TurnProcess | None:
-        if (
-            isinstance(terminal, TurnFailed)
-            and self._parser is not None
-            and self._parser.context_exceeded
-        ):
-            self._phase = "failure_compact"
-            return self._process(spec, compact=True)
-        return None
+    def _compact(self, spec: TurnSpec, *, then: str) -> TurnProcess:
+        self._then = then
+        return self._process(spec, _COMPACT_PROMPT, compact=True)
 
-    def _advance_failure_compact(
-        self, spec: TurnSpec, terminal: TurnEnded | TurnFailed | None, compacted: bool
-    ) -> TurnProcess | None:
-        if isinstance(terminal, TurnEnded) and compacted:
-            self._phase = "retry"
-            return self._process(spec, compact=False)
-        return None
-
-    def _process(self, spec: TurnSpec, *, compact: bool) -> TurnProcess:
-        prompt = _COMPACT_PROMPT if compact else spec.prompt
-        argv: list[str] = [CLAUDE_COMMAND, PRINT_FLAG, prompt]
-        argv.extend(
-            [RESUME_FLAG, self._session_id]
-            if spec.session_id is not None or self._phase != "prompt" or compact
-            else [SESSION_ID_FLAG, self._session_id]
-        )
+    def _process(self, spec: TurnSpec, prompt: str, *, compact: bool = False) -> TurnProcess:
+        session_flag = RESUME_FLAG if self._session_exists else SESSION_ID_FLAG
+        self._session_exists = True
+        argv: list[str] = [CLAUDE_COMMAND, PRINT_FLAG, prompt, session_flag, self._session_id]
         argv.extend([OUTPUT_FORMAT_FLAG, _STREAM_JSON, _VERBOSE_FLAG, MODEL_FLAG, spec.rung.model])
         if spec.rung.effort is not None:
             argv.extend([EFFORT_FLAG, spec.rung.effort])
         for directory in _unique_paths((spec.run_dir, *spec.add_dirs)):
             argv.extend([ADD_DIR_FLAG, str(directory)])
+        argv.extend([SETTINGS_FLAG, self._hook_settings()])
         argv.extend(self._args)
-        parser = ClaudeTurnParser(
+        self._parser = ClaudeTurnParser(
             session_id=self._session_id,
             model=spec.rung.model,
             initial_usage=self._usage,
@@ -529,13 +524,25 @@ class ClaudeTurnSequence(TurnProcessSequence):
             reset_time=self._reset_time,
             compact_process=compact,
         )
-        self._parser = parser
-        return TurnProcess(
-            tuple(argv),
-            spec.cwd,
-            self._environment(spec),
-            parser,
+        return TurnProcess(tuple(argv), spec.cwd, self._environment(spec), self._parser)
+
+    def _hook_settings(self) -> str:
+        command = module_command(HOOK_MODULE, str(self._state), str(self._marker), str(self._limit))
+        hook = {_HOOK_TYPE_FIELD: _COMMAND_HOOK_TYPE, _HOOK_COMMAND_FIELD: command}
+        matcher = {_HOOK_MATCHER_FIELD: _ANY_TOOL_MATCHER, _HOOKS_FIELD: [hook]}
+        return json.dumps({_HOOKS_FIELD: {_POST_TOOL_USE_EVENT: [matcher]}})
+
+    def _transcript_tokens(self, spec: TurnSpec) -> int:
+        environment = self._environment(spec)
+        config_dir = environment.get(CLAUDE_CONFIG_DIR_ENV_VAR)
+        root = Path(config_dir) if config_dir else Path(environment[HOME_ENV_VAR]) / CLAUDE_DIRNAME
+        transcripts = sorted(
+            (root / PROJECTS_DIRNAME).glob(f"*/{self._session_id}{TRANSCRIPT_SUFFIX}"),
+            key=lambda path: path.stat().st_mtime_ns,
         )
+        if not transcripts:
+            return 0
+        return transcript_context_tokens(read_transcript(transcripts[-1]))
 
     def _remember_usage(self, signals: Sequence[AgentSignal]) -> None:
         usages = [signal.usage for signal in signals if isinstance(signal, UsageReported)]

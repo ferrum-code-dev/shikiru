@@ -31,8 +31,8 @@ observed `Read` and `Bash`, confirmed that Bash invoked `shikiru report`, and
 validated the resulting report before `TurnEnded`. The excerpt preserves event
 order, tool names, usage counts, and the successful terminal event. Session and
 tool IDs, model IDs, message text, paths, command details, tool output, and cost
-are redacted. Tool-result envelopes are normalized to the parser's replay
-format; this is not a byte-for-byte provider stream capture. OpenRouter key
+are redacted. Tool-result envelopes use Claude's genuine `message.content`
+nesting; this is not a byte-for-byte provider stream capture. OpenRouter key
 usage increased by $0.01826925 for the attempt after its aggregate usage settled;
 Claude Code's separate cost estimate had an unknown cost basis.
 
@@ -47,3 +47,19 @@ behavior, not Shikiru access modes. The genuine OpenRouter capture reports
 window unless `[1m]` is selected, so the captured value does not establish a
 provider-measured context window. Other live checks and `/compact` after
 context overflow remain unverified. Context overflow was not attempted.
+
+## In-turn compaction through the plugin hook
+
+`turn_hook_stop_live_redacted.jsonl`, `turn_hook_compact_live_redacted.jsonl`
+and `turn_hook_continue_live_redacted.jsonl` are genuine redacted processes from
+one logical turn with Claude Code 2.1.282 on `claude-haiku-4-5-20251001`
+(subscription access, `costBasis=list`) on 2026-09-26, in a scratch repository
+of random dictionary words. A plugin `PostToolUse` hook passed through
+`--settings` stopped the first process before an over-threshold request
+(`terminal_reason: "hook_stopped"`), `claude -p "/compact" --resume` produced a
+manual `compact_boundary` (37,968 → 1,691 tokens), and the last of six
+continue processes completed with the task's nonce. Event order, stream
+envelopes, usage, `modelUsage`, cost and compaction metadata are kept. Session,
+message and tool IDs, file paths, tool output, thinking signatures, the
+compaction summary, init metadata, timing fields and `rate_limit_event`
+records are redacted or removed.

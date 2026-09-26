@@ -19,6 +19,7 @@ EFFORT_FLAG = "--effort"
 PRINT_FLAG = "-p"
 OUTPUT_FORMAT_FLAG = "--output-format"
 ADD_DIR_FLAG = "--add-dir"
+SETTINGS_FLAG = "--settings"
 
 
 class ClaudeOptions(BaseModel):

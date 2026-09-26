@@ -33,14 +33,24 @@ _SAFE_PATH_FLAG = "-P"
 _MODULE_FLAG = "-m"
 
 
+def module_argv(module: str, *arguments: str) -> tuple[str, ...]:
+    """Return the argv running `module` with this Shikiru installation's interpreter."""
+    return (sys.executable, _SAFE_PATH_FLAG, _MODULE_FLAG, module, *arguments)
+
+
+def module_command(module: str, *arguments: str) -> str:
+    """Return a shell command running `module` with this installation's interpreter."""
+    return shlex.join(module_argv(module, *arguments))
+
+
 def shikiru_argv(*arguments: str) -> tuple[str, ...]:
     """Return the argv running this Shikiru installation, independent of PATH."""
-    return (sys.executable, _SAFE_PATH_FLAG, _MODULE_FLAG, SHIKIRU_MODULE, *arguments)
+    return module_argv(SHIKIRU_MODULE, *arguments)
 
 
 def shikiru_command(*arguments: str) -> str:
     """Return a shell command running this Shikiru installation, independent of PATH."""
-    return shlex.join(shikiru_argv(*arguments))
+    return module_command(SHIKIRU_MODULE, *arguments)
 
 
 def role_dir(run_dir: Path, role: str) -> Path:

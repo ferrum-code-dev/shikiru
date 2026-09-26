@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"session-hook-live-redacted","model":"claude-haiku-4-5-20251001","claude_code_version":"2.1.282","permissionMode":"bypassPermissions","tools":["Read"]}
+{"type":"system","subtype":"compact_boundary","session_id":"session-hook-live-redacted","compact_metadata":{"trigger":"manual","pre_tokens":37968,"post_tokens":1691}}
+{"type":"user","session_id":"session-hook-live-redacted","message":{"role":"user","content":"[redacted compaction summary]"}}
+{"type":"user","session_id":"session-hook-live-redacted","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":null,"num_turns":0,"result":"","total_cost_usd":0.0704921,"local_command":"compact","session_id":"session-hook-live-redacted","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"modelUsage":{"claude-haiku-4-5-20251001":{"inputTokens":16896,"outputTokens":2437,"cacheReadInputTokens":42071,"cacheCreationInputTokens":18704,"costUSD":0.0704921,"contextWindow":200000,"costBasis":"list"}}}

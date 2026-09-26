@@ -6,6 +6,8 @@ import asyncio
 import json
 import os
 import re
+import shlex
+import sys
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -74,6 +76,9 @@ _OPENROUTER_LIVE_RESPONSE = "[redacted live response]"
 _OPENROUTER_REPORT_LIVE_SESSION_ID = "session-openrouter-report-live-redacted"
 _OPENROUTER_REPORT_LIVE_RESPONSE = "[redacted live report response]"
 _SESSION_RESUMED = "session-resumed"
+_HOOK_SESSION = "session-hook-live-redacted"
+_HOOK_MODULE = "shikiru.plugins.agents.claude.hook"
+_DEFAULT_LIMIT_TOKENS = 160_000
 _LIVE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_MODEL"
 _LIVE_CHANGE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL"
 _CLAUDE_HOME_DIRNAME = "claude-home"
@@ -228,7 +233,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             initial_usage=None,
             clock=FakeClock(_SAMPLE_NOW),
             reset_time=ResetTimeParser(FakeClock(_SAMPLE_NOW)),
-            compact_process="compact_process" in sample.name,
+            compact_process="compact" in sample.name,
         )
 
     def recorded_streams(self) -> Sequence[RecordedStream]:
@@ -317,6 +322,52 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     TurnEnded(_OPENROUTER_REPORT_LIVE_RESPONSE),
                 ],
                 session_id=_OPENROUTER_REPORT_LIVE_SESSION_ID,
+            ),
+            RecordedStream(
+                name="turn_hook_stop_live_redacted.jsonl",
+                stdout=_FIXTURES_DIR / "turn_hook_stop_live_redacted.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted(_HOOK_SESSION),
+                    Message("I'll read each file in order, starting with part1.txt."),
+                    ToolStarted("Read", '{"file_path":"[redacted]/part1.txt"}'),
+                    ToolFinished("Read"),
+                    Message("Part1.txt has 400 lines of content."),
+                    ToolStarted("Read", '{"file_path":"[redacted]/part2.txt"}'),
+                    ToolFinished("Read"),
+                    UsageReported(
+                        Usage(17, 484, 15902, 18432, 0.0408912, "api_equivalent", 13.0885)
+                    ),
+                    TurnEnded(""),
+                ],
+                session_id=_HOOK_SESSION,
+            ),
+            RecordedStream(
+                name="turn_hook_compact_live_redacted.jsonl",
+                stdout=_FIXTURES_DIR / "turn_hook_compact_live_redacted.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted(_HOOK_SESSION),
+                    Compacted(37968, 1691),
+                    UsageReported(Usage(0, 0, 0, 0, 0.0704921, "api_equivalent", 0.0)),
+                    TurnEnded(""),
+                ],
+                session_id=_HOOK_SESSION,
+            ),
+            RecordedStream(
+                name="turn_hook_continue_live_redacted.jsonl",
+                stdout=_FIXTURES_DIR / "turn_hook_continue_live_redacted.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted(_HOOK_SESSION),
+                    Message("DONE KESTREL-4471"),
+                    UsageReported(Usage(10, 254, 8812, 3367, 0.4819954, "api_equivalent", 6.0945)),
+                    TurnEnded("DONE KESTREL-4471"),
+                ],
+                session_id=_HOOK_SESSION,
             ),
             RecordedStream(
                 name="turn_compact_process.jsonl",
@@ -443,11 +494,13 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 "ANTHROPIC_BASE_URL": "https://provider.invalid",
             },
         )
-        compact_usage = Usage(1000, 500, 100, 20, None, "unknown", 85.0)
-        compact_spec = replace(resumed, usage=compact_usage)
+        config_dir = tmp_path / "claude-config"
+        _write_transcript(config_dir, _SESSION_RESUMED, _DEFAULT_LIMIT_TOKENS)
+        compact_spec = replace(resumed, env={**resumed.env, "CLAUDE_CONFIG_DIR": str(config_dir)})
         retry_spec = replace(resumed, usage=None)
         run_dir_arg = str(run_dir)
         extra_dir_arg = str(extra_dir)
+        settings = _hook_settings(resumed.turn_dir, _DEFAULT_LIMIT_TOKENS)
         common_tail = (
             "--output-format",
             "stream-json",
@@ -460,6 +513,8 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             run_dir_arg,
             "--add-dir",
             extra_dir_arg,
+            "--settings",
+            settings,
             *DEFAULT_ARGS,
         )
         context_failure = _record(
@@ -525,6 +580,8 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                         run_dir_arg,
                         "--add-dir",
                         extra_dir_arg,
+                        "--settings",
+                        settings,
                         *DEFAULT_ARGS,
                     )
                 ],
@@ -552,6 +609,8 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                         run_dir_arg,
                         "--add-dir",
                         extra_dir_arg,
+                        "--settings",
+                        settings,
                     )
                 ],
                 expected_env=[
@@ -563,7 +622,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 ],
             ),
             InvocationCase(
-                name="pre-turn compaction runs before a resumed prompt at the threshold",
+                name="a resumed turn whose transcript reaches the threshold compacts first",
                 options={"compact_at_pct": _COMPACTION_THRESHOLD},
                 spec=compact_spec,
                 expected_argv=[
@@ -848,3 +907,29 @@ def _record(name: str, stderr: str, session_id: str) -> RecordedStream:
         expected_signals=[],
         session_id=session_id,
     )
+
+
+def _hook_settings(turn_dir: Path, limit_tokens: int) -> str:
+    command = shlex.join(
+        (
+            sys.executable,
+            "-P",
+            "-m",
+            _HOOK_MODULE,
+            str(turn_dir / f"{_ROLE}.compact-state"),
+            str(turn_dir / f"{_ROLE}.compact-marker"),
+            str(limit_tokens),
+        )
+    )
+    hook = {"type": "command", "command": command}
+    return json.dumps({"hooks": {"PostToolUse": [{"matcher": "*", "hooks": [hook]}]}})
+
+
+def _write_transcript(config_dir: Path, session_id: str, context_tokens: int) -> None:
+    project = config_dir / "projects" / "-scratch-repo"
+    project.mkdir(parents=True)
+    entry = {
+        "type": "assistant",
+        "message": {"id": "msg-1", "usage": {"input_tokens": context_tokens}},
+    }
+    (project / f"{session_id}.jsonl").write_text(json.dumps(entry) + "\n")

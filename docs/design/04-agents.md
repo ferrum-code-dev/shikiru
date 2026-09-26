@@ -72,6 +72,7 @@ class AgentContext:    options: Mapping[str, Any]; runner: SubprocessRunner; clo
 type AgentFactory = Callable[[AgentContext], Agent]   # entry-point target; validates options, raises ConfigError
 
 def shikiru_command(*arguments: str) -> str: ...   # `<python> -P -m shikiru <arguments>` for this installation
+def module_command(module: str, *arguments: str) -> str: ...   # the same for a plugin's own module, e.g. a hook
 ```
 
 Prompts call Shikiru back only through `shikiru_command`. Agent shells may be login shells with their own `PATH`, so nothing agent-facing relies on `shikiru` being on it.
