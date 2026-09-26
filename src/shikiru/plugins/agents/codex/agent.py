@@ -17,7 +17,6 @@ from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.codex.headless import CodexHeadless
 from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import (
-    APPROVE_FOR_ME_FLAG,
     CODEX_COMMAND,
     CODEX_HOME_ENV_VAR,
     DOCTOR_TIMEOUT_SECONDS,
@@ -75,7 +74,7 @@ class CodexAgent:
         home = Path(spec.env.get(CODEX_HOME_ENV_VAR, str(self._codex_home)))
         return CodexTurnSequence(
             spec,
-            args=_headless_args(self._options.args),
+            args=self._options.args,
             environment=self._turn_environment,
             clock=self._clock,
             reset_time=self._reset_time,
@@ -213,10 +212,6 @@ def _custom_provider_check(home: Path) -> CheckResult | None:
     if custom_provider or custom_base_url:
         return CheckResult("login", True, _CUSTOM_PROVIDER_ACCESS_DETAIL)
     return None
-
-
-def _headless_args(args: list[str]) -> tuple[str, ...]:
-    return tuple(argument for argument in args if argument != APPROVE_FOR_ME_FLAG)
 
 
 def create(context: AgentContext) -> CodexAgent:

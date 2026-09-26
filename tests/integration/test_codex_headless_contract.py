@@ -55,7 +55,6 @@ from shikiru.plugins.agents.codex.options import (
     ADD_DIR_FLAG,
     CODEX_HOME_ENV_VAR,
     CONFIG_FLAG,
-    DEFAULT_ARGS,
     MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG,
     MODEL_FLAG,
     MODELS_CACHE_FILENAME,
@@ -346,7 +345,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 expected_argv=[resumed_argv],
                 expected_env=[{CODEX_HOME_ENV_VAR: resumed.env[CODEX_HOME_ENV_VAR]}],
                 interactive_session_id="session-resumed",
-                expected_interactive_command=("codex", "resume", "session-resumed", *DEFAULT_ARGS),
+                expected_interactive_command=("codex", "resume", "session-resumed"),
             ),
             InvocationCase(
                 name="turn passes TurnSpec provider environment through unchanged",
