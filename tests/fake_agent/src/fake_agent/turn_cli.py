@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 import sys
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING
 
 from fake_agent.script import (
     AcceptStep,
@@ -19,8 +19,9 @@ from fake_agent.script import (
 )
 from fake_agent.scripted import (
     build_context,
-    first_remembered_prompt,
+    load_session_state,
     save_script_index,
+    save_session_state,
     script_index,
     script_raw_for,
     submit_scripted_report,
@@ -31,7 +32,6 @@ from fake_agent.turns import (
     COMPACTED_CONTEXT_USAGE_PERCENT,
     COMPACTION_POST_TOKENS,
     COMPACTION_PRE_TOKENS,
-    CONTEXT_USAGE_PERCENT,
     FAKE_SESSION_ID_ENV_VAR,
     INPUT_TOKENS_PER_TURN,
     OUTPUT_TOKENS_PER_TURN,
@@ -43,7 +43,6 @@ from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from fake_agent.scripted import ScriptContext
 
 _EVENT_SESSION_STARTED = "session_started"
 _EVENT_MESSAGE = "message"
@@ -60,7 +59,6 @@ _SESSION_ID_ARGUMENT = "--session-id"
 _PROMPT_ARGUMENT = "--prompt"
 _MODEL_ARGUMENT = "--model"
 _EFFORT_ARGUMENT = "--effort"
-_FAKE_RETRY_ENV_VAR = "SHIKIRU_FAKE_RETRY"
 _WAIT_PROMPT = "wait for the next instruction"
 CRASH_STDERR = "fake agent crashed as scripted"
 _INPUT_TOKENS_FIELD = "input_tokens"
@@ -72,36 +70,10 @@ _COST_BASIS_FIELD = "cost_basis"
 _CONTEXT_USED_PCT_FIELD = "context_used_pct"
 
 
-class _SessionState(TypedDict):
-    prompts: list[str]
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
-    context_used_pct: float
-
-
 def _emit(entry: Mapping[str, object]) -> None:
     line = json.dumps(entry, separators=(",", ":"))
     sys.stdout.write(line + "\n")
     sys.stdout.flush()
-
-
-def _state(context: ScriptContext) -> _SessionState:
-    if not context.state_path.is_file():
-        return {
-            "prompts": [],
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_read_tokens": 0,
-            "cache_write_tokens": 0,
-            "context_used_pct": CONTEXT_USAGE_PERCENT,
-        }
-    return cast("_SessionState", json.loads(context.state_path.read_text()))
-
-
-def _save_state(context: ScriptContext, state: _SessionState) -> None:
-    context.state_path.write_text(json.dumps(state))
 
 
 def _session_started(session_id: str) -> None:
@@ -121,19 +93,19 @@ def _failure(step: FailStep) -> None:
 
 async def _run_turn(session_id: str, prompt: str) -> int:
     context = build_context()
-    state = _state(context)
+    state = load_session_state(context.state_path)
     _session_started(session_id)
     if prompt == _WAIT_PROMPT:
         await asyncio.Event().wait()
     response = (
-        first_remembered_prompt(context.state_path)
+        next(iter(state["prompts"]), "")
         if prompt == RESUME_RECALL_PROMPT
         else f"accepted: {prompt}"
     )
     prompts = list(state["prompts"])
     prompts.append(prompt)
     state["prompts"] = prompts
-    _save_state(context, state)
+    save_session_state(context.state_path, state)
     script = Script.from_env(
         script_raw_for(context.role), start_index=script_index(context.script_path)
     )
@@ -179,7 +151,7 @@ async def _run_turn(session_id: str, prompt: str) -> int:
     state[_CACHE_WRITE_TOKENS_FIELD] = (
         int(state[_CACHE_WRITE_TOKENS_FIELD]) + CACHE_WRITE_TOKENS_PER_TURN
     )
-    _save_state(context, state)
+    save_session_state(context.state_path, state)
     _emit(
         {
             "event": _EVENT_USAGE_REPORTED,
@@ -200,9 +172,9 @@ async def _run_turn(session_id: str, prompt: str) -> int:
 
 async def _run_compaction(session_id: str) -> int:
     context = build_context()
-    state = _state(context)
+    state = load_session_state(context.state_path)
     state["context_used_pct"] = COMPACTED_CONTEXT_USAGE_PERCENT
-    _save_state(context, state)
+    save_session_state(context.state_path, state)
     _session_started(session_id)
     _emit(
         {

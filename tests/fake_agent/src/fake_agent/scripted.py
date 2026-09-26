@@ -19,7 +19,7 @@ from fake_agent.script import (
     SupersedeStep,
     TurnStep,
 )
-from fake_agent.turns import FAKE_SESSION_ID_ENV_VAR
+from fake_agent.turns import CONTEXT_USAGE_PERCENT, FAKE_SESSION_ID_ENV_VAR
 from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir, shikiru_command
 from shikiru.cli.report import resolve_current_turn_dir
 from shikiru.domain.reports import (
@@ -59,8 +59,15 @@ def role_script_env_var(role: str) -> str:
     return f"{SCRIPT_ENV_VAR}_{role.upper()}"
 
 
-class _FakeAgentState(TypedDict):
+class SessionState(TypedDict):
+    """One fake session's remembered prompts, usage totals and context fill."""
+
     prompts: list[str]
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    context_used_pct: float
 
 
 @dataclass(frozen=True)
@@ -102,26 +109,23 @@ def build_context() -> ScriptContext:
     )
 
 
-def _load_prompts(state_path: Path) -> list[str]:
+def load_session_state(state_path: Path) -> SessionState:
+    """Return the fake session's persisted state, or a fresh one."""
     if not state_path.is_file():
-        return []
-    return json.loads(state_path.read_text())["prompts"]
+        return {
+            "prompts": [],
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "context_used_pct": CONTEXT_USAGE_PERCENT,
+        }
+    return cast("SessionState", json.loads(state_path.read_text()))
 
 
-def remember_prompt(state_path: Path, prompt_text: str) -> None:
-    """Persist one prompt in the fake session's resume history."""
-    if state_path.is_file():
-        state = cast("_FakeAgentState", json.loads(state_path.read_text()))
-    else:
-        state: _FakeAgentState = {"prompts": []}
-    state["prompts"].append(prompt_text)
+def save_session_state(state_path: Path, state: SessionState) -> None:
+    """Persist the fake session's state for its next resumed turn."""
     state_path.write_text(json.dumps(state))
-
-
-def first_remembered_prompt(state_path: Path) -> str:
-    """Return the first prompt observed for a fake session."""
-    prompts = _load_prompts(state_path)
-    return prompts[0] if prompts else ""
 
 
 def script_index(script_path: Path) -> int:
