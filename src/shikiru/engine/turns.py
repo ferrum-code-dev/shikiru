@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -265,8 +264,6 @@ class TurnRunner:
                 cwd=task_root(self._project_root, task.id),
                 timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
             )
-        except asyncio.CancelledError:
-            raise
         except (ShikiruError, TimeoutError, OSError) as error:
             _LOGGER.exception("failure classification failed for %s", task.id)
             self._events.append(
@@ -322,8 +319,6 @@ class TurnRunner:
                 cwd=task_root(self._project_root, task.id),
                 timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
             )
-        except asyncio.CancelledError:
-            raise
         except (ShikiruError, TimeoutError, OSError) as error:
             _LOGGER.exception("report rebuild failed for %s", task.id)
             self._events.append(
