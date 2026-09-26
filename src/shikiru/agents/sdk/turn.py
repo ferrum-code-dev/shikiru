@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 STREAM_FILENAME_SUFFIX = ".stream.jsonl"
 STDERR_FILENAME_SUFFIX = ".stderr.log"
 _LINE_ENDINGS = "\r\n"
-_MISSING_STDERR = "(empty)"
+EMPTY_OUTPUT = "(empty)"
 
 
 def stream_log_path(turn_dir: Path, role: str) -> Path:
@@ -247,7 +247,7 @@ class StreamingTurn:
 
     @staticmethod
     def _unknown_message(reason: str, exit_code: int, stderr_tail: str) -> str:
-        tail = stderr_tail or _MISSING_STDERR
+        tail = stderr_tail or EMPTY_OUTPUT
         return f"{reason}; process exited with status {exit_code}; stderr tail: {tail}"
 
     @property

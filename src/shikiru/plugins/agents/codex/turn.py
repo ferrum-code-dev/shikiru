@@ -24,7 +24,12 @@ from shikiru.agents.contracts import (
     Usage,
     UsageReported,
 )
-from shikiru.agents.sdk.turn import TurnProcess, TurnProcessResult, TurnProcessSequence
+from shikiru.agents.sdk.turn import (
+    EMPTY_OUTPUT,
+    TurnProcess,
+    TurnProcessResult,
+    TurnProcessSequence,
+)
 from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import (
     ADD_DIR_FLAG,
@@ -100,7 +105,6 @@ _QUOTA_TEXT = ("usage_limit_reached", "usage limit", "rate_limit", "rate limit",
 _AUTH_TEXT = ("authentication", "unauthorized", "invalid api key")
 _UNKNOWN_ERROR_MESSAGE = "Codex turn ended without a structured result"
 _MALFORMED_STREAM_MESSAGE = "Codex emitted malformed JSONL"
-_EMPTY_MESSAGE = "(empty)"
 _ROLLOUT_GLOB = "rollout-*.jsonl"
 _GIT_DIR_FILE_PREFIX = "gitdir: "
 _GIT_METADATA_NAME = ".git"
@@ -218,7 +222,7 @@ class CodexTurnParser:
                     TurnFailed(
                         FailureKind.UNKNOWN,
                         f"{_UNKNOWN_ERROR_MESSAGE}; process exited with status {exit_code}; "
-                        f"stderr tail: {stderr or _EMPTY_MESSAGE}",
+                        f"stderr tail: {stderr or EMPTY_OUTPUT}",
                         None,
                     )
                 )

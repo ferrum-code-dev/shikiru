@@ -24,7 +24,12 @@ from shikiru.agents.contracts import (
     Usage,
     UsageReported,
 )
-from shikiru.agents.sdk.turn import TurnProcess, TurnProcessResult, TurnProcessSequence
+from shikiru.agents.sdk.turn import (
+    EMPTY_OUTPUT,
+    TurnProcess,
+    TurnProcessResult,
+    TurnProcessSequence,
+)
 from shikiru.plugins.agents.claude.options import (
     ADD_DIR_FLAG,
     CLAUDE_COMMAND,
@@ -125,7 +130,6 @@ _INVALID_COMPACTION_MESSAGE = "Claude compaction ended without compact_boundary"
 _MALFORMED_STREAM_MESSAGE = "Claude emitted malformed stream-json"
 _STATUS_MESSAGE = "Claude returned API status {status}"
 _STDERR_MESSAGE = "Claude exited with status {exit_code}: {message}"
-_EMPTY_MESSAGE = "(empty)"
 
 
 class ClaudeTurnParser:
@@ -644,7 +648,7 @@ def _classify_text(
 
 
 def _stderr_message(exit_code: int, stderr: str, message: str) -> str:
-    detail = message.strip() or stderr.strip() or _EMPTY_MESSAGE
+    detail = message.strip() or stderr.strip() or EMPTY_OUTPUT
     return _STDERR_MESSAGE.format(exit_code=exit_code, message=detail)
 
 

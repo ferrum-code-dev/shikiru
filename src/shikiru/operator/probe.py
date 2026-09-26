@@ -22,7 +22,7 @@ from shikiru.agents.contracts import (
     role_dir,
     shikiru_command,
 )
-from shikiru.agents.sdk.turn import stderr_log_path, stream_log_path
+from shikiru.agents.sdk.turn import EMPTY_OUTPUT, stderr_log_path, stream_log_path
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     REPORT_FILENAME,
@@ -88,8 +88,8 @@ class ProbeOutcome:
         if self.problem is None:
             return "valid report submitted"
         return (
-            f"{self.problem}\nstream tail:\n{self.stream_tail or '(empty)'}"
-            f"\nstderr:\n{self.stderr or '(empty)'}"
+            f"{self.problem}\nstream tail:\n{self.stream_tail or EMPTY_OUTPUT}"
+            f"\nstderr:\n{self.stderr or EMPTY_OUTPUT}"
         )
 
 
