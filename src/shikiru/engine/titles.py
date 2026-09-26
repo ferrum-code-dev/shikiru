@@ -60,6 +60,14 @@ def _window_state(task: Task) -> tuple[str, str]:
     return ROLE_COLORS[ACTING_ROLE[task.step]], _STEP_GLYPHS[task.step]
 
 
+def _pane_state(task: Task, role: Role, *, taken_over: bool) -> tuple[str, str]:
+    if taken_over:
+        return OPERATOR_COLOR, GLYPH_OPERATOR
+    if Hold.PAUSED in task.holds:
+        return HOLD_COLOR, GLYPH_PAUSED
+    return ROLE_COLORS[role], ROLE_GLYPHS[role]
+
+
 def _flags(task: Task) -> str:
     tokens: list[str] = []
     if Hold.PAUSED in task.holds:
@@ -74,7 +82,8 @@ def _flags(task: Task) -> str:
 class TaskTitles:
     """Sets `task`'s window/pane titles and window state from `dashboard.titles` (06 §5.3).
 
-    A role's pane taken over by the Operator (03 §9) is titled and coloured as the Operator's.
+    A role's pane taken over by the Operator (03 §9) is titled and coloured as the Operator's;
+    otherwise it shows the pause hold or the role's own colour and glyph.
     """
 
     def __init__(self, decorator: PaneDecorator, runs: RunStore, settings: Settings) -> None:
@@ -123,10 +132,8 @@ class TaskTitles:
             "flags": _flags(task),
         }
         await self._decorator.set_pane_title(pane_id, template, fields)
-        if taken_over:
-            await self._decorator.set_pane_state(
-                pane_id, color=OPERATOR_COLOR, glyph=GLYPH_OPERATOR
-            )
+        color, glyph = _pane_state(task, role, taken_over=taken_over)
+        await self._decorator.set_pane_state(pane_id, color=color, glyph=glyph)
 
     def _active_run(self, task_id: str, role: Role) -> Run | None:
         live = self._runs.get_live(task_id, role)

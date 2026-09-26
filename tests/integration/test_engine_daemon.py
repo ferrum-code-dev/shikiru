@@ -56,7 +56,9 @@ from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.tmux.decorator import PANE_COLOR_OPTION
 from shikiru.tmux.session import SessionView
+from shikiru.ui.tokens import HOLD_COLOR, OPERATOR_COLOR
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, build_tmux, set_role_script, set_script
@@ -792,3 +794,50 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
         with suppress(asyncio.CancelledError, Exception):
             await engine_task
         connection.close()
+
+
+async def test_hand_back_clears_the_operator_colour_from_the_pane(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(tmp_path)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}])
+    clock = FakeClock(TASK_CREATED_AT)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, _settings(max_cpu_pct=100), clock=clock, tmux=tmux)
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    events = EventLog(connection, clock)
+    queue = CommandQueue(connection, clock)
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        task_id = await _submit(
+            Submit(title="take me", request="take me", mode=Mode.IMPLEMENT), queue, clock
+        )
+        await _wait_for_session(RunStore(connection, clock), clock, task_id)
+        await _append_and_wait(TakeOver(task_id=task_id, role=Role.IMPLEMENTER), queue, clock)
+        pane = _required_task(tasks, task_id).panes[Role.IMPLEMENTER]
+        assert await _pane_color(tmux_server, pane) == OPERATOR_COLOR
+        await _append_and_wait(Pause(task_id=task_id), queue, clock)
+
+        await tmux_server.run("send-keys", "-t", pane, "/exit", "Enter")
+
+        async def handed_back_on_hold() -> bool:
+            if clock.has_pending_sleep():
+                clock.advance(0.25)
+            pane = _required_task(tasks, task_id).panes[Role.IMPLEMENTER]
+            return await _pane_color(tmux_server, pane) == HOLD_COLOR
+
+        await wait_until(handed_back_on_hold, timeout=30)
+        assert events.since(0, kinds=[EventKind.HANDED_BACK], task_id=task_id)
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()
+
+
+async def _pane_color(tmux_server: TmuxServer, pane: str) -> str:
+    result = await tmux_server.run("show-options", "-p", "-v", "-t", pane, PANE_COLOR_OPTION)
+    return result.stdout.strip()
