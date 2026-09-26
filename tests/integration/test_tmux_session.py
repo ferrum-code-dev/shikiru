@@ -76,7 +76,7 @@ async def test_missing_pane_is_dead(tmux_server: TmuxServer, tmp_path: Path) -> 
     target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
     pane_id = await view.create_task_window(target, window_name="T-1", cwd=tmp_path)
 
-    await tmux.kill_pane(pane_id)
+    await tmux_server.run("kill-pane", "-t", pane_id)
 
     assert not await tmux.pane_exists(pane_id)
     assert await tmux.is_pane_dead(pane_id)

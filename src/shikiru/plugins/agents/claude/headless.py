@@ -7,7 +7,13 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from shikiru.errors import HeadlessOutputError
-from shikiru.plugins.agents.claude.options import CLAUDE_COMMAND
+from shikiru.plugins.agents.claude.options import (
+    CLAUDE_COMMAND,
+    EFFORT_FLAG,
+    MODEL_FLAG,
+    OUTPUT_FORMAT_FLAG,
+    PRINT_FLAG,
+)
 
 if TYPE_CHECKING:
     from datetime import timedelta
@@ -15,12 +21,8 @@ if TYPE_CHECKING:
 
     from shikiru.process import SubprocessRunner
 
-_PRINT_FLAG = "-p"
-_OUTPUT_FORMAT_FLAG = "--output-format"
 _OUTPUT_FORMAT_JSON = "json"
 _JSON_SCHEMA_FLAG = "--json-schema"
-_MODEL_FLAG = "--model"
-_EFFORT_FLAG = "--effort"
 _SAFE_MODE_FLAG = "--safe-mode"
 _TOOLS_FLAG = "--tools"
 _EMPTY_TOOLS = ""
@@ -51,16 +53,16 @@ class ClaudeHeadless:
         """Return Claude's schema-constrained `structured_output` value."""
         argv = [
             CLAUDE_COMMAND,
-            _PRINT_FLAG,
-            _OUTPUT_FORMAT_FLAG,
+            PRINT_FLAG,
+            OUTPUT_FORMAT_FLAG,
             _OUTPUT_FORMAT_JSON,
             _JSON_SCHEMA_FLAG,
             json.dumps(schema, separators=(",", ":")),
-            _MODEL_FLAG,
+            MODEL_FLAG,
             model,
         ]
         if effort is not None:
-            argv.extend([_EFFORT_FLAG, effort])
+            argv.extend([EFFORT_FLAG, effort])
         argv.extend(
             [
                 _SAFE_MODE_FLAG,

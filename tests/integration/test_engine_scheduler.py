@@ -21,7 +21,7 @@ from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.titles import TaskTitles
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
-from shikiru.store.escalations import EscalationStore
+from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
@@ -330,7 +330,7 @@ async def test_cancelled_dependency_escalates_with_packet(
     assert updated.status is Status.ESCALATED
     assert updated.status_reason is None
     assert scheduler_env.events.since(0, task_id=dependent.id)[-1].kind is EventKind.ESCALATION
-    escalation = EscalationStore(connection, scheduler_env.clock).list_open()[0]
+    escalation = fetch_open_escalations(connection)[0]
     assert escalation.reason is EscalationReason.DEPENDENCY_CANCELLED
 
 
@@ -398,6 +398,4 @@ async def test_dispatch_failures_are_reported_and_eventually_escalated(
     escalated = scheduler_env.tasks.get(task.id)
     assert escalated is not None
     assert escalated.status is Status.ESCALATED
-    assert EscalationStore(connection, scheduler_env.clock).list_open()[0].reason is (
-        EscalationReason.ENGINE_ERROR
-    )
+    assert fetch_open_escalations(connection)[0].reason is (EscalationReason.ENGINE_ERROR)

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import options_for
 from shikiru.domain.tasks import EscalationReason
-from shikiru.store.escalations import EscalationStore
+from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
 
@@ -50,11 +50,11 @@ def test_resolve_moves_an_escalation_out_of_the_open_list(connection: Connection
     store, task_id = _make_store(connection)
     escalation = _open(store, task_id)
 
-    assert [item.id for item in store.list_open()] == [escalation.id]
+    assert [item.id for item in fetch_open_escalations(connection)] == [escalation.id]
 
     store.resolve(escalation.id, "answered by operator")
 
-    assert store.list_open() == []
+    assert fetch_open_escalations(connection) == []
     resolved = store.get(escalation.id)
     assert resolved is not None
     assert resolved.resolution == "answered by operator"

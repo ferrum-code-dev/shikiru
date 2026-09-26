@@ -16,6 +16,7 @@ from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, StatusReason, Step
+from shikiru.store.escalations import fetch_open_escalations
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_ALIAS, FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
 from tests.support.flow import (
@@ -298,7 +299,7 @@ async def test_scope_change_on_an_unknown_task_escalates_without_creating_tasks(
     assert final is not None
     assert final.status is Status.ESCALATED
     assert final.step is Step.PLAN
-    escalation = next(escalation for escalation in flow_env.escalations.list_open())
+    escalation = next(escalation for escalation in fetch_open_escalations(flow_env.env.connection))
     assert escalation.reason is EscalationReason.AGENT_PROTOCOL
     assert [child for child in engine_env.tasks.list_all() if child.parent_id == task.id] == []
 

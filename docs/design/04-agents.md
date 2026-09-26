@@ -99,7 +99,6 @@ Small, tested building blocks for plugins:
 |---|---|
 | `TurnParser` | Protocol a plugin implements: `feed(line) → list[AgentSignal]` for one stdout line, `finish(exit_code, stderr) → list[AgentSignal]` at exit. Pure, so recorded streams replay offline |
 | `StreamingTurn` | `Turn` implementation: spawns the argv through `SubprocessRunner.spawn` with stdin closed, copies stdout to `turn_dir/<role>.stream.jsonl` and stderr to `turn_dir/<role>.stderr.log`, feeds lines to the parser, enforces obligations 1 and 3, and implements `stop()`. Runs the plugin's process sequence for one turn (compact, prompt, compact-and-rerun), appending every process's output to the same files |
-| `JsonlTail` | Incremental reader for agent-written JSONL (e.g. a session log), safe with partial lines |
 | `ResetTimeParser` | "resets 3:10am (Europe/Warsaw)", ISO, epoch, relative durations → `datetime` |
 
 ## 3. Contract test kit (`shikiru.agents.testing`)
@@ -210,7 +209,7 @@ codex exec resume <thread_id> --json -m <m> -c model_reasoning_effort="<e>" <arg
 | `turn.completed` | `UsageReported`, then `TurnEnded(last agent_message)` |
 | `turn.failed`, `error` | `TurnFailed` |
 
-After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thread_id>.jsonl` (`JsonlTail`) for the latest `token_count`: `info.model_context_window` and `info.last_token_usage` give context, and non-null `rate_limits.primary`/`secondary` (`used_percent`, `window_minutes`, `resets_at`; ChatGPT plans only) give `QuotaReported`.
+After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thread_id>.jsonl` for the latest `token_count`: `info.model_context_window` and `info.last_token_usage` give context, and non-null `rate_limits.primary`/`secondary` (`used_percent`, `window_minutes`, `resets_at`; ChatGPT plans only) give `QuotaReported`.
 
 **Failures**: `turn.failed.error.message` is JSON in a string carrying `status`/`code`:
 - 429, `usage_limit_reached` → `QUOTA`, `resets_at` from the latest `rate_limits` or the message; 402 payment/credit exhaustion → `AUTH` for immediate operator escalation

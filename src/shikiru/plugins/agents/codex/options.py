@@ -10,11 +10,6 @@ RESUME_SUBCOMMAND = "resume"
 MODEL_FLAG = "-m"
 CONFIG_FLAG = "-c"
 REASONING_EFFORT_CONFIG = "model_reasoning_effort"
-UNATTENDED_CONFIGS = (
-    "check_for_update_on_startup=false",
-    "notice.hide_rate_limit_model_nudge=true",
-)
-CD_FLAG = "-C"
 ADD_DIR_FLAG = "--add-dir"
 EXEC_SUBCOMMAND = "exec"
 EPHEMERAL_FLAG = "--ephemeral"

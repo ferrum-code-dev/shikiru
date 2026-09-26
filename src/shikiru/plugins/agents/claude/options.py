@@ -16,7 +16,8 @@ SESSION_ID_FLAG = "--session-id"
 RESUME_FLAG = "--resume"
 MODEL_FLAG = "--model"
 EFFORT_FLAG = "--effort"
-SETTINGS_FLAG = "--settings"
+PRINT_FLAG = "-p"
+OUTPUT_FORMAT_FLAG = "--output-format"
 ADD_DIR_FLAG = "--add-dir"
 
 

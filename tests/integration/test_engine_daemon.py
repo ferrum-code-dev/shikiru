@@ -52,7 +52,7 @@ from shikiru.engine.escalations import EscalationRaiser
 from shikiru.errors import ConfigError
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
-from shikiru.store.escalations import EscalationStore
+from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
@@ -246,8 +246,6 @@ async def test_unexpected_flow_error_escalates_without_stopping_engine(
     turn_dir.mkdir(parents=True)
     (turn_dir / "engine-verdict.json").write_text("{}")
     engine_task = asyncio.create_task(engine.run())
-    escalations = EscalationStore(connection, clock)
-
     try:
 
         async def escalated() -> bool:
@@ -256,12 +254,12 @@ async def test_unexpected_flow_error_escalates_without_stopping_engine(
             return (
                 (current := tasks.get(task.id)) is not None
                 and current.status is Status.ESCALATED
-                and bool(escalations.list_open())
+                and bool(fetch_open_escalations(connection))
             )
 
         await wait_until(escalated, timeout=10)
         assert not engine_task.done()
-        escalation = escalations.list_open()[0]
+        escalation = fetch_open_escalations(connection)[0]
         assert escalation.reason is EscalationReason.ENGINE_ERROR
         await _append_and_wait(Stop(), queue, clock)
         await engine_task
@@ -377,15 +375,14 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
     task_root(tmp_path, task.id).mkdir(parents=True)
     engine_task = asyncio.create_task(engine.run())
     try:
-        store = EscalationStore(connection, clock)
 
         async def escalated() -> bool:
             if clock.has_pending_sleep():
                 clock.advance(0.25)
-            return bool(store.list_open())
+            return bool(fetch_open_escalations(connection))
 
         await wait_until(escalated, timeout=20)
-        escalations = store.list_open()
+        escalations = fetch_open_escalations(connection)
         assert [row.reason for row in escalations] == [EscalationReason.ENGINE_ERROR]
         packet = await asyncio.to_thread(Path(escalations[0].packet_path).read_text)
         assert "missing" in packet
@@ -693,9 +690,13 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
         if clock.has_pending_sleep():
             clock.advance(0.25)
         started = EventLog(connection, clock).since(0, kinds=[EventKind.TASK_STARTED])
-        live = RunStore(connection, clock).list_live()
+        runs = RunStore(connection, clock)
         started_ids = {event.task_id for event in started}
-        live_ids = {run.task_id for run in live if run.role is Role.IMPLEMENTER}
+        live_ids = {
+            task_id
+            for task_id in (first_id, second_id)
+            if runs.get_live(task_id, Role.IMPLEMENTER) is not None
+        }
         return started_ids == {first_id, second_id} and live_ids == {first_id, second_id}
 
     await wait_until(both_started, timeout=10)

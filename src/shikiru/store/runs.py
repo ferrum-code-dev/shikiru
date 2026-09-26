@@ -73,15 +73,6 @@ def fetch_all_runs(connection: sqlite3.Connection) -> list[Run]:
     return [_row_to_run(row) for row in rows]
 
 
-def fetch_live_runs(connection: sqlite3.Connection) -> list[Run]:
-    """Read every live agent run, most recently started first."""
-    rows = connection.execute(
-        f"SELECT {_RUN_COLUMNS} FROM runs WHERE status = ? ORDER BY id DESC",
-        (RunStatus.LIVE.value,),
-    ).fetchall()
-    return [_row_to_run(row) for row in rows]
-
-
 class RunStore:
     """Starts, updates and reads agent session runs (03 §4.1-4.2)."""
 
@@ -142,10 +133,6 @@ class RunStore:
     def for_task(self, task_id: str) -> list[Run]:
         """Return every run recorded for `task_id`."""
         return fetch_runs_for_task(self._connection, task_id)
-
-    def list_live(self) -> list[Run]:
-        """Return every live run across all tasks."""
-        return fetch_live_runs(self._connection)
 
     def set_session(self, run_id: int, session_id: str | None, resume_command: str | None) -> None:
         """Record `run_id`'s launched session id and resume command.

@@ -30,6 +30,8 @@ from shikiru.plugins.agents.claude.options import (
     CLAUDE_COMMAND,
     EFFORT_FLAG,
     MODEL_FLAG,
+    OUTPUT_FORMAT_FLAG,
+    PRINT_FLAG,
     RESUME_FLAG,
     SESSION_ID_FLAG,
     STATUS_FORBIDDEN,
@@ -46,8 +48,6 @@ if TYPE_CHECKING:
     from shikiru.agents.sdk.reset_time import ResetTimeParser
     from shikiru.clock import Clock
 
-_PRINT_FLAG = "-p"
-_OUTPUT_FORMAT_FLAG = "--output-format"
 _STREAM_JSON = "stream-json"
 _VERBOSE_FLAG = "--verbose"
 _COMPACT_PROMPT = "/compact"
@@ -487,13 +487,13 @@ class ClaudeTurnSequence(TurnProcessSequence):
 
     def _process(self, spec: TurnSpec, *, compact: bool) -> TurnProcess:
         prompt = _COMPACT_PROMPT if compact else spec.prompt
-        argv: list[str] = [CLAUDE_COMMAND, _PRINT_FLAG, prompt]
+        argv: list[str] = [CLAUDE_COMMAND, PRINT_FLAG, prompt]
         argv.extend(
             [RESUME_FLAG, self._session_id]
             if spec.session_id is not None or self._phase != "prompt" or compact
             else [SESSION_ID_FLAG, self._session_id]
         )
-        argv.extend([_OUTPUT_FORMAT_FLAG, _STREAM_JSON, _VERBOSE_FLAG, MODEL_FLAG, spec.rung.model])
+        argv.extend([OUTPUT_FORMAT_FLAG, _STREAM_JSON, _VERBOSE_FLAG, MODEL_FLAG, spec.rung.model])
         if spec.rung.effort is not None:
             argv.extend([EFFORT_FLAG, spec.rung.effort])
         for directory in _unique_paths((spec.run_dir, *spec.add_dirs)):

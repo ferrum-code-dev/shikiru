@@ -63,7 +63,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `clock` | Injectable time for every timer | `Clock`, `SystemClock` |
 | `config` | Merge defaults < project file < `--set`, validate core settings. Plugin `options` stay untyped here | `Settings`, `load_settings()` |
 | `agents.contracts` | Agent plugin contract (04 §1) | `Agent`, `Turn`, `TurnSpec`, `HeadlessAgent`, signals, `Usage`, `QuotaWindow`, `Rung` |
-| `agents.sdk` | Plugin building blocks | `TurnParser`, `StreamingTurn`, `JsonlTail`, `ResetTimeParser` |
+| `agents.sdk` | Plugin building blocks | `TurnParser`, `StreamingTurn`, `ResetTimeParser` |
 | `agents.registry` | Loads `AgentFactory` entry points plus factories registered by `bootstrap` (tests register the fake agent the same way through its own test-only package entry point) | `AgentRegistry` |
 | `agents.testing` | Contract test kit | `AgentContractSuite` |
 | `domain` | Pure rules, no I/O | `Task`, `Status`, `Step`, `Hold`, `Counters`, `EventKind`, command models, report models, `next_step()`, `pick_rung()`, `recovery.decide()`, `scheduling.pick_ready()`, `escalation.options_for()`, `activity.is_stalled()` |
@@ -111,7 +111,7 @@ src/shikiru/
   domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py
   store/        database.py migrations/ tasks.py runs.py escalations.py quotas.py events.py commands.py reader.py
   agents/       contracts.py registry.py
-    sdk/        turn.py jsonl.py reset_time.py
+    sdk/        turn.py reset_time.py
     testing/    contract_suite.py
   workspace/    roots.py caches.py facts.py git.py
   tmux/         client.py session.py layout.py pane.py decorator.py

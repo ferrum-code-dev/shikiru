@@ -14,7 +14,7 @@ from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Role, Step
 from shikiru.engine.escalations import EscalationRaiser, PacketContext, render_packet
-from shikiru.store.escalations import EscalationStore
+from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from tests.support.store import seed_task
@@ -130,4 +130,4 @@ async def test_packet_creation_failure_does_not_open_an_empty_escalation(
             view_tail="",
         )
 
-    assert escalations_store.list_open() == []
+    assert fetch_open_escalations(connection) == []

@@ -155,10 +155,6 @@ class EscalationStore:
         """Read one escalation by id, or `None` if it doesn't exist."""
         return fetch_escalation(self._connection, escalation_id)
 
-    def list_open(self) -> list[Escalation]:
-        """Read every open escalation, oldest first."""
-        return fetch_open_escalations(self._connection)
-
     def latest_answer(self, task_id: str) -> str | None:
         """Return the latest resolved Operator answer for `task_id`, if it was an answer."""
         row = self._connection.execute(

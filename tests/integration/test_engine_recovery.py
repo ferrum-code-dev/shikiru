@@ -10,6 +10,7 @@ from shikiru.agents.contracts import Rung, role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
+from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.quotas import QuotaStore
 from shikiru.workspace.roots import run_dir
 from tests.support.clock import FakeClock
@@ -249,7 +250,7 @@ async def test_auth_failure_escalates_with_the_agent_auth_reason(
     final = engine_env.tasks.get(task_id)
     assert final is not None
     assert final.status is Status.ESCALATED
-    escalation = build_flow(engine_env, settings, clock=clock).escalations.list_open()
+    escalation = fetch_open_escalations(engine_env.connection)
     assert escalation[0].reason is EscalationReason.AGENT_AUTH
     assert await asyncio.to_thread(Path(escalation[0].packet_path).is_file)
 
@@ -349,7 +350,7 @@ async def test_unknown_failure_below_confidence_escalates_without_retry(
     final = engine_env.tasks.get(task_id)
     assert final is not None
     assert final.status is Status.ESCALATED
-    escalation = build_flow(engine_env, settings, clock=clock).escalations.list_open()
+    escalation = fetch_open_escalations(engine_env.connection)
     assert escalation[0].reason is EscalationReason.AGENT_ERROR
     helper_events = build_flow(engine_env, settings, clock=clock).events.since(
         0, kinds=[EventKind.HELPER_ACTION], task_id=task_id
@@ -384,5 +385,5 @@ async def test_unrecoverable_report_escalates_as_agent_protocol(
     final = engine_env.tasks.get(task_id)
     assert final is not None
     assert final.status is Status.ESCALATED
-    escalation = build_flow(engine_env, settings, clock=clock).escalations.list_open()
+    escalation = fetch_open_escalations(engine_env.connection)
     assert escalation[0].reason is EscalationReason.AGENT_PROTOCOL

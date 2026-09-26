@@ -175,10 +175,6 @@ class Tmux:
         await self._run("kill-server")
         await asyncio.to_thread(Path(located.stdout.strip()).unlink, missing_ok=True)
 
-    async def kill_pane(self, target: str) -> None:
-        """Kill pane `target`."""
-        await self._run("kill-pane", "-t", target)
-
     async def display_message(self, target: str, message: str) -> None:
         """Display `message` in the status line for `target`."""
         await self._run("display-message", "-t", target, message)
@@ -228,14 +224,6 @@ class Tmux:
                 command.append(f"{key}={value}")
         args += [_END_OF_OPTIONS, *command, *argv]
         await self._run(*args)
-
-    async def capture_pane(self, target: str, *, tail_lines: int | None = None) -> str:
-        """Return pane `target`'s text: currently visible, or its last `tail_lines` lines."""
-        args = ["capture-pane", "-p", "-t", target]
-        if tail_lines is not None:
-            args += ["-S", f"-{tail_lines}"]
-        result = await self._run(*args)
-        return result.stdout
 
     async def is_pane_dead(self, target: str) -> bool:
         """Return whether pane `target`'s process has exited (kept alive by `remain-on-exit`)."""

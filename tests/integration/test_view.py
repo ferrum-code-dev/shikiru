@@ -41,7 +41,7 @@ async def test_view_pane_shows_a_turns_messages_and_tool_calls(
     )
 
     async def rendered() -> bool:
-        text = await engine_env.tmux.capture_pane(pane)
+        text = (await tmux_server.run("capture-pane", "-p", "-t", pane)).stdout
         return all(
             part in text for part in (rows[0]["turn"], message[:_MESSAGE_PREFIX_LENGTH], tool)
         )

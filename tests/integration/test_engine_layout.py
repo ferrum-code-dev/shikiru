@@ -104,7 +104,7 @@ async def test_killed_agent_pane_rebuilds_the_task_window(
     old_agent = task.panes[Role.LEADER]
     surviving_agent = task.panes[Role.IMPLEMENTER]
     tmux = build_tmux(tmux_server)
-    await tmux.kill_pane(old_agent)
+    await tmux_server.run("kill-pane", "-t", old_agent)
 
     restored = await layout.ensure(task)
 

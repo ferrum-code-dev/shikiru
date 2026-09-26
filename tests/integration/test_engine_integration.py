@@ -23,6 +23,7 @@ from shikiru.engine.integration import (
 )
 from shikiru.errors import CommandFailed
 from shikiru.process import SubprocessRunner
+from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from shikiru.workspace.git import Git
@@ -387,5 +388,5 @@ async def test_taskflow_conflict_round_limit_escalates_after_two_changes_request
     assert final.status is Status.ESCALATED
     assert final.step is Step.INTEGRATE
     assert final.counters.conflict_rounds == 2
-    open_escalations = flow_env.escalations.list_open()
+    open_escalations = fetch_open_escalations(flow_env.env.connection)
     assert open_escalations[-1].reason is EscalationReason.INTEGRATION_CONFLICT
