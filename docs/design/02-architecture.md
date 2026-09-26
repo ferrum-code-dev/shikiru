@@ -69,10 +69,10 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `domain` | Pure rules, no I/O | `Task`, `Status`, `Step`, `Hold`, `Counters`, `EventKind`, command models, report models, `next_step()`, `pick_rung()`, `recovery.decide()`, `scheduling.pick_ready()`, `escalation.options_for()`, `activity.is_stalled()` |
 | `store` | SQLite schema, migrations, stores per aggregate, read-only reader | `Database`, `TaskStore`, `RunStore`, `EscalationStore`, `QuotaStore`, `EventLog`, `CommandQueue`, `StateReader` |
 | `workspace` | Task roots, worktrees, caches, git facts | `TaskRootBuilder`, `CacheCloner`, `GitFacts`, `Git` |
-| `tmux` | tmux client; session, windows, layout; pane decorations; pane respawn and liveness | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator`, `TmuxPane` |
+| `tmux` | tmux client; session, windows, layout; pane decorations; pane respawn and liveness | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator` |
 | `prompts` | Jinja2 templates (packaged, overridable) | `PromptRenderer` |
 | `helper` | Joshu calls | `Helper` |
-| `ui` | Visual language and Rich renderables shared by CLI, dashboard and view | `Tokens`, `Glyphs`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
+| `ui` | Visual language and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.glyphs`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
 | `operator` | Use cases for interfaces; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
@@ -106,28 +106,29 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 ```
 pyproject.toml
 src/shikiru/
-  bootstrap.py  process.py  clock.py  errors.py  __main__.py
+  bootstrap.py  process.py  clock.py  errors.py  paths.py  view_log.py  __main__.py
   config/       settings.py loader.py defaults.toml
-  domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py
+  domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py runs.py fencing.py
   store/        database.py migrations/ tasks.py runs.py escalations.py quotas.py events.py commands.py reader.py
   agents/       contracts.py registry.py
     sdk/        turn.py reset_time.py
-    testing/    contract_suite.py
-  workspace/    roots.py caches.py facts.py git.py
-  tmux/         client.py session.py layout.py pane.py decorator.py
+    testing/    contract_suite.py resume.py
+  workspace/    roots.py caches.py facts.py git.py messages.py reports.py
+  tmux/         client.py session.py layout.py decorator.py
   prompts/      renderer.py templates/
-  helper/       helper.py templates/
-  ui/           tokens.py glyphs.py strip.py bubbles.py splash.py gauge.py stream.py
+  helper/       helper.py models.py
+  ui/           tokens.py glyphs.py status.py strip.py bubbles.py splash.py gauge.py stream.py
   telemetry/    resources.py docker.py
-  engine/       daemon.py scheduler.py flow.py sessions.py monitor.py turns.py takeover.py integration.py escalations.py reconcile.py layout_guard.py notifier.py
-    handlers/   tasks.py sessions.py escalations.py engine.py
-  operator/     queries.py commands.py events.py detectors.py
-  cli/          app.py project.py sessions.py tasks.py diagnostics.py report.py view.py render.py
+  engine/       daemon.py supervisor.py lifecycle.py scheduler.py dependency.py flow.py agents.py sessions.py monitor.py turns.py
+                takeover.py integration.py integration_turns.py escalations.py reconcile.py layout_guard.py titles.py history.py events.py notifier.py
+    handlers/   base.py tasks.py operator.py escalations.py engine.py
+  operator/     queries.py commands.py services.py events.py strip_views.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py
+  cli/          app.py context.py report.py view.py render.py
   mcp/          server.py
-  dashboard/    app.py contract.py palette.py wizard.py
+  dashboard/    app.py contract.py services.py views.py palette.py wizard.py
   plugins/
-    agents/claude/  agent.py argv.py parser.py headless.py options.py
-    agents/codex/   agent.py argv.py parser.py rollout.py headless.py options.py
+    agents/claude/  agent.py turn.py headless.py options.py
+    agents/codex/   agent.py turn.py headless.py options.py home.py quota.py usage.py
     widgets/        header.py strips.py escalations.py queue.py dialogue.py usage.py resources.py docker.py
 tests/  unit/ integration/ e2e/ support/ (tmux fixture, fake clock, wait_until) fixtures/ (sample-project, agent samples)
   fake_agent/   test-only package (uv dev dependency) with its own `shikiru.agents` entry point `fake`

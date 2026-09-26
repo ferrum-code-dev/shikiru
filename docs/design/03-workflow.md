@@ -297,3 +297,4 @@ The `Scheduler` runs on every state change and every `orchestration.poll_seconds
    - **resources**: `ResourceSampler` `CPU_WINDOW` average `< resources.max_cpu_pct` and available RAM `≥ resources.min_free_ram_gb`;
    - **quota**: neither the Leader's nor the Implementer's resolved agent is blocked.
 4. **On dispatch**: assign the task's previous slot if free, else the lowest free slot, create the task window (`LayoutGuard`) and start the `TaskFlow` coroutine.
+5. **Dispatch failure**: if preparing the task (slot, task root, window) raises, the dispatch is rolled back, the task stays `queued` and `dispatch_failed` is logged; after `MAX_DISPATCH_FAILURES` consecutive failures it escalates with `engine_error`.

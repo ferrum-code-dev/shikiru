@@ -91,6 +91,7 @@ command = ""                                    # optional; event JSON on stdin 
 | `NUDGE_LIMIT` | 2 |
 | `CONSULT_LIMIT` | 3 |
 | `CONFLICT_ROUNDS` | 2 |
+| `MAX_DISPATCH_FAILURES` | 3 |
 | Stall retries per turn | 2 |
 | `CLASSIFY_CONFIDENCE` | 0.8 |
 | Unavailable backoff | 30 s / 2 min / 5 min |
@@ -173,7 +174,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 ```
 
 **`EventKind`** (in `domain.events`; `events.data` carries typed fields):
-- `task_queued`, `task_started`, `step_started`
+- `task_queued`, `task_started`, `dispatch_failed` (attempt, error), `step_started`
 - `turn_started`, `turn_completed` (agent, model, outcome, summary, question, usage delta), `turn_failed`
 - `nudge`, `helper_action`, `rung_changed`, `compacted`
 - `quota_blocked`, `quota_cleared`
