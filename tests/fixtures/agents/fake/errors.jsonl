@@ -1,2 +1,0 @@
-{"event":"turn_failed","session_id":"33333333-3333-3333-3333-333333333333","kind":"quota","message":"rate limited","resets_at":"2030-01-01T00:00:00+00:00"}
-{"event":"turn_failed","session_id":"33333333-3333-3333-3333-333333333333","kind":"other","message":"unexpected failure","resets_at":null}

@@ -1,2 +1,0 @@
-{"type":"system","subtype":"init","session_id":"44444444-4444-4444-4444-444444444444"}
-{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":42,"resetsAt":"2030-01-01T01:00:00+00:00"},"seven_day":{"utilization":12,"resetsAt":1893459600}}}}

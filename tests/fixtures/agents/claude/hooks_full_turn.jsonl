@@ -1,8 +1,0 @@
-{"hook_event_name":"SessionStart","session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"transcript_full_turn.jsonl","cwd":"/tmp/project","source":"startup","model":"claude-sonnet-4-5-20250929"}
-{"hook_event_name":"UserPromptSubmit","session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"transcript_full_turn.jsonl","prompt":"implement the retry helper"}
-{"hook_event_name":"PreToolUse","session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"transcript_full_turn.jsonl","tool_name":"Bash","tool_input":{"command":"pytest"},"tool_use_id":"tool-1"}
-{"hook_event_name":"PostToolUse","session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"transcript_full_turn.jsonl","tool_name":"Bash","tool_input":{"command":"pytest"},"tool_use_id":"tool-1","tool_response":"passed"}
-{"hook_event_name":"Stop","session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"transcript_full_turn.jsonl","stop_hook_active":false,"last_assistant_message":"accept: implement the retry helper"}
-{"hook_event_name":"PostCompact","session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"transcript_full_turn.jsonl","trigger":"auto"}
-{"hook_event_name":"Notification","session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"transcript_full_turn.jsonl","message":"waiting for operator input","title":"Claude Code"}
-{"hook_event_name":"SessionEnd","session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"transcript_full_turn.jsonl","reason":"exit"}
