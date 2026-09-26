@@ -766,12 +766,16 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
         taken_run = runs.get_taken_over(task_id, Role.IMPLEMENTER)
         assert taken_run is not None
         assert taken_run.session_id == session_id
-        assert events.since(0, kinds=[EventKind.TAKEN_OVER], task_id=task_id)
+        held = _required_task(tasks, task_id).holds
         again = await _append_and_wait(
             TakeOver(task_id=task_id, role=Role.IMPLEMENTER), queue, clock
         )
         assert again.status is CommandStatus.REJECTED
-        assert runs.get_taken_over(task_id, Role.IMPLEMENTER) == taken_run
+        assert len(events.since(0, kinds=[EventKind.TAKEN_OVER], task_id=task_id)) == 1
+        assert (
+            _required_task(tasks, task_id).holds,
+            runs.get_taken_over(task_id, Role.IMPLEMENTER),
+        ) == (held, taken_run)
 
         pane = _required_task(tasks, task_id).panes[Role.IMPLEMENTER]
         await tmux_server.run("send-keys", "-t", pane, "/exit", "Enter")
