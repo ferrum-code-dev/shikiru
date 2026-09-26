@@ -36,15 +36,6 @@ format; this is not a byte-for-byte provider stream capture. OpenRouter key
 usage increased by $0.01826925 for the attempt after its aggregate usage settled;
 Claude Code's separate cost estimate had an unknown cost basis.
 
-`session_compact_boundary_manual_live_redacted.jsonl` is a field-whitelisted
-excerpt from a genuine local Claude Code 2.1.280 session transcript audited on
-2026-09-25. It retains only the event type and subtype, CLI version, manual
-trigger, and pre/post token counts. It omits session and parent IDs, timestamps,
-paths, user and assistant content, tool data, discovered tools, and all other
-metadata. Its `compactMetadata` field is transcript schema, not a Shikiru
-subprocess `stream-json` capture. It records a real manual compaction in a
-Claude session; it does not verify Shikiru `/compact` after context overflow.
-
 The remaining `turn_*.jsonl` fixtures are synthetic protocol scenarios. They
 cover quota windows, list-priced usage, an unknown cost basis, rate limiting,
 credit exhaustion, and an unrecognised model. The quota-window fixture is not
