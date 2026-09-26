@@ -105,6 +105,7 @@ class StreamingTurn:
         self._signal_reader_started = False
         self._session_id: str | None = None
         self._session_started = False
+        self._process_session_started = False
         self._signal_count = 0
 
     @classmethod
@@ -134,6 +135,7 @@ class StreamingTurn:
         process = self._process
         try:
             while True:
+                self._process_session_started = False
                 execution = _ProcessExecution(
                     self._current_process_spec.parser,
                     self._stream_path,
@@ -197,9 +199,12 @@ class StreamingTurn:
         )
 
     def _normalize(self, signal: AgentSignal) -> tuple[AgentSignal | None, str | None]:
-        if isinstance(signal, SessionStarted):
-            return self._normalize_session_start(signal)
-        return self._normalize_other(signal)
+        if not isinstance(signal, SessionStarted):
+            return self._normalize_other(signal)
+        if self._process_session_started:
+            return None, "process emitted more than one SessionStarted"
+        self._process_session_started = True
+        return self._normalize_session_start(signal)
 
     def _normalize_session_start(
         self, signal: SessionStarted
@@ -271,7 +276,6 @@ class _ProcessExecution:
         self._signals: list[AgentSignal] = []
         self.terminal: TurnEnded | TurnFailed | None = None
         self.protocol_problem: str | None = None
-        self._session_start_seen = False
         self._outcome: TurnProcessResult | None = None
 
     @property
@@ -301,14 +305,6 @@ class _ProcessExecution:
                 )
                 self._signals.append(signal)
                 continue
-            if isinstance(signal, SessionStarted):
-                if self._session_start_seen:
-                    self.protocol_problem = self.protocol_problem or (
-                        "process emitted more than one SessionStarted"
-                    )
-                    self._signals.append(signal)
-                    continue
-                self._session_start_seen = True
             if isinstance(signal, (TurnEnded, TurnFailed)):
                 self.terminal = signal
             else:
