@@ -258,7 +258,7 @@ class AgentContractSuite:
     async def test_live_usage_reports_session_tokens(self, tmp_path: Path) -> None:
         self._require_live()
         spec = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(spec.cwd)
+        await init_scratch_repo(SubprocessRunner(), spec.cwd)
         signals = await self._run_turn(spec)
         usage = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
         _expect(bool(usage), "live turn reported no usage")
@@ -270,7 +270,7 @@ class AgentContractSuite:
     ) -> None:
         self._require_live()
         first = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(first.cwd)
+        await init_scratch_repo(SubprocessRunner(), first.cwd)
         nonce = uuid.uuid4().hex
         first_signals = await self._run_turn(
             _with_prompt(first, RESUME_NONCE_PROMPT.format(nonce=nonce))
@@ -290,7 +290,7 @@ class AgentContractSuite:
     async def test_live_stop_leaves_session_resumable(self, tmp_path: Path) -> None:
         self._require_live()
         spec = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(spec.cwd)
+        await init_scratch_repo(SubprocessRunner(), spec.cwd)
         agent = self._build_agent()
         turn = await agent.start_turn(_with_prompt(spec, "wait for the next instruction"))
         signals = turn.signals()
@@ -330,7 +330,7 @@ class AgentContractSuite:
     ) -> None:
         self._require_live()
         first = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_scratch_repo(first.cwd)
+        await init_scratch_repo(SubprocessRunner(), first.cwd)
         nonce = uuid.uuid4().hex
         started, usage = _latest_usage(
             await self._run_turn(
@@ -478,10 +478,6 @@ def _validate_usage_sequences(signals: Sequence[AgentSignal]) -> None:
 def _expect(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
-
-
-async def _init_scratch_repo(path: Path) -> None:
-    await init_scratch_repo(SubprocessRunner(), path)
 
 
 def _with_prompt(spec: TurnSpec, prompt: str, *, env: Mapping[str, str] | None = None) -> TurnSpec:
