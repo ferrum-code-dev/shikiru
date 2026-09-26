@@ -304,7 +304,7 @@ Task 39 Codex threshold note (2026-09-26): codex-cli 0.157.1 compacts at the nex
 
 ### Task 40: Probe every configured rung
 Refs: 04 §3, 06 §2.
-- [ ] `doctor --probe` runs live check 1 on each agent's first rung and a smoke turn ("Hi", must end in `TurnEnded`) on every other distinct rung (agent, model, effort) across the configured ladders, reporting each rung's result and the stream tail and stderr on failure.
+- [x] `doctor --probe` runs live check 1 on each agent's first rung and a smoke turn ("Hi", must end in `TurnEnded`) on every other distinct rung (agent, model, effort) across the configured ladders, reporting each rung's result and the stream tail and stderr on failure.
 - Tests: integration with the fake agent: a ladder with several rungs per agent probes each distinct rung once; a failing rung is reported by agent, model and effort.
 
 ## Phase 5 — Resilience and operator completeness

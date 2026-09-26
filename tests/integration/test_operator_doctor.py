@@ -173,6 +173,33 @@ async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(
     assert checks["cow"].ok is True
 
 
+MULTI_RUNG_CONFIG = """
+[project]
+name = "doctor-project"
+
+[agents.fake]
+
+[roles.leader]
+ladder = [{agent = "fake", model = "default"}]
+
+[roles.implementer]
+escalate_after = 2
+ladder = [{agent = "fake", model = "default"}, {agent = "fake", model = "strong", effort = "high"}]
+
+[roles.implementer.complexity.high]
+ladder = [{agent = "fake", model = "strong", effort = "high"}]
+
+[roles.helper]
+ladder = [{agent = "fake", model = "default", effort = "low"}]
+"""
+MULTI_RUNG_PROBES = ["probe:fake:default", "probe:fake:strong:high", "probe:fake:default:low"]
+
+
+def _probe_checks(stdout: str) -> dict[str, dict[str, object]]:
+    checks = json.loads(stdout)["checks"]
+    return {check["name"]: check for check in checks if check["name"].startswith("probe:")}
+
+
 async def test_doctor_probe_passes_when_each_ladder_agent_submits_a_valid_report(
     tmp_path: Path,
 ) -> None:
@@ -180,9 +207,36 @@ async def test_doctor_probe_passes_when_each_ladder_agent_submits_a_valid_report
 
     code, stdout, _ = await _cli(root, "--json", "doctor", "--probe")
 
-    checks = {check["name"]: check for check in json.loads(stdout)["checks"]}
     assert code == 0
-    assert checks["probe:fake"]["ok"] is True
+    assert _probe_checks(stdout)["probe:fake:default"]["ok"] is True
+
+
+async def test_doctor_probe_runs_one_turn_per_distinct_ladder_rung(tmp_path: Path) -> None:
+    root = await _project(tmp_path, MULTI_RUNG_CONFIG)
+
+    code, stdout, _ = await _cli(root, "--json", "doctor", "--probe")
+
+    probes = [check for check in json.loads(stdout)["checks"] if check["name"].startswith("probe:")]
+    assert code == 0
+    assert [probe["name"] for probe in probes] == MULTI_RUNG_PROBES
+    assert all(probe["ok"] for probe in probes)
+
+
+async def test_doctor_probe_names_the_failing_rung(tmp_path: Path) -> None:
+    root = await _project(tmp_path, MULTI_RUNG_CONFIG)
+
+    code, stdout, _ = await _cli(
+        root,
+        "--json",
+        "doctor",
+        "--probe",
+        SHIKIRU_FAKE_SCRIPT='[{"kind": "accept"}, {"kind": "crash"}]',
+    )
+
+    probes = _probe_checks(stdout)
+    assert code == 1
+    assert {name for name, probe in probes.items() if not probe["ok"]} == {"probe:fake:strong:high"}
+    assert CRASH_STDERR in str(probes["probe:fake:strong:high"]["detail"])
 
 
 async def test_doctor_probe_failure_shows_the_stream_tail_and_stderr(tmp_path: Path) -> None:
@@ -192,8 +246,8 @@ async def test_doctor_probe_failure_shows_the_stream_tail_and_stderr(tmp_path: P
         root, "--json", "doctor", "--probe", SHIKIRU_FAKE_SCRIPT='[{"kind": "crash"}]'
     )
 
-    probe = next(check for check in json.loads(stdout)["checks"] if check["name"] == "probe:fake")
+    probe = _probe_checks(stdout)["probe:fake:default"]
     assert code == 1
     assert probe["ok"] is False
-    assert '"event":"session_started"' in probe["detail"]
-    assert CRASH_STDERR in probe["detail"]
+    assert '"event":"session_started"' in str(probe["detail"])
+    assert CRASH_STDERR in str(probe["detail"])

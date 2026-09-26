@@ -49,6 +49,7 @@ PLUGINS_CHECK_NAME = "plugins"
 PLUGIN_CONFIG_CHECK_NAME = "config.plugins"
 COW_CHECK_NAME = "cow"
 DATABASE_CHECK_NAME = "db"
+PROBE_CHECK_PREFIX = "probe"
 
 
 class DoctorCheck(BaseModel):
@@ -100,7 +101,7 @@ class Doctor:
         self._probe = probe
 
     async def run(self, overrides: Sequence[str] = (), *, probe: bool = False) -> DoctorReport:
-        """Run core and plugin checks, plus one live turn per ladder agent with `probe`."""
+        """Run core and plugin checks, plus one live turn per distinct ladder rung with `probe`."""
         checks: list[DoctorCheck] = []
         checks.append(await self._tmux_check())
         checks.append(await self._git_check())
@@ -130,14 +131,15 @@ class Doctor:
 
     async def _probe_checks(self, settings: Settings) -> list[DoctorCheck]:
         checks: list[DoctorCheck] = []
-        for rung in _first_rung_per_agent(settings.ladder_rungs()):
-            outcome = await self._probe.run(
+        probed_agents: set[str] = set()
+        for rung in dict.fromkeys(settings.ladder_rungs()):
+            probe = self._probe.smoke if rung.agent in probed_agents else self._probe.run
+            probed_agents.add(rung.agent)
+            outcome = await probe(
                 self._project_root, rung, settings.agents[rung.agent].options, settings.doctor
             )
             checks.append(
-                DoctorCheck(
-                    name=_probe_check_name(rung.agent), ok=outcome.ok, detail=outcome.detail
-                )
+                DoctorCheck(name=_probe_check_name(rung), ok=outcome.ok, detail=outcome.detail)
             )
         return checks
 
@@ -267,15 +269,9 @@ def _error_detail(error: BaseException) -> str:
     return str(error) or type(error).__name__
 
 
-def _first_rung_per_agent(rungs: Sequence[Rung]) -> list[Rung]:
-    first: dict[str, Rung] = {}
-    for rung in rungs:
-        first.setdefault(rung.agent, rung)
-    return list(first.values())
-
-
-def _probe_check_name(name: str) -> str:
-    return f"probe:{name}"
+def _probe_check_name(rung: Rung) -> str:
+    efforts = () if rung.effort is None else (rung.effort,)
+    return ":".join((PROBE_CHECK_PREFIX, rung.agent, rung.model, *efforts))
 
 
 def _plugin_check_name(name: str) -> str:
