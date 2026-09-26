@@ -23,6 +23,7 @@ from shikiru.agents.contracts import (
     UsageReported,
     role_dir,
 )
+from shikiru.domain.activity import is_stalled, seconds_until_stall
 from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import ProtocolError, Stalled
 from shikiru.ui.glyphs import GLYPH_STALLED, ROLE_GLYPHS
@@ -102,14 +103,9 @@ class TurnMonitor:
                 task.panes[role], color=ROLE_COLORS[role], glyph=ROLE_GLYPHS[role]
             )
             while True:
-                timeout = (
-                    self._settings.orchestration.timeouts.tool
-                    if tool_running
-                    else self._settings.orchestration.timeouts.stall
-                )
-                elapsed = (self._clock.now() - last_signal_at).total_seconds()
-                remaining = timeout - elapsed
-                if remaining <= 0:
+                now = self._clock.now()
+                timeouts = self._settings.orchestration.timeouts
+                if is_stalled(last_signal_at, tool_running, now, timeouts):
                     await turn.stop()
                     await self._decorator.set_pane_state(
                         task.panes[role], color=HOLD_COLOR, glyph=GLYPH_STALLED
@@ -117,7 +113,7 @@ class TurnMonitor:
                     return Stalled()
                 poll_timeout = min(
                     self._settings.orchestration.poll_seconds,
-                    remaining,
+                    seconds_until_stall(last_signal_at, tool_running, now, timeouts),
                 )
                 signal_ready = await self._wait_for_signal(pending_signal, poll_timeout)
                 pid_path.write_text(str(turn.pid))
