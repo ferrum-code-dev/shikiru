@@ -282,8 +282,8 @@ Refs: 03 §9, 06 §2, §4, §5.1–5.2.
 
 ### Task 37: Probe and real E2E on headless turns
 Refs: 04 §3, 06 §2, 07 §5.
-- [ ] `doctor --probe` runs live check 1 per ladder agent in `.shikiru/probe/`, reporting the stream tail and stderr on failure.
-- [ ] E2E E1 and E2 (queued delivery, 07 §5) pass.
+- [x] `doctor --probe` runs live check 1 per ladder agent in `.shikiru/probe/`, reporting the stream tail and stderr on failure.
+- [x] E2E E1 and E2 (queued delivery, 07 §5) pass.
 
 ## Phase 5 — Resilience and operator completeness
 
