@@ -175,6 +175,17 @@ _OPENROUTER_LIVE_SIGNALS = [
 ]
 
 
+@pytest.fixture
+def operator_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "operator-codex-home"
+    home.mkdir()
+    monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(home))
+    monkeypatch.setenv("OPENAI_API_KEY", _SYNTHETIC_OPENAI_KEY)
+    monkeypatch.setenv("CODEX_API_KEY", _SYNTHETIC_CODEX_KEY)
+    monkeypatch.setenv("OPENROUTER_API_KEY", _SYNTHETIC_PROVIDER_KEY)
+    return home
+
+
 class _AskResult(BaseModel):
     ok: bool
 
@@ -395,13 +406,8 @@ class TestCodexHeadlessContract(AgentContractSuite):
         return _LIVE_ASK_PROMPT
 
     def test_turn_inherits_operator_environment_and_uses_turn_codex_home(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, operator_codex_home: Path
     ) -> None:
-        operator_codex_home = tmp_path / "operator-codex-home"
-        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(operator_codex_home))
-        monkeypatch.setenv("OPENAI_API_KEY", _SYNTHETIC_OPENAI_KEY)
-        monkeypatch.setenv("CODEX_API_KEY", _SYNTHETIC_CODEX_KEY)
-        monkeypatch.setenv("OPENROUTER_API_KEY", _SYNTHETIC_PROVIDER_KEY)
         spec = self.build_spec(tmp_path, resume_session_id=None)
         agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
 
@@ -558,16 +564,11 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
     @pytest.mark.asyncio
     async def test_headless_ask_preserves_operator_provider_environment(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_codex_home: Path
     ) -> None:
-        codex_home_path = tmp_path / "operator-codex-home"
         capture_path = tmp_path / "headless-environment.txt"
         _install_fake_codex(tmp_path / "bin")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
-        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(codex_home_path))
-        monkeypatch.setenv("OPENAI_API_KEY", _SYNTHETIC_OPENAI_KEY)
-        monkeypatch.setenv("CODEX_API_KEY", _SYNTHETIC_CODEX_KEY)
-        monkeypatch.setenv("OPENROUTER_API_KEY", _SYNTHETIC_PROVIDER_KEY)
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
         agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
         headless = agent.headless()
@@ -584,7 +585,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
         assert result == {"ok": True}
         assert capture_path.read_text().splitlines()[1:] == [
-            str(codex_home_path),
+            str(operator_codex_home),
             _SYNTHETIC_OPENAI_KEY,
             _SYNTHETIC_CODEX_KEY,
             _SYNTHETIC_PROVIDER_KEY,
@@ -592,11 +593,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
     @pytest.mark.asyncio
     async def test_doctor_does_not_apply_openai_login_status_to_custom_provider(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_codex_home: Path
     ) -> None:
-        codex_home_path = tmp_path / "operator-codex-home"
-        codex_home_path.mkdir()
-        (codex_home_path / "config.toml").write_text(
+        (operator_codex_home / "config.toml").write_text(
             'model_provider = "openrouter"\n\n'
             "[model_providers.openrouter]\n"
             'name = "OpenRouter"\n'
@@ -608,10 +607,6 @@ class TestCodexHeadlessContract(AgentContractSuite):
         capture_path = tmp_path / "doctor-environment.txt"
         _install_fake_codex(tmp_path / "bin")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
-        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(codex_home_path))
-        monkeypatch.setenv("OPENAI_API_KEY", _SYNTHETIC_OPENAI_KEY)
-        monkeypatch.setenv("CODEX_API_KEY", _SYNTHETIC_CODEX_KEY)
-        monkeypatch.setenv("OPENROUTER_API_KEY", _SYNTHETIC_PROVIDER_KEY)
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
         agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
 
@@ -622,12 +617,12 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert "not verified" in login.detail
         assert capture_path.read_text().splitlines() == [
             "--version",
-            str(codex_home_path),
+            str(operator_codex_home),
             _SYNTHETIC_OPENAI_KEY,
             _SYNTHETIC_CODEX_KEY,
             _SYNTHETIC_PROVIDER_KEY,
             "--version",
-            str(codex_home_path),
+            str(operator_codex_home),
             _SYNTHETIC_OPENAI_KEY,
             _SYNTHETIC_CODEX_KEY,
             _SYNTHETIC_PROVIDER_KEY,
