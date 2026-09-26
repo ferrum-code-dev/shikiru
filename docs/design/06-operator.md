@@ -26,7 +26,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 | `attach [NAME] [--host H]` | Attach to a session; with no `NAME` and more than one match, the picker (§5.6) |
 | `submit "<request>" [flags]` | Prints the `T-n` id (05 §1 flags) |
 | `status [T-n] [--watch]` | Without an id: engine, slots, active tasks with `wait_reason`, queue, open escalations, usage and quota per agent. With one: that task's strip, timeline, reports and verdicts, branches and sessions. `--watch` redraws on `StateReader.on_change` |
-| `doctor [--probe]` | Environment, repository-root (D20), config and plugin checks; `--probe` runs live contract check 1 (04 §3), one cheap headless turn requiring a valid report, for each agent on a ladder, showing the stream tail and stderr when a probe fails |
+| `doctor [--probe]` | Environment, repository-root (D20), config and plugin checks; `--probe` validates the configured ladders (04 §3): live contract check 1 on each agent's first rung and a smoke turn on every other distinct rung, showing the stream tail and stderr when a probe fails |
 | `mcp` | Stdio MCP server |
 | hidden: `engine`, `dash`, `palette`, `view`, `report` | Process entrypoints. `view T-n ROLE` is the live view a role pane runs (§5.1) |
 

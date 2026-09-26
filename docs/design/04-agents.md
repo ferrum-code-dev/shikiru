@@ -17,7 +17,7 @@ Rungs select only `{agent, model, effort}`. Agent options are a plugin-owned ext
 @dataclass(frozen=True)
 class Rung:            agent: str; model: str; effort: str | None
 
-class FailureKind(StrEnum): QUOTA = auto(); UNAVAILABLE = auto(); CONTEXT = auto(); AUTH = auto(); OTHER = auto(); UNKNOWN = auto()
+class FailureKind(StrEnum): QUOTA = auto(); UNAVAILABLE = auto(); AUTH = auto(); OTHER = auto(); UNKNOWN = auto()
 
 @dataclass(frozen=True)
 class Usage:           input_tokens: int; output_tokens: int; cache_read_tokens: int; cache_write_tokens: int
@@ -84,11 +84,11 @@ Prompts call Shikiru back only through `shikiru_command`. Agent shells may be lo
 5. **Usage is only what the agent reports** (D21): tokens always; `cost_usd` only when the agent marks its cost as priced, else `None` with `cost_basis = "unknown"`; `context_used_pct` only from a context window the agent reports reliably, else `None`; `QuotaReported` only when the agent reports windows. A provider's list-price estimate has `cost_basis = "api_equivalent"`; `billed` requires a provider-reported charge; otherwise use `unknown`. Plugins must not derive the basis from how access was configured.
 6. The process never waits for input: stdin is closed and no flag it is given can open a dialog.
 7. `stop()` ends the process within `TURN_STOP_GRACE` (SIGTERM, then SIGKILL); the next turn on the same `session_id` resumes the session.
-8. **Compaction.** Every supported agent must prevent context overflow by compacting proactively at its configurable `compact_at_pct` threshold (default 80), including while a single turn is running:
-   - Before a turn and before each model request within it, the plugin or the agent's verified native mechanism must enforce the threshold. A turn that starts below the threshold and reaches it must compact and continue within that same logical `Turn`, preserving the session and task progress.
-   - Enforcement must account for pending prompt and tool-result input and the model's required output allowance. Compact earlier when necessary to prevent a request from exceeding the context window; checking usage after an overflowing request is insufficient.
-   - The mechanism belongs to the plugin. Native auto-compaction is acceptable only when verified for the supported CLI, model and provider. Missing display telemetry does not waive overflow prevention; an unsupported combination must be reported explicitly before work starts rather than run without protection.
-   - After an unexpected context failure, the plugin attempts compaction and re-runs the same prompt once inside the same `Turn` (prompts are idempotent). A failed compaction or second context failure ends the turn with `TurnFailed(CONTEXT)`. This is exceptional recovery and does not satisfy proactive prevention.
+8. **Compaction.** The plugin prevents context overflow by compacting proactively at its `compact_at_pct` option (default 80), including while a single turn is running. Core Shikiru knows nothing of this beyond displaying `Compacted`:
+   - The threshold applies to the agent's own view of its context window for the configured model, before a turn and before each model request within it. A turn that starts below the threshold and reaches it compacts and continues within the same logical `Turn`, preserving the session and task progress.
+   - The headroom above the threshold must hold one request's pending input and the model's output allowance; a lower `compact_at_pct` buys more.
+   - The mechanism belongs to the plugin: the agent's native auto-compaction when verified in headless turns, otherwise a plugin-driven sequence. It must work in every access mode the agent supports; Shikiru passes no provider or window information. Display rules (obligation 5) never limit protection.
+   - Recovery is the plugin's too: after a context failure it compacts and re-runs the same prompt once inside the same `Turn` (prompts are idempotent). If that fails the turn ends with `TurnFailed(OTHER)`. Recovery is exceptional and does not replace prevention.
    - Every compaction emits `Compacted`. `SessionStarted` and the final `TurnEnded`/`TurnFailed` still occur once per `Turn`.
 
 **Failure mapping.** A plugin maps the structured errors it knows to a `FailureKind` and returns `UNKNOWN` with the raw text for anything else. The engine asks the Helper to classify `UNKNOWN` (§6); the Helper never replaces the structured path (D22).
@@ -100,7 +100,7 @@ Small, tested building blocks for plugins:
 | Block | Purpose |
 |---|---|
 | `TurnParser` | Protocol a plugin implements: `feed(line) → list[AgentSignal]` for one stdout line, `finish(exit_code, stderr) → list[AgentSignal]` at exit. Pure, so recorded streams replay offline |
-| `StreamingTurn` | `Turn` implementation: spawns the argv through `SubprocessRunner.spawn` with stdin closed, copies stdout to `turn_dir/<role>.stream.jsonl` and stderr to `turn_dir/<role>.stderr.log`, feeds lines to the parser, enforces obligations 1 and 3, and implements `stop()`. Runs the plugin's process sequence for one turn (compact, prompt, compact-and-rerun), appending every process's output to the same files |
+| `StreamingTurn` | `Turn` implementation: spawns the argv through `SubprocessRunner.spawn` with stdin closed, copies stdout to `turn_dir/<role>.stream.jsonl` and stderr to `turn_dir/<role>.stderr.log`, feeds lines to the parser, enforces obligations 1 and 3, and implements `stop()`. Runs the plugin's process sequence for one turn (for example prompt, compact, continue), appending every process's output to the same files |
 | `ResetTimeParser` | "resets 3:10am (Europe/Warsaw)", ISO, epoch, relative durations → `datetime` |
 
 ## 3. Contract test kit (`shikiru.agents.testing`)
@@ -110,8 +110,8 @@ Small, tested building blocks for plugins:
 **Offline checks** (always run; samples are recorded streams committed under `tests/fixtures/agents/<agent>/`, 07 §4):
 1. Each recorded stream (stdout lines, stderr, exit code, plus session-log excerpts when the plugin reads them) replays through the parser to the expected signal sequence and satisfies obligations 1–5.
 2. Recorded error streams map to the expected `FailureKind` and `resets_at`; unmapped text yields `UNKNOWN`.
-3. Recorded compaction output yields `Compacted`. Boundary scenarios exercise threshold crossing within one turn, pending input that would otherwise overflow, repeated compaction within one turn, and explicit rejection when prevention is unavailable. A context failure followed by a compaction and a rerun yields one `Turn` ending in `TurnEnded`, and a failed compaction or second context failure yields `TurnFailed(CONTEXT)`.
-4. Argv for a new turn, a resumed turn, a model change and compaction; Operator-provided environment pass-through; `interactive_command`.
+3. Recorded compaction output yields `Compacted`. Scenarios exercise threshold crossing within one turn and repeated compaction within one turn, each continuing to one `TurnEnded`. A context failure followed by compaction and a rerun yields one `Turn` ending in `TurnEnded`; a failed compaction or a second context failure yields `TurnFailed(OTHER)`.
+4. Argv for a new turn, a resumed turn, a model change and the compaction setting; Operator-provided environment pass-through; `interactive_command`.
 
 **Live checks** (`SHIKIRU_E2E=1`, scratch repository):
 1. A first turn whose prompt points at a prompt file → `SessionStarted`, a valid report through `shikiru report`, `TurnEnded`.
@@ -119,9 +119,9 @@ Small, tested building blocks for plugins:
 3. A resumed turn on another model of the same agent recalls a nonce from turn 1.
 4. `stop()` during a turn, then a resumed turn completes.
 5. `headless().ask()` returns schema-valid JSON (when provided).
-6. With a low `compact_at_pct`, a turn that starts below the threshold grows past it during its own work, compacts (`Compacted`) before overflow, continues working and completes with a valid report while recalling an earlier nonce. The test must not send another Shikiru turn to trigger compaction. Run this check for each supported model/provider combination; a skipped check does not establish support. Also verify compaction before a resumed turn already at the threshold.
+6. With a low `compact_at_pct`, a turn that starts below the threshold grows past it during its own work, compacts (`Compacted`) before overflow, continues working and completes with a valid report while recalling an earlier nonce. No second Shikiru turn triggers the compaction. It runs in the Operator's own agent configuration; a skipped check establishes nothing.
 
-`shikiru doctor --probe` runs live check 1 for each agent on a ladder through the same `start_turn` the engine uses, in a scratch repository reused at `.shikiru/probe/`. No dialog needs answering.
+`shikiru doctor --probe` validates the configured ladders through the same `start_turn` the engine uses, in a scratch repository reused at `.shikiru/probe/`: the first rung of each agent runs live check 1, and every other distinct rung (agent, model, effort) runs a smoke turn ("Hi") that must end in `TurnEnded`. No dialog needs answering.
 
 ## 4. Claude Code plugin (`plugins/agents/claude`) — verified with 2.1.281
 
@@ -160,7 +160,7 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 - 429 or a provider-reported usage-limit window → `QUOTA`, `resets_at` from the latest `rate_limit_event` or the message (`ResetTimeParser`); 402 payment/credit exhaustion → `AUTH` for immediate operator escalation
 - 5xx / 529, `unrecognized_model` → `UNAVAILABLE`
 - 401 / 403 → `AUTH`
-- prompt too long / context terminal reason → `CONTEXT`
+- prompt too long / context terminal reason → the plugin's recovery (Compaction); unrecovered → `OTHER`
 - else → `UNKNOWN`
 
 **Usage**:
@@ -168,12 +168,11 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 - Cost: `result.total_cost_usd` (cumulative per session) only when `modelUsage.<m>.costBasis` is `"list"`; report it as `api_equivalent`, independent of how access is configured. For any other cost basis, where the list-price estimate does not represent a reliable provider price, report `None`, `unknown`.
 - Context: the last assistant message's input and cache tokens ÷ `modelUsage.<m>.contextWindow` only when the cost basis is `"list"`. A CLI-assumed 200000 default is not a reliable provider-reported context window.
 
-**Compaction** (obligation 8):
-- Required: enforce proactive compaction during a running turn as well as before it. The current between-turn implementation does not meet the full obligation; Task 39 tracks the mechanism and live verification.
-- Before a resumed turn whose `spec.usage.context_used_pct` ≥ `compact_at_pct`, the plugin first runs `claude -p "/compact" --resume <id>` with the same model and flags. Verified: a headless `/compact` emits `compact_boundary` (47,571 → 1,949 tokens), and the next turn still recalls earlier context.
-- `context_used_pct` is only known for list-priced models (see Usage). The current implementation uses only the after-failure path on other providers; this is an implementation gap, not an exemption from obligation 8.
-- On a `CONTEXT` failure: `/compact`, then the same prompt once more. *Verify in implementation* that `/compact` succeeds on a session that already overflowed. If it does not, a Claude context failure goes straight to `TurnFailed(CONTEXT)` (handoff, 03 §7).
-- Not relied on: Claude's own auto-compaction. In `-p` mode it did not trigger, even with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`.
+**Compaction** (obligation 8), against Claude's own window for the model (`modelUsage.<m>.contextWindow`; a `[1m]` model suffix selects the larger one):
+- In-turn mechanism, *decided in Task 39 from live evidence*: Claude's native auto-compaction with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=<compact_at_pct>` in the turn environment (earlier it did not trigger in `-p` mode; re-verify on the current CLI), or a plugin-driven sequence: stop the process when stream usage crosses the threshold, `claude -p "/compact" --resume <id>`, then resume with `continue`.
+- Verified between turns: a headless `/compact` emits `compact_boundary` (47,571 → 1,949 tokens), and the next turn still recalls earlier context.
+- Recovery: on a context failure, `/compact` and the same prompt once more. *Verify* that `/compact` succeeds on an overflowed session; if it does not, the turn fails with `OTHER`.
+- The display restriction on `context_used_pct` (Usage) does not apply: protection uses Claude's window whatever the cost basis.
 
 **Other**:
 - `interactive_command`: `claude --resume <id> --add-dir <run_dir> <args>` (verified: its turns land in the same session, and the next headless `--resume` sees them).
@@ -218,14 +217,14 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 - 429, `usage_limit_reached` → `QUOTA`, `resets_at` from the latest `rate_limits` or the message; 402 payment/credit exhaustion → `AUTH` for immediate operator escalation
 - 5xx, overloaded → `UNAVAILABLE`
 - 401 → `AUTH`
-- `context_length_exceeded` → `CONTEXT` (after the compact-and-rerun of obligation 8)
+- `context_length_exceeded` → the plugin's recovery (Compaction); unrecovered → `OTHER`
 - else → `UNKNOWN`
 
-**Compaction** (obligation 8):
-- Required: verify that the configured native limit prevents overflow during a single running turn, including context growth from tool results. The previous live check demonstrated compaction on resume; Task 39 tracks verification of the stronger obligation.
-- Every turn adds `-c model_auto_compact_token_limit=<compact_at_pct × context window>`. The window is the model's `model_context_window` from the latest rollout, or, before the first turn, from Codex's model list (`$CODEX_HOME/models_cache.json`). The current implementation omits the limit when neither knows the model; running without verified protection is an implementation gap under obligation 8.
-- Without the limit, `codex exec` never compacts. With it (verified), Codex compacts at the start of the next turn whose context exceeds it, keeping earlier context. The compaction shows only in the rollout as a `compacted` entry, so the plugin emits `Compacted` from the rollout (`pre_tokens` from the last `token_count` before it, `post_tokens` from the first after).
-- On a `CONTEXT` failure: the same prompt once more via `exec resume` with the limit set, which compacts first.
+**Compaction** (obligation 8), through Codex's native limit:
+- Every turn adds `-c model_auto_compact_token_limit=<compact_at_pct × context window>`. The window is the model's `model_context_window` from the latest rollout, or, before the first turn, from Codex's model list (`$CODEX_HOME/models_cache.json`). *Task 39*: when neither knows the model, protection must not silently disappear; doctor reports it.
+- Verified: without the limit `codex exec` never compacts; with it, Codex compacts at the start of the next turn whose context exceeds it, keeping earlier context. *Task 39 verifies* that it also compacts within a running turn as tool results grow the context.
+- The compaction shows only in the rollout as a `compacted` entry, so the plugin emits `Compacted` from the rollout (`pre_tokens` from the last `token_count` before it, `post_tokens` from the first after).
+- Recovery: on a context failure, the same prompt once more via `exec resume` with the limit set, which compacts first; if that fails, `OTHER`.
 
 **Usage**: tokens from `turn.completed.usage` (cumulative for the thread on resume, so already session totals); context from the rollout; no cost is reported anywhere → `cost_usd = None`, `cost_basis = "unknown"`.
 

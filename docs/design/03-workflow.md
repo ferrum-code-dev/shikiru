@@ -119,7 +119,7 @@ A turn is one agent process (D1, 04 §1): `Agent.start_turn(spec)` spawns it as 
 |---|---|
 | Run with a `session_id`, same rung | Resume it |
 | Rung change, same agent | Resume it with the new model and effort |
-| No session yet, a different agent, or a `CONTEXT` failure | New session. If the task already has reports, the first turn is `handoff` (request, latest reports, facts) |
+| No session yet, or a different agent | New session. If the task already has reports, the first turn is `handoff` (request, latest reports, facts) |
 
 - **Turn environment**: Shikiru adds `SHIKIRU_PROJECT`, `SHIKIRU_TASK`, `SHIKIRU_ROLE`, `SHIKIRU_RUN_DIR` and `SHIKIRU_SLOT` to the Operator's inherited environment. Agent-native access settings and environment remain under Operator control and pass to child processes unchanged.
 - The run row is created with the session; `session_id` and the resume command (`interactive_command`, shell-quoted) are stored when `SessionStarted` arrives.
@@ -129,7 +129,7 @@ A turn is one agent process (D1, 04 §1): `Agent.start_turn(spec)` spawns it as 
 
 One monitor per turn process. It is the **only** consumer of `turn.signals()`. For each signal it:
 - persists session facts on the run: `session_id`, usage (`UsageReported`), quota windows (`QuotaReported` → `quotas`), the last `Message` or `TurnEnded.last_message`;
-- emits a `compacted` event for `Compacted` (pre and post tokens);
+- emits a `compacted` event for `Compacted` (pre and post tokens; display only, no decision depends on it);
 - appends the signal, timestamped, to `runs/T/<role>/view.jsonl`, which the role's pane renders (06 §5.1);
 - updates pane decorations (`PaneDecorator`).
 
@@ -212,9 +212,8 @@ Dependents become ready only when their dependencies are `done`.
 |---|---|
 | `Failed(QUOTA)` | Block the agent in `agent_blocks` until `resets_at + QUOTA_MARGIN` (unknown reset: now + `QUOTA_PROBE`). When the block ends, a resumed `continue` turn re-runs the step's prompt; a new failure repeats the cycle. If the wait exceeds `timeouts.max_quota_wait`: next rung with a different agent; none left → `quota_exhausted` |
 | `Failed(UNAVAILABLE)` | Retry after 30 s, 2 min, 5 min; then next rung; none left → `ladder_exhausted` |
-| `Failed(CONTEXT)` | Exceptional recovery after proactive prevention failed: the plugin attempted compaction and, if successful, re-ran the prompt once (04 §1, obligation 8). New session on the same rung with `handoff` (once), then `agent_error`. This recovery does not establish compliance with overflow prevention |
 | `Failed(AUTH)` | Escalate immediately as `agent_auth` for rejected credentials or provider access, including payment/credit exhaustion that needs Operator action |
-| `Failed(OTHER)` | Retry once, then `agent_error`; unclassified (§4.3 step 5) → `agent_error` at once |
+| `Failed(OTHER)` | Retry once, then `agent_error`; unclassified (§4.3 step 5) → `agent_error` at once. A context failure the plugin could not recover (04 §1, obligation 8) arrives here |
 | `Stalled` | The process was stopped; a resumed `continue` turn (≤ 2 per turn), then `agent_stuck` |
 | `ProtocolError` | `agent_protocol` |
 

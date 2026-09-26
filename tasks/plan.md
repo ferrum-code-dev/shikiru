@@ -237,8 +237,9 @@ Refs: 04 §1–3, 02 §2, 07 §3–4.
 ### Task 33: Claude Code headless plugin
 Refs: 04 §4.
 - [x] Turn argv (new, resume, model change), Operator-provided access environment pass-through, stream-json parser, provider-reported quota and cost, failure mapping incl. stderr tags, `interactive_command`, `headless`, `doctor`.
-- [ ] Compaction per 04 §4: `/compact` before a turn at `compact_at_pct`, compact-and-rerun on `CONTEXT` (verify `/compact` on an overflowed session), `Compacted` from `compact_boundary`.
-- [ ] Recorded samples under `tests/fixtures/agents/claude/` exercise native Claude Code protocol behavior: success, provider-reported quota and list-priced or unknown-price usage, rate-limit and credit-exhaustion failures, and unrecognised model; offline replay passes; designated live checks pass.
+- [x] Recorded samples under `tests/fixtures/agents/claude/` exercise native Claude Code protocol behavior: genuine redacted success and report captures; provider-reported quota, list-priced or unknown-price usage, rate-limit and credit-exhaustion failures and an unrecognised model as synthetic scenarios, since they cannot be provoked on demand (fixture README); offline replay passes.
+
+Scope change (2026-09-26): compaction and the full live contract suite moved to Task 39, which replaces the between-turn compaction design with plugin-owned in-turn compaction (D23).
 
 Task 33 verification note (2026-09-25): `uv run poe check` passes with a dedicated `TMUX_TMPDIR` (584 passed, 14 skipped; coverage above the 80% gate). An offline replay now includes a genuine redacted OpenRouter stream. The default sandbox's host-only probe failed with `gaierror`; the same host-only probe with network escalation returned HTTP 200. With the local settings environment loaded only into the Claude subprocess, one short Claude Code 2.1.281 turn on the configured Haiku model emitted `SessionStarted`, `Message`, non-zero `UsageReported`, and `TurnEnded`. This shows the earlier retry-only timeout was caused by the sandbox network restriction; no auth, model, or protocol failure reproduced after escalation. The other genuine sample types, full live contract suite, and `/compact` after context overflow remain open. Overflow was not attempted.
 
@@ -257,8 +258,8 @@ Task 33 local Claude session audit (2026-09-25): read-only inspection covered 34
 ### Task 34: Codex headless plugin
 Refs: 04 §5.
 - [x] `exec` / `exec resume` argv with closed stdin, workspace-write sandbox with the run dir and the git common dir writable (verify persistence across `exec resume`), `--json` parser, error-message JSON mapping, rollout context and `rate_limits`, `interactive_command`, `headless`, `doctor`.
-- [x] Compaction per 04 §5: `model_auto_compact_token_limit` from `compact_at_pct` and the model's window on every turn, compact-and-rerun on `CONTEXT`, `Compacted` from the rollout's `compacted` entry.
-- [ ] Recorded samples under `tests/fixtures/agents/codex/` (first turn, resume with model change, usage limit, API key with null `rate_limits`); offline checks pass; live checks pass, including a commit from the worktree. First-turn and resume-with-model-change samples are genuine redacted 0.156.1 captures; the low-threshold compaction sample is a genuine redacted protocol excerpt. The prior live suite and worktree commit check pass. The OpenRouter fixture is a genuine API-key turn with null quota windows through a native custom provider; it is distinct from a direct OpenAI API-key sample. A genuine headless usage-limit capture remains unavailable. Error classification is synthetic offline coverage, documented in the fixture README.
+- [x] Compaction per 04 §5 as designed then: `model_auto_compact_token_limit` from `compact_at_pct` and the model's window on every turn, compact-and-rerun on a context failure, `Compacted` from the rollout's `compacted` entry. Superseded by Task 39 (in-turn compaction).
+- [x] Recorded samples under `tests/fixtures/agents/codex/` (first turn, resume with model change, usage limit, API key with null `rate_limits`); offline checks pass; live checks pass, including a commit from the worktree. First-turn and resume-with-model-change samples are genuine redacted 0.156.1 captures; the low-threshold compaction sample is a genuine redacted protocol excerpt. The prior live suite and worktree commit check pass. The OpenRouter fixture is a genuine API-key turn with null quota windows through a native custom provider; it is distinct from a direct OpenAI API-key sample. A genuine headless usage-limit capture cannot be provoked on demand; usage-limit and error classification are synthetic offline coverage, documented in the fixture README (accepted 2026-09-26).
 
 Task 34 verification note (2026-09-25): `uv run poe check` passes (696 passed, 28 skipped; coverage exceeds the 80% gate). All six live contract checks pass, as do the isolated worktree model-change persistence check and doctor (8 passed in 139.12s). The later OpenRouter fixture provides a genuine API-key/null-quota sample; a genuine usage-limit sample remains unavailable.
 
@@ -286,13 +287,19 @@ Refs: 04 §3, 06 §2, 07 §5.
 - [x] E2E E1 and E2 (queued delivery, 07 §5) pass.
 
 ### Task 39: Proactive context compaction within a turn
-Refs: 01 D23, 04 §1 obligation 8, §3–5, 03 §7.
+Refs: 01 D23, 03 §4.1, §7, 04 §1 obligation 8, §3–5.
 - [x] Clarify the agent-agnostic requirement: configurable threshold (default 80%), prevention within a running turn, session and task continuity, and exceptional overflow recovery. Distinguish previous between-turn evidence from compliance with this requirement.
-- [ ] Shared contract checks exercise threshold crossing and repeated compaction within one turn, pending input and output allowance, and explicit rejection of combinations without verified prevention.
-- [ ] Claude enforces proactive compaction within a running turn for supported model/provider combinations, including when display context usage is unavailable; genuine live evidence verifies continuation and retained task context without overflow.
-- [ ] Codex's native threshold is verified within a running turn for supported model/provider combinations; missing window metadata cannot silently disable protection. Fix any gaps revealed by these checks.
-- [ ] Live contract check 6 passes for both agents: start below a low threshold, grow context during the same turn, observe compaction before overflow, continue to a valid report and recall earlier context. No second Shikiru turn is used to trigger the compaction.
-- [ ] `uv run poe check` passes; record CLI versions, model/provider combinations and genuine redacted evidence. Existing Task 33/34 compaction notes do not prove this stronger guarantee.
+- [ ] Core owns no context handling: `FailureKind.CONTEXT`, its recovery branch, the handoff on a context failure in `session_for` and `CONTEXT` in the Helper's classification are removed; an unrecovered context failure is the plugin's `TurnFailed(OTHER)`. `Compacted` stays a display-only signal and event.
+- [ ] Offline contract check 3 per 04 §3: threshold crossing and repeated compaction within one turn continue to one `TurnEnded`; context failure → compaction and rerun → `TurnEnded`; failed recovery → `TurnFailed(OTHER)`.
+- [ ] Claude compacts within a running turn per 04 §4 against Claude's own window, independent of the display `context_used_pct`; the mechanism (native or plugin-driven) is chosen from live evidence, and the before-turn `/compact` is removed if subsumed.
+- [ ] Codex's native limit is verified within a running turn per 04 §5; a model with no known window is reported by doctor instead of silently running unprotected.
+- [ ] Live contract checks 1–6 pass for both agents in the Operator's configuration; check 6 needs no second Shikiru turn to trigger compaction.
+- [ ] `uv run poe check` passes; record CLI versions, models and genuine redacted evidence.
+
+### Task 40: Probe every configured rung
+Refs: 04 §3, 06 §2.
+- [ ] `doctor --probe` runs live check 1 on each agent's first rung and a smoke turn ("Hi", must end in `TurnEnded`) on every other distinct rung (agent, model, effort) across the configured ladders, reporting each rung's result and the stream tail and stderr on failure.
+- Tests: integration with the fake agent: a ladder with several rungs per agent probes each distinct rung once; a failing rung is reported by agent, model and effort.
 
 ## Phase 5 — Resilience and operator completeness
 

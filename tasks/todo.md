@@ -38,12 +38,13 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 31: Usage rules and price-table removal
 - [x] Task 38: Code health from the 2026-09-25 review
 - [x] Task 32: Headless contract, SDK, contract kit and fake agent
-- [ ] Task 33: Claude Code headless plugin
-- [ ] Task 34: Codex headless plugin
+- [x] Task 33: Claude Code headless plugin
+- [x] Task 34: Codex headless plugin
 - [x] Task 35: Engine on process-per-turn; screen machinery removed
 - [x] Task 36: Pane views, take over / hand back, queued `say`
 - [x] Task 37: Probe and real E2E on headless turns
 - [ ] Task 39: Proactive context compaction within a turn
+- [ ] Task 40: Probe every configured rung
 
 ## Phase 5 — Resilience and operator completeness
 - [ ] Task 22: Engine restart recovery
