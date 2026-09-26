@@ -23,7 +23,6 @@ from shikiru.domain.recovery import (
     Backoff,
     Completed,
     Failed,
-    Handoff,
     NextRung,
     ProtocolError,
     RecoveryPolicy,
@@ -504,12 +503,6 @@ class TaskFlow:
                 counters,
                 stall_recoveries=counters.stall_recoveries + 1,
             )
-        elif isinstance(action, Handoff):
-            self._force_handoff.add(task.id)
-            updated = self.require_task(task.id)
-            next_counters = dataclasses.replace(
-                counters, context_handoffs=counters.context_handoffs + 1
-            )
         elif isinstance(action, NextRung):
             return await self._apply_next_rung(task, step, role, result, action)
         else:
@@ -692,8 +685,7 @@ class TaskFlow:
         conflict_context: str | None = None,
     ) -> _TurnExecution:
         role = role_override if role_override is not None else ACTING_ROLE[step]
-        force_new = task.id in self._force_handoff
-        selection = self._sessions.session_for(task, role, force_new=force_new)
+        selection = self._sessions.session_for(task, role)
 
         history = self._history.load(task.id)
         continue_turn = task.id in self._continue_next

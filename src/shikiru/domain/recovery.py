@@ -18,7 +18,6 @@ BACKOFF_SCHEDULE: tuple[timedelta, ...] = (
     timedelta(minutes=5),
 )
 MAX_STALL_RECOVERIES_PER_TURN = 2
-CONTEXT_HANDOFFS_PER_TURN = 1
 OTHER_RETRIES_PER_TURN = 1
 QUOTA_MARGIN = timedelta(seconds=60)
 QUOTA_PROBE = timedelta(minutes=15)
@@ -62,7 +61,6 @@ class TurnCounters:
     stall_recoveries: int = 0
     unavailable_retries: int = 0
     other_retries: int = 0
-    context_handoffs: int = 0
 
 
 @dataclass(frozen=True)
@@ -103,11 +101,6 @@ class ResumeTurn:
 
 
 @dataclass(frozen=True)
-class Handoff:
-    """Start a new session on the same rung with a `handoff` turn."""
-
-
-@dataclass(frozen=True)
 class RetryTurn:
     """Re-run the current turn on the live session."""
 
@@ -119,7 +112,7 @@ class Escalate:
     reason: EscalationReason
 
 
-Action = WaitForQuota | Backoff | NextRung | ResumeTurn | Handoff | RetryTurn | Escalate
+Action = WaitForQuota | Backoff | NextRung | ResumeTurn | RetryTurn | Escalate
 
 
 def quota_block_until(resets_at: datetime | None, now: datetime) -> datetime:
@@ -156,11 +149,6 @@ def _decide_failure(result: Failed, counters: TurnCounters, policy: RecoveryPoli
         action = _quota_action(result.resets_at, policy)
     elif result.kind is FailureKind.UNAVAILABLE:
         action = _decide_unavailable(counters, policy)
-    elif result.kind is FailureKind.CONTEXT:
-        if counters.context_handoffs < CONTEXT_HANDOFFS_PER_TURN:
-            action = Handoff()
-        else:
-            action = Escalate(EscalationReason.AGENT_ERROR)
     elif result.kind is FailureKind.AUTH:
         action = Escalate(EscalationReason.AGENT_AUTH)
     elif result.kind is FailureKind.OTHER and counters.other_retries < OTHER_RETRIES_PER_TURN:

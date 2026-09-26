@@ -63,15 +63,21 @@ OUTPUT_TOKENS_PER_TURN = 60
 CACHE_READ_TOKENS_PER_TURN = 20
 CACHE_WRITE_TOKENS_PER_TURN = 10
 _STDERR_LINE_ENDINGS = "\r\n"
+_CONTEXT_EXCEEDED_EVENT = "context_exceeded"
 
 
 @dataclass
 class FakeTurnParser:
     """Parse the fake CLI's JSONL signal stream."""
 
+    context_exceeded: bool = False
+
     def feed(self, line: str) -> list[AgentSignal]:
         entry = json.loads(line)
         event = entry["event"]
+        if event == _CONTEXT_EXCEEDED_EVENT:
+            self.context_exceeded = True
+            return [TurnFailed(FailureKind.OTHER, entry["message"], None)]
         builder = _SIGNAL_BUILDERS.get(event)
         if builder is None:
             message = f"unrecognized fake stream event {event!r}"
@@ -160,6 +166,7 @@ class FakeTurnSequence(TurnProcessSequence):
         self._session_id = spec.session_id or new_session_id or str(uuid.uuid4())
         self._compact_at_pct = compact_at_pct
         self._state = "new"
+        self._parser = FakeTurnParser()
         self._base_env = {**os.environ, **spec.env, FAKE_SESSION_ID_ENV_VAR: self._session_id}
 
     def start(self, spec: TurnSpec) -> TurnProcess:
@@ -197,11 +204,8 @@ class FakeTurnSequence(TurnProcessSequence):
         return self._prompt_process(spec, retry=retry)
 
     def _after_prompt(self, spec: TurnSpec, previous: TurnProcessResult) -> TurnProcess | None:
-        context_failed = any(
-            isinstance(signal, TurnFailed) and signal.kind is FailureKind.CONTEXT
-            for signal in previous.signals
-        )
-        if not context_failed:
+        del previous
+        if not self._parser.context_exceeded:
             return None
         self._state = "context_compact"
         return self._compact_process(spec)
@@ -225,11 +229,12 @@ class FakeTurnSequence(TurnProcessSequence):
             argv.extend((_EFFORT_ARGUMENT, spec.rung.effort))
         environment[_TURN_RETRY_ENV_VAR] = "1" if retry else "0"
         environment[FAKE_COMPACT_AT_PCT_ENV_VAR] = str(self._compact_at_pct)
+        self._parser = FakeTurnParser()
         return TurnProcess(
             argv=tuple(argv),
             cwd=spec.cwd,
             env=environment,
-            parser=FakeTurnParser(),
+            parser=self._parser,
         )
 
     def _compact_process(self, spec: TurnSpec) -> TurnProcess:

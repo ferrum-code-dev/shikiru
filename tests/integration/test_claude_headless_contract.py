@@ -392,7 +392,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 expected_signals=[
                     SessionStarted(_SESSION_RESUMED),
                     TurnFailed(
-                        FailureKind.CONTEXT,
+                        FailureKind.OTHER,
                         "Prompt is too long for the context window",
                         None,
                     ),

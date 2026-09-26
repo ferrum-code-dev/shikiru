@@ -28,7 +28,7 @@ _REBUILD_PROMPT = (
     "## Last message\n\n{last_message}\n\n## Facts\n\n{facts}\n"
 )
 _CLASSIFY_PROMPT = (
-    "Classify this unrecognised agent failure into QUOTA, UNAVAILABLE, CONTEXT, AUTH or OTHER. "
+    "Classify this unrecognised agent failure into QUOTA, UNAVAILABLE, AUTH or OTHER. "
     "Give confidence from 0 to 1 and a reset time only when known. If the text is ambiguous, "
     "return UNKNOWN with low confidence.\n\n## Failure\n\n{failure}\n"
 )

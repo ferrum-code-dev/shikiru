@@ -202,36 +202,6 @@ async def test_unavailable_failure_uses_backoff_then_resumes_the_session(
     assert starts == [run.session_id, run.session_id]
 
 
-async def test_context_failure_after_plugin_compaction_starts_one_fresh_session(
-    engine_env: EngineEnv, tmux_server: TmuxServer
-) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    settings = flow_settings()
-    flow_task, task_id = await _start_flow(
-        engine_env,
-        tmux_server,
-        settings=settings,
-        clock=clock,
-        script=[
-            {"kind": "fail", "failure_kind": "context"},
-            {"kind": "fail", "failure_kind": "context"},
-        ],
-    )
-
-    await _drive(flow_task, clock)
-
-    final = engine_env.tasks.get(task_id)
-    assert final is not None
-    assert final.step is Step.INTEGRATE
-    runs = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
-    assert len(runs) == 2
-    assert runs[0].session_id != runs[1].session_id
-    assert runs[0].usage.input_tokens == 120
-    events = build_flow(engine_env, settings, clock=clock).events.since(0, task_id=task_id)
-    compacted = [event for event in events if event.kind is EventKind.COMPACTED]
-    assert compacted
-
-
 async def test_auth_failure_escalates_with_the_agent_auth_reason(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:

@@ -42,7 +42,7 @@ from shikiru.operator.probe import init_scratch_repo, live_report_problem, prepa
 from shikiru.process import SubprocessRunner
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from pydantic import BaseModel
@@ -185,7 +185,7 @@ class AgentContractSuite:
         failure = await _run_synthetic_compaction(tmp_path / "failure", second_failure=True)
         terminal = [signal for signal in failure if isinstance(signal, (TurnEnded, TurnFailed))]
         _expect(
-            terminal == [TurnFailed(FailureKind.CONTEXT, "second context failure", None)],
+            terminal == [TurnFailed(FailureKind.OTHER, "second context failure", None)],
             "a second context failure did not end the turn",
         )
 
@@ -198,14 +198,17 @@ class AgentContractSuite:
             )
             agent = self.agent_factory()(context)
             sequence = self.process_sequence(agent, case.spec)
-            command = sequence.start(case.spec)
-            commands = [command]
-            outcomes = _process_outcomes(self.parser_for, case.outcome_streams)
-            for outcome in outcomes:
-                command = sequence.advance(case.spec, outcome)
-                if command is None:
-                    break
+            command: TurnProcess | None = sequence.start(case.spec)
+            commands: list[TurnProcess] = []
+            outcomes: list[TurnProcessResult] = []
+            streams = iter(case.outcome_streams)
+            while command is not None:
                 commands.append(command)
+                sample = next(streams, None)
+                if sample is None:
+                    break
+                outcomes.append(_process_outcome(command.parser, sample))
+                command = sequence.advance(case.spec, outcomes[-1])
             _expect([item.argv for item in commands] == list(case.expected_argv), case.name)
             _expect(len(commands) == len(case.expected_env), case.name)
             for command, expected in zip(commands, case.expected_env, strict=True):
@@ -379,20 +382,12 @@ def _replay(parser: TurnParser, sample: RecordedStream) -> list[AgentSignal]:
     return signals
 
 
-def _process_outcomes(
-    parser_for: Callable[[RecordedStream], TurnParser], samples: Sequence[RecordedStream]
-) -> list[TurnProcessResult]:
-    outcomes: list[TurnProcessResult] = []
-    for sample in samples:
-        signals = _replay(parser_for(sample), sample)
-        outcomes.append(
-            TurnProcessResult(
-                signals=tuple(signals),
-                exit_code=sample.exit_code,
-                stderr=sample.stderr.read_text(),
-            )
-        )
-    return outcomes
+def _process_outcome(parser: TurnParser, sample: RecordedStream) -> TurnProcessResult:
+    return TurnProcessResult(
+        signals=tuple(_replay(parser, sample)),
+        exit_code=sample.exit_code,
+        stderr=sample.stderr.read_text(),
+    )
 
 
 def assert_agent_obligations(signals: Sequence[AgentSignal], session_id: str | None) -> None:
@@ -516,7 +511,7 @@ class _SyntheticParser:
         if event == "ended":
             return [TurnEnded(entry["text"])]
         if event == "context_failure":
-            return [TurnFailed(FailureKind.CONTEXT, entry["text"], None)]
+            return [TurnFailed(FailureKind.OTHER, entry["text"], None)]
         message = f"unrecognized synthetic event {event!r}"
         raise ValueError(message)
 

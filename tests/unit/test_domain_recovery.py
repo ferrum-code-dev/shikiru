@@ -13,7 +13,6 @@ from shikiru.domain.recovery import (
     Completed,
     Escalate,
     Failed,
-    Handoff,
     NextRung,
     ProtocolError,
     RecoveryPolicy,
@@ -21,7 +20,6 @@ from shikiru.domain.recovery import (
     RetryTurn,
     Stalled,
     TurnCounters,
-    TurnResult,
     WaitForQuota,
     decide,
 )
@@ -92,13 +90,6 @@ def _policy(
             NextRung(different_agent=False),
         ),
         (
-            FailureKind.CONTEXT,
-            None,
-            _policy(),
-            TurnCounters(),
-            Handoff(),
-        ),
-        (
             FailureKind.AUTH,
             None,
             _policy(),
@@ -134,7 +125,6 @@ def _policy(
         "quota-exhausted",
         "unavailable-backoff",
         "unavailable-next-rung",
-        "context-handoff",
         "auth-escalates",
         "other-retries",
         "other-retry-exhausted",
@@ -168,15 +158,10 @@ def test_stall_resumes_then_escalates_after_the_limit(
     assert decide(Stalled(), counters, _policy()) == expected
 
 
-@pytest.mark.parametrize(
-    ("result", "expected"),
-    [
-        (ProtocolError(), Escalate(EscalationReason.AGENT_PROTOCOL)),
-        (Failed(FailureKind.CONTEXT, None, ""), Handoff()),
-    ],
-)
-def test_terminal_recovery_outcomes(result: TurnResult, expected: object) -> None:
-    assert decide(result, TurnCounters(), _policy()) == expected
+def test_protocol_error_escalates() -> None:
+    assert decide(ProtocolError(), TurnCounters(), _policy()) == Escalate(
+        EscalationReason.AGENT_PROTOCOL
+    )
 
 
 def test_decide_rejects_a_completed_result() -> None:

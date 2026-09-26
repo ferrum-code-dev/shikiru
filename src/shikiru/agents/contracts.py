@@ -56,7 +56,6 @@ class FailureKind(StrEnum):
 
     QUOTA = auto()
     UNAVAILABLE = auto()
-    CONTEXT = auto()
     AUTH = auto()
     OTHER = auto()
     UNKNOWN = auto()

@@ -152,6 +152,7 @@ class CodexTurnParser:
         self._malformed = False
         self._terminal = False
         self._did_complete = False
+        self._context_exceeded = False
         self._rollout = rollout_path or _rollout_path(home, session_id)
         self._initial_compaction_count = _compaction_count(_read_rollout(self._rollout))
         self._handlers = {
@@ -162,6 +163,11 @@ class CodexTurnParser:
             _TURN_FAILED: self._record_failure,
             _ERROR_TYPE: self._record_failure,
         }
+
+    @property
+    def context_exceeded(self) -> bool:
+        """Return whether this process failed because its context was full."""
+        return self._context_exceeded
 
     def feed(self, line: str) -> list[AgentSignal]:
         if self._terminal:
@@ -228,6 +234,7 @@ class CodexTurnParser:
                 )
             else:
                 kind, message = failure
+                self._context_exceeded = kind is FailureKind.OTHER
                 signals.append(TurnFailed(kind, message, None))
         return signals
 
@@ -290,6 +297,7 @@ class CodexTurnParser:
         )
         reset = error_reset or _latest_reset(quota) or self._reset_time.parse(message)
         kind = FailureKind.UNKNOWN if classification is None else classification
+        self._context_exceeded = kind is FailureKind.OTHER
         detail = message or _UNKNOWN_ERROR_MESSAGE
         if stderr:
             detail = f"{detail}; stderr: {stderr.strip()}"
@@ -322,6 +330,7 @@ class CodexTurnSequence(TurnProcessSequence):
         self._session_id = spec.session_id
         self._phase = "start"
         self._usage = spec.usage
+        self._parser: CodexTurnParser | None = None
         self._context_window = context_window(self._home, spec.rung.model, spec.session_id)
 
     def start(self, spec: TurnSpec) -> TurnProcess:
@@ -334,7 +343,8 @@ class CodexTurnSequence(TurnProcessSequence):
         if (
             self._phase == "prompt"
             and isinstance(terminal, TurnFailed)
-            and terminal.kind is FailureKind.CONTEXT
+            and self._parser is not None
+            and self._parser.context_exceeded
         ):
             self._phase = "retry"
             return self._process(spec)
@@ -364,6 +374,7 @@ class CodexTurnSequence(TurnProcessSequence):
             clock=self._clock,
             reset_time=self._reset_time,
         )
+        self._parser = parser
         return TurnProcess(tuple(argv), spec.cwd, self._environment(spec), parser)
 
     def _token_limit(self) -> int | None:
@@ -573,7 +584,7 @@ def _classify_error(message: str, status: int | None, code: str) -> FailureKind 
     if any(token in text for token in _UNAVAILABLE_TEXT):
         return FailureKind.UNAVAILABLE
     if any(token in text for token in _CONTEXT_TEXT):
-        return FailureKind.CONTEXT
+        return FailureKind.OTHER
     return None
 
 

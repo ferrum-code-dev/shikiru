@@ -435,13 +435,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         sequence = agent.process_sequence(spec)
         first = sequence.start(spec)
         session_id = "session-context-failure"
-        parser = CodexTurnParser(
-            session_id=None,
-            initial_usage=None,
-            home=Path(spec.env[CODEX_HOME_ENV_VAR]),
-            clock=SystemClock(),
-            reset_time=ResetTimeParser(SystemClock()),
-        )
+        parser = first.parser
         signals = parser.feed(json.dumps({"type": "thread.started", "thread_id": session_id}))
         parser.feed(
             json.dumps(
@@ -465,7 +459,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert second is not None
         assert second.argv[:4] == ("codex", "exec", RESUME_SUBCOMMAND, session_id)
         assert f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000" in second.argv
-        terminal = TurnFailed(FailureKind.CONTEXT, "context length exceeded", None)
+        terminal = TurnFailed(FailureKind.OTHER, "context length exceeded", None)
         assert (
             sequence.advance(
                 spec,
@@ -507,7 +501,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                     "code": "context_length_exceeded",
                     "message": "prompt exceeds context window",
                 },
-                TurnFailed(FailureKind.CONTEXT, "prompt exceeds context window", None),
+                TurnFailed(FailureKind.OTHER, "prompt exceeds context window", None),
             ),
             (
                 {"status": 418, "message": "unrecognized response"},

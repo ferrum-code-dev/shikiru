@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Protocol
 
 from shikiru.agents.contracts import (
     AgentSignal,
-    Compacted,
     FailureKind,
     SessionStarted,
     TurnEnded,
@@ -16,7 +15,7 @@ from shikiru.agents.contracts import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+    from collections.abc import AsyncIterator, Callable, Mapping
     from pathlib import Path
 
     from shikiru.process import SpawnedProcess, SubprocessRunner
@@ -167,14 +166,6 @@ class StreamingTurn:
                     )
                     yield terminal
                     return
-                terminal_problem = self._intermediate_terminal_problem(
-                    execution.terminal, outcome.signals
-                )
-                if terminal_problem is not None:
-                    yield self._unknown_failure(
-                        terminal_problem, outcome.exit_code, process.stderr_tail
-                    )
-                    return
                 process = await self._runner.spawn(
                     next_process.argv,
                     cwd=next_process.cwd,
@@ -230,20 +221,6 @@ class StreamingTurn:
             return None, "turn emitted a signal before SessionStarted"
         self._signal_count += 1
         return signal, None
-
-    @staticmethod
-    def _intermediate_terminal_problem(
-        terminal: TurnEnded | TurnFailed | None, signals: Sequence[AgentSignal]
-    ) -> str | None:
-        if terminal is None:
-            return None
-        if isinstance(terminal, TurnFailed) and terminal.kind is FailureKind.CONTEXT:
-            return None
-        if isinstance(terminal, TurnEnded) and any(
-            isinstance(signal, Compacted) for signal in signals
-        ):
-            return None
-        return "only context failure or successful compaction may be followed by another process"
 
     @staticmethod
     def _unknown_message(reason: str, exit_code: int, stderr_tail: str) -> str:

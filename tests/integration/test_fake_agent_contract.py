@@ -255,7 +255,7 @@ class TestFakeAgentContract(AgentContractSuite):
                 exit_code=0,
                 expected_signals=[
                     SessionStarted(_RESUMED_SESSION_ID),
-                    TurnFailed(FailureKind.CONTEXT, "context full", None),
+                    TurnFailed(FailureKind.OTHER, "context full", None),
                 ],
                 session_id=_RESUMED_SESSION_ID,
             ),
@@ -266,7 +266,7 @@ class TestFakeAgentContract(AgentContractSuite):
                 exit_code=0,
                 expected_signals=[
                     SessionStarted(_RESUMED_SESSION_ID),
-                    TurnFailed(FailureKind.CONTEXT, "context still full", None),
+                    TurnFailed(FailureKind.OTHER, "context still full", None),
                 ],
                 session_id=_RESUMED_SESSION_ID,
             ),
@@ -503,7 +503,7 @@ class TestFakeAgentContract(AgentContractSuite):
                 expected_final_signals=[
                     SessionStarted(_RESUMED_SESSION_ID),
                     Compacted(2000, 400),
-                    TurnFailed(FailureKind.CONTEXT, "context still full", None),
+                    TurnFailed(FailureKind.OTHER, "context still full", None),
                 ],
             ),
         ]

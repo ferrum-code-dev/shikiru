@@ -99,20 +99,6 @@ async def test_different_agent_starts_a_handoff_run_when_history_has_a_report(
     assert runs[1].status is RunStatus.CLOSED
 
 
-async def test_forced_new_session_closes_the_current_run(engine_env: EngineEnv) -> None:
-    task = await engine_env.build_task()
-    sessions = _session_manager(engine_env)
-    first = sessions.session_for(task, Role.IMPLEMENTER)
-    engine_env.runs.set_session(first.run.id, "session-1", "resume session-1")
-
-    selected = sessions.session_for(task, Role.IMPLEMENTER, force_new=True)
-
-    assert selected.run.id != first.run.id
-    assert selected.session_id is None
-    assert selected.handoff is False
-    assert engine_env.runs.for_task(task.id)[1].status is RunStatus.CLOSED
-
-
 async def test_task_closure_closes_all_role_runs(engine_env: EngineEnv) -> None:
     task = await engine_env.build_task()
     sessions = _session_manager(engine_env)

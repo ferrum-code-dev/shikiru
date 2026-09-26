@@ -45,11 +45,11 @@ class SessionManager:
         self._project_root = project_root
         self._settings = settings
 
-    def session_for(self, task: Task, role: Role, *, force_new: bool = False) -> SessionSelection:
+    def session_for(self, task: Task, role: Role) -> SessionSelection:
         """Choose a session, resuming it across turns and same-agent rung changes (03 §4.1)."""
         rung = pick_rung(task, role, self._settings)
         current = self._runs.get_live(task.id, role)
-        if current is not None and current.agent == rung.agent and not force_new:
+        if current is not None and current.agent == rung.agent:
             self._runs.set_rung(current.id, rung)
             refreshed = self._runs.get_live(task.id, role)
             if refreshed is None:

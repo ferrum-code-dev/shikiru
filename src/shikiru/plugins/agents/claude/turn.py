@@ -120,7 +120,13 @@ _ERROR_STATUSES = (
 )
 _UNAVAILABLE_STATUS_MIN = 500
 _UNAVAILABLE_STATUS_MAX = 599
-_CONTEXT_ERROR_TEXTS = ("prompt is too long", "context length", "context window")
+_CONTEXT_ERROR_TEXTS = (
+    "prompt is too long",
+    "prompt_too_long",
+    "context length",
+    "context_length_exceeded",
+    "context window",
+)
 _QUOTA_ERROR_TEXTS = ("usage limit", "rate limit", "too many requests")
 _UNAVAILABLE_ERROR_TEXTS = ("overloaded", "unrecognized_model", "unrecognized model")
 _AUTH_ERROR_TEXTS = ("authentication", "unauthorized", "invalid api key")
@@ -163,6 +169,12 @@ class ClaudeTurnParser:
         self._malformed_line: str | None = None
         self._did_compact = False
         self._failure_payload: Mapping[str, Any] | None = None
+        self._context_exceeded = False
+
+    @property
+    def context_exceeded(self) -> bool:
+        """Return whether this process failed because its context was full."""
+        return self._context_exceeded
 
     def feed(self, line: str) -> list[AgentSignal]:
         if self._terminal:
@@ -328,7 +340,7 @@ class ClaudeTurnParser:
             return []
         if self._compact_process and not self._has_compaction_boundary:
             self._terminal = True
-            return [TurnFailed(FailureKind.CONTEXT, _INVALID_COMPACTION_MESSAGE, None)]
+            return [TurnFailed(FailureKind.OTHER, _INVALID_COMPACTION_MESSAGE, None)]
         usage = _mapping(payload.get(_USAGE_FIELD))
         model_usage = _mapping(payload.get(_MODEL_USAGE_FIELD))
         selected_model_usage = _select_model_usage(model_usage, self._model)
@@ -402,6 +414,7 @@ class ClaudeTurnParser:
             return classified
         if classified is None:
             classified = _classify_text(lowered, message, stderr, status)
+            self._context_exceeded = classified is not None and classified[0] is FailureKind.OTHER
         if classified is not None and classified[0] is FailureKind.QUOTA:
             kind, failure_message, resets_at = classified
             return kind, failure_message, resets_at or self._reset_time.parse(message)
@@ -435,6 +448,7 @@ class ClaudeTurnSequence(TurnProcessSequence):
         self._session_id = spec.session_id or session_id or str(uuid.uuid4())
         self._phase = "start"
         self._usage = spec.usage
+        self._parser: ClaudeTurnParser | None = None
 
     @property
     def session_id(self) -> str:
@@ -476,7 +490,11 @@ class ClaudeTurnSequence(TurnProcessSequence):
     def _advance_prompt(
         self, spec: TurnSpec, terminal: TurnEnded | TurnFailed | None, _compacted: bool
     ) -> TurnProcess | None:
-        if isinstance(terminal, TurnFailed) and terminal.kind is FailureKind.CONTEXT:
+        if (
+            isinstance(terminal, TurnFailed)
+            and self._parser is not None
+            and self._parser.context_exceeded
+        ):
             self._phase = "failure_compact"
             return self._process(spec, compact=True)
         return None
@@ -511,6 +529,7 @@ class ClaudeTurnSequence(TurnProcessSequence):
             reset_time=self._reset_time,
             compact_process=compact,
         )
+        self._parser = parser
         return TurnProcess(
             tuple(argv),
             spec.cwd,
@@ -641,7 +660,7 @@ def _classify_text(
     if _contains(lowered, _AUTH_ERROR_TEXTS):
         return FailureKind.AUTH, message or stderr.strip(), None
     if _contains(lowered, _CONTEXT_ERROR_TEXTS):
-        return FailureKind.CONTEXT, message or stderr.strip(), None
+        return FailureKind.OTHER, message or stderr.strip(), None
     if status is not None or message or stderr:
         return FailureKind.UNKNOWN, message or stderr.strip(), None
     return None
