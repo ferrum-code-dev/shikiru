@@ -88,7 +88,6 @@ class TurnMonitor:
         run_id: int,
         turn_dir: Path,
         run_dir: Path,
-        cwd: Path,
     ) -> TurnEnded | TurnFailed | Stalled | ProtocolError:
         """Consume `turn` through its terminal signal, or stop it when it stalls."""
         pid_path = role_dir(run_dir, role.value) / _TURN_PID_NAME
@@ -134,7 +133,7 @@ class TurnMonitor:
                     task=task,
                     role=role,
                     run_id=run_id,
-                    cwd=cwd,
+                    run_dir=run_dir,
                     tool_running=tool_running,
                 )
                 if terminal is not None:
@@ -161,12 +160,12 @@ class TurnMonitor:
         task: Task,
         role: Role,
         run_id: int,
-        cwd: Path,
+        run_dir: Path,
         tool_running: bool,
     ) -> tuple[bool, TurnEnded | TurnFailed | None]:
         if isinstance(signal, SessionStarted):
             self._sessions.record_session_started(
-                run_id=run_id, agent=agent, session_id=signal.session_id, cwd=cwd
+                run_id=run_id, agent=agent, session_id=signal.session_id, run_dir=run_dir
             )
             await self._refresh_titles(task)
         elif isinstance(signal, Message):

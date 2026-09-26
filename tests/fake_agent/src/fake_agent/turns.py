@@ -278,8 +278,8 @@ class FakeHeadlessTurnAgent:
             new_session_id=self._new_session_id,
         )
 
-    def interactive_command(self, session_id: str, cwd: Path) -> tuple[str, ...]:
-        del cwd
+    def interactive_command(self, session_id: str, run_dir: Path) -> tuple[str, ...]:
+        del run_dir
         return (
             sys.executable,
             "-m",

@@ -193,13 +193,10 @@ class AgentContractSuite:
         self, tmp_path: Path
     ) -> None:
         for case in self.invocation_cases(tmp_path):
-            agent = self.agent_factory()(
-                AgentContext(
-                    options=case.options,
-                    runner=SubprocessRunner(),
-                    clock=SystemClock(),
-                )
+            context = AgentContext(
+                options=case.options, runner=SubprocessRunner(), clock=SystemClock()
             )
+            agent = self.agent_factory()(context)
             sequence = self.process_sequence(agent, case.spec)
             command = sequence.start(case.spec)
             commands = [command]
@@ -232,8 +229,13 @@ class AgentContractSuite:
                 assert_agent_obligations(case.expected_final_signals, case.spec.session_id)
             if case.interactive_session_id is not None:
                 _expect(case.expected_interactive_command is not None, case.name)
+                restarted = self.agent_factory()(context)
                 _expect(
-                    tuple(agent.interactive_command(case.interactive_session_id, case.spec.cwd))
+                    tuple(
+                        restarted.interactive_command(
+                            case.interactive_session_id, case.spec.run_dir
+                        )
+                    )
                     == case.expected_interactive_command,
                     case.name,
                 )

@@ -52,9 +52,9 @@ class FakeAgent:
         """Build the fake CLI process sequence for contract scenarios."""
         return self._headless_turns.process_sequence(spec)
 
-    def interactive_command(self, session_id: str, cwd: Path) -> Sequence[str]:
+    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
         """Return the optional fake REPL command for a future operator take-over."""
-        return self._headless_turns.interactive_command(session_id, cwd)
+        return self._headless_turns.interactive_command(session_id, run_dir)
 
     async def doctor(self) -> list[CheckResult]:
         """Report the fake CLI as available."""

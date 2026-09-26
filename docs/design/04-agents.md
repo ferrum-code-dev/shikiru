@@ -62,7 +62,7 @@ class Agent(Protocol):
     """An agent CLI plugin."""
     name: str
     async def start_turn(self, spec: TurnSpec) -> Turn: ...
-    def interactive_command(self, session_id: str, cwd: Path) -> Sequence[str]: ...   # take over (03 §9); also the resume command
+    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]: ...   # take over (03 §9); also the resume command
     async def doctor(self) -> list[CheckResult]: ...     # binary, version, native access
     def headless(self) -> HeadlessAgent | None: ...
 

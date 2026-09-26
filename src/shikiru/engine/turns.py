@@ -171,7 +171,6 @@ class TurnRunner:
                 run_id=selection.run.id,
                 turn_dir=turn_dir,
                 run_dir=task_run_dir,
-                cwd=task_root_dir,
             )
             if isinstance(terminal, TurnFailed):
                 result = await self._classify_unknown(terminal, task, selection)

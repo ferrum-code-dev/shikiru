@@ -276,7 +276,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 **Take over** (`TakeOver(task, role)`, by `Takeover`):
 1. If a turn is running on the task, `turn.stop()` and cancel the current step; the session persists.
 2. Set the `intervention` hold on **that task** and mark the run `taken_over`.
-3. Respawn the role's pane with the plugin's `interactive_command(session_id, task root)`, with the turn environment of §4.1. The Operator answers any dialog the TUI shows. With no session yet, take over is rejected.
+3. Respawn the role's pane in the task root with the plugin's `interactive_command(session_id, run dir)`, with the turn environment of §4.1. The Operator answers any dialog the TUI shows. With no session yet, take over is rejected.
 - **While held**: no turns start for the task. The pane border turns operator magenta and the title shows `⌨ operator`.
 
 **Hand back** (`HandBack(task, role)`, or the taken-over pane's process exits, which `LayoutGuard` turns into a `HandBack`):

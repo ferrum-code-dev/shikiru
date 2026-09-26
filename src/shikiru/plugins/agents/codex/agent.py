@@ -84,9 +84,9 @@ class CodexAgent:
             compact_at_pct=self._options.compact_at_pct,
         )
 
-    def interactive_command(self, session_id: str, cwd: Path) -> Sequence[str]:
+    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
         """Return Codex's interactive resume command for a headless session."""
-        del cwd
+        del run_dir
         return (CODEX_COMMAND, RESUME_SUBCOMMAND, session_id, *self._options.args)
 
     async def doctor(self) -> list[CheckResult]:

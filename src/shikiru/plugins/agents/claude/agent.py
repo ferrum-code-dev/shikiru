@@ -47,7 +47,6 @@ class ClaudeAgent:
         self._clock = clock
         self._options = options
         self._reset_time = ResetTimeParser(clock)
-        self._run_dirs: dict[str, Path] = {}
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one process-per-turn Claude Code exchange."""
@@ -55,7 +54,7 @@ class ClaudeAgent:
 
     def process_sequence(self, spec: TurnSpec) -> ClaudeTurnSequence:
         """Build the compact, prompt and retry process sequence for `spec`."""
-        sequence = ClaudeTurnSequence(
+        return ClaudeTurnSequence(
             spec,
             clock=self._clock,
             reset_time=self._reset_time,
@@ -63,13 +62,9 @@ class ClaudeAgent:
             args=self._options.args,
             environment=self._turn_environment,
         )
-        self._run_dirs[sequence.session_id] = spec.run_dir
-        return sequence
 
-    def interactive_command(self, session_id: str, cwd: Path) -> Sequence[str]:
+    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
         """Return Claude's interactive resume command for a headless session."""
-        del cwd
-        run_dir = self._run_dirs[session_id]
         return (
             CLAUDE_COMMAND,
             RESUME_FLAG,

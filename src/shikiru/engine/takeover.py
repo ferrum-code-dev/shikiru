@@ -76,8 +76,9 @@ class Takeover:
         self._tasks.set_holds(task.id, self._current(task.id).holds | {Hold.INTERVENTION})
         self._runs.mark_taken_over(run.id)
         root = task_root(self._project_root, task.id)
-        argv = self._agents.get(run.agent).interactive_command(run.session_id, root)
-        env = turn_environment(task, role, run_dir(self._project_root, task.id), self._project_name)
+        task_run_dir = run_dir(self._project_root, task.id)
+        argv = self._agents.get(run.agent).interactive_command(run.session_id, task_run_dir)
+        env = turn_environment(task, role, task_run_dir, self._project_name)
         await self._tmux.respawn_pane(pane_id, argv, env=env, cwd=root)
         await self._refresh_titles(self._current(task.id))
         self._events.append(

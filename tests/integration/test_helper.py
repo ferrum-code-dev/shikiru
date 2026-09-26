@@ -106,8 +106,8 @@ class _AgentWithoutHeadless:
         del spec
         raise AssertionError
 
-    def interactive_command(self, session_id: str, cwd: Path) -> Sequence[str]:
-        del session_id, cwd
+    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
+        del session_id, run_dir
         return ()
 
     async def doctor(self) -> list[CheckResult]:
