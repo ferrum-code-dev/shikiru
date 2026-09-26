@@ -387,3 +387,7 @@ async def test_unrecoverable_report_escalates_as_agent_protocol(
     assert final.status is Status.ESCALATED
     escalation = fetch_open_escalations(engine_env.connection)
     assert escalation[0].reason is EscalationReason.AGENT_PROTOCOL
+    [helper_event] = build_flow(engine_env, settings, clock=clock).events.since(
+        0, kinds=[EventKind.HELPER_ACTION], task_id=task_id
+    )
+    assert helper_event.data == {"role": Role.LEADER.value, "reason": "no report"}

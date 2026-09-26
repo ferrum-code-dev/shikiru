@@ -211,10 +211,8 @@ class TurnRunner:
             if report is not None:
                 return Completed(report=report), selection
             if nudges >= NUDGE_LIMIT:
-                return (
-                    await self._rebuild(turn_dir, request, task_root_dir, last_message),
-                    selection,
-                )
+                rebuilt = await self._rebuild(task, selection, turn_dir, request, last_message)
+                return rebuilt, selection
             nudges += 1
             on_nudge()
             prompt = _NUDGE_MESSAGE.format(prompt_path=prompt_path)
@@ -307,9 +305,10 @@ class TurnRunner:
 
     async def _rebuild(
         self,
+        task: Task,
+        selection: SessionSelection,
         turn_dir: Path,
         request: TurnRequest,
-        cwd: Path,
         last_message: str,
     ) -> TurnResult:
         helper_rung = self._settings.roles.helper.ladder[0]
@@ -320,14 +319,27 @@ class TurnRunner:
                 request.facts,
                 model=helper_rung.model,
                 effort=helper_rung.effort,
-                cwd=cwd,
+                cwd=task_root(self._project_root, task.id),
                 timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
             )
         except asyncio.CancelledError:
             raise
-        except ShikiruError, TimeoutError, OSError:
+        except (ShikiruError, TimeoutError, OSError) as error:
+            _LOGGER.exception("report rebuild failed for %s", task.id)
+            self._events.append(
+                EventKind.HELPER_ACTION,
+                task_id=task.id,
+                message=f"{task.id} report rebuild failed",
+                data={"role": selection.run.role.value, "error": str(error)},
+            )
             return ProtocolError()
         if isinstance(report, Unrecoverable):
+            self._events.append(
+                EventKind.HELPER_ACTION,
+                task_id=task.id,
+                message=f"{task.id} report could not be rebuilt",
+                data={"role": selection.run.role.value, "reason": report.unrecoverable},
+            )
             return ProtocolError()
         (turn_dir / HELPER_REPORT_FILENAME).write_text(report.model_dump_json(indent=2))
         return Completed(report=report, rebuilt=True)
