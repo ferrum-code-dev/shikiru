@@ -29,7 +29,7 @@ from shikiru.cli.view import view_command
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import Mode
-from shikiru.errors import ShikiruError, UsageError
+from shikiru.errors import EXIT_COMMAND_REJECTED, EXIT_GENERIC_ERROR, ShikiruError, UsageError
 from shikiru.operator.commands import Ack, AckStatus
 from shikiru.operator.lifecycle import CLI_DASH_COMMAND, CLI_ENGINE_COMMAND, PACKAGE_NAME
 from shikiru.view_log import CLI_VIEW_COMMAND
@@ -218,7 +218,7 @@ def doctor(
     else:
         Console().print(doctor_renderable(report))
     if not report.ok:
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_GENERIC_ERROR)
 
 
 @app.command(name=CLI_ENGINE_COMMAND, hidden=True)
@@ -293,13 +293,13 @@ async def _status_loop(
 
 
 def emit_ack(state: CliState, ack: Ack) -> None:
-    """Render an acknowledgement and map rejected commands to exit code four."""
+    """Render an acknowledgement and map rejected commands to their exit code."""
     if state.json_output:
         typer.echo(ack.model_dump_json())
     else:
         Console().print(ack_renderable(ack))
     if ack.status is AckStatus.REJECTED:
-        raise typer.Exit(code=4)
+        raise typer.Exit(code=EXIT_COMMAND_REJECTED)
 
 
 def _emit_value(state: CliState, value: object, human: str) -> None:
