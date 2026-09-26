@@ -168,11 +168,12 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 - Cost: `result.total_cost_usd` (cumulative per session) only when `modelUsage.<m>.costBasis` is `"list"`; report it as `api_equivalent`, independent of how access is configured. For any other cost basis, where the list-price estimate does not represent a reliable provider price, report `None`, `unknown`.
 - Context: the last assistant message's input and cache tokens ÷ `modelUsage.<m>.contextWindow` only when the cost basis is `"list"`. A CLI-assumed 200000 default is not a reliable provider-reported context window.
 
-**Compaction** (obligation 8), against Claude's own window for the model (`modelUsage.<m>.contextWindow`; a `[1m]` model suffix selects the larger one):
-- In-turn mechanism, *decided in Task 39 from live evidence*: Claude's native auto-compaction with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=<compact_at_pct>` in the turn environment (earlier it did not trigger in `-p` mode; re-verify on the current CLI), or a plugin-driven sequence: stop the process when stream usage crosses the threshold, `claude -p "/compact" --resume <id>`, then resume with `continue`.
-- Verified between turns: a headless `/compact` emits `compact_boundary` (47,571 → 1,949 tokens), and the next turn still recalls earlier context.
+**Compaction** (obligation 8), against the window Claude itself assumes for the model: 200,000 tokens, or 1,000,000 with a `[1m]` model suffix (protocol constants):
+- `claude -p` never compacts within a turn (verified with 2.1.282: none with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=20`, none by default up to 199,279 of 200,000 tokens), so the plugin drives it.
+- Every turn passes `--settings` with a `PostToolUse` hook, a plugin module run by Shikiru's interpreter. It estimates the next request as the last assistant usage in the session transcript (input, cache and output tokens) plus the tool results returned since that message (characters ÷ 3, accumulated in the turn dir for parallel calls). At ≥ `compact_at_pct` of the window it marks the turn dir and returns `{"continue": false}`: the process ends with `terminal_reason: "hook_stopped"` before the request is sent.
+- On that marker the plugin runs `claude -p "/compact" --resume <id>` and resumes with a continue prompt, as often as needed, within one `Turn`. Verified: six compactions in one logical turn at a 20% threshold; every compaction ran below the limit and the task completed, recalling its nonce. Stopping on stream usage instead acts only after the request is sent: one parallel batch grew a request from 12k to 106k tokens.
+- Before a resumed turn, the same estimate over the transcript decides a leading `/compact`.
 - Recovery: on a context failure, `/compact` and the same prompt once more. *Verify* that `/compact` succeeds on an overflowed session; if it does not, the turn fails with `OTHER`.
-- The display restriction on `context_used_pct` (Usage) does not apply: protection uses Claude's window whatever the cost basis.
 
 **Other**:
 - `interactive_command`: `claude --resume <id> --add-dir <run_dir> <args>` (verified: its turns land in the same session, and the next headless `--resume` sees them).
@@ -222,8 +223,8 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 
 **Compaction** (obligation 8), through Codex's native limit:
 - Every turn adds `-c model_auto_compact_token_limit=<compact_at_pct × context window>`. The window is the model's `model_context_window` from the latest rollout, or, before the first turn, from Codex's model list (`$CODEX_HOME/models_cache.json`). *Task 39*: when neither knows the model, protection must not silently disappear; doctor reports it.
-- Verified: without the limit `codex exec` never compacts; with it, Codex compacts at the start of the next turn whose context exceeds it, keeping earlier context. *Task 39 verifies* that it also compacts within a running turn as tool results grow the context.
-- The compaction shows only in the rollout as a `compacted` entry, so the plugin emits `Compacted` from the rollout (`pre_tokens` from the last `token_count` before it, `post_tokens` from the first after).
+- Verified: without the limit `codex exec` never compacts. With it (0.157.1), Codex compacts within a running turn before the request that would exceed it (twice in one turn at 40,000 tokens; the task completed, recalling its nonce), and at the start of a resumed turn.
+- The compaction shows only in the rollout as a `compacted` entry, so the plugin emits `Compacted` from the rollout (`pre_tokens` from the last `token_count` before it, `post_tokens` from the first non-zero one after; the `token_count` right after a `compacted` entry reports 0).
 - Recovery: on a context failure, the same prompt once more via `exec resume` with the limit set, which compacts first; if that fails, `OTHER`.
 
 **Usage**: tokens from `turn.completed.usage` (cumulative for the thread on resume, so already session totals); context from the rollout; no cost is reported anywhere → `cost_usd = None`, `cost_basis = "unknown"`.

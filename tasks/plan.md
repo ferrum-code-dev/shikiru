@@ -288,11 +288,13 @@ Refs: 04 §3, 06 §2, 07 §5.
 
 ### Task 39: Proactive context compaction within a turn
 Refs: 01 D23, 03 §4.1, §7, 04 §1 obligation 8, §3–5.
+
+Spike (2026-09-26, Claude Code 2.1.282, codex-cli 0.157.1): Claude `-p` never compacts within a turn; a plugin `PostToolUse` hook returning `continue: false` stops the turn before an over-threshold request, and `/compact` plus a continue prompt completed a 12-file turn with six compactions. Codex's native limit compacts within a running turn before the exceeding request.
 - [x] Clarify the agent-agnostic requirement: configurable threshold (default 80%), prevention within a running turn, session and task continuity, and exceptional overflow recovery. Distinguish previous between-turn evidence from compliance with this requirement.
 - [ ] Core owns no context handling: `FailureKind.CONTEXT`, its recovery branch, the handoff on a context failure in `session_for` and `CONTEXT` in the Helper's classification are removed; an unrecovered context failure is the plugin's `TurnFailed(OTHER)`. `Compacted` stays a display-only signal and event.
 - [ ] Offline contract check 3 per 04 §3: threshold crossing and repeated compaction within one turn continue to one `TurnEnded`; context failure → compaction and rerun → `TurnEnded`; failed recovery → `TurnFailed(OTHER)`.
-- [ ] Claude compacts within a running turn per 04 §4 against Claude's own window, independent of the display `context_used_pct`; the mechanism (native or plugin-driven) is chosen from live evidence, and the before-turn `/compact` is removed if subsumed.
-- [ ] Codex's native limit is verified within a running turn per 04 §5; a model with no known window is reported by doctor instead of silently running unprotected.
+- [ ] Claude compacts within a running turn per 04 §4 through the plugin's `PostToolUse` hook, `/compact` and a continue prompt, independent of the display `context_used_pct`; a resumed turn over the threshold compacts first.
+- [ ] Codex per 04 §5: `post_tokens` from the first non-zero `token_count`; a model with no known window is reported by doctor instead of silently running unprotected.
 - [ ] Live contract checks 1–6 pass for both agents in the Operator's configuration; check 6 needs no second Shikiru turn to trigger compaction.
 - [ ] `uv run poe check` passes; record CLI versions, models and genuine redacted evidence.
 
