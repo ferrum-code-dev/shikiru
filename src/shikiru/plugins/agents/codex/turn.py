@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from shikiru.agents.contracts import (
     AgentSignal,
@@ -224,7 +224,7 @@ class CodexTurnParser:
         elif self._did_complete:
             signals.append(TurnEnded(self._last_message))
         else:
-            failure = _failure_from_text(stderr)
+            failure = _classify_error(stderr, None, "")
             if failure is None:
                 signals.append(
                     TurnFailed(
@@ -235,9 +235,8 @@ class CodexTurnParser:
                     )
                 )
             else:
-                kind, message = failure
-                self._context_exceeded = kind is FailureKind.OTHER
-                signals.append(TurnFailed(kind, message, None))
+                self._context_exceeded = failure.context_exceeded
+                signals.append(TurnFailed(failure.kind, stderr.strip(), None))
         return signals
 
     def _thread_started(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
@@ -295,8 +294,8 @@ class CodexTurnParser:
             else None
         )
         reset = error_reset or _latest_reset(quota) or self._reset_time.parse(message)
-        kind = FailureKind.UNKNOWN if classification is None else classification
-        self._context_exceeded = kind is FailureKind.OTHER
+        kind = FailureKind.UNKNOWN if classification is None else classification.kind
+        self._context_exceeded = classification is not None and classification.context_exceeded
         detail = message or _UNKNOWN_ERROR_MESSAGE
         if stderr:
             detail = f"{detail}; stderr: {stderr.strip()}"
@@ -568,28 +567,28 @@ def _error_details(
     return message_text or code_text, status, code_text, reset_value
 
 
-def _classify_error(message: str, status: int | None, code: str) -> FailureKind | None:
+class _Classification(NamedTuple):
+    kind: FailureKind
+    context_exceeded: bool = False
+
+
+def _classify_error(message: str, status: int | None, code: str) -> _Classification | None:
     text = f"{code} {message}".lower()
     if (
         status == _PAYMENT_REQUIRED_STATUS
         or status in _AUTH_STATUSES
         or any(token in text for token in _AUTH_TEXT)
     ):
-        return FailureKind.AUTH
+        return _Classification(FailureKind.AUTH)
     if status == _RATE_LIMIT_STATUS or any(token in text for token in _QUOTA_TEXT):
-        return FailureKind.QUOTA
+        return _Classification(FailureKind.QUOTA)
     if status is not None and _UNAVAILABLE_STATUS_MIN <= status <= _UNAVAILABLE_STATUS_MAX:
-        return FailureKind.UNAVAILABLE
+        return _Classification(FailureKind.UNAVAILABLE)
     if any(token in text for token in _UNAVAILABLE_TEXT):
-        return FailureKind.UNAVAILABLE
+        return _Classification(FailureKind.UNAVAILABLE)
     if any(token in text for token in _CONTEXT_TEXT):
-        return FailureKind.OTHER
+        return _Classification(FailureKind.OTHER, context_exceeded=True)
     return None
-
-
-def _failure_from_text(stderr: str) -> tuple[FailureKind, str] | None:
-    classification = _classify_error(stderr, None, "")
-    return (classification, stderr.strip()) if classification is not None else None
 
 
 def _latest_reset(windows: Sequence[QuotaWindow]) -> datetime | None:

@@ -66,7 +66,18 @@ async def test_hook_stops_the_turn_once_the_next_request_reaches_the_limit(
     assert outputs[-1].stdout.strip() == (_STOP_DECISION if stops else "")
 
 
-def test_a_hook_stop_without_the_plugin_marker_ends_the_turn(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("stream", "stderr", "exit_code"),
+    [
+        (_STOP, None, 0),
+        ("turn_unknown_error.jsonl", "turn_unknown_error.stderr.log", 1),
+        ("turn_rate_limit.jsonl", "turn_rate_limit.stderr.log", 1),
+    ],
+    ids=["operator-hook-stop", "unknown-failure", "quota-failure"],
+)
+def test_only_the_plugin_marker_or_a_context_failure_continues_the_turn(
+    tmp_path: Path, stream: str, stderr: str | None, exit_code: int
+) -> None:
     spec = TurnSpec(
         rung=Rung("claude", "haiku", "low"),
         role=_ROLE,
@@ -82,10 +93,12 @@ def test_a_hook_stop_without_the_plugin_marker_ends_the_turn(tmp_path: Path) -> 
     agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
     sequence = agent.process_sequence(spec)
     command = sequence.start(spec)
+    stderr_text = (_FIXTURES_DIR / stderr).read_text() if stderr is not None else ""
     signals = [
         signal
-        for line in (_FIXTURES_DIR / _STOP).read_text().splitlines()
+        for line in (_FIXTURES_DIR / stream).read_text().splitlines()
         for signal in command.parser.feed(line)
     ]
+    signals.extend(command.parser.finish(exit_code, stderr_text))
 
-    assert sequence.advance(spec, TurnProcessResult(tuple(signals), 0, "")) is None
+    assert sequence.advance(spec, TurnProcessResult(tuple(signals), exit_code, stderr_text)) is None

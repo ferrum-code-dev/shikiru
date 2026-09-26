@@ -437,8 +437,12 @@ class ClaudeTurnParser:
         if status == STATUS_PAYMENT_REQUIRED:
             return classified
         if classified is None:
-            classified = _classify_text(lowered, message, stderr, status)
-            self._context_exceeded = classified is not None and classified[0] is FailureKind.OTHER
+            classified = _classify_text(lowered, message, stderr)
+        if classified is None and _contains(lowered, _CONTEXT_ERROR_TEXTS):
+            self._context_exceeded = True
+            classified = FailureKind.OTHER, message or stderr.strip(), None
+        if classified is None and (status is not None or message or stderr):
+            classified = FailureKind.UNKNOWN, message or stderr.strip(), None
         if classified is not None and classified[0] is FailureKind.QUOTA:
             kind, failure_message, resets_at = classified
             return kind, failure_message, resets_at or self._reset_time.parse(message)
@@ -658,7 +662,7 @@ def _classify_status(
 
 
 def _classify_text(
-    lowered: str, message: str, stderr: str, status: int | None
+    lowered: str, message: str, stderr: str
 ) -> tuple[FailureKind, str, datetime | None] | None:
     if _contains(lowered, _QUOTA_ERROR_TEXTS):
         return FailureKind.QUOTA, message or stderr.strip(), None
@@ -666,10 +670,6 @@ def _classify_text(
         return FailureKind.UNAVAILABLE, message or stderr.strip(), None
     if _contains(lowered, _AUTH_ERROR_TEXTS):
         return FailureKind.AUTH, message or stderr.strip(), None
-    if _contains(lowered, _CONTEXT_ERROR_TEXTS):
-        return FailureKind.OTHER, message or stderr.strip(), None
-    if status is not None or message or stderr:
-        return FailureKind.UNKNOWN, message or stderr.strip(), None
     return None
 
 
