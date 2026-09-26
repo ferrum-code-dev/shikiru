@@ -154,7 +154,9 @@ class CodexTurnParser:
         self._did_complete = False
         self._context_exceeded = False
         self._rollout = rollout_path or _rollout_path(home, session_id)
-        self._initial_compaction_count = _compaction_count(_read_rollout(self._rollout))
+        self._initial_compaction_count = (
+            _compaction_count(_read_rollout(self._rollout)) if session_id is not None else 0
+        )
         self._handlers = {
             _THREAD_STARTED: self._thread_started,
             _ITEM_STARTED: self._item_started,
@@ -242,11 +244,8 @@ class CodexTurnParser:
         session_id = payload.get(_THREAD_ID_FIELD)
         if not isinstance(session_id, str) or not session_id.strip():
             return []
-        session_was_unknown = self._session_id is None
         self._session_id = session_id
         self._rollout = self._rollout_override or _rollout_path(self._home, session_id)
-        if session_was_unknown:
-            self._initial_compaction_count = _compaction_count(_read_rollout(self._rollout))
         return [SessionStarted(session_id)]
 
     def _item_started(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
@@ -494,7 +493,7 @@ def _nearby_token_count(
         info = _mapping(payload.get(_INFO_FIELD)) if payload is not None else None
         last_usage = _mapping(info.get(_LAST_USAGE_FIELD)) if info is not None else None
         value = _optional_integer(last_usage, _INPUT_TOKENS_FIELD) if last_usage else None
-        if value is not None:
+        if value is not None and (before or value > _ZERO_TOKENS):
             return value
     return None
 

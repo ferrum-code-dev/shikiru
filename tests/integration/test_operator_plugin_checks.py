@@ -17,6 +17,7 @@ from tests.support.factories import TASK_CREATED_AT
 from tests.support.git_repo import commit_all, init_repo
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 
@@ -24,7 +25,8 @@ class _BrokenAgent:
     def __init__(self, error: Exception | None = None) -> None:
         self._error = error
 
-    async def doctor(self) -> list[CheckResult]:
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
+        del models
         if self._error is not None:
             raise self._error
         return [CheckResult(name="binary", ok=False, detail="binary is missing")]

@@ -259,8 +259,12 @@ class Agent(Protocol):
         """
         ...
 
-    async def doctor(self) -> list[CheckResult]:
-        """Run this agent's binary, version and login checks."""
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
+        """Run this agent's binary, version and login checks, plus checks for `models`.
+
+        `models` are the models the configured ladders select for this agent; empty when
+        the agent is only being detected.
+        """
         ...
 
     def headless(self) -> HeadlessAgent | None:

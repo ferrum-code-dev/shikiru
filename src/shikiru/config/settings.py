@@ -168,6 +168,10 @@ class Settings(ConfigModel):
         rungs.extend(self.roles.helper.ladder)
         return rungs
 
+    def ladder_models(self, agent: str) -> tuple[str, ...]:
+        """Return the distinct models the configured ladders select for `agent`."""
+        return tuple(sorted({rung.model for rung in self.ladder_rungs() if rung.agent == agent}))
+
     @model_validator(mode="after")
     def _every_ladder_agent_has_a_table(self) -> Settings:
         wanted = {rung.agent for rung in self.ladder_rungs()}

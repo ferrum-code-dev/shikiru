@@ -110,7 +110,8 @@ class _AgentWithoutHeadless:
         del session_id, run_dir
         return ()
 
-    async def doctor(self) -> list[CheckResult]:
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
+        del models
         return []
 
     def headless(self) -> None:

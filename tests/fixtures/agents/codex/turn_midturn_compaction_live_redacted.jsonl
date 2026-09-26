@@ -1,0 +1,28 @@
+{"type":"thread.started","thread_id":"session-midturn-live-redacted"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"cat [redacted]/part1.txt","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"cat [redacted]/part1.txt","aggregated_output":"[redacted file content]","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"part1.txt ends at line 400."}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"cat [redacted]/part2.txt","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"cat [redacted]/part2.txt","aggregated_output":"[redacted file content]","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"part2.txt ends at line 400."}}
+{"type":"item.started","item":{"id":"item_4","type":"command_execution","command":"cat [redacted]/part3.txt","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_4","type":"command_execution","command":"cat [redacted]/part3.txt","aggregated_output":"[redacted file content]","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_5","type":"agent_message","text":"part3.txt ends at line 400."}}
+{"type":"item.started","item":{"id":"item_6","type":"command_execution","command":"cat [redacted]/part4.txt","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_6","type":"command_execution","command":"cat [redacted]/part4.txt","aggregated_output":"[redacted file content]","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_7","type":"agent_message","text":"part4.txt ends at line 400."}}
+{"type":"item.started","item":{"id":"item_8","type":"command_execution","command":"cat [redacted]/part5.txt","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_8","type":"command_execution","command":"cat [redacted]/part5.txt","aggregated_output":"[redacted file content]","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_9","type":"agent_message","text":"part5.txt ends at line 400."}}
+{"type":"item.started","item":{"id":"item_10","type":"command_execution","command":"cat [redacted]/part6.txt","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_10","type":"command_execution","command":"cat [redacted]/part6.txt","aggregated_output":"[redacted file content]","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_11","type":"agent_message","text":"part6.txt ends at line 400."}}
+{"type":"item.started","item":{"id":"item_12","type":"command_execution","command":"cat [redacted]/part7.txt","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_12","type":"command_execution","command":"cat [redacted]/part7.txt","aggregated_output":"[redacted file content]","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_13","type":"agent_message","text":"part7.txt ends at line 400."}}
+{"type":"item.started","item":{"id":"item_14","type":"command_execution","command":"cat [redacted]/part8.txt","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_14","type":"command_execution","command":"cat [redacted]/part8.txt","aggregated_output":"[redacted file content]","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_15","type":"agent_message","text":"part8.txt ends at line 400."}}
+{"type":"item.completed","item":{"id":"item_16","type":"agent_message","text":"DONE KESTREL-4471"}}
+{"type":"turn.completed","usage":{"input_tokens":230585,"cached_input_tokens":152320,"cache_write_input_tokens":0,"output_tokens":1145,"reasoning_output_tokens":182}}

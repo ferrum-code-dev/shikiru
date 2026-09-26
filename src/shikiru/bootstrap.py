@@ -137,7 +137,7 @@ def build_lifecycle() -> ProjectLifecycle:
 
     async def plugin_validator(settings: Settings) -> None:
         results = [
-            await plugin_checks.check(name, config.options)
+            await plugin_checks.check(name, config.options, settings.ladder_models(name))
             for name, config in sorted(settings.agents.items())
         ]
         failures = [result for result in results if not result.ok]

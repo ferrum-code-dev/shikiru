@@ -10,11 +10,23 @@ commits in the linked worktree. Event types, item types, nesting, token counts,
 context windows and quota percentages are retained. Session/tool IDs, prompts,
 message text, command details, paths and account/reset details are redacted.
 
-`rollout_compaction.jsonl` is a genuine protocol excerpt from a low-threshold
-resumed turn in the same live suite. It retains the `event_msg` token-count
-shape and the top-level `compacted` event with its nested payload, plus the
-token counts needed to exercise compaction parsing. Other rollout fields and
-identifiers are omitted.
+## Mid-turn compaction capture
+
+`turn_midturn_compaction_live_redacted.jsonl` and
+`rollout_midturn_compaction_live_redacted.jsonl` are a genuine redacted
+`codex exec --json` turn from codex-cli 0.157.1 on `gpt-5.6-luna` with low
+reasoning effort and `-c model_auto_compact_token_limit=40000` (subscription
+access) on 2026-09-26, in a scratch repository of random dictionary words. One
+turn read eight files with one `cat` per command; Codex compacted twice inside
+the running turn, each time before the request that would exceed the limit, and
+the turn completed with the task's nonce. The stream keeps event and item types,
+item IDs, the agent messages and the final usage. The thread ID, command paths
+and command output are redacted. The rollout keeps only its `token_count`
+entries (token usage and the 258,400-token model context window, with
+`rate_limits` set to null) and the `compacted` entries (window number only);
+the compaction history, session metadata and account identifiers are removed.
+The `token_count` right after each `compacted` entry reports 0 input tokens,
+so `post_tokens` comes from the first non-zero one after it.
 
 ## OpenRouter custom-provider capture
 

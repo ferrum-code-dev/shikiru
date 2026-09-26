@@ -63,7 +63,7 @@ class Agent(Protocol):
     name: str
     async def start_turn(self, spec: TurnSpec) -> Turn: ...
     def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]: ...   # take over (03 §9); also the resume command
-    async def doctor(self) -> list[CheckResult]: ...     # binary, version, native access
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]: ...   # binary, version, native access; models: the ladders' models for this agent
     def headless(self) -> HeadlessAgent | None: ...
 
 @dataclass(frozen=True)
@@ -223,7 +223,7 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 - else → `UNKNOWN`
 
 **Compaction** (obligation 8), through Codex's native limit:
-- Every turn adds `-c model_auto_compact_token_limit=<compact_at_pct × context window>`. The window is the model's `model_context_window` from the latest rollout, or, before the first turn, from Codex's model list (`$CODEX_HOME/models_cache.json`). *Task 39*: when neither knows the model, protection must not silently disappear; doctor reports it.
+- Every turn adds `-c model_auto_compact_token_limit=<compact_at_pct × context window>`. The window is the model's `model_context_window` from the latest rollout, or, before the first turn, from Codex's model list (`$CODEX_HOME/models_cache.json`). When the model list does not know a configured model, doctor's `context_window` check fails, so `start` refuses to run it unprotected.
 - Verified: without the limit `codex exec` never compacts. With it (0.157.1), Codex compacts within a running turn before the request that would exceed it (twice in one turn at 40,000 tokens; the task completed, recalling its nonce), and at the start of a resumed turn.
 - The compaction shows only in the rollout as a `compacted` entry, so the plugin emits `Compacted` from the rollout (`pre_tokens` from the last `token_count` before it, `post_tokens` from the first non-zero one after; the `token_count` right after a `compacted` entry reports 0).
 - Recovery: on a context failure, the same prompt once more via `exec resume` with the limit set, which compacts first; if that fails, `OTHER`.

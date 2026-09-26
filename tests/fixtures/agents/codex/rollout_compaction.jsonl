@@ -1,3 +1,0 @@
-{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":13824},"last_token_usage":{"input_tokens":13824},"model_context_window":258400}}}
-{"type":"compacted","payload":{"window_number":2}}
-{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":0},"last_token_usage":{"input_tokens":0},"model_context_window":258400}}}

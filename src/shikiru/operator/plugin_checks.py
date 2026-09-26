@@ -9,7 +9,7 @@ from shikiru.agents.contracts import AgentContext, CheckResult
 from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from typing import Any
 
     from shikiru.agents.registry import AgentRegistry
@@ -52,14 +52,16 @@ class PluginChecks:
         """Return names available from the injected agent registry."""
         return self._registry.names()
 
-    async def check(self, name: str, options: Mapping[str, Any]) -> PluginCheckResult:
-        """Create `name` with `options` and run its doctor, reporting expected failures."""
+    async def check(
+        self, name: str, options: Mapping[str, Any], models: Sequence[str] = ()
+    ) -> PluginCheckResult:
+        """Create `name` with `options` and run its doctor for `models`, reporting failures."""
         try:
             agent = self._registry.create(
                 name,
                 AgentContext(options=options, runner=self._runner, clock=self._clock),
             )
-            checks = await agent.doctor()
+            checks = await agent.doctor(models)
         except (ShikiruError, OSError, TimeoutError) as error:
             detail = str(error) or type(error).__name__
             return PluginCheckResult(name=name, error=detail)

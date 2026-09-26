@@ -235,7 +235,9 @@ class Doctor:
     async def _plugin_checks(self, settings: Settings) -> list[DoctorCheck]:
         checks: list[DoctorCheck] = []
         for name, agent_config in sorted(settings.agents.items()):
-            result = await self._plugins.check(name, agent_config.options)
+            result = await self._plugins.check(
+                name, agent_config.options, settings.ladder_models(name)
+            )
             if result.error is not None:
                 checks.append(
                     DoctorCheck(name=_plugin_check_name(name), ok=False, detail=result.detail)

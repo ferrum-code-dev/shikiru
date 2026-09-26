@@ -103,7 +103,9 @@ _GIT_USER_EMAIL = "shikiru-contract@example.invalid"
 _FIRST_FILE_CONTENT = "first"
 _SECOND_FILE_CONTENT = "second"
 _EMPTY_STDERR = "turn_empty.stderr.log"
-_COMPACTION_ROLLOUT = "rollout_compaction.jsonl"
+_MIDTURN_TURN = "turn_midturn_compaction_live_redacted.jsonl"
+_MIDTURN_ROLLOUT = "rollout_midturn_compaction_live_redacted.jsonl"
+_SESSION_MIDTURN = "session-midturn-live-redacted"
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 _SESSION_FIRST = "session-first"
 _SESSION_RESUMED = "session-resume_model_change"
@@ -174,6 +176,25 @@ _OPENROUTER_LIVE_SIGNALS = [
     TurnEnded(_OPENROUTER_LIVE_MESSAGE),
 ]
 
+_MIDTURN_PARTS = range(1, 9)
+_MIDTURN_SIGNALS = [
+    SessionStarted(_SESSION_MIDTURN),
+    *(
+        signal
+        for part in _MIDTURN_PARTS
+        for signal in (
+            ToolStarted("command", f"cat [redacted]/part{part}.txt"),
+            ToolFinished("command"),
+            Message(f"part{part}.txt ends at line 400."),
+        )
+    ),
+    Message("DONE KESTREL-4471"),
+    Compacted(36_697, 14_270),
+    Compacted(37_330, 14_387),
+    UsageReported(Usage(230_585, 1_145, 152_320, 0, None, "unknown", 37_348 / 258_400 * 100)),
+    TurnEnded("DONE KESTREL-4471"),
+]
+
 
 @pytest.fixture
 def operator_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -240,7 +261,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
     def parser_for(self, sample: RecordedStream) -> CodexTurnParser:
         clock = FakeClock(_SAMPLE_NOW)
         return CodexTurnParser(
-            session_id=sample.session_id,
+            session_id=None,
             initial_usage=None,
             home=_FIXTURES_DIR / "offline-home",
             rollout_path=sample.session_logs.get("rollout"),
@@ -263,6 +284,12 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 session_id=_SESSION_RESUMED,
                 expected_signals=_RESUMED_SIGNALS,
                 stderr_name="turn_resume_model_change.stderr.log",
+            ),
+            _record(
+                _MIDTURN_TURN,
+                _MIDTURN_ROLLOUT,
+                session_id=_SESSION_MIDTURN,
+                expected_signals=_MIDTURN_SIGNALS,
             ),
             _record(
                 "turn_openrouter_live_redacted.jsonl",
@@ -604,7 +631,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
         agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
 
-        checks = await agent.doctor()
+        checks = await agent.doctor(())
 
         login = next(check for check in checks if check.name == "login")
         assert all(check.ok for check in checks)
@@ -623,60 +650,23 @@ class TestCodexHeadlessContract(AgentContractSuite):
         ]
 
     @pytest.mark.asyncio
-    async def test_offline_compaction_replays_and_retries_once(self, tmp_path: Path) -> None:
-        rollout = tmp_path / "rollout-session-compacted.jsonl"
-        compaction_entries = (
-            (_FIXTURES_DIR / _COMPACTION_ROLLOUT).read_text(encoding="utf-8").splitlines()
-        )
-        rollout.write_text(compaction_entries[0] + "\n", encoding="utf-8")
-        clock = FakeClock(_SAMPLE_NOW)
-        parser = CodexTurnParser(
-            session_id="session-compacted",
-            initial_usage=Usage(13_824, 0, 0, 0, None, "unknown", 5.35),
-            home=tmp_path,
-            rollout_path=rollout,
-            clock=clock,
-            reset_time=ResetTimeParser(clock),
-        )
-        with rollout.open("a", encoding="utf-8") as handle:
-            handle.write("\n".join(compaction_entries[1:]) + "\n")
-        parser.feed(json.dumps({"type": "thread.started", "thread_id": "session-compacted"}))
-        parser.feed(json.dumps({"type": "turn.completed", "usage": {}}))
-
-        signals = parser.finish(0, "")
-
-        assert Compacted(13_824, 0) in signals
-        usage = next(signal.usage for signal in signals if isinstance(signal, UsageReported))
-        assert usage.context_used_pct is not None
-        assert usage.context_used_pct == 0.0
-        assert usage.context_used_pct < 5.35
-        assert isinstance(signals[-1], TurnEnded)
-
-    def test_unknown_session_sets_rollout_compaction_baseline_on_start(
-        self, tmp_path: Path
+    async def test_doctor_fails_for_a_configured_model_without_a_known_window(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_codex_home: Path
     ) -> None:
-        home = tmp_path / "codex-home"
-        sessions = home / "sessions" / "2030" / "01" / "01"
-        sessions.mkdir(parents=True)
-        rollout = sessions / "rollout-2030-01-01T00-00-00-session-unknown.jsonl"
-        compaction_entry = (
-            (_FIXTURES_DIR / _COMPACTION_ROLLOUT).read_text(encoding="utf-8").splitlines()[1]
-        )
-        rollout.write_text(compaction_entry + "\n", encoding="utf-8")
-        clock = FakeClock(_SAMPLE_NOW)
-        parser = CodexTurnParser(
-            session_id=None,
-            initial_usage=None,
-            home=home,
-            clock=clock,
-            reset_time=ResetTimeParser(clock),
-        )
-        parser.feed(json.dumps({"type": "thread.started", "thread_id": "session-unknown"}))
-        parser.feed(json.dumps({"type": "turn.completed", "usage": {}}))
+        _write_model_cache(operator_codex_home, [(_MODEL, _TEST_CONTEXT_WINDOW)])
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "doctor-environment.txt"))
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
 
-        signals = parser.finish(0, "")
+        known = await agent.doctor((_MODEL,))
+        unknown = await agent.doctor((_MODEL, "unlisted-model"))
 
-        assert not any(isinstance(signal, Compacted) for signal in signals)
+        assert next(check for check in known if check.name == "context_window").ok
+        window = next(check for check in unknown if check.name == "context_window")
+        assert not window.ok
+        assert "unlisted-model" in window.detail
+        assert _MODEL not in window.detail
 
     def _require_live(self) -> None:
         super()._require_live()
@@ -751,7 +741,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
     ) -> None:
         self._require_live()
         self.build_spec(tmp_path, resume_session_id=None)
-        checks = await self._build_agent().doctor()
+        checks = await self._build_agent().doctor((_MODEL,))
         assert all(check.ok for check in checks)
 
     @pytest.mark.asyncio

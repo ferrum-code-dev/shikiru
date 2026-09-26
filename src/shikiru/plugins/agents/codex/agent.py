@@ -26,7 +26,7 @@ from shikiru.plugins.agents.codex.options import (
     VERSION_ARGV,
     CodexOptions,
 )
-from shikiru.plugins.agents.codex.turn import CodexTurnSequence
+from shikiru.plugins.agents.codex.turn import CodexTurnSequence, context_window
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -44,6 +44,11 @@ _MODEL_PROVIDERS_FIELD = "model_providers"
 _OPENAI_BASE_URL_FIELD = "openai_base_url"
 _PROFILES_FIELD = "profiles"
 _PROFILE_FIELD = "profile"
+_CONTEXT_WINDOW_CHECK = "context_window"
+_UNKNOWN_WINDOW_DETAIL = (
+    "no known context window for {models} in Codex's model list; "
+    "compaction at compact_at_pct cannot be applied"
+)
 _CUSTOM_PROVIDER_ACCESS_DETAIL = (
     "custom provider configured; provider credentials are not verified by doctor"
 )
@@ -88,8 +93,8 @@ class CodexAgent:
         del run_dir
         return (CODEX_COMMAND, RESUME_SUBCOMMAND, session_id, *self._options.args)
 
-    async def doctor(self) -> list[CheckResult]:
-        """Check Codex's binary, version and native access setup."""
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
+        """Check Codex's binary, version, native access and each model's context window."""
         binary = await self._check_binary()
         if not binary.ok:
             unavailable = "binary unavailable"
@@ -98,7 +103,22 @@ class CodexAgent:
                 CheckResult("version", False, unavailable),
                 CheckResult("login", False, unavailable),
             ]
-        return [binary, await self._check_version(), await self._check_login()]
+        checks = [binary, await self._check_version(), await self._check_login()]
+        if models:
+            checks.append(self._check_context_windows(models))
+        return checks
+
+    def _check_context_windows(self, models: Sequence[str]) -> CheckResult:
+        windows = {model: context_window(self._codex_home, model) for model in models}
+        unknown = [model for model, window in windows.items() if window is None]
+        if unknown:
+            return CheckResult(
+                _CONTEXT_WINDOW_CHECK,
+                False,
+                _UNKNOWN_WINDOW_DETAIL.format(models=", ".join(unknown)),
+            )
+        known = ", ".join(f"{model}: {window}" for model, window in windows.items())
+        return CheckResult(_CONTEXT_WINDOW_CHECK, True, known)
 
     def headless(self) -> HeadlessAgent | None:
         """Return Codex's schema-constrained headless client."""

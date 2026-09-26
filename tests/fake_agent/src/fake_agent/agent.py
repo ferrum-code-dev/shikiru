@@ -56,8 +56,9 @@ class FakeAgent:
         """Return the optional fake REPL command for a future operator take-over."""
         return self._headless_turns.interactive_command(session_id, run_dir)
 
-    async def doctor(self) -> list[CheckResult]:
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
         """Report the fake CLI as available."""
+        del models
         return [CheckResult(name=_DOCTOR_CHECK_NAME, ok=True, detail=REPL_COMMAND)]
 
     def headless(self) -> HeadlessAgent | None:

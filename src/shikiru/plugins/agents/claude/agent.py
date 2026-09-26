@@ -74,8 +74,9 @@ class ClaudeAgent:
             *self._options.args,
         )
 
-    async def doctor(self) -> list[CheckResult]:
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
         """Check Claude's binary, version and authentication."""
+        del models
         binary = await self._check_binary()
         if not binary.ok:
             unavailable = "binary unavailable"
