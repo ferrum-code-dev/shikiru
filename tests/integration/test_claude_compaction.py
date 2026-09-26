@@ -8,19 +8,16 @@ from pathlib import Path
 import pytest
 
 from shikiru.agents.contracts import AgentContext, Rung, TurnSpec, module_argv
-from shikiru.agents.sdk.turn import TurnProcess, TurnProcessResult
+from shikiru.agents.sdk.turn import TurnProcessResult
 from shikiru.clock import SystemClock
 from shikiru.plugins.agents.claude.agent import create
 from shikiru.plugins.agents.claude.hook import STOP_REASON
-from shikiru.plugins.agents.claude.turn import CONTINUE_PROMPT, ClaudeTurnSequence
 from shikiru.process import SubprocessRunner
 
 _FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "agents" / "claude"
 _HOOK_MODULE = "shikiru.plugins.agents.claude.hook"
 _ROLE = "implementer"
 _STOP = "turn_hook_stop_live_redacted.jsonl"
-_COMPACT = "turn_hook_compact_live_redacted.jsonl"
-_CONTINUE = "turn_hook_continue_live_redacted.jsonl"
 _CONTEXT_TOKENS = 10_000
 _LIMIT_TOKENS = 12_000
 _HOOK_TIMEOUT_SECONDS = 30.0
@@ -69,59 +66,26 @@ async def test_hook_stops_the_turn_once_the_next_request_reaches_the_limit(
     assert outputs[-1].stdout.strip() == (_STOP_DECISION if stops else "")
 
 
-def test_hook_stops_compact_and_continue_until_the_turn_ends(tmp_path: Path) -> None:
-    spec = _spec(tmp_path, session_id=None)
-    sequence = _sequence(spec)
-    marker = spec.turn_dir / f"{_ROLE}.compact-marker"
-    command: TurnProcess | None = sequence.start(spec)
-    prompts: list[str] = []
-    for stream in (_STOP, _COMPACT, _STOP, _COMPACT, _CONTINUE):
-        assert command is not None
-        prompts.append(command.argv[2])
-        if stream == _STOP:
-            marker.touch()
-        command = sequence.advance(spec, _outcome(command, stream))
-
-    assert command is None
-    assert prompts == [spec.prompt, "/compact", CONTINUE_PROMPT, "/compact", CONTINUE_PROMPT]
-
-
 def test_a_hook_stop_without_the_plugin_marker_ends_the_turn(tmp_path: Path) -> None:
-    spec = _spec(tmp_path, session_id=None)
-    sequence = _sequence(spec)
-    command = sequence.start(spec)
-
-    assert sequence.advance(spec, _outcome(command, _STOP)) is None
-
-
-def _spec(tmp_path: Path, *, session_id: str | None) -> TurnSpec:
-    run_dir = tmp_path / "run"
-    turn_dir = tmp_path / "turn"
-    turn_dir.mkdir()
-    return TurnSpec(
+    spec = TurnSpec(
         rung=Rung("claude", "haiku", "low"),
         role=_ROLE,
         prompt="read the files",
         cwd=tmp_path,
-        run_dir=run_dir,
-        turn_dir=turn_dir,
+        run_dir=tmp_path / "run",
+        turn_dir=tmp_path / "turn",
         add_dirs=(),
         env={},
-        session_id=session_id,
+        session_id=None,
         usage=None,
     )
-
-
-def _sequence(spec: TurnSpec) -> ClaudeTurnSequence:
     agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
-    return agent.process_sequence(spec)
-
-
-def _outcome(command: TurnProcess, stream: str) -> TurnProcessResult:
+    sequence = agent.process_sequence(spec)
+    command = sequence.start(spec)
     signals = [
         signal
-        for line in (_FIXTURES_DIR / stream).read_text().splitlines()
+        for line in (_FIXTURES_DIR / _STOP).read_text().splitlines()
         for signal in command.parser.feed(line)
     ]
-    signals.extend(command.parser.finish(0, ""))
-    return TurnProcessResult(tuple(signals), 0, "")
+
+    assert sequence.advance(spec, TurnProcessResult(tuple(signals), 0, "")) is None

@@ -19,7 +19,7 @@ from fake_agent.script import (
     SupersedeStep,
     TurnStep,
 )
-from fake_agent.turns import CONTEXT_USAGE_PERCENT, FAKE_SESSION_ID_ENV_VAR
+from fake_agent.turns import FAKE_SESSION_ID_ENV_VAR, INITIAL_CONTEXT_USAGE_PERCENT
 from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir, shikiru_command
 from shikiru.cli.report import resolve_current_turn_dir
 from shikiru.domain.reports import (
@@ -118,7 +118,7 @@ def load_session_state(state_path: Path) -> SessionState:
             "output_tokens": 0,
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
-            "context_used_pct": CONTEXT_USAGE_PERCENT,
+            "context_used_pct": INITIAL_CONTEXT_USAGE_PERCENT,
         }
     return cast("SessionState", json.loads(state_path.read_text()))
 

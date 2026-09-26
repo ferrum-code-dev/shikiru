@@ -9,7 +9,7 @@ import shutil
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 import pytest
@@ -36,8 +36,14 @@ from shikiru.agents.contracts import (
     UsageReported,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
-from shikiru.agents.sdk.turn import TurnProcessResult
-from shikiru.agents.testing import AgentContractSuite, InvocationCase, RecordedStream
+from shikiru.agents.testing import (
+    AgentContractSuite,
+    CompactionCase,
+    CompactionScenario,
+    InvocationCase,
+    RecordedStream,
+    ReplayedProcess,
+)
 from shikiru.agents.testing.resume import RESUME_NONCE_PROMPT, RESUME_RECALL_PROMPT
 from shikiru.clock import SystemClock
 from shikiru.domain.recovery import (
@@ -78,7 +84,6 @@ _EFFORT = "low"
 _TEST_CONTEXT_WINDOW = 100_000
 _ROLLOUT_CONTEXT_WINDOW = 250_000
 _COMPACT_AT_PCT = 80.0
-_LOW_LIVE_COMPACT_AT_PCT = 1.0
 _TURN_TIMEOUT_SECONDS = 60.0
 _LIVE_REPORT_TIMEOUT_SECONDS = 180.0
 _LIVE_REPORT_PYTEST_TIMEOUT_SECONDS = 190.0
@@ -106,6 +111,9 @@ _EMPTY_STDERR = "turn_empty.stderr.log"
 _MIDTURN_TURN = "turn_midturn_compaction_live_redacted.jsonl"
 _MIDTURN_ROLLOUT = "rollout_midturn_compaction_live_redacted.jsonl"
 _SESSION_MIDTURN = "session-midturn-live-redacted"
+_SESSION_RECOVERY = "session-recovery"
+_RERUN_ROLLOUT = "rollout_rerun_compaction.jsonl"
+_LIVE_COMPACT_AT_PCT = 15.0
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 _SESSION_FIRST = "session-first"
 _SESSION_RESUMED = "session-resume_model_change"
@@ -219,9 +227,14 @@ class TestCodexHeadlessContract(AgentContractSuite):
     _active_home = Path()
     _live_turn_timeout_seconds = _TURN_TIMEOUT_SECONDS
 
-    async def _run_turn(self, spec: TurnSpec) -> list[AgentSignal]:
-        turn = await self._build_agent().start_turn(spec)
-        async with asyncio.timeout(self._live_turn_timeout_seconds):
+    async def _run_turn(
+        self,
+        spec: TurnSpec,
+        options: Mapping[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> list[AgentSignal]:
+        turn = await self._build_agent(options).start_turn(spec)
+        async with asyncio.timeout(timeout or self._live_turn_timeout_seconds):
             return [signal async for signal in turn.signals()]
 
     def agent_factory(self) -> AgentFactory:
@@ -423,6 +436,61 @@ class TestCodexHeadlessContract(AgentContractSuite):
     def process_sequence(self, agent: Agent, spec: TurnSpec) -> CodexTurnSequence:
         return cast("CodexAgent", agent).process_sequence(spec)
 
+    def live_compaction_options(self) -> Mapping[str, object]:
+        return {"compact_at_pct": _LIVE_COMPACT_AT_PCT}
+
+    def compaction_scenarios(self, tmp_path: Path) -> Sequence[CompactionScenario]:
+        options = {"compact_at_pct": _COMPACT_AT_PCT}
+        midturn = self.build_spec(tmp_path / "midturn", resume_session_id=_SESSION_MIDTURN)
+        recovery = self.build_spec(tmp_path / "recovery", resume_session_id=_SESSION_RECOVERY)
+        context_failure = ReplayedProcess(
+            _record(
+                "turn_context_failure.jsonl",
+                None,
+                session_id=_SESSION_RECOVERY,
+                expected_signals=(),
+            )
+        )
+        rerun = ReplayedProcess(
+            _record(
+                "turn_rerun_success.jsonl", None, session_id=_SESSION_RECOVERY, expected_signals=()
+            ),
+            {_rollout_file(recovery): (_FIXTURES_DIR / _RERUN_ROLLOUT).read_text()},
+        )
+        return [
+            CompactionScenario(
+                name="Codex compacts twice within one running turn",
+                case=CompactionCase.THRESHOLD,
+                options=options,
+                spec=midturn,
+                processes=[
+                    ReplayedProcess(
+                        _record(
+                            _MIDTURN_TURN, None, session_id=_SESSION_MIDTURN, expected_signals=()
+                        ),
+                        {_rollout_file(midturn): (_FIXTURES_DIR / _MIDTURN_ROLLOUT).read_text()},
+                    )
+                ],
+                expected_argv=[_resume_argv(midturn)],
+            ),
+            CompactionScenario(
+                name="a context failure reruns the prompt with the limit, compacting first",
+                case=CompactionCase.CONTEXT_FAILURE,
+                options=options,
+                spec=recovery,
+                processes=[context_failure, rerun],
+                expected_argv=[_resume_argv(recovery), _resume_argv(recovery)],
+            ),
+            CompactionScenario(
+                name="a second context failure ends the turn",
+                case=CompactionCase.FAILED_RECOVERY,
+                options=options,
+                spec=recovery,
+                processes=[context_failure, context_failure],
+                expected_argv=[_resume_argv(recovery), _resume_argv(recovery)],
+            ),
+        ]
+
     def headless_ask_schema_model(self) -> type[BaseModel]:
         return _AskResult
 
@@ -446,54 +514,6 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert command.env["CODEX_API_KEY"] == _SYNTHETIC_CODEX_KEY
         assert command.env["OPENROUTER_API_KEY"] == _SYNTHETIC_PROVIDER_KEY
         assert f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000" in command.argv
-
-    def test_context_error_json_compacts_and_retries_once_on_the_same_session(
-        self, tmp_path: Path
-    ) -> None:
-        spec = self.build_spec(tmp_path, resume_session_id=None)
-        (spec.cwd / ".git").mkdir()
-        agent = create(
-            AgentContext(
-                options={"compact_at_pct": _COMPACT_AT_PCT},
-                runner=SubprocessRunner(),
-                clock=SystemClock(),
-            )
-        )
-        sequence = agent.process_sequence(spec)
-        first = sequence.start(spec)
-        session_id = "session-context-failure"
-        parser = first.parser
-        signals = parser.feed(json.dumps({"type": "thread.started", "thread_id": session_id}))
-        parser.feed(
-            json.dumps(
-                {
-                    "type": "turn.failed",
-                    "error": {
-                        "message": json.dumps(
-                            {
-                                "status": 400,
-                                "code": "context_length_exceeded",
-                                "message": "context length exceeded",
-                            }
-                        )
-                    },
-                }
-            )
-        )
-        signals.extend(parser.finish(1, ""))
-        second = sequence.advance(spec, TurnProcessResult(tuple(signals), 1, ""))
-        assert first.argv[:2] == ("codex", "exec")
-        assert second is not None
-        assert second.argv[:4] == ("codex", "exec", RESUME_SUBCOMMAND, session_id)
-        assert f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000" in second.argv
-        terminal = TurnFailed(FailureKind.OTHER, "context length exceeded", None)
-        assert (
-            sequence.advance(
-                spec,
-                TurnProcessResult((SessionStarted(session_id), terminal), 1, ""),
-            )
-            is None
-        )
 
     def test_offline_maps_errors_and_preserves_unknown_failures(self) -> None:
         cases = (
@@ -706,9 +726,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         resumed_signals = await self._run_turn(resumed)
         assert isinstance(resumed_signals[-1], TurnEnded)
 
-    def _build_agent(self) -> Agent:
+    def _build_agent(self, options: Mapping[str, Any] | None = None) -> Agent:
         with _codex_home_environment(self._active_home):
-            return super()._build_agent()
+            return super()._build_agent(options)
 
     def _prepare_home(self, home: Path, repo: Path) -> None:
         home.mkdir(parents=True, exist_ok=True)
@@ -818,34 +838,6 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
         signals = await self._run_turn(_with_prompt(resumed, RESUME_RECALL_PROMPT))
 
-        message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
-        assert nonce in message
-
-    @pytest.mark.asyncio
-    async def test_live_low_compaction_threshold_preserves_session_memory(
-        self, tmp_path: Path
-    ) -> None:
-        self._require_live()
-        first = self.build_spec(tmp_path, resume_session_id=None)
-        await _init_live_repo(first.cwd)
-        nonce = uuid4().hex
-        started, usage = _latest_usage(
-            await self._run_turn(
-                _with_prompt(first, f"Remember this nonce for later in this session: {nonce}")
-            )
-        )
-        resumed = self.build_spec(tmp_path, resume_session_id=started, usage=usage)
-        low_agent = create(
-            AgentContext(
-                options={"compact_at_pct": _LOW_LIVE_COMPACT_AT_PCT},
-                runner=SubprocessRunner(),
-                clock=SystemClock(),
-            )
-        )
-
-        signals = await _run_with_agent(low_agent, _with_prompt(resumed, RESUME_RECALL_PROMPT))
-
-        assert any(isinstance(signal, Compacted) for signal in signals)
         message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
         assert nonce in message
 
@@ -993,12 +985,6 @@ def _install_fake_codex(directory: Path) -> None:
     executable.chmod(0o755)
 
 
-async def _run_with_agent(agent: Agent, spec: TurnSpec) -> list[AgentSignal]:
-    turn = await agent.start_turn(spec)
-    async with asyncio.timeout(_TURN_TIMEOUT_SECONDS):
-        return [signal async for signal in turn.signals()]
-
-
 async def _init_live_repo(path: Path) -> None:
     await asyncio.to_thread(path.mkdir, parents=True, exist_ok=True)
     await SubprocessRunner().run(["git", "init"], timeout=30, cwd=path, check=True)
@@ -1015,3 +1001,34 @@ def _codex_home_environment(home: Path):
             os.environ.pop(CODEX_HOME_ENV_VAR, None)
         else:
             os.environ[CODEX_HOME_ENV_VAR] = previous
+
+
+def _rollout_file(spec: TurnSpec) -> Path:
+    return (
+        Path(spec.env[CODEX_HOME_ENV_VAR])
+        / "sessions"
+        / "2026"
+        / "09"
+        / "26"
+        / f"rollout-2026-09-26T00-00-00-{spec.session_id}.jsonl"
+    )
+
+
+def _resume_argv(spec: TurnSpec) -> tuple[str, ...]:
+    if spec.session_id is None:
+        message = "compaction scenarios resume a recorded session"
+        raise AssertionError(message)
+    return (
+        "codex",
+        "exec",
+        RESUME_SUBCOMMAND,
+        spec.session_id,
+        "--json",
+        MODEL_FLAG,
+        _MODEL,
+        CONFIG_FLAG,
+        f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
+        CONFIG_FLAG,
+        f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000",
+        spec.prompt,
+    )

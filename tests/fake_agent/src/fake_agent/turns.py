@@ -50,12 +50,10 @@ _SESSION_ARGUMENT = "--session-id"
 _PROMPT_ARGUMENT = "--prompt"
 _MODEL_ARGUMENT = "--model"
 _EFFORT_ARGUMENT = "--effort"
-_TURN_PHASE_ENV_VAR = "SHIKIRU_FAKE_PHASE"
-_TURN_RETRY_ENV_VAR = "SHIKIRU_FAKE_RETRY"
-_PHASE_TURN = "turn"
-_PHASE_COMPACT = "compact"
-CONTEXT_USAGE_PERCENT = 90.0
-COMPACTED_CONTEXT_USAGE_PERCENT = 30.0
+INITIAL_CONTEXT_USAGE_PERCENT = 40.0
+WORK_CONTEXT_USAGE_PERCENT = 20.0
+COMPACTED_CONTEXT_USAGE_PERCENT = 10.0
+CONTINUE_PROMPT = "Continue the task exactly where you stopped."
 COMPACTION_PRE_TOKENS = 2000
 COMPACTION_POST_TOKENS = 400
 INPUT_TOKENS_PER_TURN = 120
@@ -63,37 +61,49 @@ OUTPUT_TOKENS_PER_TURN = 60
 CACHE_READ_TOKENS_PER_TURN = 20
 CACHE_WRITE_TOKENS_PER_TURN = 10
 _STDERR_LINE_ENDINGS = "\r\n"
-_CONTEXT_EXCEEDED_EVENT = "context_exceeded"
+CONTEXT_EXCEEDED_EVENT = "context_exceeded"
+THRESHOLD_REACHED_EVENT = "threshold_reached"
+_COMPACTION_FAILED_MESSAGE = "fake compaction did not compact"
 
 
 @dataclass
 class FakeTurnParser:
-    """Parse the fake CLI's JSONL signal stream."""
+    """Parse the fake CLI's JSONL signal stream; `compact` marks a compaction process."""
 
+    compact: bool = False
     context_exceeded: bool = False
+    threshold_reached: bool = False
+    compacted: bool = False
 
     def feed(self, line: str) -> list[AgentSignal]:
         entry = json.loads(line)
         event = entry["event"]
-        if event == _CONTEXT_EXCEEDED_EVENT:
+        if event == CONTEXT_EXCEEDED_EVENT:
             self.context_exceeded = True
             return [TurnFailed(FailureKind.OTHER, entry["message"], None)]
+        if event == THRESHOLD_REACHED_EVENT:
+            self.threshold_reached = True
+            return []
         builder = _SIGNAL_BUILDERS.get(event)
         if builder is None:
             message = f"unrecognized fake stream event {event!r}"
             raise ValueError(message)
-        return [builder(entry)]
+        signal = builder(entry)
+        self.compacted |= isinstance(signal, Compacted)
+        return [signal]
 
     def finish(self, exit_code: int, stderr: str) -> list[AgentSignal]:
-        if exit_code == 0:
-            return []
-        return [
-            TurnFailed(
-                kind=FailureKind.UNKNOWN,
-                message=f"fake CLI exited {exit_code}: {stderr.rstrip(_STDERR_LINE_ENDINGS)}",
-                resets_at=None,
-            )
-        ]
+        if exit_code != 0:
+            return [
+                TurnFailed(
+                    kind=FailureKind.UNKNOWN,
+                    message=f"fake CLI exited {exit_code}: {stderr.rstrip(_STDERR_LINE_ENDINGS)}",
+                    resets_at=None,
+                )
+            ]
+        if self.compact and not self.compacted:
+            return [TurnFailed(FailureKind.OTHER, _COMPACTION_FAILED_MESSAGE, None)]
+        return []
 
 
 def _session_started(entry: Mapping[str, Any]) -> AgentSignal:
@@ -158,61 +168,34 @@ _SIGNAL_BUILDERS: dict[str, Callable[[Mapping[str, Any]], AgentSignal]] = {
 
 
 class FakeTurnSequence(TurnProcessSequence):
-    """Build fake compact, prompt and compact-and-retry processes for one turn."""
+    """Build one fake turn's prompt, compaction and continue processes (obligation 8)."""
 
     def __init__(
         self, spec: TurnSpec, *, compact_at_pct: float, new_session_id: str | None
     ) -> None:
         self._session_id = spec.session_id or new_session_id or str(uuid.uuid4())
         self._compact_at_pct = compact_at_pct
-        self._state = "new"
-        self._parser = FakeTurnParser()
         self._base_env = {**os.environ, **spec.env, FAKE_SESSION_ID_ENV_VAR: self._session_id}
+        self._parser = FakeTurnParser()
+        self._then: str | None = None
+        self._recovered = False
 
     def start(self, spec: TurnSpec) -> TurnProcess:
-        if (
-            spec.session_id is not None
-            and spec.usage is not None
-            and spec.usage.context_used_pct is not None
-            and spec.usage.context_used_pct >= self._compact_at_pct
-        ):
-            self._state = "pre_compact"
-            return self._compact_process(spec)
-        self._state = "prompt"
-        return self._prompt_process(spec, retry=False)
+        return self._prompt_process(spec, spec.prompt)
 
     def advance(self, spec: TurnSpec, previous: TurnProcessResult) -> TurnProcess | None:
-        if self._state == "pre_compact":
-            return self._after_compaction(spec, previous, next_state="prompt", retry=False)
-        if self._state == "prompt":
-            return self._after_prompt(spec, previous)
-        if self._state == "context_compact":
-            return self._after_compaction(spec, previous, next_state="retry", retry=True)
+        del previous
+        if self._then is not None:
+            prompt, self._then = self._then, None
+            return self._prompt_process(spec, prompt) if self._parser.compacted else None
+        if self._parser.threshold_reached:
+            return self._compact_process(spec, then=CONTINUE_PROMPT)
+        if self._parser.context_exceeded and not self._recovered:
+            self._recovered = True
+            return self._compact_process(spec, then=spec.prompt)
         return None
 
-    def _after_compaction(
-        self,
-        spec: TurnSpec,
-        previous: TurnProcessResult,
-        *,
-        next_state: str,
-        retry: bool,
-    ) -> TurnProcess | None:
-        if not any(isinstance(signal, Compacted) for signal in previous.signals):
-            return None
-        self._state = next_state
-        return self._prompt_process(spec, retry=retry)
-
-    def _after_prompt(self, spec: TurnSpec, previous: TurnProcessResult) -> TurnProcess | None:
-        del previous
-        if not self._parser.context_exceeded:
-            return None
-        self._state = "context_compact"
-        return self._compact_process(spec)
-
-    def _prompt_process(self, spec: TurnSpec, *, retry: bool) -> TurnProcess:
-        environment = dict(self._base_env)
-        environment[_TURN_PHASE_ENV_VAR] = _PHASE_TURN
+    def _prompt_process(self, spec: TurnSpec, prompt: str) -> TurnProcess:
         argv = [
             sys.executable,
             "-m",
@@ -221,25 +204,18 @@ class FakeTurnSequence(TurnProcessSequence):
             _SESSION_ARGUMENT,
             self._session_id,
             _PROMPT_ARGUMENT,
-            spec.prompt,
+            prompt,
             _MODEL_ARGUMENT,
             spec.rung.model,
         ]
         if spec.rung.effort is not None:
             argv.extend((_EFFORT_ARGUMENT, spec.rung.effort))
-        environment[_TURN_RETRY_ENV_VAR] = "1" if retry else "0"
-        environment[FAKE_COMPACT_AT_PCT_ENV_VAR] = str(self._compact_at_pct)
+        environment = {**self._base_env, FAKE_COMPACT_AT_PCT_ENV_VAR: str(self._compact_at_pct)}
         self._parser = FakeTurnParser()
-        return TurnProcess(
-            argv=tuple(argv),
-            cwd=spec.cwd,
-            env=environment,
-            parser=self._parser,
-        )
+        return TurnProcess(argv=tuple(argv), cwd=spec.cwd, env=environment, parser=self._parser)
 
-    def _compact_process(self, spec: TurnSpec) -> TurnProcess:
-        environment = dict(self._base_env)
-        environment[_TURN_PHASE_ENV_VAR] = _PHASE_COMPACT
+    def _compact_process(self, spec: TurnSpec, *, then: str) -> TurnProcess:
+        self._then = then
         argv = (
             sys.executable,
             "-m",
@@ -248,12 +224,8 @@ class FakeTurnSequence(TurnProcessSequence):
             _SESSION_ARGUMENT,
             self._session_id,
         )
-        return TurnProcess(
-            argv=argv,
-            cwd=spec.cwd,
-            env=environment,
-            parser=FakeTurnParser(),
-        )
+        self._parser = FakeTurnParser(compact=True)
+        return TurnProcess(argv=argv, cwd=spec.cwd, env=self._base_env, parser=self._parser)
 
 
 class FakeHeadlessTurnAgent:

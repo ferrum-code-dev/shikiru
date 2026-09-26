@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
+from enum import StrEnum, auto
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
@@ -19,7 +22,6 @@ from shikiru.agents.contracts import (
     Compacted,
     FailureKind,
     Message,
-    Rung,
     SessionStarted,
     ToolFinished,
     ToolStarted,
@@ -38,12 +40,17 @@ from shikiru.agents.sdk.turn import (
 )
 from shikiru.agents.testing.resume import RESUME_NONCE_PROMPT, RESUME_RECALL_PROMPT
 from shikiru.clock import SystemClock
-from shikiru.operator.probe import init_scratch_repo, live_report_problem, prepare_live_report
+from shikiru.operator.probe import (
+    REPORT_COMMAND,
+    REPORT_INPUT_FILENAME,
+    init_scratch_repo,
+    live_report_problem,
+    prepare_live_report,
+)
 from shikiru.process import SubprocessRunner
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
-    from pathlib import Path
+    from collections.abc import Callable, Mapping, Sequence
 
     from pydantic import BaseModel
 
@@ -51,7 +58,35 @@ if TYPE_CHECKING:
 
 E2E_ENV_VAR = "SHIKIRU_E2E"
 _TURN_TIMEOUT_SECONDS = 60.0
-_SYNTHETIC_SESSION_ID = "synthetic-session"
+_LIVE_COMPACTION_TIMEOUT_SECONDS = 900.0
+_PYTEST_TIMEOUT_MARGIN_SECONDS = 60.0
+_GROWTH_FILES = 6
+_GROWTH_FILE_LINES = 400
+_GROWTH_WORDS_PER_LINE = 10
+_SYLLABLES = ("ka", "ro", "mit", "sel", "dun", "vo", "tra", "ple", "gor", "nis", "bu", "fex")
+_SYLLABLES_PER_WORD = 3
+_LIVE_COMPACTION_PROMPT = (
+    f"Read part1.txt through part{_GROWTH_FILES}.txt in this repository in order, each file "
+    "in full and one file per tool call. After each file, state its last line number in one "
+    "short sentence.\n"
+    "Then use Bash to run exactly this report command once:\n"
+    f'{REPORT_COMMAND} "$SHIKIRU_RUN_DIR/{REPORT_INPUT_FILENAME}"\n'
+    "After the command succeeds, reply with exactly: DONE followed by the nonce."
+)
+_LIVE_COMPACTION_TURN_PROMPT = (
+    "Remember this nonce: {nonce}. Then read {prompt_path} and follow it exactly."
+)
+_REPLAY_SCRIPT = """
+import json, sys
+from pathlib import Path
+plan = json.loads(sys.argv[1])
+for path, content in plan["writes"].items():
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(content)
+sys.stdout.write(Path(plan["stdout"]).read_text())
+sys.stderr.write(Path(plan["stderr"]).read_text())
+sys.exit(plan["exit_code"])
+"""
 
 
 def _empty_session_logs() -> Mapping[str, Path]:
@@ -84,6 +119,38 @@ class InvocationCase:
     expected_final_signals: Sequence[AgentSignal] = ()
     interactive_session_id: str | None = None
     expected_interactive_command: tuple[str, ...] | None = None
+
+
+class CompactionCase(StrEnum):
+    """The obligation-8 rule one offline compaction scenario exercises (04 §3, check 3)."""
+
+    THRESHOLD = auto()
+    CONTEXT_FAILURE = auto()
+    FAILED_RECOVERY = auto()
+
+
+def _no_writes() -> Mapping[Path, str]:
+    return {}
+
+
+@dataclass(frozen=True)
+class ReplayedProcess:
+    """One recorded process, plus the files its agent wrote while it ran (hook marker, log)."""
+
+    stream: RecordedStream
+    writes: Mapping[Path, str] = field(default_factory=_no_writes)
+
+
+@dataclass(frozen=True)
+class CompactionScenario:
+    """One turn replayed through the plugin's own process sequence and parsers."""
+
+    name: str
+    case: CompactionCase
+    options: Mapping[str, Any]
+    spec: TurnSpec
+    processes: Sequence[ReplayedProcess]
+    expected_argv: Sequence[tuple[str, ...]]
 
 
 class AgentContractSuite:
@@ -130,6 +197,14 @@ class AgentContractSuite:
         """Return the same process sequence used by `agent.start_turn(spec)`."""
         raise NotImplementedError
 
+    def compaction_scenarios(self, tmp_path: Path) -> Sequence[CompactionScenario]:
+        """Return recorded turns covering every `CompactionCase` (offline check 3)."""
+        raise NotImplementedError
+
+    def live_compaction_options(self) -> Mapping[str, Any]:
+        """Return options whose low `compact_at_pct` live check 6 grows past in one turn."""
+        raise NotImplementedError
+
     def headless_ask_schema_model(self) -> type[BaseModel] | None:
         """Return the result model for `headless().ask()`, when the plugin provides it."""
         return None
@@ -161,33 +236,35 @@ class AgentContractSuite:
         _expect(unknown_found, "unmapped error text did not produce UNKNOWN")
 
     @pytest.mark.asyncio
-    async def test_offline_compaction_replays_and_retries_once(self, tmp_path: Path) -> None:
-        samples = self.recorded_streams()
+    async def test_offline_compaction_continues_within_one_turn(self, tmp_path: Path) -> None:
         _expect(
             any(
                 isinstance(signal, Compacted)
-                for sample in samples
+                for sample in self.recorded_streams()
                 for signal in sample.expected_signals
             ),
             "recorded streams contain no Compacted signal",
         )
-        success = await _run_synthetic_compaction(tmp_path, second_failure=False)
+        scenarios = self.compaction_scenarios(tmp_path)
         _expect(
-            sum(isinstance(signal, SessionStarted) for signal in success) == 1,
-            "session start count",
+            {scenario.case for scenario in scenarios} == set(CompactionCase),
+            "compaction scenarios must cover every CompactionCase",
         )
-        _expect(sum(isinstance(signal, Compacted) for signal in success) == 1, "compaction count")
-        _expect(sum(isinstance(signal, TurnEnded) for signal in success) == 1, "turn end count")
-        _expect(
-            not any(isinstance(signal, TurnFailed) for signal in success),
-            "successful compact-and-retry failed",
-        )
-        failure = await _run_synthetic_compaction(tmp_path / "failure", second_failure=True)
-        terminal = [signal for signal in failure if isinstance(signal, (TurnEnded, TurnFailed))]
-        _expect(
-            terminal == [TurnFailed(FailureKind.OTHER, "second context failure", None)],
-            "a second context failure did not end the turn",
-        )
+        for scenario in scenarios:
+            signals, argv = await self._replay_scenario(scenario)
+            _expect(argv == list(scenario.expected_argv), scenario.name)
+            assert_agent_obligations(signals, scenario.spec.session_id)
+            _expect(_COMPACTION_RULES[scenario.case](signals), scenario.name)
+
+    async def _replay_scenario(
+        self, scenario: CompactionScenario
+    ) -> tuple[list[AgentSignal], list[tuple[str, ...]]]:
+        agent = self._build_agent(scenario.options)
+        replay = _ReplaySequence(self.process_sequence(agent, scenario.spec), scenario.processes)
+        turn = await StreamingTurn.start(scenario.spec, SubprocessRunner(), replay)
+        signals = [signal async for signal in turn.signals()]
+        _expect(replay.exhausted, f"{scenario.name}: the turn ended before every process ran")
+        return signals, replay.argv
 
     def test_offline_builds_expected_argv_environment_and_interactive_commands(
         self, tmp_path: Path
@@ -328,38 +405,38 @@ class AgentContractSuite:
         schema_model.model_validate(result)
 
     @pytest.mark.asyncio
-    async def test_live_low_compaction_threshold_preserves_session_memory(
-        self, tmp_path: Path
-    ) -> None:
+    @pytest.mark.timeout(_LIVE_COMPACTION_TIMEOUT_SECONDS + _PYTEST_TIMEOUT_MARGIN_SECONDS)
+    async def test_live_turn_compacts_as_it_grows_and_completes(self, tmp_path: Path) -> None:
         self._require_live()
-        first = self.build_spec(tmp_path, resume_session_id=None)
-        await init_scratch_repo(SubprocessRunner(), first.cwd)
+        spec = await self._prepare_live_report_spec(
+            self.build_spec(tmp_path, resume_session_id=None)
+        )
+        prompt_path = Path(spec.prompt)
+        await asyncio.to_thread(_write_growth_files, spec.cwd)
+        await asyncio.to_thread(prompt_path.write_text, _LIVE_COMPACTION_PROMPT)
         nonce = uuid.uuid4().hex
-        started, usage = _latest_usage(
-            await self._run_turn(
-                _with_prompt(first, f"Remember this nonce for later in this session: {nonce}")
-            )
+        spec = _with_prompt(
+            spec, _LIVE_COMPACTION_TURN_PROMPT.format(nonce=nonce, prompt_path=prompt_path)
         )
-        resumed = self.build_spec(
-            tmp_path,
-            resume_session_id=started,
-            usage=usage,
+        signals = await self._run_turn(
+            spec, self.live_compaction_options(), _LIVE_COMPACTION_TIMEOUT_SECONDS
         )
-        signals = await self._run_turn(_with_prompt(resumed, RESUME_RECALL_PROMPT))
+        problem = await asyncio.to_thread(live_report_problem, spec, signals)
+        _expect(problem is None, problem or "")
         _expect(
-            any(isinstance(signal, Compacted) for signal in signals), "resumed turn did not compact"
+            any(isinstance(signal, Compacted) for signal in signals), "the turn never compacted"
         )
         message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
-        _expect(nonce in message, "compacted resumed turn forgot the nonce")
+        _expect(nonce in message, "the compacted turn forgot the nonce")
 
     def _require_live(self) -> None:
         if not self.runs_live_checks_in_default_gate and not os.environ.get(E2E_ENV_VAR):
             pytest.skip(f"set {E2E_ENV_VAR}=1 to run live agent contract checks")
 
-    def _build_agent(self) -> Agent:
+    def _build_agent(self, options: Mapping[str, Any] | None = None) -> Agent:
         return self.agent_factory()(
             AgentContext(
-                options=self.agent_options(),
+                options=self.agent_options() if options is None else options,
                 runner=SubprocessRunner(),
                 clock=SystemClock(),
             )
@@ -368,9 +445,14 @@ class AgentContractSuite:
     def _live_report_environment(self, spec: TurnSpec) -> Mapping[str, str]:
         return spec.env
 
-    async def _run_turn(self, spec: TurnSpec) -> list[AgentSignal]:
-        turn = await self._build_agent().start_turn(spec)
-        async with asyncio.timeout(_TURN_TIMEOUT_SECONDS):
+    async def _run_turn(
+        self,
+        spec: TurnSpec,
+        options: Mapping[str, Any] | None = None,
+        timeout: float = _TURN_TIMEOUT_SECONDS,
+    ) -> list[AgentSignal]:
+        turn = await self._build_agent(options).start_turn(spec)
+        async with asyncio.timeout(timeout):
             return [signal async for signal in turn.signals()]
 
 
@@ -497,79 +579,72 @@ def _latest_usage(signals: Sequence[AgentSignal]) -> tuple[str, Usage]:
     return session.session_id, usage[-1]
 
 
-@dataclass
-class _SyntheticParser:
-    def feed(self, line: str) -> list[AgentSignal]:
-        entry = json.loads(line)
-        event = entry["event"]
-        if event == "session":
-            return [SessionStarted(entry["session_id"])]
-        if event == "compacted":
-            return [Compacted(2000, 400)]
-        if event == "message":
-            return [Message(entry["text"])]
-        if event == "ended":
-            return [TurnEnded(entry["text"])]
-        if event == "context_failure":
-            return [TurnFailed(FailureKind.OTHER, entry["text"], None)]
-        message = f"unrecognized synthetic event {event!r}"
-        raise ValueError(message)
-
-    def finish(self, exit_code: int, stderr: str) -> list[AgentSignal]:
-        del exit_code, stderr
-        return []
+def _ended(signals: Sequence[AgentSignal]) -> bool:
+    return isinstance(signals[-1], TurnEnded)
 
 
-class _SyntheticSequence:
-    def __init__(self, *, second_failure: bool) -> None:
-        self._second_failure = second_failure
-        self._step = 0
+_COMPACTION_RULES: dict[CompactionCase, Callable[[Sequence[AgentSignal]], bool]] = {
+    CompactionCase.THRESHOLD: lambda signals: (
+        _ended(signals) and sum(isinstance(signal, Compacted) for signal in signals) > 1
+    ),
+    CompactionCase.CONTEXT_FAILURE: lambda signals: (
+        _ended(signals) and any(isinstance(signal, Compacted) for signal in signals)
+    ),
+    CompactionCase.FAILED_RECOVERY: lambda signals: (
+        isinstance(signals[-1], TurnFailed) and signals[-1].kind is FailureKind.OTHER
+    ),
+}
+
+
+class _ReplaySequence:
+    """Runs the plugin's sequence, replacing each process with its recorded output."""
+
+    def __init__(self, inner: TurnProcessSequence, processes: Sequence[ReplayedProcess]) -> None:
+        self._inner = inner
+        self._processes = list(processes)
+        self._next = 0
+        self.argv: list[tuple[str, ...]] = []
+
+    @property
+    def exhausted(self) -> bool:
+        return self._next == len(self._processes)
 
     def start(self, spec: TurnSpec) -> TurnProcess:
-        return self._process(spec, "session", "context_failure")
+        return self._replay(self._inner.start(spec))
 
     def advance(self, spec: TurnSpec, previous: TurnProcessResult) -> TurnProcess | None:
-        if self._step == 0:
-            self._step += 1
-            return self._process(spec, "compacted", "ended", text="compaction finished")
-        if self._step == 1:
-            self._step += 1
-            event = "context_failure" if self._second_failure else "ended"
-            text = "second context failure" if self._second_failure else "completed"
-            return self._process(spec, "session", event, text=text)
-        del previous
-        return None
+        process = self._inner.advance(spec, previous)
+        return None if process is None else self._replay(process)
 
-    @staticmethod
-    def _process(spec: TurnSpec, *events: str, text: str = "first context failure") -> TurnProcess:
-        lines: list[str] = []
-        for event in events:
-            entry = {"event": event, "session_id": _SYNTHETIC_SESSION_ID, "text": text}
-            lines.append(json.dumps(entry))
-        script = "\n".join(f"print({line!r})" for line in lines)
+    def _replay(self, process: TurnProcess) -> TurnProcess:
+        _expect(self._next < len(self._processes), f"unrecorded process {process.argv}")
+        recorded = self._processes[self._next]
+        self._next += 1
+        self.argv.append(process.argv)
+        plan = {
+            "writes": {str(path): content for path, content in recorded.writes.items()},
+            "stdout": str(recorded.stream.stdout),
+            "stderr": str(recorded.stream.stderr),
+            "exit_code": recorded.stream.exit_code,
+        }
         return TurnProcess(
-            argv=(sys.executable, "-c", script),
-            cwd=spec.cwd,
-            env=dict(spec.env),
-            parser=_SyntheticParser(),
+            argv=(sys.executable, "-c", _REPLAY_SCRIPT, json.dumps(plan)),
+            cwd=process.cwd,
+            env=process.env,
+            parser=process.parser,
         )
 
 
-async def _run_synthetic_compaction(tmp_path: Path, *, second_failure: bool) -> list[AgentSignal]:
-    await asyncio.to_thread(tmp_path.mkdir, parents=True, exist_ok=True)
-    spec = TurnSpec(
-        rung=Rung(agent="synthetic", model="synthetic"),
-        role="implementer",
-        prompt="synthetic prompt",
-        cwd=tmp_path,
-        run_dir=tmp_path / "run",
-        turn_dir=tmp_path / "turn",
-        add_dirs=(),
-        env={},
-        session_id=None,
-        usage=None,
-    )
-    turn = await StreamingTurn.start(
-        spec, SubprocessRunner(), _SyntheticSequence(second_failure=second_failure)
-    )
-    return [signal async for signal in turn.signals()]
+def _write_growth_files(repo: Path) -> None:
+    for number in range(1, _GROWTH_FILES + 1):
+        lines = (
+            f"{number}-{line:04d} "
+            + " ".join(_growth_word(number, line, word) for word in range(_GROWTH_WORDS_PER_LINE))
+            for line in range(1, _GROWTH_FILE_LINES + 1)
+        )
+        (repo / f"part{number}.txt").write_text("\n".join(lines) + "\n")
+
+
+def _growth_word(*key: int) -> str:
+    digest = hashlib.blake2b(repr(key).encode(), digest_size=_SYLLABLES_PER_WORD).digest()
+    return "".join(_SYLLABLES[byte % len(_SYLLABLES)] for byte in digest)

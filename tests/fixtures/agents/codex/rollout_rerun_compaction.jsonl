@@ -1,0 +1,4 @@
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":118000,"output_tokens":350},"last_token_usage":{"input_tokens":97000},"model_context_window":100000},"rate_limits":null}}
+{"type":"compacted","payload":{"window_number":2}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":118000,"output_tokens":350},"last_token_usage":{"input_tokens":0},"model_context_window":100000},"rate_limits":null}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":130000,"output_tokens":400},"last_token_usage":{"input_tokens":12000},"model_context_window":100000},"rate_limits":null}}

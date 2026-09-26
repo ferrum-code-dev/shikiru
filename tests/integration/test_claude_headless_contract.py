@@ -11,6 +11,7 @@ import sys
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -42,8 +43,11 @@ from shikiru.agents.testing import (
     RESUME_NONCE_PROMPT,
     RESUME_RECALL_PROMPT,
     AgentContractSuite,
+    CompactionCase,
+    CompactionScenario,
     InvocationCase,
     RecordedStream,
+    ReplayedProcess,
 )
 from shikiru.clock import SystemClock
 from shikiru.domain.recovery import Escalate, Failed, RecoveryPolicy, TurnCounters, decide
@@ -57,7 +61,7 @@ from shikiru.domain.reports import (
 from shikiru.domain.tasks import EscalationReason
 from shikiru.plugins.agents.claude.agent import ClaudeAgent, create
 from shikiru.plugins.agents.claude.options import DEFAULT_ARGS
-from shikiru.plugins.agents.claude.turn import ClaudeTurnParser
+from shikiru.plugins.agents.claude.turn import CONTINUE_PROMPT, ClaudeTurnParser
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
 
@@ -85,7 +89,11 @@ _CLAUDE_HOME_DIRNAME = "claude-home"
 _CLAUDE_CONFIG_DIRNAME = "claude-config"
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 _COMPACTION_THRESHOLD = 80.0
-_LOW_COMPACTION_THRESHOLD = 0.0
+_LIVE_COMPACT_AT_PCT = 25.0
+_EMPTY_STDERR = "turn_rate_limit.stderr.log"
+_HOOK_STOP = "turn_hook_stop_live_redacted.jsonl"
+_HOOK_COMPACT = "turn_hook_compact_live_redacted.jsonl"
+_HOOK_CONTINUE = "turn_hook_continue_live_redacted.jsonl"
 _RESET_FIVE_HOUR = datetime(2030, 1, 1, 1, tzinfo=UTC)
 _RESET_SEVEN_DAY = datetime(2030, 1, 5, tzinfo=UTC)
 _DEFAULT_HAIKU_MODEL_ENV = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
@@ -109,7 +117,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         return create
 
     def agent_options(self) -> Mapping[str, object]:
-        return {"compact_at_pct": _LOW_COMPACTION_THRESHOLD}
+        return {}
 
     def _live_model(self) -> str:
         return os.environ.get(_LIVE_MODEL_ENV) or os.environ.get(_DEFAULT_HAIKU_MODEL_ENV) or _MODEL
@@ -497,7 +505,6 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         config_dir = tmp_path / "claude-config"
         _write_transcript(config_dir, _SESSION_RESUMED, _DEFAULT_LIMIT_TOKENS)
         compact_spec = replace(resumed, env={**resumed.env, "CLAUDE_CONFIG_DIR": str(config_dir)})
-        retry_spec = replace(resumed, usage=None)
         run_dir_arg = str(run_dir)
         extra_dir_arg = str(extra_dir)
         settings = _hook_settings(resumed.turn_dir, _DEFAULT_LIMIT_TOKENS)
@@ -517,20 +524,10 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             settings,
             *DEFAULT_ARGS,
         )
-        context_failure = _record(
-            "turn_context_failure.jsonl",
-            "turn_context_failure.stderr.log",
-            _SESSION_RESUMED,
-        )
         compact_process = _record(
             "turn_compact_process.jsonl",
             "turn_rate_limit.stderr.log",
             _SESSION_RESUMED,
-        )
-        retry_success = _record(
-            "turn_subscription.jsonl",
-            "turn_rate_limit.stderr.log",
-            "session-subscription",
         )
         return [
             InvocationCase(
@@ -646,53 +643,88 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 expected_env=[{"SHIKIRU_ROLE": _ROLE}, {"SHIKIRU_ROLE": _ROLE}],
                 outcome_streams=[compact_process],
             ),
-            InvocationCase(
-                name="context failure compacts and reruns the prompt once",
-                options={"compact_at_pct": _COMPACTION_THRESHOLD},
-                spec=retry_spec,
-                expected_argv=[
-                    (
-                        "claude",
-                        "-p",
-                        retry_spec.prompt,
-                        "--resume",
-                        _SESSION_RESUMED,
-                        *common_tail,
-                    ),
-                    (
-                        "claude",
-                        "-p",
-                        "/compact",
-                        "--resume",
-                        _SESSION_RESUMED,
-                        *common_tail,
-                    ),
-                    (
-                        "claude",
-                        "-p",
-                        retry_spec.prompt,
-                        "--resume",
-                        _SESSION_RESUMED,
-                        *common_tail,
-                    ),
-                ],
-                expected_env=[
-                    {"SHIKIRU_ROLE": _ROLE},
-                    {"SHIKIRU_ROLE": _ROLE},
-                    {"SHIKIRU_ROLE": _ROLE},
-                ],
-                outcome_streams=[context_failure, compact_process, retry_success],
-                expected_final_signals=[
-                    SessionStarted(_SESSION_RESUMED),
-                    Compacted(12000, 1100),
-                    UsageReported(Usage(20, 8, 0, 0, 0.00003, "api_equivalent", 0.01)),
-                    TurnEnded("Ready."),
-                ],
-            ),
         ]
 
     def process_sequence(self, agent: Agent, spec: TurnSpec) -> TurnProcessSequence:
         return cast("ClaudeAgent", agent).process_sequence(spec)
+
+    def live_compaction_options(self) -> Mapping[str, object]:
+        return {"compact_at_pct": _LIVE_COMPACT_AT_PCT}
+
+    def compaction_scenarios(self, tmp_path: Path) -> Sequence[CompactionScenario]:
+        hook_spec = _scenario_spec(tmp_path / "hook", _HOOK_SESSION)
+        marker = {hook_spec.turn_dir / f"{_ROLE}.compact-marker": ""}
+        stop = ReplayedProcess(_record(_HOOK_STOP, _EMPTY_STDERR, _HOOK_SESSION), marker)
+        compact = ReplayedProcess(_record(_HOOK_COMPACT, _EMPTY_STDERR, _HOOK_SESSION))
+        done = ReplayedProcess(_record(_HOOK_CONTINUE, _EMPTY_STDERR, _HOOK_SESSION))
+        recovery_spec = _scenario_spec(tmp_path / "recovery", _SESSION_RESUMED)
+        context_failure = ReplayedProcess(
+            _record("turn_context_failure.jsonl", _EMPTY_STDERR, _SESSION_RESUMED)
+        )
+        recovered = ReplayedProcess(
+            _record("turn_compact_process.jsonl", _EMPTY_STDERR, _SESSION_RESUMED)
+        )
+        hook = partial(_scenario_argv, hook_spec)
+        recovery = partial(_scenario_argv, recovery_spec)
+        return [
+            CompactionScenario(
+                name="hook stops compact and continue twice within one turn",
+                case=CompactionCase.THRESHOLD,
+                options={},
+                spec=hook_spec,
+                processes=[stop, compact, stop, compact, done],
+                expected_argv=[
+                    hook(hook_spec.prompt),
+                    hook("/compact"),
+                    hook(CONTINUE_PROMPT),
+                    hook("/compact"),
+                    hook(CONTINUE_PROMPT),
+                ],
+            ),
+            CompactionScenario(
+                name="a context failure compacts and reruns the prompt",
+                case=CompactionCase.CONTEXT_FAILURE,
+                options={},
+                spec=recovery_spec,
+                processes=[
+                    context_failure,
+                    recovered,
+                    ReplayedProcess(
+                        _record("turn_rerun_success.jsonl", _EMPTY_STDERR, _SESSION_RESUMED)
+                    ),
+                ],
+                expected_argv=[
+                    recovery(recovery_spec.prompt),
+                    recovery("/compact"),
+                    recovery(recovery_spec.prompt),
+                ],
+            ),
+            CompactionScenario(
+                name="a second context failure ends the turn",
+                case=CompactionCase.FAILED_RECOVERY,
+                options={},
+                spec=recovery_spec,
+                processes=[context_failure, recovered, context_failure],
+                expected_argv=[
+                    recovery(recovery_spec.prompt),
+                    recovery("/compact"),
+                    recovery(recovery_spec.prompt),
+                ],
+            ),
+            CompactionScenario(
+                name="a compaction without compact_boundary ends the turn",
+                case=CompactionCase.FAILED_RECOVERY,
+                options={},
+                spec=recovery_spec,
+                processes=[
+                    context_failure,
+                    ReplayedProcess(
+                        _record("turn_compaction_failed.jsonl", _EMPTY_STDERR, _SESSION_RESUMED)
+                    ),
+                ],
+                expected_argv=[recovery(recovery_spec.prompt), recovery("/compact")],
+            ),
+        ]
 
     @pytest.mark.asyncio
     async def test_live_model_change_resumes_and_recalls_session_memory(
@@ -729,41 +761,6 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         signals = await self._run_turn(replace(resumed, prompt=RESUME_RECALL_PROMPT))
         message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
         assert nonce in message, "resumed turn did not recall the nonce"
-
-    @pytest.mark.asyncio
-    async def test_live_low_compaction_threshold_preserves_session_memory(
-        self, tmp_path: Path
-    ) -> None:
-        self._require_live()
-        first = self.build_spec(tmp_path, resume_session_id=None)
-        await SubprocessRunner().run(
-            ["git", "init"],
-            timeout=_LIVE_REPO_INIT_TIMEOUT_SECONDS,
-            cwd=first.cwd,
-            check=True,
-        )
-        nonce = uuid.uuid4().hex
-        first_signals = await self._run_turn(
-            replace(first, prompt=f"Remember this nonce for later in this session: {nonce}")
-        )
-        session_id = next(
-            signal.session_id for signal in first_signals if isinstance(signal, SessionStarted)
-        )
-        usages = [signal.usage for signal in first_signals if isinstance(signal, UsageReported)]
-        assert usages, "live turn reported no usage"
-        if usages[-1].context_used_pct is None:
-            pytest.skip("configured provider does not report a reliable context window")
-        resumed = self.build_spec(
-            tmp_path,
-            resume_session_id=session_id,
-            usage=usages[-1],
-        )
-        signals = await self._run_turn(replace(resumed, prompt=RESUME_RECALL_PROMPT))
-        assert any(isinstance(signal, Compacted) for signal in signals), (
-            "resumed turn did not compact"
-        )
-        message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
-        assert nonce in message, "compacted resumed turn forgot the nonce"
 
     def headless_ask_schema_model(self) -> type[BaseModel]:
         return _AskResult
@@ -933,3 +930,46 @@ def _write_transcript(config_dir: Path, session_id: str, context_tokens: int) ->
         "message": {"id": "msg-1", "usage": {"input_tokens": context_tokens}},
     }
     (project / f"{session_id}.jsonl").write_text(json.dumps(entry) + "\n")
+
+
+def _scenario_spec(tmp_path: Path, session_id: str) -> TurnSpec:
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+    run_dir = tmp_path / "run"
+    return TurnSpec(
+        rung=Rung("claude", _MODEL, "low"),
+        role=_ROLE,
+        prompt="read the files and report",
+        cwd=repo,
+        run_dir=run_dir,
+        turn_dir=tmp_path / "turn",
+        add_dirs=(),
+        env={"CLAUDE_CONFIG_DIR": str(tmp_path / "claude-config")},
+        session_id=session_id,
+        usage=None,
+    )
+
+
+def _scenario_argv(spec: TurnSpec, prompt: str) -> tuple[str, ...]:
+    if spec.session_id is None:
+        message = "compaction scenarios resume a recorded session"
+        raise AssertionError(message)
+    return (
+        "claude",
+        "-p",
+        prompt,
+        "--resume",
+        spec.session_id,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--model",
+        _MODEL,
+        "--effort",
+        "low",
+        "--add-dir",
+        str(spec.run_dir),
+        "--settings",
+        _hook_settings(spec.turn_dir, _DEFAULT_LIMIT_TOKENS),
+        *DEFAULT_ARGS,
+    )

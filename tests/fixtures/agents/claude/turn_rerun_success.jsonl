@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"session-resumed"}
+{"type":"assistant","message":{"id":"msg-rerun","usage":{"input_tokens":30,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Rerun completed."}]}}
+{"type":"result","subtype":"success","result":"Rerun completed.","usage":{"input_tokens":30,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"total_cost_usd":0.00005,"modelUsage":{"claude-haiku-4-5-20251001":{"costBasis":"list","contextWindow":200000}}}

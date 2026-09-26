@@ -18,6 +18,7 @@ from fake_agent.script import (
     StallStep,
 )
 from fake_agent.scripted import (
+    SessionState,
     build_context,
     load_session_state,
     save_script_index,
@@ -32,9 +33,13 @@ from fake_agent.turns import (
     COMPACTED_CONTEXT_USAGE_PERCENT,
     COMPACTION_POST_TOKENS,
     COMPACTION_PRE_TOKENS,
+    CONTINUE_PROMPT,
+    FAKE_COMPACT_AT_PCT_ENV_VAR,
     FAKE_SESSION_ID_ENV_VAR,
     INPUT_TOKENS_PER_TURN,
     OUTPUT_TOKENS_PER_TURN,
+    THRESHOLD_REACHED_EVENT,
+    WORK_CONTEXT_USAGE_PERCENT,
 )
 from shikiru.agents.contracts import role_dir
 from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
@@ -53,6 +58,8 @@ _EVENT_QUOTA_REPORTED = "quota_reported"
 _EVENT_COMPACTED = "compacted"
 _EVENT_TURN_ENDED = "turn_ended"
 _EVENT_TURN_FAILED = "turn_failed"
+_WORK_TOOL_NAME = "read"
+_WORK_TOOL_DETAIL = "reading the workspace"
 _REPORT_TOOL_NAME = "shikiru report"
 _REPORT_TOOL_DETAIL = "submitting the turn report"
 _SESSION_ID_ARGUMENT = "--session-id"
@@ -91,21 +98,38 @@ def _failure(step: FailStep) -> None:
     )
 
 
-async def _run_turn(session_id: str, prompt: str) -> int:
+def _response(prompt: str, earlier_prompts: list[str]) -> str:
+    if prompt == CONTINUE_PROMPT:
+        tasks = [
+            index for index, earlier in enumerate(earlier_prompts) if earlier != CONTINUE_PROMPT
+        ]
+        if not tasks:
+            return ""
+        return _response(earlier_prompts[tasks[-1]], earlier_prompts[: tasks[-1]])
+    if prompt == RESUME_RECALL_PROMPT:
+        return next(iter(earlier_prompts), "")
+    return f"accepted: {prompt}"
+
+
+def _work(state: SessionState) -> None:
+    _emit({"event": _EVENT_TOOL_STARTED, "name": _WORK_TOOL_NAME, "detail": _WORK_TOOL_DETAIL})
+    state["context_used_pct"] = float(state["context_used_pct"]) + WORK_CONTEXT_USAGE_PERCENT
+    _emit({"event": _EVENT_TOOL_FINISHED, "name": _WORK_TOOL_NAME})
+
+
+async def _run_turn(session_id: str, prompt: str, compact_at_pct: float | None) -> int:
     context = build_context()
     state = load_session_state(context.state_path)
     _session_started(session_id)
     if prompt == _WAIT_PROMPT:
         await asyncio.Event().wait()
-    response = (
-        next(iter(state["prompts"]), "")
-        if prompt == RESUME_RECALL_PROMPT
-        else f"accepted: {prompt}"
-    )
-    prompts = list(state["prompts"])
-    prompts.append(prompt)
-    state["prompts"] = prompts
+    response = _response(prompt, state["prompts"])
+    state["prompts"] = [*state["prompts"], prompt]
+    _work(state)
     save_session_state(context.state_path, state)
+    if compact_at_pct is not None and state["context_used_pct"] >= compact_at_pct:
+        _emit({"event": THRESHOLD_REACHED_EVENT})
+        return 0
     script = Script.from_env(
         script_raw_for(context.role), start_index=script_index(context.script_path)
     )
@@ -191,7 +215,7 @@ async def _run_interactive(session_id: str) -> None:
         prompt = line.rstrip("\n")
         if prompt == "/exit":
             return
-        await _run_turn(session_id, prompt)
+        await _run_turn(session_id, prompt, None)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -212,7 +236,8 @@ def main() -> None:
     args = _parser().parse_args()
     os.environ[FAKE_SESSION_ID_ENV_VAR] = args.session_id
     if args.command == "turn":
-        sys.exit(asyncio.run(_run_turn(args.session_id, args.prompt)))
+        compact_at_pct = float(os.environ[FAKE_COMPACT_AT_PCT_ENV_VAR])
+        sys.exit(asyncio.run(_run_turn(args.session_id, args.prompt, compact_at_pct)))
     if args.command == "compact":
         sys.exit(asyncio.run(_run_compaction(args.session_id)))
     asyncio.run(_run_interactive(args.session_id))

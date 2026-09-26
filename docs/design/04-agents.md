@@ -106,7 +106,7 @@ Small, tested building blocks for plugins:
 
 ## 3. Contract test kit (`shikiru.agents.testing`)
 
-`AgentContractSuite` is a pytest base class. A plugin subclasses it and provides its factory, its `TurnParser` and sample files.
+`AgentContractSuite` is a pytest base class. A plugin subclasses it and provides its factory, its `TurnParser`, sample files and compaction scenarios: recorded processes (plus files the agent wrote, such as a hook marker or a session log) that the kit replays through the plugin's own process sequence and `StreamingTurn`.
 
 **Offline checks** (always run; samples are recorded streams committed under `tests/fixtures/agents/<agent>/`, 07 §4):
 1. Each recorded stream (stdout lines, stderr, exit code, plus session-log excerpts when the plugin reads them) replays through the parser to the expected signal sequence and satisfies obligations 1–5.

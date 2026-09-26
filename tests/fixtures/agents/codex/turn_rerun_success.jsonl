@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"session-recovery"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Rerun completed."}}
+{"type":"turn.completed","usage":{"input_tokens":130000,"cached_input_tokens":90000,"output_tokens":400}}

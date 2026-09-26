@@ -140,20 +140,19 @@ async def test_cancelling_a_turn_stops_its_child_process(
     assert not (role_path / "turn.pid").exists()
 
 
-async def test_turn_pid_tracks_prompt_process_after_precompaction(
+async def test_turn_pid_tracks_the_continue_process_after_in_turn_compaction(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
     base_settings = flow_settings()
     settings = base_settings.model_copy(
         update={
-            "agents": {"fake": AgentConfig(options={"compact_at_pct": 1})},
+            "agents": {"fake": AgentConfig(options={"compact_at_pct": 50})},
             "orchestration": base_settings.orchestration.model_copy(update={"poll_seconds": 1}),
         }
     )
     await init_project_repo(engine_env.project_root)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
-    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}, {"kind": "stall"}])
-    await set_role_script(tmux_server, Role.LEADER, [{"kind": "changes_requested"}])
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}])
     flow_env = build_flow(engine_env, settings, turn_clock=SystemClock())
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
     role_path = run_dir(engine_env.project_root, task.id) / "implementer"

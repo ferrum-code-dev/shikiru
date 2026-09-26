@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from fake_agent.agent import FakeAgent, create
 from fake_agent.turns import (
+    CONTINUE_PROMPT,
     FAKE_COMPACT_AT_PCT_ENV_VAR,
     FAKE_SESSION_ID_ENV_VAR,
     FakeTurnParser,
@@ -31,7 +32,14 @@ from shikiru.agents.contracts import (
     Usage,
     UsageReported,
 )
-from shikiru.agents.testing import AgentContractSuite, InvocationCase, RecordedStream
+from shikiru.agents.testing import (
+    AgentContractSuite,
+    CompactionCase,
+    CompactionScenario,
+    InvocationCase,
+    RecordedStream,
+    ReplayedProcess,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -44,6 +52,7 @@ _MODEL = "fake-standard"
 _FIXED_SESSION_ID = "fixed-new-session-id"
 _RESUMED_SESSION_ID = "resumed-session-id"
 _COMPACTION_THRESHOLD = 80.0
+_LOW_COMPACTION_THRESHOLD = 50.0
 _TOKEN_USAGE = Usage(
     input_tokens=120,
     output_tokens=60,
@@ -94,9 +103,11 @@ class TestFakeAgentContract(AgentContractSuite):
         return {
             "asks": [{"ok": True}],
             "auth": "none",
-            "compact_at_pct": 10.0,
             "new_session_id": _FIXED_SESSION_ID,
         }
+
+    def live_compaction_options(self) -> Mapping[str, object]:
+        return {**self.agent_options(), "compact_at_pct": _LOW_COMPACTION_THRESHOLD}
 
     def build_spec(
         self,
@@ -171,18 +182,6 @@ class TestFakeAgentContract(AgentContractSuite):
                     TurnEnded("the earlier nonce is still remembered"),
                 ],
                 session_id=compacted_session,
-            ),
-            RecordedStream(
-                name="turn_compact_process.jsonl",
-                stdout=_FIXTURE_DIR / "turn_compact_process.jsonl",
-                stderr=_FIXTURE_DIR / "turn_full.stderr.log",
-                exit_code=0,
-                expected_signals=[
-                    SessionStarted(_RESUMED_SESSION_ID),
-                    Compacted(2000, 400),
-                    TurnEnded("context compacted"),
-                ],
-                session_id=_RESUMED_SESSION_ID,
             ),
             RecordedStream(
                 name="turn_retry_success.jsonl",
@@ -278,15 +277,6 @@ class TestFakeAgentContract(AgentContractSuite):
         resumed_spec = self.build_spec(
             tmp_path / "resumed", resume_session_id=_RESUMED_SESSION_ID, model="fake-next"
         )
-        compact_spec = self.build_spec(
-            tmp_path / "compact",
-            resume_session_id=_RESUMED_SESSION_ID,
-            usage=_TOKEN_USAGE,
-        )
-        outcome_streams = {
-            sample.name: sample for sample in (*self.recorded_streams(), *self.error_streams())
-        }
-        retry_spec = self.build_spec(tmp_path / "retry", resume_session_id=_RESUMED_SESSION_ID)
         return [
             InvocationCase(
                 name="new session",
@@ -306,9 +296,7 @@ class TestFakeAgentContract(AgentContractSuite):
                 expected_env=[
                     {
                         FAKE_SESSION_ID_ENV_VAR: _FIXED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "turn",
-                        "SHIKIRU_FAKE_RETRY": "0",
-                        FAKE_COMPACT_AT_PCT_ENV_VAR: "10.0",
+                        FAKE_COMPACT_AT_PCT_ENV_VAR: str(_COMPACTION_THRESHOLD),
                     }
                 ],
             ),
@@ -330,9 +318,7 @@ class TestFakeAgentContract(AgentContractSuite):
                 expected_env=[
                     {
                         FAKE_SESSION_ID_ENV_VAR: _RESUMED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "turn",
-                        "SHIKIRU_FAKE_RETRY": "0",
-                        FAKE_COMPACT_AT_PCT_ENV_VAR: "10.0",
+                        FAKE_COMPACT_AT_PCT_ENV_VAR: str(_COMPACTION_THRESHOLD),
                     }
                 ],
                 interactive_session_id=_RESUMED_SESSION_ID,
@@ -361,149 +347,7 @@ class TestFakeAgentContract(AgentContractSuite):
                 expected_env=[
                     {
                         FAKE_SESSION_ID_ENV_VAR: _FIXED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "turn",
-                        "SHIKIRU_FAKE_RETRY": "0",
                     }
-                ],
-            ),
-            InvocationCase(
-                name="pre-turn compaction before a resumed turn",
-                options={**options, "compact_at_pct": _COMPACTION_THRESHOLD},
-                spec=compact_spec,
-                expected_argv=[
-                    (*_CLI_PREFIX, *_COMPACT_ARGUMENTS, _RESUMED_SESSION_ID),
-                    (
-                        *_CLI_PREFIX,
-                        *_TURN_ARGUMENTS,
-                        _RESUMED_SESSION_ID,
-                        _PROMPT_ARGUMENT,
-                        compact_spec.prompt,
-                        _MODEL_ARGUMENT,
-                        compact_spec.rung.model,
-                    ),
-                ],
-                expected_env=[
-                    {
-                        FAKE_SESSION_ID_ENV_VAR: _RESUMED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "compact",
-                    },
-                    {
-                        FAKE_SESSION_ID_ENV_VAR: _RESUMED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "turn",
-                        "SHIKIRU_FAKE_RETRY": "0",
-                        FAKE_COMPACT_AT_PCT_ENV_VAR: str(_COMPACTION_THRESHOLD),
-                    },
-                ],
-                outcome_streams=[outcome_streams["turn_compact_process.jsonl"]],
-            ),
-            InvocationCase(
-                name="context failure compacts and reruns the prompt once",
-                options={**options, "compact_at_pct": _COMPACTION_THRESHOLD},
-                spec=retry_spec,
-                expected_argv=[
-                    (
-                        *_CLI_PREFIX,
-                        *_TURN_ARGUMENTS,
-                        _RESUMED_SESSION_ID,
-                        _PROMPT_ARGUMENT,
-                        retry_spec.prompt,
-                        _MODEL_ARGUMENT,
-                        retry_spec.rung.model,
-                    ),
-                    (*_CLI_PREFIX, *_COMPACT_ARGUMENTS, _RESUMED_SESSION_ID),
-                    (
-                        *_CLI_PREFIX,
-                        *_TURN_ARGUMENTS,
-                        _RESUMED_SESSION_ID,
-                        _PROMPT_ARGUMENT,
-                        retry_spec.prompt,
-                        _MODEL_ARGUMENT,
-                        retry_spec.rung.model,
-                    ),
-                ],
-                expected_env=[
-                    {
-                        FAKE_SESSION_ID_ENV_VAR: _RESUMED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "turn",
-                        "SHIKIRU_FAKE_RETRY": "0",
-                        FAKE_COMPACT_AT_PCT_ENV_VAR: str(_COMPACTION_THRESHOLD),
-                    },
-                    {
-                        FAKE_SESSION_ID_ENV_VAR: _RESUMED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "compact",
-                    },
-                    {
-                        FAKE_SESSION_ID_ENV_VAR: _RESUMED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "turn",
-                        "SHIKIRU_FAKE_RETRY": "1",
-                        FAKE_COMPACT_AT_PCT_ENV_VAR: str(_COMPACTION_THRESHOLD),
-                    },
-                ],
-                outcome_streams=[
-                    outcome_streams["turn_context_failure.jsonl"],
-                    outcome_streams["turn_compact_process.jsonl"],
-                    outcome_streams["turn_retry_success.jsonl"],
-                ],
-                expected_final_signals=[
-                    SessionStarted(_RESUMED_SESSION_ID),
-                    Compacted(2000, 400),
-                    Message("retry completed"),
-                    UsageReported(_RETRY_USAGE),
-                    TurnEnded("retry completed"),
-                ],
-            ),
-            InvocationCase(
-                name="second context failure ends after one retry",
-                options={**options, "compact_at_pct": _COMPACTION_THRESHOLD},
-                spec=retry_spec,
-                expected_argv=[
-                    (
-                        *_CLI_PREFIX,
-                        *_TURN_ARGUMENTS,
-                        _RESUMED_SESSION_ID,
-                        _PROMPT_ARGUMENT,
-                        retry_spec.prompt,
-                        _MODEL_ARGUMENT,
-                        retry_spec.rung.model,
-                    ),
-                    (*_CLI_PREFIX, *_COMPACT_ARGUMENTS, _RESUMED_SESSION_ID),
-                    (
-                        *_CLI_PREFIX,
-                        *_TURN_ARGUMENTS,
-                        _RESUMED_SESSION_ID,
-                        _PROMPT_ARGUMENT,
-                        retry_spec.prompt,
-                        _MODEL_ARGUMENT,
-                        retry_spec.rung.model,
-                    ),
-                ],
-                expected_env=[
-                    {
-                        FAKE_SESSION_ID_ENV_VAR: _RESUMED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "turn",
-                        "SHIKIRU_FAKE_RETRY": "0",
-                        FAKE_COMPACT_AT_PCT_ENV_VAR: str(_COMPACTION_THRESHOLD),
-                    },
-                    {
-                        FAKE_SESSION_ID_ENV_VAR: _RESUMED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "compact",
-                    },
-                    {
-                        FAKE_SESSION_ID_ENV_VAR: _RESUMED_SESSION_ID,
-                        "SHIKIRU_FAKE_PHASE": "turn",
-                        "SHIKIRU_FAKE_RETRY": "1",
-                        FAKE_COMPACT_AT_PCT_ENV_VAR: str(_COMPACTION_THRESHOLD),
-                    },
-                ],
-                outcome_streams=[
-                    outcome_streams["turn_context_failure.jsonl"],
-                    outcome_streams["turn_compact_process.jsonl"],
-                    outcome_streams["turn_retry_context_failure.jsonl"],
-                ],
-                expected_final_signals=[
-                    SessionStarted(_RESUMED_SESSION_ID),
-                    Compacted(2000, 400),
-                    TurnFailed(FailureKind.OTHER, "context still full", None),
                 ],
             ),
         ]
@@ -511,5 +355,74 @@ class TestFakeAgentContract(AgentContractSuite):
     def process_sequence(self, agent: Agent, spec: TurnSpec) -> TurnProcessSequence:
         return cast("FakeAgent", agent).process_sequence(spec)
 
+    def compaction_scenarios(self, tmp_path: Path) -> Sequence[CompactionScenario]:
+        spec = self.build_spec(tmp_path / "compaction", resume_session_id=_RESUMED_SESSION_ID)
+        threshold = _process("turn_threshold_reached.jsonl")
+        compact = _process("turn_compact_process.jsonl")
+        completed = _process("turn_retry_success.jsonl")
+        context_failure = _process("turn_context_failure.jsonl")
+        prompt = _turn_argv(spec.prompt, spec.rung.model)
+        resume = _turn_argv(CONTINUE_PROMPT, spec.rung.model)
+        compact_argv = (*_CLI_PREFIX, *_COMPACT_ARGUMENTS, _RESUMED_SESSION_ID)
+        return [
+            CompactionScenario(
+                name="threshold crossings compact and continue twice within one turn",
+                case=CompactionCase.THRESHOLD,
+                options=self.agent_options(),
+                spec=spec,
+                processes=[threshold, compact, threshold, compact, completed],
+                expected_argv=[prompt, compact_argv, resume, compact_argv, resume],
+            ),
+            CompactionScenario(
+                name="a context failure compacts and reruns the prompt",
+                case=CompactionCase.CONTEXT_FAILURE,
+                options=self.agent_options(),
+                spec=spec,
+                processes=[context_failure, compact, completed],
+                expected_argv=[prompt, compact_argv, prompt],
+            ),
+            CompactionScenario(
+                name="a second context failure ends the turn",
+                case=CompactionCase.FAILED_RECOVERY,
+                options=self.agent_options(),
+                spec=spec,
+                processes=[context_failure, compact, _process("turn_retry_context_failure.jsonl")],
+                expected_argv=[prompt, compact_argv, prompt],
+            ),
+            CompactionScenario(
+                name="a failed compaction ends the turn",
+                case=CompactionCase.FAILED_RECOVERY,
+                options=self.agent_options(),
+                spec=spec,
+                processes=[context_failure, _process("turn_compaction_failed.jsonl")],
+                expected_argv=[prompt, compact_argv],
+            ),
+        ]
+
     def headless_ask_schema_model(self) -> type[BaseModel]:
         return _AskResult
+
+
+def _process(name: str) -> ReplayedProcess:
+    return ReplayedProcess(
+        RecordedStream(
+            name=name,
+            stdout=_FIXTURE_DIR / name,
+            stderr=_FIXTURE_DIR / "turn_full.stderr.log",
+            exit_code=0,
+            expected_signals=[],
+            session_id=_RESUMED_SESSION_ID,
+        )
+    )
+
+
+def _turn_argv(prompt: str, model: str) -> tuple[str, ...]:
+    return (
+        *_CLI_PREFIX,
+        *_TURN_ARGUMENTS,
+        _RESUMED_SESSION_ID,
+        _PROMPT_ARGUMENT,
+        prompt,
+        _MODEL_ARGUMENT,
+        model,
+    )

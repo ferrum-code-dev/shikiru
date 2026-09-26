@@ -1,0 +1,4 @@
+{"event":"session_started","session_id":"resumed-session-id"}
+{"event":"tool_started","name":"read","detail":"reading the workspace"}
+{"event":"tool_finished","name":"read"}
+{"event":"threshold_reached"}
