@@ -40,3 +40,7 @@ shell = "Shell · {cwd}"
 
 [notify]
 command = ""
+
+[doctor]
+probe_timeout = 180
+probe_stream_tail_lines = 20

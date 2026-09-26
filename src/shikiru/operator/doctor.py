@@ -132,7 +132,7 @@ class Doctor:
         checks: list[DoctorCheck] = []
         for rung in _first_rung_per_agent(settings.ladder_rungs()):
             outcome = await self._probe.run(
-                self._project_root, rung, settings.agents[rung.agent].options
+                self._project_root, rung, settings.agents[rung.agent].options, settings.doctor
             )
             checks.append(
                 DoctorCheck(

@@ -80,6 +80,10 @@ shell = "Shell · {cwd}"
 
 [notify]
 command = ""                                    # optional; event JSON on stdin for escalation and task_done
+
+[doctor]
+probe_timeout = 180                             # seconds per `doctor --probe` live turn
+probe_stream_tail_lines = 20                    # stream lines shown when a probe fails
 ```
 
 **`submit` flags**, applying to that task only: `--mode implement|plan`, `--complexity low|normal|high`, `--priority N`, `--after T-n` (repeatable), `--leader a:m:e`, `--implementer a:m:e`.

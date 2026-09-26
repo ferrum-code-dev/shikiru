@@ -44,12 +44,11 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import AgentSignal, Rung, Turn
     from shikiru.agents.registry import AgentRegistry
     from shikiru.clock import Clock
+    from shikiru.config.settings import DoctorConfig
     from shikiru.process import SubprocessRunner
 
 GIT_INIT_TIMEOUT_SECONDS = 10.0
-PROBE_TIMEOUT_SECONDS = 180.0
 PROBE_ROLE = "implementer"
-PROBE_STREAM_TAIL_LINES = 20
 REPORT_INPUT_FILENAME = "contract-report-input.json"
 REPORT_PROMPT_FILENAME = "contract-prompt.md"
 REPORT_TOOL_NAME = "shikiru report"
@@ -102,7 +101,9 @@ class AgentProbe:
         self._runner = runner
         self._clock = clock
 
-    async def run(self, project_root: Path, rung: Rung, options: Mapping[str, Any]) -> ProbeOutcome:
+    async def run(
+        self, project_root: Path, rung: Rung, options: Mapping[str, Any], config: DoctorConfig
+    ) -> ProbeOutcome:
         """Start one real turn on `rung` that must submit a valid report through the CLI."""
         run_dir = probe_run_dir(project_root)
         turn_dir = run_dir / TURNS_DIR_NAME / rung.agent
@@ -120,14 +121,18 @@ class AgentProbe:
             usage=None,
         )
         try:
-            problem = await self._run_turn(spec, options)
+            problem = await self._run_turn(spec, options, config.probe_timeout)
         except (ShikiruError, OSError) as error:
             problem = str(error) or type(error).__name__
         if problem is None:
             return ProbeOutcome(problem=None)
-        return await asyncio.to_thread(_failed_outcome, spec, problem)
+        return await asyncio.to_thread(
+            _failed_outcome, spec, problem, config.probe_stream_tail_lines
+        )
 
-    async def _run_turn(self, spec: TurnSpec, options: Mapping[str, Any]) -> str | None:
+    async def _run_turn(
+        self, spec: TurnSpec, options: Mapping[str, Any], timeout: float
+    ) -> str | None:
         agent = self._registry.create(
             spec.rung.agent, AgentContext(options=options, runner=self._runner, clock=self._clock)
         )
@@ -135,25 +140,25 @@ class AgentProbe:
         spec = replace(spec, prompt=TURN_PROMPT.format(prompt_path=prompt_path))
         turn = await agent.start_turn(spec)
         try:
-            signals = await _collect(turn)
+            signals = await _collect(turn, timeout)
         except TimeoutError:
             await turn.stop()
-            return f"live turn exceeded {PROBE_TIMEOUT_SECONDS:g}s"
+            return f"live turn exceeded {timeout:g}s"
         return await asyncio.to_thread(live_report_problem, spec, signals)
 
 
-async def _collect(turn: Turn) -> list[AgentSignal]:
-    async with asyncio.timeout(PROBE_TIMEOUT_SECONDS):
+async def _collect(turn: Turn, timeout: float) -> list[AgentSignal]:
+    async with asyncio.timeout(timeout):
         return [signal async for signal in turn.signals()]
 
 
-def _failed_outcome(spec: TurnSpec, problem: str) -> ProbeOutcome:
+def _failed_outcome(spec: TurnSpec, problem: str, tail_lines: int) -> ProbeOutcome:
     stream_path = stream_log_path(spec.turn_dir, spec.role)
     stderr_path = stderr_log_path(spec.turn_dir, spec.role)
     stream_lines = stream_path.read_text().splitlines() if stream_path.is_file() else []
     return ProbeOutcome(
         problem=problem,
-        stream_tail="\n".join(stream_lines[-PROBE_STREAM_TAIL_LINES:]),
+        stream_tail="\n".join(stream_lines[-tail_lines:]),
         stderr=stderr_path.read_text().strip() if stderr_path.is_file() else "",
     )
 

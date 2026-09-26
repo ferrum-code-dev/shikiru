@@ -11,6 +11,7 @@ from shikiru.config.settings import (
     ComplexityLadder,
     ComplexityName,
     DashboardConfig,
+    DoctorConfig,
     ImplementerConfig,
     LayoutSplit,
     NotifyConfig,
@@ -110,6 +111,7 @@ def make_settings(
             titles=TitlesConfig(window="", leader="", implementer="", system="", shell=""),
         ),
         notify=NotifyConfig(command=""),
+        doctor=DoctorConfig(probe_timeout=180, probe_stream_tail_lines=20),
     )
 
 

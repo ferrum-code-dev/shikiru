@@ -141,6 +141,13 @@ class NotifyConfig(ConfigModel):
     command: str
 
 
+class DoctorConfig(ConfigModel):
+    """`[doctor]`: `doctor --probe` limits."""
+
+    probe_timeout: float
+    probe_stream_tail_lines: int
+
+
 class Settings(ConfigModel):
     """The full merged and validated Shikiru configuration."""
 
@@ -151,6 +158,7 @@ class Settings(ConfigModel):
     roles: RolesConfig
     dashboard: DashboardConfig
     notify: NotifyConfig
+    doctor: DoctorConfig
 
     def ladder_rungs(self) -> list[Rung]:
         """Return every configured rung: leader, implementer, complexity overrides, helper."""
