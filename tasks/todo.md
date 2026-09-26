@@ -43,6 +43,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 35: Engine on process-per-turn; screen machinery removed
 - [x] Task 36: Pane views, take over / hand back, queued `say`
 - [x] Task 37: Probe and real E2E on headless turns
+- [ ] Task 39: Proactive context compaction within a turn
 
 ## Phase 5 — Resilience and operator completeness
 - [ ] Task 22: Engine restart recovery

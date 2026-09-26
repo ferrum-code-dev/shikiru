@@ -12,7 +12,7 @@ Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`
 **Order**:
 - Phases 0–3 build the whole pipeline against the fake agent.
 - Phase 4 makes it real (E1, E2).
-- Phase 4b moves agents to headless turns on resumed sessions with panes as live views (D1 revised, D21, D22). Its tasks are numbered 31–38 so earlier numbers stay stable; do them before Phase 5. Task 38 (code health) runs alongside: its correctness items first, the rest together with the Phase 4b tasks they touch.
+- Phase 4b moves agents to headless turns on resumed sessions with panes as live views (D1 revised, D21, D22, D23). Its tasks are numbered 31–39 so earlier numbers stay stable; do them before Phase 5. Task 38 (code health) runs alongside: its correctness items first, the rest together with the Phase 4b tasks they touch.
 - Phases 5–6 complete resilience, operator surfaces and onboarding.
 
 ---
@@ -284,6 +284,15 @@ Refs: 03 §9, 06 §2, §4, §5.1–5.2.
 Refs: 04 §3, 06 §2, 07 §5.
 - [x] `doctor --probe` runs live check 1 per ladder agent in `.shikiru/probe/`, reporting the stream tail and stderr on failure.
 - [x] E2E E1 and E2 (queued delivery, 07 §5) pass.
+
+### Task 39: Proactive context compaction within a turn
+Refs: 01 D23, 04 §1 obligation 8, §3–5, 03 §7.
+- [x] Clarify the agent-agnostic requirement: configurable threshold (default 80%), prevention within a running turn, session and task continuity, and exceptional overflow recovery. Distinguish previous between-turn evidence from compliance with this requirement.
+- [ ] Shared contract checks exercise threshold crossing and repeated compaction within one turn, pending input and output allowance, and explicit rejection of combinations without verified prevention.
+- [ ] Claude enforces proactive compaction within a running turn for supported model/provider combinations, including when display context usage is unavailable; genuine live evidence verifies continuation and retained task context without overflow.
+- [ ] Codex's native threshold is verified within a running turn for supported model/provider combinations; missing window metadata cannot silently disable protection. Fix any gaps revealed by these checks.
+- [ ] Live contract check 6 passes for both agents: start below a low threshold, grow context during the same turn, observe compaction before overflow, continue to a valid report and recall earlier context. No second Shikiru turn is used to trigger the compaction.
+- [ ] `uv run poe check` passes; record CLI versions, model/provider combinations and genuine redacted evidence. Existing Task 33/34 compaction notes do not prove this stronger guarantee.
 
 ## Phase 5 — Resilience and operator completeness
 
