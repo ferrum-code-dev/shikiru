@@ -85,8 +85,6 @@ _HOOK_MODULE = "shikiru.plugins.agents.claude.hook"
 _DEFAULT_LIMIT_TOKENS = 160_000
 _LIVE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_MODEL"
 _LIVE_CHANGE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL"
-_CLAUDE_HOME_DIRNAME = "claude-home"
-_CLAUDE_CONFIG_DIRNAME = "claude-config"
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 _COMPACTION_THRESHOLD = 80.0
 _LIVE_COMPACT_AT_PCT = 25.0
@@ -154,17 +152,6 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             usage=usage,
         )
 
-    def _live_report_environment(self, spec: TurnSpec) -> Mapping[str, str]:
-        home_dir = spec.cwd.parent / _CLAUDE_HOME_DIRNAME
-        config_dir = spec.cwd.parent / _CLAUDE_CONFIG_DIRNAME
-        home_dir.mkdir(parents=True, exist_ok=True)
-        config_dir.mkdir(parents=True, exist_ok=True)
-        return {
-            **spec.env,
-            "HOME": str(home_dir),
-            "CLAUDE_CONFIG_DIR": str(config_dir),
-        }
-
     @pytest.mark.asyncio
     async def test_live_report_payload_is_confined_to_scratch_inputs(self, tmp_path: Path) -> None:
         spec = await self._prepare_live_report_spec(
@@ -176,16 +163,10 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         role_dir = spec.run_dir / spec.role
         turn_link = role_dir / CURRENT_TURN_LINK_NAME
         schema_path = spec.turn_dir / REPORT_SCHEMA_FILENAME
-        isolated_home = tmp_path / "claude-home"
-        isolated_config = tmp_path / "claude-config"
 
         assert project_root not in spec.cwd.resolve().parents
         assert project_root not in spec.run_dir.resolve().parents
-        assert project_root not in isolated_home.resolve().parents
-        assert project_root not in isolated_config.resolve().parents
         assert spec.add_dirs == ()
-        assert not any(isolated_home.iterdir())
-        assert not any(isolated_config.iterdir())
         assert {path.name for path in spec.cwd.iterdir()} == {".git", prompt_path.name}
         assert {path.name for path in spec.run_dir.iterdir()} == {report_input.name, spec.role}
         assert {path.name for path in role_dir.iterdir()} == {CURRENT_TURN_LINK_NAME}
@@ -226,8 +207,6 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         assert command.cwd == spec.cwd
         assert command.argv[:3] == ("claude", "-p", str(prompt_path))
         assert add_dirs == [spec.run_dir]
-        assert command.env["HOME"] == str(isolated_home)
-        assert command.env["CLAUDE_CONFIG_DIR"] == str(isolated_config)
         assert command.env["SHIKIRU_RUN_DIR"] == str(spec.run_dir)
         assert command.env["SHIKIRU_ROLE"] == spec.role
         for name in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"):

@@ -332,7 +332,7 @@ class AgentContractSuite:
 
     async def _prepare_live_report_spec(self, spec: TurnSpec) -> TurnSpec:
         prompt_path = await prepare_live_report(SubprocessRunner(), spec)
-        return _with_prompt(spec, str(prompt_path), env=self._live_report_environment(spec))
+        return _with_prompt(spec, str(prompt_path))
 
     @pytest.mark.asyncio
     async def test_live_usage_reports_session_tokens(self, tmp_path: Path) -> None:
@@ -441,9 +441,6 @@ class AgentContractSuite:
                 clock=SystemClock(),
             )
         )
-
-    def _live_report_environment(self, spec: TurnSpec) -> Mapping[str, str]:
-        return spec.env
 
     async def _run_turn(
         self,
@@ -557,7 +554,7 @@ def _expect(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def _with_prompt(spec: TurnSpec, prompt: str, *, env: Mapping[str, str] | None = None) -> TurnSpec:
+def _with_prompt(spec: TurnSpec, prompt: str) -> TurnSpec:
     return TurnSpec(
         rung=spec.rung,
         role=spec.role,
@@ -566,7 +563,7 @@ def _with_prompt(spec: TurnSpec, prompt: str, *, env: Mapping[str, str] | None =
         run_dir=spec.run_dir,
         turn_dir=spec.turn_dir,
         add_dirs=spec.add_dirs,
-        env=spec.env if env is None else env,
+        env=spec.env,
         session_id=spec.session_id,
         usage=spec.usage,
     )

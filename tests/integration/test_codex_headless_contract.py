@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,6 +15,8 @@ import pytest
 from pydantic import BaseModel
 
 from shikiru.agents.contracts import (
+    ROLE_ENV_VAR,
+    RUN_DIR_ENV_VAR,
     Agent,
     AgentContext,
     AgentFactory,
@@ -80,6 +81,8 @@ _FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "agents" / "codex"
 _ROLE = "implementer"
 _MODEL = "gpt-5.6-sol"
 _OTHER_MODEL = "gpt-5.6-terra"
+_LIVE_MODEL = "gpt-5.6-luna"
+_LIVE_OTHER_MODEL = "gpt-5.6-terra"
 _EFFORT = "low"
 _TEST_CONTEXT_WINDOW = 100_000
 _ROLLOUT_CONTEXT_WINDOW = 250_000
@@ -255,18 +258,21 @@ class TestCodexHeadlessContract(AgentContractSuite):
         repo.mkdir(parents=True, exist_ok=True)
         run_dir = tmp_path / "run"
         run_dir.mkdir(parents=True, exist_ok=True)
-        home = tmp_path / "codex-home"
-        self._prepare_home(home, repo)
+        env = {RUN_DIR_ENV_VAR: str(run_dir), ROLE_ENV_VAR: _ROLE}
+        if not self._live:
+            home = tmp_path / "codex-home"
+            self._prepare_home(home, repo)
+            env[CODEX_HOME_ENV_VAR] = str(home)
         turn_name = "01-turn" if resume_session_id is None else "02-turn"
         return TurnSpec(
-            rung=Rung(agent="codex", model=model or _MODEL, effort=_EFFORT),
+            rung=Rung(agent="codex", model=model or self._model(), effort=_EFFORT),
             role=_ROLE,
             prompt="complete the requested turn",
             cwd=repo,
             run_dir=run_dir,
             turn_dir=tmp_path / "turns" / turn_name,
             add_dirs=(),
-            env={CODEX_HOME_ENV_VAR: str(home)},
+            env=env,
             session_id=resume_session_id,
             usage=usage,
         )
@@ -495,7 +501,13 @@ class TestCodexHeadlessContract(AgentContractSuite):
         return _AskResult
 
     def headless_ask_model(self) -> str:
-        return _MODEL
+        return _LIVE_MODEL
+
+    def _model(self) -> str:
+        return _LIVE_MODEL if self._live else _MODEL
+
+    def _other_model(self) -> str:
+        return _LIVE_OTHER_MODEL if self._live else _OTHER_MODEL
 
     def headless_ask_prompt(self) -> str:
         return _LIVE_ASK_PROMPT
@@ -727,26 +739,16 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert isinstance(resumed_signals[-1], TurnEnded)
 
     def _build_agent(self, options: Mapping[str, Any] | None = None) -> Agent:
+        if self._live:
+            return super()._build_agent(options)
         with _codex_home_environment(self._active_home):
             return super()._build_agent(options)
 
     def _prepare_home(self, home: Path, repo: Path) -> None:
         home.mkdir(parents=True, exist_ok=True)
-        if self._live:
-            source_home = Path(os.environ.get(CODEX_HOME_ENV_VAR, Path.home() / ".codex"))
-            source_auth = source_home / "auth.json"
-            if not source_auth.is_file():
-                message = "authenticated Codex credentials are required for live checks"
-                raise AssertionError(message)
-            shutil.copyfile(source_auth, home / "auth.json")
-            (home / "auth.json").chmod(0o600)
-            source_cache = source_home / MODELS_CACHE_FILENAME
-            if source_cache.is_file():
-                shutil.copyfile(source_cache, home / MODELS_CACHE_FILENAME)
-        else:
-            _write_model_cache(
-                home, [(_MODEL, _TEST_CONTEXT_WINDOW), (_OTHER_MODEL, _TEST_CONTEXT_WINDOW)]
-            )
+        _write_model_cache(
+            home, [(_MODEL, _TEST_CONTEXT_WINDOW), (_OTHER_MODEL, _TEST_CONTEXT_WINDOW)]
+        )
         project = json.dumps(str(repo), ensure_ascii=False)
         (home / "config.toml").write_text(
             f"check_for_update_on_startup = false\n\n[projects.{project}]\n"
@@ -761,7 +763,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
     ) -> None:
         self._require_live()
         self.build_spec(tmp_path, resume_session_id=None)
-        checks = await self._build_agent().doctor((_MODEL,))
+        checks = await self._build_agent().doctor((self._model(), self._other_model()))
         assert all(check.ok for check in checks)
 
     @pytest.mark.asyncio
@@ -794,7 +796,6 @@ class TestCodexHeadlessContract(AgentContractSuite):
             check=True,
         )
         spec = self.build_spec(tmp_path, resume_session_id=None)
-        self._trust_project(self._active_home, worktree)
         first = _replace_cwd(spec, worktree, "first-turn")
         first_signals = await self._run_turn(_with_prompt(first, _LIVE_COMMIT_PROMPT))
         session_id, usage = _latest_usage(first_signals)
@@ -806,9 +807,8 @@ class TestCodexHeadlessContract(AgentContractSuite):
             tmp_path,
             resume_session_id=session_id,
             usage=usage,
-            model=_OTHER_MODEL,
+            model=self._other_model(),
         )
-        self._trust_project(self._active_home, worktree)
         resumed = _replace_cwd(resumed, worktree, "second-turn")
         await self._run_turn(_with_prompt(resumed, _LIVE_SECOND_COMMIT_PROMPT))
         second_commit = await runner.run(
@@ -833,18 +833,13 @@ class TestCodexHeadlessContract(AgentContractSuite):
             tmp_path,
             resume_session_id=session_id,
             usage=usage,
-            model=_OTHER_MODEL,
+            model=self._other_model(),
         )
 
         signals = await self._run_turn(_with_prompt(resumed, RESUME_RECALL_PROMPT))
 
         message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
         assert nonce in message
-
-    def _trust_project(self, home: Path, project: Path) -> None:
-        project_json = json.dumps(str(project), ensure_ascii=False)
-        with (home / "config.toml").open("a", encoding="utf-8") as handle:
-            handle.write(f'\n[projects.{project_json}]\ntrust_level = "trusted"\n')
 
 
 def _record(
