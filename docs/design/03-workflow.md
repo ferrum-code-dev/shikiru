@@ -200,7 +200,7 @@ Integration runs under the project integration lock. A branch with no commits ah
      - `git push -u <repo.remote> <branch>` and `gh pr create`.
      - The slot is released, `wait_reason = "PR open"`, and `gh pr view --json state` is polled every `PR_POLL` (5 min).
      - `MERGED` → done. `CLOSED` → `pr_closed`.
-3. **Done**: cleanup, close the window, emit `task_done` (summary, commits, residual risks).
+3. **Done**: the `done` status and `task_done` (summary, commits, residual risks) land in one transaction; then the window closes and the worktree is removed, last (§7).
 
 Dependents become ready only when their dependencies are `done`.
 
@@ -226,7 +226,8 @@ Dependents become ready only when their dependencies are `done`.
 1. Rebuild the tmux session and windows from the DB (`LayoutGuard`).
 2. End orphaned turn processes: a `runs/T/<role>/turn.pid` whose process still runs is stopped (SIGTERM, then SIGKILL after `TURN_STOP_GRACE`), since the old engine died without stopping it.
 3. For each `running` or `integrating` task, re-run the current step; its turn resumes the session (§4.1). The step's turn is idempotent: an existing valid `report.json` is consumed without starting a turn. That holds only for the first turn of the resumed flow, and only when that step's turn dir is still the task's latest and the role's `current_turn`; any other report there was already consumed.
-4. Pending `commands` are processed by the normal loop.
+4. Finish interrupted cleanup: a terminal task is entered together with its terminal event (`task_done`, `task_cancelled`) in one transaction and cleaned up afterwards, worktree last. A `done` or `cancelled` task whose task root still exists is cleaned up again (sessions closed, window closed, worktree removed); its event is never re-emitted.
+5. Pending `commands` are processed by the normal loop.
 
 ## 8. Escalation
 
