@@ -10,6 +10,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
+import psutil
+
 from shikiru.errors import (
     CommandFailed,
     CommandTimeoutError,
@@ -35,6 +37,14 @@ class ProcessResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessIdentity:
+    """A process id with its start time, which together never match a reused pid."""
+
+    pid: int
+    started_at: float
 
 
 class SpawnedProcess:
@@ -216,6 +226,34 @@ class SubprocessRunner:
                 raise DetachedProcessError(argv_tuple, error) from error
         finally:
             os.close(null_fd)
+
+    def identify(self, pid: int) -> ProcessIdentity | None:
+        """Return the identity of process `pid`, or `None` when no inspectable process runs.
+
+        An exited (or zombie) process has no identity, and neither has one the caller may not
+        inspect, since every process this engine starts is its own.
+        """
+        try:
+            process = psutil.Process(pid)
+            if process.status() == psutil.STATUS_ZOMBIE:
+                return None
+            return ProcessIdentity(pid, process.create_time())
+        except psutil.NoSuchProcess, psutil.AccessDenied:
+            return None
+
+    def is_running(self, identity: ProcessIdentity) -> bool:
+        """Return whether the very process `identity` names still runs."""
+        return self.identify(identity.pid) == identity
+
+    def send_signal(self, identity: ProcessIdentity, signum: signal.Signals) -> bool:
+        """Send `signum` to `identity`'s process if it still runs; return whether it was sent."""
+        if not self.is_running(identity):
+            return False
+        try:
+            os.kill(identity.pid, signum)
+        except ProcessLookupError:
+            return False
+        return True
 
     def replace(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None) -> NoReturn:
         """Replace this process with `argv`, resolving its executable on `PATH`."""

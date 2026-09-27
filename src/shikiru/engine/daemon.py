@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from shikiru.engine.handlers import HandlerRegistry
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.notifier import Notifier
+    from shikiru.engine.reconcile import Reconciler
     from shikiru.engine.scheduler import Scheduler
     from shikiru.engine.supervisor import TaskSupervisor
     from shikiru.store.commands import CommandQueue
@@ -96,6 +97,7 @@ class Engine:
         task_supervisor: TaskSupervisor,
         handlers: HandlerRegistry,
         layout: LayoutGuard,
+        reconciler: Reconciler,
         notifier: Notifier,
         settings: Settings,
         clock: Clock,
@@ -112,6 +114,7 @@ class Engine:
         self._task_supervisor = task_supervisor
         self._handlers = handlers
         self._layout = layout
+        self._reconciler = reconciler
         self._notifier = notifier
         self._settings = settings
         self._clock = clock
@@ -132,6 +135,7 @@ class Engine:
         try:
             self._last_notified_event = self._events.latest_id()
             self._events.append(EventKind.ENGINE_STARTED, message="engine started")
+            await self._reconciler.reconcile()
             next_tick = self._clock.now()
             while not self._task_supervisor.stop_requested:
                 await self._task_supervisor.supervise(self._logger)

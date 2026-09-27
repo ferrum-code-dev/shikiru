@@ -21,7 +21,6 @@ from shikiru.agents.contracts import (
     TurnEnded,
     TurnFailed,
     UsageReported,
-    role_dir,
 )
 from shikiru.domain.activity import is_stalled, seconds_until_stall
 from shikiru.domain.events import EventKind
@@ -45,12 +44,12 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Role, Task
     from shikiru.engine.sessions import SessionManager
+    from shikiru.engine.turn_processes import TurnProcesses
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.runs import RunStore
     from shikiru.tmux.decorator import PaneDecorator
 
-_TURN_PID_NAME = "turn.pid"
 _LINE_ENDING = "\n"
 
 
@@ -68,6 +67,7 @@ class TurnMonitor:
         settings: Settings,
         decorator: PaneDecorator,
         refresh_titles: Callable[[Task], Awaitable[None]],
+        processes: TurnProcesses,
     ) -> None:
         self._sessions = sessions
         self._runs = runs
@@ -77,6 +77,7 @@ class TurnMonitor:
         self._settings = settings
         self._decorator = decorator
         self._refresh_titles = refresh_titles
+        self._processes = processes
 
     async def run(
         self,
@@ -91,14 +92,13 @@ class TurnMonitor:
         run_dir: Path,
     ) -> TurnEnded | TurnFailed | Stalled | ProtocolError:
         """Consume `turn` through its terminal signal, or stop it when it stalls."""
-        pid_path = role_dir(run_dir, role.value) / _TURN_PID_NAME
-        pid_path.parent.mkdir(parents=True, exist_ok=True)
         iterator = turn.signals()
         last_signal_at = self._clock.now()
         tool_running = False
         pending_signal = asyncio.create_task(_next_signal(iterator))
+        recorded_pid = turn.pid
         try:
-            pid_path.write_text(str(turn.pid))
+            self._processes.record(run_dir, role, recorded_pid)
             await self._decorator.set_pane_state(
                 task.panes[role], color=ROLE_COLORS[role], glyph=ROLE_GLYPHS[role]
             )
@@ -116,7 +116,9 @@ class TurnMonitor:
                     seconds_until_stall(last_signal_at, tool_running, now, timeouts),
                 )
                 signal_ready = await self._wait_for_signal(pending_signal, poll_timeout)
-                pid_path.write_text(str(turn.pid))
+                if turn.pid != recorded_pid:
+                    recorded_pid = turn.pid
+                    self._processes.record(run_dir, role, recorded_pid)
                 if not signal_ready:
                     continue
                 signal = pending_signal.result()
@@ -143,7 +145,7 @@ class TurnMonitor:
             if not pending_signal.done():
                 pending_signal.cancel()
             await asyncio.gather(pending_signal, return_exceptions=True)
-            pid_path.unlink(missing_ok=True)
+            self._processes.clear(run_dir, role)
 
     async def _record_signal(
         self,

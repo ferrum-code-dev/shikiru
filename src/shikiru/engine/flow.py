@@ -244,13 +244,18 @@ class TaskFlow:
         self._runs = runs
         self._force_handoff: set[str] = set()
         self._continue_next: set[str] = set()
+        self._resumed: set[str] = set()
 
-    async def run(self, task_id: str) -> None:
+    async def run(self, task_id: str, *, resumed: bool = False) -> None:
         """Run `task_id` from its current step (or its first) until `integrate` or an escalation.
 
+        A `resumed` run re-runs the step an engine restart interrupted: its first turn consumes a
+        report that turn already submitted instead of starting another (03 §7).
         An unexpected error escalates the task as `engine_error` instead of propagating, so one
         task's failure never stops the engine (03 §8).
         """
+        if resumed:
+            self._resumed.add(task_id)
         try:
             await self._run(task_id)
         except Exception as error:
@@ -259,6 +264,8 @@ class TaskFlow:
             if task is None or task.status in (Status.CANCELLED, Status.DONE, Status.ESCALATED):
                 return
             await self._escalate_engine_error(task, error)
+        finally:
+            self._resumed.discard(task_id)
 
     async def _run(self, task_id: str) -> None:
         task = self.require_task(task_id)
@@ -711,6 +718,20 @@ class TaskFlow:
             facts=plan.facts,
         )
         usage_before = selection.run.usage
+        resumed = task.id in self._resumed
+        self._resumed.discard(task.id)
+        completed = self._turns.completed_turn(task.id, role, turn_request) if resumed else None
+        if completed is not None:
+            result, turn_dir = completed
+            return _TurnExecution(
+                result=result,
+                task_id=task.id,
+                role=role,
+                turn_dir=turn_dir,
+                rung=selection.rung,
+                usage_before=usage_before,
+                usage_after=usage_before,
+            )
         self._events.append(
             EventKind.TURN_STARTED,
             task_id=task.id,

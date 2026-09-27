@@ -42,11 +42,13 @@ from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.lifecycle import TaskFinisher
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notifier import NOTIFY_TIMEOUT_SECONDS, Notifier
+from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.supervisor import TaskSupervisor
 from shikiru.engine.takeover import Takeover
 from shikiru.engine.titles import TaskTitles
+from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
 from shikiru.errors import ConfigError
 from shikiru.helper.helper import Helper
@@ -278,6 +280,9 @@ def build_engine(
         await titles.refresh(task)
 
     sessions = SessionManager(runs=runs, project_root=project_root, settings=resolved_settings)
+    turn_processes = TurnProcesses(
+        runner=resolved_runner, clock=resolved_clock, project_root=project_root
+    )
     monitor = TurnMonitor(
         sessions=sessions,
         runs=runs,
@@ -287,6 +292,7 @@ def build_engine(
         settings=resolved_settings,
         decorator=decorator,
         refresh_titles=refresh_titles,
+        processes=turn_processes,
     )
 
     target = exact_target(session_name(resolved_settings.project.name))
@@ -430,6 +436,12 @@ def build_engine(
         task_supervisor=task_supervisor,
         handlers=handlers,
         layout=layout,
+        reconciler=Reconciler(
+            tasks=tasks,
+            layout=layout,
+            processes=turn_processes,
+            resume_task=task_supervisor.resume_task,
+        ),
         notifier=notifier,
         settings=resolved_settings,
         clock=resolved_clock,

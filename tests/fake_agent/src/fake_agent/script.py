@@ -43,6 +43,7 @@ class AcceptStep(_StepModel):
     new_tasks: list[NewTaskSpec] = Field(default_factory=list)
     uncommitted: str = ""
     corrupt_report: bool = False
+    stall_after_report: bool = False
 
 
 class SupersedeStep(_StepModel):

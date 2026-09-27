@@ -130,6 +130,8 @@ async def _report(context: ScriptContext, step: TurnStep, prompt: str, current_t
     if isinstance(step, AcceptStep) and step.corrupt_report:
         await asyncio.to_thread(_corrupt_report, current_turn)
     _emit({"event": _EVENT_TOOL_FINISHED, "name": _REPORT_TOOL_NAME})
+    if isinstance(step, AcceptStep) and step.stall_after_report:
+        await asyncio.Event().wait()
 
 
 async def _run_turn(session_id: str, prompt: str, compact_at_pct: float | None) -> int:

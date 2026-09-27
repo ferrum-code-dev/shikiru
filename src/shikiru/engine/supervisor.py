@@ -36,10 +36,17 @@ class TaskSupervisor:
 
     async def start_task(self, task_id: str) -> None:
         """Schedule a task flow once, leaving supervision in this object."""
+        self._start(task_id, resumed=False)
+
+    async def resume_task(self, task_id: str) -> None:
+        """Schedule the flow of a task whose step an engine restart interrupted (03 §7)."""
+        self._start(task_id, resumed=True)
+
+    def _start(self, task_id: str, *, resumed: bool) -> None:
         existing = self._flow_tasks.get(task_id)
         if existing is not None and not existing.done():
             return
-        self._flow_tasks[task_id] = asyncio.create_task(self._run_flow(task_id))
+        self._flow_tasks[task_id] = asyncio.create_task(self._run_flow(task_id, resumed=resumed))
 
     async def cancel_task(self, task_id: str) -> None:
         """Interrupt and await one supervised flow coroutine, if present."""
@@ -75,9 +82,9 @@ class TaskSupervisor:
             await asyncio.gather(*self._flow_tasks.values(), return_exceptions=True)
         self._flow_tasks.clear()
 
-    async def _run_flow(self, task_id: str) -> None:
+    async def _run_flow(self, task_id: str, *, resumed: bool) -> None:
         try:
-            await self._flow.run(task_id)
+            await self._flow.run(task_id, resumed=resumed)
         finally:
             current = self._tasks.get(task_id)
             if current is not None and (

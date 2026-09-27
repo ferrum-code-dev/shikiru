@@ -12,6 +12,7 @@ from shikiru.clock import SystemClock
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Mode, Role, Status, Step
+from shikiru.engine.turn_processes import read_turn_pid
 from shikiru.store.quotas import fetch_quotas
 from shikiru.workspace.roots import run_dir
 from tests.support.clock import FakeClock
@@ -131,7 +132,7 @@ async def test_cancelling_a_turn_stops_its_child_process(
         return (role_path / "turn.pid").is_file() and run is not None and run.session_id is not None
 
     await wait_until(process_started, timeout=10)
-    pid = int((role_path / "turn.pid").read_text())
+    pid = read_turn_pid(role_path / "turn.pid").pid
     flow_task.cancel()
     with suppress(asyncio.CancelledError):
         await flow_task
@@ -162,7 +163,7 @@ async def test_turn_pid_tracks_the_continue_process_after_in_turn_compaction(
         compactions = flow_env.events.since(0, kinds=[EventKind.COMPACTED], task_id=task.id)
         if not compactions or not pid_path.is_file():
             return False
-        pid = int(pid_path.read_text())
+        pid = read_turn_pid(pid_path).pid
         if not await asyncio.to_thread(psutil.pid_exists, pid):
             return False
         try:
@@ -173,7 +174,7 @@ async def test_turn_pid_tracks_the_continue_process_after_in_turn_compaction(
 
     try:
         await wait_until(prompt_is_active_after_compaction, timeout=20)
-        pid = int(pid_path.read_text())
+        pid = read_turn_pid(pid_path).pid
         command = await asyncio.to_thread(psutil.Process(pid).cmdline)
         assert "turn" in command
         assert await asyncio.to_thread(psutil.pid_exists, pid)

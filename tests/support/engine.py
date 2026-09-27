@@ -22,6 +22,7 @@ from shikiru.engine.agents import AgentPool
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.titles import TaskTitles
+from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
 from shikiru.helper.helper import Helper
 from shikiru.process import SubprocessRunner
@@ -166,6 +167,7 @@ def build_turn_system(
         settings=settings,
         decorator=decorator,
         refresh_titles=refresh_titles,
+        processes=TurnProcesses(runner=runner, clock=clock, project_root=project_root),
     )
     turns = TurnRunner(
         agents=agents,

@@ -224,16 +224,37 @@ class TurnRunner:
             prompt = _NUDGE_MESSAGE.format(prompt_path=prompt_path)
             selection = self._sessions.session_for(task, role)
 
+    def completed_turn(
+        self, task_id: str, role: Role, request: TurnRequest
+    ) -> tuple[Completed, Path] | None:
+        """Return the report of `request`'s latest turn when it holds a valid one (03 §7).
+
+        A restarted engine re-runs the step whose turn it lost. When that turn is the task's
+        latest, still `role`'s current turn, and already submitted a valid report, the report is
+        consumed as is instead of starting another turn.
+        """
+        turns_root = turns_dir(self._project_root, task_id)
+        if not turns_root.is_dir():
+            return None
+        turn_dir = turns_root / _turn_dir_name(_turn_count(turns_root), request)
+        link = role_dir(run_dir(self._project_root, task_id), role.value) / CURRENT_TURN_LINK_NAME
+        if not link.is_symlink() or link.readlink() != turn_dir:
+            return None
+        try:
+            report = read_turn_report(turn_dir)
+        except InvalidTurnReportError:
+            _LOGGER.exception("invalid report in interrupted turn %s", turn_dir)
+            return None
+        if report is None:
+            return None
+        return Completed(report=report), turn_dir
+
     def _prepare_turn_dir(
         self, task_run_dir: Path, task_id: str, role: Role, request: TurnRequest
     ) -> Path:
         turns_root = turns_dir(self._project_root, task_id)
         turns_root.mkdir(parents=True, exist_ok=True)
-        number = sum(1 for entry in turns_root.iterdir() if entry.is_dir()) + 1
-        turn_dir = (
-            turns_root
-            / f"{number:0{_TURN_NUMBER_WIDTH}d}-{request.step.value}-i{request.iteration}"
-        )
+        turn_dir = turns_root / _turn_dir_name(_turn_count(turns_root) + 1, request)
         turn_dir.mkdir(parents=True, exist_ok=True)
         (turn_dir / REPORT_FILENAME).unlink(missing_ok=True)
         (turn_dir / HELPER_REPORT_FILENAME).unlink(missing_ok=True)
@@ -342,3 +363,11 @@ class TurnRunner:
             return ProtocolError()
         (turn_dir / HELPER_REPORT_FILENAME).write_text(report.model_dump_json(indent=2))
         return Completed(report=report, rebuilt=True)
+
+
+def _turn_count(turns_root: Path) -> int:
+    return sum(1 for entry in turns_root.iterdir() if entry.is_dir())
+
+
+def _turn_dir_name(number: int, request: TurnRequest) -> str:
+    return f"{number:0{_TURN_NUMBER_WIDTH}d}-{request.step.value}-i{request.iteration}"
