@@ -16,8 +16,10 @@ from fake_agent.script import (
     NoReportStep,
     Script,
     StallStep,
+    TurnStep,
 )
 from fake_agent.scripted import (
+    ScriptContext,
     SessionState,
     build_context,
     load_session_state,
@@ -47,6 +49,7 @@ from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
 
 _EVENT_SESSION_STARTED = "session_started"
@@ -117,6 +120,18 @@ def _work(state: SessionState) -> None:
     _emit({"event": _EVENT_TOOL_FINISHED, "name": _WORK_TOOL_NAME})
 
 
+def _corrupt_report(current_turn: Path) -> None:
+    (current_turn.resolve() / REPORT_FILENAME).write_text("{")
+
+
+async def _report(context: ScriptContext, step: TurnStep, prompt: str, current_turn: Path) -> None:
+    _emit({"event": _EVENT_TOOL_STARTED, "name": _REPORT_TOOL_NAME, "detail": _REPORT_TOOL_DETAIL})
+    await submit_scripted_report(context, step, prompt)
+    if isinstance(step, AcceptStep) and step.corrupt_report:
+        await asyncio.to_thread(_corrupt_report, current_turn)
+    _emit({"event": _EVENT_TOOL_FINISHED, "name": _REPORT_TOOL_NAME})
+
+
 async def _run_turn(session_id: str, prompt: str, compact_at_pct: float | None) -> int:
     context = build_context()
     state = load_session_state(context.state_path)
@@ -153,20 +168,9 @@ async def _run_turn(session_id: str, prompt: str, compact_at_pct: float | None) 
     if isinstance(step, NoReportStep):
         response = f"no report: {prompt}"
     _emit({"event": _EVENT_MESSAGE, "text": response})
-    role_path = role_dir(context.run_dir, context.role)
-    current_turn = role_path / CURRENT_TURN_LINK_NAME
+    current_turn = role_dir(context.run_dir, context.role) / CURRENT_TURN_LINK_NAME
     if current_turn.is_symlink() and not isinstance(step, NoReportStep):
-        _emit(
-            {
-                "event": _EVENT_TOOL_STARTED,
-                "name": _REPORT_TOOL_NAME,
-                "detail": _REPORT_TOOL_DETAIL,
-            }
-        )
-        await submit_scripted_report(context, step, prompt)
-        if isinstance(step, AcceptStep) and step.corrupt_report:
-            (current_turn.resolve() / REPORT_FILENAME).write_text("{")
-        _emit({"event": _EVENT_TOOL_FINISHED, "name": _REPORT_TOOL_NAME})
+        await _report(context, step, prompt, current_turn)
     state[_INPUT_TOKENS_FIELD] = int(state[_INPUT_TOKENS_FIELD]) + INPUT_TOKENS_PER_TURN
     state[_OUTPUT_TOKENS_FIELD] = int(state[_OUTPUT_TOKENS_FIELD]) + OUTPUT_TOKENS_PER_TURN
     state[_CACHE_READ_TOKENS_FIELD] = (
