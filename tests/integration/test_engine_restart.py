@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import gc
 import threading
+import warnings
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -21,7 +23,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 from shikiru.domain.tasks import Role, Status, Step
 from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
-from shikiru.paths import engine_lock_path, run_dir, state_db_path, turns_dir
+from shikiru.paths import engine_lock_path, project_state_dir, run_dir, state_db_path, turns_dir
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
@@ -34,6 +36,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_RUNG, build_registry, build_tmux, set_role_script
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
+from tests.support.git_repo import commit_all
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -42,6 +45,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.engine.daemon import Engine
     from shikiru.process import ProcessIdentity
+    from shikiru.tmux.client import Tmux
     from tests.support.tmux import TmuxServer
 
 _PROJECT_NAME = "test"
@@ -56,47 +60,88 @@ _STALL = {
 }
 _REPORT_THEN_STALL = {"kind": "accept", "stall_after_report": True}
 _ACCEPT = {"kind": "accept"}
+_NEEDS_DECISION = {"kind": "needs_decision"}
+_CONFLICT_COMMITS = 2
 _RUNNER = SubprocessRunner()
 
 
 @dataclass(frozen=True)
-class _Boundary:
+class _Kill:
     step: Step
     role: Role | None
-    scripts: dict[Role, list[dict[str, Any]]] = field(default_factory=dict[Role, Any])
     reported: bool = False
+
+
+_REBASE_SETUP_KILL = _Kill(Step.IMPLEMENT, Role.IMPLEMENTER, reported=True)
+
+
+@dataclass(frozen=True)
+class _Boundary:
+    kills: tuple[_Kill, ...]
+    scripts: dict[Role, list[dict[str, Any]]] = field(default_factory=dict[Role, Any])
     step_turns: int = 0
+    commits: int = 1
     blocked_merge: bool = False
+    conflicting_base: bool = False
 
 
 _BOUNDARIES = {
     "triage turn running": _Boundary(
-        Step.TRIAGE, Role.LEADER, {Role.LEADER: [_STALL]}, step_turns=2
+        (_Kill(Step.TRIAGE, Role.LEADER),), {Role.LEADER: [_STALL]}, step_turns=2
     ),
     "triage report submitted": _Boundary(
-        Step.TRIAGE, Role.LEADER, {Role.LEADER: [_REPORT_THEN_STALL]}, reported=True, step_turns=1
+        (_Kill(Step.TRIAGE, Role.LEADER, reported=True),),
+        {Role.LEADER: [_REPORT_THEN_STALL]},
+        step_turns=1,
     ),
     "implement turn running": _Boundary(
-        Step.IMPLEMENT, Role.IMPLEMENTER, {Role.IMPLEMENTER: [_STALL]}, step_turns=2
+        (_Kill(Step.IMPLEMENT, Role.IMPLEMENTER),), {Role.IMPLEMENTER: [_STALL]}, step_turns=2
     ),
     "implement report submitted": _Boundary(
-        Step.IMPLEMENT,
-        Role.IMPLEMENTER,
+        (_Kill(Step.IMPLEMENT, Role.IMPLEMENTER, reported=True),),
         {Role.IMPLEMENTER: [_REPORT_THEN_STALL]},
-        reported=True,
         step_turns=1,
     ),
     "verify turn running": _Boundary(
-        Step.VERIFY, Role.LEADER, {Role.LEADER: [_ACCEPT, _STALL]}, step_turns=2
+        (_Kill(Step.VERIFY, Role.LEADER),), {Role.LEADER: [_ACCEPT, _STALL]}, step_turns=2
     ),
     "verify report submitted": _Boundary(
-        Step.VERIFY,
-        Role.LEADER,
+        (_Kill(Step.VERIFY, Role.LEADER, reported=True),),
         {Role.LEADER: [_ACCEPT, _REPORT_THEN_STALL]},
-        reported=True,
         step_turns=1,
     ),
-    "integration waiting": _Boundary(Step.INTEGRATE, None, blocked_merge=True),
+    "integration waiting": _Boundary((_Kill(Step.INTEGRATE, None),), blocked_merge=True),
+    "conflicts turn running": _Boundary(
+        (_REBASE_SETUP_KILL, _Kill(Step.INTEGRATE, Role.IMPLEMENTER)),
+        {Role.IMPLEMENTER: [_REPORT_THEN_STALL, _STALL]},
+        step_turns=3,
+        commits=_CONFLICT_COMMITS,
+        conflicting_base=True,
+    ),
+    "conflicts report submitted": _Boundary(
+        (_REBASE_SETUP_KILL, _Kill(Step.INTEGRATE, Role.IMPLEMENTER, reported=True)),
+        {Role.IMPLEMENTER: [_REPORT_THEN_STALL, _REPORT_THEN_STALL]},
+        step_turns=2,
+        commits=_CONFLICT_COMMITS,
+        conflicting_base=True,
+    ),
+    "post-rebase verify running": _Boundary(
+        (_REBASE_SETUP_KILL, _Kill(Step.INTEGRATE, Role.LEADER)),
+        {Role.IMPLEMENTER: [_REPORT_THEN_STALL], Role.LEADER: [_ACCEPT, _ACCEPT, _STALL]},
+        step_turns=3,
+        commits=_CONFLICT_COMMITS,
+        conflicting_base=True,
+    ),
+    "integration consult running": _Boundary(
+        (_REBASE_SETUP_KILL, _Kill(Step.CONSULT, Role.LEADER)),
+        {
+            Role.IMPLEMENTER: [_REPORT_THEN_STALL, _NEEDS_DECISION],
+            Role.LEADER: [_ACCEPT, _ACCEPT, _STALL],
+        },
+        step_turns=2,
+        commits=_CONFLICT_COMMITS,
+        conflicting_base=True,
+    ),
 }
 
 
@@ -104,7 +149,7 @@ class _KillableEngine:
     """An in-process engine on its own event loop thread, which can die without any cleanup."""
 
     def __init__(self, engine: Engine, clock: FakeClock) -> None:
-        self._engine = engine
+        self._engine: Engine | None = engine
         self._clock = clock
         self._loop = asyncio.new_event_loop()
         self._reap = threading.Event()
@@ -127,21 +172,28 @@ class _KillableEngine:
 
     def _serve(self) -> None:
         asyncio.set_event_loop(self._loop)
+        assert self._engine is not None
         self._loop.create_task(self._engine.run())
         self._loop.run_forever()
         self._reap.wait()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            self._reclaim_what_the_dead_engine_left_open()
+
+    def _reclaim_what_the_dead_engine_left_open(self) -> None:
         pending = asyncio.all_tasks(self._loop)
         for task in pending:
             task.cancel()
         self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         self._loop.close()
+        self._engine = None
+        gc.collect()
 
 
 def _release_lock_held_by_dead_engine(lock_path: Path) -> None:
-    [descriptor] = [
-        opened.fd for opened in psutil.Process().open_files() if lock_path.samefile(opened.path)
-    ]
-    fcntl.flock(descriptor, fcntl.LOCK_UN)
+    for opened in psutil.Process().open_files():
+        if lock_path.samefile(opened.path):
+            fcntl.flock(opened.fd, fcntl.LOCK_UN)
 
 
 def _settings() -> Settings:
@@ -201,6 +253,7 @@ class _Project:
 
     def __init__(self, root: Path, clock: FakeClock) -> None:
         self.root = root
+        project_state_dir(root).mkdir(parents=True, exist_ok=True)
         self._connection = Database(state_db_path(root)).connect()
         self.tasks = TaskStore(self._connection, clock)
         self.runs = RunStore(self._connection, clock)
@@ -210,7 +263,7 @@ class _Project:
     def close(self) -> None:
         self._connection.close()
 
-    def reached(self, task_id: str, boundary: _Boundary) -> bool:
+    def reached(self, task_id: str, boundary: _Kill) -> bool:
         if boundary.role is None:
             return bool(
                 self.events.since(0, kinds=[EventKind.INTEGRATION_STARTED], task_id=task_id)
@@ -235,7 +288,7 @@ class _Project:
             and stalled
         )
 
-    def interrupted(self, task_id: str, boundary: _Boundary) -> _Interrupted:
+    def interrupted(self, task_id: str, boundary: _Kill) -> _Interrupted:
         orphan = (
             read_turn_pid(
                 role_dir(run_dir(self.root, task_id), boundary.role.value) / TURN_PID_NAME
@@ -281,17 +334,71 @@ async def _run_until_done(
 
 
 async def _assert_resumed(
-    project: _Project, task_id: str, boundary: _Boundary, interrupted: _Interrupted, initial: str
+    project: _Project,
+    task_id: str,
+    boundary: _Boundary,
+    interrupted: list[_Interrupted],
+    initial: str,
 ) -> None:
-    if interrupted.orphan is not None:
-        assert not _RUNNER.is_running(interrupted.orphan)
+    for kill in interrupted:
+        if kill.orphan is not None:
+            assert not _RUNNER.is_running(kill.orphan)
     runs = project.runs.for_task(task_id)
     assert len(runs) == len({run.role for run in runs})
     sessions = {run.role: run.session_id for run in runs}
-    assert {role: sessions[role] for role in interrupted.sessions} == interrupted.sessions
-    assert len(await _commit_subjects(project.root, initial)) == 1
-    step_turns = list(turns_dir(project.root, task_id).glob(f"*-{boundary.step.value}-i*"))
+    for kill in interrupted:
+        assert {role: sessions[role] for role in kill.sessions} == kill.sessions
+    assert len(await _commit_subjects(project.root, initial)) == boundary.commits
+    last_step = boundary.kills[-1].step.value
+    step_turns = list(turns_dir(project.root, task_id).glob(f"*-{last_step}-i*"))
     assert len(step_turns) == boundary.step_turns
+
+
+async def _while_first_engine_down(project_root: Path, boundary: _Boundary) -> None:
+    (project_root / FAKE_CHANGE_FILENAME).unlink(missing_ok=True)
+    if boundary.conflicting_base:
+        (project_root / FAKE_CHANGE_FILENAME).write_text("base\n")
+        await commit_all(_RUNNER, project_root, "conflicting base change")
+
+
+class _Engines:
+    """The engines one scenario starts in turn, each on its own fake clock."""
+
+    def __init__(self, project_root: Path, tmux: Tmux) -> None:
+        self._project_root = project_root
+        self._tmux = tmux
+        self._killable: list[_KillableEngine] = []
+
+    def build(self, clock: FakeClock) -> Engine:
+        return build_engine(
+            self._project_root, _settings(), clock=clock, tmux=self._tmux, registry=build_registry()
+        )
+
+    def start_killable(self) -> _KillableEngine:
+        clock = FakeClock(TASK_CREATED_AT)
+        engine = _KillableEngine(self.build(clock), clock)
+        self._killable.append(engine)
+        engine.start()
+        return engine
+
+    async def reap(self) -> None:
+        for engine in reversed(self._killable):
+            await engine.reap()
+
+
+async def _kill_at(
+    project: _Project, engines: _Engines, kill: _Kill, task_id: str | None
+) -> tuple[str, _Interrupted]:
+    engine = engines.start_killable()
+    resolved_id = task_id if task_id is not None else await _submit(project, engine)
+
+    def reached() -> bool:
+        engine.advance()
+        return project.reached(resolved_id, kill)
+
+    await wait_until(reached, timeout=_WAIT_SECONDS)
+    await engine.kill(engine_lock_path(project.root))
+    return resolved_id, project.interrupted(resolved_id, kill)
 
 
 @pytest.mark.parametrize("boundary", _BOUNDARIES.values(), ids=_BOUNDARIES.keys())
@@ -300,40 +407,27 @@ async def test_a_restarted_engine_completes_the_task_it_lost_at_a_step_boundary(
 ) -> None:
     await init_project_repo(tmp_path)
     initial = await _head(tmp_path)
-    dirty = tmp_path / FAKE_CHANGE_FILENAME
     if boundary.blocked_merge:
-        dirty.write_text("uncommitted\n")
+        (tmp_path / FAKE_CHANGE_FILENAME).write_text("uncommitted\n")
     for role, steps in boundary.scripts.items():
         await set_role_script(tmux_server, role, steps)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure(_PROJECT_NAME, tmp_path, home_command=("/bin/sh",))
-    first_clock = FakeClock(TASK_CREATED_AT)
-    first = _KillableEngine(
-        build_engine(
-            tmp_path, _settings(), clock=first_clock, tmux=tmux, registry=build_registry()
-        ),
-        first_clock,
-    )
-    project = _Project(tmp_path, first_clock)
-    first.start()
+    project = _Project(tmp_path, FakeClock(TASK_CREATED_AT))
+    engines = _Engines(tmp_path, tmux)
     try:
-        task_id = await _submit(project, first)
-
-        def reached() -> bool:
-            first.advance()
-            return project.reached(task_id, boundary)
-
-        await wait_until(reached, timeout=_WAIT_SECONDS)
-        await first.kill(engine_lock_path(tmp_path))
-        interrupted = project.interrupted(task_id, boundary)
-        dirty.unlink(missing_ok=True)
-        second_clock = FakeClock(TASK_CREATED_AT)
-        second = build_engine(
-            tmp_path, _settings(), clock=second_clock, tmux=tmux, registry=build_registry()
-        )
-        await _run_until_done(project, task_id, second, second_clock)
+        task_id: str | None = None
+        interrupted: list[_Interrupted] = []
+        for index, kill in enumerate(boundary.kills):
+            task_id, lost = await _kill_at(project, engines, kill, task_id)
+            interrupted.append(lost)
+            if index == 0:
+                await _while_first_engine_down(tmp_path, boundary)
+        assert task_id is not None
+        clock = FakeClock(TASK_CREATED_AT)
+        await _run_until_done(project, task_id, engines.build(clock), clock)
 
         await _assert_resumed(project, task_id, boundary, interrupted, initial)
     finally:
-        await first.reap()
+        await engines.reap()
         project.close()

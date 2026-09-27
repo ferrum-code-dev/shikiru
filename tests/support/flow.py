@@ -48,6 +48,9 @@ class _NoOpIntegrationCoordinator:
         del task, resolve_conflicts
         return IntegrationSummary(summary=metadata.summary, residual_risks=metadata.residual_risks)
 
+    async def continue_rebase(self, task: Task) -> None:
+        del task
+
 
 def flow_settings(*, max_iterations: int = 5, escalate_after: int = 2) -> Settings:
     """Settings whose leader, implementer and helper all use the fake CLI."""

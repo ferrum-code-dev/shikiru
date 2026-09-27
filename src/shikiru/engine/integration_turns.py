@@ -96,8 +96,11 @@ class IntegrationTurns:
         self._tasks = tasks
 
     async def run(self, task: Task, host: IntegrationTurnHost) -> None:
-        """Run integration and its conflict turns, then escalate blocked integration."""
-        metadata = self._history.integration_metadata(task)
+        """Run integration and its conflict turns, then escalate blocked integration.
+
+        Resolved conflicts whose post-rebase verify never ran (the flow was interrupted) are
+        verified before integrating, so no resolution merges unreviewed.
+        """
 
         async def resolve_conflicts(
             current: Task, continue_rebase: Callable[[], Awaitable[None]]
@@ -105,8 +108,15 @@ class IntegrationTurns:
             resolved = await self._resolve_conflicts(current, continue_rebase, host)
             return resolved, self._history.integration_metadata(resolved)
 
+        async def continue_rebase() -> None:
+            await self._coordinator.continue_rebase(task)
+
         try:
-            await self._coordinator.run(task, resolve_conflicts, metadata)
+            current = task
+            if self._awaits_review(task):
+                current = await self._resolve_conflicts(task, continue_rebase, host, resolved=True)
+            metadata = self._history.integration_metadata(current)
+            await self._coordinator.run(current, resolve_conflicts, metadata)
         except IntegrationTurnStopped:
             return
         except (IntegrationBlocked, IntegrationConflict) as error:
@@ -114,47 +124,59 @@ class IntegrationTurns:
             transition = Transition.escalate(current, error.reason, step=Step.INTEGRATE)
             await host.escalate(current, transition, None, question=str(error))
 
+    def _awaits_review(self, task: Task) -> bool:
+        latest = self._history.latest_report(task.id)
+        return (
+            task.step is Step.INTEGRATE
+            and isinstance(latest, ImplementationReport)
+            and latest.status == "completed"
+        )
+
     async def _resolve_conflicts(
         self,
         task: Task,
         continue_rebase: Callable[[], Awaitable[None]],
         host: IntegrationTurnHost,
+        *,
+        resolved: bool = False,
     ) -> Task:
         current = task
         context = ""
         while True:
-            current, _, stopped = await host.run_step(
-                current,
-                Step.INTEGRATE,
-                TurnCounters(),
-                conflict_context=context,
-            )
-            if stopped:
-                raise IntegrationTurnStopped
-            latest = self._history.latest_report(current.id)
-            if not isinstance(latest, ImplementationReport):
-                message = f"{current.id} conflicts turn produced no implementation report"
-                raise ShikiruError(message)
-            if latest.status != "completed":
-                if current.step is not Step.CONSULT:
-                    message = f"{current.id} conflict report did not route to consult"
-                    raise ShikiruError(message)
-                current, _, stopped = await host.run_step(
-                    current, Step.CONSULT, TurnCounters(), conflict_context=context
-                )
-                if stopped:
-                    raise IntegrationTurnStopped
-                answer = self._history.latest_report(current.id)
-                if not isinstance(answer, ConsultAnswer):
-                    message = f"{current.id} integration consult produced no answer"
-                    raise ShikiruError(message)
-                context = answer.answer
+            if not resolved:
+                current, context, resolved = await self._conflict_turn(current, context, host)
                 continue
             await continue_rebase()
             current, verdict = await self._verify_conflicts(current, host)
             if verdict.decision == "accept":
                 return current
             context = "; ".join(issue.description for issue in verdict.issues)
+            resolved = False
+
+    async def _conflict_turn(
+        self, task: Task, context: str, host: IntegrationTurnHost
+    ) -> tuple[Task, str, bool]:
+        step = Step.CONSULT if task.step is Step.CONSULT else Step.INTEGRATE
+        current, _, stopped = await host.run_step(
+            task, step, TurnCounters(), conflict_context=context
+        )
+        if stopped:
+            raise IntegrationTurnStopped
+        latest = self._history.latest_report(current.id)
+        if step is Step.CONSULT:
+            if not isinstance(latest, ConsultAnswer):
+                message = f"{current.id} integration consult produced no answer"
+                raise ShikiruError(message)
+            return current, latest.answer, False
+        if not isinstance(latest, ImplementationReport):
+            message = f"{current.id} conflicts turn produced no implementation report"
+            raise ShikiruError(message)
+        if latest.status == "completed":
+            return current, context, True
+        if current.step is not Step.CONSULT:
+            message = f"{current.id} conflict report did not route to consult"
+            raise ShikiruError(message)
+        return current, context, False
 
     async def _verify_conflicts(
         self, task: Task, host: IntegrationTurnHost

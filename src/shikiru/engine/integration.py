@@ -104,6 +104,10 @@ class IntegrationCoordinator(Protocol):
         """Integrate `task` and finalize it, resolving conflicts through TaskFlow."""
         ...
 
+    async def continue_rebase(self, task: Task) -> None:
+        """Continue `task`'s rebase after its conflicts were resolved, if one is in progress."""
+        ...
+
 
 class LocalMerge:
     """Apply a rebased branch locally using fast-forward or a compare-and-swap ref update."""
@@ -261,6 +265,10 @@ class Integrator:
                 },
             )
             return summary
+
+    async def continue_rebase(self, task: Task) -> None:
+        """Continue `task`'s rebase after its conflicts were resolved, if one is in progress."""
+        await self._continue_rebase(task_root(self._project_root, task.id))
 
     async def _try_rebase(self, task_dir: Path, base: str) -> bool:
         try:
