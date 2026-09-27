@@ -23,7 +23,7 @@
 | `overrides` | Operator rungs per role |
 | `repo` | `{base, base_sha, branch}`, set when the task root is built |
 | `slot`, `window_id`, `panes` | `panes` maps `{role: pane_id}` (the only place pane ids are stored) |
-| `wait_reason` | Written by the scheduler |
+| `wait_reason` | Written by the scheduler, and `PR open` by `PullRequest` (§6) |
 | `requeued_at` | Set when resumed after an escalation; gives precedence |
 | `summary` | Final summary |
 
@@ -197,9 +197,10 @@ Integration runs under the project integration lock. A branch with no commits ah
      - If a check fails: retry every `INTEGRATION_RETRY` (2 min) for up to `timeouts.integration_wait`, then `integration_blocked`.
      - Then: `git merge --ff-only` if `base` is checked out, else `git update-ref refs/heads/<base> <new> <old>`.
    - **`PullRequest`** (`integration = "pr"`):
-     - `git push -u <repo.remote> <branch>` and `gh pr create`.
-     - The slot is released, `wait_reason = "PR open"`, and `gh pr view --json state` is polled every `PR_POLL` (5 min).
-     - `MERGED` → done. `CLOSED` → `pr_closed`.
+     - `git push -u <repo.remote> <branch>` and `gh pr create --base <base> --head <branch>`, titled with the task title and with the accepted summary as its body. `pr_opened` records the PR URL and commits.
+     - Polling runs outside the integration lock: the slot is released, `wait_reason = "PR open"`, and `gh pr view <url> --json state` is polled every `PR_POLL` (5 min).
+     - `MERGED` → done. `CLOSED` → `pr_closed`, whose `retry` pushes again and opens a new PR.
+     - The open PR is the task's latest `pr_opened` not followed by a `pr_closed` escalation. A resumed integration (§7) polls it instead of rebasing, pushing or opening another.
 3. **Done**: the `done` status and `task_done` (summary, commits, residual risks) land in one transaction; then the window closes and the worktree is removed, last (§7).
 
 Dependents become ready only when their dependencies are `done`.

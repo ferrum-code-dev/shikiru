@@ -68,7 +68,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `agents.testing` | Contract test kit | `AgentContractSuite` |
 | `domain` | Pure rules, no I/O | `Task`, `Status`, `Step`, `Hold`, `Counters`, `EventKind`, command models, report models, `next_step()`, `pick_rung()`, `recovery.decide()`, `scheduling.pick_ready()`, `escalation.options_for()`, `activity.is_stalled()` |
 | `store` | SQLite schema, migrations, stores per aggregate, read-only reader | `Database`, `TaskStore`, `RunStore`, `EscalationStore`, `QuotaStore`, `EventLog`, `CommandQueue`, `StateReader` |
-| `workspace` | Task roots, worktrees, caches, git facts | `TaskRootBuilder`, `CacheCloner`, `GitFacts`, `Git` |
+| `workspace` | Task roots, worktrees, caches, git facts, pull requests through `gh` | `TaskRootBuilder`, `CacheCloner`, `GitFacts`, `Git`, `GitHub` |
 | `tmux` | tmux client; session, windows, layout; pane decorations; pane respawn and liveness | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator` |
 | `prompts` | Jinja2 templates (packaged, overridable) | `PromptRenderer` |
 | `helper` | Joshu calls | `Helper` |
@@ -113,7 +113,7 @@ src/shikiru/
   agents/       contracts.py registry.py
     sdk/        turn.py reset_time.py
     testing/    contract_suite.py resume.py
-  workspace/    roots.py caches.py facts.py git.py messages.py reports.py
+  workspace/    roots.py caches.py facts.py git.py github.py messages.py reports.py
   tmux/         client.py session.py layout.py decorator.py
   prompts/      renderer.py templates/
   helper/       helper.py models.py

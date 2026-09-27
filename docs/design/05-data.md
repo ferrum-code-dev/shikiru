@@ -19,6 +19,7 @@ trackers = ["tasks/plan.md", "tasks/todo.md"]
 [repo]                                          # the project root is the repository root (D20)
 base = "main"                                   # omit = branch checked out at task start
 caches = ["node_modules", "**/node_modules", ".venv", "target"]
+remote = "origin"                               # push target when integration = "pr"
 
 [orchestration]
 max_parallel = 2
@@ -185,7 +186,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `verdict`, `scope_change`
 - `hold_set`, `hold_cleared`, `taken_over`, `handed_back`, `operator_message`
 - `escalation`, `escalation_resolved`
-- `integration_started`, `pr_opened`
+- `integration_started`, `pr_opened` (url, branch, commits)
 - `task_done`, `task_cancelled`
 - `pane_restored`, `engine_started`, `engine_stopped`
 
