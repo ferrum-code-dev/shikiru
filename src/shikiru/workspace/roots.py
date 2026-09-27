@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 from typing import TYPE_CHECKING
 
 from shikiru.domain.tasks import RepoState
@@ -81,17 +82,19 @@ class TaskRootBuilder:
         return RepoState(base=base, base_sha=base_sha, branch=branch)
 
     async def cleanup(self, task_id: str, repo: RepoState | None) -> None:
-        """Remove the task's worktree and delete its branch once merged into base (03 §5).
+        """Remove the task's worktree, its merged branch, and last its task root (03 §5, §7).
 
-        Idempotent and tolerant of a worktree already removed. Never deletes an unmerged branch.
+        Idempotent and tolerant of a worktree already removed. Never deletes an unmerged branch,
+        and never follows a symlink out of the task root.
         """
-        if repo is None:
-            return
         project = self._project_root
         root = task_root(project, task_id)
-        if await self._git.worktree_exists(project, root):
-            await self._git.worktree_remove(project, root)
-        if await self._git.branch_exists(
-            project, repo.branch
-        ) and await self._git.merge_base_is_ancestor(project, repo.branch, repo.base):
-            await self._git.delete_branch(project, repo.branch)
+        if repo is not None:
+            if await self._git.worktree_exists(project, root):
+                await self._git.worktree_remove(project, root)
+            if await self._git.branch_exists(
+                project, repo.branch
+            ) and await self._git.merge_base_is_ancestor(project, repo.branch, repo.base):
+                await self._git.delete_branch(project, repo.branch)
+        if root.exists():
+            shutil.rmtree(root)

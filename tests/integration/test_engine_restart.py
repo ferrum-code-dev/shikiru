@@ -20,9 +20,10 @@ from fake_agent.scripted import FAKE_CHANGE_FILENAME
 from shikiru.agents.contracts import role_dir
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
-from shikiru.domain.commands import Cancel, Submit
+from shikiru.domain.commands import Cancel, Pause, Prioritize, Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
+from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step
 from shikiru.engine.integration import INTEGRATION_RETRY
 from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
@@ -35,7 +36,7 @@ from shikiru.paths import (
     turns_dir,
 )
 from shikiru.process import SubprocessRunner
-from shikiru.store.commands import CommandQueue
+from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import fetch_quotas
@@ -47,6 +48,7 @@ from tests.support.engine import FAKE_RUNG, build_registry, build_tmux, set_role
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
+from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -74,6 +76,8 @@ _ACCEPT = {"kind": "accept"}
 _NEEDS_DECISION = {"kind": "needs_decision"}
 _CONFLICT_COMMITS = 2
 _RUNNER = SubprocessRunner()
+_POLL_SECONDS = 3600
+_UNKNOWN_TASK_ID = "T-999"
 _TERMINAL_EVENTS = {Status.DONE: EventKind.TASK_DONE, Status.CANCELLED: EventKind.TASK_CANCELLED}
 
 
@@ -97,6 +101,7 @@ class _Boundary:
     blocked_merge: bool = False
     conflicting_base: bool = False
     status: Status = Status.DONE
+    repo_less_leftover: bool = False
 
 
 _BOUNDARIES = {
@@ -134,6 +139,7 @@ _BOUNDARIES = {
         step_turns=1,
         commits=0,
         status=Status.CANCELLED,
+        repo_less_leftover=True,
     ),
     "conflicts turn running": _Boundary(
         (_REBASE_SETUP_KILL, _Kill(Step.INTEGRATE, Role.IMPLEMENTER)),
@@ -191,6 +197,9 @@ class _KillableEngine:
         _release_lock_held_by_dead_engine(lock_path)
 
     async def reap(self) -> None:
+        if self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        await wait_until(lambda: not self._loop.is_running(), timeout=_WAIT_SECONDS)
         self._reap.set()
         await asyncio.to_thread(self._thread.join)
 
@@ -229,9 +238,10 @@ def _settings() -> Settings:
     )
     orchestration = settings.orchestration.model_copy(
         update={
+            "poll_seconds": _POLL_SECONDS,
             "resources": settings.orchestration.resources.model_copy(
                 update={"max_cpu_pct": 100, "min_free_ram_gb": 0}
-            )
+            ),
         }
     )
     layout = LayoutSplit(
@@ -278,14 +288,14 @@ class _Project:
     def __init__(self, root: Path, clock: FakeClock) -> None:
         self.root = root
         project_state_dir(root).mkdir(parents=True, exist_ok=True)
-        self._connection = Database(state_db_path(root)).connect()
-        self.tasks = TaskStore(self._connection, clock)
-        self.runs = RunStore(self._connection, clock)
-        self.events = EventLog(self._connection, clock)
-        self.queue = CommandQueue(self._connection, clock)
+        self.connection = Database(state_db_path(root)).connect()
+        self.tasks = TaskStore(self.connection, clock)
+        self.runs = RunStore(self.connection, clock)
+        self.events = EventLog(self.connection, clock)
+        self.queue = CommandQueue(self.connection, clock)
 
     def close(self) -> None:
-        self._connection.close()
+        self.connection.close()
 
     def reached(self, task_id: str, boundary: _Kill) -> bool:
         if boundary.role is None:
@@ -302,7 +312,7 @@ class _Project:
         stalled = (
             (role_path / CURRENT_TURN_LINK_NAME / REPORT_FILENAME).is_file()
             if boundary.reported
-            else bool(fetch_quotas(self._connection, FAKE_RUNG.agent))
+            else bool(fetch_quotas(self.connection, FAKE_RUNG.agent))
         )
         return (
             bool(started)
@@ -389,6 +399,53 @@ async def _assert_resumed(
     assert len(step_turns) == boundary.step_turns
 
 
+def _seed_repo_less_leftover(project: _Project, clock: FakeClock) -> str:
+    task = seed_task(project.connection, clock, title="never dispatched")
+    [pending] = project.queue.pending()
+    project.queue.mark_done(pending.id, {"task_id": task.id})
+    project.tasks.finish(
+        task.id,
+        Transition.stay(task, step=None, status=Status.CANCELLED),
+        EventKind.TASK_CANCELLED,
+        message=f"{task.id} cancelled",
+        data={},
+    )
+    root = task_root(project.root, task.id)
+    root.mkdir(parents=True)
+    (root / "project").symlink_to(project.root, target_is_directory=True)
+    return task.id
+
+
+async def _restart_once(project: _Project, engines: _Engines, leftover_id: str) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    probe = project.queue.append(Pause(task_id=leftover_id))
+
+    def probed() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(_POLL_ADVANCE_SECONDS)
+        outcome = project.queue.status(probe.id)
+        return outcome is not None and outcome.status is not CommandStatus.PENDING
+
+    running = asyncio.create_task(engines.build(clock).run())
+    try:
+        await wait_until(probed, timeout=_WAIT_SECONDS)
+    finally:
+        running.cancel()
+        with suppress(asyncio.CancelledError):
+            await running
+
+
+async def _assert_leftover_reclaimed_once(
+    project: _Project, engines: _Engines, leftover_id: str
+) -> None:
+    assert not task_root(project.root, leftover_id).exists()
+    assert (project.root / "README.md").is_file()
+    before = project.events.since(0, task_id=leftover_id)
+    await _restart_once(project, engines, leftover_id)
+    assert project.events.since(0, task_id=leftover_id) == before
+    assert not task_root(project.root, leftover_id).exists()
+
+
 async def _while_first_engine_down(project_root: Path, boundary: _Boundary) -> None:
     (project_root / FAKE_CHANGE_FILENAME).unlink(missing_ok=True)
     if boundary.conflicting_base:
@@ -436,10 +493,22 @@ async def _kill_at(
     if kill.terminal is None:
         await engine.kill(engine_lock_path(project.root))
     else:
+        await _settle(project, engine)
         async with _frozen(engines.tmux_server):
             await _reach_terminal_status(project, engine, resolved_id, kill.terminal)
             await engine.kill(engine_lock_path(project.root))
     return resolved_id, project.interrupted(resolved_id, kill)
+
+
+async def _settle(project: _Project, engine: _KillableEngine) -> None:
+    probe = project.queue.append(Prioritize(task_id=_UNKNOWN_TASK_ID, priority=0))
+
+    def processed() -> bool:
+        engine.advance()
+        outcome = project.queue.status(probe.id)
+        return outcome is not None and outcome.status is not CommandStatus.PENDING
+
+    await wait_until(processed, timeout=_WAIT_SECONDS)
 
 
 @asynccontextmanager
@@ -460,8 +529,10 @@ async def _reach_terminal_status(
         project.queue.append(Cancel(task_id=task_id))
     (project.root / FAKE_CHANGE_FILENAME).unlink(missing_ok=True)
 
+    step = INTEGRATION_RETRY.total_seconds() if status is Status.DONE else _POLL_ADVANCE_SECONDS
+
     def terminal() -> bool:
-        engine.advance(INTEGRATION_RETRY.total_seconds())
+        engine.advance(step)
         task = project.tasks.get(task_id)
         return task is not None and task.status is status
 
@@ -480,8 +551,12 @@ async def test_a_restarted_engine_completes_the_task_it_lost_at_a_step_boundary(
         await set_role_script(tmux_server, role, steps)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure(_PROJECT_NAME, tmp_path, home_command=("/bin/sh",))
-    project = _Project(tmp_path, FakeClock(TASK_CREATED_AT))
+    project_clock = FakeClock(TASK_CREATED_AT)
+    project = _Project(tmp_path, project_clock)
     engines = _Engines(tmp_path, tmux, tmux_server)
+    leftover_id = (
+        _seed_repo_less_leftover(project, project_clock) if boundary.repo_less_leftover else None
+    )
     try:
         task_id: str | None = None
         interrupted: list[_Interrupted] = []
@@ -495,6 +570,8 @@ async def test_a_restarted_engine_completes_the_task_it_lost_at_a_step_boundary(
         await _run_until_finished(project, task_id, boundary.status, engines.build(clock), clock)
 
         await _assert_resumed(project, task_id, boundary, interrupted, initial, tmux=tmux)
+        if leftover_id is not None:
+            await _assert_leftover_reclaimed_once(project, engines, leftover_id)
     finally:
         await engines.reap()
         project.close()
