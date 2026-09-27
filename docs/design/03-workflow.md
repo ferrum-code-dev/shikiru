@@ -135,7 +135,7 @@ One monitor per turn process. It is the **only** consumer of `turn.signals()`. F
 
 Every `orchestration.poll_seconds` it checks `domain.activity.is_stalled(last_signal_at, tool_running, now, timeouts)`: no signal for `timeouts.stall` while no tool runs, or for `timeouts.tool` while one does. A stall calls `turn.stop()` and the monitor returns `Stalled`; the session is resumed by the next attempt.
 
-The engine writes `runs/T/<role>/turn.pid` while the process runs, so a restarted engine can end an orphan (§7).
+The engine writes `runs/T/<role>/turn.pid` while the process runs, so a restarted engine can end an orphan (§7). The file holds the process id and its start time; a process is treated as the orphan only while both still match, so a reused pid is never signalled.
 
 ### 4.3 TurnRunner
 
@@ -225,7 +225,7 @@ Dependents become ready only when their dependencies are `done`.
 **Engine restart (`Reconciler`)**:
 1. Rebuild the tmux session and windows from the DB (`LayoutGuard`).
 2. End orphaned turn processes: a `runs/T/<role>/turn.pid` whose process still runs is stopped (SIGTERM, then SIGKILL after `TURN_STOP_GRACE`), since the old engine died without stopping it.
-3. For each `running` or `integrating` task, re-run the current step; its turn resumes the session (§4.1). The step's turn is idempotent: an existing valid `report.json` is consumed without starting a turn.
+3. For each `running` or `integrating` task, re-run the current step; its turn resumes the session (§4.1). The step's turn is idempotent: an existing valid `report.json` is consumed without starting a turn. That holds only for the first turn of the resumed flow, and only when that step's turn dir is still the task's latest and the role's `current_turn`; any other report there was already consumed.
 4. Pending `commands` are processed by the normal loop.
 
 ## 8. Escalation
