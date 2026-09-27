@@ -103,23 +103,23 @@ class ResolveHandler:
             and escalation.reason is EscalationReason.DEPENDENCY_CANCELLED
         ):
             self._drop_cancelled_dependencies(task.id, task.depends_on)
-        self._context.tasks.apply_transition(task.id, transition)
         if transition.status is Status.CANCELLED:
-            self._context.tasks.set_slot(task.id, None)
-        if transition.status is not Status.CANCELLED:
-            self._context.tasks.set_requeued(task.id)
+            self._context.tasks.finish(
+                task.id,
+                transition,
+                EventKind.TASK_CANCELLED,
+                message=f"{task.id} cancelled",
+                data={"reason": "cancelled by operator"},
+            )
+            return
+        self._context.tasks.apply_transition(task.id, transition)
+        self._context.tasks.set_requeued(task.id)
 
     async def _finish_cancel(self, task: Task) -> None:
         updated = self._context.tasks.get(task.id)
         if updated is None:
             message = f"task {task.id} disappeared after cancellation"
             raise CommandRejectedError(message)
-        self._context.events.append(
-            EventKind.TASK_CANCELLED,
-            task_id=task.id,
-            message=f"{task.id} cancelled",
-            data={"reason": "cancelled by operator"},
-        )
         await self._context.finish_task(updated)
 
     def _drop_cancelled_dependencies(self, task_id: str, dependencies: list[str]) -> None:

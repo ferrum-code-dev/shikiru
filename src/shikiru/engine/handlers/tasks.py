@@ -132,14 +132,10 @@ class CancelHandler:
         if current is None:
             message = f"task {task.id} disappeared while cancelling"
             raise CommandRejectedError(message)
-        self._context.tasks.apply_transition(
+        self._context.tasks.finish(
             task.id,
             Transition.stay(current, step=current.step, status=Status.CANCELLED),
-        )
-        self._context.tasks.set_slot(task.id, None)
-        self._context.events.append(
             EventKind.TASK_CANCELLED,
-            task_id=task.id,
             message=f"{task.id} cancelled",
             data={"reason": "cancelled by operator"},
         )

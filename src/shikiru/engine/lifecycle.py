@@ -23,10 +23,13 @@ class TaskFinisher:
         self._finished_tasks: set[str] = set()
 
     async def finish_task(self, task: Task) -> None:
-        """Release task resources after it reaches a terminal lifecycle state."""
+        """Release task resources after it reaches a terminal lifecycle state.
+
+        The worktree goes last, so a task root left behind marks unfinished cleanup (03 §7).
+        """
         if task.id in self._finished_tasks:
             return
         self._sessions.close_task(task.id)
-        await self._roots.cleanup(task.id, task.repo)
         await self._layout.close(task)
+        await self._roots.cleanup(task.id, task.repo)
         self._finished_tasks.add(task.id)

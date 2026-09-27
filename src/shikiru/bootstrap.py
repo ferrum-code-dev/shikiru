@@ -441,6 +441,8 @@ def build_engine(
             layout=layout,
             processes=turn_processes,
             resume_task=task_supervisor.resume_task,
+            finish_task=task_finisher.finish_task,
+            project_root=project_root,
         ),
         notifier=notifier,
         settings=resolved_settings,

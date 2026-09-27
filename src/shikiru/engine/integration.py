@@ -247,16 +247,10 @@ class Integrator:
             if updated is None:
                 message = f"{current.id} vanished before integration could finish"
                 raise ShikiruError(message)
-            self._tasks.apply_transition(current.id, _done_transition(updated))
-            done = self._tasks.get(current.id)
-            if done is None:
-                message = f"{current.id} vanished after integration completed"
-                raise ShikiruError(message)
-            self._tasks.set_slot(done.id, None)
-            await self._finish_task(done)
-            self._events.append(
+            self._tasks.finish(
+                current.id,
+                _done_transition(updated),
                 EventKind.TASK_DONE,
-                task_id=current.id,
                 message=summary.summary,
                 data={
                     "summary": summary.summary,
@@ -264,6 +258,11 @@ class Integrator:
                     "residual_risks": list(summary.residual_risks),
                 },
             )
+            done = self._tasks.get(current.id)
+            if done is None:
+                message = f"{current.id} vanished after integration completed"
+                raise ShikiruError(message)
+            await self._finish_task(done)
             return summary
 
     async def continue_rebase(self, task: Task) -> None:

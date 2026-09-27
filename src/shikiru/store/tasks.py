@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
@@ -31,6 +31,7 @@ from shikiru.store.database import (
     require_after_insert,
     transaction,
 )
+from shikiru.store.events import EventLog
 
 if TYPE_CHECKING:
     import sqlite3
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.domain.commands import Submit
+    from shikiru.domain.events import EventKind
     from shikiru.domain.reports import NewTask
     from shikiru.domain.scheduling import WaitReason
     from shikiru.domain.steps import Transition
@@ -357,6 +359,27 @@ class TaskStore:
             "UPDATE tasks SET wait_reason = ? WHERE id = ?",
             (reason.value if reason is not None else None, task_id),
         )
+
+    def finish(
+        self,
+        task_id: str,
+        transition: Transition,
+        event: EventKind,
+        *,
+        message: str,
+        data: dict[str, Any],
+    ) -> None:
+        """Enter a terminal `transition`, free the slot and append its terminal `event` at once.
+
+        Status and event land in one transaction, so a restart never sees a terminal task
+        without its terminal event, nor the event twice (03 §7).
+        """
+        with transaction(self._connection):
+            self.apply_transition(task_id, transition)
+            self.set_slot(task_id, None)
+            EventLog(self._connection, self._clock).append(
+                event, task_id=task_id, message=message, data=data
+            )
 
     def set_slot(self, task_id: str, slot: int | None) -> None:
         """Assign or clear `task_id`'s dispatch slot."""
