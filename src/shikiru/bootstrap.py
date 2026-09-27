@@ -468,6 +468,7 @@ def _build_integrator(
         strategy=LocalMerge(
             git,
             clock,
+            project_root=project_root,
             integration_wait=settings.orchestration.timeouts.integration_wait,
         ),
         lock=asyncio.Lock(),

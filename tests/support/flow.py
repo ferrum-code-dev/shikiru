@@ -134,6 +134,7 @@ def build_flow(
             strategy=LocalMerge(
                 git,
                 flow_clock,
+                project_root=env.project_root,
                 integration_wait=settings.orchestration.timeouts.integration_wait,
             ),
             lock=asyncio.Lock(),

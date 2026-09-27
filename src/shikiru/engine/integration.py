@@ -64,6 +64,14 @@ class IntegrationMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class MergeRequest:
+    """A rebased task branch ready to be applied to its base."""
+
+    repo: RepoState
+    task_root: Path
+
+
+@dataclass(frozen=True, slots=True)
 class _MergeCandidate:
     base_sha: str
     branch_sha: str
@@ -85,9 +93,7 @@ type TaskFinisher = Callable[[Task], Awaitable[None]]
 class IntegrationStrategy(Protocol):
     """A strategy that applies an already rebased task branch to its base."""
 
-    async def merge(
-        self, project_root: Path, task_root_path: Path, repo: RepoState
-    ) -> tuple[str, ...]:
+    async def merge(self, request: MergeRequest) -> tuple[str, ...]:
         """Merge the task branch into its base and return its commits."""
         ...
 
@@ -112,16 +118,20 @@ class IntegrationCoordinator(Protocol):
 class LocalMerge:
     """Apply a rebased branch locally using fast-forward or a compare-and-swap ref update."""
 
-    def __init__(self, git: Git, clock: Clock, *, integration_wait: int) -> None:
-        """Use `git` for repository operations and `clock` for retry deadlines."""
+    def __init__(
+        self, git: Git, clock: Clock, *, project_root: Path, integration_wait: int
+    ) -> None:
+        """Use `git` on `project_root` for repository operations and `clock` for retry deadlines."""
         self._git = git
         self._clock = clock
+        self._project_root = project_root
         self._integration_wait = integration_wait
 
-    async def merge(
-        self, project_root: Path, task_root_path: Path, repo: RepoState
-    ) -> tuple[str, ...]:
+    async def merge(self, request: MergeRequest) -> tuple[str, ...]:
         """Pre-check the local base, then apply the merge, retrying while it is blocked."""
+        project_root = self._project_root
+        task_root_path = request.task_root
+        repo = request.repo
         deadline = self._clock.now() + timedelta(seconds=self._integration_wait)
         while True:
             try:
@@ -236,7 +246,7 @@ class Integrator:
                     current, lambda: self._continue_rebase(task_dir)
                 )
                 await self._continue_rebase(task_dir)
-            commits = await self._strategy.merge(self._project_root, task_dir, repo)
+            commits = await self._strategy.merge(MergeRequest(repo=repo, task_root=task_dir))
             summary = IntegrationSummary(
                 summary=current_metadata.summary,
                 commits=commits,
