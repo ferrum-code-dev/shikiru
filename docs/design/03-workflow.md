@@ -179,7 +179,7 @@ The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's 
   - Every task gets a warm, fully independent cache.
 - **Shared resources**: `SHIKIRU_SLOT` and `SHIKIRU_TASK` let project scripts separate ports and Docker Compose project names.
 - **Git hygiene**: `.shikiru/` is added to the repository's `.git/info/exclude`.
-- **Cleanup** on a terminal status: `git worktree remove --force`, and the branch is deleted once merged.
+- **Cleanup** on a terminal status: `git worktree remove --force`, and the branch is deleted once merged. The task root goes last, with or without a repo; symlinks in it are removed, never followed.
 
 ## 6. Integration
 
