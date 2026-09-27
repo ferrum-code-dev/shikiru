@@ -311,8 +311,8 @@ Refs: 04 §3, 06 §2.
 
 ### Task 22: Engine restart recovery
 Refs: 03 §7.
-- [ ] `Reconciler`: rebuild windows, end orphaned turn processes (`turn.pid`), re-run current steps idempotently on resumed sessions, integration restart.
-- [ ] Integration test: kill the in-process engine at each step boundary with the fake agent. E2E E5 passes.
+- [x] `Reconciler`: rebuild windows, end orphaned turn processes (`turn.pid`), re-run current steps idempotently on resumed sessions, integration restart.
+- [x] Integration test: kill the in-process engine at each step boundary with the fake agent. E2E E5 passes.
 
 ### Task 23: Pull request integration
 Refs: 03 §6.

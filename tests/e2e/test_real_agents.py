@@ -5,20 +5,29 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import psutil
 import pytest
 
 from shikiru.bootstrap import build_operator
+from shikiru.clock import SystemClock
+from shikiru.domain.events import EventKind
 from shikiru.domain.reports import REPORT_FILENAME, Verdict
 from shikiru.domain.tasks import Role, Status, Step
+from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import AckStatus
-from shikiru.paths import MESSAGES_DIR_NAME, run_dir, turns_dir
+from shikiru.operator.lifecycle import CLI_ENGINE_COMMAND
+from shikiru.paths import MESSAGES_DIR_NAME, run_dir, state_db_path, turns_dir
 from shikiru.process import SubprocessRunner
+from shikiru.store.database import Database
+from shikiru.store.events import EventLog
+from shikiru.store.runs import RunStore
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import session_name
 from shikiru.view_log import view_log_path
@@ -28,6 +37,7 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from shikiru.process import ProcessIdentity
     from tests.support.tmux import TmuxServer
 
 
@@ -487,6 +497,113 @@ async def _e2_body(
     _assert_message_drove_review(project)
     await _assert_git_and_tracker(project, "A2")
     await _assert_edge_case_handled(project)
+
+
+async def _e5_body(
+    project: PreparedProject,
+    environment: dict[str, str],
+    _tmux_server: TmuxServer,
+    state: AttemptState,
+) -> None:
+    await _submit(project, environment, E1_REQUEST)
+    orphan, session_id = await _wait_for_implement_turn(project)
+    try:
+        await asyncio.to_thread(_kill_engine, project)
+        await _start(project, environment, state)
+        await _wait_done(project, environment, state)
+        _require(not SubprocessRunner().is_running(orphan), "the orphaned turn process survived")
+        _assert_same_implementer_session(project, session_id)
+        await _assert_no_duplicate_commits(project)
+        await _assert_git_and_tracker(project, "A1")
+    finally:
+        SubprocessRunner().send_signal(orphan, signal.SIGKILL)
+
+
+async def _wait_for_implement_turn(project: PreparedProject) -> tuple[ProcessIdentity, str]:
+    pid_path = run_dir(project.root, TASK_ID) / Role.IMPLEMENTER.value / TURN_PID_NAME
+    connection = Database(state_db_path(project.root)).connect_readonly()
+    try:
+        events = EventLog(connection, SystemClock())
+        runs = RunStore(connection, SystemClock())
+
+        def implementing() -> bool:
+            started = any(
+                event.data.get("step") == Step.IMPLEMENT.value
+                for event in events.since(0, kinds=[EventKind.TURN_STARTED], task_id=TASK_ID)
+            )
+            run = runs.get_live(TASK_ID, Role.IMPLEMENTER)
+            return started and pid_path.is_file() and run is not None and bool(run.session_id)
+
+        await wait_until(implementing, timeout=ATTEMPT_TIMEOUT_SECONDS)
+        run = runs.get_live(TASK_ID, Role.IMPLEMENTER)
+        assert run is not None
+        assert run.session_id is not None
+        return read_turn_pid(pid_path), run.session_id
+    finally:
+        connection.close()
+
+
+def _kill_engine(project: PreparedProject) -> None:
+    engines = [
+        process
+        for process in psutil.process_iter(["cmdline"])
+        if (command := process.info["cmdline"])
+        and command[-1] == CLI_ENGINE_COMMAND
+        and str(project.root) in command
+    ]
+    _require(len(engines) == 1, f"expected one engine process, found {len(engines)}")
+    engines[0].send_signal(signal.SIGKILL)
+    engines[0].wait(CLI_TIMEOUT_SECONDS)
+
+
+def _assert_same_implementer_session(project: PreparedProject, session_id: str) -> None:
+    connection = Database(state_db_path(project.root)).connect_readonly()
+    try:
+        runs = [
+            run
+            for run in RunStore(connection, SystemClock()).for_task(TASK_ID)
+            if run.role is Role.IMPLEMENTER
+        ]
+    finally:
+        connection.close()
+    sessions = [run.session_id for run in runs]
+    _require(sessions == [session_id], f"implementer sessions changed: {sessions}")
+    view = view_log_path(run_dir(project.root, TASK_ID), Role.IMPLEMENTER.value)
+    started = [
+        row["session_id"]
+        for row in map(json.loads, view.read_text().splitlines())
+        if row["signal"] == "SessionStarted"
+    ]
+    _require(
+        len(started) > 1 and set(started) == {session_id},
+        f"the turn did not re-run on the same session: {started}",
+    )
+
+
+async def _assert_no_duplicate_commits(project: PreparedProject) -> None:
+    log = await SubprocessRunner().run(
+        ["git", "log", "-p", f"{project.initial_sha}..HEAD"],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=project.root,
+        check=True,
+    )
+    patches = await SubprocessRunner().run(
+        ["git", "patch-id", "--stable"],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=project.root,
+        input_text=log.stdout,
+        check=True,
+    )
+    patch_ids = [line.split()[0] for line in patches.stdout.splitlines()]
+    _require(len(patch_ids) == len(set(patch_ids)), f"duplicate commits: {patches.stdout}")
+
+
+async def test_real_agents_e5_restart_resumes_the_interrupted_turn(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    record_e2e_cost: Callable[[float | None], None],
+) -> None:
+    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e5_body)
 
 
 async def test_real_agents_e1_completes_and_integrates(
