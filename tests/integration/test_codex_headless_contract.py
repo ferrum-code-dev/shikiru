@@ -402,7 +402,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 expected_argv=[resumed_argv],
                 expected_env=[{CODEX_HOME_ENV_VAR: resumed.env[CODEX_HOME_ENV_VAR]}],
                 interactive_session_id="session-resumed",
-                expected_interactive_command=("codex", "resume", "session-resumed"),
+                expected_interactive_command=("codex", "resume", "--no-daemon", "session-resumed"),
             ),
             InvocationCase(
                 name="turn passes TurnSpec provider environment through unchanged",

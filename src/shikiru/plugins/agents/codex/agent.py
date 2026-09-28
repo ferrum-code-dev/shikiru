@@ -22,6 +22,7 @@ from shikiru.plugins.agents.codex.options import (
     DOCTOR_TIMEOUT_SECONDS,
     GIT_COMMON_DIR_TIMEOUT_SECONDS,
     LOGIN_STATUS_ARGV,
+    NO_DAEMON_FLAG,
     RESUME_SUBCOMMAND,
     VERSION_ARGV,
     CodexOptions,
@@ -91,7 +92,13 @@ class CodexAgent:
     def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
         """Return Codex's interactive resume command for a headless session."""
         del run_dir
-        return (CODEX_COMMAND, RESUME_SUBCOMMAND, session_id, *self._options.args)
+        return (
+            CODEX_COMMAND,
+            RESUME_SUBCOMMAND,
+            NO_DAEMON_FLAG,
+            session_id,
+            *self._options.args,
+        )
 
     async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
         """Check Codex's binary, version, native access and each model's context window."""

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 CODEX_HOME_ENV_VAR = "CODEX_HOME"
 CODEX_COMMAND = "codex"
 RESUME_SUBCOMMAND = "resume"
+NO_DAEMON_FLAG = "--no-daemon"
 MODEL_FLAG = "-m"
 CONFIG_FLAG = "-c"
 REASONING_EFFORT_CONFIG = "model_reasoning_effort"
