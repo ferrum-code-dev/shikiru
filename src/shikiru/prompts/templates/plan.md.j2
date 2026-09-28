@@ -4,7 +4,10 @@ You are the Leader planning a task.
 
 Shape the plan in the trackers listed above and commit it. Fill `new_tasks` only when the
 request itself asks you to execute the plan, not merely to produce one; otherwise leave it
-empty. When you fill `new_tasks`, restructure the tracker entries so each new task has its own
+empty. A plan turn implements nothing, so when the request asks for work to be done (for
+example "implement ..."), `new_tasks` is the only way that work happens, even when the
+trackers already describe it: leaving it empty ends this task with nothing implemented.
+When you fill `new_tasks`, restructure the tracker entries so each new task has its own
 entry and together they replace this task's entry; each new task ticks its own entry when done.
 Record any tracker changes outside the plan itself in `scope_changes`.
 {% endblock %}
