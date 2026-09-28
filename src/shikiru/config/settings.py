@@ -9,9 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from shikiru.agents.contracts import Rung
 
 ComplexityName = Literal["low", "normal", "high"]
-IntegrationStrategy = Literal["merge"]
+IntegrationStrategy = Literal["merge", "pr"]
 LayoutSplitAxis = Literal["h", "v"]
 PaneName = Literal["system", "leader", "implementer", "shell"]
+GIT_DEFAULT_REMOTE = "origin"
 
 
 class ConfigModel(BaseModel):
@@ -32,6 +33,7 @@ class RepoConfig(ConfigModel):
 
     base: str | None = None
     caches: list[str] = Field(default_factory=list)
+    remote: str = GIT_DEFAULT_REMOTE
 
 
 class ResourcesConfig(ConfigModel):

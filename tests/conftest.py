@@ -6,7 +6,12 @@ import os
 
 import pytest
 
-pytest_plugins = ["tests.support.tmux", "tests.support.store", "tests.support.engine"]
+pytest_plugins = [
+    "tests.support.tmux",
+    "tests.support.store",
+    "tests.support.engine",
+    "tests.support.github",
+]
 
 
 @pytest.fixture(autouse=True)

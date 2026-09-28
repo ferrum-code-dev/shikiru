@@ -87,15 +87,6 @@ def test_set_override_rejects_malformed_values(tmp_path: Path, override: str) ->
     assert "neither a TOML value nor a bare word" in str(excinfo.value)
 
 
-def test_pr_integration_is_rejected_until_a_pr_strategy_exists(tmp_path: Path) -> None:
-    project_dir = _project(tmp_path)
-
-    with pytest.raises(ConfigError) as excinfo:
-        load_settings(project_dir, overrides=['orchestration.integration="pr"'])
-
-    assert "--set: orchestration.integration" in str(excinfo.value)
-
-
 def test_set_override_without_equals_sign_is_a_config_error(tmp_path: Path) -> None:
     project_dir = _project(tmp_path)
 

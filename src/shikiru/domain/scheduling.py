@@ -15,13 +15,14 @@ if TYPE_CHECKING:
 
 
 class WaitReason(StrEnum):
-    """Why a queued task isn't running yet (03 §9, §10)."""
+    """Why a task is waiting instead of running (03 §6, §9, §10)."""
 
     PAUSED = auto()
     DEPENDENCY = auto()
     SLOT = auto()
     RESOURCES = auto()
     QUOTA = auto()
+    PR_OPEN = "PR open"
 
 
 @dataclass(frozen=True)

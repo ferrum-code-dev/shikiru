@@ -316,7 +316,7 @@ Refs: 03 §7.
 
 ### Task 23: Pull request integration
 Refs: 03 §6.
-- [ ] `PullRequest` strategy: push, `gh pr create`, slot release with `wait_reason`, polling, merged → done, closed → `pr_closed`.
+- [x] `PullRequest` strategy: push, `gh pr create`, slot release with `wait_reason`, polling, merged → done, closed → `pr_closed`.
 - Tests: integration with `gh` faked on PATH.
 
 ### Task 24: Parallel, escalation and intervention E2E

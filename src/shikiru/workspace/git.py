@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 _GIT_BIN = "git"
 _COMMAND_TIMEOUT_SECONDS = 30.0
+_PUSH_TIMEOUT_SECONDS = 300.0
 _WORKTREE_LIST_PREFIX = "worktree "
 _STATUS_IGNORED_PREFIX = "!! "
 _STATUS_PATH_OFFSET = 3
@@ -151,6 +152,10 @@ class Git:
             expected_old_sha,
         )
 
+    async def push(self, repo_dir: Path, remote: str, branch: str) -> None:
+        """Push `branch` to `remote` and set it as the branch's upstream."""
+        await self._run(repo_dir, "push", "-u", remote, branch, timeout=_PUSH_TIMEOUT_SECONDS)
+
     async def dirty_paths(self, repo_dir: Path) -> set[str]:
         """Return paths changed in the working tree, including untracked paths."""
         result = await self._run(repo_dir, "status", "--porcelain=v1", "-z")
@@ -207,7 +212,11 @@ class Git:
                 paths.add(Path(line[len(_WORKTREE_LIST_PREFIX) :]).resolve())
         return paths
 
-    async def _run(self, repo_dir: Path, *args: str, check: bool = True) -> ProcessResult:
-        return await self._runner.run(
-            [_GIT_BIN, *args], timeout=_COMMAND_TIMEOUT_SECONDS, cwd=repo_dir, check=check
-        )
+    async def _run(
+        self,
+        repo_dir: Path,
+        *args: str,
+        check: bool = True,
+        timeout: float = _COMMAND_TIMEOUT_SECONDS,
+    ) -> ProcessResult:
+        return await self._runner.run([_GIT_BIN, *args], timeout=timeout, cwd=repo_dir, check=check)

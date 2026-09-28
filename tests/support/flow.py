@@ -14,6 +14,7 @@ from shikiru.engine.flow import TaskFlow
 from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import (
     IntegrationMetadata,
+    IntegrationStrategy,
     IntegrationSummary,
     Integrator,
     LocalMerge,
@@ -110,15 +111,19 @@ def build_flow(
     clock: Clock | None = None,
     turn_clock: Clock | None = None,
     local_integration: bool = False,
+    strategy: IntegrationStrategy | None = None,
 ) -> FlowEnv:
-    """Build one flow and its production turn collaborators with fake CLI processes."""
+    """Build one flow and its production turn collaborators with fake CLI processes.
+
+    `local_integration` integrates through `LocalMerge`, `strategy` through the one given.
+    """
     flow_clock = clock if clock is not None else env.clock
     resolved_turn_clock = turn_clock if turn_clock is not None else flow_clock
     system = env.build_turn_system(settings, clock=resolved_turn_clock)
     escalations_store = EscalationStore(env.connection, flow_clock)
     escalations = EscalationRaiser(escalations_store, system.events, env.runs, env.project_root)
     coordinator = _NoOpIntegrationCoordinator()
-    if local_integration:
+    if local_integration or strategy is not None:
         builder = task_root_builder(SubprocessRunner(), env.project_root, settings.repo)
 
         async def finish_task(task: Task) -> None:
@@ -131,7 +136,8 @@ def build_flow(
         git = Git(SubprocessRunner())
         coordinator = Integrator(
             git=git,
-            strategy=LocalMerge(
+            strategy=strategy
+            or LocalMerge(
                 git,
                 flow_clock,
                 project_root=env.project_root,

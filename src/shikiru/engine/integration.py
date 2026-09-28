@@ -1,4 +1,4 @@
-"""Rebase, conflict hand-off and local merge orchestration (03-workflow.md §6)."""
+"""Rebase, conflict hand-off, local merge and pull request orchestration (03-workflow.md §6)."""
 
 from __future__ import annotations
 
@@ -7,23 +7,30 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from shikiru.domain.events import EventKind
+from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
 from shikiru.errors import CommandFailed, ShikiruError
 from shikiru.paths import task_root
+from shikiru.workspace.github import PullRequestState
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
     from shikiru.clock import Clock
+    from shikiru.domain.events import Event
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
     from shikiru.workspace.git import Git
+    from shikiru.workspace.github import GitHub
 
 INTEGRATION_RETRY = timedelta(minutes=2)
 """Delay between blocked integration pre-checks (05-data.md §1)."""
+
+PR_POLL = timedelta(minutes=5)
+"""Delay between polls of an open pull request (05-data.md §1)."""
 
 
 class IntegrationBlocked(ShikiruError):
@@ -44,6 +51,16 @@ class IntegrationConflict(ShikiruError):
     def __init__(self) -> None:
         """Build the integration-conflict error."""
         super().__init__("integration conflicts could not be resolved")
+
+
+class PullRequestClosed(ShikiruError):
+    """The task's pull request was closed without being merged."""
+
+    reason = EscalationReason.PR_CLOSED
+
+    def __init__(self, url: str) -> None:
+        """Build the pull-request-closed error for the PR at `url`."""
+        super().__init__(f"pull request closed without merging: {url}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,8 +84,11 @@ class IntegrationMetadata:
 class MergeRequest:
     """A rebased task branch ready to be applied to its base."""
 
+    task_id: str
+    title: str
     repo: RepoState
     task_root: Path
+    summary: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,11 +110,25 @@ type ConflictResolver = Callable[
 type TaskFinisher = Callable[[Task], Awaitable[None]]
 
 
+@dataclass(frozen=True, slots=True)
+class _OpenPullRequest:
+    url: str
+    commits: tuple[str, ...]
+
+
 class IntegrationStrategy(Protocol):
     """A strategy that applies an already rebased task branch to its base."""
 
+    def started(self, task_id: str) -> tuple[str, ...] | None:
+        """Return the commits of `task_id`'s started, unsettled integration, if there is one."""
+        ...
+
     async def merge(self, request: MergeRequest) -> tuple[str, ...]:
-        """Merge the task branch into its base and return its commits."""
+        """Merge the task branch into its base, or start doing so, and return its commits."""
+        ...
+
+    async def settle(self, task_id: str) -> None:
+        """Wait until `task_id`'s started integration has landed in its base."""
         ...
 
 
@@ -127,6 +161,10 @@ class LocalMerge:
         self._project_root = project_root
         self._integration_wait = integration_wait
 
+    def started(self, task_id: str) -> tuple[str, ...] | None:
+        """Return `None`: a local merge lands within `merge`, so none is ever left unsettled."""
+        del task_id
+
     async def merge(self, request: MergeRequest) -> tuple[str, ...]:
         """Pre-check the local base, then apply the merge, retrying while it is blocked."""
         project_root = self._project_root
@@ -146,6 +184,10 @@ class LocalMerge:
                 continue
             break
         return candidate.commits if candidate is not None else ()
+
+    async def settle(self, task_id: str) -> None:
+        """Return at once: `merge` already landed the branch in its base."""
+        del task_id
 
     async def _apply(self, project_root: Path, repo: RepoState, candidate: _MergeCandidate) -> None:
         if candidate.base_checked_out:
@@ -195,6 +237,91 @@ def _paths_overlap(changed: set[str], dirty: set[str]) -> bool:
     return False
 
 
+class PullRequest:
+    """Push a rebased branch, open a pull request for it and poll it until it lands (03 §6)."""
+
+    def __init__(
+        self,
+        *,
+        git: Git,
+        github: GitHub,
+        clock: Clock,
+        tasks: TaskStore,
+        events: EventLog,
+        project_root: Path,
+        remote: str,
+    ) -> None:
+        """Push to `remote` from `project_root`; record the PR in `events`, waits in `tasks`."""
+        self._git = git
+        self._github = github
+        self._clock = clock
+        self._tasks = tasks
+        self._events = events
+        self._project_root = project_root
+        self._remote = remote
+
+    def started(self, task_id: str) -> tuple[str, ...] | None:
+        """Return the commits of `task_id`'s open pull request, if it has one."""
+        opened = self._open_pull_request(task_id)
+        return opened.commits if opened is not None else None
+
+    async def merge(self, request: MergeRequest) -> tuple[str, ...]:
+        """Push the branch and open its pull request, recorded as `pr_opened`."""
+        repo = request.repo
+        commits = tuple(
+            await self._git.log_oneline(request.task_root, f"{repo.base}..{repo.branch}")
+        )
+        if not commits:
+            return ()
+        await self._git.push(self._project_root, self._remote, repo.branch)
+        url = await self._github.create_pull_request(
+            self._project_root,
+            base=repo.base,
+            head=repo.branch,
+            title=request.title,
+            body=request.summary,
+        )
+        self._events.append(
+            EventKind.PR_OPENED,
+            task_id=request.task_id,
+            message=f"{request.task_id} opened {url}",
+            data={"url": url, "branch": repo.branch, "commits": list(commits)},
+        )
+        return commits
+
+    async def settle(self, task_id: str) -> None:
+        """Release the slot and poll the open pull request until it is merged or closed."""
+        opened = self._open_pull_request(task_id)
+        if opened is None:
+            return
+        self._tasks.set_slot(task_id, None)
+        self._tasks.set_wait_reason(task_id, WaitReason.PR_OPEN)
+        while (state := await self._state(opened.url)) is PullRequestState.OPEN:
+            await self._clock.sleep(PR_POLL.total_seconds())
+        self._tasks.set_wait_reason(task_id, None)
+        if state is PullRequestState.CLOSED:
+            raise PullRequestClosed(opened.url)
+
+    async def _state(self, url: str) -> PullRequestState:
+        return await self._github.pull_request_state(self._project_root, url)
+
+    def _open_pull_request(self, task_id: str) -> _OpenPullRequest | None:
+        events = self._events.since(
+            0, kinds=[EventKind.PR_OPENED, EventKind.ESCALATION], task_id=task_id
+        )
+        return _open_pull_request(events)
+
+
+def _open_pull_request(events: Sequence[Event]) -> _OpenPullRequest | None:
+    opened: _OpenPullRequest | None = None
+    for event in events:
+        if event.kind is EventKind.PR_OPENED:
+            opened = _OpenPullRequest(event.data["url"], tuple(event.data["commits"]))
+        elif event.data["reason"] == EscalationReason.PR_CLOSED:
+            opened = None
+    return opened
+
+
 class Integrator:
     """Own the project integration lock, rebase protocol and terminal cleanup."""
 
@@ -224,12 +351,58 @@ class Integrator:
         resolve_conflicts: ConflictResolver,
         metadata: IntegrationMetadata,
     ) -> IntegrationSummary:
-        """Rebase and integrate `task`, delegating conflict turns to TaskFlow."""
+        """Rebase and integrate `task`, delegating conflict turns to TaskFlow.
+
+        An integration the strategy already started (an open PR) is only settled, never
+        rebased or applied again (03 §6-7).
+        """
+        repo = task.repo
+        if repo is None:
+            message = f"{task.id} has no task root to integrate"
+            raise ShikiruError(message)
+        current, current_metadata = task, metadata
+        commits = self._strategy.started(task.id)
+        if commits is None:
+            current, current_metadata, commits = await self._apply(
+                task, repo, resolve_conflicts, metadata
+            )
+        await self._strategy.settle(current.id)
+        summary = IntegrationSummary(
+            summary=current_metadata.summary,
+            commits=commits,
+            residual_risks=current_metadata.residual_risks,
+        )
+        self._tasks.set_summary(current.id, summary.summary)
+        updated = self._tasks.get(current.id)
+        if updated is None:
+            message = f"{current.id} vanished before integration could finish"
+            raise ShikiruError(message)
+        self._tasks.finish(
+            current.id,
+            _done_transition(updated),
+            EventKind.TASK_DONE,
+            message=summary.summary,
+            data={
+                "summary": summary.summary,
+                "commits": list(summary.commits),
+                "residual_risks": list(summary.residual_risks),
+            },
+        )
+        done = self._tasks.get(current.id)
+        if done is None:
+            message = f"{current.id} vanished after integration completed"
+            raise ShikiruError(message)
+        await self._finish_task(done)
+        return summary
+
+    async def _apply(
+        self,
+        task: Task,
+        repo: RepoState,
+        resolve_conflicts: ConflictResolver,
+        metadata: IntegrationMetadata,
+    ) -> tuple[Task, IntegrationMetadata, tuple[str, ...]]:
         async with self._lock:
-            repo = task.repo
-            if repo is None:
-                message = f"{task.id} has no task root to integrate"
-                raise ShikiruError(message)
             self._events.append(
                 EventKind.INTEGRATION_STARTED,
                 task_id=task.id,
@@ -246,34 +419,16 @@ class Integrator:
                     current, lambda: self._continue_rebase(task_dir)
                 )
                 await self._continue_rebase(task_dir)
-            commits = await self._strategy.merge(MergeRequest(repo=repo, task_root=task_dir))
-            summary = IntegrationSummary(
-                summary=current_metadata.summary,
-                commits=commits,
-                residual_risks=current_metadata.residual_risks,
+            commits = await self._strategy.merge(
+                MergeRequest(
+                    task_id=current.id,
+                    title=current.title,
+                    repo=repo,
+                    task_root=task_dir,
+                    summary=current_metadata.summary,
+                )
             )
-            self._tasks.set_summary(current.id, summary.summary)
-            updated = self._tasks.get(current.id)
-            if updated is None:
-                message = f"{current.id} vanished before integration could finish"
-                raise ShikiruError(message)
-            self._tasks.finish(
-                current.id,
-                _done_transition(updated),
-                EventKind.TASK_DONE,
-                message=summary.summary,
-                data={
-                    "summary": summary.summary,
-                    "commits": list(summary.commits),
-                    "residual_risks": list(summary.residual_risks),
-                },
-            )
-            done = self._tasks.get(current.id)
-            if done is None:
-                message = f"{current.id} vanished after integration completed"
-                raise ShikiruError(message)
-            await self._finish_task(done)
-            return summary
+            return current, current_metadata, commits
 
     async def continue_rebase(self, task: Task) -> None:
         """Continue `task`'s rebase after its conflicts were resolved, if one is in progress."""

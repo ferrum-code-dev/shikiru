@@ -36,7 +36,12 @@ from shikiru.engine.handlers import (
     TakeOverHandler,
 )
 from shikiru.engine.history import ReportHistory
-from shikiru.engine.integration import Integrator, LocalMerge
+from shikiru.engine.integration import (
+    IntegrationStrategy,
+    Integrator,
+    LocalMerge,
+    PullRequest,
+)
 from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.lifecycle import TaskFinisher
@@ -80,6 +85,7 @@ from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
+from shikiru.workspace.github import GitHub
 from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import TaskRootBuilder
 
@@ -323,6 +329,7 @@ def build_engine(
         settings=resolved_settings,
         clock=resolved_clock,
         git=git,
+        runner=resolved_runner,
         tasks=tasks,
         events=events,
         task_finisher=task_finisher,
@@ -459,18 +466,33 @@ def _build_integrator(
     settings: Settings,
     clock: Clock,
     git: Git,
+    runner: SubprocessRunner,
     tasks: TaskStore,
     events: EventLog,
     task_finisher: TaskFinisher,
 ) -> Integrator:
+    strategy: IntegrationStrategy
+    match settings.orchestration.integration:
+        case "merge":
+            strategy = LocalMerge(
+                git,
+                clock,
+                project_root=project_root,
+                integration_wait=settings.orchestration.timeouts.integration_wait,
+            )
+        case "pr":
+            strategy = PullRequest(
+                git=git,
+                github=GitHub(runner),
+                clock=clock,
+                tasks=tasks,
+                events=events,
+                project_root=project_root,
+                remote=settings.repo.remote,
+            )
     return Integrator(
         git=git,
-        strategy=LocalMerge(
-            git,
-            clock,
-            project_root=project_root,
-            integration_wait=settings.orchestration.timeouts.integration_wait,
-        ),
+        strategy=strategy,
         lock=asyncio.Lock(),
         project_root=project_root,
         tasks=tasks,

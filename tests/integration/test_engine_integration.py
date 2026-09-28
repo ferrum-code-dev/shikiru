@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.clock import Clock
-    from shikiru.domain.tasks import Task
+    from shikiru.domain.tasks import RepoState, Task
     from tests.support.engine import EngineEnv
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -60,6 +60,12 @@ async def _repo(path: Path, filename: str = "README.md") -> Path:
 def _local_merge(project_root: Path, clock: Clock, integration_wait: int) -> LocalMerge:
     return LocalMerge(
         Git(_RUNNER), clock, project_root=project_root, integration_wait=integration_wait
+    )
+
+
+def _request(task: Task, state: RepoState, task_root: Path) -> MergeRequest:
+    return MergeRequest(
+        task_id=task.id, title=task.title, repo=state, task_root=task_root, summary=task.title
     )
 
 
@@ -93,7 +99,7 @@ async def test_local_merge_fast_forwards_base_and_reports_commits(
     await commit_all(_RUNNER, task_root, "task change")
 
     result = await _local_merge(project_root, SystemClock(), 1).merge(
-        MergeRequest(repo=state, task_root=task_root)
+        _request(task, state, task_root)
     )
 
     assert (project_root / "README.md").read_text() == "task\n"
@@ -112,7 +118,7 @@ async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
     await commit_all(_RUNNER, task_root, "release change")
 
     result = await _local_merge(project_root, SystemClock(), 1).merge(
-        MergeRequest(repo=state, task_root=task_root)
+        _request(task, state, task_root)
     )
 
     assert result
@@ -133,7 +139,7 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
     (project_root / "README.md").write_text("operator\n")
     clock = FakeClock(TASK_CREATED_AT)
     merge_task = asyncio.create_task(
-        _local_merge(project_root, clock, 300).merge(MergeRequest(repo=state, task_root=task_root))
+        _local_merge(project_root, clock, 300).merge(_request(task, state, task_root))
     )
     await wait_until(clock.has_pending_sleep, timeout=5)
     (project_root / "README.md").write_text("base\n")
@@ -161,7 +167,7 @@ async def test_local_merge_escalates_when_dirty_overlap_never_clears(
     integration_wait_seconds = 120
     merge_task = asyncio.create_task(
         _local_merge(project_root, clock, integration_wait_seconds).merge(
-            MergeRequest(repo=state, task_root=task_root)
+            _request(task, state, task_root)
         )
     )
 
@@ -206,7 +212,7 @@ async def test_local_merge_waits_for_a_dirty_directory_ancestor(
     await init_repo(_RUNNER, dirty_directory)
     clock = FakeClock(TASK_CREATED_AT)
     merge_task = asyncio.create_task(
-        _local_merge(project_root, clock, 300).merge(MergeRequest(repo=state, task_root=task_root))
+        _local_merge(project_root, clock, 300).merge(_request(task, state, task_root))
     )
     await wait_until(clock.has_pending_sleep, timeout=5)
     shutil.rmtree(dirty_directory)
@@ -231,9 +237,7 @@ async def test_local_merge_blocks_when_base_moved_past_the_rebased_branch(
     base_sha = await Git(_RUNNER).rev_parse(project_root, "main")
 
     with pytest.raises(IntegrationBlocked):
-        await _local_merge(project_root, SystemClock(), 0).merge(
-            MergeRequest(repo=state, task_root=task_root)
-        )
+        await _local_merge(project_root, SystemClock(), 0).merge(_request(task, state, task_root))
 
     assert await Git(_RUNNER).rev_parse(project_root, "main") == base_sha
 
