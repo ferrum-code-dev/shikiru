@@ -47,6 +47,7 @@ class _Case:
     outcomes: tuple[PullRequestState, ...]
     restart_while_open: bool = False
     base_moves_after_close: bool = False
+    crash_after_create: bool = False
 
 
 _CASES = {
@@ -59,6 +60,9 @@ _CASES = {
     ),
     "a restart while open resumes polling": _Case(
         (PullRequestState.MERGED,), restart_while_open=True
+    ),
+    "a restart between opening and recording adopts the open PR": _Case(
+        (PullRequestState.MERGED,), crash_after_create=True
     ),
 }
 
@@ -94,6 +98,12 @@ class _Run:
         )
         flow = build_flow(env, self._settings, strategy=strategy).flow
         return asyncio.create_task(flow.run(self._task_id, resumed=resumed))
+
+
+async def _die_between_opening_and_recording(github: FakeGitHub, run: _Run) -> None:
+    await wait_until(lambda: len(github.pull_requests()) == 1, _WAIT_SECONDS)
+    await run.restart()
+    github.release_create()
 
 
 async def _await_poll(github: FakeGitHub, clock: FakeClock, views: int) -> None:
@@ -188,7 +198,11 @@ async def test_pull_request_lands_through_the_done_path(
     remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
     await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    if case.crash_after_create:
+        fake_github.hold_create()
     run = _Run(engine_env, settings, task.id)
+    if case.crash_after_create:
+        await _die_between_opening_and_recording(fake_github, run)
     for number, outcome in enumerate(case.outcomes, start=1):
         views = fake_github.views() + 1
         await _await_poll(fake_github, clock, views)

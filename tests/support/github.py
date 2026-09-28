@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ from shikiru.process import SubprocessRunner
 from tests.support import fake_gh
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from shikiru.workspace.github import PullRequestState
@@ -34,6 +36,24 @@ class FakeGitHub:
         count = len(list(pulls.glob("*.json")))
         return [json.loads((pulls / f"{n}.json").read_text()) for n in range(1, count + 1)]
 
+    def hold_create(self) -> None:
+        """Make `pr create` block after recording its pull request, until `release_create`."""
+        os.mkfifo(self.state / fake_gh.HOLD_CREATE)
+
+    def release_create(self) -> None:
+        """Remove the create hold and unblock any `pr create` still waiting on it."""
+        hold = self.state / fake_gh.HOLD_CREATE
+        if not hold.exists():
+            return
+        try:
+            descriptor = os.open(hold, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as error:
+            if error.errno != errno.ENXIO:
+                raise
+        else:
+            os.close(descriptor)
+        hold.unlink()
+
     def set_state(self, number: int, state: PullRequestState) -> None:
         path = self.state / fake_gh.PULLS_DIR / f"{number}.json"
         record = json.loads(path.read_text())
@@ -48,7 +68,7 @@ class FakeGitHub:
 @pytest.fixture
 def fake_github(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> FakeGitHub:
+) -> Iterator[FakeGitHub]:
     """Shadow any real `gh` on PATH, drop GitHub credentials and neutralise git config."""
     root = tmp_path_factory.mktemp("github")
     bin_dir = root / "bin"
@@ -66,7 +86,9 @@ def fake_github(
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
     monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
     assert shutil.which("gh") == str(gh)
-    return FakeGitHub(state)
+    github = FakeGitHub(state)
+    yield github
+    github.release_create()
 
 
 async def add_bare_remote(project_root: Path, remote_dir: Path, name: str) -> None:

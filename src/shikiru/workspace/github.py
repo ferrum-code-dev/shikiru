@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 _GH_BIN = "gh"
 _COMMAND_TIMEOUT_SECONDS = 60.0
 _STATE_FIELD = "state"
+_URL_FIELD = "url"
+_OPEN_STATE_FILTER = "open"
 
 
 class PullRequestState(StrEnum):
@@ -32,6 +34,24 @@ class GitHub:
     def __init__(self, runner: SubprocessRunner) -> None:
         """Run every gh command through `runner`, never a shell."""
         self._runner = runner
+
+    async def open_pull_request(self, repo_dir: Path, *, base: str, head: str) -> str | None:
+        """Return the URL of an open pull request of `head` into `base`, if there is one."""
+        result = await self._run(
+            repo_dir,
+            "pr",
+            "list",
+            "--head",
+            head,
+            "--base",
+            base,
+            "--state",
+            _OPEN_STATE_FILTER,
+            "--json",
+            _URL_FIELD,
+        )
+        pulls = json.loads(result.stdout)
+        return pulls[0][_URL_FIELD] if pulls else None
 
     async def create_pull_request(
         self, repo_dir: Path, *, base: str, head: str, title: str, body: str

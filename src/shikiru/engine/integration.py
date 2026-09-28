@@ -266,7 +266,11 @@ class PullRequest:
         return opened.commits if opened is not None else None
 
     async def merge(self, request: MergeRequest) -> tuple[str, ...]:
-        """Push the branch and open its pull request, recorded as `pr_opened`."""
+        """Push the branch and open its pull request, recorded as `pr_opened`.
+
+        An open pull request of the branch that was never recorded (the engine died between
+        opening and recording it) is adopted instead of opening another.
+        """
         repo = request.repo
         commits = tuple(
             await self._git.log_oneline(request.task_root, f"{repo.base}..{repo.branch}")
@@ -275,7 +279,9 @@ class PullRequest:
             return ()
         lease = await self._git.remote_branch_sha(self._project_root, self._remote, repo.branch)
         await self._git.push(self._project_root, self._remote, repo.branch, lease=lease)
-        url = await self._github.create_pull_request(
+        url = await self._github.open_pull_request(
+            self._project_root, base=repo.base, head=repo.branch
+        ) or await self._github.create_pull_request(
             self._project_root,
             base=repo.base,
             head=repo.branch,
