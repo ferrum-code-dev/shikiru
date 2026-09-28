@@ -54,7 +54,7 @@ queued ──► running ──► integrating ──► done
 
 | Step | Role | Template → report | Outcomes |
 |---|---|---|---|
-| triage | Leader | `triage` → `TriageReport` | `implement` → implement · `plan` → plan (also when the request needs decomposing into several tasks) |
+| triage | Leader | `triage` → `TriageReport` | `implement` → implement · `plan` → plan (also when the request needs decomposing into several tasks; never for an open decision, which plan cannot raise and implement raises through consult) |
 | plan | Leader | `plan` → `PlanReport` | → integrate; `new_tasks` are enqueued (the template tells the Leader to fill them only when the request asks to execute the plan, giving each new task its own tracker entry in place of this task's) |
 | implement | Implementer | `implement` (i = 1) / `rework` → `ImplementationReport` | `completed` → verify · `needs_decision`/`blocked` → consult |
 | consult | Leader | `consult` → `ConsultAnswer` | `answer` → implement (same iteration) · `escalate` → `decision_required`. More than `CONSULT_LIMIT` (3) consults → `decision_required` |
