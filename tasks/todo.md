@@ -49,7 +49,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 ## Phase 5 — Resilience and operator completeness
 - [x] Task 22: Engine restart recovery
 - [x] Task 23: Pull request integration
-- [ ] Task 24: Parallel, escalation and intervention E2E
+- [x] Task 24: Parallel, escalation and intervention E2E
 
 ## Phase 6 — Operator surfaces and onboarding
 - [ ] Task 25: Remaining widgets and renderables

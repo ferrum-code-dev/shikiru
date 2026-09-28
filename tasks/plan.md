@@ -321,7 +321,7 @@ Refs: 03 §6.
 
 ### Task 24: Parallel, escalation and intervention E2E
 Refs: 07 §5.
-- [ ] E2E E3, E4 and E6 pass.
+- [x] E2E E3, E4 and E6 pass.
 
 ## Phase 6 — Operator surfaces and onboarding
 
