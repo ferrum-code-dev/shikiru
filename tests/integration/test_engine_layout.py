@@ -8,7 +8,8 @@ from shikiru.agents.contracts import Rung
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import HandBack, Submit
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import Role
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import Role, Status, Step
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.store.commands import CommandQueue
 from shikiru.store.events import EventLog
@@ -191,3 +192,27 @@ async def test_dead_special_pane_is_respawned_in_place(
     restored = events.since(0, kinds=[EventKind.PANE_RESTORED], task_id=task_id)
     assert restored
     assert restored[-1].data.get("pane") in {"system", "shell"}
+
+
+async def test_restore_from_a_stale_snapshot_leaves_a_finished_task_closed(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    layout, tasks, _events, task_id = await _task_window(connection, clock, tmux_server, tmp_path)
+    snapshot = tasks.get(task_id)
+    assert snapshot is not None
+    assert snapshot.window_id is not None
+    tasks.apply_transition(
+        task_id, Transition.stay(snapshot, step=Step.INTEGRATE, status=Status.DONE)
+    )
+    finished = tasks.get(task_id)
+    assert finished is not None
+    await layout.close(finished)
+
+    await layout.restore([snapshot])
+
+    windows = await tmux_server.run(
+        "list-windows", "-t", exact_target(session_name("test")), "-F", "#{window_id}"
+    )
+    assert snapshot.window_id not in windows.stdout.split()
+    assert len(windows.stdout.split()) == 1

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from shikiru.domain.commands import HandBack
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import Role, Task
+from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Task
 from shikiru.errors import ShikiruError
 from shikiru.paths import task_root
 from shikiru.tmux.client import FORMAT_PANE_ID
@@ -66,6 +67,7 @@ class LayoutGuard:
         self._runs = runs
         self._commands = commands
         self._special_panes: dict[str, dict[str, str]] = {}
+        self._windows = asyncio.Lock()
 
     async def ensure(self, task: Task) -> Task:
         """Create `task`'s window or restore missing panes, returning fresh task state."""
@@ -86,15 +88,19 @@ class LayoutGuard:
         return restored
 
     async def restore(self, tasks: list[Task]) -> None:
-        """Restore all active task windows and dead system/shell panes."""
+        """Restore the windows and dead panes of `tasks` that are still active when reached."""
         for task in tasks:
-            await self.ensure(task)
+            async with self._windows:
+                current = self._tasks.get(task.id)
+                if current is not None and current.status in ACTIVE_STATUSES:
+                    await self.ensure(current)
 
     async def close(self, task: Task) -> None:
         """Close a task window when its task reaches a terminal state."""
-        if task.window_id is not None and await self._tmux.target_exists(task.window_id):
-            await self._view.close_task_window(task.window_id)
-        self._special_panes.pop(task.id, None)
+        async with self._windows:
+            if task.window_id is not None and await self._tmux.target_exists(task.window_id):
+                await self._view.close_task_window(task.window_id)
+            self._special_panes.pop(task.id, None)
 
     async def _create(self, task: Task) -> Task:
         root = task_root(self._project_root, task.id)
