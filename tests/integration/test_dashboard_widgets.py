@@ -8,7 +8,9 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 
 from shikiru.config.loader import load_settings
+from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView, WidgetContext
+from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition, first_step
@@ -79,11 +81,12 @@ def _context(
     reader: StateReader, project_dir: Path, *, services: _StubServices | None = None
 ) -> WidgetContext:
     dashboard_services = services or _StubServices()
+    settings = load_settings(project_dir)
     return WidgetContext(
         views=StateDashboardViews(
             reader,
             focus_task=None,
-            settings=load_settings(project_dir),
+            settings=settings,
             sources=dashboard_services,
             queries=OperatorQueries(
                 reader,
@@ -93,9 +96,11 @@ def _context(
                 max_parallel=2,
             ),
             clock=FakeClock(START),
+            motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
         ),
         focus_task=None,
         on_change=reader.watch,
+        on_motion=lambda _: None,
         open_palette=_open_palette,
     )
 

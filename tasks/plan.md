@@ -337,7 +337,7 @@ Refs: 06 §5.5.
 
 ### Task 27: Motion
 Refs: 06 §6.5.
-- [ ] `frame(state, now)` for spinner/freeze/stall, stamp flash, escalation pulse, ticking counters; 4 Hz cap; `animations = false`.
+- [x] `frame(state, now)` for spinner/freeze/stall, stamp flash, escalation pulse, ticking counters; 4 Hz cap; `animations = false`.
 - Tests: unit tests of `frame` with `FakeClock`.
 
 ### Task 28: Sessions list and attach

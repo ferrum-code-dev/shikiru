@@ -23,6 +23,15 @@ escalate_after = 2
 
 [dashboard]
 widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
+animations = true
+
+[dashboard.motion]
+refresh_hz = 4
+stream_active_seconds = 10
+stamp_flash_milliseconds = 400
+escalation_pulse_hz = 1
+task_event_limit = 50
+merge_event_limit = 20
 
 [dashboard.layout]
 split = "h"

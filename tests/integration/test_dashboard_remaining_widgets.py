@@ -16,6 +16,7 @@ from textual.widgets import DataTable, Static
 from shikiru.agents.contracts import QuotaWindow, Rung, Usage
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
+from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.contract import (
     DockerView,
     OpenPalette,
@@ -23,6 +24,7 @@ from shikiru.dashboard.contract import (
     ResourceView,
     WidgetContext,
 )
+from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.services import DashboardServices, GitRepoStatusService
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.escalation import options_for
@@ -121,9 +123,11 @@ def _context(
                 max_parallel=settings.orchestration.max_parallel,
             ),
             clock=clock,
+            motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
         ),
         focus_task=None,
         on_change=reader.watch,
+        on_motion=lambda _: None,
         open_palette=open_palette or _open_palette,
     )
 

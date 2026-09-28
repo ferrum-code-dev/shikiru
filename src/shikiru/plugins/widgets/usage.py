@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
     from shikiru.dashboard.contract import AgentUsageView, WidgetContext
 
-USAGE_REFRESH_SECONDS = 1
 UNKNOWN_VALUE = "\N{EN DASH}"
 API_EQUIVALENT_LABEL = "API-equivalent"
 
@@ -67,7 +66,7 @@ class UsagePanel(Static):
         """Render current usage, subscribe to state and tick quota age/countdowns."""
         await self._refresh()
         self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
-        self.set_interval(USAGE_REFRESH_SECONDS, self._refresh)
+        self._widget_context.on_motion(self._refresh)
 
     async def _refresh(self) -> None:
         usage = self._widget_context.views.usage()

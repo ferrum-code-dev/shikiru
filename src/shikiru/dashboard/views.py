@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol
 
 from shikiru.dashboard.contract import (
@@ -17,16 +17,24 @@ from shikiru.dashboard.contract import (
     ResourceView,
 )
 from shikiru.domain.events import EventKind
+from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status
 from shikiru.operator.strip_views import task_strip_data
+from shikiru.ui.glyphs import SPINNER_FRAMES
+from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 
 if TYPE_CHECKING:
+    from datetime import timedelta
+
+    from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
-    from shikiru.operator.queries import OperatorQueries
+    from shikiru.dashboard.motion import DashboardMotion
+    from shikiru.domain.motion import TaskMotionFrame
+    from shikiru.domain.tasks import Task
+    from shikiru.operator.queries import EscalationView, OperatorQueries, UsageView
     from shikiru.store.reader import StateReader
-    from shikiru.ui.strip import TaskStripData
 
 DIALOGUE_LINE_LIMIT = 20
 SECONDS_PER_MINUTE = 60
@@ -35,7 +43,6 @@ HOURS_PER_DAY = 24
 TIME_UNKNOWN = "\N{EN DASH}"
 PACKET_QUESTION_HEADING = "Question"
 PACKET_OPTIONS_HEADING = "Options"
-
 _DIALOGUE_KINDS = (
     EventKind.VERDICT,
     EventKind.TURN_COMPLETED,
@@ -79,6 +86,7 @@ class StateDashboardViews:
         sources: DashboardSources,
         queries: OperatorQueries,
         clock: Clock,
+        motion: DashboardMotion,
     ) -> None:
         """Use `state`, shared operator queries, sources and `clock` for widget data."""
         self._state = state
@@ -87,6 +95,11 @@ class StateDashboardViews:
         self._sources = sources
         self._queries = queries
         self._clock = clock
+        self._motion = motion
+        self._usage_version = -1
+        self._usage_cache: tuple[list[UsageView], dict[str, list[QuotaWindow]]] | None = None
+        self._escalation_version = -1
+        self._escalation_cache: list[EscalationView] | None = None
 
     async def header(self) -> HeaderView:
         """Build the project, engine, slot and repository summary."""
@@ -101,9 +114,18 @@ class StateDashboardViews:
 
     def strips(self) -> list[TaskStripData]:
         """Build the active task strips, placing the focused task first."""
+        now = self._clock.now()
         tasks = self._state.list_tasks(statuses=ACTIVE_STATUSES)
         tasks.sort(key=lambda task: task.id != self._focus_task)
-        return [task_strip_data(task, self._settings) for task in tasks]
+        recent_merges = self._motion.recent_merges(now)
+        task_ids = {task.id for task in tasks}
+        all_tasks = [*tasks, *(task for task in recent_merges if task.id not in task_ids)]
+        rendered = self._motion.frames(tuple(all_tasks), now)
+        frames = {item.task_id: item for item in rendered.tasks}
+        return [
+            self._strip_with_motion(task, frames[task.id], self._motion.current_cost(task))
+            for task in all_tasks
+        ]
 
     def queue(self) -> list[QueueRow]:
         """Build queued-task rows in dispatch order."""
@@ -122,6 +144,17 @@ class StateDashboardViews:
 
     def escalations(self) -> list[EscalationPanelView]:
         """Build splash panels from each stored packet's headline, question and options."""
+        version = self._state.data_version()
+        if version != self._escalation_version:
+            self._escalation_version = version
+            self._escalation_cache = self._queries.list_escalations()
+        items = self._escalation_cache
+        if items is None:
+            message = "escalation cache was not initialized"
+            raise RuntimeError(message)
+        pulse = self._motion.frames(
+            (), self._clock.now(), escalations_open=bool(items)
+        ).escalation_red
         return [
             EscalationPanelView(
                 escalation_id=item.escalation.id,
@@ -130,8 +163,9 @@ class StateDashboardViews:
                 question=_packet_section(item.packet, PACKET_QUESTION_HEADING, allow_empty=True),
                 options=_packet_options(item.packet),
                 packet=item.packet,
+                pulse_red=pulse,
             )
-            for item in self._queries.list_escalations()
+            for item in items
         ]
 
     def dialogue(self) -> list[DialogueBubbleView]:
@@ -155,9 +189,26 @@ class StateDashboardViews:
     def usage(self) -> list[AgentUsageView]:
         """Build per-agent usage and reported quota windows for every known agent."""
         now = self._clock.now()
-        usage, quotas = self._queries.usage_and_quotas()
+        version = self._state.data_version()
+        if version != self._usage_version:
+            self._usage_version = version
+            self._usage_cache = self._queries.usage_and_quotas()
+        usage_data = self._usage_cache
+        if usage_data is None:
+            message = "usage cache was not initialized"
+            raise RuntimeError(message)
+        usage, quotas = usage_data
         by_agent = {item.agent: item for item in usage}
         agents = sorted(set(by_agent) | set(quotas))
+        quota_states = tuple(
+            QuotaMotionState(agent, window.name, window.resets_at)
+            for agent in agents
+            for window in quotas.get(agent, [])
+        )
+        quota_frames = {
+            (item.agent, item.window): item.remaining_seconds
+            for item in self._motion.frames((), now, quotas=quota_states).quotas
+        }
         result: list[AgentUsageView] = []
         for agent in agents:
             item = by_agent.get(agent)
@@ -166,9 +217,9 @@ class StateDashboardViews:
                     name=window.name,
                     used_pct=window.used_pct,
                     resets_in=(
-                        _relative(window.resets_at - now)
-                        if window.resets_at is not None
-                        else TIME_UNKNOWN
+                        _quota_countdown(
+                            quota_frames[(agent, window.name)], window.resets_at is not None
+                        )
                     ),
                     observed_ago=_age(now - window.observed_at),
                 )
@@ -195,6 +246,37 @@ class StateDashboardViews:
     async def containers(self) -> DockerView:
         """Return the current Docker sample."""
         return await self._sources.containers()
+
+    def _strip_with_motion(
+        self, task: Task, motion: TaskMotionFrame, cost_usd: float | None
+    ) -> TaskStripData:
+        data = task_strip_data(task, self._settings)
+        panels = list(data.panels)
+        active_index = next(
+            (index for index, panel in enumerate(panels) if panel.state is PanelState.ACTIVE),
+            None,
+        )
+        if active_index is not None:
+            panel = panels[active_index]
+            detail = [panel.detail, _duration(motion.elapsed_seconds)]
+            if cost_usd is not None:
+                detail.append(f"${cost_usd:.2f}")
+            panels[active_index] = replace(
+                panel,
+                state=PanelState.STALLED if motion.stalled else panel.state,
+                detail=" · ".join(part for part in detail if part),
+                spinner_frame=(
+                    ""
+                    if not motion.spinner_visible
+                    else SPINNER_FRAMES[motion.spinner_phase % len(SPINNER_FRAMES)]
+                ),
+            )
+        stamp = data.stamp
+        if motion.stamp_kind is MotionStampKind.VERDICT:
+            stamp = StripStamp(StampKind.VERDICT, motion.stamp_detail, motion.stamp_flash)
+        elif motion.stamp_kind is MotionStampKind.MERGED:
+            stamp = StripStamp(StampKind.MERGED, flash=motion.stamp_flash)
+        return replace(data, panels=tuple(panels), stamp=stamp)
 
 
 def _packet_headline(packet: str) -> str:
@@ -267,9 +349,20 @@ def _age(duration: timedelta) -> str:
     return f"{hours // HOURS_PER_DAY}d"
 
 
-def _relative(duration: timedelta) -> str:
-    seconds = int(duration.total_seconds())
-    if abs(seconds) < SECONDS_PER_MINUTE:
-        return "now"
-    label = _age(timedelta(seconds=abs(seconds)))
-    return f"in {label}" if seconds > 0 else f"{label} ago"
+def _duration(seconds: int) -> str:
+    minutes, remainder = divmod(seconds, SECONDS_PER_MINUTE)
+    hours, minutes = divmod(minutes, MINUTES_PER_HOUR)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {remainder}s"
+    return f"{remainder}s"
+
+
+def _quota_countdown(seconds: int | None, has_reset: bool) -> str:
+    if not has_reset:
+        return TIME_UNKNOWN
+    if seconds is None:
+        message = "a quota reset deadline did not produce a countdown"
+        raise RuntimeError(message)
+    return _duration(seconds)

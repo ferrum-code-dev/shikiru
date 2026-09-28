@@ -13,6 +13,7 @@ IntegrationStrategy = Literal["merge", "pr"]
 LayoutSplitAxis = Literal["h", "v"]
 PaneName = Literal["system", "leader", "implementer", "shell"]
 GIT_DEFAULT_REMOTE = "origin"
+MAX_MOTION_REFRESH_HZ = 4
 
 
 class ConfigModel(BaseModel):
@@ -129,12 +130,25 @@ class TitlesConfig(ConfigModel):
     shell: str
 
 
+class DashboardMotionConfig(ConfigModel):
+    """Motion cadence and signal windows for the dashboard."""
+
+    refresh_hz: int = Field(gt=0, le=MAX_MOTION_REFRESH_HZ)
+    stream_active_seconds: float = Field(gt=0)
+    stamp_flash_milliseconds: int = Field(gt=0)
+    escalation_pulse_hz: int = Field(gt=0)
+    task_event_limit: int = Field(gt=0)
+    merge_event_limit: int = Field(gt=0)
+
+
 class DashboardConfig(ConfigModel):
     """`[dashboard]`."""
 
     widgets: list[str]
     layout: LayoutSplit
     titles: TitlesConfig
+    animations: bool
+    motion: DashboardMotionConfig
 
 
 class NotifyConfig(ConfigModel):

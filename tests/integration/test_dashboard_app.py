@@ -10,8 +10,10 @@ from textual.widgets import TextArea
 import shikiru.agents.registry as registry_module
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
+from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView
+from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.steps import first_step
@@ -76,7 +78,13 @@ def _views(reader: StateReader, project_dir: Path, sources: _StubServices) -> St
             max_parallel=settings.orchestration.max_parallel,
         ),
         clock=SystemClock(),
+        motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
     )
+
+
+def _motion_interval(project_dir: Path) -> float | None:
+    dashboard = load_settings(project_dir).dashboard
+    return 1 / dashboard.motion.refresh_hz if dashboard.animations else None
 
 
 async def test_dashboard_app_rejects_an_unregistered_widget_name(
@@ -90,6 +98,8 @@ async def test_dashboard_app_rejects_an_unregistered_widget_name(
             focus_task=None,
             views=_views(reader, project_dir, _StubServices()),
             on_change=reader.watch,
+            clock=SystemClock(),
+            motion_interval_seconds=_motion_interval(project_dir),
             open_palette=_open_palette,
             widget_names=["no-such-widget"],
         )
@@ -115,6 +125,8 @@ async def test_dashboard_mounts_the_default_widgets(
             focus_task=None,
             views=_views(reader, project_dir, _StubServices()),
             on_change=reader.watch,
+            clock=SystemClock(),
+            motion_interval_seconds=_motion_interval(project_dir),
             open_palette=_open_palette,
             widget_names=settings.dashboard.widgets,
         )
@@ -148,6 +160,8 @@ async def test_default_dashboard_widgets_fit_a_narrow_system_pane(
             focus_task=None,
             views=_views(reader, project_dir, _StubServices()),
             on_change=reader.watch,
+            clock=SystemClock(),
+            motion_interval_seconds=_motion_interval(project_dir),
             open_palette=_open_palette,
             widget_names=settings.dashboard.widgets,
         )
@@ -201,6 +215,8 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
             focus_task=None,
             views=_views(reader, project_dir, _StubServices()),
             on_change=reader.watch,
+            clock=SystemClock(),
+            motion_interval_seconds=_motion_interval(project_dir),
             open_palette=open_palette,
             widget_names=[],
         )
@@ -266,6 +282,8 @@ async def test_dashboard_app_rejects_an_ambiguous_widget_name(
             focus_task=None,
             views=_views(reader, project_dir, _StubServices()),
             on_change=reader.watch,
+            clock=SystemClock(),
+            motion_interval_seconds=_motion_interval(project_dir),
             open_palette=_open_palette,
             widget_names=["dup"],
         )

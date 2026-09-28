@@ -54,7 +54,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 ## Phase 6 — Operator surfaces and onboarding
 - [x] Task 25: Remaining widgets and renderables
 - [x] Task 26: Palette
-- [ ] Task 27: Motion
+- [x] Task 27: Motion
 - [ ] Task 28: Sessions list and attach
 - [ ] Task 29: Init wizard
 - [ ] Task 30: Release readiness

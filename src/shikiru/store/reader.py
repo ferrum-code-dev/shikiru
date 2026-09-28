@@ -83,6 +83,7 @@ class StateReader:
         *,
         kinds: Sequence[EventKind] | None = None,
         implementer_turns_only: bool = False,
+        task_id: str | None = None,
     ) -> list[Event]:
         """Read the latest matching events in chronological order."""
         return fetch_latest_events(
@@ -90,6 +91,7 @@ class StateReader:
             limit,
             kinds=kinds,
             implementer_turns_only=implementer_turns_only,
+            task_id=task_id,
         )
 
     def data_version(self) -> int:

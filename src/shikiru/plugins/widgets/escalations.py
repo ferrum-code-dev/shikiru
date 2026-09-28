@@ -66,6 +66,7 @@ class EscalationsPanel(Static):
         """Render open packets and refresh on state changes."""
         await self._refresh()
         self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self._widget_context.on_motion(self._refresh)
 
     async def on_key(self, event: events.Key) -> None:
         """Move between open packets, show a packet, or request its resolution form."""
@@ -87,9 +88,25 @@ class EscalationsPanel(Static):
             event.stop()
 
     async def _refresh(self) -> None:
-        self._escalations = self._widget_context.views.escalations()
-        self.display = bool(self._escalations)
-        self._selected = min(self._selected, max(len(self._escalations) - 1, 0))
+        escalations = self._widget_context.views.escalations()
+        same_items = len(self._escalations) == len(escalations) and all(
+            _same_escalation(old, new)
+            for old, new in zip(self._escalations, escalations, strict=True)
+        )
+        self._escalations = escalations
+        self.display = bool(escalations)
+        self._selected = min(self._selected, max(len(escalations) - 1, 0))
+        if same_items and not escalations:
+            return
+        if same_items:
+            panels = self.query_one("#escalation-panels", VerticalScroll)
+            cards = list(panels.query(Static))
+            if len(cards) != len(escalations):
+                await self._render_panels()
+                return
+            for index, (card, item) in enumerate(zip(cards, escalations, strict=True)):
+                card.update(self._render_item(index, item))
+            return
         await self._render_panels()
 
     async def _render_panels(self) -> None:
@@ -109,9 +126,20 @@ class EscalationsPanel(Static):
             f"{_SELECTED_MARKER}{item.headline}" if index == self._selected else item.headline
         )
         return Group(
-            SplashPanel(headline, item.question, item.options).render(),
+            SplashPanel(headline, item.question, item.options, item.pulse_red).render(),
             "",
         )
+
+
+def _same_escalation(left: EscalationPanelView, right: EscalationPanelView) -> bool:
+    return (
+        left.escalation_id == right.escalation_id
+        and left.task_id == right.task_id
+        and left.headline == right.headline
+        and left.question == right.question
+        and left.options == right.options
+        and left.packet == right.packet
+    )
 
 
 class EscalationsWidget:

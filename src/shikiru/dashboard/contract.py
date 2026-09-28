@@ -18,6 +18,7 @@ RESOURCE_REFRESH_SECONDS = 2
 DOCKER_REFRESH_SECONDS = 5
 OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
+MotionRegistration = Callable[[OnChange], None]
 OpenPalette = Callable[[str], Awaitable[None]]
 
 
@@ -63,6 +64,7 @@ class EscalationPanelView:
     question: str
     options: tuple[str, ...]
     packet: str
+    pulse_red: bool
 
 
 @dataclass(frozen=True)
@@ -180,4 +182,5 @@ class WidgetContext:
     views: DashboardViews
     focus_task: str | None
     on_change: OnChangeRegistration
+    on_motion: MotionRegistration
     open_palette: OpenPalette

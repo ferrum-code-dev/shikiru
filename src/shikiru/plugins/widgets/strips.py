@@ -28,6 +28,7 @@ class StripsPanel(Static):
         """Render the current strips, then refresh on every state change."""
         await self._refresh()
         self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self._widget_context.on_motion(self._refresh)
 
     async def on_resize(self, event: events.Resize) -> None:
         """Re-render at the new width: a narrower pane switches every strip to its one-line form."""

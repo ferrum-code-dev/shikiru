@@ -180,6 +180,8 @@ async def run_dashboard(
     dashboard_palette_module = import_module("shikiru.dashboard.palette")
     dashboard_services_module = import_module("shikiru.dashboard.services")
     dashboard_views_module = import_module("shikiru.dashboard.views")
+    dashboard_motion_module = import_module("shikiru.dashboard.motion")
+    dashboard_activity_module = import_module("shikiru.dashboard.activity")
     clock = build_clock()
     runner = SubprocessRunner()
     git = Git(runner)
@@ -198,6 +200,12 @@ async def run_dashboard(
             resources=ResourceSampler(clock),
             docker=DockerSampler(runner, clock),
         )
+        motion = dashboard_motion_module.DashboardMotion(
+            services.reader,
+            project_root,
+            settings,
+            dashboard_activity_module.RoleViewTail(),
+        )
         views = dashboard_views_module.StateDashboardViews(
             services.reader,
             focus_task=focus_task,
@@ -205,6 +213,7 @@ async def run_dashboard(
             sources=dashboard_services,
             queries=services.queries,
             clock=clock,
+            motion=motion,
         )
 
         app_instance = None
@@ -225,6 +234,10 @@ async def run_dashboard(
             focus_task=focus_task,
             views=views,
             on_change=services.reader.watch,
+            clock=clock,
+            motion_interval_seconds=(
+                1 / settings.dashboard.motion.refresh_hz if settings.dashboard.animations else None
+            ),
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
         )

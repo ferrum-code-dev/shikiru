@@ -17,9 +17,11 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
     from textual.binding import BindingType
 
+    from shikiru.clock import Clock
     from shikiru.dashboard.contract import (
         DashboardViews,
         DashboardWidget,
+        OnChange,
         OnChangeRegistration,
         OpenPalette,
     )
@@ -51,6 +53,8 @@ class DashboardApp(App[None]):
         focus_task: str | None,
         views: DashboardViews,
         on_change: OnChangeRegistration,
+        clock: Clock,
+        motion_interval_seconds: float | None,
         open_palette: OpenPalette,
         widget_names: Sequence[str],
     ) -> None:
@@ -59,8 +63,11 @@ class DashboardApp(App[None]):
         self._focus_task = focus_task
         self._views = views
         self._on_change = on_change
+        self._clock = clock
+        self._motion_interval_seconds = motion_interval_seconds
         self._open_palette = open_palette
         self._widget_names = tuple(widget_names)
+        self._motion_callbacks: list[OnChange] = []
 
     def compose(self) -> ComposeResult:
         """Yield one mounted `Widget` per configured widget name, in order."""
@@ -68,11 +75,26 @@ class DashboardApp(App[None]):
             views=self._views,
             focus_task=self._focus_task,
             on_change=self._on_change,
+            on_motion=self._motion_callbacks.append,
             open_palette=self._open_palette,
         )
         with VerticalScroll(id="dashboard-panels"):
             for name in self._widget_names:
                 yield _load_widget(name).create(context)
+
+    async def on_mount(self) -> None:
+        """Start the single clock-driven refresh source for mounted motion-aware widgets."""
+        if self._motion_interval_seconds is not None:
+            self.run_worker(self._motion_loop(), group="dashboard-motion", exclusive=True)
+
+    async def _motion_loop(self) -> None:
+        interval = self._motion_interval_seconds
+        if interval is None:
+            return
+        while True:
+            await self._clock.sleep(interval)
+            for callback in tuple(self._motion_callbacks):
+                await callback()
 
     async def action_open_palette(self) -> None:
         """Open the operator palette through the shared dashboard callback."""

@@ -38,6 +38,7 @@ from shikiru.helper.helper import FailureClassification
 from shikiru.helper.models import Unrecoverable
 from shikiru.paths import run_dir, task_root, turns_dir
 from shikiru.prompts.renderer import OPERATOR_MESSAGES_KEY
+from shikiru.view_log import TURN_DIR_ITERATION_MARKER, TURN_DIR_SEPARATOR
 from shikiru.workspace.reports import InvalidTurnReportError, load_turn_report
 
 if TYPE_CHECKING:
@@ -370,4 +371,7 @@ def _turn_count(turns_root: Path) -> int:
 
 
 def _turn_dir_name(number: int, request: TurnRequest) -> str:
-    return f"{number:0{_TURN_NUMBER_WIDTH}d}-{request.step.value}-i{request.iteration}"
+    return (
+        f"{number:0{_TURN_NUMBER_WIDTH}d}{TURN_DIR_SEPARATOR}{request.step.value}"
+        f"{TURN_DIR_ITERATION_MARKER}{request.iteration}"
+    )

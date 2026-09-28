@@ -15,6 +15,7 @@ from shikiru.ui.glyphs import (
     GLYPH_OPERATOR,
     GLYPH_PAUSED,
     GLYPH_PENDING,
+    GLYPH_STALLED,
     PANEL_KANJI,
     ROLE_GLYPHS,
     STAGE_IMPLEMENT,
@@ -26,6 +27,7 @@ from shikiru.ui.glyphs import (
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     ENGINE_COLOR,
+    HOLD_COLOR,
     IDLE_COLOR,
     ROLE_COLORS,
     STYLE_BOLD,
@@ -44,6 +46,7 @@ class PanelState(StrEnum):
     ACTIVE = auto()
     DONE = auto()
     ESCALATED = auto()
+    STALLED = auto()
 
 
 class StampKind(StrEnum):
@@ -51,25 +54,33 @@ class StampKind(StrEnum):
 
     PAUSED = auto()
     OPERATOR = auto()
+    VERDICT = auto()
+    MERGED = auto()
 
 
 _STATE_GLYPHS: dict[PanelState, str] = {
     PanelState.PENDING: GLYPH_PENDING,
     PanelState.DONE: GLYPH_DONE,
     PanelState.ESCALATED: GLYPH_ESCALATED,
+    PanelState.STALLED: GLYPH_STALLED,
 }
 _STATE_STYLES: dict[PanelState, str] = {
     PanelState.PENDING: f"{STYLE_DIM} {IDLE_COLOR}",
     PanelState.DONE: f"{STYLE_BOLD} {SUCCESS_COLOR}",
     PanelState.ESCALATED: f"{STYLE_REVERSE} {ALERT_COLOR}",
+    PanelState.STALLED: f"{STYLE_BOLD} {HOLD_COLOR}",
 }
 _STAMP_GLYPHS: dict[StampKind, str] = {
     StampKind.PAUSED: GLYPH_PAUSED,
     StampKind.OPERATOR: GLYPH_OPERATOR,
+    StampKind.VERDICT: GLYPH_DONE,
+    StampKind.MERGED: GLYPH_DONE,
 }
 _STAMP_WORDS: dict[StampKind, str] = {
     StampKind.PAUSED: "PAUSED",
     StampKind.OPERATOR: "OPERATOR",
+    StampKind.VERDICT: "VERDICT",
+    StampKind.MERGED: "MERGED",
 }
 
 _NARROW_SEPARATOR = " "
@@ -128,6 +139,7 @@ class StripStamp:
 
     kind: StampKind
     detail: str = ""
+    flash: bool = False
 
     def render(self) -> str:
         """Render as `<glyph> <WORD>`, with `detail` appended when set (e.g. a reset time)."""
@@ -178,6 +190,16 @@ def _body_cell(panel: PanelView) -> str:
     else:
         pieces = (_STATE_GLYPHS[panel.state], panel.detail)
     return " ".join(piece for piece in pieces if piece)
+
+
+def _stamp_index(panels: tuple[PanelView, ...]) -> int | None:
+    active = _active_index(panels)
+    if active is not None:
+        return active
+    for index in range(len(panels) - 1, -1, -1):
+        if panels[index].state is not PanelState.PENDING:
+            return index
+    return 0 if panels else None
 
 
 def _active_or_last(panels: tuple[PanelView, ...]) -> PanelView:
@@ -253,6 +275,11 @@ class TaskStrip:
         if self._data.stamp is not None:
             line = f"{line}{_HEADER_SEPARATOR}{self._data.stamp.render()}"
         text = Text(line)
+        if self._data.stamp is not None and self._data.stamp.flash:
+            stamp = self._data.stamp.render()
+            start = line.rfind(stamp)
+            if start >= 0:
+                text.stylize(STYLE_REVERSE, start, start + cell_len(stamp))
         if cell_len(line) > width:
             text.truncate(width, overflow="crop")
         return text
@@ -272,7 +299,7 @@ class TaskStrip:
             _fit(panel.role_line, column) for panel, column in zip(panels, widths, strict=True)
         ]
 
-        stamp_index = _active_index(panels) if self._data.stamp is not None else None
+        stamp_index = _stamp_index(panels) if self._data.stamp is not None else None
         if stamp_index is not None and self._data.stamp is not None:
             body_cells[stamp_index] = _fit(self._data.stamp.render(), widths[stamp_index])
             role_cells[stamp_index] = _fit("", widths[stamp_index])
@@ -283,6 +310,13 @@ class TaskStrip:
             body.append(_BORDER_VERTICAL)
             for index, cell in enumerate(row):
                 style = _panel_style(panels[index]) if row is body_cells else None
+                if (
+                    row is body_cells
+                    and index == stamp_index
+                    and self._data.stamp is not None
+                    and self._data.stamp.flash
+                ):
+                    style = f"{style} {STYLE_REVERSE}"
                 body.append(cell, style=style)
                 body.append(_BORDER_VERTICAL)
         body.append("\n")

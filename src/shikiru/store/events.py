@@ -69,6 +69,7 @@ def fetch_latest_events(
     *,
     kinds: Sequence[EventKind] | None = None,
     implementer_turns_only: bool = False,
+    task_id: str | None = None,
 ) -> list[Event]:
     """Read the latest matching events in chronological order."""
     if limit < 1:
@@ -80,6 +81,9 @@ def fetch_latest_events(
         placeholders = ", ".join("?" for _ in kinds)
         clauses.append(f"kind IN ({placeholders})")
         params.extend(kind.value for kind in kinds)
+    if task_id is not None:
+        clauses.append("task_id = ?")
+        params.append(task_id)
     if implementer_turns_only:
         clauses.append("(kind != ? OR json_extract(data, ?) = ?)")
         params.extend(

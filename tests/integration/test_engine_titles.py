@@ -8,9 +8,6 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import (
     AgentConfig,
-    DashboardConfig,
-    LayoutSplit,
-    PaneLeaf,
     TitlesConfig,
 )
 from shikiru.domain.runs import context_title
@@ -55,11 +52,7 @@ def _titled_settings(*, max_iterations: int = 5) -> Settings:
     settings = flow_settings(max_iterations=max_iterations)
     return settings.model_copy(
         update={
-            "dashboard": DashboardConfig(
-                widgets=[],
-                layout=LayoutSplit(split="h", panes=[PaneLeaf(pane="system")]),
-                titles=_TITLES,
-            )
+            "dashboard": settings.dashboard.model_copy(update={"widgets": [], "titles": _TITLES})
         }
     )
 

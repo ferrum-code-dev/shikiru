@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import role_dir, shikiru_argv
+from shikiru.agents.contracts import (
+    SessionStarted,
+    ToolFinished,
+    ToolStarted,
+    TurnEnded,
+    TurnFailed,
+    role_dir,
+    shikiru_argv,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -14,6 +22,13 @@ VIEW_TIME_KEY = "ts"
 VIEW_TURN_KEY = "turn"
 VIEW_RUNG_KEY = "rung"
 VIEW_SIGNAL_KEY = "signal"
+VIEW_SESSION_STARTED_SIGNAL = SessionStarted.__name__
+VIEW_TOOL_STARTED_SIGNAL = ToolStarted.__name__
+VIEW_TOOL_FINISHED_SIGNAL = ToolFinished.__name__
+VIEW_TURN_ENDED_SIGNAL = TurnEnded.__name__
+VIEW_TURN_FAILED_SIGNAL = TurnFailed.__name__
+TURN_DIR_SEPARATOR = "-"
+TURN_DIR_ITERATION_MARKER = "-i"
 CLI_VIEW_COMMAND = "view"
 CLI_PROJECT_FLAG = "--project"
 
