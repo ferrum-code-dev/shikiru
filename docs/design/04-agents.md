@@ -231,7 +231,7 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 **Usage**: tokens from `turn.completed.usage` (cumulative for the thread on resume, so already session totals); context from the rollout; no cost is reported anywhere → `cost_usd = None`, `cost_basis = "unknown"`.
 
 **Other**:
-- `interactive_command`: `codex resume <id> <args>`.
+- `interactive_command`: `codex resume --no-daemon <id> <args>`. The TUI otherwise resumes the thread in the shared app-server daemon, which keeps the thread's writer after the TUI exits, so the next headless `exec resume` fails with "already has an active writer" (verified 0.157.1). An untrusted worktree shows Codex's trust dialog (trust or quit); quitting hands back.
 - `headless().ask`: `codex exec --ephemeral --json --output-schema <file> -m <m> -c model_reasoning_effort="<e>" -s read-only --skip-git-repo-check` → the final `agent_message`.
 - Turns inherit the Operator's process environment, with `TurnSpec.env` overriding it for that turn. Headless calls and doctor inherit the process environment unchanged. Codex uses `CODEX_HOME` from that environment; Shikiru uses the same home to read model caches and rollout files.
 - Doctor checks `codex login status` for the built-in provider. When `$CODEX_HOME/config.toml` selects a configured custom provider, the login check reports that provider access is Operator-managed and unverified; the CLI login status does not establish custom-provider access.
