@@ -7,18 +7,24 @@ import shlex
 import shutil
 import signal
 import sys
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import psutil
 import pytest
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from shikiru.bootstrap import build_operator
 from shikiru.clock import SystemClock
-from shikiru.domain.events import EventKind
+from shikiru.domain.commands import ResolutionKind
+from shikiru.domain.escalation import EscalationReason
+from shikiru.domain.events import Event, EventKind
 from shikiru.domain.reports import REPORT_FILENAME, Verdict
-from shikiru.domain.tasks import Role, Status, Step
+from shikiru.domain.tasks import Hold, Role, Status, Step
+from shikiru.engine.takeover import HAND_BACK_MESSAGE
 from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import AckStatus
@@ -28,6 +34,7 @@ from shikiru.process import SubprocessRunner
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
+from shikiru.store.tasks import TASK_ID_PREFIX
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import session_name
 from shikiru.view_log import view_log_path
@@ -35,7 +42,7 @@ from tests.support.git_repo import commit_all, init_repo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from shikiru.process import ProcessIdentity
     from tests.support.tmux import TmuxServer
@@ -73,6 +80,28 @@ E2_MESSAGE = (
 VERIFY_TURN_PATTERN = f"*-{Step.VERIFY.value}-i*"
 FIRST_IMPLEMENT_TURN_PATTERN = f"*-{Step.IMPLEMENT.value}-i1"
 ACTING_ROLES = (Role.LEADER, Role.IMPLEMENTER)
+MAX_PARALLEL = 2
+E3_REQUEST = "Implement all tasks in phase B"
+E3_TRACKER_TASKS = ("B1", "B2", "B3")
+E3_CHECK = "triple(4) == 12 and negate(5) == -5 and triple_negated(2) == -6"
+CONFLICT_TURN_PATTERN = f"*-{Step.INTEGRATE.value}-i*"
+CONFLICT_MARKER = "^<<<<<<< "
+E4_REQUEST = "Implement task C1 from tasks/plan.md"
+E4_ANSWER = (
+    "Product decision: amounts exactly halfway between two whole numbers round up, away from "
+    "zero, so round_price(2.5) must return 3 and round_price(3.5) must return 4."
+)
+E4_CHECK = "round_price(2.5) == 3 and round_price(3.5) == 4 and round_price(2.4) == 2"
+MCP_COMMAND = "mcp"
+MCP_WAIT_SECONDS = 60.0
+MCP_RESULT_KEY = "result"
+E6_SECOND_TASK_ID = "T-2"
+E6_TUI_EXIT_KEYS = ("C-c", "C-c")
+PANE_FORMAT_SEPARATOR = "\t"
+PANE_STATE_FORMAT = PANE_FORMAT_SEPARATOR.join(
+    ("#{pane_dead}", "#{pane_current_command}", "#{pane_start_command}")
+)
+PANE_ALIVE = "0"
 
 
 FIXTURE_NAME = "sample-project"
@@ -104,6 +133,8 @@ REAL_OVERRIDES = (
     "orchestration.resources.min_free_ram_gb=0",
     "--set",
     'dashboard.widgets=["header"]',
+    "--set",
+    f"orchestration.max_parallel={MAX_PARALLEL}",
     "--set",
     'roles.leader.ladder=[{agent="claude",model="haiku",effort="low"}]',
     "--set",
@@ -283,9 +314,10 @@ def _assert_both_agents_used(
     _require({"claude", "codex"} <= agents, f"both real agents were not used: {agents}")
 
 
-async def _assert_git_and_tracker(project: PreparedProject, task_name: str = "A1") -> None:
-    tracker = project.root / "tasks" / "todo.md"
-    _require(f"- [x] {task_name}" in await _read_text(tracker), f"{task_name} was not ticked")
+async def _assert_git_and_tracker(project: PreparedProject, *task_names: str) -> None:
+    tracker = await _read_text(project.root / "tasks" / "todo.md")
+    for task_name in task_names:
+        _require(f"- [x] {task_name}" in tracker, f"{task_name} was not ticked")
     runner = SubprocessRunner()
     branch = await runner.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -338,15 +370,12 @@ async def _assert_project_tests_pass(project: PreparedProject) -> None:
     _require(result.returncode == 0, f"project tests failed: {result.stdout}")
 
 
-async def _assert_edge_case_handled(project: PreparedProject) -> None:
-    check = (
-        "from sample_project import parse_count; "
-        f"assert {E2_EDGE_CASE_CALL} == {E2_EDGE_CASE_RESULT}"
-    )
+async def _assert_behaviour(project: PreparedProject, assertion: str) -> None:
+    check = f"from sample_project import *; assert {assertion}"
     result = await SubprocessRunner().run(
         [sys.executable, "-c", check], timeout=CLI_TIMEOUT_SECONDS, cwd=project.root, check=False
     )
-    _require(result.returncode == 0, f"edge case not handled: {result.stderr[-1000:]}")
+    _require(result.returncode == 0, f"{assertion} failed: {result.stderr[-1000:]}")
     await _assert_project_tests_pass(project)
 
 
@@ -373,11 +402,13 @@ def _assert_message_drove_review(project: PreparedProject) -> None:
     _require(_verdict(last).decision == "accept", f"final verdict {last.name} was not accept")
 
 
-def _assert_views_recorded(project: PreparedProject) -> None:
-    task_run_dir = run_dir(project.root, TASK_ID)
+def _assert_views_recorded(project: PreparedProject, task_ids: list[str]) -> None:
     for role in ACTING_ROLES:
-        view = view_log_path(task_run_dir, role.value)
-        _require(view.is_file() and view.stat().st_size > 0, f"{role.value} view log is empty")
+        views = [view_log_path(run_dir(project.root, task_id), role.value) for task_id in task_ids]
+        _require(
+            any(view.is_file() and view.stat().st_size > 0 for view in views),
+            f"{role.value} view log is empty",
+        )
 
 
 async def _send_edge_case_during_first_implementation(project: PreparedProject) -> None:
@@ -394,7 +425,7 @@ async def _send_edge_case_during_first_implementation(project: PreparedProject) 
     _require(ack.status is not AckStatus.REJECTED, f"send_message rejected: {ack.message}")
 
 
-async def _assert_window_closed(project: PreparedProject, tmux_server: TmuxServer) -> None:
+async def _open_task_windows(project: PreparedProject, tmux_server: TmuxServer) -> set[str]:
     target = exact_target(session_name(project.root.name))
     windows = await tmux_server.run(
         "list-windows",
@@ -404,10 +435,18 @@ async def _assert_window_closed(project: PreparedProject, tmux_server: TmuxServe
         "#{window_name}",
         check=True,
     )
-    _require(
-        not any(name.startswith(TASK_ID) for name in windows.stdout.splitlines()),
-        "task window remained open",
-    )
+    return {
+        name.split(maxsplit=1)[0]
+        for name in windows.stdout.splitlines()
+        if name.startswith(TASK_ID_PREFIX)
+    }
+
+
+async def _assert_windows_closed(
+    project: PreparedProject, tmux_server: TmuxServer, task_ids: list[str]
+) -> None:
+    remaining = await _open_task_windows(project, tmux_server) & set(task_ids)
+    _require(not remaining, f"task windows remained open: {sorted(remaining)}")
 
 
 async def _read_text(path: Path) -> str:
@@ -450,9 +489,9 @@ async def _execute(
     await body(project, environment, tmux_server, state)
     task_statuses = await _task_tree_statuses(project.root, environment, state)
     _assert_both_agents_used(task_statuses)
-    _assert_views_recorded(project)
+    _assert_views_recorded(project, state.task_ids)
     await _assert_live_checkout_untouched(project)
-    await _assert_window_closed(project, tmux_server)
+    await _assert_windows_closed(project, tmux_server, state.task_ids)
 
 
 async def _run_with_reruns(
@@ -496,7 +535,7 @@ async def _e2_body(
     await _wait_done(project, environment, state)
     _assert_message_drove_review(project)
     await _assert_git_and_tracker(project, "A2")
-    await _assert_edge_case_handled(project)
+    await _assert_behaviour(project, f"{E2_EDGE_CASE_CALL} == {E2_EDGE_CASE_RESULT}")
 
 
 async def _e5_body(
@@ -713,3 +752,328 @@ async def _cleanup_attempt(
     except TimeoutError as error:
         _require(False, "real-agent cleanup timed out")
         raise AssertionError from error
+
+
+async def test_real_agents_e3_plans_and_runs_dependent_tasks_in_parallel(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    record_e2e_cost: Callable[[float | None], None],
+) -> None:
+    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e3_body)
+
+
+async def test_real_agents_e4_mcp_operator_resolves_a_product_decision(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    record_e2e_cost: Callable[[float | None], None],
+) -> None:
+    """A scripted MCP client stands in for the AI Operator.
+
+    It proves the MCP escalation flow (`wait_for_events` → `resolve_escalation`) with a fixed
+    answer, not a model's judgement.
+    """
+    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e4_body)
+
+
+async def test_real_agents_e6_take_over_holds_only_that_task(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    record_e2e_cost: Callable[[float | None], None],
+) -> None:
+    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e6_body)
+
+
+async def _e3_body(
+    project: PreparedProject,
+    environment: dict[str, str],
+    tmux_server: TmuxServer,
+    state: AttemptState,
+) -> None:
+    await _submit(project, environment, E3_REQUEST)
+    parallel = asyncio.create_task(_wait_parallel_new_task_windows(project, tmux_server, state))
+    try:
+        await _wait_done(project, environment, state)
+    finally:
+        observed = parallel.done() and not parallel.cancelled() and parallel.exception() is None
+        parallel.cancel()
+    _require(observed, f"{MAX_PARALLEL} new task windows were never open at once")
+    new_task_ids = state.task_ids[1:]
+    _assert_dependent_new_tasks(
+        [await _status(project.root, environment, task_id) for task_id in new_task_ids]
+    )
+    _require(
+        any(
+            any(turns_dir(project.root, task_id).glob(CONFLICT_TURN_PATTERN))
+            for task_id in new_task_ids
+        ),
+        "no new task resolved an integration conflict",
+    )
+    await _assert_no_conflict_markers(project)
+    await _assert_git_and_tracker(project, *E3_TRACKER_TASKS)
+    await _assert_behaviour(project, E3_CHECK)
+
+
+async def _wait_parallel_new_task_windows(
+    project: PreparedProject, tmux_server: TmuxServer, state: AttemptState
+) -> None:
+    async def parallel() -> bool:
+        new_task_ids = set(state.task_ids[1:])
+        return len(await _open_task_windows(project, tmux_server) & new_task_ids) >= MAX_PARALLEL
+
+    await wait_until(parallel, timeout=ATTEMPT_TIMEOUT_SECONDS)
+
+
+def _assert_dependent_new_tasks(statuses: list[dict[str, object] | None]) -> None:
+    tasks = [_task_record(status) for status in statuses]
+    new_task_ids = {task.get("id") for task in tasks}
+    dependent = [
+        task
+        for task in tasks
+        if (depends_on := task.get("depends_on"))
+        and isinstance(depends_on, list)
+        and set(cast("list[object]", depends_on)) <= new_task_ids
+    ]
+    _require(
+        len(tasks) >= MAX_PARALLEL and bool(dependent),
+        f"the plan did not enqueue dependent new tasks: {tasks}",
+    )
+
+
+def _task_record(status: dict[str, object] | None) -> dict[str, object]:
+    detail = _task_detail(status)
+    task = None if detail is None else detail.get("task")
+    _require(isinstance(task, dict), "task record missing")
+    return cast("dict[str, object]", task)
+
+
+async def _assert_no_conflict_markers(project: PreparedProject) -> None:
+    result = await SubprocessRunner().run(
+        ["git", "grep", "-n", "-E", CONFLICT_MARKER],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=project.root,
+        check=False,
+    )
+    _require(not result.stdout.strip(), f"conflict markers remain: {result.stdout}")
+
+
+async def _e4_body(
+    project: PreparedProject,
+    environment: dict[str, str],
+    _tmux_server: TmuxServer,
+    state: AttemptState,
+) -> None:
+    await _submit(project, environment, E4_REQUEST)
+    async with _mcp_session(project, environment) as session:
+        escalation_id = await _wait_for_decision_escalation(session)
+        packet = await _call_tool(session, "get_escalation", {"escalation_id": escalation_id})
+        _require(
+            isinstance(packet, dict) and bool(cast("dict[str, object]", packet).get("packet")),
+            f"escalation {escalation_id} has no packet",
+        )
+        ack = await _call_tool(
+            session,
+            "resolve_escalation",
+            {
+                "escalation_id": escalation_id,
+                "resolution": {"kind": ResolutionKind.ANSWER.value, "text": E4_ANSWER},
+            },
+        )
+        _require(
+            isinstance(ack, dict)
+            and cast("dict[str, object]", ack).get("status") == AckStatus.DONE,
+            f"resolve_escalation was not applied: {ack}",
+        )
+    await _wait_done(project, environment, state)
+    await _assert_git_and_tracker(project, "C1")
+    await _assert_behaviour(project, E4_CHECK)
+
+
+@asynccontextmanager
+async def _mcp_session(
+    project: PreparedProject, environment: dict[str, str]
+) -> AsyncGenerator[ClientSession]:
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "shikiru", "--project", str(project.root), MCP_COMMAND],
+        env=environment,
+        cwd=project.root,
+    )
+    try:
+        async with stdio_client(server) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            yield session
+    except BaseExceptionGroup as group:
+        raise _sole_error(group) from group
+
+
+def _sole_error(group: BaseExceptionGroup[BaseException]) -> BaseException:
+    errors: tuple[BaseException, ...] = group.exceptions
+    if len(errors) != 1:
+        return group
+    sole = errors[0]
+    if isinstance(sole, BaseExceptionGroup):
+        return _sole_error(cast("BaseExceptionGroup[BaseException]", sole))
+    return sole
+
+
+async def _call_tool(session: ClientSession, name: str, arguments: dict[str, object]) -> object:
+    result = await session.call_tool(name, arguments)
+    _require(not result.isError, f"MCP {name} failed: {result.content}")
+    content = result.structuredContent
+    _require(content is not None, f"MCP {name} returned no structured content")
+    assert content is not None
+    return content[MCP_RESULT_KEY] if set(content) == {MCP_RESULT_KEY} else content
+
+
+async def _wait_for_decision_escalation(session: ClientSession) -> str:
+    cursor = 0
+    escalation_ids: list[str] = []
+
+    async def escalated() -> bool:
+        nonlocal cursor
+        events = await _call_tool(
+            session,
+            "wait_for_events",
+            {
+                "since_id": cursor,
+                "kinds": [EventKind.ESCALATION.value, EventKind.TASK_DONE.value],
+                "task_id": TASK_ID,
+                "timeout_s": MCP_WAIT_SECONDS,
+            },
+        )
+        _require(isinstance(events, list), f"wait_for_events returned {events}")
+        for value in cast("list[object]", events):
+            event = Event.model_validate(value)
+            cursor = max(cursor, event.id)
+            _require(event.kind is EventKind.ESCALATION, "the task finished without escalating")
+            reason = event.data.get("reason")
+            _require(
+                reason == EscalationReason.DECISION_REQUIRED.value,
+                f"escalated for {reason}, not a product decision",
+            )
+            escalation_ids.append(cast("str", event.data["escalation_id"]))
+        return bool(escalation_ids)
+
+    await wait_until(escalated, timeout=ATTEMPT_TIMEOUT_SECONDS)
+    return escalation_ids[0]
+
+
+async def _e6_body(
+    project: PreparedProject,
+    environment: dict[str, str],
+    tmux_server: TmuxServer,
+    state: AttemptState,
+) -> None:
+    await _submit(project, environment, E1_REQUEST)
+    await _submit(project, environment, E2_REQUEST)
+    state.task_ids.append(E6_SECOND_TASK_ID)
+    _, session_id = await _wait_for_implement_turn(project)
+    await _take_over_implementer(project)
+    pane_id = await _wait_for_agent_tui(project, environment, tmux_server, session_id)
+    await _wait_second_task_done_while_first_held(project, environment)
+    await tmux_server.run("send-keys", "-t", pane_id, *E6_TUI_EXIT_KEYS, check=True)
+    await wait_until(
+        lambda: bool(_task_events(project, EventKind.HANDED_BACK)), timeout=CLI_TIMEOUT_SECONDS
+    )
+    await _wait_done(project, environment, state)
+    _assert_no_turn_while_held(project)
+    _assert_hand_back_message_delivered(project)
+    _assert_same_implementer_session(project, session_id)
+    await _assert_git_and_tracker(project, "A1", "A2")
+
+
+async def _take_over_implementer(project: PreparedProject) -> None:
+    services = build_operator(project.root)
+    try:
+        ack = await services.commands.take_over(TASK_ID, Role.IMPLEMENTER)
+    finally:
+        services.close()
+    _require(ack.status is AckStatus.DONE, f"take_over was not applied: {ack.message}")
+
+
+async def _wait_for_agent_tui(
+    project: PreparedProject,
+    environment: dict[str, str],
+    tmux_server: TmuxServer,
+    session_id: str,
+) -> str:
+    first = _task_record(await _status(project.root, environment))
+    second = _task_record(await _status(project.root, environment, E6_SECOND_TASK_ID))
+    _require(
+        Hold.INTERVENTION.value in cast("list[str]", first.get("holds"))
+        and Hold.INTERVENTION.value not in cast("list[str]", second.get("holds")),
+        f"intervention holds: {first.get('holds')} and {second.get('holds')}",
+    )
+    pane_id = cast("dict[str, str]", first.get("panes"))[Role.IMPLEMENTER.value]
+    agent = _taken_over_agent(project)
+
+    async def tui_shown() -> bool:
+        state = await tmux_server.run("display-message", "-p", "-t", pane_id, PANE_STATE_FORMAT)
+        dead, command, start_command = state.stdout.rstrip("\n").split(PANE_FORMAT_SEPARATOR)
+        _require(dead == PANE_ALIVE, "the taken-over pane exited before hand back")
+        _require(session_id in start_command, f"pane does not resume {session_id}")
+        screen = await tmux_server.run("capture-pane", "-p", "-t", pane_id)
+        return command == agent and bool(screen.stdout.strip())
+
+    await wait_until(tui_shown, timeout=CLI_TIMEOUT_SECONDS)
+    return pane_id
+
+
+def _taken_over_agent(project: PreparedProject) -> str:
+    connection = Database(state_db_path(project.root)).connect_readonly()
+    try:
+        run = RunStore(connection, SystemClock()).get_taken_over(TASK_ID, Role.IMPLEMENTER)
+    finally:
+        connection.close()
+    _require(run is not None, "the implementer run is not taken over")
+    assert run is not None
+    return run.agent
+
+
+async def _wait_second_task_done_while_first_held(
+    project: PreparedProject, environment: dict[str, str]
+) -> None:
+    async def second_done() -> bool:
+        first = _task_record(await _status(project.root, environment))
+        _require(
+            Hold.INTERVENTION.value in cast("list[str]", first.get("holds")),
+            "the intervention hold was lost before hand back",
+        )
+        second = _task_status(await _status(project.root, environment, E6_SECOND_TASK_ID))
+        _require(
+            second not in {Status.ESCALATED.value, Status.CANCELLED.value},
+            f"{E6_SECOND_TASK_ID} ended as {second}",
+        )
+        return second == Status.DONE.value
+
+    await wait_until(second_done, timeout=ATTEMPT_TIMEOUT_SECONDS)
+
+
+def _task_events(project: PreparedProject, *kinds: EventKind) -> list[Event]:
+    connection = Database(state_db_path(project.root)).connect_readonly()
+    try:
+        return EventLog(connection, SystemClock()).since(0, kinds=kinds, task_id=TASK_ID)
+    finally:
+        connection.close()
+
+
+def _assert_no_turn_while_held(project: PreparedProject) -> None:
+    events = _task_events(
+        project, EventKind.TAKEN_OVER, EventKind.HANDED_BACK, EventKind.TURN_STARTED
+    )
+    taken = next(event.id for event in events if event.kind is EventKind.TAKEN_OVER)
+    handed = next(event.id for event in events if event.kind is EventKind.HANDED_BACK)
+    held_turns = [
+        event
+        for event in events
+        if event.kind is EventKind.TURN_STARTED and taken < event.id < handed
+    ]
+    _require(not held_turns, f"turns started while taken over: {held_turns}")
+
+
+def _assert_hand_back_message_delivered(project: PreparedProject) -> None:
+    delivered = [
+        path.read_text()
+        for path in turns_dir(project.root, TASK_ID).glob(f"*/{MESSAGES_DIR_NAME}/*")
+    ]
+    _require(HAND_BACK_MESSAGE in delivered, "the hand-back message was not delivered")
