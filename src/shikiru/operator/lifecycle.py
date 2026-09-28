@@ -11,7 +11,7 @@ from shikiru.config.loader import load_settings
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import Ack, AckStatus
 from shikiru.tmux.client import exact_target
-from shikiru.tmux.session import session_name
+from shikiru.tmux.session import bind_palette_key, session_name
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 PACKAGE_NAME = "shikiru"
 CLI_ENGINE_COMMAND = "engine"
 CLI_DASH_COMMAND = "dash"
+CLI_PALETTE_COMMAND = "palette"
+PALETTE_COMMAND = (sys.executable, "-m", PACKAGE_NAME, CLI_PALETTE_COMMAND)
 ENGINE_START_WAIT_SECONDS = 5.0
 ENGINE_START_POLL_SECONDS = 0.05
 
@@ -87,6 +89,7 @@ class ProjectLifecycle:
                 overrides,
             ),
         )
+        await bind_palette_key(self._tmux, PALETTE_COMMAND)
         started = False
         if not self._engine_up(root):
             self._runner.spawn_detached(

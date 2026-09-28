@@ -1,24 +1,33 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import VerticalScroll
+from textual.widgets import TextArea
 
 import shikiru.agents.registry as registry_module
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView
+from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.steps import first_step
 from shikiru.domain.tasks import Mode
+from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.plugins.widgets.strips import StripsPanel
+from shikiru.store.commands import CommandQueue
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
+from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.store import seed_task
+from tests.support.waiting import wait_until
+
+_TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,6 +54,11 @@ class _StubServices:
 
 async def _open_palette(action: str) -> None:
     del action
+
+
+async def _unexpected_pane_selection(pane_id: str) -> None:
+    del pane_id
+    raise AssertionError
 
 
 def _views(reader: StateReader, project_dir: Path, sources: _StubServices) -> StateDashboardViews:
@@ -152,6 +166,66 @@ async def test_default_dashboard_widgets_fit_a_narrow_system_pane(
             await pilot.pause()
             assert resources.region.y < dashboard.region.bottom
             assert resources.region.bottom > dashboard.region.y
+    finally:
+        reader.close()
+
+
+async def test_ctrl_p_pushes_the_shared_operator_palette(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_TEST_START)
+    reader = StateReader(database, SystemClock())
+    settings = load_settings(project_dir)
+    queue = CommandQueue(connection, clock)
+    commands = OperatorCommands(queue, clock, engine_up=lambda: True)
+    queries = OperatorQueries(
+        reader,
+        project=settings.project.name,
+        project_root=project_dir,
+        engine_up=lambda: False,
+        max_parallel=settings.orchestration.max_parallel,
+    )
+    opened: list[str] = []
+    app_instance: DashboardApp | None = None
+
+    async def open_palette(action: str) -> None:
+        opened.append(action)
+        if app_instance is None:
+            message = "dashboard app has not been initialized"
+            raise RuntimeError(message)
+        await app_instance.push_screen(PaletteScreen(commands, queries, _unexpected_pane_selection))
+
+    try:
+        app_instance = DashboardApp(
+            focus_task=None,
+            views=_views(reader, project_dir, _StubServices()),
+            on_change=reader.watch,
+            open_palette=open_palette,
+            widget_names=[],
+        )
+        async with app_instance.run_test(size=(72, 32)) as pilot:
+            await pilot.press("ctrl+p")
+            await pilot.pause()
+
+            assert isinstance(app_instance.screen, PaletteScreen)
+            assert opened == [""]
+            palette = cast("PaletteScreen", app_instance.screen)
+            palette.query_one("#request", TextArea).text = "keep the dashboard available"
+            await pilot.click("#palette-submit")
+            await wait_until(clock.has_pending_sleep, timeout=2)
+            queued = queue.pending()
+            assert len(queued) == 1
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app_instance.screen, PaletteScreen)
+            await pilot.press("ctrl+p")
+            await pilot.pause()
+            assert isinstance(app_instance.screen, PaletteScreen)
+            assert opened == ["", ""]
+            queue.mark_done(queued[0].id, {"task_id": "T-2"})
+            clock.advance(0.25)
     finally:
         reader.close()
 

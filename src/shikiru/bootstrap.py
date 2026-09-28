@@ -177,6 +177,7 @@ async def run_dashboard(
 ) -> None:
     """Run the configured dashboard for one project entry point."""
     dashboard_app_module = import_module("shikiru.dashboard.app")
+    dashboard_palette_module = import_module("shikiru.dashboard.palette")
     dashboard_services_module = import_module("shikiru.dashboard.services")
     dashboard_views_module = import_module("shikiru.dashboard.views")
     clock = build_clock()
@@ -187,11 +188,12 @@ async def run_dashboard(
     try:
         lock_path = engine_lock_path(project_root)
         session_target = exact_target(session_name(settings.project.name))
+        tmux = Tmux(runner)
         dashboard_services = dashboard_services_module.DashboardServices(
             dashboard_services_module.GitRepoStatusService(git, settings.repo, project_root, clock),
             engine_up=lambda: engine_is_running(lock_path),
             engine_pid=lambda: EngineLock.pid_if_running(lock_path),
-            tmux=Tmux(runner),
+            tmux=tmux,
             session_target=session_target,
             resources=ResourceSampler(clock),
             docker=DockerSampler(runner, clock),
@@ -205,9 +207,19 @@ async def run_dashboard(
             clock=clock,
         )
 
+        app_instance = None
+
         async def open_palette(action: str) -> None:
-            message = f"dashboard palette action is not available: {action}"
-            raise ConfigError(message)
+            if app_instance is None:
+                message = "dashboard palette is not mounted"
+                raise ConfigError(message)
+            palette = dashboard_palette_module.PaletteScreen(
+                services.commands,
+                services.queries,
+                tmux.select_pane,
+                initial_action=action,
+            )
+            await app_instance.push_screen(palette)
 
         app_instance = dashboard_app_module.DashboardApp(
             focus_task=focus_task,
@@ -215,6 +227,23 @@ async def run_dashboard(
             on_change=services.reader.watch,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
+        )
+        await app_instance.run_async()
+    finally:
+        services.close()
+
+
+async def run_palette(project_root: Path, overrides: Sequence[str]) -> None:
+    """Run the operator palette as a popup using project-local operator services."""
+    palette_module = import_module("shikiru.dashboard.palette")
+    clock = build_clock()
+    settings = load_settings(project_root, overrides)
+    services = build_operator(project_root, settings, clock=clock)
+    try:
+        app_instance = palette_module.PaletteApp(
+            services.commands,
+            services.queries,
+            Tmux(SubprocessRunner()).select_pane,
         )
         await app_instance.run_async()
     finally:

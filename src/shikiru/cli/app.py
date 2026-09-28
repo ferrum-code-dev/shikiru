@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn
@@ -21,6 +22,7 @@ from shikiru.bootstrap import (
     build_operator,
     build_project_detectors,
     run_dashboard,
+    run_palette,
 )
 from shikiru.cli.context import CliState, project_root, state_from
 from shikiru.cli.render import ack_renderable, doctor_renderable, status_renderable
@@ -32,6 +34,7 @@ from shikiru.domain.tasks import Mode
 from shikiru.errors import EXIT_COMMAND_REJECTED, EXIT_GENERIC_ERROR, ShikiruError, UsageError
 from shikiru.operator.commands import Ack, AckStatus
 from shikiru.operator.lifecycle import CLI_DASH_COMMAND, CLI_ENGINE_COMMAND, PACKAGE_NAME
+from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.view_log import CLI_VIEW_COMMAND
 
 if TYPE_CHECKING:
@@ -248,6 +251,21 @@ def dash(
             message = "dash requires exactly one of --home or --task"
             raise UsageError(message)
         _run(run_dashboard(root, state.overrides, None if home else task))
+    except ShikiruError as error:
+        _fail(error)
+
+
+@app.command(hidden=True)
+def palette(context: typer.Context) -> None:
+    """Run the operator palette for the invoking Shikiru tmux session."""
+    try:
+        state = state_from(context)
+        project = state.project
+        if project is None:
+            session_project = os.environ.get(PROJECT_DIR_ENV_VAR)
+            project = Path(session_project) if session_project is not None else None
+        root = project_root(CliState(project, state.json_output, state.overrides))
+        _run(run_palette(root, state.overrides))
     except ShikiruError as error:
         _fail(error)
 

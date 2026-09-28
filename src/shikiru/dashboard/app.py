@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from textual.app import App
 from textual.containers import VerticalScroll
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from textual.app import ComposeResult
+    from textual.binding import BindingType
 
     from shikiru.dashboard.contract import (
         DashboardViews,
@@ -40,6 +41,9 @@ def _load_widget(name: str) -> DashboardWidget:
 
 class DashboardApp(App[None]):
     """Stacks `dashboard.widgets` panels in configured order for one system pane (06 §5.4)."""
+
+    ENABLE_COMMAND_PALETTE = False
+    BINDINGS: ClassVar[list[BindingType]] = [("ctrl+p", "open_palette", "Palette")]
 
     def __init__(
         self,
@@ -69,3 +73,7 @@ class DashboardApp(App[None]):
         with VerticalScroll(id="dashboard-panels"):
             for name in self._widget_names:
                 yield _load_widget(name).create(context)
+
+    async def action_open_palette(self) -> None:
+        """Open the operator palette through the shared dashboard callback."""
+        await self._open_palette("")

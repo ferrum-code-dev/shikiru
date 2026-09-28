@@ -332,7 +332,7 @@ Refs: 06 §5.4, §6.3–6.4.
 
 ### Task 26: Palette
 Refs: 06 §5.5.
-- [ ] `PaletteApp` with every action including the escalation resolution form and take over / hand back; tmux popup and `Ctrl+P` in `dash`.
+- [x] `PaletteApp` with every action including the escalation resolution form and take over / hand back; tmux popup and `Ctrl+P` in `dash`.
 - Tests: Textual `run_test` for submit, prioritize, resolve, take over.
 
 ### Task 27: Motion

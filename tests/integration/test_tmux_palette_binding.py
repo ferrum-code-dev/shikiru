@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+import sys
 from typing import TYPE_CHECKING
 
 from shikiru.tmux.client import Tmux
@@ -11,7 +12,7 @@ from shikiru.tmux.session import SHIKIRU_SESSION_PATTERN, bind_palette_key
 if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
 
-_PALETTE_COMMAND = ("shikiru", "palette")
+_PALETTE_COMMAND = (sys.executable, "-m", "shikiru", "palette")
 
 
 async def _bound_space_tokens(tmux_server: TmuxServer) -> list[str]:

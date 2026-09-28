@@ -150,6 +150,11 @@ class Tmux:
         """Set pane `target`'s title (`#{pane_title}`)."""
         await self._run("select-pane", "-t", target, "-T", title)
 
+    async def select_pane(self, target: str) -> None:
+        """Select the window containing pane `target`, then make that pane active."""
+        await self._run("select-window", "-t", target)
+        await self._run("select-pane", "-t", target)
+
     async def new_window(
         self,
         target_session: str,
