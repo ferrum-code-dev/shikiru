@@ -327,7 +327,7 @@ Refs: 07 §5.
 
 ### Task 25: Remaining widgets and renderables
 Refs: 06 §5.4, §6.3–6.4.
-- [ ] `ui.SpeechBubble`, `ui.SplashPanel`, `ui.Gauge`; widgets `escalations`, `dialogue`, `usage`, `resources`, `docker` (hidden without Docker); `DockerSampler`.
+- [x] `ui.SpeechBubble`, `ui.SplashPanel`, `ui.Gauge`; widgets `escalations`, `dialogue`, `usage`, `resources`, `docker` (hidden without Docker); `DockerSampler`.
 - Tests: Textual `run_test` behaviour over seeded state; samplers against real psutil and Docker (skipped when absent).
 
 ### Task 26: Palette

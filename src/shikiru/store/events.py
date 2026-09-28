@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import TypeAdapter
 
 from shikiru.domain.events import Event, EventKind
+from shikiru.domain.tasks import Role
 from shikiru.store.database import (
     dump_json,
     format_timestamp,
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from shikiru.clock import Clock
+
+_EVENT_ROLE_JSON_PATH = "$.role"
 
 _DATA_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
@@ -58,6 +61,36 @@ def fetch_events_since(
         params,
     ).fetchall()
     return [_row_to_event(row) for row in rows]
+
+
+def fetch_latest_events(
+    connection: sqlite3.Connection,
+    limit: int,
+    *,
+    kinds: Sequence[EventKind] | None = None,
+    implementer_turns_only: bool = False,
+) -> list[Event]:
+    """Read the latest matching events in chronological order."""
+    if limit < 1:
+        message = "event limit must be positive"
+        raise ValueError(message)
+    clauses: list[str] = []
+    params: list[object] = []
+    if kinds:
+        placeholders = ", ".join("?" for _ in kinds)
+        clauses.append(f"kind IN ({placeholders})")
+        params.extend(kind.value for kind in kinds)
+    if implementer_turns_only:
+        clauses.append("(kind != ? OR json_extract(data, ?) = ?)")
+        params.extend(
+            (EventKind.TURN_COMPLETED.value, _EVENT_ROLE_JSON_PATH, Role.IMPLEMENTER.value)
+        )
+    where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+    rows = connection.execute(
+        f"SELECT id, ts, task_id, kind, message, data FROM events {where}ORDER BY id DESC LIMIT ?",
+        [*params, limit],
+    ).fetchall()
+    return [_row_to_event(row) for row in reversed(rows)]
 
 
 class EventLog:

@@ -52,7 +52,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 24: Parallel, escalation and intervention E2E
 
 ## Phase 6 — Operator surfaces and onboarding
-- [ ] Task 25: Remaining widgets and renderables
+- [x] Task 25: Remaining widgets and renderables
 - [ ] Task 26: Palette
 - [ ] Task 27: Motion
 - [ ] Task 28: Sessions list and attach

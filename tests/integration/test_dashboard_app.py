@@ -1,20 +1,29 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
+from textual.containers import VerticalScroll
 
 import shikiru.agents.registry as registry_module
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
-from shikiru.dashboard.contract import RepoStatus
+from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView
 from shikiru.dashboard.views import StateDashboardViews
+from shikiru.domain.steps import first_step
+from shikiru.domain.tasks import Mode
+from shikiru.operator.queries import OperatorQueries
+from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.store.reader import StateReader
+from shikiru.store.tasks import TaskStore
 from tests.support.config import write_minimal_project
+from tests.support.store import seed_task
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from rich.text import Text
 
     from shikiru.store.database import Database
     from tests.support.store import Connection
@@ -27,6 +36,34 @@ class _StubServices:
     def engine_up(self) -> bool:
         return False
 
+    async def resources(self) -> ResourceView:
+        return ResourceView(10.0, 40.0, 4.0, 2.0, 0.2)
+
+    async def containers(self) -> DockerView:
+        return DockerView(available=False, containers=())
+
+
+async def _open_palette(action: str) -> None:
+    del action
+
+
+def _views(reader: StateReader, project_dir: Path, sources: _StubServices) -> StateDashboardViews:
+    settings = load_settings(project_dir)
+    return StateDashboardViews(
+        reader,
+        focus_task=None,
+        settings=settings,
+        sources=sources,
+        queries=OperatorQueries(
+            reader,
+            project=settings.project.name,
+            project_root=project_dir,
+            engine_up=sources.engine_up,
+            max_parallel=settings.orchestration.max_parallel,
+        ),
+        clock=SystemClock(),
+    )
+
 
 async def test_dashboard_app_rejects_an_unregistered_widget_name(
     database: Database, connection: Connection, tmp_path: Path
@@ -37,13 +74,9 @@ async def test_dashboard_app_rejects_an_unregistered_widget_name(
     try:
         app = DashboardApp(
             focus_task=None,
-            views=StateDashboardViews(
-                reader,
-                focus_task=None,
-                settings=load_settings(project_dir),
-                sources=_StubServices(),
-            ),
+            views=_views(reader, project_dir, _StubServices()),
             on_change=reader.watch,
+            open_palette=_open_palette,
             widget_names=["no-such-widget"],
         )
         with pytest.raises(WidgetPluginError):
@@ -56,24 +89,69 @@ async def test_dashboard_app_rejects_an_unregistered_widget_name(
 async def test_dashboard_mounts_the_default_widgets(
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
-    del connection
     project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Visible task", mode=Mode.IMPLEMENT)
+    TaskStore(connection, clock).set_slot(task.id, 0)
+    TaskStore(connection, clock).apply_transition(task.id, first_step(task))
     reader = StateReader(database, SystemClock())
     settings = load_settings(project_dir)
     try:
         app = DashboardApp(
             focus_task=None,
-            views=StateDashboardViews(
-                reader,
-                focus_task=None,
-                settings=settings,
-                sources=_StubServices(),
-            ),
+            views=_views(reader, project_dir, _StubServices()),
             on_change=reader.watch,
+            open_palette=_open_palette,
             widget_names=settings.dashboard.widgets,
         )
-        async with app.run_test():
-            pass
+        async with app.run_test(size=(72, 64)) as pilot:
+            await pilot.pause()
+            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
+            strips = app.query_one(StripsPanel)
+            escalations = app.query_one("#escalations")
+            docker = app.query_one("#docker")
+            assert not escalations.display
+            assert not docker.display
+            assert dashboard.scroll_y == 0
+            assert strips.region.y < app.size.height
+            assert task.id in cast("Text", strips.content).plain
+    finally:
+        reader.close()
+
+
+async def test_default_dashboard_widgets_fit_a_narrow_system_pane(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Visible narrow task", mode=Mode.IMPLEMENT)
+    TaskStore(connection, clock).set_slot(task.id, 0)
+    TaskStore(connection, clock).apply_transition(task.id, first_step(task))
+    reader = StateReader(database, SystemClock())
+    settings = load_settings(project_dir)
+    try:
+        app = DashboardApp(
+            focus_task=None,
+            views=_views(reader, project_dir, _StubServices()),
+            on_change=reader.watch,
+            open_palette=_open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        async with app.run_test(size=(30, 24)) as pilot:
+            await pilot.pause()
+            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
+            assert dashboard.size.height > 0
+            strips = app.query_one(StripsPanel)
+            usage = app.query_one("#usage")
+            resources = app.query_one("#resources")
+            assert dashboard.scroll_y == 0
+            assert strips.region.y < app.size.height
+            assert task.id in cast("Text", strips.content).plain
+            dashboard.scroll_to_widget(usage, animate=False)
+            dashboard.scroll_to_widget(resources, animate=False)
+            await pilot.pause()
+            assert resources.region.y < dashboard.region.bottom
+            assert resources.region.bottom > dashboard.region.y
     finally:
         reader.close()
 
@@ -112,13 +190,9 @@ async def test_dashboard_app_rejects_an_ambiguous_widget_name(
     try:
         app = DashboardApp(
             focus_task=None,
-            views=StateDashboardViews(
-                reader,
-                focus_task=None,
-                settings=load_settings(project_dir),
-                sources=_StubServices(),
-            ),
+            views=_views(reader, project_dir, _StubServices()),
             on_change=reader.watch,
+            open_palette=_open_palette,
             widget_names=["dup"],
         )
         with pytest.raises(WidgetPluginError, match="dist-one") as excinfo:

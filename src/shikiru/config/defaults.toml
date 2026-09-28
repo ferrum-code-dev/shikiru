@@ -22,7 +22,7 @@ helper = 300
 escalate_after = 2
 
 [dashboard]
-widgets = ["header", "strips", "queue"]
+widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
 
 [dashboard.layout]
 split = "h"

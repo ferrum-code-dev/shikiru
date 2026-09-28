@@ -14,6 +14,7 @@ from shikiru.engine.agents import AgentPool
 from shikiru.engine.daemon import (
     ENGINE_LOGGER_NAME,
     Engine,
+    EngineLock,
     engine_is_running,
 )
 from shikiru.engine.dependency import DependencyEscalator
@@ -77,6 +78,7 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.telemetry.docker import DockerSampler
 from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.decorator import PaneDecorator
@@ -178,24 +180,40 @@ async def run_dashboard(
     dashboard_services_module = import_module("shikiru.dashboard.services")
     dashboard_views_module = import_module("shikiru.dashboard.views")
     clock = build_clock()
-    git = Git(SubprocessRunner())
+    runner = SubprocessRunner()
+    git = Git(runner)
     settings = load_settings(project_root, overrides)
     services = build_operator(project_root, settings, clock=clock)
     try:
+        lock_path = engine_lock_path(project_root)
+        session_target = exact_target(session_name(settings.project.name))
         dashboard_services = dashboard_services_module.DashboardServices(
             dashboard_services_module.GitRepoStatusService(git, settings.repo, project_root, clock),
-            lambda: engine_is_running(engine_lock_path(project_root)),
+            engine_up=lambda: engine_is_running(lock_path),
+            engine_pid=lambda: EngineLock.pid_if_running(lock_path),
+            tmux=Tmux(runner),
+            session_target=session_target,
+            resources=ResourceSampler(clock),
+            docker=DockerSampler(runner, clock),
         )
         views = dashboard_views_module.StateDashboardViews(
             services.reader,
             focus_task=focus_task,
             settings=settings,
             sources=dashboard_services,
+            queries=services.queries,
+            clock=clock,
         )
+
+        async def open_palette(action: str) -> None:
+            message = f"dashboard palette action is not available: {action}"
+            raise ConfigError(message)
+
         app_instance = dashboard_app_module.DashboardApp(
             focus_task=focus_task,
             views=views,
             on_change=services.reader.watch,
+            open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
         )
         await app_instance.run_async()

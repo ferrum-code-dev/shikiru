@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
-from shikiru.store.events import fetch_events_since
+from shikiru.store.events import fetch_events_since, fetch_latest_events
 from shikiru.store.quotas import fetch_quota_agents, fetch_quotas
 from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task
 from shikiru.store.tasks import fetch_task, fetch_tasks
@@ -76,6 +76,21 @@ class StateReader:
     ) -> list[Event]:
         """See `shikiru.store.events.fetch_events_since`."""
         return fetch_events_since(self._connection, since_id, kinds=kinds, task_id=task_id)
+
+    def latest_events(
+        self,
+        limit: int,
+        *,
+        kinds: Sequence[EventKind] | None = None,
+        implementer_turns_only: bool = False,
+    ) -> list[Event]:
+        """Read the latest matching events in chronological order."""
+        return fetch_latest_events(
+            self._connection,
+            limit,
+            kinds=kinds,
+            implementer_turns_only=implementer_turns_only,
+        )
 
     def data_version(self) -> int:
         """Return SQLite's `data_version` counter, bumped by every other connection's commit."""

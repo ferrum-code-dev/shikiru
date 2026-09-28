@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import fcntl
+import os
 from datetime import timedelta
 from typing import TYPE_CHECKING, Self
+
+import psutil
 
 from shikiru.domain.events import EventKind
 from shikiru.errors import ShikiruError
@@ -29,6 +32,7 @@ if TYPE_CHECKING:
 
 COMMAND_POLL_SECONDS = 0.25
 ENGINE_LOGGER_NAME = "shikiru"
+_ENGINE_LOCK_METADATA_PARTS = 2
 
 
 class EngineAlreadyRunningError(ShikiruError):
@@ -53,6 +57,39 @@ class EngineLock:
             self._file = None
             message = f"engine lock is held: {self._path}"
             raise EngineAlreadyRunningError(message) from None
+        self._file.seek(0)
+        self._file.truncate()
+        started_at = psutil.Process(os.getpid()).create_time()
+        self._file.write(f"{os.getpid()} {started_at!r}")
+        self._file.flush()
+
+    @staticmethod
+    def pid_if_running(path: Path) -> int | None:
+        """Return the verified PID written by the process that currently holds `path`."""
+        try:
+            lock_file = path.open()
+        except FileNotFoundError:
+            return None
+        with lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                lock_file.seek(0)
+                contents = lock_file.read().split()
+                if len(contents) != _ENGINE_LOCK_METADATA_PARTS:
+                    return None
+                try:
+                    pid = int(contents[0])
+                    started_at = float(contents[1])
+                except ValueError:
+                    return None
+                try:
+                    actual_started_at = psutil.Process(pid).create_time()
+                except psutil.NoSuchProcess, psutil.ZombieProcess:
+                    return None
+                return pid if actual_started_at == started_at else None
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        return None
 
     def release(self) -> None:
         """Release the lock and close its file descriptor."""
@@ -72,15 +109,19 @@ class EngineLock:
 
 def engine_is_running(lock_path: Path) -> bool:
     """Return whether another process currently holds `lock_path`."""
-    if not lock_path.exists():
-        return False
-    lock = EngineLock(lock_path)
     try:
-        lock.acquire()
-    except EngineAlreadyRunningError:
+        lock_file = lock_path.open("r")
+    except FileNotFoundError:
+        return False
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
         return True
-    lock.release()
-    return False
+    else:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        return False
+    finally:
+        lock_file.close()
 
 
 class Engine:

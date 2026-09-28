@@ -176,9 +176,7 @@ class OperatorQueries:
         active = [summary for summary in summaries if summary.status in ACTIVE_STATUSES]
         queued = [TaskSummary.from_task(task) for task in queued_tasks]
         open_escalations = self.list_escalations()
-        runs = self._reader.list_all_runs()
-        usage = _aggregate_usage(runs)
-        agents = sorted({run.agent for run in runs} | set(self._reader.list_quota_agents()))
+        usage, quotas = self.usage_and_quotas()
         task_detail = self.get_task(task_id) if task_id is not None else None
         return StatusView(
             project=self._project,
@@ -188,9 +186,15 @@ class OperatorQueries:
             queued_tasks=queued,
             escalations=open_escalations,
             usage=usage,
-            quotas=self._reader.list_quotas(agents),
+            quotas=quotas,
             task=task_detail,
         )
+
+    def usage_and_quotas(self) -> tuple[list[UsageView], dict[str, list[QuotaWindow]]]:
+        """Return shared usage totals and provider-reported quota windows."""
+        runs = self._reader.list_all_runs()
+        agents = sorted({run.agent for run in runs} | set(self._reader.list_quota_agents()))
+        return _aggregate_usage(runs), self._reader.list_quotas(agents)
 
     def list_tasks(self, *, statuses: Sequence[Status] | None = None) -> list[TaskSummary]:
         """Return task summaries ordered by their allocated task sequence."""
@@ -292,16 +296,23 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
     views: list[UsageView] = []
     for agent in sorted(by_agent):
         agent_runs = by_agent[agent]
-        costs = [run.usage.cost_usd for run in agent_runs if run.usage.cost_usd is not None]
+        known_costs = [run.usage.cost_usd for run in agent_runs]
         cost_bases: set[CostBasis] = {
             run.usage.cost_basis for run in agent_runs if run.usage.cost_usd is not None
         }
-        if len(cost_bases) > 1:
-            cost_basis: CostBasis | Literal["mixed"] = "mixed"
-        elif cost_bases:
-            cost_basis = next(iter(cost_bases))
-        else:
+        cost_basis: CostBasis | Literal["mixed"]
+        if any(
+            cost is None or run.usage.cost_basis == "unknown"
+            for cost, run in zip(known_costs, agent_runs, strict=True)
+        ):
+            cost_usd = None
             cost_basis = "unknown"
+        elif len(cost_bases) > 1:
+            cost_usd = None
+            cost_basis = "mixed"
+        else:
+            cost_usd = sum((cost for cost in known_costs if cost is not None), 0.0)
+            cost_basis = next(iter(cost_bases)) if cost_bases else "unknown"
         views.append(
             UsageView(
                 agent=agent,
@@ -309,7 +320,7 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
                 output_tokens=sum(run.usage.output_tokens for run in agent_runs),
                 cache_read_tokens=sum(run.usage.cache_read_tokens for run in agent_runs),
                 cache_write_tokens=sum(run.usage.cache_write_tokens for run in agent_runs),
-                cost_usd=sum(costs) if costs else None,
+                cost_usd=cost_usd,
                 cost_basis=cost_basis,
             )
         )

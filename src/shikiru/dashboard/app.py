@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from textual.app import App
+from textual.containers import VerticalScroll
 
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, WidgetContext
@@ -15,7 +16,12 @@ if TYPE_CHECKING:
 
     from textual.app import ComposeResult
 
-    from shikiru.dashboard.contract import DashboardViews, DashboardWidget, OnChangeRegistration
+    from shikiru.dashboard.contract import (
+        DashboardViews,
+        DashboardWidget,
+        OnChangeRegistration,
+        OpenPalette,
+    )
 
 _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
 
@@ -41,6 +47,7 @@ class DashboardApp(App[None]):
         focus_task: str | None,
         views: DashboardViews,
         on_change: OnChangeRegistration,
+        open_palette: OpenPalette,
         widget_names: Sequence[str],
     ) -> None:
         """Build the system pane for `focus_task` (`None` means the home window)."""
@@ -48,6 +55,7 @@ class DashboardApp(App[None]):
         self._focus_task = focus_task
         self._views = views
         self._on_change = on_change
+        self._open_palette = open_palette
         self._widget_names = tuple(widget_names)
 
     def compose(self) -> ComposeResult:
@@ -56,6 +64,8 @@ class DashboardApp(App[None]):
             views=self._views,
             focus_task=self._focus_task,
             on_change=self._on_change,
+            open_palette=self._open_palette,
         )
-        for name in self._widget_names:
-            yield _load_widget(name).create(context)
+        with VerticalScroll(id="dashboard-panels"):
+            for name in self._widget_names:
+                yield _load_widget(name).create(context)

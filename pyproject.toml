@@ -22,8 +22,13 @@ codex = "shikiru.plugins.agents.codex.agent:create"
 
 [project.entry-points."shikiru.widgets"]
 header = "shikiru.plugins.widgets.header:HeaderWidget"
+escalations = "shikiru.plugins.widgets.escalations:EscalationsWidget"
 strips = "shikiru.plugins.widgets.strips:StripsWidget"
 queue = "shikiru.plugins.widgets.queue:QueueWidget"
+dialogue = "shikiru.plugins.widgets.dialogue:DialogueWidget"
+usage = "shikiru.plugins.widgets.usage:UsageWidget"
+resources = "shikiru.plugins.widgets.resources:ResourcesWidget"
+docker = "shikiru.plugins.widgets.docker:DockerWidget"
 
 [build-system]
 requires = ["hatchling"]

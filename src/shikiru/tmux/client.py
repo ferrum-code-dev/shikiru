@@ -21,6 +21,7 @@ _ENV_COMMAND = "env"
 _PRIVATE_SOCKET_SUFFIX_LENGTH = 8
 
 FORMAT_PANE_ID = "#{pane_id}"
+FORMAT_PANE_PID = "#{pane_pid}"
 FORMAT_PANE_DEAD = "#{pane_dead}"
 FORMAT_WINDOW_ID = "#{window_id}"
 FORMAT_SOCKET_PATH = "#{socket_path}"
@@ -241,6 +242,11 @@ class Tmux:
     async def list_panes(self, target: str, fmt: str) -> list[str]:
         """List every pane of `target`, one formatted line per pane."""
         result = await self._run("list-panes", "-t", target, "-F", fmt)
+        return result.stdout.splitlines()
+
+    async def list_session_panes(self, target: str, fmt: str) -> list[str]:
+        """List every pane across every window of session `target`."""
+        result = await self._run("list-panes", "-s", "-t", target, "-F", fmt)
         return result.stdout.splitlines()
 
     async def pane_exists(self, target: str) -> bool:

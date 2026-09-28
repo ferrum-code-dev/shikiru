@@ -8,11 +8,12 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 
 from shikiru.config.loader import load_settings
-from shikiru.dashboard.contract import RepoStatus, WidgetContext
+from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView, WidgetContext
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import Hold, Mode, Status
+from shikiru.operator.queries import OperatorQueries
 from shikiru.plugins.widgets.header import HeaderPanel, HeaderWidget
 from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.plugins.widgets.strips import StripsPanel, StripsWidget
@@ -48,6 +49,12 @@ class _StubServices:
     def engine_up(self) -> bool:
         return self._engine_running
 
+    async def resources(self) -> ResourceView:
+        return ResourceView(10.0, 40.0, 4.0, 2.0, 0.2)
+
+    async def containers(self) -> DockerView:
+        return DockerView(available=False, containers=())
+
 
 class _WidgetHostApp(App[None]):
     def __init__(self, widget: Widget) -> None:
@@ -71,16 +78,30 @@ def _submit_task(
 def _context(
     reader: StateReader, project_dir: Path, *, services: _StubServices | None = None
 ) -> WidgetContext:
+    dashboard_services = services or _StubServices()
     return WidgetContext(
         views=StateDashboardViews(
             reader,
             focus_task=None,
             settings=load_settings(project_dir),
-            sources=services or _StubServices(),
+            sources=dashboard_services,
+            queries=OperatorQueries(
+                reader,
+                project="demo",
+                project_root=project_dir,
+                engine_up=dashboard_services.engine_up,
+                max_parallel=2,
+            ),
+            clock=FakeClock(START),
         ),
         focus_task=None,
         on_change=reader.watch,
+        open_palette=_open_palette,
     )
+
+
+async def _open_palette(action: str) -> None:
+    del action
 
 
 async def test_header_shows_project_name_engine_state_and_slots(
