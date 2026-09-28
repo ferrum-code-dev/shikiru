@@ -273,7 +273,8 @@ class PullRequest:
         )
         if not commits:
             return ()
-        await self._git.push(self._project_root, self._remote, repo.branch)
+        lease = await self._git.remote_branch_sha(self._project_root, self._remote, repo.branch)
+        await self._git.push(self._project_root, self._remote, repo.branch, lease=lease)
         url = await self._github.create_pull_request(
             self._project_root,
             base=repo.base,

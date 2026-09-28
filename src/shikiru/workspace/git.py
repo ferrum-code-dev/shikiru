@@ -152,9 +152,27 @@ class Git:
             expected_old_sha,
         )
 
-    async def push(self, repo_dir: Path, remote: str, branch: str) -> None:
-        """Push `branch` to `remote` and set it as the branch's upstream."""
-        await self._run(repo_dir, "push", "-u", remote, branch, timeout=_PUSH_TIMEOUT_SECONDS)
+    async def remote_branch_sha(self, repo_dir: Path, remote: str, branch: str) -> str | None:
+        """Return the sha `branch` had when last pushed to or fetched from `remote`, if ever."""
+        result = await self._run(
+            repo_dir,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"refs/remotes/{remote}/{branch}",
+            check=False,
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    async def push(self, repo_dir: Path, remote: str, branch: str, *, lease: str | None) -> None:
+        """Push `branch` to `remote` as its upstream, overwriting it only if it is still `lease`.
+
+        Without a `lease` the push never overwrites the remote branch.
+        """
+        lease_args = () if lease is None else (f"--force-with-lease={branch}:{lease}",)
+        await self._run(
+            repo_dir, "push", *lease_args, "-u", remote, branch, timeout=_PUSH_TIMEOUT_SECONDS
+        )
 
     async def dirty_paths(self, repo_dir: Path) -> set[str]:
         """Return paths changed in the working tree, including untracked paths."""
