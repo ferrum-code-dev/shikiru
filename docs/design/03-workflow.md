@@ -198,6 +198,7 @@ Integration runs under the project integration lock. A branch with no commits ah
      - Then: `git merge --ff-only` if `base` is checked out, else `git update-ref refs/heads/<base> <new> <old>`.
    - **`PullRequest`** (`integration = "pr"`):
      - `git push -u <repo.remote> <branch>` and `gh pr create --base <base> --head <branch>`, titled with the task title and with the accepted summary as its body. `pr_opened` records the PR URL and commits.
+     - The task branch is Shikiru's; a re-push after a rebase uses `--force-with-lease` against the last pushed sha. An open PR already on that head and base (the engine died before `pr_opened`) is adopted instead of opening another.
      - Polling runs outside the integration lock: the slot is released, `wait_reason = "PR open"`, and `gh pr view <url> --json state` is polled every `PR_POLL` (5 min).
      - `MERGED` → done. `CLOSED` → `pr_closed`, whose `retry` pushes again and opens a new PR.
      - The open PR is the task's latest `pr_opened` not followed by a `pr_closed` escalation. A resumed integration (§7) polls it instead of rebasing, pushing or opening another.
