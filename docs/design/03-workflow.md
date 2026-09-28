@@ -158,7 +158,9 @@ The engine writes `runs/T/<role>/turn.pid` while the process runs, so a restarte
 
 **The report instruction** ends every prompt:
 
-> Write the report JSON matching `report.schema.json` and run `shikiru report --file <file>`. If it exits non-zero, fix it and run it again. Then end your turn.
+> Write the report JSON matching `report.schema.json` to `report.draft.json` in this prompt's directory, never inside the workspace, and run `shikiru report --file <that file>`. If it exits non-zero, fix it and run it again. Then end your turn.
+
+The draft stays out of the workspace so it is never committed, and the roles' drafts never overwrite each other there.
 
 The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's shell `PATH` never decides which Shikiru runs.
 
