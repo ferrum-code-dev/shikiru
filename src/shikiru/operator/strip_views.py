@@ -9,6 +9,7 @@ from shikiru.domain.steps import ACTING_ROLE, Step
 from shikiru.domain.tasks import Hold, Status, Task
 from shikiru.ui.glyphs import (
     GLYPH_DONE,
+    GLYPH_ENGINE,
     GLYPH_ESCALATED,
     GLYPH_PENDING,
     ROLE_GLYPHS,
@@ -40,7 +41,9 @@ _PANEL_INDEX: dict[Step, int] = {
 def task_strip_data(task: Task, settings: Settings) -> TaskStripData:
     """Build the render data for one task using the configured role ladder."""
     if task.step is None:
-        if task.status not in (Status.QUEUED, Status.DONE, Status.CANCELLED):
+        if task.status is Status.RUNNING:
+            return _starting_strip_data(task)
+        if task.status not in (Status.QUEUED, Status.DONE, Status.CANCELLED, Status.ESCALATED):
             message = f"task {task.id} is active but has no step recorded"
             raise ValueError(message)
         return _unstarted_strip_data(task)
@@ -79,10 +82,34 @@ def _unstarted_strip_data(task: Task) -> TaskStripData:
         state, glyph = PanelState.PENDING, GLYPH_PENDING
     elif task.status is Status.DONE:
         state, glyph = PanelState.DONE, GLYPH_DONE
-    else:
+    elif task.status in (Status.CANCELLED, Status.ESCALATED):
         state, glyph = PanelState.ESCALATED, GLYPH_ESCALATED
+    else:
+        message = f"task {task.id} has no step for status {task.status.value!r}"
+        raise ValueError(message)
     panel = PanelView(label=task.status.value.title(), stage_glyph=glyph, state=state)
-    return TaskStripData(task_id=task.id, title=task.title, panels=(panel,))
+    return TaskStripData(
+        task_id=task.id,
+        title=task.title,
+        panels=(panel,),
+        stamp=_stamp_for(task),
+    )
+
+
+def _starting_strip_data(task: Task) -> TaskStripData:
+    panel = PanelView(
+        label="Starting",
+        stage_glyph=GLYPH_ENGINE,
+        state=PanelState.ACTIVE,
+        detail="setting up",
+        spinner_frame=SPINNER_FRAMES[0],
+    )
+    return TaskStripData(
+        task_id=task.id,
+        title=task.title,
+        panels=(panel,),
+        stamp=_stamp_for(task),
+    )
 
 
 def _active_panel_state(task: Task) -> PanelState:

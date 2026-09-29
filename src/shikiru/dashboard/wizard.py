@@ -10,7 +10,6 @@ from shikiru.agents.contracts import Rung, parse_rung
 from shikiru.domain.tasks import Role
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import (
-    DEFAULT_MODEL,
     DetectedProject,
     InitWizardResult,
     ProjectDetectors,
@@ -51,6 +50,7 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel", "Cancel")]
     CSS = """
+    Screen { height: 80%; }
     #wizard-shell { height: 100%; padding: 0 1; }
     #wizard-title { height: 1; content-align: center middle; }
     #wizard-body { height: 1fr; border: round $accent; }
@@ -294,11 +294,11 @@ class InitWizardApp(App[InitWizardResult | None]):
                 f"Detected plugins that passed doctor(): {', '.join(self._project.agents)}",
                 markup=False,
             )
-            yield Static("Replace the detected model with one supported by your plugin if needed.")
+            yield Static("Enter an explicit model supported by each selected plugin.")
             for role in WIZARD_ROLES:
                 yield Label(f"{role.title()} ladder (comma-separated agent:model:effort)")
                 yield Input(
-                    value=f"{self._project.agents[0]}:{DEFAULT_MODEL}",
+                    value=f"{self._project.agents[0]}:",
                     placeholder="agent:model:effort",
                     id=f"{role}-ladder",
                 )

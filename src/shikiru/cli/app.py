@@ -120,7 +120,13 @@ def init(
             config_path = result.config_path
     except ShikiruError as error:
         _fail(error)
-    _emit_value(state, {"config": str(config_path)}, f"initialized {config_path}")
+    message = f"initialized {config_path}"
+    if yes:
+        message += (
+            "; review the generated default model placeholders, edit role ladders as needed, "
+            "and run `shikiru doctor` before `shikiru start`"
+        )
+    _emit_value(state, {"config": str(config_path)}, message)
 
 
 @app.command()

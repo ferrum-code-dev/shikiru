@@ -93,6 +93,37 @@ async def _app_with_cow_probe_error(root: Path) -> InitWizardApp:
     )
 
 
+async def test_detect_caches_preserves_nested_ignored_paths(tmp_path: Path) -> None:
+    await _git_project(tmp_path)
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "README.md").write_text("tracked\n")
+    runner = SubprocessRunner()
+    await runner.run(["git", "add", "frontend/README.md"], timeout=10, cwd=tmp_path, check=True)
+    await runner.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "track frontend",
+        ],
+        timeout=10,
+        cwd=tmp_path,
+        check=True,
+    )
+    nested_cache = frontend / "node_modules"
+    nested_cache.mkdir(parents=True)
+    (nested_cache / "cache.dat").write_text("nested cache\n")
+
+    project = await build_project_detectors(tmp_path).detect()
+
+    assert {"node_modules", "frontend/node_modules"} <= set(project.caches)
+
+
 async def _replace_input(pilot: Pilot[InitWizardResult | None], selector: str, value: str) -> None:
     target = pilot.app.query_one(selector)
     if not await pilot.click(selector):
@@ -122,13 +153,16 @@ async def _focus_with_tab(pilot: Pilot[InitWizardResult | None], selector: str) 
 
 async def _set_agents_and_trackers(pilot: Pilot[InitWizardResult | None], tmp_path: Path) -> None:
     await _click_next(pilot)
+    await _click_next(pilot)
+    assert str(pilot.app.query_one("#wizard-error", Static).render()).strip()
+    assert not (tmp_path / ".shikiru" / "config.toml").exists()
     await _replace_input(pilot, "#leader-ladder", "missing:model:high")
     await _click_next(pilot)
     assert str(pilot.app.query_one("#wizard-error", Static).render()).strip()
     assert not (tmp_path / ".shikiru" / "config.toml").exists()
-    await _replace_input(pilot, "#leader-ladder", "fake:default:low")
+    await _replace_input(pilot, "#leader-ladder", "fake:smoke:low")
     await _replace_input(pilot, "#implementer-ladder", "fake:strong:high")
-    await _replace_input(pilot, "#helper-ladder", "fake:default:low")
+    await _replace_input(pilot, "#helper-ladder", "fake:smoke:low")
     await _click_next(pilot)
     await _replace_input(pilot, "#trackers", "tasks/plan.md, docs/todo.md")
     await _click_next(pilot)
@@ -183,9 +217,9 @@ async def test_init_wizard_walkthrough_saves_choices_and_shows_doctor(
         await _set_agents_and_trackers(pilot, tmp_path)
         await _set_caches_parallelism_and_integration(pilot)
         assert app.query_one("#wizard-page-6").display
-        assert app.query_one("#leader-ladder", Input).value == "fake:default:low"
+        assert app.query_one("#leader-ladder", Input).value == "fake:smoke:low"
         assert app.query_one("#implementer-ladder", Input).value == "fake:strong:high"
-        assert app.query_one("#helper-ladder", Input).value == "fake:default:low"
+        assert app.query_one("#helper-ladder", Input).value == "fake:smoke:low"
         await _focus_with_tab(pilot, "#wizard-finish")
         await pilot.press("enter")
         config_path = tmp_path / ".shikiru" / "config.toml"
@@ -202,7 +236,7 @@ async def test_init_wizard_walkthrough_saves_choices_and_shows_doctor(
     settings = load_settings(tmp_path)
     assert settings.project.trackers == ["tasks/plan.md", "docs/todo.md"]
     assert settings.repo.caches == ["node_modules", "build-cache"]
-    assert settings.roles.leader.ladder[0].model == "default"
+    assert settings.roles.leader.ladder[0].model == "smoke"
     assert settings.roles.leader.ladder[0].effort == "low"
     assert settings.roles.implementer.ladder[0].model == "strong"
     assert settings.roles.implementer.ladder[0].effort == "high"
@@ -228,9 +262,9 @@ async def test_init_wizard_keeps_config_and_exposes_failed_doctor_report(
 
     async with app.run_test(size=(64, 18)) as pilot:
         await _click_next(pilot)
-        await _replace_input(pilot, "#leader-ladder", "fake:default:low")
-        await _replace_input(pilot, "#implementer-ladder", "fake:default:low")
-        await _replace_input(pilot, "#helper-ladder", "fake:default:low")
+        await _replace_input(pilot, "#leader-ladder", "fake:smoke:low")
+        await _replace_input(pilot, "#implementer-ladder", "fake:smoke:low")
+        await _replace_input(pilot, "#helper-ladder", "fake:smoke:low")
         for step in range(1, 6):
             await _click_next(pilot)
             timeout = 60 if step == 2 else 1
@@ -264,6 +298,9 @@ async def test_cow_probe_error_remains_visible_after_navigation(tmp_path: Path) 
 
     async with app.run_test(size=(64, 18)) as pilot:
         await _click_next(pilot)
+        await _replace_input(pilot, "#leader-ladder", "fake:smoke:low")
+        await _replace_input(pilot, "#implementer-ladder", "fake:smoke:low")
+        await _replace_input(pilot, "#helper-ladder", "fake:smoke:low")
         await _click_next(pilot)
         await _click_next(pilot)
         cow_result = app.query_one("#cow-result", Static)

@@ -24,7 +24,7 @@ class SessionPicker(App[SessionRow | None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel", "Cancel")]
     CSS = """
-    Screen { align: center middle; }
+    Screen { height: 80%; align: center middle; }
     #session-picker {
         width: 90%; max-width: 100; height: auto; max-height: 80%;
         border: round $accent; padding: 1 2;

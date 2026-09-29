@@ -165,7 +165,9 @@ class ProjectDetectors:
 
     async def _caches(self) -> list[str]:
         ignored = await self._git.ignored_paths(self._root)
-        return sorted(path.name for path in ignored if path.name in CACHE_NAMES)
+        return sorted(
+            path.relative_to(self._root).as_posix() for path in ignored if path.name in CACHE_NAMES
+        )
 
     async def _agents(self) -> tuple[str, ...]:
         results = [

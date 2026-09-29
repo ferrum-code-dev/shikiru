@@ -79,6 +79,8 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     assert code == 0
     assert stderr == ""
     assert str(tmp_path / ".shikiru" / "config.toml") in stdout
+    assert "model placeholders" in stdout
+    assert "shikiru doctor" in stdout
 
     code, stdout, stderr = await _cli(tmp_path, "submit", "human task")
     assert code == 0

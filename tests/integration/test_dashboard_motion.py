@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
+import pytest
 from rich.console import Console, Group
 from rich.text import Text
 from textual.widgets import Static
@@ -25,7 +26,7 @@ from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import EscalationReason, Mode, Role, Status
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
@@ -37,8 +38,8 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
-from shikiru.ui.glyphs import GLYPH_STALLED
-from shikiru.ui.strip import PanelState, TaskStrip
+from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED
+from shikiru.ui.strip import PanelState, StampKind, TaskStrip
 from shikiru.ui.tokens import STYLE_BOLD, STYLE_DIM, STYLE_REVERSE
 from shikiru.view_log import (
     VIEW_SESSION_STARTED_SIGNAL,
@@ -323,6 +324,8 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
             on_change=reader.watch,
             clock=clock,
             motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
         )
@@ -365,6 +368,68 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
                 handle.write(f"{_row(clock.now(), _TURN_NAME, VIEW_TOOL_FINISHED_SIGNAL)}\n")
             clock.advance(2.5)
             await wait_until(lambda: GLYPH_STALLED in cast("Text", strips.content).plain, timeout=1)
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        (Status.RUNNING, frozenset[Hold](), PanelState.ACTIVE, GLYPH_ENGINE, None),
+        (
+            Status.RUNNING,
+            frozenset({Hold.PAUSED}),
+            PanelState.ACTIVE,
+            GLYPH_ENGINE,
+            StampKind.PAUSED,
+        ),
+        (
+            Status.RUNNING,
+            frozenset({Hold.INTERVENTION}),
+            PanelState.ACTIVE,
+            GLYPH_ENGINE,
+            StampKind.OPERATOR,
+        ),
+        (
+            Status.ESCALATED,
+            frozenset[Hold](),
+            PanelState.ESCALATED,
+            GLYPH_ESCALATED,
+            None,
+        ),
+    ],
+)
+async def test_dashboard_strips_render_step_less_lifecycle_states(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    case: tuple[Status, frozenset[Hold], PanelState, str, StampKind | None],
+) -> None:
+    status, holds, expected_state, expected_glyph, expected_stamp = case
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(project_dir)
+    tasks = TaskStore(connection, clock)
+    task = seed_task(connection, clock, title="Pre-step task")
+    transition = (
+        Transition.escalate_current(task, EscalationReason.ENGINE_ERROR)
+        if status is Status.ESCALATED
+        else Transition.stay(task, step=None, status=status)
+    )
+    tasks.apply_transition(task.id, transition)
+    tasks.set_holds(task.id, holds)
+    task = tasks.get(task.id)
+    assert task is not None
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, task)
+        strips = {strip.task_id: strip for strip in views.strips()}
+        task_strip = strips[task.id]
+
+        assert task_strip.panels[0].state is expected_state
+        assert task_strip.panels[0].stage_glyph == expected_glyph
+        assert (task_strip.stamp.kind if task_strip.stamp is not None else None) is expected_stamp
+        assert task.id in TaskStrip(task_strip).render(100).plain
     finally:
         reader.close()
 
@@ -503,6 +568,8 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             on_change=reader.watch,
             clock=clock,
             motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
         )
@@ -584,6 +651,8 @@ async def test_disabled_animations_only_refresh_static_frames_after_a_database_c
             on_change=reader.watch,
             clock=clock,
             motion_interval_seconds=None,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
         )
