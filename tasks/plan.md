@@ -14,6 +14,7 @@ Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`
 - Phase 4 makes it real (E1, E2).
 - Phase 4b moves agents to headless turns on resumed sessions with panes as live views (D1 revised, D21, D22, D23). Its tasks are numbered 31–39 so earlier numbers stay stable; do them before Phase 5. Task 38 (code health) runs alongside: its correctness items first, the rest together with the Phase 4b tasks they touch.
 - Phases 5–6 complete resilience, operator surfaces and onboarding.
+- Phase 7 (Tasks 41–59) remediates the 2026-09-29 review. Task 41 comes first because it makes the gate reliable; then follow the listed order, since high-severity work and operator-control fixes precede the rest.
 
 ---
 
@@ -355,3 +356,133 @@ Refs: 06 §3.
 - [x] All E2E scenarios pass in one `poe e2e` run; coverage ≥ 80%; `poe check` clean.
 - [x] Scripted clean-environment check: fresh `HOME`, `uv tool install .`, README quick start.
 - [x] Walk every section of `docs/design`; code and docs agree, and each difference is fixed in one or the other.
+
+## Phase 7 — Review remediation (2026-09-29)
+
+Source: the 2026-09-29 review of `e56832b` (finding ids F01–F23). Every finding was re-checked against the source on 2026-09-29. Tasks 41–59 are ordered by risk: work preservation, operator control and dependent-work correctness first. Each task adds its regression test first, against the real boundary named in it (real SQLite, Git and tmux, the fake agent). Design text changes in the same commit as the code it describes.
+
+Invariants these tasks establish:
+1. A task workspace has one owner: automation or operator takeover.
+2. A hold blocks the next operation on every execution path, including recovery and integration.
+3. `done` implies the intended changes are integrated or explicitly accounted for; cleanup never erases unexplained dirtiness.
+4. A dependent's base contains the completed work it depends on, including remote and decomposed work.
+5. Durable command, message and escalation state survives interruption between effects.
+
+### Task 41: Quality gate independent of the terminal (F17)
+Refs: 07 §2–3.
+- [ ] `test_usage_panel_labels_api_equivalent_cost_and_hides_incomplete_totals` passes under `TERM=dumb`, a narrow `COLUMNS` and the ordinary terminal (it fails today with `TERM=dumb`): it compares label and value text after normalizing layout whitespace, and the render helper does not inherit terminal settings.
+- [ ] Other `_plain`-style render helpers in `tests/` are checked for the same dependence.
+- [ ] `uv run poe check` passes with `TERM=dumb` and with the default environment.
+
+### Task 42: Integration never discards uncommitted work (F01)
+Refs: 03 §5–6, invariant 3.
+- [ ] Integration refuses a task worktree with tracked or untracked changes at its shared entry, including the no-op path (branch SHA equals base) and plan tasks, and keeps the worktree.
+- [ ] Post-rebase acceptance after conflict resolution applies the same check; an accepting Leader with uncommitted changes gets the existing rework path, not a merge.
+- [ ] A clean no-op task still finishes `done`.
+- Tests: integration with real Git: uncommitted tracked and untracked plan output; dirty post-rebase acceptance; clean no-op. Each asserts the task outcome and that the files still exist.
+
+### Task 43: Holds block every execution path (F04)
+Refs: 03 §1.2, §7, §9, invariant 2.
+- [ ] One turn-boundary hold check is used by ordinary steps, integration entry, each integration turn and the reconciler; the task returns without starting the next external effect while `paused` or `intervention` is held.
+- [ ] Decision recorded in 03 §6: an already-running Git operation may finish, no further step starts.
+- [ ] A hold set while integration waits for access is honoured before the merge.
+- Tests: integration: restart with a paused `INTEGRATING` task does not rebase, run a turn or merge until `resume`; pause at the verify → integrate boundary; pause while waiting for integration access.
+
+### Task 44: One owner for a task workspace during takeover (F03)
+Refs: 03 §4.1, §9, invariant 1.
+- [ ] `resume` on a task with a taken-over role is rejected with an actionable message, or performs the full hand-back; the choice is written in 03 §9.
+- [ ] `hand_back` releases the intervention hold only when no role is taken over; a partial hand-back keeps it.
+- [ ] No headless turn starts while any role is taken over, and the original session is resumed after hand-back rather than replaced.
+- Tests: integration on `tmux_server` with the fake agent: resume during takeover; take over both roles and hand back one; pause plus takeover. Assert pane and process ownership, run and session identity, holds and the absence of headless turns.
+
+### Task 45: Stale escalation actions cannot resurrect work (F05)
+Refs: 03 §8, 06 §2.
+- [ ] Direct `cancel` and `retry` settle the task's open escalations in the same transaction as the task transition.
+- [ ] `Resolve` is checked against the task's current state and rejects an escalation that no longer owns it.
+- [ ] A presentation failure (title refresh) after the durable transition does not turn the acknowledgement into a rejection while leaving the transition applied; the primary state and the acknowledgement agree.
+- Tests: integration through the daemon and command queue: escalate → cancel → stale resolve (stays cancelled, rejected); escalate → retry → stale resolve; repeated resolve; title-refresh failure after resolve.
+
+### Task 46: Turn processes own their descendants (F02)
+Refs: 03 §4.3, §7, 04 §6.
+- [ ] `SubprocessRunner.spawn` starts each turn in its own process group; `stop()` signals the group, then kills it after the grace period, and its wait for stderr EOF is bounded.
+- [ ] Orphan cleanup after a restart signals the recorded group only while the recorded PID identity still matches.
+- Tests: integration with a real runner: a descendant that inherits stdout/stderr and outlives or ignores its parent; `stop(grace)` returns within a bound and the descendant is gone; orphan cleanup ends it and never signals a reused PID.
+
+### Task 47: Dependents start from the merged base in PR mode (F06)
+Refs: 03 §6, invariant 4.
+- [ ] Decision written in 03 §6: after a PR is merged, the engine fetches the remote base and creates dependents' worktrees from the verified fetched ref. The operator's checked-out branch and local changes are never reset.
+- [ ] Dependents are not released until the merged remote base is fetched and verified.
+- [ ] Squash and rebase merges are handled.
+- Tests: integration with a local bare remote and `gh` faked on PATH: merge T-1 remotely (merge commit and squash); T-2's worktree contains T-1's change.
+
+### Task 48: Decomposition delivers tracker changes to children (F07)
+Refs: 03 §2–3, §6, invariant 4.
+- [ ] Design decision first, written in 03 before code: plan children wait until the plan parent's tracker changes are on the base (for example an implicit dependency on the parent's `done`); for `supersede`, the approved replacement tracker entries reach the replacements without integrating the rejected implementation. The dependency cascade on a cancelled parent must not cancel the replacements.
+- [ ] Scheduling and `apply_scope_change` implement the decision; child worktrees contain the tracker entries the parent committed.
+- Tests: integration with real Git: a blocked plan integration keeps its children undispatched, then releasing it dispatches them with the tracker entries present; supersede with committed replacement tracker entries leaves them available to the replacements.
+
+### Task 49: Transitions persist triage results and keep concurrent overrides (F09, F10)
+Refs: 03 §2–3, 05 §2.
+- [ ] A completed triage persists the selected complexity and title with the transition (an explicit operator complexity has the precedence written in 03 §2); the next turn uses the ladder for the persisted complexity.
+- [ ] A `set_rung` acknowledged while a turn runs is kept when that turn completes and is used by the next invocation; rung-change counter semantics are unchanged.
+- Tests: integration: triage `high` → the next turn's rung is the high ladder and the title updates; `SetRung` during a controlled in-flight turn → the following turn uses it.
+
+### Task 50: Dependency graph validation (F11)
+Refs: 03 §10.
+- [ ] `apply_scope_change` validates the resulting graph inside its transaction and rejects self-edges and cycles, including cycles created by repointing existing dependents, with the offending ids; forward sibling references stay allowed.
+- [ ] A rejected scope change escalates through the existing scope-change protocol path.
+- Tests: table-driven domain tests for the graph rule (self-edge, sibling cycle, repoint-induced cycle, valid forward reference); one integration test through the store.
+
+### Task 51: SQLite path is opened exactly (F16)
+Refs: 05 §3.
+- [ ] `Database._connect` builds an escaped absolute file URI and keeps read-only mode.
+- Tests: integration: paths with spaces, `#`, `?` and literal `%` sequences; `PRAGMA database_list` reports the requested file, and no other file is created.
+
+### Task 52: A slow notification hook cannot block the engine loop (F08)
+Refs: 06 §5.7.
+- [ ] Notification delivery runs in a supervised bounded queue and task with a shutdown policy; the command loop and scheduling never await the hook.
+- [ ] A blocked or failing hook is logged, and `stop` and `pause` are acknowledged normally.
+- Tests: integration: a hook blocked on a FIFO does not delay `stop`/`pause` acknowledgements or scheduling (`FakeClock`, `wait_until`); a failing hook is logged and delivery continues.
+
+### Task 53: Idempotent command replay (F12)
+Refs: 03 §7, 06 §2, invariant 5.
+- [ ] At-least-once delivery, idempotent by command id, is written in 03 §7. Database effects and the acknowledgement commit together where possible; `say` file writes and hand-back pane/run/hold changes are repeatable. No generic effect-replay framework.
+- [ ] A restart after the effect but before the acknowledgement neither duplicates guidance, rejects a `submit` whose task exists, nor rejects a hand-back that already took effect.
+- Tests: integration with a crash between durable effect and acknowledgement for `say`, `submit` and `hand_back`.
+
+### Task 54: Interrupted turns keep operator messages (F13)
+Refs: 03 §4.3, §7, §9.
+- [ ] After a turn dies without a report (engine kill or process death), delivered messages of that turn are requeued ahead of newer ones before its replacement turn is created.
+- Tests: integration with a real SIGKILL of the fake agent after delivery and before its report: the replacement turn's prompt lists the message, in order relative to a newly queued one.
+
+### Task 55: Escalated state always has an actionable escalation (F14)
+Refs: 03 §8, invariant 5.
+- [ ] The escalated task state, its escalation row and its event commit together; the packet is regenerated from durable state when missing, including at reconciliation. Title refresh stays outside the correctness path. Dispatch and dependency escalations follow the same rule.
+- Tests: integration: failure after the state write; failure while writing the packet; both end with an open actionable escalation after recovery.
+
+### Task 56: Codex context window belongs to the model (F15)
+Refs: 04 §5.
+- [ ] Design 04 §5 and the implementation associate each observed window with its model and use it only for that model; a rung change to another model drops the old window and uses the new model's cache. Session resume is unchanged.
+- [ ] The existing test that prescribes the rollout-first precedence is changed with the design.
+- Tests: contract-level integration: change model in both directions between models with different windows; the compaction threshold follows the selected model.
+
+### Task 57: TaskFlow responsibilities (F18)
+Refs: 02 §2, 07 §1; `refactor:` commits only.
+- [ ] After Tasks 42, 43 and 49 the shared hold, acceptance and persistence rules each have one implementation used by ordinary steps and integration turns.
+- [ ] Recovery/quota waiting, prompt-context and escalation-evidence preparation move into focused collaborators wired in `bootstrap.py`. `TaskFlow` stays the sequencing layer; no one-method classes and no workflow framework.
+- [ ] Behaviour tests are unchanged and green.
+
+### Task 58: Low-severity items (F19, F20, F21, F23, F22)
+Refs: 01 §glossary, 02 §2, 07 §1–2.
+- [ ] F19: one deterministic live-tail scenario in `test_view.py`: start the view, append a partial then complete JSONL row, assert the output before the turn completes; include a terminal or failure outcome.
+- [ ] F20: import-linter contracts for the stated `plugins.agents.*` import boundary, and `banned-api` entries for wall and monotonic clock calls; or 02 §2 says which rules are lint-enforced and which are review conventions.
+- [ ] F21: `scripts/release-readiness-smoke.sh` uses a portable temporary directory; it is proven on macOS and on Linux where available. A CI workflow for the non-paid gate is optional and not part of this task.
+- [ ] F23: 01 §glossary documents slots `0..max_parallel-1` (implementation and tests win), with a matching `SHIKIRU_SLOT` example.
+- [ ] F22 (design opinion, needs an owner decision, no code churn): either relax the "no other literals" and "no comments" rules in 07 §2 and AGENTS.md to allow local syntax literals and short rationale comments, or record that they stay. Apply a relaxed rule only in code touched by other tasks.
+
+### Task 59: Re-verify and regenerate release evidence
+Refs: 07 §5.
+- [ ] `uv run poe check` passes in a normal and a `TERM=dumb` environment.
+- [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included.
+- [ ] The portable clean-install smoke passes; tested CLI versions and the source commit are recorded next to the results.
+- [ ] `docs/release-readiness-*.md` states which findings were fixed, and its claim that every design section agrees with the code is restated after Tasks 41–58.

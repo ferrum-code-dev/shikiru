@@ -58,3 +58,24 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 28: Sessions list and attach
 - [x] Task 29: Init wizard
 - [x] Task 30: Release readiness
+
+## Phase 7 — Review remediation (2026-09-29)
+- [ ] Task 41: Quality gate independent of the terminal (F17)
+- [ ] Task 42: Integration never discards uncommitted work (F01)
+- [ ] Task 43: Holds block every execution path (F04)
+- [ ] Task 44: One owner for a task workspace during takeover (F03)
+- [ ] Task 45: Stale escalation actions cannot resurrect work (F05)
+- [ ] Task 46: Turn processes own their descendants (F02)
+- [ ] Task 47: Dependents start from the merged base in PR mode (F06)
+- [ ] Task 48: Decomposition delivers tracker changes to children (F07)
+- [ ] Task 49: Transitions persist triage results and keep concurrent overrides (F09, F10)
+- [ ] Task 50: Dependency graph validation (F11)
+- [ ] Task 51: SQLite path is opened exactly (F16)
+- [ ] Task 52: A slow notification hook cannot block the engine loop (F08)
+- [ ] Task 53: Idempotent command replay (F12)
+- [ ] Task 54: Interrupted turns keep operator messages (F13)
+- [ ] Task 55: Escalated state always has an actionable escalation (F14)
+- [ ] Task 56: Codex context window belongs to the model (F15)
+- [ ] Task 57: TaskFlow responsibilities (F18)
+- [ ] Task 58: Low-severity items (F19, F20, F21, F23, F22)
+- [ ] Task 59: Re-verify and regenerate release evidence
