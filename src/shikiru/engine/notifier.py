@@ -37,9 +37,14 @@ class Notifier:
         self._timeout_seconds = timeout_seconds
         self._logger = logging.getLogger(__name__)
 
+    @staticmethod
+    def wants(event: Event) -> bool:
+        """Return whether `event` is an escalation or task completion."""
+        return event.kind in _NOTIFIABLE
+
     async def notify(self, event: Event) -> None:
         """Deliver `event` when it is an escalation or task completion."""
-        if event.kind not in _NOTIFIABLE:
+        if not self.wants(event):
             return
         try:
             await self._tmux.display_message(self._session_target, event.message)
@@ -49,6 +54,8 @@ class Notifier:
             try:
                 argv = tuple(shlex.split(self._command))
                 payload = json.dumps(event.model_dump(mode="json"))
-                await self._runner.run(argv, timeout=self._timeout_seconds, input_text=payload)
+                await self._runner.run(
+                    argv, timeout=self._timeout_seconds, input_text=payload, check=True
+                )
             except Exception:
                 self._logger.exception("external notification failed for event %s", event.id)

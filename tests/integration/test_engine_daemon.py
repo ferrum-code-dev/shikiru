@@ -112,7 +112,7 @@ def _create_no_headless_agent(context: AgentContext) -> FakeAgent:
     return _NoHeadlessFakeAgent(context.runner, FakeOptions())
 
 
-def _settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
+def engine_settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
     settings = make_settings(
         leader_ladder=[_FAKE_RUNG],
         implementer_ladder=[_FAKE_RUNG],
@@ -135,7 +135,7 @@ def _settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
     return settings.model_copy(update=update)
 
 
-async def _wait_for_command(
+async def wait_for_command(
     queued: QueuedCommand, queue: CommandQueue, clock: FakeClock
 ) -> CommandOutcome:
     async def completed() -> bool:
@@ -153,7 +153,7 @@ async def _wait_for_command(
 async def _append_and_wait(
     command: Command, queue: CommandQueue, clock: FakeClock
 ) -> CommandOutcome:
-    return await _wait_for_command(queue.append(command), queue, clock)
+    return await wait_for_command(queue.append(command), queue, clock)
 
 
 async def _submit(command: Submit, queue: CommandQueue, clock: FakeClock) -> str:
@@ -172,7 +172,7 @@ async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings()
+    settings = engine_settings()
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     registry: AgentRegistry = build_registry()
@@ -183,7 +183,7 @@ async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch
     engine_task = asyncio.create_task(engine.run())
 
     submitted = queue.append(Submit(title="queued task", request="queued task"))
-    outcome = await _wait_for_command(submitted, queue, clock)
+    outcome = await wait_for_command(submitted, queue, clock)
     assert outcome.status is CommandStatus.DONE
     task_id = str(outcome.result["task_id"]) if outcome.result is not None else ""
     assert task_id
@@ -236,7 +236,7 @@ async def test_unexpected_flow_error_escalates_without_stopping_engine(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await init_project_repo(tmp_path)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
@@ -304,7 +304,7 @@ async def test_stop_before_first_pass_prevents_same_batch_dispatch(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -314,8 +314,8 @@ async def test_stop_before_first_pass_prevents_same_batch_dispatch(
     stopped = queue.append(Stop())
     engine_task = asyncio.create_task(engine.run())
 
-    submit_outcome = await _wait_for_command(submitted, queue, clock)
-    stop_outcome = await _wait_for_command(stopped, queue, clock)
+    submit_outcome = await wait_for_command(submitted, queue, clock)
+    stop_outcome = await wait_for_command(stopped, queue, clock)
     assert submit_outcome.status is CommandStatus.DONE
     assert stop_outcome.status is CommandStatus.DONE
     await engine_task
@@ -347,7 +347,7 @@ def test_liveness_check_does_not_create_a_missing_lock_path(tmp_path: Path) -> N
 
 
 async def test_engine_log_captures_child_errors_and_detaches_on_shutdown(tmp_path: Path) -> None:
-    engine = build_engine(tmp_path, _settings(), registry=build_registry())
+    engine = build_engine(tmp_path, engine_settings(), registry=build_registry())
     log_path = tmp_path / ".shikiru" / "logs" / "engine.log"
     child_logger = logging.getLogger("shikiru.engine.test")
     child_logger.error("child module failure")
@@ -365,7 +365,7 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
 ) -> None:
     await init_project_repo(tmp_path)
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -476,7 +476,7 @@ async def test_resolution_commands_persist_task_and_escalation_outcomes(
     tmp_path: Path, tmux_server: TmuxServer, case: _ResolutionCase
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings()
+    settings = engine_settings()
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -510,8 +510,8 @@ async def test_resolution_commands_persist_task_and_escalation_outcomes(
     stop = queue.append(Stop())
     engine_task = asyncio.create_task(engine.run())
     try:
-        resolve_outcome = await _wait_for_command(resolve, queue, clock)
-        stop_outcome = await _wait_for_command(stop, queue, clock)
+        resolve_outcome = await wait_for_command(resolve, queue, clock)
+        stop_outcome = await wait_for_command(stop, queue, clock)
         assert resolve_outcome.status is case.expected_command_status
         assert stop_outcome.status is CommandStatus.DONE
         await engine_task
@@ -576,7 +576,9 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
     clock = FakeClock(TASK_CREATED_AT)
     tmux = build_tmux(tmux_server)
     session = await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, _settings(), clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path, engine_settings(), clock=clock, tmux=tmux, registry=build_registry()
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
@@ -679,7 +681,7 @@ async def test_retry_resolution_drops_only_cancelled_dependencies(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings()
+    settings = engine_settings()
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -729,8 +731,8 @@ async def test_retry_resolution_drops_only_cancelled_dependencies(
     stop = queue.append(Stop())
     engine_task = asyncio.create_task(engine.run())
     try:
-        resolve_outcome = await _wait_for_command(resolve, queue, clock)
-        stop_outcome = await _wait_for_command(stop, queue, clock)
+        resolve_outcome = await wait_for_command(resolve, queue, clock)
+        stop_outcome = await wait_for_command(stop, queue, clock)
         assert resolve_outcome.status is CommandStatus.DONE
         assert stop_outcome.status is CommandStatus.DONE
         await engine_task
@@ -762,7 +764,7 @@ async def test_superseded_task_uses_shared_terminal_cleanup(
         [{"kind": "supersede", "new_tasks": [{"title": "replacement", "request": "redo"}]}],
     )
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -778,7 +780,7 @@ async def test_superseded_task_uses_shared_terminal_cleanup(
                 mode=Mode.IMPLEMENT,
             )
         )
-        outcome = await _wait_for_command(submitted, queue, clock)
+        outcome = await wait_for_command(submitted, queue, clock)
         task_id = str(outcome.result["task_id"]) if outcome.result is not None else ""
         assert task_id
 
@@ -812,7 +814,7 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
     await init_project_repo(tmp_path)
     set_script(monkeypatch, [{"kind": "stall"}])
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -822,8 +824,8 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
     second = queue.append(Submit(title="parallel two", request="parallel two", mode=Mode.IMPLEMENT))
     engine_task = asyncio.create_task(engine.run())
 
-    first_outcome = await _wait_for_command(first, queue, clock)
-    second_outcome = await _wait_for_command(second, queue, clock)
+    first_outcome = await wait_for_command(first, queue, clock)
+    second_outcome = await wait_for_command(second, queue, clock)
     first_id = str(first_outcome.result["task_id"]) if first_outcome.result is not None else ""
     second_id = str(second_outcome.result["task_id"]) if second_outcome.result is not None else ""
 
@@ -848,7 +850,7 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
     assert {first_task.slot, second_task.slot} == {0, 1}
 
     stopped = queue.append(Stop())
-    stop_outcome = await _wait_for_command(stopped, queue, clock)
+    stop_outcome = await wait_for_command(stopped, queue, clock)
     assert stop_outcome.status is CommandStatus.DONE
     await engine_task
     connection.close()
@@ -873,7 +875,7 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
     await init_project_repo(tmp_path)
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}, {"kind": "accept"}])
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -947,7 +949,9 @@ async def test_hand_back_clears_the_operator_colour_from_the_pane(
     clock = FakeClock(TASK_CREATED_AT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, _settings(max_cpu_pct=CPU_UNCAPPED_PCT), clock=clock, tmux=tmux)
+    engine = build_engine(
+        tmp_path, engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT), clock=clock, tmux=tmux
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     events = EventLog(connection, clock)
@@ -1027,7 +1031,7 @@ async def _operator_session(
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(
         tmp_path,
-        _settings(max_cpu_pct=CPU_UNCAPPED_PCT),
+        engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT),
         clock=clock,
         tmux=tmux,
         registry=build_registry(),

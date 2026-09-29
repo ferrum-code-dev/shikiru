@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.engine.handlers import HandlerRegistry
     from shikiru.engine.layout_guard import LayoutGuard
-    from shikiru.engine.notifier import Notifier
+    from shikiru.engine.notification_delivery import NotificationDelivery
     from shikiru.engine.reconcile import Reconciler
     from shikiru.engine.scheduler import Scheduler
     from shikiru.engine.supervisor import TaskSupervisor
@@ -139,7 +139,7 @@ class Engine:
         handlers: HandlerRegistry,
         layout: LayoutGuard,
         reconciler: Reconciler,
-        notifier: Notifier,
+        notifications: NotificationDelivery,
         settings: Settings,
         clock: Clock,
         close_state: Callable[[], None],
@@ -156,7 +156,7 @@ class Engine:
         self._handlers = handlers
         self._layout = layout
         self._reconciler = reconciler
-        self._notifier = notifier
+        self._notifications = notifications
         self._settings = settings
         self._clock = clock
         self._close_state = close_state
@@ -175,11 +175,13 @@ class Engine:
             raise
         try:
             self._last_notified_event = self._events.latest_id()
+            self._notifications.start()
             self._events.append(EventKind.ENGINE_STARTED, message="engine started")
             await self._reconciler.reconcile()
             next_tick = self._clock.now()
             while not self._task_supervisor.stop_requested:
                 await self._task_supervisor.supervise(self._logger)
+                self._notifications.supervise(self._logger)
                 commands_changed = await self._process_commands()
                 if self._task_supervisor.stop_requested:
                     break
@@ -196,7 +198,7 @@ class Engine:
                     if scheduled_events:
                         self._last_scheduled_event = max(event.id for event in scheduled_events)
                     next_tick = now + timedelta(seconds=self._settings.orchestration.poll_seconds)
-                await self._notify_events()
+                self._queue_notifications()
                 await self._clock.sleep(COMMAND_POLL_SECONDS)
             await self._task_supervisor.supervise(self._logger)
         finally:
@@ -222,14 +224,15 @@ class Engine:
             changed = True
         return changed
 
-    async def _notify_events(self) -> None:
+    def _queue_notifications(self) -> None:
         for event in self._events.since(self._last_notified_event):
             self._last_notified_event = event.id
-            await self._notifier.notify(event)
+            self._notifications.enqueue(event)
 
     async def _shutdown(self) -> None:
         try:
             self._events.append(EventKind.ENGINE_STOPPED, message="engine stopped")
+            await self._notifications.shutdown()
             await self._task_supervisor.shutdown()
         finally:
             try:

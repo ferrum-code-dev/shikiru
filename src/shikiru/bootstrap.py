@@ -47,6 +47,7 @@ from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.lifecycle import TaskFinisher
 from shikiru.engine.monitor import TurnMonitor
+from shikiru.engine.notification_delivery import NotificationDelivery
 from shikiru.engine.notifier import NOTIFY_TIMEOUT_SECONDS, Notifier
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.scheduler import Scheduler
@@ -591,7 +592,7 @@ def build_engine(
             finish_task=task_finisher.finish_task,
             project_root=project_root,
         ),
-        notifier=notifier,
+        notifications=NotificationDelivery(notifier),
         settings=resolved_settings,
         clock=resolved_clock,
         close_state=connection.close,

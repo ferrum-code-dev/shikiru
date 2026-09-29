@@ -156,7 +156,13 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 `Notifier`, on `escalation` and `task_done`:
 - runs `tmux display-message` in the session;
-- runs `notify.command`, when set, with the event JSON on stdin (for Slack, ntfy or a remote AI Operator).
+- runs `notify.command`, when set, with the event JSON on stdin (for Slack, ntfy or a remote AI Operator). A non-zero exit, a timeout (2 hours) or a missing command is logged with the event id.
+
+Delivery never runs on the command loop. The `Engine` queues each notifiable event on `NotificationDelivery`, whose single task delivers them in order, so a hung hook cannot delay `stop`, `pause` or scheduling:
+- the queue holds 64 events; when full, the oldest pending event is dropped with a logged warning;
+- a delivery failure is logged and the next event is delivered;
+- the engine loop supervises the task like the task flows: an unexpected failure is logged and the task restarted;
+- on engine stop the task is cancelled, which terminates a running hook, and pending events are dropped, so `stop` never waits for a hook.
 
 ## 6. Visual design: comic strips with a semantic visual language
 

@@ -97,6 +97,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `LayoutGuard` | Keeps windows and panes matching the DB (recreates killed or dead panes; a dead taken-over pane is handed back) |
 | `Takeover` | Take over and hand back one task role (03 §9) |
 | `Notifier` | tmux message plus `notify.command` on escalation and task completion |
+| `NotificationDelivery` | Bounded queue and one supervised task delivering notifications off the command loop (06 §5.7) |
 
 **Enforced rules** (lint, not convention):
 - import-linter layers as above;
@@ -122,7 +123,7 @@ src/shikiru/
   ui/           tokens.py glyphs.py status.py strip.py bubbles.py splash.py gauge.py stream.py
   telemetry/    resources.py docker.py
   engine/       daemon.py supervisor.py lifecycle.py scheduler.py dependency.py flow.py agents.py sessions.py monitor.py turns.py
-                takeover.py integration.py integration_turns.py escalations.py reconcile.py layout_guard.py titles.py history.py events.py notifier.py
+                takeover.py integration.py integration_turns.py escalations.py reconcile.py layout_guard.py titles.py history.py events.py notifier.py notification_delivery.py
     handlers/   base.py tasks.py operator.py escalations.py engine.py
   operator/     queries.py commands.py services.py events.py strip_views.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py
   cli/          app.py context.py report.py view.py render.py

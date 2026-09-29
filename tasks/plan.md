@@ -441,8 +441,8 @@ Refs: 05 §3.
 
 ### Task 52: A slow notification hook cannot block the engine loop (F08)
 Refs: 06 §5.7.
-- [ ] Notification delivery runs in a supervised bounded queue and task with a shutdown policy; the command loop and scheduling never await the hook.
-- [ ] A blocked or failing hook is logged, and `stop` and `pause` are acknowledged normally.
+- [x] Notification delivery runs in a supervised bounded queue and task with a shutdown policy; the command loop and scheduling never await the hook.
+- [x] A blocked or failing hook is logged, and `stop` and `pause` are acknowledged normally.
 - Tests: integration: a hook blocked on a FIFO does not delay `stop`/`pause` acknowledgements or scheduling (`FakeClock`, `wait_until`); a failing hook is logged and delivery continues.
 
 ### Task 53: Idempotent command replay (F12)
