@@ -45,7 +45,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.session import SessionView
 from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_RUNG, build_registry, build_tmux, set_role_script
-from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
 from tests.support.store import seed_task
@@ -240,7 +240,7 @@ def _settings() -> Settings:
         update={
             "poll_seconds": _POLL_SECONDS,
             "resources": settings.orchestration.resources.model_copy(
-                update={"max_cpu_pct": 100, "min_free_ram_gb": 0}
+                update={"max_cpu_pct": CPU_UNCAPPED_PCT, "min_free_ram_gb": 0}
             ),
         }
     )

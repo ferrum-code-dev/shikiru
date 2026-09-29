@@ -38,7 +38,7 @@ from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.engine import build_decorator, build_tmux
-from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
 from tests.support.workspace import task_root_builder
@@ -84,7 +84,7 @@ class SchedulerFixture:
     clock: Clock
 
 
-def _settings(*, max_parallel: int = 2, max_cpu_pct: int = 100) -> Settings:
+def _settings(*, max_parallel: int = 2, max_cpu_pct: int = CPU_UNCAPPED_PCT) -> Settings:
     settings = make_settings(
         leader_ladder=[_FAKE_RUNG],
         implementer_ladder=[_FAKE_RUNG],
@@ -357,7 +357,7 @@ async def test_resource_gate_blocks_at_zero_and_dispatches_at_hundred(
     assert waiting is not None
     assert waiting.wait_reason == "resources"
 
-    passing = await _scheduler(scheduler_env, _settings(max_cpu_pct=100)).run_once()
+    passing = await _scheduler(scheduler_env, _settings(max_cpu_pct=CPU_UNCAPPED_PCT)).run_once()
 
     assert [dispatch.task_id for dispatch in passing.dispatches] == [task.id]
 

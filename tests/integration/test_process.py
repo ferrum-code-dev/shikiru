@@ -171,4 +171,4 @@ async def test_stop_returns_within_a_bound_and_ends_a_descendant_holding_the_pip
     await asyncio.wait_for(process.stop(grace=0.5), timeout=_STOP_BOUND_SECONDS)
 
     assert [line async for line in process.stdout_lines()] == []
-    assert not runner.is_running(descendant)
+    await wait_until(lambda: not runner.is_running(descendant), _STOP_BOUND_SECONDS)

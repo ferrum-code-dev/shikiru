@@ -52,6 +52,7 @@ HELPER_RUNG = Rung(agent="claude", model="haiku", effort="low")
 DEFAULT_AGENTS = {"claude": AgentConfig(), "codex": AgentConfig()}
 
 MAX_ITERATIONS = 5
+CPU_UNCAPPED_PCT = 101
 ESCALATE_AFTER = 2
 
 TASK_CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)

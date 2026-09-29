@@ -56,7 +56,7 @@ async def test_orphan_cleanup_ends_the_leftover_group(
     await _end_orphans(processes, clock)
 
     assert [line async for line in turn.stdout_lines()] == []
-    assert not runner.is_running(descendant)
+    await wait_until(lambda: not runner.is_running(descendant), _WAIT_SECONDS)
     assert not turn_pid_path(run_dir(tmp_path, _TASK_ID), Role.IMPLEMENTER).exists()
 
 

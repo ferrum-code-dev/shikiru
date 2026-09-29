@@ -63,7 +63,7 @@ from shikiru.ui.tokens import HOLD_COLOR, OPERATOR_COLOR
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, build_tmux, set_role_script, set_script
-from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until
 
@@ -236,7 +236,7 @@ async def test_unexpected_flow_error_escalates_without_stopping_engine(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=100)
+    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await init_project_repo(tmp_path)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
@@ -304,7 +304,7 @@ async def test_stop_before_first_pass_prevents_same_batch_dispatch(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=100)
+    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -365,7 +365,7 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
 ) -> None:
     await init_project_repo(tmp_path)
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=100)
+    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -762,7 +762,7 @@ async def test_superseded_task_uses_shared_terminal_cleanup(
         [{"kind": "supersede", "new_tasks": [{"title": "replacement", "request": "redo"}]}],
     )
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=100)
+    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -812,7 +812,7 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
     await init_project_repo(tmp_path)
     set_script(monkeypatch, [{"kind": "stall"}])
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=100, max_parallel=2)
+    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -873,7 +873,7 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
     await init_project_repo(tmp_path)
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}, {"kind": "accept"}])
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings(max_cpu_pct=100, max_parallel=2)
+    settings = _settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
@@ -947,7 +947,7 @@ async def test_hand_back_clears_the_operator_colour_from_the_pane(
     clock = FakeClock(TASK_CREATED_AT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, _settings(max_cpu_pct=100), clock=clock, tmux=tmux)
+    engine = build_engine(tmp_path, _settings(max_cpu_pct=CPU_UNCAPPED_PCT), clock=clock, tmux=tmux)
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     events = EventLog(connection, clock)
@@ -1026,7 +1026,11 @@ async def _operator_session(
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(
-        tmp_path, _settings(max_cpu_pct=100), clock=clock, tmux=tmux, registry=build_registry()
+        tmp_path,
+        _settings(max_cpu_pct=CPU_UNCAPPED_PCT),
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
     )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     operator = _Operator(
