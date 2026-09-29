@@ -78,7 +78,7 @@ from shikiru.paths import (
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue
-from shikiru.store.database import Database
+from shikiru.store.database import Database, transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
@@ -514,6 +514,7 @@ def build_engine(
         finish_task=task_finisher.finish_task,
         stop_engine=task_supervisor.request_stop,
         refresh_titles=titles.refresh,
+        atomically=lambda: transaction(connection),
     )
     takeover = Takeover(
         tmux=resolved_tmux,

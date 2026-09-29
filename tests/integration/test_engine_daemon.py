@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from shikiru.domain.commands import Command
     from shikiru.domain.runs import Run
     from shikiru.store.commands import CommandOutcome, QueuedCommand
+    from shikiru.tmux.client import Tmux
     from tests.support.tmux import TmuxServer
 
 _FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
@@ -537,6 +538,138 @@ async def test_resolution_commands_persist_task_and_escalation_outcomes(
         with suppress(asyncio.CancelledError, Exception):
             await engine_task
         connection.close()
+
+
+@dataclass
+class _Escalated:
+    operator: _Operator
+    escalations: EscalationStore
+    task: Task
+    escalation_id: str
+    tmux: Tmux
+    session: str
+    tasks: TaskStore
+
+    async def strand_window(self, tmp_path: Path) -> None:
+        pane = await SessionView(self.tmux).create_task_window(
+            self.session, window_name=self.task.id, cwd=tmp_path
+        )
+        window_id = await self.tmux.window_id(pane)
+        await self.tmux.kill_window(window_id)
+        self.tasks.set_window(self.task.id, window_id)
+
+    def escalation_status(self) -> EscalationStatus:
+        escalation = self.escalations.get(self.escalation_id)
+        assert escalation is not None
+        return escalation.status
+
+    def resolved_events(self) -> int:
+        events = self.operator.events.since(0, kinds=[EventKind.ESCALATION_RESOLVED])
+        return len(events)
+
+
+@asynccontextmanager
+async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGenerator[_Escalated]:
+    clock = FakeClock(TASK_CREATED_AT)
+    tmux = build_tmux(tmux_server)
+    session = await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, _settings(), clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    queue = CommandQueue(connection, clock)
+    submitted = queue.append(Submit(title="stale me", request="stale me"))
+    assert isinstance(submitted.command, Submit)
+    task = tasks.insert_from_submit(submitted.command)
+    queue.mark_done(submitted.id, {"task_id": task.id})
+    tasks.apply_transition(
+        task.id, Transition.stay(task, step=Step.IMPLEMENT, status=Status.ESCALATED)
+    )
+    tasks.set_slot(task.id, 1)
+    runs = RunStore(connection, clock)
+    escalations = EscalationStore(connection, clock)
+    escalation = await EscalationRaiser(
+        escalations, EventLog(connection, clock), runs, tmp_path
+    ).raise_escalation(
+        task,
+        step=Step.IMPLEMENT,
+        reason=EscalationReason.AGENT_ERROR,
+        question="choose",
+        attempted="test",
+        reports=(),
+        facts="",
+        view_tail="",
+    )
+    operator = _Operator(tasks, runs, EventLog(connection, clock), queue, clock, tmux_server)
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        yield _Escalated(operator, escalations, task, escalation.id, tmux, session, tasks)
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    ("direct", "expected_status"),
+    [(Cancel, Status.CANCELLED), (Retry, Status.QUEUED)],
+    ids=["cancel", "retry"],
+)
+async def test_direct_cancel_and_retry_settle_the_escalation_so_a_stale_resolve_is_rejected(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    direct: type[Cancel | Retry],
+    expected_status: Status,
+) -> None:
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        operator, task_id = escalated.operator, escalated.task.id
+
+        direct_outcome = await operator.send(direct(task_id=task_id))
+        stale = await operator.send(
+            Resolve(escalation_id=escalated.escalation_id, resolution=RetryResolution())
+        )
+
+        assert direct_outcome.status is CommandStatus.DONE
+        assert stale.status is CommandStatus.REJECTED
+        assert operator.task(task_id).status is expected_status
+        assert escalated.escalation_status() is EscalationStatus.RESOLVED
+        assert escalated.resolved_events() == 0
+
+
+async def test_a_resolved_escalation_cannot_be_resolved_again(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        operator = escalated.operator
+        first = await operator.send(
+            Resolve(escalation_id=escalated.escalation_id, resolution=CancelResolution())
+        )
+
+        again = await operator.send(
+            Resolve(escalation_id=escalated.escalation_id, resolution=RetryResolution())
+        )
+
+        assert first.status is CommandStatus.DONE
+        assert again.status is CommandStatus.REJECTED
+        assert operator.task(escalated.task.id).status is Status.CANCELLED
+        assert escalated.resolved_events() == 1
+
+
+async def test_a_title_refresh_failure_after_resolve_does_not_reject_the_applied_resolution(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        await escalated.operator.send(Prioritize(task_id=escalated.task.id, priority=1))
+        await escalated.strand_window(tmp_path)
+        outcome = await escalated.operator.send(
+            Resolve(escalation_id=escalated.escalation_id, resolution=RetryResolution())
+        )
+
+        assert outcome.status is CommandStatus.DONE
+        assert escalated.operator.task(escalated.task.id).status is Status.QUEUED
+        assert escalated.escalation_status() is EscalationStatus.RESOLVED
+        assert escalated.resolved_events() == 1
 
 
 async def test_retry_resolution_drops_only_cancelled_dependencies(

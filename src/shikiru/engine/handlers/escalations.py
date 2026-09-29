@@ -40,18 +40,25 @@ class ResolveHandler:
     async def handle(self, command: Resolve) -> dict[str, object]:
         escalation = self._open_escalation(command)
         task = require_task(self._context, escalation.task_id)
+        if task.status is not Status.ESCALATED:
+            message = (
+                f"{escalation.id} no longer applies: {task.id} is {task.status.value}, "
+                "not escalated"
+            )
+            raise CommandRejectedError(message)
         transition = self._transition(task, escalation, command)
         if not isinstance(command.resolution, AnswerResolution):
             await interrupt_task(self._context, task, even_if_inactive=True)
-        self._apply_transition(task, escalation, command, transition)
+        with self._context.atomically():
+            self._apply_transition(task, escalation, command, transition)
+            self._context.escalations.resolve(escalation.id, self._resolution_text(command))
+            self._context.events.append(
+                EventKind.ESCALATION_RESOLVED,
+                task_id=task.id,
+                message=f"{escalation.id} resolved with {command.resolution.kind.value}",
+                data={"escalation_id": escalation.id, "resolution": command.resolution.kind.value},
+            )
         await refresh_titles(self._context, task.id)
-        self._context.escalations.resolve(escalation.id, self._resolution_text(command))
-        self._context.events.append(
-            EventKind.ESCALATION_RESOLVED,
-            task_id=task.id,
-            message=f"{escalation.id} resolved with {command.resolution.kind.value}",
-            data={"escalation_id": escalation.id, "resolution": command.resolution.kind.value},
-        )
         if isinstance(command.resolution, CancelResolution):
             await self._finish_cancel(task)
         return {

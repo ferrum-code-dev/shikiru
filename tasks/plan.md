@@ -397,9 +397,9 @@ Refs: 03 §4.1, §9, invariant 1.
 
 ### Task 45: Stale escalation actions cannot resurrect work (F05)
 Refs: 03 §8, 06 §2.
-- [ ] Direct `cancel` and `retry` settle the task's open escalations in the same transaction as the task transition.
-- [ ] `Resolve` is checked against the task's current state and rejects an escalation that no longer owns it.
-- [ ] A presentation failure (title refresh) after the durable transition does not turn the acknowledgement into a rejection while leaving the transition applied; the primary state and the acknowledgement agree.
+- [x] Direct `cancel` and `retry` settle the task's open escalations in the same transaction as the task transition.
+- [x] `Resolve` is checked against the task's current state and rejects an escalation that no longer owns it.
+- [x] A presentation failure (title refresh) after the durable transition does not turn the acknowledgement into a rejection while leaving the transition applied; the primary state and the acknowledgement agree.
 - Tests: integration through the daemon and command queue: escalate → cancel → stale resolve (stays cancelled, rejected); escalate → retry → stale resolve; repeated resolve; title-refresh failure after resolve.
 
 ### Task 46: Turn processes own their descendants (F02)

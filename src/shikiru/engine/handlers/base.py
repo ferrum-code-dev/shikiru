@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
@@ -11,6 +12,7 @@ from shikiru.domain.tasks import Status, Task
 from shikiru.errors import CommandRejectedError
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from shikiru.store.escalations import EscalationStore
@@ -22,6 +24,8 @@ if TYPE_CHECKING:
 TaskCallback = Callable[[str], Awaitable[None]]
 TerminalCallback = Callable[[Task], Awaitable[None]]
 RefreshCallback = Callable[[Task], Awaitable[None]]
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,6 +42,7 @@ class HandlerContext:
     finish_task: TerminalCallback
     stop_engine: Callable[[], None]
     refresh_titles: RefreshCallback
+    atomically: Callable[[], AbstractContextManager[object]]
 
 
 CommandT = TypeVar("CommandT", bound=Command)
@@ -86,12 +91,15 @@ def reject_terminal(task: Task) -> None:
 
 
 async def refresh_titles(context: HandlerContext, task_id: str) -> None:
-    """Refresh one task's tmux titles after a command changes its persisted state."""
+    """Refresh one task's tmux titles; a presentation failure is logged, never a rejection."""
     task = context.tasks.get(task_id)
     if task is None:
         message = f"task {task_id} disappeared while refreshing titles"
         raise CommandRejectedError(message)
-    await context.refresh_titles(task)
+    try:
+        await context.refresh_titles(task)
+    except Exception:
+        _LOGGER.exception("title refresh failed for %s", task_id)
 
 
 async def interrupt_task(

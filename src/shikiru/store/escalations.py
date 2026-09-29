@@ -176,6 +176,12 @@ class EscalationStore:
             return None
         return resolution[len(ANSWER_RESOLUTION_PREFIX) :]
 
+    def settle_open(self, task_id: str, resolution: str) -> None:
+        """Resolve every open escalation of `task_id`, so none can act on its later state."""
+        for escalation in fetch_open_escalations(self._connection):
+            if escalation.task_id == task_id:
+                self.resolve(escalation.id, resolution)
+
     def resolve(self, escalation_id: str, resolution: str) -> None:
         """Mark `escalation_id` resolved, recording `resolution`'s summary text."""
         self._connection.execute(

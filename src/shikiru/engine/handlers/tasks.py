@@ -8,6 +8,7 @@ from shikiru.domain.commands import (
     Cancel,
     Pause,
     Prioritize,
+    ResolutionKind,
     Resume,
     Retry,
     SetRung,
@@ -135,13 +136,15 @@ class CancelHandler:
         if current is None:
             message = f"task {task.id} disappeared while cancelling"
             raise CommandRejectedError(message)
-        self._context.tasks.finish(
-            task.id,
-            Transition.stay(current, step=current.step, status=Status.CANCELLED),
-            EventKind.TASK_CANCELLED,
-            message=f"{task.id} cancelled",
-            data={"reason": "cancelled by operator"},
-        )
+        with self._context.atomically():
+            self._context.tasks.finish(
+                task.id,
+                Transition.stay(current, step=current.step, status=Status.CANCELLED),
+                EventKind.TASK_CANCELLED,
+                message=f"{task.id} cancelled",
+                data={"reason": "cancelled by operator"},
+            )
+            self._context.escalations.settle_open(task.id, ResolutionKind.CANCEL.value)
         updated = self._context.tasks.get(task.id)
         if updated is None:
             message = f"task {task.id} disappeared after cancellation"
@@ -172,8 +175,10 @@ class RetryHandler:
             Transition.stay(current, step=current.step, status=Status.QUEUED),
             counters=counters,
         )
-        self._context.tasks.apply_transition(current.id, transition)
-        self._context.tasks.set_requeued(current.id)
+        with self._context.atomically():
+            self._context.tasks.apply_transition(current.id, transition)
+            self._context.tasks.set_requeued(current.id)
+            self._context.escalations.settle_open(current.id, ResolutionKind.RETRY.value)
         await refresh_titles(self._context, current.id)
         return {"task_id": current.id, "status": Status.QUEUED.value}
 

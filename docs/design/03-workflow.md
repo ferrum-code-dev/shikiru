@@ -268,6 +268,8 @@ Dependents become ready only when their dependencies are `done`.
 
 Resolved tasks are re-queued with `requeued_at`. Raising an escalation frees the slot and notifies.
 
+An escalation acts only on the task state it was raised for. `resolve` is rejected unless the task is still `escalated`, and a resolved escalation cannot be resolved again. A direct `cancel` or `retry` settles the task's open escalations in the same transaction as its transition, so a stale escalation can never resurrect or redirect the task. A resolution's status change, escalation row and event are one transaction; a failed tmux title refresh afterwards is logged and never turns the acknowledgement into a rejection.
+
 ## 9. Operator access and intervention
 
 Every action is scoped to **one task**. Other tasks, including parallel ones on the same agent, are unaffected, because each task runs in its own coroutine. The only cross-task effect is an agent quota block (§7), because quota belongs to the account.
