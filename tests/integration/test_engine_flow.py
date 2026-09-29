@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
 
 from shikiru.agents.contracts import Rung, role_dir
-from shikiru.config.settings import AgentConfig
-from shikiru.domain.commands import ResolutionKind
+from shikiru.config.settings import AgentConfig, ComplexityLadder
+from shikiru.domain.commands import ResolutionKind, SetRung
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, StatusReason, Step
+from shikiru.engine.handlers.base import HandlerContext
+from shikiru.engine.handlers.tasks import SetRungHandler
+from shikiru.store.database import transaction
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_ALIAS, FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
@@ -26,9 +30,13 @@ from tests.support.flow import (
     flow_settings,
     init_project_repo,
 )
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from shikiru.config.settings import Settings
+    from pathlib import Path
+
+    from shikiru.config.settings import ComplexityName, Settings
+    from shikiru.domain.tasks import Task
     from tests.support.engine import EngineEnv
     from tests.support.tmux import TmuxServer
 
@@ -348,3 +356,104 @@ async def test_a_supersede_verdict_cancels_the_task_and_enqueues_new_tasks(
     assert final.status_reason is StatusReason.SUPERSEDED
     children = [t for t in engine_env.tasks.list_all() if t.parent_id == task.id]
     assert [child.title for child in children] == ["redo it properly"]
+
+
+_HIGH_RUNG = Rung(agent=FAKE_AGENT_NAME, model="fake-high", effort=None)
+_PINNED_RUNG = Rung(agent=FAKE_AGENT_NAME, model="fake-pinned", effort=None)
+
+
+def _implementer_models(flow_env: FlowEnv, task_id: str) -> list[str]:
+    started = flow_env.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task_id)
+    return [str(e.data["model"]) for e in started if e.data["role"] == Role.IMPLEMENTER.value]
+
+
+_TRIAGE_COMPLEXITY_CASES = {
+    "default_complexity_takes_the_triaged_one": ("normal", "fake-high"),
+    "operator_complexity_keeps_its_ladder": ("low", "fake-1"),
+}
+
+
+@pytest.mark.parametrize(
+    ("submitted", "expected_model"),
+    _TRIAGE_COMPLEXITY_CASES.values(),
+    ids=_TRIAGE_COMPLEXITY_CASES.keys(),
+)
+async def test_triage_persists_title_and_complexity_for_the_next_turn(
+    engine_env: EngineEnv,
+    tmux_server: TmuxServer,
+    submitted: ComplexityName,
+    expected_model: str,
+) -> None:
+    settings = flow_settings()
+    implementer = settings.roles.implementer.model_copy(
+        update={"complexity": {"high": ComplexityLadder(ladder=[_HIGH_RUNG])}}
+    )
+    settings = settings.model_copy(
+        update={"roles": settings.roles.model_copy(update={"implementer": implementer})}
+    )
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, complexity=submitted)
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "accept", "triage_title": "Triaged title", "triage_complexity": "high"}],
+    )
+
+    flow_env = await _run_flow(engine_env, task.id, settings)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.title == "Triaged title"
+    assert final.complexity == ("high" if submitted == "normal" else submitted)
+    assert _implementer_models(flow_env, task.id) == [expected_model]
+
+
+async def test_a_rung_set_during_a_turn_is_kept_and_used_by_the_next_turn(
+    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    release = tmp_path / "release-implement"
+    os.mkfifo(release)
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "accept", "release_fifo": str(release)}, {"kind": "accept"}],
+    )
+    await set_role_script(
+        tmux_server, Role.LEADER, [{"kind": "changes_requested"}, {"kind": "accept"}]
+    )
+    flow_env = build_flow(engine_env, settings)
+    flow_task = asyncio.create_task(flow_env.flow.run(task.id))
+    await wait_until(lambda: bool(_implementer_models(flow_env, task.id)), timeout=30)
+
+    async def unused(_task_id: str) -> None:
+        raise AssertionError
+
+    async def unused_task(_task: Task) -> None:
+        raise AssertionError
+
+    context = HandlerContext(
+        tasks=engine_env.tasks,
+        escalations=flow_env.escalations,
+        events=flow_env.events,
+        runs=engine_env.runs,
+        project_root=engine_env.project_root,
+        cancel_task=unused,
+        start_task=unused,
+        finish_task=unused_task,
+        stop_engine=lambda: None,
+        refresh_titles=flow_env.titles.refresh,
+        atomically=lambda: transaction(engine_env.connection),
+    )
+    await SetRungHandler(context).handle(
+        SetRung(task_id=task.id, role=Role.IMPLEMENTER, rung=_PINNED_RUNG)
+    )
+    await asyncio.to_thread(release.write_text, "go")
+    await asyncio.wait_for(flow_task, timeout=_TIMEOUT_SECONDS)
+
+    assert _implementer_models(flow_env, task.id) == ["fake-1", "fake-pinned"]
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.overrides[Role.IMPLEMENTER] == _PINNED_RUNG

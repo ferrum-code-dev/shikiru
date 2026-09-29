@@ -424,8 +424,8 @@ Refs: 03 §2–3, §6, invariant 4.
 
 ### Task 49: Transitions persist triage results and keep concurrent overrides (F09, F10)
 Refs: 03 §2–3, 05 §2.
-- [ ] A completed triage persists the selected complexity and title with the transition (an explicit operator complexity has the precedence written in 03 §2); the next turn uses the ladder for the persisted complexity.
-- [ ] A `set_rung` acknowledged while a turn runs is kept when that turn completes and is used by the next invocation; rung-change counter semantics are unchanged.
+- [x] A completed triage persists the selected complexity and title with the transition (an explicit operator complexity has the precedence written in 03 §2); the next turn uses the ladder for the persisted complexity.
+- [x] A `set_rung` acknowledged while a turn runs is kept when that turn completes and is used by the next invocation; rung-change counter semantics are unchanged.
 - Tests: integration: triage `high` → the next turn's rung is the high ladder and the title updates; `SetRung` during a controlled in-flight turn → the following turn uses it.
 
 ### Task 50: Dependency graph validation (F11)

@@ -66,6 +66,7 @@ queued ──► running ──► integrating ──► done
 - A `changes_requested` in the final round raises `iterations_exhausted`.
 
 **Triage** is read-only (the prompt forbids edits). Implement and rework turns tick the task's own tracker entry per project conventions; `plan` turns restructure entries (each new task gets its own, and ticks it when done); verify turns never change code or tests (anything missing or wrong is `changes_requested`) and edit only trackers, on scope changes, committing those edits.
+A completed triage persists its `title` and `complexity` with the transition, so the next turn uses the ladder for that complexity (§3). An operator complexity other than the default `normal` keeps precedence over the triaged one; an explicit `--complexity normal` cannot be told from the default and is replaced.
 `submit --mode` skips triage. The title is then the first line of the request, cut to 60 characters.
 
 **Templates.** Every template:
@@ -235,6 +236,7 @@ Dependents become ready only when their dependencies are `done`.
 
 **Rungs**:
 - The resolved rung is `overrides[role]` if set, otherwise the ladder at `rung_index[role]`.
+- A step's transition writes `overrides` only when the step itself changes them (`move_up`), so an operator `rung` acknowledged while a turn runs survives that turn and applies to the next.
 - The Leader uses `roles.leader.ladder`. The Implementer uses `roles.implementer.complexity.<c>.ladder`, falling back to `roles.implementer.ladder`.
 - Each rung change emits `rung_changed`.
 

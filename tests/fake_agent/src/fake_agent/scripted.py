@@ -204,9 +204,9 @@ def _triage_report(step: TurnStep, prompt_text: str) -> Report:
     if not isinstance(step, AcceptStep):
         _unsupported(ReportKind.TRIAGE, step)
     return TriageReport(
-        title="fake triage",
+        title=step.triage_title,
         mode=Mode.IMPLEMENT,
-        complexity="normal",
+        complexity=step.triage_complexity,
         acceptance_criteria=[prompt_text],
         references=[],
     )

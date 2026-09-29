@@ -15,6 +15,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.tasks import (
+    DEFAULT_COMPLEXITY,
     Counters,
     EscalationReason,
     Mode,
@@ -27,7 +28,7 @@ from shikiru.domain.tasks import (
 
 if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
-    from shikiru.config.settings import Settings
+    from shikiru.config.settings import ComplexityName, Settings
 
 CONSULT_LIMIT = 3
 CONFLICT_ROUNDS = 2
@@ -54,7 +55,9 @@ class Transition:
     iteration: int
     counters: Counters
     rung_index: dict[Role, int]
-    overrides: dict[Role, Rung]
+    overrides: dict[Role, Rung] | None = None
+    complexity: ComplexityName | None = None
+    title: str | None = None
     status_reason: StatusReason | None = None
     escalation_reason: EscalationReason | None = None
     repoint_dependents: bool = False
@@ -69,7 +72,6 @@ class Transition:
             iteration=task.iteration,
             counters=task.counters,
             rung_index=dict(task.rung_index),
-            overrides=dict(task.overrides),
         )
 
     @staticmethod
@@ -101,10 +103,18 @@ def first_step(task: Task) -> Transition:
     return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
 
 
+def _triaged_complexity(task: Task, outcome: TriageReport) -> ComplexityName | None:
+    return outcome.complexity if task.complexity == DEFAULT_COMPLEXITY else None
+
+
 def _from_triage(task: Task, outcome: TriageReport) -> Transition:
     if outcome.mode is Mode.IMPLEMENT:
-        return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
-    return Transition.stay(task, step=Step.PLAN)
+        base = dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
+    else:
+        base = Transition.stay(task, step=Step.PLAN)
+    return dataclasses.replace(
+        base, complexity=_triaged_complexity(task, outcome), title=outcome.title
+    )
 
 
 def _from_plan(task: Task) -> Transition:
@@ -141,7 +151,7 @@ def _changes_requested(task: Task, settings: Settings) -> Transition:
         return Transition.escalate(task, EscalationReason.ITERATIONS_EXHAUSTED, step=Step.VERIFY)
     rejections = task.counters.rejections_on_rung + 1
     rung_index = dict(task.rung_index)
-    overrides = dict(task.overrides)
+    overrides = None
     counters = task.counters.model_copy(update={"rejections_on_rung": rejections})
     if rejections >= settings.roles.implementer.escalate_after:
         move = move_up(task, Role.IMPLEMENTER, settings)

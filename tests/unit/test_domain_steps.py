@@ -267,7 +267,7 @@ def test_verify_changes_requested_bumping_the_rung_clears_an_operator_override()
 
     transition = _next(task, make_verdict(decision="changes_requested"))
 
-    assert Role.IMPLEMENTER not in transition.overrides
+    assert transition.overrides == {}
 
 
 def test_verify_changes_requested_at_the_top_of_the_ladder_keeps_counting() -> None:

@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.clock import Clock
-    from shikiru.config.settings import Settings
+    from shikiru.config.settings import ComplexityName, Settings
     from shikiru.domain.tasks import Mode, Task
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
@@ -74,12 +74,16 @@ async def init_project_repo(project_root: Path) -> None:
 
 
 async def build_flow_task(
-    env: EngineEnv, *, title: str = "Add retries", mode: Mode | None = None
+    env: EngineEnv,
+    *,
+    title: str = "Add retries",
+    mode: Mode | None = None,
+    complexity: ComplexityName = "normal",
 ) -> Task:
     """Insert a queued task with real leader/implementer panes and a git worktree."""
     tasks = env.tasks
     queue = CommandQueue(env.connection, env.clock)
-    queued = queue.append(Submit(title=title, request=title, mode=mode))
+    queued = queue.append(Submit(title=title, request=title, mode=mode, complexity=complexity))
     assert isinstance(queued.command, Submit)
     submitted = tasks.insert_from_submit(queued.command)
     leader_pane = await env.new_pane()

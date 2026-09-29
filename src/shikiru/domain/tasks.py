@@ -119,6 +119,9 @@ class RepoState(DomainModel):
     branch: str
 
 
+DEFAULT_COMPLEXITY: ComplexityName = "normal"
+
+
 class Task(DomainModel):
     """The task fields the domain rules need (03 §1.1; mirrors the `tasks` table, 05 §2)."""
 
@@ -129,7 +132,7 @@ class Task(DomainModel):
     title: str
     request: str
     mode: Mode | None = None
-    complexity: ComplexityName = "normal"
+    complexity: ComplexityName = DEFAULT_COMPLEXITY
     priority: int = 0
     depends_on: list[str] = Field(default_factory=list)
     status: Status

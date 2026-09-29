@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from shikiru.agents.contracts import FailureKind
+from shikiru.config.settings import ComplexityName
 
 
 class QuotaWindowStep(BaseModel):
@@ -45,6 +46,8 @@ class AcceptStep(_StepModel):
     corrupt_report: bool = False
     stall_after_report: bool = False
     release_fifo: str = ""
+    triage_title: str = "fake triage"
+    triage_complexity: ComplexityName = "normal"
 
 
 class SupersedeStep(_StepModel):

@@ -313,14 +313,19 @@ class TaskStore:
         return fetch_tasks(self._connection)
 
     def apply_transition(self, task_id: str, transition: Transition) -> None:
-        """Persist `transition`'s step, status, iteration, counters and rungs (03 §2-3, §6-7)."""
+        """Persist `transition`'s step, status, iteration, counters, rungs and triage results.
+
+        Overrides, complexity and title are written only when the transition sets them, so a
+        concurrent operator override survives the turn that was running (03 §2-3, §6-7).
+        """
         now = format_timestamp(self._clock.now())
         status = transition.status.value
         self._connection.execute(
             """
             UPDATE tasks SET
               step = ?, status = ?, status_reason = ?, iteration = ?,
-              counters = ?, rung_index = ?, overrides = ?,
+              counters = ?, rung_index = ?, overrides = COALESCE(?, overrides),
+              complexity = COALESCE(?, complexity), title = COALESCE(?, title),
               started_at = CASE WHEN ? = ? AND started_at IS NULL THEN ? ELSE started_at END,
               finished_at = CASE WHEN ? IN (?, ?) AND finished_at IS NULL
                 THEN ? ELSE finished_at END
@@ -333,7 +338,11 @@ class TaskStore:
                 transition.iteration,
                 dump_json(_COUNTERS_ADAPTER, transition.counters),
                 dump_json(_RUNG_INDEX_ADAPTER, transition.rung_index),
-                dump_json(_OVERRIDES_ADAPTER, transition.overrides),
+                None
+                if transition.overrides is None
+                else dump_json(_OVERRIDES_ADAPTER, transition.overrides),
+                transition.complexity,
+                transition.title,
                 status,
                 Status.RUNNING.value,
                 now,
