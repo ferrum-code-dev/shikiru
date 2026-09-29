@@ -41,18 +41,18 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
 from shikiru.telemetry.docker import (
     DOCKER_BINARY,
-    DOCKER_COMMAND_TIMEOUT_SECONDS,
     DOCKER_FORMAT_FLAG,
     DOCKER_JSON_FORMAT,
     DOCKER_NO_STREAM_FLAG,
     DOCKER_STATS_SUBCOMMAND,
     DockerSampler,
 )
-from shikiru.telemetry.resources import RESOURCE_SAMPLE_SECONDS, ResourceSampler
+from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import Tmux
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
+from tests.support.factories import make_settings
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -126,6 +126,8 @@ def _context(
             motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
         ),
         focus_task=None,
+        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         on_change=reader.watch,
         on_motion=lambda _: None,
         open_palette=open_palette or _open_palette,
@@ -333,15 +335,27 @@ async def test_resources_service_samples_every_pane_in_the_project_session(
         for process in [task_process, *task_process.children(recursive=True)]
     )
     clock = FakeClock(START)
-    sampler = ResourceSampler(clock)
+    settings = make_settings()
+    sampler = ResourceSampler(clock, settings.orchestration.resources)
     service = DashboardServices(
-        GitRepoStatusService(Git(SubprocessRunner()), RepoConfig(base=None), tmp_path, clock),
+        GitRepoStatusService(
+            Git(SubprocessRunner()),
+            RepoConfig(base=None),
+            tmp_path,
+            clock,
+            cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
+        ),
         engine_up=lambda: False,
         engine_pid=lambda: None,
         tmux=tmux,
         session_target=session_target,
         resources=sampler,
-        docker=DockerSampler(SubprocessRunner(), clock),
+        docker=DockerSampler(
+            SubprocessRunner(),
+            clock,
+            refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            timeout_seconds=settings.dashboard.docker_timeout_seconds,
+        ),
     )
 
     try:
@@ -351,7 +365,7 @@ async def test_resources_service_samples_every_pane_in_the_project_session(
 
     assert snapshot.instance_rss_gb is not None
     assert snapshot.instance_rss_gb * BYTES_PER_GIB >= task_tree_rss
-    clock.advance(RESOURCE_SAMPLE_SECONDS)
+    clock.advance(settings.orchestration.resources.sample_seconds)
     overlapping_sample = sampler.sample_process_trees(pane_pids[1], pane_pids)
     assert overlapping_sample.instance_rss_gb is not None
     assert (
@@ -361,7 +375,8 @@ async def test_resources_service_samples_every_pane_in_the_project_session(
 
 def test_resource_sampler_measures_a_real_process_tree() -> None:
     clock = FakeClock(START)
-    sampler = ResourceSampler(clock)
+    settings = make_settings()
+    sampler = ResourceSampler(clock, settings.orchestration.resources)
 
     try:
         snapshot = sampler.sample_process_trees(os.getpid(), ())
@@ -371,7 +386,7 @@ def test_resource_sampler_measures_a_real_process_tree() -> None:
     assert snapshot.instance_rss_gb is not None
     assert snapshot.instance_rss_gb > 0
 
-    clock.advance(RESOURCE_SAMPLE_SECONDS)
+    clock.advance(settings.orchestration.resources.sample_seconds)
     for _ in range(CPU_WORK_ITERATIONS):
         pass
     refreshed = sampler.sample_process_trees(os.getpid(), ())
@@ -393,13 +408,19 @@ async def test_docker_sampler_reads_a_real_docker_stats_sample() -> None:
             DOCKER_FORMAT_FLAG,
             DOCKER_JSON_FORMAT,
         ],
-        timeout=DOCKER_COMMAND_TIMEOUT_SECONDS,
+        timeout=make_settings().dashboard.docker_timeout_seconds,
         check=False,
     )
     if direct.returncode != 0:
         pytest.skip("Docker daemon is unavailable")
     raw = [json.loads(line) for line in direct.stdout.splitlines()]
-    sampler = DockerSampler(runner, FakeClock(START))
+    settings = make_settings()
+    sampler = DockerSampler(
+        runner,
+        FakeClock(START),
+        refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        timeout_seconds=settings.dashboard.docker_timeout_seconds,
+    )
 
     snapshot = await sampler.sample()
 

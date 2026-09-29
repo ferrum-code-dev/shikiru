@@ -21,8 +21,6 @@ DOCKER_STATS_SUBCOMMAND = "stats"
 DOCKER_NO_STREAM_FLAG = "--no-stream"
 DOCKER_FORMAT_FLAG = "--format"
 DOCKER_JSON_FORMAT = "json"
-DOCKER_COMMAND_TIMEOUT_SECONDS = 5.0
-DOCKER_SAMPLE_SECONDS = 5
 DOCKER_NAME_FIELD = "Name"
 DOCKER_CPU_FIELD = "CPUPerc"
 DOCKER_MEMORY_FIELD = "MemUsage"
@@ -52,10 +50,19 @@ class DockerStatsError(ValueError):
 class DockerSampler:
     """Samples `docker stats --no-stream --format json` through `SubprocessRunner`."""
 
-    def __init__(self, runner: SubprocessRunner, clock: Clock) -> None:
+    def __init__(
+        self,
+        runner: SubprocessRunner,
+        clock: Clock,
+        *,
+        refresh_seconds: float,
+        timeout_seconds: float,
+    ) -> None:
         """Use injected process and time boundaries for Docker sampling."""
         self._runner = runner
         self._clock = clock
+        self._refresh_seconds = refresh_seconds
+        self._timeout_seconds = timeout_seconds
         self._sampled_at: datetime | None = None
         self._last = DockerSnapshot(available=False)
 
@@ -74,7 +81,7 @@ class DockerSampler:
                         DOCKER_FORMAT_FLAG,
                         DOCKER_JSON_FORMAT,
                     ],
-                    timeout=DOCKER_COMMAND_TIMEOUT_SECONDS,
+                    timeout=self._timeout_seconds,
                     check=False,
                 )
             except CommandTimeoutError:
@@ -93,11 +100,11 @@ class DockerSampler:
         return self._last
 
     async def sample_if_due(self) -> DockerSnapshot:
-        """Run a Docker sample no more often than the five-second protocol cadence."""
+        """Run a Docker sample no more often than the configured refresh cadence."""
         sampled_at = self._sampled_at
         if (
             sampled_at is None
-            or (self._clock.now() - sampled_at).total_seconds() >= DOCKER_SAMPLE_SECONDS
+            or (self._clock.now() - sampled_at).total_seconds() >= self._refresh_seconds
         ):
             return await self.sample()
         return self._last

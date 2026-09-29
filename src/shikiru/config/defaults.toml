@@ -13,6 +13,8 @@ poll_seconds = 2
 [orchestration.resources]
 max_cpu_pct = 85
 min_free_ram_gb = 4
+sample_seconds = 2
+cpu_window_seconds = 30
 
 [orchestration.timeouts]
 stall = 1200
@@ -27,6 +29,9 @@ escalate_after = 2
 [dashboard]
 widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
 animations = true
+docker_refresh_seconds = 5
+docker_timeout_seconds = 5
+repo_status_cache_seconds = 10
 
 [dashboard.motion]
 refresh_hz = 4

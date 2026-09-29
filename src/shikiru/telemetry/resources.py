@@ -15,8 +15,6 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import ResourcesConfig
 
-CPU_WINDOW_SECONDS = 30
-RESOURCE_SAMPLE_SECONDS = 2
 _BYTES_PER_GIB = 1024**3
 
 
@@ -34,9 +32,10 @@ class ResourceSnapshot:
 class ResourceSampler:
     """Samples host CPU and available memory through `psutil`."""
 
-    def __init__(self, clock: Clock) -> None:
-        """Use `clock` to keep host CPU samples within one rolling window."""
+    def __init__(self, clock: Clock, config: ResourcesConfig) -> None:
+        """Use `clock` and configured cadences for resource samples."""
         self._clock = clock
+        self._config = config
         self._host_cpu: deque[tuple[datetime, float]] = deque()
         self._last = ResourceSnapshot(0.0, 0.0, 0.0)
         self._sampled_at: datetime | None = None
@@ -59,11 +58,11 @@ class ResourceSampler:
         return self._last
 
     def sample_if_due(self) -> ResourceSnapshot:
-        """Sample at the protocol cadence and return the latest snapshot."""
+        """Sample at the configured cadence and return the latest snapshot."""
         sampled_at = self._sampled_at
         if (
             sampled_at is None
-            or (self._clock.now() - sampled_at).total_seconds() >= RESOURCE_SAMPLE_SECONDS
+            or (self._clock.now() - sampled_at).total_seconds() >= self._config.sample_seconds
         ):
             return self.sample()
         return self._last
@@ -82,7 +81,10 @@ class ResourceSampler:
         """Sample host usage and the selected engine and pane process trees."""
         now = self._clock.now()
         sampled_at = self._instance_sampled_at
-        if sampled_at is not None and (now - sampled_at).total_seconds() < RESOURCE_SAMPLE_SECONDS:
+        if (
+            sampled_at is not None
+            and (now - sampled_at).total_seconds() < self._config.sample_seconds
+        ):
             return self._last
         host_sample = self.sample_if_due()
         processes = self._process_tree(engine_pid, pane_pids)
@@ -144,7 +146,7 @@ class ResourceSampler:
             return None
 
     def _trim(self, now: datetime) -> None:
-        cutoff = now.timestamp() - CPU_WINDOW_SECONDS
+        cutoff = now.timestamp() - self._config.cpu_window_seconds
         while self._host_cpu and self._host_cpu[0][0].timestamp() < cutoff:
             self._host_cpu.popleft()
 

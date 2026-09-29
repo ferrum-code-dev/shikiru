@@ -99,6 +99,8 @@ def _context(
             motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
         ),
         focus_task=None,
+        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         on_change=reader.watch,
         on_motion=lambda _: None,
         open_palette=_open_palette,

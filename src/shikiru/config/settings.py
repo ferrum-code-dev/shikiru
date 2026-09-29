@@ -48,6 +48,8 @@ class ResourcesConfig(ConfigModel):
 
     max_cpu_pct: int
     min_free_ram_gb: float
+    sample_seconds: float = Field(gt=0)
+    cpu_window_seconds: float = Field(gt=0)
 
 
 class TimeoutsConfig(ConfigModel):
@@ -155,6 +157,9 @@ class DashboardConfig(ConfigModel):
     titles: TitlesConfig
     animations: bool
     motion: DashboardMotionConfig
+    docker_refresh_seconds: float = Field(gt=0)
+    docker_timeout_seconds: float = Field(gt=0)
+    repo_status_cache_seconds: float = Field(gt=0)
 
 
 class NotifyConfig(ConfigModel):

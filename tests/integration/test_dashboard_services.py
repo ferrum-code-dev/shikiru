@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from shikiru.config.settings import RepoConfig
-from shikiru.dashboard.services import REPO_STATUS_CACHE_TTL_SECONDS, GitRepoStatusService
+from shikiru.dashboard.services import GitRepoStatusService
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
@@ -28,7 +28,9 @@ async def test_repo_status_reports_branch_ahead_behind_and_dirty_count(tmp_path:
     await commit_all(runner, repo_dir, "feature commit")
     (repo_dir / "c.txt").write_text("dirty")
 
-    service = GitRepoStatusService(git, RepoConfig(base="main"), repo_dir, FakeClock(START))
+    service = GitRepoStatusService(
+        git, RepoConfig(base="main"), repo_dir, FakeClock(START), cache_ttl_seconds=10
+    )
     status = await service.repo_status()
 
     assert status.branch == "feature"
@@ -46,13 +48,20 @@ async def test_repo_status_is_cached_within_the_ttl(tmp_path: Path) -> None:
     await commit_all(runner, repo_dir, "initial")
 
     clock = FakeClock(START)
-    service = GitRepoStatusService(git, RepoConfig(base="main"), repo_dir, clock)
+    cache_ttl_seconds = 3
+    service = GitRepoStatusService(
+        git,
+        RepoConfig(base="main"),
+        repo_dir,
+        clock,
+        cache_ttl_seconds=cache_ttl_seconds,
+    )
 
     first = await service.repo_status()
     (repo_dir / "b.txt").write_text("2")
     cached = await service.repo_status()
     assert cached.dirty == first.dirty == 0
 
-    clock.advance(REPO_STATUS_CACHE_TTL_SECONDS + 1)
+    clock.advance(cache_ttl_seconds + 1)
     refreshed = await service.repo_status()
     assert refreshed.dirty == 1

@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 from textual.widgets import Static
 
-from shikiru.dashboard.contract import DOCKER_REFRESH_SECONDS
-
 if TYPE_CHECKING:
     from textual.widget import Widget
 
@@ -34,9 +32,9 @@ class DockerPanel(Static):
         self.display = False
 
     async def on_mount(self) -> None:
-        """Render and refresh Docker state at the five-second protocol cadence."""
+        """Render and refresh Docker state at the configured cadence."""
         await self._refresh()
-        self.set_interval(DOCKER_REFRESH_SECONDS, self._refresh)
+        self.set_interval(self._widget_context.docker_refresh_seconds, self._refresh)
 
     async def _refresh(self) -> None:
         snapshot = await self._widget_context.views.containers()

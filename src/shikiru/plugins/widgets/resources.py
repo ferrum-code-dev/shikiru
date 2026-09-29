@@ -8,7 +8,6 @@ from rich.console import Group
 from rich.text import Text
 from textual.widgets import Static
 
-from shikiru.dashboard.contract import RESOURCE_REFRESH_SECONDS
 from shikiru.ui import Gauge
 
 if TYPE_CHECKING:
@@ -47,9 +46,9 @@ class ResourcesPanel(Static):
         self._widget_context = context
 
     async def on_mount(self) -> None:
-        """Render and resample resources at the two-second protocol cadence."""
+        """Render and resample resources at the configured cadence."""
         await self._refresh()
-        self.set_interval(RESOURCE_REFRESH_SECONDS, self._refresh)
+        self.set_interval(self._widget_context.resources_refresh_seconds, self._refresh)
 
     async def _refresh(self) -> None:
         self.update(_resource_lines(await self._widget_context.views.resources()))

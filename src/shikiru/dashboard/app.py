@@ -55,6 +55,8 @@ class DashboardApp(App[None]):
         on_change: OnChangeRegistration,
         clock: Clock,
         motion_interval_seconds: float | None,
+        resources_refresh_seconds: float,
+        docker_refresh_seconds: float,
         open_palette: OpenPalette,
         widget_names: Sequence[str],
     ) -> None:
@@ -65,6 +67,8 @@ class DashboardApp(App[None]):
         self._on_change = on_change
         self._clock = clock
         self._motion_interval_seconds = motion_interval_seconds
+        self._resources_refresh_seconds = resources_refresh_seconds
+        self._docker_refresh_seconds = docker_refresh_seconds
         self._open_palette = open_palette
         self._widget_names = tuple(widget_names)
         self._motion_callbacks: list[OnChange] = []
@@ -74,6 +78,8 @@ class DashboardApp(App[None]):
         context = WidgetContext(
             views=self._views,
             focus_task=self._focus_task,
+            resources_refresh_seconds=self._resources_refresh_seconds,
+            docker_refresh_seconds=self._docker_refresh_seconds,
             on_change=self._on_change,
             on_motion=self._motion_callbacks.append,
             open_palette=self._open_palette,

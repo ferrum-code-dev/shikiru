@@ -90,7 +90,12 @@ def make_settings(
             max_iterations=max_iterations,
             integration="merge",
             poll_seconds=2,
-            resources=ResourcesConfig(max_cpu_pct=85, min_free_ram_gb=4),
+            resources=ResourcesConfig(
+                max_cpu_pct=85,
+                min_free_ram_gb=4,
+                sample_seconds=2,
+                cpu_window_seconds=30,
+            ),
             timeouts=TimeoutsConfig(
                 stall=1200,
                 tool=7200,
@@ -113,6 +118,9 @@ def make_settings(
             layout=LayoutSplit(split="h", panes=[PaneLeaf(pane="system")]),
             titles=TitlesConfig(window="", leader="", implementer="", system="", shell=""),
             animations=True,
+            docker_refresh_seconds=5,
+            docker_timeout_seconds=5,
+            repo_status_cache_seconds=10,
             motion=DashboardMotionConfig(
                 refresh_hz=4,
                 stream_active_seconds=10,

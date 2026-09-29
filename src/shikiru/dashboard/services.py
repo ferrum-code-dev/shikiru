@@ -1,8 +1,7 @@
 """Real `WidgetServices` implementations, wired by `bootstrap` (docs/design/06-operator.md §5.4).
 
-`GitRepoStatusService` is the `header` widget's only source of git data, cached for
-`REPO_STATUS_CACHE_TTL_SECONDS` so a 0.5 s dashboard refresh never spawns a git process on
-every tick.
+`GitRepoStatusService` is the `header` widget's only source of git data and caches it for its
+configured interval so a dashboard refresh never spawns a git process on every tick.
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ if TYPE_CHECKING:
     from shikiru.tmux.client import Tmux
     from shikiru.workspace.git import Git
 
-REPO_STATUS_CACHE_TTL_SECONDS = 10.0
 _PANE_RESOURCE_FORMAT = "#{pane_id} #{pane_pid}"
 
 
@@ -35,14 +33,23 @@ class _CachedRepoStatus:
 
 
 class GitRepoStatusService:
-    """Reports `header`'s repo row, refreshing git data at most once per 10 s (06 §5.4)."""
+    """Report `header`'s repo row, refreshing at most once per configured interval (06 §5.4)."""
 
-    def __init__(self, git: Git, repo: RepoConfig, project_dir: Path, clock: Clock) -> None:
+    def __init__(
+        self,
+        git: Git,
+        repo: RepoConfig,
+        project_dir: Path,
+        clock: Clock,
+        *,
+        cache_ttl_seconds: float,
+    ) -> None:
         """Read `project_dir`'s checkout, configured by `repo`, through `git` when asked."""
         self._git = git
         self._repo = repo
         self._project_dir = project_dir
         self._clock = clock
+        self._cache_ttl_seconds = cache_ttl_seconds
         self._cache: _CachedRepoStatus | None = None
 
     async def repo_status(self) -> RepoStatus:
@@ -50,7 +57,7 @@ class GitRepoStatusService:
         now = self._clock.now()
         if self._cache is not None:
             age = (now - self._cache.fetched_at).total_seconds()
-            if age < REPO_STATUS_CACHE_TTL_SECONDS:
+            if age < self._cache_ttl_seconds:
                 return self._cache.status
         status = await self._status()
         self._cache = _CachedRepoStatus(fetched_at=now, status=status)

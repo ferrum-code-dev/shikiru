@@ -100,6 +100,10 @@ async def test_dashboard_app_rejects_an_unregistered_widget_name(
             on_change=reader.watch,
             clock=SystemClock(),
             motion_interval_seconds=_motion_interval(project_dir),
+            resources_refresh_seconds=load_settings(
+                project_dir
+            ).orchestration.resources.sample_seconds,
+            docker_refresh_seconds=load_settings(project_dir).dashboard.docker_refresh_seconds,
             open_palette=_open_palette,
             widget_names=["no-such-widget"],
         )
@@ -127,6 +131,8 @@ async def test_dashboard_mounts_the_default_widgets(
             on_change=reader.watch,
             clock=SystemClock(),
             motion_interval_seconds=_motion_interval(project_dir),
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=_open_palette,
             widget_names=settings.dashboard.widgets,
         )
@@ -162,6 +168,8 @@ async def test_default_dashboard_widgets_fit_a_narrow_system_pane(
             on_change=reader.watch,
             clock=SystemClock(),
             motion_interval_seconds=_motion_interval(project_dir),
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=_open_palette,
             widget_names=settings.dashboard.widgets,
         )
@@ -217,6 +225,10 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
             on_change=reader.watch,
             clock=SystemClock(),
             motion_interval_seconds=_motion_interval(project_dir),
+            resources_refresh_seconds=load_settings(
+                project_dir
+            ).orchestration.resources.sample_seconds,
+            docker_refresh_seconds=load_settings(project_dir).dashboard.docker_refresh_seconds,
             open_palette=open_palette,
             widget_names=[],
         )
@@ -284,6 +296,10 @@ async def test_dashboard_app_rejects_an_ambiguous_widget_name(
             on_change=reader.watch,
             clock=SystemClock(),
             motion_interval_seconds=_motion_interval(project_dir),
+            resources_refresh_seconds=load_settings(
+                project_dir
+            ).orchestration.resources.sample_seconds,
+            docker_refresh_seconds=load_settings(project_dir).dashboard.docker_refresh_seconds,
             open_palette=_open_palette,
             widget_names=["dup"],
         )

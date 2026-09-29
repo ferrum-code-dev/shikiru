@@ -14,8 +14,6 @@ if TYPE_CHECKING:
     from shikiru.ui.strip import TaskStripData
 
 WIDGET_ENTRY_POINT_GROUP = "shikiru.widgets"
-RESOURCE_REFRESH_SECONDS = 2
-DOCKER_REFRESH_SECONDS = 5
 OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
 MotionRegistration = Callable[[OnChange], None]
@@ -181,6 +179,8 @@ class WidgetContext:
 
     views: DashboardViews
     focus_task: str | None
+    resources_refresh_seconds: float
+    docker_refresh_seconds: float
     on_change: OnChangeRegistration
     on_motion: MotionRegistration
     open_palette: OpenPalette

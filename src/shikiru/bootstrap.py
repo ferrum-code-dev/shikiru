@@ -252,13 +252,24 @@ async def run_dashboard(
         session_target = exact_target(session_name(settings.project.name))
         tmux = Tmux(runner)
         dashboard_services = dashboard_services_module.DashboardServices(
-            dashboard_services_module.GitRepoStatusService(git, settings.repo, project_root, clock),
+            dashboard_services_module.GitRepoStatusService(
+                git,
+                settings.repo,
+                project_root,
+                clock,
+                cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
+            ),
             engine_up=lambda: engine_is_running(lock_path),
             engine_pid=lambda: EngineLock.pid_if_running(lock_path),
             tmux=tmux,
             session_target=session_target,
-            resources=ResourceSampler(clock),
-            docker=DockerSampler(runner, clock),
+            resources=ResourceSampler(clock, settings.orchestration.resources),
+            docker=DockerSampler(
+                runner,
+                clock,
+                refresh_seconds=settings.dashboard.docker_refresh_seconds,
+                timeout_seconds=settings.dashboard.docker_timeout_seconds,
+            ),
         )
         motion = dashboard_motion_module.DashboardMotion(
             services.reader,
@@ -298,6 +309,8 @@ async def run_dashboard(
             motion_interval_seconds=(
                 1 / settings.dashboard.motion.refresh_hz if settings.dashboard.animations else None
             ),
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
         )
@@ -531,7 +544,7 @@ def build_engine(
             StopHandler(handler_context),
         ]
     )
-    sampler = ResourceSampler(resolved_clock)
+    sampler = ResourceSampler(resolved_clock, resolved_settings.orchestration.resources)
     notifier = Notifier(
         resolved_tmux,
         resolved_runner,
