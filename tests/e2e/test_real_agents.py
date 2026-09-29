@@ -555,7 +555,7 @@ async def _e5_body(
         await _assert_no_duplicate_commits(project)
         await _assert_git_and_tracker(project, "A1")
     finally:
-        SubprocessRunner().send_signal(orphan, signal.SIGKILL)
+        SubprocessRunner().signal_group(orphan, signal.SIGKILL)
 
 
 async def _wait_for_implement_turn(project: PreparedProject) -> tuple[ProcessIdentity, str]:

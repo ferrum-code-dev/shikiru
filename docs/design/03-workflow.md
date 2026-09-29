@@ -137,6 +137,8 @@ Every `orchestration.poll_seconds` it checks `domain.activity.is_stalled(last_si
 
 The engine writes `runs/T/<role>/turn.pid` while the process runs, so a restarted engine can end an orphan (§7). The file holds the process id and its start time; a process is treated as the orphan only while both still match, so a reused pid is never signalled.
 
+Each turn process is started in its own process group, which the engine owns: `stop()` sends SIGTERM to the group, SIGKILLs it after `TURN_STOP_GRACE`, and always SIGKILLs it once the direct child has exited, so no descendant outlives its turn. Reading stderr after the exit is bounded by `STDERR_DRAIN_TIMEOUT`; a descendant that escaped the group and still holds the pipe cannot block `stop()`. The recorded pid is the group's id.
+
 ### 4.3 TurnRunner
 
 `run(task, role, TurnSpec) → TurnResult`, where the result is one of:
@@ -232,7 +234,7 @@ Dependents become ready only when their dependencies are `done`.
 
 **Engine restart (`Reconciler`)**:
 1. Rebuild the tmux session and windows from the DB (`LayoutGuard`).
-2. End orphaned turn processes: a `runs/T/<role>/turn.pid` whose process still runs is stopped (SIGTERM, then SIGKILL after `TURN_STOP_GRACE`), since the old engine died without stopping it.
+2. End orphaned turn processes: a `runs/T/<role>/turn.pid` whose process still runs has its whole process group stopped (SIGTERM, then SIGKILL after `TURN_STOP_GRACE`), since the old engine died without stopping it. A recorded pid now held by a process with a different start time is never signalled. The group is stopped even when its leader already exited, because a live group id is never reused as a pid.
 3. For each `running` or `integrating` task without a hold, re-run the current step (a held task waits for `resume`, §6); its turn resumes the session (§4.1). The step's turn is idempotent: an existing valid `report.json` is consumed without starting a turn. That holds only for the first turn of the resumed flow, and only when that step's turn dir is still the task's latest and the role's `current_turn`; any other report there was already consumed.
 4. Finish interrupted cleanup: a terminal task is entered together with its terminal event (`task_done`, `task_cancelled`) in one transaction and cleaned up afterwards, worktree last. A `done` or `cancelled` task whose task root still exists is cleaned up again (sessions closed, window closed, worktree removed); its event is never re-emitted.
 5. Pending `commands` are processed by the normal loop.

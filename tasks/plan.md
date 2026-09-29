@@ -404,8 +404,8 @@ Refs: 03 §8, 06 §2.
 
 ### Task 46: Turn processes own their descendants (F02)
 Refs: 03 §4.3, §7, 04 §6.
-- [ ] `SubprocessRunner.spawn` starts each turn in its own process group; `stop()` signals the group, then kills it after the grace period, and its wait for stderr EOF is bounded.
-- [ ] Orphan cleanup after a restart signals the recorded group only while the recorded PID identity still matches.
+- [x] `SubprocessRunner.spawn` starts each turn in its own process group; `stop()` signals the group, then kills it after the grace period, and its wait for stderr EOF is bounded.
+- [x] Orphan cleanup after a restart signals the recorded group only while the recorded PID identity still matches.
 - Tests: integration with a real runner: a descendant that inherits stdout/stderr and outlives or ignores its parent; `stop(grace)` returns within a bound and the descendant is gone; orphan cleanup ends it and never signals a reused PID.
 
 ### Task 47: Dependents start from the merged base in PR mode (F06)

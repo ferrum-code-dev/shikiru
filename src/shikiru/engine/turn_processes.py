@@ -68,11 +68,9 @@ class TurnProcesses:
             path.unlink()
 
     async def _stop(self, identity: ProcessIdentity) -> None:
-        if not self._runner.send_signal(identity, signal.SIGTERM):
+        if not self._runner.signal_group(identity, signal.SIGTERM):
             return
         deadline = self._clock.now() + timedelta(seconds=TURN_STOP_GRACE)
-        while self._runner.is_running(identity):
-            if self._clock.now() >= deadline:
-                self._runner.send_signal(identity, signal.SIGKILL)
-                return
+        while self._runner.is_running(identity) and self._clock.now() < deadline:
             await self._clock.sleep(EXIT_POLL_SECONDS)
+        self._runner.signal_group(identity, signal.SIGKILL)

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 TURN_STOP_GRACE = 10.0
+STDERR_DRAIN_TIMEOUT = 2.0
 _STDERR_READ_SIZE = 65536
 _STDOUT_READ_SIZE = 65536
 _STDERR_TAIL_CHARS = 4000
@@ -39,6 +40,19 @@ class ProcessResult:
     stderr: str
 
 
+def _killpg(pgid: int, signum: signal.Signals) -> bool:
+    """Signal process group `pgid`; return whether it was sent.
+
+    A missing group, or on macOS a group of only zombies (a permission error), has nothing left
+    to signal.
+    """
+    try:
+        os.killpg(pgid, signum)
+    except ProcessLookupError, PermissionError:
+        return False
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class ProcessIdentity:
     """A process id with its start time, which together never match a reused pid."""
@@ -52,8 +66,10 @@ class SpawnedProcess:
 
     def __init__(self, process: asyncio.subprocess.Process) -> None:
         self._process = process
+        self._stderr_chunks: list[bytes] = []
         self._stderr_task = asyncio.create_task(self._read_stderr())
         self._stdout_read = False
+        self._group_swept = False
         self._stop_lock = asyncio.Lock()
         self._stderr = ""
         self._stderr_bytes = b""
@@ -103,35 +119,35 @@ class SpawnedProcess:
             yield bytes(pending)
 
     async def wait(self) -> int:
-        """Wait for process exit and finish capturing stderr."""
+        """Wait for process exit, end its process group, and capture stderr within a bound."""
         returncode = await self._process.wait()
-        stderr_bytes = await self._stderr_task
-        self._stderr_bytes = stderr_bytes
-        self._stderr = stderr_bytes.decode(errors="replace")
+        if not self._group_swept:
+            self._group_swept = True
+            _killpg(self._process.pid, signal.SIGKILL)
+        _, pending = await asyncio.wait({self._stderr_task}, timeout=STDERR_DRAIN_TIMEOUT)
+        for task in pending:
+            task.cancel()
+        self._stderr_bytes = b"".join(self._stderr_chunks)
+        self._stderr = self._stderr_bytes.decode(errors="replace")
         return returncode
 
     async def stop(self, *, grace: float = TURN_STOP_GRACE) -> None:
-        """Send SIGTERM, then SIGKILL after `grace`, and reap the child."""
+        """Signal the process group with SIGTERM, then SIGKILL after `grace`, and reap it."""
         async with self._stop_lock:
             if self._process.returncode is None:
-                with suppress(ProcessLookupError):
-                    self._process.send_signal(signal.SIGTERM)
-                try:
+                _killpg(self._process.pid, signal.SIGTERM)
+                with suppress(TimeoutError):
                     await asyncio.wait_for(self._process.wait(), timeout=grace)
-                except TimeoutError:
-                    with suppress(ProcessLookupError):
-                        self._process.kill()
-                    await self._process.wait()
+                if self._process.returncode is None:
+                    _killpg(self._process.pid, signal.SIGKILL)
             await self.wait()
 
-    async def _read_stderr(self) -> bytes:
+    async def _read_stderr(self) -> None:
         if self._process.stderr is None:
             message = "spawned process has no stderr pipe"
             raise RuntimeError(message)
-        chunks: list[bytes] = []
         while chunk := await self._process.stderr.read(_STDERR_READ_SIZE):
-            chunks.append(chunk)
-        return b"".join(chunks)
+            self._stderr_chunks.append(chunk)
 
 
 class SubprocessRunner:
@@ -197,6 +213,7 @@ class SubprocessRunner:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
         return SpawnedProcess(process)
 
@@ -245,15 +262,15 @@ class SubprocessRunner:
         """Return whether the very process `identity` names still runs."""
         return self.identify(identity.pid) == identity
 
-    def send_signal(self, identity: ProcessIdentity, signum: signal.Signals) -> bool:
-        """Send `signum` to `identity`'s process if it still runs; return whether it was sent."""
-        if not self.is_running(identity):
+    def signal_group(self, identity: ProcessIdentity, signum: signal.Signals) -> bool:
+        """Send `signum` to the process group `identity` leads; return whether it was sent.
+
+        A group outlives its leader while any member runs, and no pid equal to a live group id is
+        reused, so only a pid now held by a different process is refused.
+        """
+        if self.identify(identity.pid) not in (None, identity):
             return False
-        try:
-            os.kill(identity.pid, signum)
-        except ProcessLookupError:
-            return False
-        return True
+        return _killpg(identity.pid, signum)
 
     def replace(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None) -> NoReturn:
         """Replace this process with `argv`, resolving its executable on `PATH`."""

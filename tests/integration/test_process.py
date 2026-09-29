@@ -15,9 +15,12 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tests.support.process_tree import ProcessTree
+
 pytestmark = pytest.mark.asyncio
 
 _PID_FILE_WAIT_TIMEOUT = 5.0
+_STOP_BOUND_SECONDS = 5.0
 
 
 async def test_run_returns_stdout_and_zero_returncode() -> None:
@@ -154,3 +157,18 @@ async def test_spawn_stop_sends_sigterm_then_sigkill_and_reaps_child() -> None:
     assert process.returncode == -signal.SIGKILL
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+async def test_stop_returns_within_a_bound_and_ends_a_descendant_holding_the_pipes(
+    process_tree: ProcessTree,
+) -> None:
+    runner = SubprocessRunner()
+    process = await runner.spawn(process_tree.argv)
+    process_tree.parent_pid = process.pid
+    descendant = runner.identify(await process_tree.descendant_started())
+    assert descendant is not None
+
+    await asyncio.wait_for(process.stop(grace=0.5), timeout=_STOP_BOUND_SECONDS)
+
+    assert [line async for line in process.stdout_lines()] == []
+    assert not runner.is_running(descendant)
