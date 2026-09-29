@@ -461,7 +461,14 @@ def build_engine(
         trackers=resolved_settings.project.trackers,
     )
     task_finisher = TaskFinisher(sessions, layout, roots)
-    escalation_raiser = EscalationRaiser(escalations_store, events, runs, project_root)
+    escalation_raiser = EscalationRaiser(
+        escalations_store,
+        events,
+        runs,
+        project_root,
+        atomically=lambda: transaction(connection),
+        titles=titles,
+    )
     integrator = _build_integrator(
         project_root=project_root,
         settings=resolved_settings,
@@ -570,8 +577,8 @@ def build_engine(
         layout=layout,
         roots=roots,
         events=events,
-        on_dependency_cancelled=DependencyEscalator(tasks, escalation_raiser, titles),
-        on_dispatch_failure=DispatchFailureEscalator(tasks, escalation_raiser, titles),
+        on_dependency_cancelled=DependencyEscalator(tasks, escalation_raiser),
+        on_dispatch_failure=DispatchFailureEscalator(tasks, escalation_raiser),
         titles=titles,
     )
     lock_path = engine_lock_path(project_root)
@@ -591,6 +598,7 @@ def build_engine(
             processes=turn_processes,
             resume_task=task_supervisor.resume_task,
             finish_task=task_finisher.finish_task,
+            restore_escalation=escalation_raiser.ensure_actionable,
             project_root=project_root,
         ),
         notifications=NotificationDelivery(notifier),

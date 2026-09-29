@@ -34,7 +34,7 @@ from shikiru.domain.commands import (
     Submit,
     TakeOver,
 )
-from shikiru.domain.escalation import EscalationStatus
+from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import (
@@ -50,7 +50,6 @@ from shikiru.domain.tasks import (
     Task,
 )
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
-from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.takeover import HAND_BACK_MESSAGE
 from shikiru.errors import ConfigError
 from shikiru.store.commands import CommandQueue, CommandStatus
@@ -64,7 +63,13 @@ from shikiru.tmux.session import SessionView
 from shikiru.ui.tokens import HOLD_COLOR, OPERATOR_COLOR
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
-from tests.support.engine import build_registry, build_tmux, set_role_script, set_script
+from tests.support.engine import (
+    build_raiser,
+    build_registry,
+    build_tmux,
+    set_role_script,
+    set_script,
+)
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.store import reopen_command
@@ -410,6 +415,52 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
         connection.close()
 
 
+@pytest.mark.parametrize("packet_recorded", [False, True], ids=["no-escalation", "missing-packet"])
+async def test_a_restarted_engine_gives_every_escalated_task_one_actionable_escalation(
+    tmp_path: Path, tmux_server: TmuxServer, *, packet_recorded: bool
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = engine_settings()
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    queue = CommandQueue(connection, clock)
+    submitted = queue.append(Submit(title="orphaned", request="orphaned"))
+    assert isinstance(submitted.command, Submit)
+    task = tasks.insert_from_submit(submitted.command)
+    queue.mark_done(submitted.id, {"task_id": task.id})
+    tasks.apply_transition(
+        task.id, Transition.stay(task, step=Step.IMPLEMENT, status=Status.ESCALATED)
+    )
+    tasks.set_slot(task.id, 1)
+    if packet_recorded:
+        EscalationStore(connection, clock).open(
+            task.id,
+            step=Step.IMPLEMENT,
+            reason=EscalationReason.AGENT_ERROR,
+            headline="lost packet",
+            packet_path=str(tmp_path / ".shikiru" / "runs" / task.id / "escalations" / "E-1.md"),
+            options=options_for(EscalationReason.AGENT_ERROR),
+        )
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        stop_outcome = await _append_and_wait(Stop(), queue, clock)
+        assert stop_outcome.status is CommandStatus.DONE
+        await engine_task
+        [escalation] = fetch_open_escalations(connection)
+        assert escalation.task_id == task.id
+        assert await asyncio.to_thread(Path(escalation.packet_path).read_text)
+        assert _required_task(tasks, task.id).status is Status.ESCALATED
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -498,9 +549,7 @@ async def test_resolution_commands_persist_task_and_escalation_outcomes(
     tasks.set_slot(task.id, 1)
     events = EventLog(connection, clock)
     escalation_store = EscalationStore(connection, clock)
-    escalation = await EscalationRaiser(
-        escalation_store, events, RunStore(connection, clock), tmp_path
-    ).raise_escalation(
+    escalation = await build_raiser(connection, clock, tmp_path, tmux=tmux).raise_escalation(
         task,
         step=case.step,
         reason=case.reason,
@@ -509,6 +558,7 @@ async def test_resolution_commands_persist_task_and_escalation_outcomes(
         reports=(),
         facts="",
         view_tail="",
+        apply_state=lambda: task,
     )
     resolve = queue.append(Resolve(escalation_id=escalation.id, resolution=case.resolution))
     stop = queue.append(Stop())
@@ -596,9 +646,7 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
     tasks.set_slot(task.id, 1)
     runs = RunStore(connection, clock)
     escalations = EscalationStore(connection, clock)
-    escalation = await EscalationRaiser(
-        escalations, EventLog(connection, clock), runs, tmp_path
-    ).raise_escalation(
+    escalation = await build_raiser(connection, clock, tmp_path).raise_escalation(
         task,
         step=Step.IMPLEMENT,
         reason=EscalationReason.AGENT_ERROR,
@@ -607,6 +655,7 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
         reports=(),
         facts="",
         view_tail="",
+        apply_state=lambda: task,
     )
     operator = _Operator(
         tasks, runs, EventLog(connection, clock), queue, clock, tmux_server, connection, tmp_path
@@ -719,11 +768,7 @@ async def test_retry_resolution_drops_only_cancelled_dependencies(
         task.id, Transition.stay(task, step=Step.IMPLEMENT, status=Status.ESCALATED)
     )
     tasks.set_slot(task.id, 1)
-    events = EventLog(connection, clock)
-    escalations = EscalationStore(connection, clock)
-    escalation = await EscalationRaiser(
-        escalations, events, RunStore(connection, clock), tmp_path
-    ).raise_escalation(
+    escalation = await build_raiser(connection, clock, tmp_path).raise_escalation(
         task,
         step=Step.IMPLEMENT,
         reason=EscalationReason.DEPENDENCY_CANCELLED,
@@ -732,6 +777,7 @@ async def test_retry_resolution_drops_only_cancelled_dependencies(
         reports=(),
         facts="",
         view_tail="",
+        apply_state=lambda: task,
     )
     resolve = queue.append(Resolve(escalation_id=escalation.id, resolution=RetryResolution()))
     stop = queue.append(Stop())
@@ -748,7 +794,7 @@ async def test_retry_resolution_drops_only_cancelled_dependencies(
         assert retried.depends_on == [completed_dependency.id]
         assert retried.step is Step.IMPLEMENT
         assert retried.status is Status.QUEUED
-        persisted_escalation = escalations.get(escalation.id)
+        persisted_escalation = EscalationStore(connection, clock).get(escalation.id)
         assert persisted_escalation is not None
         assert persisted_escalation.status is EscalationStatus.RESOLVED
     finally:

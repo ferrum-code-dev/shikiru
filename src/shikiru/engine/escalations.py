@@ -10,7 +10,9 @@ another action set to choose from.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from shikiru.domain.commands import ResolutionKind
@@ -22,8 +24,8 @@ from shikiru.errors import ShikiruError
 from shikiru.paths import run_dir
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from pathlib import Path
+    from collections.abc import Callable, Sequence
+    from contextlib import AbstractContextManager
 
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.tasks import Step, Task
@@ -35,6 +37,15 @@ if TYPE_CHECKING:
 
 ESCALATIONS_DIR_NAME = "escalations"
 PACKET_FILENAME_SUFFIX = ".md"
+PACKET_TEMPORARY_SUFFIX = ".tmp"
+LOST_ESCALATION_QUESTION = (
+    "The task was escalated but its escalation record was lost; retry or cancel."
+)
+LOST_ESCALATION_ATTEMPTED = (
+    "The engine restarted and found the task escalated with no open escalation."
+)
+RESTORED_PACKET_ATTEMPTED = "The packet file was missing and was rewritten from recorded state."
+_LOGGER = logging.getLogger(__name__)
 
 _HEADLINE_SENTENCES: dict[EscalationReason, str] = {
     EscalationReason.DECISION_REQUIRED: "The Leader needs an Operator decision to continue.",
@@ -118,7 +129,7 @@ def render_packet(context: PacketContext) -> str:
 
 
 class EscalationRaiser:
-    """Builds the escalation packet, writes it, and records the escalation (03 §8)."""
+    """Builds the escalation packet and commits the escalated state with its row and event."""
 
     def __init__(
         self,
@@ -126,12 +137,17 @@ class EscalationRaiser:
         events: EventLog,
         runs: RunStore,
         project_root: Path,
+        *,
+        atomically: Callable[[], AbstractContextManager[object]],
+        titles: TaskTitles,
     ) -> None:
-        """Persist through `escalations`/`events`, and read session evidence from `runs`."""
+        """Persist through `escalations`/`events` in `atomically`, refresh titles via `titles`."""
         self._escalations = escalations
         self._events = events
         self._runs = runs
         self._project_root = project_root
+        self._atomically = atomically
+        self._titles = titles
 
     async def raise_escalation(
         self,
@@ -144,8 +160,14 @@ class EscalationRaiser:
         reports: Sequence[dict[str, str]],
         facts: str,
         view_tail: str,
+        apply_state: Callable[[], Task],
     ) -> Escalation:
-        """Build the packet for `task`, write it, and open its `Escalation` row (03 §8)."""
+        """Write the packet, then commit `apply_state`, the escalation row and its event as one.
+
+        `apply_state` persists the task's escalated state and returns the task as stored. The
+        packet file is written first and removed again if the transaction fails, so an escalated
+        task never lacks its escalation. Titles refresh after the commit (03 §8).
+        """
         options = options_for(reason)
         context = PacketContext(
             task_id=task.id,
@@ -160,33 +182,93 @@ class EscalationRaiser:
             question=question,
             options=options,
         )
-        packet = render_packet(context)
         headline = _headline(context)
         escalation_id = self._escalations.reserve_id()
-        packet_path = self._packet_path(task.id, escalation_id)
+        packet_path = self._write_packet(task.id, escalation_id, context)
         try:
-            packet_path.parent.mkdir(parents=True, exist_ok=True)
-            packet_path.write_text(packet)
-            escalation = self._escalations.open(
-                task.id,
-                escalation_id=escalation_id,
-                step=step,
-                reason=reason,
-                headline=headline,
-                packet_path=str(packet_path),
-                options=options,
-            )
-        except Exception:
-            if packet_path.parent.is_dir() and packet_path.exists():
-                packet_path.unlink()
+            with self._atomically():
+                updated = apply_state()
+                escalation = self._escalations.open(
+                    task.id,
+                    escalation_id=escalation_id,
+                    step=step,
+                    reason=reason,
+                    headline=headline,
+                    packet_path=str(packet_path),
+                    options=options,
+                )
+                self._events.append(
+                    EventKind.ESCALATION,
+                    task_id=task.id,
+                    message=headline,
+                    data={"escalation_id": escalation.id, "reason": reason.value},
+                )
+        except BaseException:
+            packet_path.unlink(missing_ok=True)
             raise
-        self._events.append(
-            EventKind.ESCALATION,
-            task_id=task.id,
-            message=headline,
-            data={"escalation_id": escalation.id, "reason": reason.value},
-        )
+        await self._refresh_titles(updated)
         return escalation
+
+    async def ensure_actionable(self, task: Task) -> None:
+        """Give an escalated `task` an open escalation with a packet on disk (03 §7).
+
+        A missing packet is rewritten from durable state at its recorded path; a task without
+        any open escalation gets a new `engine_error` one. Neither duplicates an open escalation.
+        """
+        open_ones = [e for e in self._escalations.list_open() if e.task_id == task.id]
+        if not open_ones:
+            await self.raise_escalation(
+                task,
+                step=task.step,
+                reason=EscalationReason.ENGINE_ERROR,
+                question=LOST_ESCALATION_QUESTION,
+                attempted=LOST_ESCALATION_ATTEMPTED,
+                reports=(),
+                facts="",
+                view_tail="",
+                apply_state=lambda: task,
+            )
+            return
+        self._restore_missing_packets(task, open_ones)
+
+    def _restore_missing_packets(self, task: Task, open_ones: Sequence[Escalation]) -> None:
+        for escalation in open_ones:
+            path = Path(escalation.packet_path)
+            if not path.exists():
+                self._write_packet_at(path, self._restored_context(task, escalation))
+
+    def _restored_context(self, task: Task, escalation: Escalation) -> PacketContext:
+        return PacketContext(
+            task_id=task.id,
+            step=escalation.step,
+            reason=escalation.reason,
+            timeline=self._timeline(task.id),
+            attempted=RESTORED_PACKET_ATTEMPTED,
+            reports="",
+            facts="",
+            view_tail="",
+            sessions=self._sessions_evidence(task.id),
+            question=escalation.headline,
+            options=escalation.options,
+        )
+
+    def _write_packet(self, task_id: str, escalation_id: str, context: PacketContext) -> Path:
+        path = self._packet_path(task_id, escalation_id)
+        self._write_packet_at(path, context)
+        return path
+
+    @staticmethod
+    def _write_packet_at(path: Path, context: PacketContext) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + PACKET_TEMPORARY_SUFFIX)
+        temporary.write_text(render_packet(context))
+        temporary.replace(path)
+
+    async def _refresh_titles(self, task: Task) -> None:
+        try:
+            await self._titles.refresh(task)
+        except Exception:
+            _LOGGER.exception("title refresh failed for %s", task.id)
 
     def _packet_path(self, task_id: str, escalation_id: str) -> Path:
         return (
@@ -211,32 +293,36 @@ class EscalationRaiser:
         return "\n".join(lines)
 
 
+def escalate_stored(tasks: TaskStore, task: Task, transition: Transition) -> Task:
+    """Persist `transition` for a not-yet-running `task`, clear its wait reason, reload it."""
+    tasks.apply_transition(task.id, transition)
+    tasks.set_wait_reason(task.id, None)
+    current = tasks.get(task.id)
+    if current is None:
+        message = f"{task.id} vanished during escalation"
+        raise ShikiruError(message)
+    return current
+
+
 class DispatchFailureEscalator:
     """Escalate a task after repeated failures while preparing its dispatch."""
 
-    def __init__(self, tasks: TaskStore, raiser: EscalationRaiser, titles: TaskTitles) -> None:
-        """Use the task store, title updater and packet raiser for dispatch failures."""
+    def __init__(self, tasks: TaskStore, raiser: EscalationRaiser) -> None:
+        """Use the task store for the state change and `raiser` for the escalation."""
         self._tasks = tasks
         self._raiser = raiser
-        self._titles = titles
 
     async def __call__(self, task: Task, error: Exception) -> None:
         """Mark `task` escalated and record the dispatch error for the operator."""
         transition = Transition.escalate_current(task, EscalationReason.ENGINE_ERROR)
-        self._tasks.apply_transition(task.id, transition)
-        self._tasks.set_wait_reason(task.id, None)
-        current = self._tasks.get(task.id)
-        if current is None:
-            message = f"{task.id} vanished before dispatch failure escalation"
-            raise ShikiruError(message)
-        await self._titles.refresh(current)
         await self._raiser.raise_escalation(
-            current,
-            step=current.step,
+            task,
+            step=transition.step,
             reason=EscalationReason.ENGINE_ERROR,
             question=str(error),
             attempted="Workspace or pane setup failed after scheduler retries.",
             reports=(),
             facts="",
             view_tail="",
+            apply_state=lambda: escalate_stored(self._tasks, task, transition),
         )

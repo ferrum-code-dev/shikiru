@@ -22,6 +22,7 @@ from shikiru.engine.integration import (
 from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
+from shikiru.store.database import transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.quotas import QuotaStore
 from shikiru.tmux.session import SessionView
@@ -125,7 +126,14 @@ def build_flow(
     resolved_turn_clock = turn_clock if turn_clock is not None else flow_clock
     system = env.build_turn_system(settings, clock=resolved_turn_clock)
     escalations_store = EscalationStore(env.connection, flow_clock)
-    escalations = EscalationRaiser(escalations_store, system.events, env.runs, env.project_root)
+    escalations = EscalationRaiser(
+        escalations_store,
+        system.events,
+        env.runs,
+        env.project_root,
+        atomically=lambda: transaction(env.connection),
+        titles=system.titles,
+    )
     coordinator = _NoOpIntegrationCoordinator()
     if local_integration or strategy is not None:
         builder = task_root_builder(SubprocessRunner(), env.project_root, settings.repo)

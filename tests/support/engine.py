@@ -19,6 +19,7 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.engine.agents import AgentPool
+from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.titles import TaskTitles
@@ -28,6 +29,8 @@ from shikiru.helper.helper import Helper
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue
+from shikiru.store.database import transaction
+from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
@@ -79,6 +82,22 @@ def fake_engine_settings() -> Settings:
 def build_tmux(tmux_server: TmuxServer) -> Tmux:
     """A `Tmux` client scoped to the fixture's private socket."""
     return Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
+
+
+def build_raiser(
+    connection: Connection, clock: Clock, project_root: Path, *, tmux: Tmux | None = None
+) -> EscalationRaiser:
+    """An `EscalationRaiser` over `connection`, refreshing titles through `tmux` when given."""
+    runs = RunStore(connection, clock)
+    decorator = PaneDecorator(tmux if tmux is not None else Tmux(SubprocessRunner()))
+    return EscalationRaiser(
+        EscalationStore(connection, clock),
+        EventLog(connection, clock),
+        runs,
+        project_root,
+        atomically=lambda: transaction(connection),
+        titles=TaskTitles(decorator, runs, fake_engine_settings()),
+    )
 
 
 def build_decorator(tmux: Tmux) -> PaneDecorator:

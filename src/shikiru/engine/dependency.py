@@ -6,41 +6,33 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason
-from shikiru.errors import ShikiruError
+from shikiru.engine.escalations import escalate_stored
 
 if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from shikiru.engine.escalations import EscalationRaiser
-    from shikiru.engine.titles import TaskTitles
     from shikiru.store.tasks import TaskStore
 
 
 class DependencyEscalator:
     """Apply and packet a dependency-cancelled escalation through one boundary."""
 
-    def __init__(self, tasks: TaskStore, raiser: EscalationRaiser, titles: TaskTitles) -> None:
+    def __init__(self, tasks: TaskStore, raiser: EscalationRaiser) -> None:
         """Use `tasks` for the state transition and `raiser` for the operator packet."""
         self._tasks = tasks
         self._raiser = raiser
-        self._titles = titles
 
     async def __call__(self, task: Task) -> None:
         """Escalate `task` after the scheduler finds a cancelled dependency."""
         transition = Transition.escalate_current(task, EscalationReason.DEPENDENCY_CANCELLED)
-        self._tasks.apply_transition(task.id, transition)
-        self._tasks.set_wait_reason(task.id, None)
-        current = self._tasks.get(task.id)
-        if current is None:
-            message = f"{task.id} vanished before dependency escalation"
-            raise ShikiruError(message)
-        await self._titles.refresh(current)
         await self._raiser.raise_escalation(
-            current,
-            step=current.step,
+            task,
+            step=transition.step,
             reason=EscalationReason.DEPENDENCY_CANCELLED,
             question="A dependency was cancelled; choose whether to drop it or cancel this task.",
             attempted="The scheduler found a cancelled dependency before dispatch.",
             reports=(),
             facts="",
             view_tail="",
+            apply_state=lambda: escalate_stored(self._tasks, task, transition),
         )

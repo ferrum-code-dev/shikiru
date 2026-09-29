@@ -458,7 +458,7 @@ Refs: 03 §4.3, §7, §9.
 
 ### Task 55: Escalated state always has an actionable escalation (F14)
 Refs: 03 §8, invariant 5.
-- [ ] The escalated task state, its escalation row and its event commit together; the packet is regenerated from durable state when missing, including at reconciliation. Title refresh stays outside the correctness path. Dispatch and dependency escalations follow the same rule.
+- [x] The escalated task state, its escalation row and its event commit together; the packet is regenerated from durable state when missing, including at reconciliation. Title refresh stays outside the correctness path. Dispatch and dependency escalations follow the same rule.
 - Tests: integration: failure after the state write; failure while writing the packet; both end with an open actionable escalation after recovery.
 
 ### Task 56: Codex context window belongs to the model (F15)

@@ -151,6 +151,10 @@ class EscalationStore:
             escalation, f"escalation {escalation_id} vanished immediately after insert"
         )
 
+    def list_open(self) -> list[Escalation]:
+        """Read every open escalation, oldest first."""
+        return fetch_open_escalations(self._connection)
+
     def get(self, escalation_id: str) -> Escalation | None:
         """Read one escalation by id, or `None` if it doesn't exist."""
         return fetch_escalation(self._connection, escalation_id)

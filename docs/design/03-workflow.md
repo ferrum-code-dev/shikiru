@@ -246,7 +246,8 @@ Dependents become ready only when their dependencies are `done`.
 2. End orphaned turn processes: a `runs/T/<role>/turn.pid` whose process still runs has its whole process group stopped (SIGTERM, then SIGKILL after `TURN_STOP_GRACE`), since the old engine died without stopping it. A recorded pid now held by a process with a different start time is never signalled. The group is stopped even when its leader already exited, because a live group id is never reused as a pid.
 3. For each `running` or `integrating` task without a hold, re-run the current step (a held task waits for `resume`, §6); its turn resumes the session (§4.1). The step's turn is idempotent: an existing valid `report.json` is consumed without starting a turn. That holds only for the first turn of the resumed flow, and only when that step's turn dir is still the task's latest and the role's `current_turn`; any other report there was already consumed.
 4. Finish interrupted cleanup: a terminal task is entered together with its terminal event (`task_done`, `task_cancelled`) in one transaction and cleaned up afterwards, worktree last. A `done` or `cancelled` task whose task root still exists is cleaned up again (sessions closed, window closed, worktree removed); its event is never re-emitted.
-5. Pending `commands` are processed by the normal loop.
+5. Every `escalated` task has an open escalation whose packet file exists (§8): a missing packet is rewritten at its recorded path from durable state (timeline, sessions, the escalation row's reason, options and headline); a task with no open escalation gets a new `engine_error` one asking to retry or cancel. An existing open escalation is never duplicated.
+6. Pending `commands` are processed by the normal loop.
 
 **Command replay.** Commands are delivered at least once: a command stays `pending` until its handler returns, so an engine that dies between a durable effect and the acknowledgement replays it on restart. Handlers are idempotent by command id, derived from durable state and never from a replay log:
 - `submit`: the queue allocated the task id when appending, so a task with that id already existing is the command's own effect; the replay returns its id. The task insert and `task_queued` commit in one transaction.
@@ -282,6 +283,8 @@ Commands that only set state to a target value (`prioritize`, `pause`, `set_rung
 - `retry` re-runs the failed step.
 - `accept` integrates.
 - `cancel` cancels the task and keeps the branch.
+
+**Atomicity.** Every path that escalates a task (a step outcome, an integration turn, a dispatch failure, a cancelled dependency) goes through the one `EscalationRaiser`. The packet file is written first, atomically (temporary file, then rename); then the escalated task state, the escalation row and the `escalation` event commit in one transaction, and the packet is removed again if that transaction fails. A task is therefore never `escalated` without an open escalation; a failure before the commit leaves the task in its previous state for the ordinary error handling. Title refresh runs after the commit and its failure is logged, never raised.
 
 Resolved tasks are re-queued with `requeued_at`. Raising an escalation frees the slot and notifies.
 

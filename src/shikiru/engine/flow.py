@@ -58,6 +58,7 @@ from shikiru.workspace.facts import render_facts
 _LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from shikiru.agents.contracts import Rung, Usage
@@ -642,8 +643,9 @@ class TaskFlow:
         question: str | None = None,
         result: TurnResult | None = None,
         role: Role | None = None,
+        apply_state: Callable[[], Task],
     ) -> None:
-        """Build and persist the escalation packet for a task flow."""
+        """Build the packet and commit `apply_state` with the escalation for a task flow."""
         narrative_question, attempted = _escalation_narrative(reason, outcome, result)
         if question is None:
             question = narrative_question
@@ -661,6 +663,7 @@ class TaskFlow:
             reports=self._history.context(history),
             facts=await self._escalation_facts(task),
             view_tail=await self._view_tail(task, step, role_override=role),
+            apply_state=apply_state,
         )
 
     async def _escalation_facts(self, task: Task) -> str:
@@ -830,6 +833,12 @@ class TaskFlow:
 
     async def apply(self, task: Task, transition: Transition, outcome: Outcome | None) -> Task:
         """Apply a task transition and refresh its visible title."""
+        updated = self._persist(task, transition, outcome)
+        await self._titles.refresh(updated)
+        return updated
+
+    def _persist(self, task: Task, transition: Transition, outcome: Outcome | None) -> Task:
+        """Write a task transition, emitting its step event, and return the stored task."""
         if transition.enqueue_new_tasks:
             if outcome is None:
                 message = f"{task.id}'s transition enqueues new tasks but has no outcome"
@@ -852,7 +861,6 @@ class TaskFlow:
             )
         ):
             emit_step_started(self._events, updated, self._settings)
-        await self._titles.refresh(updated)
         return updated
 
     def _apply_new_tasks(self, task: Task, transition: Transition, outcome: Outcome) -> None:
@@ -981,17 +989,17 @@ class TaskFlow:
         if transition.status is not Status.ESCALATED or transition.escalation_reason is None:
             message = f"{task.id} escalation has no escalated status or reason"
             raise ShikiruError(message)
-        updated = await self.apply(task, transition, outcome)
         await self.raise_escalation(
-            updated,
+            task,
             transition.step,
             transition.escalation_reason,
             outcome,
             question=question,
             result=result,
             role=role,
+            apply_state=lambda: self._persist(task, transition, outcome),
         )
-        return updated
+        return self.require_task(task.id)
 
 
 def _require_repo(task: Task) -> RepoState:

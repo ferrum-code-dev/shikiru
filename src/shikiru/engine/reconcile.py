@@ -31,14 +31,16 @@ class Reconciler:
         processes: TurnProcesses,
         resume_task: Callable[[str], Awaitable[None]],
         finish_task: Callable[[Task], Awaitable[None]],
+        restore_escalation: Callable[[Task], Awaitable[None]],
         project_root: Path,
     ) -> None:
-        """Resume in-flight tasks through `resume_task`, finish terminal ones via `finish_task`."""
+        """Resume in-flight tasks, finish terminal ones, restore escalations of escalated ones."""
         self._tasks = tasks
         self._layout = layout
         self._processes = processes
         self._resume_task = resume_task
         self._finish_task = finish_task
+        self._restore_escalation = restore_escalation
         self._project_root = project_root
 
     async def reconcile(self) -> None:
@@ -53,5 +55,7 @@ class Reconciler:
             if task.status in _TERMINAL and task_root(self._project_root, task.id).exists():
                 await self._finish_task(task)
         for task in active:
-            if task.status in _IN_FLIGHT and not task.held:
+            if task.status is Status.ESCALATED:
+                await self._restore_escalation(task)
+            elif task.status in _IN_FLIGHT and not task.held:
                 await self._resume_task(task.id)

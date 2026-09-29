@@ -13,10 +13,11 @@ from shikiru.clock import SystemClock
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Role, Step
-from shikiru.engine.escalations import EscalationRaiser, PacketContext, render_packet
+from shikiru.engine.escalations import PacketContext, render_packet
 from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
+from tests.support.engine import build_raiser
 from tests.support.store import seed_task
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     events = EventLog(connection, clock)
     runs = RunStore(connection, clock)
     escalations_store = EscalationStore(connection, clock)
-    raiser = EscalationRaiser(escalations_store, events, runs, tmp_path)
+    raiser = build_raiser(connection, clock, tmp_path)
     task = seed_task(connection, clock, title="Add retries")
     run = runs.start(task.id, Role.LEADER, Rung(agent="claude", model="opus"))
     runs.set_session(run.id, "sess-123", "claude --resume sess-123")
@@ -87,6 +88,7 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
         reports=[{"label": "01-verify-i1", "json": '{"decision": "changes_requested"}'}],
         facts="### .\n\n#### Commits\n\nabc123 do the thing",
         view_tail='{"signal":"TurnEnded","last_message":"turn ended"}',
+        apply_state=lambda: task,
     )
 
     assert escalation.status is EscalationStatus.OPEN
@@ -109,10 +111,7 @@ async def test_packet_creation_failure_does_not_open_an_empty_escalation(
     connection: Connection, tmp_path: Path
 ) -> None:
     clock = SystemClock()
-    events = EventLog(connection, clock)
-    runs = RunStore(connection, clock)
-    escalations_store = EscalationStore(connection, clock)
-    raiser = EscalationRaiser(escalations_store, events, runs, tmp_path)
+    raiser = build_raiser(connection, clock, tmp_path)
     task = seed_task(connection, clock, title="Packet failure")
     blocked_parent = tmp_path / ".shikiru" / "runs" / task.id / "escalations"
     blocked_parent.parent.mkdir(parents=True)
@@ -128,6 +127,7 @@ async def test_packet_creation_failure_does_not_open_an_empty_escalation(
             reports=(),
             facts="",
             view_tail="",
+            apply_state=lambda: task,
         )
 
     assert fetch_open_escalations(connection) == []
