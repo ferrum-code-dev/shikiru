@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from rich.console import Console
-
 from shikiru.agents.contracts import QuotaWindow
 from shikiru.cli.render import status_renderable
 from shikiru.domain.reports import ReportKind, Verdict
@@ -18,6 +16,7 @@ from shikiru.operator.queries import (
     UsageView,
 )
 from tests.support.factories import make_settings, make_task
+from tests.support.render import RENDER_WIDTH, plain_text
 
 OBSERVED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -93,9 +92,7 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
         task=detail,
     )
 
-    console = Console(record=True, no_color=True, width=120)
-    console.print(status_renderable(view, settings=make_settings(), width=console.width))
-    output = console.export_text()
+    output = plain_text(status_renderable(view, settings=make_settings(), width=RENDER_WIDTH))
 
     assert "T-active" in output
     assert "T-queued" in output

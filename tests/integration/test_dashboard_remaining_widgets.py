@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, cast
 
 import psutil
 import pytest
-from rich.console import Console
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Static
 
@@ -53,6 +52,7 @@ from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.factories import make_settings
+from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -136,12 +136,6 @@ def _context(
 
 async def _open_palette(action: str) -> None:
     del action
-
-
-def _plain(content: object) -> str:
-    console = Console(record=True, width=120)
-    console.print(content)
-    return console.export_text()
 
 
 async def test_escalations_open_full_packet_and_route_resolution_action(
@@ -297,7 +291,7 @@ async def test_usage_panel_labels_api_equivalent_cost_and_hides_incomplete_total
     widget = cast("UsagePanel", UsageWidget().create(context))
     async with _WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
-        text = _plain(widget.content)
+        text = plain_text(widget.content)
         assert "codex" in text
         assert "$0.42 API-equivalent" in text
         assert "weekly" in text

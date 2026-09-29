@@ -5,8 +5,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from rich.console import Console, Group
-from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.agents.contracts import (
@@ -53,11 +51,15 @@ from shikiru.view_log import (
 )
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
+from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from rich.console import Group
+    from rich.text import Text
 
     from shikiru.config.settings import Settings
     from shikiru.domain.runs import Run
@@ -86,14 +88,6 @@ class _DashboardSources:
 
 def _row(at: datetime, turn: str, signal: str) -> str:
     return json.dumps({VIEW_TIME_KEY: at.isoformat(), VIEW_TURN_KEY: turn, VIEW_SIGNAL_KEY: signal})
-
-
-def _plain(content: object) -> str:
-    if isinstance(content, Text):
-        return content.plain
-    console = Console(record=True, width=100)
-    console.print(content)
-    return console.export_text()
 
 
 def _motion_settings(project_dir: Path) -> Settings:
@@ -333,12 +327,12 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
             strips = app.query_one(StripsPanel)
             usage = app.query_one("#usage", UsagePanel)
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert "10s" in _plain(usage.content)
+            assert "10s" in plain_text(usage.content)
 
             previous_frame = cast("Text", strips.content).plain
             clock.advance(1)
             await wait_until(lambda: all(item.stamp is None for item in views.strips()), timeout=1)
-            await wait_until(lambda: "9s" in _plain(usage.content), timeout=1)
+            await wait_until(lambda: "9s" in plain_text(usage.content), timeout=1)
             assert cast("Text", strips.content).plain != previous_frame
             clock.advance(2)
             await wait_until(
@@ -360,7 +354,7 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
             )
             clock.advance(0.5)
             await wait_until(
-                lambda: "$0.87" in _plain(usage.content),
+                lambda: "$0.87" in plain_text(usage.content),
                 timeout=1,
             )
 
@@ -580,7 +574,7 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             panel.focus()
             await pilot.press("down")
             await wait_until(
-                lambda: "▶ E-2 · Second packet" in _plain(scroll.query(Static)[1].content),
+                lambda: "▶ E-2 · Second packet" in plain_text(scroll.query(Static)[1].content),
                 timeout=1,
             )
             scroll.scroll_end(animate=False)
@@ -601,7 +595,7 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             assert list(scroll.query(Static)) == cards
             assert scroll.scroll_y == scroll_y
             assert pilot.app.focused is panel
-            assert "▶ E-2 · Second packet" in _plain(scroll.query(Static)[1].content)
+            assert "▶ E-2 · Second packet" in plain_text(scroll.query(Static)[1].content)
 
             store = EscalationStore(connection, clock)
             store.resolve(first.id, "retry")
@@ -613,7 +607,7 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             reopened = _open_escalation(connection, clock, project_dir, task.id, "Reopened packet")
             clock.advance(0.5)
             await wait_until(
-                lambda: "Reopened packet" in _plain(scroll.query(Static)[0].content), timeout=1
+                lambda: "Reopened packet" in plain_text(scroll.query(Static)[0].content), timeout=1
             )
             assert panel.display
             assert views.escalations()[0].escalation_id == reopened.id
@@ -661,19 +655,19 @@ async def test_disabled_animations_only_refresh_static_frames_after_a_database_c
             usage = app.query_one(UsagePanel)
             await wait_until(clock.has_pending_sleep, timeout=1)
             initial = cast("Text", panel.content).plain
-            initial_usage = _plain(usage.content)
+            initial_usage = plain_text(usage.content)
             assert "$0.42" in initial_usage
             assert "10s" in initial_usage
             clock.advance(2)
             await wait_until(clock.has_pending_sleep, timeout=1)
             assert cast("Text", panel.content).plain == initial
-            assert _plain(usage.content) == initial_usage
+            assert plain_text(usage.content) == initial_usage
 
             RunStore(connection, clock).record_usage(
                 task_run.id,
                 Usage(200, 40, 0, 0, 0.87, "billed", None),
             )
             clock.advance(0.5)
-            await wait_until(lambda: "$0.87" in _plain(usage.content), timeout=1)
+            await wait_until(lambda: "$0.87" in plain_text(usage.content), timeout=1)
     finally:
         reader.close()

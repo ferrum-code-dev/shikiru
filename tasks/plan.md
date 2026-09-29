@@ -370,9 +370,9 @@ Invariants these tasks establish:
 
 ### Task 41: Quality gate independent of the terminal (F17)
 Refs: 07 §2–3.
-- [ ] `test_usage_panel_labels_api_equivalent_cost_and_hides_incomplete_totals` passes under `TERM=dumb`, a narrow `COLUMNS` and the ordinary terminal (it fails today with `TERM=dumb`): it compares label and value text after normalizing layout whitespace, and the render helper does not inherit terminal settings.
-- [ ] Other `_plain`-style render helpers in `tests/` are checked for the same dependence.
-- [ ] `uv run poe check` passes with `TERM=dumb` and with the default environment.
+- [x] `test_usage_panel_labels_api_equivalent_cost_and_hides_incomplete_totals` passes under `TERM=dumb`, a narrow `COLUMNS` and the ordinary terminal (it fails today with `TERM=dumb`): it compares label and value text after normalizing layout whitespace, and the render helper does not inherit terminal settings.
+- [x] Other `_plain`-style render helpers in `tests/` are checked for the same dependence.
+- [x] `uv run poe check` passes with `TERM=dumb` and with the default environment.
 
 ### Task 42: Integration never discards uncommitted work (F01)
 Refs: 03 §5–6, invariant 3.
