@@ -164,6 +164,17 @@ class Git:
         )
         return result.stdout.strip() if result.returncode == 0 else None
 
+    async def ref_exists(self, repo_dir: Path, ref: str) -> bool:
+        """Return whether the fully qualified `ref` exists in the repo at `repo_dir`."""
+        result = await self._run(repo_dir, "rev-parse", "--verify", "--quiet", ref, check=False)
+        return result.returncode == 0
+
+    async def fetch(self, repo_dir: Path, remote: str, refspec: str) -> None:
+        """Fetch `refspec` from `remote`, updating only the refs the refspec names."""
+        await self._run(
+            repo_dir, "fetch", "--no-tags", remote, refspec, timeout=_PUSH_TIMEOUT_SECONDS
+        )
+
     async def push(self, repo_dir: Path, remote: str, branch: str, *, lease: str | None) -> None:
         """Push `branch` to `remote` as its upstream, overwriting it only if it is still `lease`.
 

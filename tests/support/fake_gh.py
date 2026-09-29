@@ -28,6 +28,7 @@ def _create(state: Path, options: list[str]) -> str:
     number = len(list(pulls.glob("*.json"))) + 1
     record = {
         "state": _OPEN,
+        "mergeCommit": None,
         "base": values["--base"],
         "head": values["--head"],
         "title": values["--title"],

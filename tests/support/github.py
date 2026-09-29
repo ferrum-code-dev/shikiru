@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from shikiru.workspace.github import PullRequestState
 
 _GIT_TIMEOUT_SECONDS = 10.0
+_IDENTITY_ARGS = ("-c", "user.name=Shikiru Test", "-c", "user.email=test@shikiru.example")
 _GH_ENV_TO_DROP = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GH_HOST", "GH_REPO")
 
 
@@ -53,6 +55,12 @@ class FakeGitHub:
         else:
             os.close(descriptor)
         hold.unlink()
+
+    def merge(self, number: int, commit: str) -> None:
+        """Record pull request `number` as merged by `commit`, as gh reports a merged PR."""
+        path = self.state / fake_gh.PULLS_DIR / f"{number}.json"
+        record = json.loads(path.read_text())
+        path.write_text(json.dumps({**record, "state": "MERGED", "mergeCommit": {"oid": commit}}))
 
     def set_state(self, number: int, state: PullRequestState) -> None:
         path = self.state / fake_gh.PULLS_DIR / f"{number}.json"
@@ -91,8 +99,10 @@ def fake_github(
     github.release_create()
 
 
-async def add_bare_remote(project_root: Path, remote_dir: Path, name: str) -> None:
-    """Create a bare repository at `remote_dir` and add it to `project_root` as `name`."""
+async def add_bare_remote(
+    project_root: Path, remote_dir: Path, name: str, *, base: str = "main"
+) -> None:
+    """Create a bare repository at `remote_dir` with `base`, added to `project_root` as `name`."""
     runner = SubprocessRunner()
     await runner.run(
         ["git", "init", "--bare", str(remote_dir)], timeout=_GIT_TIMEOUT_SECONDS, check=True
@@ -103,3 +113,42 @@ async def add_bare_remote(project_root: Path, remote_dir: Path, name: str) -> No
         cwd=project_root,
         check=True,
     )
+    await runner.run(
+        ["git", "push", name, base],
+        timeout=_GIT_TIMEOUT_SECONDS,
+        cwd=project_root,
+        check=True,
+    )
+
+
+class MergeStyle(StrEnum):
+    """How a hosting service lands a pull request on its base."""
+
+    MERGE_COMMIT = "merge commit"
+    SQUASH = "squash"
+    FAST_FORWARD = "fast-forward"
+
+
+async def merge_on_remote(remote_dir: Path, base: str, head: str, style: MergeStyle) -> str:
+    """Land `head` on `base` in the bare repository at `remote_dir` and return the landed commit."""
+    runner = SubprocessRunner()
+
+    async def git(*args: str) -> str:
+        result = await runner.run(
+            ["git", *_IDENTITY_ARGS, *args],
+            timeout=_GIT_TIMEOUT_SECONDS,
+            cwd=remote_dir,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    base_sha = await git("rev-parse", base)
+    head_sha = await git("rev-parse", head)
+    if style is MergeStyle.FAST_FORWARD:
+        landed = head_sha
+    else:
+        tree = await git("merge-tree", "--write-tree", base_sha, head_sha)
+        parents = ["-p", base_sha] + (["-p", head_sha] if style is MergeStyle.MERGE_COMMIT else [])
+        landed = await git("commit-tree", tree, *parents, "-m", f"merge {head}")
+    await git("update-ref", f"refs/heads/{base}", landed, base_sha)
+    return landed

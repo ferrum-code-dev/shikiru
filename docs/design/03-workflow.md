@@ -176,7 +176,7 @@ The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's 
 ## 5. Workspaces
 
 - **Task root** `.shikiru/worktrees/T-12/` *is* the task's worktree of the project repository (D20). Agents run in it and never in the project checkout.
-- **Worktree**: `git worktree add -b shikiru/T-12-<slug> <task root> <base>`. `base` is `repo.base` or the branch checked out in the project. Creation is idempotent.
+- **Worktree**: `git worktree add -b shikiru/T-12-<slug> <task root> <base>`. `base` is `repo.base` or the branch checked out in the project; `<base>` is its *base ref* (§6): the local branch, or, in PR mode once a PR has merged, the verified fetched remote base. The task keeps both (`repo.base`, `repo.base_ref`) and rebases, diffs and reviews against the ref. Creation is idempotent.
 - **Caches** are copied copy-on-write (`repo.caches` globs that match ignored paths): macOS `cp -c -R`, Linux `cp -a --reflink=always`. If CoW isn't supported, nothing is copied and one warning is logged.
   - **Copy-on-write**: the filesystem (APFS; btrfs/XFS) creates only metadata that points at the same data blocks.
   - A 5 GB `node_modules` or `target` "copies" in about a second and uses no extra disk; only files that one side later modifies get their own blocks.
@@ -206,7 +206,9 @@ Integration itself never discards work: at its entry, and again before the strat
      - `git push -u <repo.remote> <branch>` and `gh pr create --base <base> --head <branch>`, titled with the task title and with the accepted summary as its body. `pr_opened` records the PR URL and commits.
      - The task branch is Shikiru's; a re-push after a rebase uses `--force-with-lease` against the last pushed sha. An open PR already on that head and base (the engine died before `pr_opened`) is adopted instead of opening another.
      - Polling runs outside the integration lock: the slot is released, `wait_reason = "PR open"`, and `gh pr view <url> --json state` is polled every `PR_POLL` (5 min).
-     - `MERGED` → done. `CLOSED` → `pr_closed`, whose `retry` pushes again and opens a new PR.
+     - `MERGED` → the merged base is fetched and verified (below), then done. `CLOSED` → `pr_closed`, whose `retry` pushes again and opens a new PR.
+     - **Merged base.** A merged PR lands on the remote base, never on the local branch, and the operator's checkout, index and local changes are never reset, pulled or merged. On `MERGED` the engine reads the PR's `mergeCommit` (`gh pr view <url> --json state,mergeCommit`), fetches `+refs/heads/<base>:refs/shikiru/bases/<base>` from `repo.remote`, and verifies that the merge commit is the fetched ref or its ancestor (`merge-base --is-ancestor`). That holds for merge, squash and rebase merges alike, since the PR head itself is not an ancestor after a squash or rebase. Only then is the task `done`, so its dependents are not ready before the verified base exists. A failed fetch or a merge commit missing from the fetched base raises `integration_blocked` (§8); its `retry` fetches and verifies again without touching the PR.
+     - **Base ref.** The ref new task roots start from is one injected rule. `merge` mode: the local base branch. `pr` mode: `refs/shikiru/bases/<base>` once a PR has merged and the engine fetched it, before that the local base branch. The ref is Shikiru's own, so operator fetches and local commits never move it.
      - The open PR is the task's latest `pr_opened` not followed by a `pr_closed` escalation. A resumed integration (§7) polls it instead of rebasing, pushing or opening another.
 3. **Done**: the `done` status and `task_done` (summary, commits, residual risks) land in one transaction; then the window closes and the worktree is removed, last (§7).
 
@@ -246,7 +248,7 @@ Dependents become ready only when their dependencies are `done`.
 | `decision_required` | The Leader escalates (product decision, conflicting requirements, missing access), or the consult limit is exceeded | answer ★, cancel |
 | `iterations_exhausted` | Final round still `changes_requested` | answer ★ (one more final round with guidance), accept, cancel |
 | `integration_conflict` | Conflict rounds exhausted | retry ★, cancel |
-| `integration_blocked` | Main checkout blocked beyond `integration_wait` | retry ★, cancel |
+| `integration_blocked` | Main checkout blocked beyond `integration_wait`, or a merged PR's commit could not be fetched and verified on the remote base (§6) | retry ★, cancel |
 | `uncommitted_work` | The task worktree has uncommitted changes when integration starts or is about to merge | retry ★ (after committing or discarding them, e.g. through takeover), cancel |
 | `pr_closed` | PR closed unmerged | retry ★ (new PR), cancel |
 | `agent_auth` / `agent_error` / `agent_stuck` / `agent_protocol` | §7 | retry [--rung] ★, cancel |

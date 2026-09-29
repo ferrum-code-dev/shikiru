@@ -814,7 +814,7 @@ class TaskFlow:
         if needs_facts:
             context["facts"] = facts_text
         if template is PromptName.VERIFY:
-            context["base"] = _require_repo(task).base
+            context["base"] = _require_repo(task).base_ref
             context["final_round"] = task.iteration >= self._settings.orchestration.max_iterations
         if template is PromptName.CONFLICTS:
             context["conflict"] = conflict_context or ""

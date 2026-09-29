@@ -169,7 +169,9 @@ def test_scheduling_fields_round_trip(connection: Connection) -> None:
     store.set_slot(task.id, 2)
     store.set_window(task.id, "@3")
     store.set_panes(task.id, {Role.LEADER: "%1", Role.IMPLEMENTER: "%2"})
-    store.set_repo(task.id, RepoState(base="main", base_sha="abc123", branch="shikiru/T-1"))
+    store.set_repo(
+        task.id, RepoState(base="main", base_ref="main", base_sha="abc123", branch="shikiru/T-1")
+    )
     store.set_requeued(task.id)
     store.set_summary(task.id, "All done")
 
@@ -181,7 +183,9 @@ def test_scheduling_fields_round_trip(connection: Connection) -> None:
     assert reloaded.slot == 2
     assert reloaded.window_id == "@3"
     assert reloaded.panes == {Role.LEADER: "%1", Role.IMPLEMENTER: "%2"}
-    assert reloaded.repo == RepoState(base="main", base_sha="abc123", branch="shikiru/T-1")
+    assert reloaded.repo == RepoState(
+        base="main", base_ref="main", base_sha="abc123", branch="shikiru/T-1"
+    )
     assert reloaded.requeued_at == clock.now()
     assert reloaded.summary == "All done"
 

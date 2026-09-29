@@ -377,7 +377,10 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
     task = tasks.insert_from_submit(submitted.command)
     queue.mark_done(submitted.id, {"task_id": task.id})
     tasks.apply_transition(task.id, Transition.stay(task, step=Step.VERIFY, status=Status.QUEUED))
-    tasks.set_repo(task.id, RepoState(base="missing", base_sha="0" * 40, branch="shikiru/broken"))
+    tasks.set_repo(
+        task.id,
+        RepoState(base="missing", base_ref="missing", base_sha="0" * 40, branch="shikiru/broken"),
+    )
     task_root(tmp_path, task.id).mkdir(parents=True)
     engine_task = asyncio.create_task(engine.run())
     try:

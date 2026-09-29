@@ -114,6 +114,7 @@ class RepoState(DomainModel):
     """The task's checkout state (03 §1.1, §5; mirrors `tasks.repo`, 05 §2)."""
 
     base: str
+    base_ref: str
     base_sha: str
     branch: str
 

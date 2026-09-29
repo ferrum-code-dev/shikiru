@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
 _GH_BIN = "gh"
 _COMMAND_TIMEOUT_SECONDS = 60.0
 _STATE_FIELD = "state"
+_MERGE_COMMIT_FIELD = "mergeCommit"
+_OID_FIELD = "oid"
 _URL_FIELD = "url"
 _OPEN_STATE_FILTER = "open"
 
@@ -26,6 +29,14 @@ class PullRequestState(StrEnum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"
     MERGED = "MERGED"
+
+
+@dataclass(frozen=True, slots=True)
+class PullRequestStatus:
+    """A pull request's state and, once merged, the commit it landed as on its base."""
+
+    state: PullRequestState
+    merge_commit: str | None
 
 
 class GitHub:
@@ -76,10 +87,17 @@ class GitHub:
             raise ShikiruError(message)
         return lines[-1]
 
-    async def pull_request_state(self, repo_dir: Path, url: str) -> PullRequestState:
-        """Return the current state of the pull request at `url`."""
-        result = await self._run(repo_dir, "pr", "view", url, "--json", _STATE_FIELD)
-        return PullRequestState(json.loads(result.stdout)[_STATE_FIELD])
+    async def pull_request_status(self, repo_dir: Path, url: str) -> PullRequestStatus:
+        """Return the current state and merge commit of the pull request at `url`."""
+        result = await self._run(
+            repo_dir, "pr", "view", url, "--json", f"{_STATE_FIELD},{_MERGE_COMMIT_FIELD}"
+        )
+        view = json.loads(result.stdout)
+        merge_commit = view[_MERGE_COMMIT_FIELD]
+        return PullRequestStatus(
+            PullRequestState(view[_STATE_FIELD]),
+            merge_commit[_OID_FIELD] if merge_commit is not None else None,
+        )
 
     async def _run(self, repo_dir: Path, *args: str) -> ProcessResult:
         return await self._runner.run(

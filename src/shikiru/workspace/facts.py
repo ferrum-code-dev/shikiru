@@ -51,8 +51,8 @@ class GitFacts:
         self, task_root: Path, repo: RepoState, trackers: Sequence[str]
     ) -> WorkspaceFacts:
         """Collect facts for the worktree at `task_root`, checked out as `repo`."""
-        diff_range = f"{repo.base}...HEAD"
-        commits = await self._git.log_oneline(task_root, f"{repo.base}..HEAD")
+        diff_range = f"{repo.base_ref}...HEAD"
+        commits = await self._git.log_oneline(task_root, f"{repo.base_ref}..HEAD")
         diff_stat = await self._git.diff_stat(task_root, diff_range)
         status = await self._git.status_porcelain(task_root)
         changed_paths = set(await self._git.diff_name_only(task_root, diff_range))

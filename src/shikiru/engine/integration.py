@@ -12,6 +12,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
 from shikiru.errors import CommandFailed, ShikiruError
 from shikiru.paths import task_root
+from shikiru.workspace.base_refs import MergedBaseUnavailable
 from shikiru.workspace.github import PullRequestState
 
 if TYPE_CHECKING:
@@ -23,8 +24,9 @@ if TYPE_CHECKING:
     from shikiru.domain.events import Event
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
+    from shikiru.workspace.base_refs import FetchedBaseRefs
     from shikiru.workspace.git import Git
-    from shikiru.workspace.github import GitHub
+    from shikiru.workspace.github import GitHub, PullRequestStatus
 
 INTEGRATION_RETRY = timedelta(minutes=2)
 """Delay between blocked integration pre-checks (05-data.md §1)."""
@@ -38,9 +40,9 @@ class IntegrationBlocked(ShikiruError):
 
     reason = EscalationReason.INTEGRATION_BLOCKED
 
-    def __init__(self) -> None:
-        """Build the integration-blocked error."""
-        super().__init__("local integration remained blocked")
+    def __init__(self, message: str = "local integration remained blocked") -> None:
+        """Build the integration-blocked error, saying what stayed blocked."""
+        super().__init__(message)
 
 
 class IntegrationHeld(Exception):
@@ -143,8 +145,8 @@ class IntegrationStrategy(Protocol):
         """Merge the task branch into its base, or start doing so, and return its commits."""
         ...
 
-    async def settle(self, task_id: str) -> None:
-        """Wait until `task_id`'s started integration has landed in its base."""
+    async def settle(self, task_id: str, repo: RepoState) -> None:
+        """Wait until `task_id`'s started integration has landed in its base `repo`."""
         ...
 
 
@@ -203,9 +205,9 @@ class LocalMerge:
             break
         return candidate.commits if candidate is not None else ()
 
-    async def settle(self, task_id: str) -> None:
+    async def settle(self, task_id: str, repo: RepoState) -> None:
         """Return at once: `merge` already landed the branch in its base."""
-        del task_id
+        del task_id, repo
 
     async def _apply(self, project_root: Path, repo: RepoState, candidate: _MergeCandidate) -> None:
         if candidate.base_checked_out:
@@ -268,8 +270,12 @@ class PullRequest:
         events: EventLog,
         project_root: Path,
         remote: str,
+        base_refs: FetchedBaseRefs,
     ) -> None:
-        """Push to `remote` from `project_root`; record the PR in `events`, waits in `tasks`."""
+        """Push to `remote` from `project_root`; record the PR in `events`, waits in `tasks`.
+
+        A merged PR's base is fetched and verified through `base_refs` before the task is done.
+        """
         self._git = git
         self._github = github
         self._clock = clock
@@ -277,6 +283,7 @@ class PullRequest:
         self._events = events
         self._project_root = project_root
         self._remote = remote
+        self._base_refs = base_refs
 
     def started(self, task_id: str) -> tuple[str, ...] | None:
         """Return the commits of `task_id`'s open pull request, if it has one."""
@@ -291,7 +298,7 @@ class PullRequest:
         """
         repo = request.repo
         commits = tuple(
-            await self._git.log_oneline(request.task_root, f"{repo.base}..{repo.branch}")
+            await self._git.log_oneline(request.task_root, f"{repo.base_ref}..{repo.branch}")
         )
         if not commits:
             return ()
@@ -314,21 +321,29 @@ class PullRequest:
         )
         return commits
 
-    async def settle(self, task_id: str) -> None:
-        """Release the slot and poll the open pull request until it is merged or closed."""
+    async def settle(self, task_id: str, repo: RepoState) -> None:
+        """Poll the open pull request until it is merged or closed, then verify the merged base.
+
+        Raises `PullRequestClosed` for a closed one, and `IntegrationBlocked` when the merged
+        commit cannot be fetched from and verified on the remote base.
+        """
         opened = self._open_pull_request(task_id)
         if opened is None:
             return
         self._tasks.set_slot(task_id, None)
         self._tasks.set_wait_reason(task_id, WaitReason.PR_OPEN)
-        while (state := await self._state(opened.url)) is PullRequestState.OPEN:
+        while (status := await self._status(opened.url)).state is PullRequestState.OPEN:
             await self._clock.sleep(PR_POLL.total_seconds())
         self._tasks.set_wait_reason(task_id, None)
-        if state is PullRequestState.CLOSED:
+        if status.state is PullRequestState.CLOSED:
             raise PullRequestClosed(opened.url)
+        try:
+            await self._base_refs.sync(repo.base, status.merge_commit)
+        except (CommandFailed, MergedBaseUnavailable) as error:
+            raise IntegrationBlocked(str(error)) from error
 
-    async def _state(self, url: str) -> PullRequestState:
-        return await self._github.pull_request_state(self._project_root, url)
+    async def _status(self, url: str) -> PullRequestStatus:
+        return await self._github.pull_request_status(self._project_root, url)
 
     def _open_pull_request(self, task_id: str) -> _OpenPullRequest | None:
         events = self._events.since(
@@ -391,7 +406,7 @@ class Integrator:
             current, current_metadata, commits = await self._apply(
                 task, repo, resolve_conflicts, metadata
             )
-        await self._strategy.settle(current.id)
+        await self._strategy.settle(current.id, repo)
         summary = IntegrationSummary(
             summary=current_metadata.summary,
             commits=commits,
@@ -439,9 +454,9 @@ class Integrator:
             current_metadata = metadata
             task_dir = task_root(self._project_root, current.id)
             await self._require_committed(current, task_dir)
-            base_sha = await self._git.rev_parse(task_dir, repo.base)
+            base_sha = await self._git.rev_parse(task_dir, repo.base_ref)
             branch_sha = await self._git.rev_parse(task_dir, repo.branch)
-            if base_sha != branch_sha and await self._try_rebase(task_dir, repo.base):
+            if base_sha != branch_sha and await self._try_rebase(task_dir, repo.base_ref):
                 current, current_metadata = await resolve_conflicts(
                     current, lambda: self._continue_rebase(task_dir)
                 )

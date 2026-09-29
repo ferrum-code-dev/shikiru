@@ -410,9 +410,9 @@ Refs: 03 §4.3, §7, 04 §6.
 
 ### Task 47: Dependents start from the merged base in PR mode (F06)
 Refs: 03 §6, invariant 4.
-- [ ] Decision written in 03 §6: after a PR is merged, the engine fetches the remote base and creates dependents' worktrees from the verified fetched ref. The operator's checked-out branch and local changes are never reset.
-- [ ] Dependents are not released until the merged remote base is fetched and verified.
-- [ ] Squash and rebase merges are handled.
+- [x] Decision written in 03 §6: after a PR is merged, the engine fetches the remote base and creates dependents' worktrees from the verified fetched ref. The operator's checked-out branch and local changes are never reset.
+- [x] Dependents are not released until the merged remote base is fetched and verified.
+- [x] Squash and rebase merges are handled.
 - Tests: integration with a local bare remote and `gh` faked on PATH: merge T-1 remotely (merge commit and squash); T-2's worktree contains T-1's change.
 
 ### Task 48: Decomposition delivers tracker changes to children (F07)

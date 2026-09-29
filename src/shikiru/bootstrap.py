@@ -91,6 +91,7 @@ from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
+from shikiru.workspace.base_refs import FetchedBaseRefs, LocalBaseRefs
 from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
@@ -448,21 +449,24 @@ def build_engine(
         runs=runs,
         commands=command_queue,
     )
+    git = Git(resolved_runner)
+    fetched_bases = FetchedBaseRefs(git, project_root, resolved_settings.repo.remote)
     roots = TaskRootBuilder(
-        Git(resolved_runner),
+        git,
         project_root,
         resolved_settings.repo,
         CacheCloner(resolved_runner, cow_args=default_cow_args()),
+        fetched_bases if resolved_settings.orchestration.integration == "pr" else LocalBaseRefs(),
     )
     task_finisher = TaskFinisher(sessions, layout, roots)
     escalation_raiser = EscalationRaiser(escalations_store, events, runs, project_root)
-    git = Git(resolved_runner)
     integrator = _build_integrator(
         project_root=project_root,
         settings=resolved_settings,
         clock=resolved_clock,
         git=git,
         runner=resolved_runner,
+        fetched_bases=fetched_bases,
         tasks=tasks,
         events=events,
         task_finisher=task_finisher,
@@ -602,6 +606,7 @@ def _build_integrator(
     clock: Clock,
     git: Git,
     runner: SubprocessRunner,
+    fetched_bases: FetchedBaseRefs,
     tasks: TaskStore,
     events: EventLog,
     task_finisher: TaskFinisher,
@@ -624,6 +629,7 @@ def _build_integrator(
                 events=events,
                 project_root=project_root,
                 remote=settings.repo.remote,
+                base_refs=fetched_bases,
             )
     return Integrator(
         git=git,
