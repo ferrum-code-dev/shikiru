@@ -342,8 +342,8 @@ Refs: 06 §6.5.
 
 ### Task 28: Sessions list and attach
 Refs: 06 §5.6.
-- [ ] `SessionLister` rows: session, project dir, engine state, running/queued/escalated counts, read without writing to the other project.
-- [ ] `ls [--host H]` (human and `--json`) and `attach [NAME] [--host H]` with the inline picker, `switch-client` inside tmux, quoted SSH command.
+- [x] `SessionLister` rows: session, project dir, engine state, running/queued/escalated counts, read without writing to the other project.
+- [x] `ls [--host H]` (human and `--json`) and `attach [NAME] [--host H]` with the inline picker, `switch-client` inside tmux, quoted SSH command.
 - Tests: integration on `tmux_server` with two projects; SSH argv construction.
 
 ### Task 29: Init wizard

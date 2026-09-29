@@ -55,6 +55,6 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 25: Remaining widgets and renderables
 - [x] Task 26: Palette
 - [x] Task 27: Motion
-- [ ] Task 28: Sessions list and attach
+- [x] Task 28: Sessions list and attach
 - [ ] Task 29: Init wizard
 - [ ] Task 30: Release readiness

@@ -22,6 +22,7 @@ from shikiru.config.settings import (
     ResourcesConfig,
     RoleConfig,
     RolesConfig,
+    SessionSettings,
     Settings,
     TimeoutsConfig,
     TitlesConfig,
@@ -82,6 +83,7 @@ def make_settings(
 ) -> Settings:
     return Settings(
         project=ProjectConfig(name="demo", trackers=[]),
+        sessions=SessionSettings(ssh_timeout_seconds=30),
         agents={**DEFAULT_AGENTS, **(agents or {})},
         orchestration=OrchestrationConfig(
             max_parallel=2,

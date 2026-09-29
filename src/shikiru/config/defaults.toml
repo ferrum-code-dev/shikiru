@@ -1,6 +1,9 @@
 [project]
 trackers = []
 
+[sessions]
+ssh_timeout_seconds = 30
+
 [orchestration]
 max_parallel = 2
 max_iterations = 5

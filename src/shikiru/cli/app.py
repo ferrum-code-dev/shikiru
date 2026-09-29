@@ -21,11 +21,17 @@ from shikiru.bootstrap import (
     build_mcp_server,
     build_operator,
     build_project_detectors,
+    build_session_tools,
     run_dashboard,
     run_palette,
 )
 from shikiru.cli.context import CliState, project_root, state_from
-from shikiru.cli.render import ack_renderable, doctor_renderable, status_renderable
+from shikiru.cli.render import (
+    ack_renderable,
+    doctor_renderable,
+    session_rows_renderable,
+    status_renderable,
+)
 from shikiru.cli.report import report_command
 from shikiru.cli.view import view_command
 from shikiru.config.loader import load_settings
@@ -137,6 +143,52 @@ def stop(
     except ShikiruError as error:
         _fail(error)
     emit_ack(state, result)
+
+
+@app.command(name="ls")
+def list_sessions(
+    context: typer.Context,
+    *,
+    host: Annotated[str | None, typer.Option("--host")] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Print JSON output.")] = False,
+) -> None:
+    """List Shikiru project sessions visible on this host or an SSH host."""
+    try:
+        state = state_from(context)
+        lister, _ = build_session_tools(state.overrides)
+        rows = _run(lister.list_sessions(host))
+    except ShikiruError as error:
+        _fail(error)
+    if state.json_output or json_output:
+        typer.echo(json.dumps([row.model_dump(mode="json") for row in rows]))
+    else:
+        Console().print(session_rows_renderable(rows))
+
+
+@app.command()
+def attach(
+    context: typer.Context,
+    name: Annotated[str | None, typer.Argument()] = None,
+    *,
+    host: Annotated[str | None, typer.Option("--host")] = None,
+) -> None:
+    """Attach to a listed Shikiru session, with a picker when selection is needed."""
+    try:
+        state = state_from(context)
+        lister, attacher = build_session_tools(state.overrides)
+
+        async def attach_session() -> None:
+            rows = await lister.list_sessions(host)
+            await attacher.attach(
+                rows,
+                name=name,
+                host=host,
+                inside_tmux=bool(os.environ.get("TMUX")),
+            )
+
+        _run(attach_session())
+    except ShikiruError as error:
+        _fail(error)
 
 
 @app.command()

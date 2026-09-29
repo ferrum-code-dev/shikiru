@@ -147,7 +147,7 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 `SessionLister` returns one row per project, for the local host or for `H`; `ls` prints the rows, `attach` picks one from them.
 
-- **Rows**: `tmux list-sessions` filtered by the `[shikiru] ` prefix, each session's `SHIKIRU_PROJECT_DIR`, and, from that project's DB, the engine state and the running, queued and escalated counts. `ls` is a read of other projects' progress, so it never writes to them.
+- **Rows**: `tmux list-sessions` filtered by the `[shikiru] ` prefix, each session's `SHIKIRU_PROJECT_DIR`, and, from that project's DB, the engine state and the running, queued and escalated counts. `ls` opens each DB with SQLite read-only mode and never changes its schema, progress or other project state. SQLite may create or update WAL and shared-memory coordination sidecars while reading a WAL database; a newly created WAL file is empty, and existing database or WAL contents remain unchanged.
 - **`attach`**: exactly one row, or a matching `NAME` → `os.execvp("tmux", ["tmux", "attach", "-t", "=[shikiru] NAME"])` (`switch-client` when inside tmux). Otherwise an inline selectable list of the same rows.
 - **Remote** (`--host H`, on both): `ssh H shikiru ls --json` gives the rows; `attach` then runs `os.execvp("ssh", ["ssh", "-t", H, shlex.join(["tmux", "attach", "-t", "=[shikiru] NAME"])])`. `--host` needs nothing installed locally but `ssh`, and nothing remote but `shikiru`.
 

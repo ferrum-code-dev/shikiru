@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from shikiru.errors import DatabaseError
 from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
 from shikiru.store.events import fetch_events_since, fetch_latest_events
 from shikiru.store.quotas import fetch_quota_agents, fetch_quotas
@@ -33,6 +35,7 @@ class StateReader:
     def __init__(self, database: Database, clock: Clock) -> None:
         """Open `database`'s read-only connection, polled through `clock` by `watch`."""
         self._connection = database.connect_readonly()
+        self._database_path = database.path
         self._clock = clock
 
     def get_task(self, task_id: str) -> Task | None:
@@ -41,7 +44,11 @@ class StateReader:
 
     def list_tasks(self, *, statuses: Sequence[Status] | None = None) -> list[Task]:
         """See `shikiru.store.tasks.fetch_tasks`."""
-        return fetch_tasks(self._connection, statuses=statuses)
+        try:
+            return fetch_tasks(self._connection, statuses=statuses)
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
 
     def list_runs(self, task_id: str) -> list[Run]:
         """See `shikiru.store.runs.fetch_runs_for_task`."""

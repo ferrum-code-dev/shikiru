@@ -29,6 +29,11 @@ class Database:
         """Point at the SQLite file `path`; no connection is opened until asked for one."""
         self._path = path
 
+    @property
+    def path(self) -> Path:
+        """Return the database file path used in actionable read errors."""
+        return self._path
+
     def connect(self) -> sqlite3.Connection:
         """Open a read-write connection and migrate the schema up to date.
 
@@ -42,7 +47,11 @@ class Database:
 
     def connect_readonly(self) -> sqlite3.Connection:
         """Open a connection SQLite itself refuses to let write."""
-        return self._connect(mode="ro")
+        try:
+            return self._connect(mode="ro")
+        except sqlite3.Error as error:
+            message = f"could not open read-only database {self._path}: {error}"
+            raise DatabaseError(message) from error
 
     def schema_version(self, connection: sqlite3.Connection) -> int:
         """Return the migrated schema version for an open database connection."""

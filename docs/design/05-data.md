@@ -21,6 +21,9 @@ base = "main"                                   # omit = branch checked out at t
 caches = ["node_modules", "**/node_modules", ".venv", "target"]
 remote = "origin"                               # push target when integration = "pr"
 
+[sessions]
+ssh_timeout_seconds = 30                        # maximum wait for remote `ls`
+
 [orchestration]
 max_parallel = 2
 max_iterations = 5

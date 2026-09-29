@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from shikiru.operator.commands import Ack
     from shikiru.operator.doctor import DoctorReport
     from shikiru.operator.queries import StatusView, TaskDetail, TaskSummary
+    from shikiru.operator.sessions import SessionRow
 
 STATUS_PANEL_TITLE = "Shikiru status"
 ACTIVE_TABLE_TITLE = "Active tasks"
@@ -44,6 +45,7 @@ DOCTOR_OK_LABEL = "ok"
 DOCTOR_FAIL_LABEL = "fail"
 NO_ROWS = "none"
 NO_VALUE = "—"
+SESSIONS_TABLE_TITLE = "Shikiru sessions"
 
 
 def status_renderable(view: StatusView, *, settings: Settings, width: int) -> RenderableType:
@@ -126,6 +128,29 @@ def doctor_renderable(report: DoctorReport) -> Table:
             check.name,
             check.detail,
         )
+    return table
+
+
+def session_rows_renderable(rows: list[SessionRow]) -> Table:
+    """Render session locations and progress counts as a Rich table."""
+    table = Table(title=SESSIONS_TABLE_TITLE)
+    table.add_column("Session", overflow="fold")
+    table.add_column("Project directory", overflow="fold")
+    table.add_column("Engine")
+    table.add_column("Running")
+    table.add_column("Queued")
+    table.add_column("Escalated")
+    for row in rows:
+        table.add_row(
+            Text(row.session, overflow="fold"),
+            Text(row.project_dir, overflow="fold"),
+            row.engine_state,
+            str(row.running),
+            str(row.queued),
+            str(row.escalated),
+        )
+    if not rows:
+        table.add_row(NO_ROWS, NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE)
     return table
 
 

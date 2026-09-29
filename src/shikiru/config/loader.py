@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
-from shikiru.config.settings import Settings
+from shikiru.config.settings import SessionSettings, Settings
 from shikiru.errors import ConfigError
 from shikiru.paths import PROJECT_CONFIG_RELATIVE_PATH, project_config_path
 
@@ -41,6 +41,19 @@ def load_settings(project_dir: Path, overrides: Sequence[str] = ()) -> Settings:
         return Settings.model_validate(merged)
     except ValidationError as error:
         raise ConfigError(_format_validation_error(error, sources)) from error
+
+
+def load_session_settings(overrides: Sequence[str] = ()) -> SessionSettings:
+    """Load packaged session settings and applicable `--set` overrides outside a project."""
+    merged, _sources = _load_defaults()
+    try:
+        for override in overrides:
+            key_path, value = _parse_set_override(override)
+            merged = _deep_merge(merged, _nest(key_path, value))
+        return SessionSettings.model_validate(merged["sessions"])
+    except (KeyError, ValidationError) as error:
+        message = f"defaults.toml: invalid sessions settings: {error}"
+        raise ConfigError(message) from error
 
 
 def _load_defaults() -> tuple[dict[str, Any], dict[str, str]]:

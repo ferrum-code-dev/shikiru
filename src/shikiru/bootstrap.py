@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
-from shikiru.config.loader import load_settings
+from shikiru.config.loader import load_session_settings, load_settings
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.daemon import (
     ENGINE_LOGGER_NAME,
@@ -67,6 +67,7 @@ from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.probe import AgentProbe
 from shikiru.operator.queries import OperatorQueries
 from shikiru.operator.services import OperatorServices
+from shikiru.operator.sessions import SessionAttacher, SessionLister, SessionRow
 from shikiru.paths import engine_lock_path, engine_log_path, project_state_dir, state_db_path
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
@@ -167,6 +168,37 @@ def build_lifecycle() -> ProjectLifecycle:
         operator_factory=operator_factory,
         plugin_validator=plugin_validator,
         engine_up=engine_up,
+    )
+
+
+def build_session_tools(
+    overrides: Sequence[str] = (),
+) -> tuple[SessionLister, SessionAttacher]:
+    """Build the read-only session lister and process-replacing attach adapter."""
+    runner = SubprocessRunner()
+    clock = build_clock()
+    tmux = Tmux(runner)
+    session_settings = load_session_settings(overrides)
+
+    def engine_up(project_root: Path) -> bool:
+        return engine_is_running(engine_lock_path(project_root))
+
+    def reader_for(project_root: Path) -> StateReader:
+        return StateReader(Database(state_db_path(project_root)), clock)
+
+    async def pick(rows: Sequence[SessionRow]) -> SessionRow:
+        picker_module = import_module("shikiru.dashboard.session_picker")
+        return await picker_module.pick_session(tuple(rows))
+
+    return (
+        SessionLister(
+            tmux=tmux,
+            runner=runner,
+            engine_up=engine_up,
+            reader_factory=reader_for,
+            remote_timeout_seconds=session_settings.ssh_timeout_seconds,
+        ),
+        SessionAttacher(runner, pick),
     )
 
 

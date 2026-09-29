@@ -37,6 +37,12 @@ class RepoConfig(ConfigModel):
     remote: str = GIT_DEFAULT_REMOTE
 
 
+class SessionSettings(ConfigModel):
+    """`[sessions]`: limits for host-to-host session queries."""
+
+    ssh_timeout_seconds: float = Field(gt=0)
+
+
 class ResourcesConfig(ConfigModel):
     """`[orchestration.resources]`."""
 
@@ -169,6 +175,7 @@ class Settings(ConfigModel):
 
     project: ProjectConfig
     repo: RepoConfig = Field(default_factory=RepoConfig)
+    sessions: SessionSettings
     orchestration: OrchestrationConfig
     agents: dict[str, AgentConfig] = Field(default_factory=dict)
     roles: RolesConfig

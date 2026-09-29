@@ -7,6 +7,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from shikiru.errors import CommandFailed
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -25,6 +27,10 @@ FORMAT_PANE_PID = "#{pane_pid}"
 FORMAT_PANE_DEAD = "#{pane_dead}"
 FORMAT_WINDOW_ID = "#{window_id}"
 FORMAT_SOCKET_PATH = "#{socket_path}"
+FORMAT_SESSION_NAME = "#{session_name}"
+NO_SERVER_RUNNING = "no server running on "
+ERROR_CONNECTING = "error connecting to "
+SOCKET_MISSING = "(No such file or directory)"
 
 SplitAxis = Literal["h", "v"]
 
@@ -253,6 +259,18 @@ class Tmux:
         """List every pane across every window of session `target`."""
         result = await self._run("list-panes", "-s", "-t", target, "-F", fmt)
         return result.stdout.splitlines()
+
+    async def list_sessions(self) -> list[str]:
+        """List session names, returning an empty list when this server is absent."""
+        result = await self._run("list-sessions", "-F", FORMAT_SESSION_NAME, check=False)
+        if result.returncode == 0:
+            return result.stdout.splitlines()
+        error = result.stderr.strip()
+        if error.startswith(NO_SERVER_RUNNING) or (
+            error.startswith(ERROR_CONNECTING) and error.endswith(SOCKET_MISSING)
+        ):
+            return []
+        raise CommandFailed(result.argv, result.returncode, result.stderr)
 
     async def pane_exists(self, target: str) -> bool:
         """Return whether an exact pane target exists."""
