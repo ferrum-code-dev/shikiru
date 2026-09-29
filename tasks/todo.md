@@ -62,7 +62,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 ## Phase 7 — Review remediation (2026-09-29)
 - [x] Task 41: Quality gate independent of the terminal (F17)
 - [x] Task 42: Integration never discards uncommitted work (F01)
-- [ ] Task 43: Holds block every execution path (F04)
+- [x] Task 43: Holds block every execution path (F04)
 - [ ] Task 44: One owner for a task workspace during takeover (F03)
 - [ ] Task 45: Stale escalation actions cannot resurrect work (F05)
 - [ ] Task 46: Turn processes own their descendants (F02)

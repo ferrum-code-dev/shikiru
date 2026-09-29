@@ -66,7 +66,12 @@ def _local_merge(project_root: Path, clock: Clock, integration_wait: int) -> Loc
 
 def _request(task: Task, state: RepoState, task_root: Path) -> MergeRequest:
     return MergeRequest(
-        task_id=task.id, title=task.title, repo=state, task_root=task_root, summary=task.title
+        task_id=task.id,
+        title=task.title,
+        repo=state,
+        task_root=task_root,
+        summary=task.title,
+        held=lambda: False,
     )
 
 

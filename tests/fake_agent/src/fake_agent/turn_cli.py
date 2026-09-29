@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fake_agent.script import (
@@ -49,7 +50,6 @@ from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
 
 _EVENT_SESSION_STARTED = "session_started"
@@ -124,7 +124,13 @@ def _corrupt_report(current_turn: Path) -> None:
     (current_turn.resolve() / REPORT_FILENAME).write_text("{")
 
 
+def _read_release(release_fifo: str) -> None:
+    Path(release_fifo).read_text()
+
+
 async def _report(context: ScriptContext, step: TurnStep, prompt: str, current_turn: Path) -> None:
+    if isinstance(step, AcceptStep) and step.release_fifo:
+        await asyncio.to_thread(_read_release, step.release_fifo)
     _emit({"event": _EVENT_TOOL_STARTED, "name": _REPORT_TOOL_NAME, "detail": _REPORT_TOOL_DETAIL})
     await submit_scripted_report(context, step, prompt)
     if isinstance(step, AcceptStep) and step.corrupt_report:

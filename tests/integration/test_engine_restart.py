@@ -20,11 +20,11 @@ from fake_agent.scripted import FAKE_CHANGE_FILENAME
 from shikiru.agents.contracts import role_dir
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
-from shikiru.domain.commands import Cancel, Pause, Prioritize, Submit
+from shikiru.domain.commands import Cancel, Pause, Prioritize, Resume, Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Role, Status, Step
+from shikiru.domain.tasks import Hold, Role, Status, Step
 from shikiru.engine.integration import INTEGRATION_RETRY
 from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
 from shikiru.paths import (
@@ -575,3 +575,65 @@ async def test_a_restarted_engine_completes_the_task_it_lost_at_a_step_boundary(
     finally:
         await engines.reap()
         project.close()
+
+
+async def test_a_restarted_engine_leaves_a_paused_integrating_task_alone_until_it_is_resumed(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(tmp_path)
+    initial = await _head(tmp_path)
+    (tmp_path / FAKE_CHANGE_FILENAME).write_text("uncommitted\n")
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure(_PROJECT_NAME, tmp_path, home_command=("/bin/sh",))
+    project = _Project(tmp_path, FakeClock(TASK_CREATED_AT))
+    engines = _Engines(tmp_path, tmux, tmux_server)
+    try:
+        task_id, _ = await _kill_at(project, engines, _Kill(Step.INTEGRATE, None), None)
+        project.tasks.set_holds(task_id, frozenset({Hold.PAUSED}))
+        await _while_first_engine_down(tmp_path, _Boundary(kills=()))
+        events_before = project.events.since(0, task_id=task_id)
+        clock = FakeClock(TASK_CREATED_AT)
+        running = asyncio.create_task(engines.build(clock).run())
+        try:
+            await _process(project, clock, Prioritize(task_id=_UNKNOWN_TASK_ID, priority=0))
+            held = project.tasks.get(task_id)
+            assert held is not None
+            assert held.status is Status.INTEGRATING
+            assert project.events.since(0, task_id=task_id) == events_before
+            assert await _head(tmp_path) == initial
+
+            await _process(project, clock, Resume(task_id=task_id))
+            await wait_until(lambda: _finished(project, task_id, clock), timeout=_WAIT_SECONDS)
+        finally:
+            running.cancel()
+            with suppress(asyncio.CancelledError):
+                await running
+        assert len(await _commit_subjects(tmp_path, initial)) == 1
+    finally:
+        await engines.reap()
+        project.close()
+
+
+async def _process(
+    project: _Project, clock: FakeClock, command: Pause | Prioritize | Resume
+) -> None:
+    queued = project.queue.append(command)
+
+    def processed() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(_POLL_ADVANCE_SECONDS)
+        outcome = project.queue.status(queued.id)
+        return outcome is not None and outcome.status is not CommandStatus.PENDING
+
+    await wait_until(processed, timeout=_WAIT_SECONDS)
+
+
+def _finished(project: _Project, task_id: str, clock: FakeClock) -> bool:
+    if clock.has_pending_sleep():
+        clock.advance(_POLL_ADVANCE_SECONDS)
+    task = project.tasks.get(task_id)
+    return (
+        task is not None
+        and task.status is Status.DONE
+        and not task_root(project.root, task_id).exists()
+    )

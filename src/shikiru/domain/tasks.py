@@ -149,3 +149,8 @@ class Task(DomainModel):
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+    @property
+    def held(self) -> bool:
+        """Whether a task-scoped hold forbids starting the task's next external effect (03 §6)."""
+        return bool(self.holds)

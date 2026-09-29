@@ -43,6 +43,10 @@ class IntegrationBlocked(ShikiruError):
         super().__init__("local integration remained blocked")
 
 
+class IntegrationHeld(Exception):
+    """A task hold was set before integration could start its next external effect."""
+
+
 class IntegrationConflict(ShikiruError):
     """Conflict recovery could not produce an accepted post-rebase result."""
 
@@ -100,6 +104,7 @@ class MergeRequest:
     repo: RepoState
     task_root: Path
     summary: str
+    held: Callable[[], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +191,8 @@ class LocalMerge:
             try:
                 candidate = await self._precheck(project_root, task_root_path, repo)
                 if candidate is not None:
+                    if request.held():
+                        raise IntegrationHeld
                     await self._apply(project_root, repo, candidate)
             except _PrecheckFailed, CommandFailed:
                 remaining = (deadline - self._clock.now()).total_seconds()
@@ -427,6 +434,7 @@ class Integrator:
                 message=f"{task.id} integration started",
                 data={"branch": repo.branch, "base": repo.base},
             )
+            self._require_not_held(task.id)
             current = task
             current_metadata = metadata
             task_dir = task_root(self._project_root, current.id)
@@ -439,6 +447,7 @@ class Integrator:
                 )
                 await self._continue_rebase(task_dir)
             await self._require_committed(current, task_dir)
+            self._require_not_held(current.id)
             commits = await self._strategy.merge(
                 MergeRequest(
                     task_id=current.id,
@@ -446,9 +455,21 @@ class Integrator:
                     repo=repo,
                     task_root=task_dir,
                     summary=current_metadata.summary,
+                    held=lambda: self._is_held(current.id),
                 )
             )
             return current, current_metadata, commits
+
+    def _is_held(self, task_id: str) -> bool:
+        current = self._tasks.get(task_id)
+        if current is None:
+            message = f"{task_id} vanished during integration"
+            raise ShikiruError(message)
+        return current.held
+
+    def _require_not_held(self, task_id: str) -> None:
+        if self._is_held(task_id):
+            raise IntegrationHeld
 
     async def _require_committed(self, task: Task, task_dir: Path) -> None:
         if await self._git.is_rebase_in_progress(task_dir):

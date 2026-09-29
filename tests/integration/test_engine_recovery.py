@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.quotas import QuotaStore
 from shikiru.workspace.roots import run_dir
@@ -361,3 +361,44 @@ async def test_unrecoverable_report_escalates_as_agent_protocol(
         0, kinds=[EventKind.HELPER_ACTION], task_id=task_id
     )
     assert helper_event.data == {"role": Role.LEADER.value, "reason": "no report"}
+
+
+async def test_a_pause_set_during_a_quota_wait_stops_the_continue_turn_until_resumed(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=flow_settings(),
+        clock=clock,
+        script=[
+            {
+                "kind": "fail",
+                "failure_kind": "quota",
+                "resets_at": (TASK_CREATED_AT + timedelta(minutes=1)).isoformat(),
+            }
+        ],
+    )
+    quota = QuotaStore(engine_env.connection)
+    await wait_until(lambda: quota.block_for(FAKE_RUNG.agent) is not None, timeout=10)
+    await wait_until(clock.has_pending_sleep, timeout=10)
+    engine_env.tasks.set_holds(task_id, frozenset({Hold.PAUSED}))
+    turns_before = len(list((run_dir(engine_env.project_root, task_id) / "turns").iterdir()))
+
+    await _drive(flow_task, clock)
+
+    held = engine_env.tasks.get(task_id)
+    assert held is not None
+    assert held.status is Status.RUNNING
+    assert (
+        len(list((run_dir(engine_env.project_root, task_id) / "turns").iterdir())) == turns_before
+    )
+    engine_env.tasks.set_holds(task_id, frozenset())
+    flow_env = build_flow(engine_env, flow_settings(), clock=clock)
+    resumed = asyncio.create_task(flow_env.flow.run(task_id))
+    await _drive(resumed, clock)
+
+    final = engine_env.tasks.get(task_id)
+    assert final is not None
+    assert final.status is Status.INTEGRATING

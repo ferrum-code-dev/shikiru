@@ -383,9 +383,9 @@ Refs: 03 §5–6, invariant 3.
 
 ### Task 43: Holds block every execution path (F04)
 Refs: 03 §1.2, §7, §9, invariant 2.
-- [ ] One turn-boundary hold check is used by ordinary steps, integration entry, each integration turn and the reconciler; the task returns without starting the next external effect while `paused` or `intervention` is held.
-- [ ] Decision recorded in 03 §6: an already-running Git operation may finish, no further step starts.
-- [ ] A hold set while integration waits for access is honoured before the merge.
+- [x] One turn-boundary hold check is used by ordinary steps, integration entry, each integration turn and the reconciler; the task returns without starting the next external effect while `paused` or `intervention` is held.
+- [x] Decision recorded in 03 §6: an already-running Git operation may finish, no further step starts.
+- [x] A hold set while integration waits for access is honoured before the merge.
 - Tests: integration: restart with a paused `INTEGRATING` task does not rebase, run a turn or merge until `resume`; pause at the verify → integrate boundary; pause while waiting for integration access.
 
 ### Task 44: One owner for a task workspace during takeover (F03)

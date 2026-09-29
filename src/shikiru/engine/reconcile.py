@@ -53,5 +53,5 @@ class Reconciler:
             if task.status in _TERMINAL and task_root(self._project_root, task.id).exists():
                 await self._finish_task(task)
         for task in active:
-            if task.status in _IN_FLIGHT:
+            if task.status in _IN_FLIGHT and not task.held:
                 await self._resume_task(task.id)

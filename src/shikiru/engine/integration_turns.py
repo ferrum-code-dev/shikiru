@@ -12,6 +12,7 @@ from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationConflict,
     IntegrationCoordinator,
+    IntegrationHeld,
     IntegrationMetadata,
     PullRequestClosed,
     UncommittedWork,
@@ -119,7 +120,7 @@ class IntegrationTurns:
                 current = await self._resolve_conflicts(task, continue_rebase, host, resolved=True)
             metadata = self._history.integration_metadata(current)
             await self._coordinator.run(current, resolve_conflicts, metadata)
-        except IntegrationTurnStopped:
+        except IntegrationTurnStopped, IntegrationHeld:
             return
         except (
             IntegrationBlocked,

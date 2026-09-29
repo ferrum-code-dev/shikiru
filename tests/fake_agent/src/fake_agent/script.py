@@ -44,6 +44,7 @@ class AcceptStep(_StepModel):
     uncommitted: str = ""
     corrupt_report: bool = False
     stall_after_report: bool = False
+    release_fifo: str = ""
 
 
 class SupersedeStep(_StepModel):

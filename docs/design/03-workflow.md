@@ -208,6 +208,8 @@ Integration itself never discards work: at its entry, and again before the strat
      - The open PR is the task's latest `pr_opened` not followed by a `pr_closed` escalation. A resumed integration (§7) polls it instead of rebasing, pushing or opening another.
 3. **Done**: the `done` status and `task_done` (summary, commits, residual risks) land in one transaction; then the window closes and the worktree is removed, last (§7).
 
+**Holds.** A `paused` or `intervention` hold (§9) is checked at every turn boundary by one rule (`Task.held`): before each step, before integration starts, before each integration turn, after waiting for the integration lock or for base access and before the rebase and the merge, and by the `Reconciler` before it resumes a task (§7). A Git operation that is already running finishes; no further step, turn, rebase, push or merge starts while a hold is set, and a turn's recovery (a quota or backoff wait, a stall `continue`) rechecks the hold before its follow-up turn. Only observing an already open pull request continues, since it starts nothing. The task keeps its status, worktree and slot, and `resume` re-enters integration from its persisted state.
+
 Dependents become ready only when their dependencies are `done`.
 
 ## 7. Recovery
@@ -231,7 +233,7 @@ Dependents become ready only when their dependencies are `done`.
 **Engine restart (`Reconciler`)**:
 1. Rebuild the tmux session and windows from the DB (`LayoutGuard`).
 2. End orphaned turn processes: a `runs/T/<role>/turn.pid` whose process still runs is stopped (SIGTERM, then SIGKILL after `TURN_STOP_GRACE`), since the old engine died without stopping it.
-3. For each `running` or `integrating` task, re-run the current step; its turn resumes the session (§4.1). The step's turn is idempotent: an existing valid `report.json` is consumed without starting a turn. That holds only for the first turn of the resumed flow, and only when that step's turn dir is still the task's latest and the role's `current_turn`; any other report there was already consumed.
+3. For each `running` or `integrating` task without a hold, re-run the current step (a held task waits for `resume`, §6); its turn resumes the session (§4.1). The step's turn is idempotent: an existing valid `report.json` is consumed without starting a turn. That holds only for the first turn of the resumed flow, and only when that step's turn dir is still the task's latest and the role's `current_turn`; any other report there was already consumed.
 4. Finish interrupted cleanup: a terminal task is entered together with its terminal event (`task_done`, `task_cancelled`) in one transaction and cleaned up afterwards, worktree last. A `done` or `cancelled` task whose task root still exists is cleaned up again (sessions closed, window closed, worktree removed); its event is never re-emitted.
 5. Pending `commands` are processed by the normal loop.
 
@@ -275,7 +277,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 | Watch | attach, select the window (role panes are live views) | `peek_session` | Last message, recent view lines, usage (from the DB and `view.jsonl`) |
 | Message an agent | palette | `send_message` | Queued for the role's next turn (below) |
 | Take over / hand back | palette; hand back also by exiting the agent's TUI | `take_over`, `hand_back` | Below |
-| Pause / resume | palette | `pause_task` (`now`), `resume_task` | `pause` stops before the next turn; `now` stops the running turn and cancels the current step |
+| Pause / resume | palette | `pause_task` (`now`), `resume_task` | `pause` stops before the next turn or integration effect (§6); `now` stops the running turn and cancels the current step |
 | Change model | palette | `set_rung` | Applied at the next turn (§4.1) |
 | Redo current step | palette | `retry_task` | Cancels and re-runs the current step |
 | Open elsewhere | `status T-n` lists the resume command | `get_task` | — |

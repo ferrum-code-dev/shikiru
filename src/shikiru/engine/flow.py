@@ -45,7 +45,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.steps import ACTING_ROLE, Transition, first_step, next_step
-from shikiru.domain.tasks import EscalationReason, Hold, Role, Status, Step, TaskOrigin
+from shikiru.domain.tasks import EscalationReason, Role, Status, Step, TaskOrigin
 from shikiru.engine.events import emit_step_started
 from shikiru.engine.history import ENGINE_VERDICT_FILENAME, ReportHistory
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
@@ -283,7 +283,9 @@ class TaskFlow:
             if should_return:
                 return
         if task.status is Status.INTEGRATING:
-            await self._integration_turns.run(task, self)
+            task = self.require_task(task.id)
+            if not task.held:
+                await self._integration_turns.run(task, self)
 
     async def run_report_turn(
         self,
@@ -294,6 +296,9 @@ class TaskFlow:
         kind: ReportKind,
     ) -> tuple[Task, ImplementationReport | Verdict]:
         """Run one integration report through the shared turn and recovery loop."""
+        task = self.require_task(task.id)
+        if task.held:
+            raise IntegrationTurnStopped
         current, _, execution, stopped = await self._run_until_completed(
             task,
             Step.INTEGRATE,
@@ -326,13 +331,9 @@ class TaskFlow:
     ) -> tuple[Task, TurnCounters, bool]:
         """Run one domain step through the task's turn and recovery loop."""
         task = self.require_task(task.id)
-        if self._step_blocked(task):
+        if task.held:
             return task, counters, True
         return await self._run_step_turn(task, step, counters, conflict_context=conflict_context)
-
-    @staticmethod
-    def _step_blocked(task: Task) -> bool:
-        return Hold.PAUSED in task.holds or Hold.INTERVENTION in task.holds
 
     async def _run_step_turn(
         self,
@@ -391,7 +392,7 @@ class TaskFlow:
                 message = f"{current.id} recovery left the task with no step"
                 raise ShikiruError(message)
             current = self.require_task(current.id)
-            if self._step_blocked(current):
+            if current.held:
                 return current, counters, None, True
             current_step = next_step
             execution = await self._run_turn(
