@@ -20,7 +20,7 @@ It escalates to the Operator only when something critical comes up.
 ## Highlights
 
 - **Agent-agnostic**: agents are tested code plugins behind a normalized contract. Claude Code and Codex CLI are built in, and new agents are added as plugins using the agent SDK and the contract test kit.
-- **Real interactive sessions** in tmux panes that Operators can watch and step into, one task at a time.
+- **Live role views** in tmux panes show each headless turn; Operators can take over a role in its native TUI when needed.
 - **Parallel tasks**: each task gets its own git worktree and branch, with instant copy-on-write build caches, a dependency graph, priorities and resource-aware scheduling.
 - **Resilient**: model ladders, a wait for quota resets followed by a real session resume, and recovery after crashes or restarts.
 - **Comic-strip dashboard**: every task is drawn as a 4-panel strip.
@@ -29,14 +29,20 @@ It escalates to the Operator only when something critical comes up.
 
 ## Quick start
 
+From the Shikiru checkout:
+
 ```sh
-uv tool install shikiru
+uv tool install .
 cd ~/Projects/my-product
 shikiru init            # wizard: base branch, agents, plan files, caches
 shikiru start           # launches the engine and the tmux session "[shikiru] my-product"
 shikiru submit "Implement task 20 from Phase 2 in tasks/plan.md"
 shikiru attach
 ```
+
+Choose an explicit model supported by each selected agent in the wizard. `shikiru init --yes`
+writes editable defaults with model placeholders; review the role ladders and run `shikiru doctor`
+before starting.
 
 From anywhere else:
 

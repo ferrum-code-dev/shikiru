@@ -298,7 +298,7 @@ The `Scheduler` runs on every state change and every `orchestration.poll_seconds
 2. **Order**: `requeued_at` set first, then `priority` descending, then `seq`.
 3. **Dispatch** in order until a gate fails; the task stops there and its reason is written to `wait_reason`. Gates:
    - **slot**: a free slot exists;
-   - **resources**: `ResourceSampler` `CPU_WINDOW` average `< resources.max_cpu_pct` and available RAM `≥ resources.min_free_ram_gb`;
+   - **resources**: `ResourceSampler` average over configured `resources.cpu_window_seconds` `< resources.max_cpu_pct` and available RAM `≥ resources.min_free_ram_gb`;
    - **quota**: neither the Leader's nor the Implementer's resolved agent is blocked.
 4. **On dispatch**: assign the task's previous slot if free, else the lowest free slot, create the task window (`LayoutGuard`) and start the `TaskFlow` coroutine.
 5. **Dispatch failure**: if preparing the task (slot, task root, window) raises, the dispatch is rolled back, the task stays `queued` and `dispatch_failed` is logged; after `MAX_DISPATCH_FAILURES` consecutive failures it escalates with `engine_error`.

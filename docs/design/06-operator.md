@@ -41,17 +41,17 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 
 `dashboard/wizard.py` is an inline Textual app. It shares `operator/detectors.py` with `init --yes`:
 1. **Repository**: the project root must be a git repository root (`git rev-parse --show-toplevel` equals it); otherwise `init` fails naming the path (D20). `base` = the current branch.
-2. **Agents**: installed plugins whose `doctor()` passes. Choose ladders for leader, implementer and helper.
-3. **Trackers**: glob `tasks/*.md`, `**/plan*.md`, `**/todo*.md`.
-4. **Caches**: existing ignored dirs among common cache names, plus a CoW support check.
+2. **Agents**: installed plugins whose `doctor()` passes. Enter explicit `agent:model[:effort]` ladders for leader, implementer and helper; the empty model field requires an operator choice.
+3. **Trackers**: scan Markdown files up to four path components from the repository root, skipping `.git` and `.shikiru`; select files under a `tasks` directory or whose stem starts or ends with `plan` or `todo` (case-insensitive).
+4. **Caches**: existing git-ignored paths with common cache directory names, preserving repository-relative paths, plus a CoW support check.
 5. **Parallelism**: set the maximum number of active tasks.
 6. **Integration mode**: choose local merge or pull request integration.
-7. **Finish**: write `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor`.
+7. **Finish**: write `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor`. `init --yes` writes the editable `default` model placeholder, so review the role ladders and run `doctor` before `start`.
 
 ## 4. MCP (`shikiru mcp`)
 
 - **Transport**: stdio via FastMCP.
-- **Remote use**: `{"command": "ssh", "args": ["host", "shikiru", "mcp", "--project", "/path"]}`.
+- **Remote use**: `{"command": "ssh", "args": ["host", "shikiru", "--project", "/path", "mcp"]}`.
 - **Tools** map 1:1 to the operator services:
 
 | Group | Tools |
@@ -148,7 +148,7 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 `SessionLister` returns one row per project, for the local host or for `H`; `ls` prints the rows, `attach` picks one from them.
 
-- **Rows**: `tmux list-sessions` filtered by the `[shikiru] ` prefix, each session's `SHIKIRU_PROJECT_DIR`, and, from that project's DB, the engine state and the running, queued and escalated counts. `ls` opens each DB with SQLite read-only mode and never changes its schema, progress or other project state. SQLite may create or update WAL and shared-memory coordination sidecars while reading a WAL database; a newly created WAL file is empty, and existing database or WAL contents remain unchanged.
+- **Rows**: `tmux list-sessions` filtered by the `[shikiru] ` prefix and each session's `SHIKIRU_PROJECT_DIR`; engine liveness comes from the project's `engine.lock`, while running, queued and escalated counts come from its DB. `ls` opens each DB with SQLite read-only mode and never changes its schema, progress or other project state. SQLite may create or update WAL and shared-memory coordination sidecars while reading a WAL database; a newly created WAL file is empty, and existing database or WAL contents remain unchanged.
 - **`attach`**: exactly one row, or a matching `NAME` → `os.execvp("tmux", ["tmux", "attach", "-t", "=[shikiru] NAME"])` (`switch-client` when inside tmux). Otherwise an inline selectable list of the same rows.
 - **Remote** (`--host H`, on both): `ssh H shikiru ls --json` gives the rows; `attach` then runs `os.execvp("ssh", ["ssh", "-t", H, shlex.join(["tmux", "attach", "-t", "=[shikiru] NAME"])])`. `--host` needs nothing installed locally but `ssh`, and nothing remote but `shikiru`.
 
@@ -217,6 +217,7 @@ State is never shown by colour alone: each state has a glyph, and a word whereve
   - done: green `✔` and duration
   - rework: orange `↺n`
   - escalated or failed: red `‼`
+- During dispatch setup, a `running` task without a persisted step has one engine-coloured setup panel. If setup retries exhaust before the first step, its step-less escalation has the red escalation panel.
 - **Stamps** drawn over the active panel, in the hold colour: `PAUSED`, `OPERATOR`, `QUOTA · resets 14:10`, `STALLED`.
 - **Widths**: ≥ 60 columns gives the full strip; narrower gives one line, `T-12 ⚖︎ Verify 2/5 ◆ opus ⠹`.
 

@@ -4,7 +4,7 @@
 
 | Concern | Choice |
 |---|---|
-| Runtime | Python 3.14, uv (`uv tool install shikiru`) |
+| Runtime | Python 3.14, uv (`uv tool install .` from the Shikiru checkout) |
 | CLI / TUI | Typer + Rich / Textual (pinned minor versions) |
 | Validation | pydantic v2 |
 | Config | `tomllib` |
@@ -81,7 +81,7 @@ Plugin offline checks replay protocol fixtures committed under `tests/fixtures/a
 - It is one git repository; multi-repo projects are out of scope (D20).
 
 **Runs**:
-- Each scenario copies the fixture, runs `init --yes --set` with the cheapest rungs, `start`, and asserts only observable outcomes.
+- Each scenario copies the fixture, runs `init --yes`, then starts with global `--set` rung overrides for the cheapest test rungs; it asserts only observable outcomes.
 - Each scenario has a 30-minute timeout and one automatic rerun.
 - `poe e2e` writes `build/e2e/<date>.json` (scenario, pass/fail, agent-reported cost or `null` when no agent reported one). The file is temporary and git-ignored.
 - A plan AC that names an E2E scenario is ticked only after a passing `poe e2e` run; the ticking commit message states the run date, scenarios and cost.

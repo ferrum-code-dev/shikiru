@@ -50,7 +50,9 @@ workspace · tmux · prompts · helper · ui · telemetry · agents.registry
 store
 domain
 config · agents.contracts · agents.sdk
-errors · process · clock                   lowest; no internal imports
+errors                                      lowest; no internal imports
+process                                     imports errors
+clock                                       no internal imports
 ───────────────────────────────────────────
 plugins.agents.*  → agents.contracts, agents.sdk, process, clock, errors only; loaded by agents.registry from bootstrap
 plugins.widgets.* → dashboard.contract, ui only (all data arrives as view models through WidgetContext, 06 §5.4)
@@ -59,7 +61,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | Package | Responsibility | Key types |
 |---|---|---|
 | `errors` | Error hierarchy with exit codes | `ShikiruError`, `ConfigError`, … |
-| `process` | The only subprocess gateway: argv lists, timeouts, typed errors, async; `spawn` for long-running processes with stdin closed, line-streamed stdout and terminate | `SubprocessRunner`, `CommandFailed` |
+| `process` | The only subprocess gateway: argv lists, timeouts, typed errors from `errors`, async; `spawn` for long-running processes with stdin closed, line-streamed stdout and terminate | `SubprocessRunner`, `CommandFailed` |
 | `clock` | Injectable time for every timer | `Clock`, `SystemClock` |
 | `config` | Merge defaults < project file < `--set`, validate core settings. Plugin `options` stay untyped here | `Settings`, `load_settings()` |
 | `agents.contracts` | Agent plugin contract (04 §1) | `Agent`, `Turn`, `TurnSpec`, `HeadlessAgent`, signals, `Usage`, `QuotaWindow`, `Rung` |

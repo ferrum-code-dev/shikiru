@@ -352,6 +352,6 @@ Refs: 06 §3.
 - [x] Tests: Textual `run_test` walkthrough on a tmp repository project, and rejection of a non-repository root.
 
 ### Task 30: Release readiness
-- [ ] All E2E scenarios pass in one `poe e2e` run; coverage ≥ 80%; `poe check` clean.
-- [ ] Scripted clean-environment check: fresh `HOME`, `uv tool install .`, README quick start.
-- [ ] Walk every section of `docs/design`; code and docs agree, and each difference is fixed in one or the other.
+- [x] All E2E scenarios pass in one `poe e2e` run; coverage ≥ 80%; `poe check` clean.
+- [x] Scripted clean-environment check: fresh `HOME`, `uv tool install .`, README quick start.
+- [x] Walk every section of `docs/design`; code and docs agree, and each difference is fixed in one or the other.

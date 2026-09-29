@@ -7,9 +7,9 @@
 2. `.shikiru/config.toml`
 3. `--set key.path=value` (value parsed as TOML)
 
-`doctor --json` prints the merged result. Core keys are validated by pydantic (`extra="forbid"`). Each `[agents.<name>.options]` table is a plugin-owned extension point validated by that plugin's factory at `start` and `doctor`; a plugin may define agent-specific access options when its provider requires them. Core Shikiru has no provider-access configuration or credential handling. For the current Claude and Codex plugins, Operators configure provider access through agent-native files and environment, which those plugins pass through to their child processes.
+`shikiru --json doctor` prints a `DoctorReport` with overall `ok` and named diagnostic checks; it does not dump effective settings. `--project`, `--json` and `--set` are global CLI options and precede the command. Core keys are validated by pydantic (`extra="forbid"`). Each `[agents.<name>.options]` table is a plugin-owned extension point validated by that plugin's factory at `start` and `doctor`; a plugin may define agent-specific access options when its provider requires them. Core Shikiru has no provider-access configuration or credential handling. For the current Claude and Codex plugins, Operators configure provider access through agent-native files and environment, which those plugins pass through to their child processes.
 
-The full reference (this is also what `init` writes):
+The full configuration reference (the wizard writes the values the operator selects; `init --yes` writes detected project values and editable model placeholders):
 
 ```toml
 [project]
@@ -33,6 +33,8 @@ poll_seconds = 2
 [orchestration.resources]
 max_cpu_pct = 85
 min_free_ram_gb = 4
+sample_seconds = 2
+cpu_window_seconds = 30
 
 [orchestration.timeouts]                        # seconds
 stall = 1200                                    # no stream event while no tool runs
@@ -70,6 +72,9 @@ ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
 
 [dashboard]
 widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
+docker_refresh_seconds = 5
+docker_timeout_seconds = 5
+repo_status_cache_seconds = 10
 layout = { split = "h", panes = [
   { pane = "system", size = 30 },
   { split = "v", panes = [ { pane = "leader" }, { pane = "implementer" }, { pane = "shell", size = 20 } ] },
@@ -113,12 +118,17 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 | Escalation evidence | 60 view lines per role |
 | Command ack wait | 10 s |
 | `QUOTA_MARGIN` | 60 s |
-| `CPU_WINDOW` | 30 s |
-| Git data cache (header) | 10 s |
-| Resource / Docker sampling | 2 s / 5 s |
 | Dialogue length | 20 lines |
 | MCP `wait_for_events` max timeout | 300 s |
 | Dashboard motion cap | 4 Hz |
+
+**Operational intervals** use the defaults below and can be set in the project config:
+
+| Setting | Default |
+|---|---|
+| Resource sample cadence / CPU averaging window | 2 s / 30 s |
+| Header git data cache | 10 s |
+| Docker sample cadence / command timeout | 5 s / 5 s |
 
 ## 2. State DB (`.shikiru/state.db`)
 
