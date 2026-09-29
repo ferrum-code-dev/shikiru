@@ -120,6 +120,14 @@ class RunStore:
         """Mark a taken-over `run_id` live again: the engine drives its session."""
         self._set_status_keeping_open(run_id, RunStatus.LIVE)
 
+    def has_taken_over(self, task_id: str) -> bool:
+        """Report whether the Operator has taken over any role of `task_id`."""
+        row = self._connection.execute(
+            "SELECT 1 FROM runs WHERE task_id = ? AND status = ? LIMIT 1",
+            (task_id, RunStatus.TAKEN_OVER.value),
+        ).fetchone()
+        return row is not None
+
     def _get_with_status(self, task_id: str, role: Role, status: RunStatus) -> Run | None:
         row = self._connection.execute(
             f"SELECT {_RUN_COLUMNS} FROM runs WHERE task_id = ? AND role = ? AND status = ?",

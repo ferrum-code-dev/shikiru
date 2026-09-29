@@ -289,9 +289,11 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 - **While held**: no turns start for the task. The pane border turns operator magenta and the title shows `⌨ operator`.
 
 **Hand back** (`HandBack(task, role)`, or the taken-over pane's process exits, which `LayoutGuard` turns into a `HandBack`):
-1. Respawn the pane with the view, mark the run active, clear `intervention`.
+1. Respawn the pane with the view, mark the run active, and clear `intervention` only when no other role of the task remains taken over.
 2. Queue an operator message for that role: "The Operator worked in this session since your last turn; take their changes into account."
-3. Re-run the current step; its turn resumes the same session, which already holds the Operator's exchange (verified for Claude).
+3. Re-run the current step unless a hold remains (another taken-over role, or `pause`); its turn resumes the same session, which already holds the Operator's exchange (verified for Claude).
+
+**`resume` while a role is taken over is rejected** with a message to hand the role back first. There is no implicit hand-back: an interactive pane owns the workspace until every taken-over role is handed back, so no headless turn can run beside the Operator's session (invariant 1).
 
 **`say`** (`Say(task, role, text)`) writes `runs/T/messages/<role>/NNN.md`. A headless turn takes no input mid-turn, so the message is delivered at the start of that role's next turn (§4.3 step 2), never interrupting; interrupting is what take over is for. `say` never sets a hold.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,6 +21,7 @@ from shikiru.domain.commands import (
     AnswerResolution,
     Cancel,
     CancelResolution,
+    HandBack,
     Pause,
     Prioritize,
     Resolve,
@@ -67,6 +68,8 @@ from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Callable
+
     from shikiru.agents.registry import AgentRegistry
     from shikiru.config.settings import Settings
     from shikiru.domain.commands import Command
@@ -840,6 +843,158 @@ async def test_hand_back_clears_the_operator_colour_from_the_pane(
         with suppress(asyncio.CancelledError, Exception):
             await engine_task
         connection.close()
+
+
+@dataclass(frozen=True)
+class _Operator:
+    tasks: TaskStore
+    runs: RunStore
+    events: EventLog
+    queue: CommandQueue
+    clock: FakeClock
+    tmux_server: TmuxServer
+
+    async def send(self, command: Command) -> CommandOutcome:
+        return await _append_and_wait(command, self.queue, self.clock)
+
+    def task(self, task_id: str) -> Task:
+        return _required_task(self.tasks, task_id)
+
+    def turns(self, task_id: str) -> int:
+        return len(self.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task_id))
+
+    def run_ids(self, task_id: str) -> list[int]:
+        return [run.id for run in self.runs.for_task(task_id)]
+
+    async def pane_pid(self, task_id: str, role: Role) -> str:
+        pane = self.task(task_id).panes[role]
+        result = await self.tmux_server.run("display-message", "-p", "-t", pane, "#{pane_pid}")
+        return result.stdout.strip()
+
+    async def advance_until(self, condition: Callable[[], bool]) -> None:
+        async def reached() -> bool:
+            if self.clock.has_pending_sleep():
+                self.clock.advance(0.25)
+            return condition()
+
+        await wait_until(reached, timeout=30)
+
+
+@asynccontextmanager
+async def _operator_session(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> AsyncGenerator[tuple[_Operator, str, Run]]:
+    await init_project_repo(tmp_path)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}, {"kind": "accept"}])
+    clock = FakeClock(TASK_CREATED_AT)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(
+        tmp_path, _settings(max_cpu_pct=100), clock=clock, tmux=tmux, registry=build_registry()
+    )
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    operator = _Operator(
+        TaskStore(connection, clock),
+        RunStore(connection, clock),
+        EventLog(connection, clock),
+        CommandQueue(connection, clock),
+        clock,
+        tmux_server,
+    )
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        task_id = await _submit(
+            Submit(title="own me", request="own me", mode=Mode.IMPLEMENT),
+            operator.queue,
+            clock,
+        )
+        run = await _wait_for_session(operator.runs, clock, task_id)
+        yield operator, task_id, run
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()
+
+
+@pytest.mark.parametrize("paused", [False, True], ids=["running", "paused"])
+async def test_resume_is_rejected_while_a_role_is_taken_over(
+    tmp_path: Path, tmux_server: TmuxServer, paused: bool
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, run):
+        if paused:
+            await operator.send(Pause(task_id=task_id))
+        taken = await operator.send(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+        assert taken.status is CommandStatus.DONE
+        holds = operator.task(task_id).holds
+        pid = await operator.pane_pid(task_id, Role.IMPLEMENTER)
+        turns = operator.turns(task_id)
+
+        resumed = await operator.send(Resume(task_id=task_id))
+
+        assert resumed.status is CommandStatus.REJECTED
+        assert operator.task(task_id).holds == holds
+        assert await operator.pane_pid(task_id, Role.IMPLEMENTER) == pid
+        owned = operator.runs.get_taken_over(task_id, Role.IMPLEMENTER)
+        assert owned is not None
+        assert (owned.id, owned.session_id) == (run.id, run.session_id)
+        assert operator.run_ids(task_id) == [run.id]
+        assert operator.turns(task_id) == turns
+
+
+async def test_a_partial_hand_back_keeps_the_intervention_hold_until_the_last_role_returns(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, run):
+        leader = operator.runs.start(task_id, Role.LEADER, _FAKE_RUNG)
+        operator.runs.set_session(leader.id, "leader-session", None)
+        step = operator.task(task_id).step
+        for role in (Role.IMPLEMENTER, Role.LEADER):
+            taken = await operator.send(TakeOver(task_id=task_id, role=role))
+            assert taken.status is CommandStatus.DONE
+        turns = operator.turns(task_id)
+        leader_pid = await operator.pane_pid(task_id, Role.LEADER)
+
+        handed = await operator.send(HandBack(task_id=task_id, role=Role.IMPLEMENTER))
+
+        assert handed.status is CommandStatus.DONE
+        assert operator.task(task_id).holds == {Hold.INTERVENTION}
+        assert operator.runs.get_taken_over(task_id, Role.LEADER) is not None
+        assert await operator.pane_pid(task_id, Role.LEADER) == leader_pid
+        assert operator.turns(task_id) == turns
+        assert operator.task(task_id).step is step
+
+        await operator.send(HandBack(task_id=task_id, role=Role.LEADER))
+        await operator.advance_until(lambda: operator.task(task_id).step is not step)
+
+        assert operator.task(task_id).holds == frozenset()
+        resumed = operator.runs.get_live(task_id, Role.IMPLEMENTER)
+        assert resumed is not None
+        assert (resumed.id, resumed.session_id) == (run.id, run.session_id)
+
+
+async def test_pause_survives_a_takeover_and_its_hand_back_until_resume(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, run):
+        step = operator.task(task_id).step
+        await operator.send(Pause(task_id=task_id))
+        await operator.send(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+        turns = operator.turns(task_id)
+
+        await operator.send(HandBack(task_id=task_id, role=Role.IMPLEMENTER))
+
+        assert operator.task(task_id).holds == {Hold.PAUSED}
+        assert operator.turns(task_id) == turns
+        assert operator.run_ids(task_id) == [run.id]
+
+        resumed = await operator.send(Resume(task_id=task_id))
+        assert resumed.status is CommandStatus.DONE
+        await operator.advance_until(lambda: operator.task(task_id).step is not step)
+        live = operator.runs.get_live(task_id, Role.IMPLEMENTER)
+        assert live is not None
+        assert (live.id, live.session_id) == (run.id, run.session_id)
 
 
 async def _pane_color(tmux_server: TmuxServer, pane: str) -> str:

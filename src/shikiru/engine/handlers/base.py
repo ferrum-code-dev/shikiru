@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
+    from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
 
 
@@ -30,6 +31,7 @@ class HandlerContext:
     tasks: TaskStore
     escalations: EscalationStore
     events: EventLog
+    runs: RunStore
     project_root: Path
     cancel_task: TaskCallback
     start_task: TaskCallback

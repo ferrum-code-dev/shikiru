@@ -88,7 +88,7 @@ class PauseHandler:
 
 
 class ResumeHandler:
-    """Clear task holds and resume the task flow."""
+    """Clear task holds and resume the task flow, unless a role is taken over."""
 
     command_type: type[Resume] = Resume
 
@@ -98,6 +98,9 @@ class ResumeHandler:
     async def handle(self, command: Resume) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
+        if self._context.runs.has_taken_over(task.id):
+            message = f"{task.id} has a role taken over; hand it back before resuming"
+            raise CommandRejectedError(message)
         holds = task.holds
         self._context.tasks.set_holds(task.id, frozenset())
         for hold in holds:

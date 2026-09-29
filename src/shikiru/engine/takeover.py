@@ -96,8 +96,8 @@ class Takeover:
             raise CommandRejectedError(message)
         await self._layout.start_view(task.id, role, _role_pane(task, role))
         self._runs.mark_live(run.id)
-        current = self._current(task.id)
-        self._tasks.set_holds(task.id, current.holds - {Hold.INTERVENTION})
+        if not self._runs.has_taken_over(task.id):
+            self._tasks.set_holds(task.id, self._current(task.id).holds - {Hold.INTERVENTION})
         path = self._messages.queue(task.id, role, HAND_BACK_MESSAGE)
         self._events.append(
             EventKind.HANDED_BACK,
@@ -105,7 +105,8 @@ class Takeover:
             message=f"{task.id} {role.value} handed back",
             data={"role": role.value, "path": str(path)},
         )
-        if current.status in _ACTIVE_STATUSES and Hold.PAUSED not in current.holds:
+        current = self._current(task.id)
+        if current.status in _ACTIVE_STATUSES and not current.held:
             await self._start_task(task.id)
         await self._refresh_titles(self._current(task.id))
 

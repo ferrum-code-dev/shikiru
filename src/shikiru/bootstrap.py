@@ -507,6 +507,7 @@ def build_engine(
         tasks=tasks,
         escalations=escalations_store,
         events=events,
+        runs=runs,
         project_root=project_root,
         cancel_task=task_supervisor.cancel_task,
         start_task=task_supervisor.start_task,

@@ -390,9 +390,9 @@ Refs: 03 §1.2, §7, §9, invariant 2.
 
 ### Task 44: One owner for a task workspace during takeover (F03)
 Refs: 03 §4.1, §9, invariant 1.
-- [ ] `resume` on a task with a taken-over role is rejected with an actionable message, or performs the full hand-back; the choice is written in 03 §9.
-- [ ] `hand_back` releases the intervention hold only when no role is taken over; a partial hand-back keeps it.
-- [ ] No headless turn starts while any role is taken over, and the original session is resumed after hand-back rather than replaced.
+- [x] `resume` on a task with a taken-over role is rejected with an actionable message, or performs the full hand-back; the choice is written in 03 §9.
+- [x] `hand_back` releases the intervention hold only when no role is taken over; a partial hand-back keeps it.
+- [x] No headless turn starts while any role is taken over, and the original session is resumed after hand-back rather than replaced.
 - Tests: integration on `tmux_server` with the fake agent: resume during takeover; take over both roles and hand back one; pause plus takeover. Assert pane and process ownership, run and session identity, holds and the absence of headless turns.
 
 ### Task 45: Stale escalation actions cannot resurrect work (F05)
