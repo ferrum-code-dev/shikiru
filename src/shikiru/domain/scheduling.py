@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum, auto
+from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING
 
 from shikiru.domain.tasks import Hold, Status
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from shikiru.domain.tasks import Task
 
@@ -58,6 +59,15 @@ class ReadySchedule:
     dispatches: tuple[Dispatch, ...]
     wait_reasons: Mapping[str, WaitReason]
     dependency_cancelled: tuple[str, ...]
+
+
+def find_dependency_cycle(dependencies: Mapping[str, Iterable[str]]) -> tuple[str, ...]:
+    """Return the task ids on one dependency cycle (a self-edge included), or none (03 §10)."""
+    try:
+        TopologicalSorter(dependencies).prepare()
+    except CycleError as error:
+        return tuple(dict.fromkeys(error.args[1]))
+    return ()
 
 
 def dispatch_sort_key(task: Task) -> tuple[bool, int, int]:

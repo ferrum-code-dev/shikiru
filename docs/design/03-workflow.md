@@ -84,7 +84,7 @@ A completed triage persists its `title` and `complexity` with the transition, so
 
 **Scope changes (D4).** A `Verdict` or `PlanReport` may carry `new_tasks` and `scope_changes`:
 - The Leader updates trackers in the worktree and commits.
-- The engine enqueues the new tasks (`origin = leader`) and emits `scope_change`, which is notified.
+- The engine enqueues the new tasks (`origin = leader`) and emits `scope_change`, which is notified. A new task may depend on a later sibling, but the resulting dependency graph (including the implicit plan edge and repointed dependents) must be acyclic: a self-edge or cycle rejects the whole change, writing nothing, and escalates as `agent_protocol` naming the task ids on the cycle.
 - The Operator undoes a change with `cancel T-n`.
 
 **Where new tasks get their tracker entries.** The Leader commits tracker changes in its own task branch, which reaches the base only when that task integrates. Two cases, kept separate:
@@ -313,7 +313,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 
 The `Scheduler` runs on every state change and every `orchestration.poll_seconds`.
 
-1. **Ready**: `queued`, not `paused`, all dependencies `done`. A cancelled dependency raises `dependency_cancelled`. Dependencies include the implicit one of a plan task's new tasks on it (§2).
+1. **Ready**: `queued`, not `paused`, all dependencies `done`. A cancelled dependency raises `dependency_cancelled`. Scope changes never leave a cycle, so a dependency wait always ends (§2). Dependencies include the implicit one of a plan task's new tasks on it (§2).
 2. **Order**: `requeued_at` set first, then `priority` descending, then `seq`.
 3. **Dispatch** in order until a gate fails; the task stops there and its reason is written to `wait_reason`. Gates:
    - **slot**: a free slot exists;

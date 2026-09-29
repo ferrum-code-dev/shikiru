@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 
 from shikiru.agents.contracts import Rung
 from shikiru.domain.reports import SIBLING_REFERENCE_PREFIX, resolve_dependency
+from shikiru.domain.scheduling import find_dependency_cycle
 from shikiru.domain.tasks import (
     ACTIVE_STATUSES,
     Counters,
@@ -225,6 +226,7 @@ class TaskStore:
             )
             if transition.repoint_dependents:
                 self._repoint_dependents(task_id, child_ids)
+            self._validate_acyclic()
         return [self._fetch_or_raise(child_id) for child_id in child_ids]
 
     def _insert_row(
@@ -291,6 +293,15 @@ class TaskStore:
                 reference = min(missing)
                 message = f"scope change dependency {reference!r} does not exist"
                 raise UsageError(message)
+
+    def _validate_acyclic(self) -> None:
+        graph: dict[str, list[str]] = {}
+        for row in self._connection.execute("SELECT task_id, depends_on FROM task_deps"):
+            graph.setdefault(row["task_id"], []).append(row["depends_on"])
+        cycle = find_dependency_cycle(graph)
+        if cycle:
+            message = f"scope change creates a dependency cycle: {', '.join(cycle)}"
+            raise UsageError(message)
 
     def set_mode(self, task_id: str, mode: Mode) -> None:
         """Persist the mode selected by a completed triage turn."""

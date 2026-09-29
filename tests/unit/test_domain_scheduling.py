@@ -9,6 +9,7 @@ from shikiru.domain.scheduling import (
     SchedulingGates,
     TaskAgents,
     WaitReason,
+    find_dependency_cycle,
     occupied_slot_ids,
     pick_ready,
 )
@@ -204,3 +205,34 @@ def test_dispatch_consumes_slots_across_multiple_tasks() -> None:
 
     assert [d.task_id for d in schedule.dispatches] == ["T-1"]
     assert schedule.wait_reasons == {"T-2": WaitReason.SLOT}
+
+
+@pytest.mark.parametrize(
+    ("graph", "cycle_ids"),
+    [
+        pytest.param({"T-1": ["T-1"]}, {"T-1"}, id="self-edge"),
+        pytest.param({"T-2": ["T-3"], "T-3": ["T-2"]}, {"T-2", "T-3"}, id="sibling-cycle"),
+        pytest.param(
+            {"T-1": ["T-4"], "T-4": ["T-2"], "T-2": ["T-1"], "T-5": []},
+            {"T-1", "T-2", "T-4"},
+            id="repoint-induced-cycle",
+        ),
+        pytest.param(
+            {"T-1": [], "T-2": ["T-1"], "T-3": ["T-1", "T-2"]}, frozenset[str](), id="acyclic"
+        ),
+        pytest.param(
+            {"T-2": ["T-3", "T-1"], "T-3": ["T-1"], "T-1": []},
+            frozenset[str](),
+            id="forward-reference",
+        ),
+        pytest.param(
+            {"T-1": [], "T-2": ["T-1", "T-3"], "T-3": ["T-1", "T-2"]},
+            {"T-2", "T-3"},
+            id="cycle-beside-implicit-parent-edge",
+        ),
+    ],
+)
+def test_dependency_cycle_names_the_tasks_that_wait_on_each_other(
+    graph: Mapping[str, list[str]], cycle_ids: frozenset[str] | set[str]
+) -> None:
+    assert set(find_dependency_cycle(graph)) == cycle_ids

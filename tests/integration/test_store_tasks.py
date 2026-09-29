@@ -305,3 +305,36 @@ def test_scope_change_resolves_forward_sibling_dependencies_atomically(
     assert reloaded_unrelated is not None
     assert set(reloaded_dependent.depends_on) == {children[0].id, children[1].id}
     assert reloaded_unrelated.depends_on == []
+
+
+def test_scope_change_that_closes_a_dependency_cycle_writes_nothing(
+    connection: Connection,
+) -> None:
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    parent = _submit(connection, clock, "parent")
+    dependent = _submit(connection, clock, "dependent", depends_on=[parent.id])
+    transition = Transition(
+        step=None,
+        status=Status.DONE,
+        iteration=0,
+        counters=Counters(),
+        rung_index={},
+        overrides={},
+        status_reason=StatusReason.SUPERSEDED,
+        repoint_dependents=True,
+        enqueue_new_tasks=True,
+    )
+
+    with pytest.raises(UsageError, match=dependent.id):
+        store.apply_scope_change(
+            parent.id,
+            transition,
+            [NewTask(title="replacement", request="replacement", depends_on=[dependent.id])],
+            origin=TaskOrigin.LEADER,
+        )
+
+    unchanged_dependent = store.get(dependent.id)
+    assert unchanged_dependent is not None
+    assert unchanged_dependent.depends_on == [parent.id]
+    assert len(store.list_all()) == 2

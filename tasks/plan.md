@@ -430,8 +430,8 @@ Refs: 03 §2–3, 05 §2.
 
 ### Task 50: Dependency graph validation (F11)
 Refs: 03 §10.
-- [ ] `apply_scope_change` validates the resulting graph inside its transaction and rejects self-edges and cycles, including cycles created by repointing existing dependents, with the offending ids; forward sibling references stay allowed.
-- [ ] A rejected scope change escalates through the existing scope-change protocol path.
+- [x] `apply_scope_change` validates the resulting graph inside its transaction and rejects self-edges and cycles, including cycles created by repointing existing dependents, with the offending ids; forward sibling references stay allowed.
+- [x] A rejected scope change escalates through the existing scope-change protocol path.
 - Tests: table-driven domain tests for the graph rule (self-edge, sibling cycle, repoint-induced cycle, valid forward reference); one integration test through the store.
 
 ### Task 51: SQLite path is opened exactly (F16)
