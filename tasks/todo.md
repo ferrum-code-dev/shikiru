@@ -73,7 +73,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 51: SQLite path is opened exactly (F16)
 - [x] Task 52: A slow notification hook cannot block the engine loop (F08)
 - [ ] Task 53: Idempotent command replay (F12)
-- [ ] Task 54: Interrupted turns keep operator messages (F13)
+- [x] Task 54: Interrupted turns keep operator messages (F13)
 - [ ] Task 55: Escalated state always has an actionable escalation (F14)
 - [ ] Task 56: Codex context window belongs to the model (F15)
 - [ ] Task 57: TaskFlow responsibilities (F18)

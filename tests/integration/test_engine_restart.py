@@ -43,6 +43,7 @@ from shikiru.store.quotas import fetch_quotas
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.session import SessionView
+from shikiru.workspace.messages import OperatorMessages
 from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_RUNG, build_registry, build_tmux, set_role_script
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
@@ -637,3 +638,39 @@ def _finished(project: _Project, task_id: str, clock: FakeClock) -> bool:
         and task.status is Status.DONE
         and not task_root(project.root, task_id).exists()
     )
+
+
+async def test_a_restarted_engine_hands_the_messages_of_the_turn_it_lost_to_the_replacement(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(tmp_path)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [dict(_STALL)])
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure(_PROJECT_NAME, tmp_path, home_command=("/bin/sh",))
+    project = _Project(tmp_path, FakeClock(TASK_CREATED_AT))
+    engines = _Engines(tmp_path, tmux, tmux_server)
+    messages = OperatorMessages(tmp_path)
+    try:
+        engine = engines.start_killable()
+        task_id = await _submit(project, engine)
+        messages.queue(task_id, Role.IMPLEMENTER, "first guidance", "c1")
+        lost = _Kill(Step.IMPLEMENT, Role.IMPLEMENTER)
+
+        def reached() -> bool:
+            engine.advance()
+            return project.reached(task_id, lost)
+
+        await wait_until(reached, timeout=_WAIT_SECONDS)
+        await engine.kill(engine_lock_path(tmp_path))
+        messages.queue(task_id, Role.IMPLEMENTER, "newer guidance", "c2")
+        clock = FakeClock(TASK_CREATED_AT)
+        await _run_until_finished(project, task_id, Status.DONE, engines.build(clock), clock)
+
+        *_, replacement = sorted(turns_dir(tmp_path, task_id).glob("*-implement-i*"))
+        delivered = sorted((replacement / "messages").iterdir())
+        assert [path.read_text() for path in delivered] == ["first guidance", "newer guidance"]
+        prompt = (replacement / "prompt.md").read_text()
+        assert prompt.index(str(delivered[0])) < prompt.index(str(delivered[1]))
+    finally:
+        await engines.reap()
+        project.close()

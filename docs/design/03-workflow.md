@@ -154,6 +154,7 @@ Each turn process is started in its own process group, which the engine owns: `s
 
 1. **Turn dir** `runs/T/turns/NN-<step>-i<iteration>/`: write `prompt.md`, `report.schema.json` and `report.kind`, remove any stale `report.json`, and point `runs/T/<role>/current_turn` at it.
 2. **Operator messages**: move the role's queued `runs/T/messages/<role>/*.md` into the turn dir's `messages/`; `prompt.md` lists them under "Operator messages — read these first" (§9).
+   Before this move, if the role's `current_turn` names a turn holding delivered messages but neither `report.json` nor `helper.json`, that turn was lost (engine killed or turn process dead) before its report was consumed: its messages return to the front of the queue, keys kept, so the replacement turn lists them ahead of newer ones. A turn with a report keeps its messages, and a repeat finds nothing to return. A failed turn returns its messages the same way at once.
 3. **Start** the turn with the pointer line `Read {prompt path} and follow it exactly.` and the session from §4.1.
 4. **Await** the monitor's terminal outcome: `TurnEnded`, `TurnFailed` or `Stalled`.
 5. **On `TurnFailed(UNKNOWN)`**: `helper.classify_failure` (04 §6); a result with confidence ≥ `CLASSIFY_CONFIDENCE` becomes `Failed(kind)`, anything else `Failed(OTHER)` marked unclassified, which escalates `agent_error` without a retry (§7).
@@ -313,7 +314,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 
 **`resume` while a role is taken over is rejected** with a message to hand the role back first. There is no implicit hand-back: an interactive pane owns the workspace until every taken-over role is handed back, so no headless turn can run beside the Operator's session (invariant 1).
 
-**`say`** (`Say(task, role, text)`) writes `runs/T/messages/<role>/NNN-c<id>.md` (`<id>` is the command id; a replay files it once, §7). A headless turn takes no input mid-turn, so the message is delivered at the start of that role's next turn (§4.3 step 2), never interrupting; interrupting is what take over is for. `say` never sets a hold.
+**`say`** (`Say(task, role, text)`) writes `runs/T/messages/<role>/NNN-c<id>.md` (`<id>` is the command id; a replay files it once, §7). A headless turn takes no input mid-turn, so the message is delivered at the start of that role's next turn (§4.3 step 2), never interrupting; a message delivered into a turn that dies without a report is delivered again with the replacement turn (§4.3 step 2); interrupting is what take over is for. `say` never sets a hold.
 
 ## 10. Scheduling
 

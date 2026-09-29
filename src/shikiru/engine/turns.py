@@ -257,6 +257,7 @@ class TurnRunner:
         turns_root.mkdir(parents=True, exist_ok=True)
         turn_dir = turns_root / _turn_dir_name(_turn_count(turns_root) + 1, request)
         turn_dir.mkdir(parents=True, exist_ok=True)
+        self._requeue_unreported(task_run_dir, task_id, role)
         (turn_dir / REPORT_FILENAME).unlink(missing_ok=True)
         (turn_dir / HELPER_REPORT_FILENAME).unlink(missing_ok=True)
         delivered = self._messages.deliver(task_id, role, turn_dir)
@@ -270,6 +271,17 @@ class TurnRunner:
             (turn_dir / FACTS_FILENAME).write_text(request.facts)
         self._point_current_turn(task_run_dir, role, turn_dir)
         return turn_dir
+
+    def _requeue_unreported(self, task_run_dir: Path, task_id: str, role: Role) -> None:
+        link = role_dir(task_run_dir, role.value) / CURRENT_TURN_LINK_NAME
+        if not link.is_symlink():
+            return
+        previous = link.readlink()
+        reported = any(
+            (previous / name).exists() for name in (REPORT_FILENAME, HELPER_REPORT_FILENAME)
+        )
+        if not reported:
+            self._messages.requeue(task_id, role, previous)
 
     @staticmethod
     def _point_current_turn(task_run_dir: Path, role: Role, turn_dir: Path) -> None:

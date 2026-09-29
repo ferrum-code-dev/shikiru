@@ -453,7 +453,7 @@ Refs: 03 §7, 06 §2, invariant 5.
 
 ### Task 54: Interrupted turns keep operator messages (F13)
 Refs: 03 §4.3, §7, §9.
-- [ ] After a turn dies without a report (engine kill or process death), delivered messages of that turn are requeued ahead of newer ones before its replacement turn is created.
+- [x] After a turn dies without a report (engine kill or process death), delivered messages of that turn are requeued ahead of newer ones before its replacement turn is created.
 - Tests: integration with a real SIGKILL of the fake agent after delivery and before its report: the replacement turn's prompt lists the message, in order relative to a newly queued one.
 
 ### Task 55: Escalated state always has an actionable escalation (F14)

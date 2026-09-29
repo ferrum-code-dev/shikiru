@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import signal
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import role_dir
@@ -10,13 +12,17 @@ from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import HELPER_REPORT_FILENAME, REPORT_FILENAME
 from shikiru.domain.tasks import Mode, Role, Status, Step
+from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
 from shikiru.engine.turns import NUDGE_LIMIT
 from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_NAME, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
 
     from tests.support.engine import EngineEnv
@@ -191,3 +197,50 @@ async def test_operator_message_is_redelivered_when_its_turn_fails(
     [delivered] = (retried / "messages").iterdir()
     assert delivered.read_text() == "use the helper"
     assert str(delivered) in (retried / "prompt.md").read_text()
+
+
+async def test_messages_delivered_to_a_killed_turn_lead_the_replacement_prompt(
+    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    release = tmp_path / "release"
+    os.mkfifo(release)
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "accept", "release_fifo": str(release)}, {"kind": "accept"}],
+    )
+    messages = OperatorMessages(engine_env.project_root)
+    messages.queue(task.id, Role.IMPLEMENTER, "first guidance", "c1")
+    settings = flow_settings().model_copy(
+        update={
+            "agents": {
+                FAKE_AGENT_NAME: AgentConfig(
+                    options={"asks": [{"kind": "other", "confidence": 0.95}]}
+                )
+            }
+        }
+    )
+    flow_env = build_flow(engine_env, settings)
+    role_path = role_dir(run_dir(engine_env.project_root, task.id), Role.IMPLEMENTER.value)
+    flow_task = asyncio.create_task(flow_env.flow.run(task.id))
+
+    def started() -> bool:
+        run = engine_env.runs.get_live(task.id, Role.IMPLEMENTER)
+        return (
+            (role_path / TURN_PID_NAME).is_file() and run is not None and run.session_id is not None
+        )
+
+    await wait_until(started, timeout=_FLOW_TIMEOUT_SECONDS)
+
+    messages.queue(task.id, Role.IMPLEMENTER, "newer guidance", "c2")
+    os.kill(read_turn_pid(role_path / TURN_PID_NAME).pid, signal.SIGKILL)
+    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+
+    turns = run_dir(engine_env.project_root, task.id) / "turns"
+    *_, replacement = sorted(path for path in turns.iterdir() if "-implement-i1" in path.name)
+    delivered = sorted((replacement / "messages").iterdir())
+    assert [path.read_text() for path in delivered] == ["first guidance", "newer guidance"]
+    prompt = (replacement / "prompt.md").read_text()
+    assert prompt.index(str(delivered[0])) < prompt.index(str(delivered[1]))
