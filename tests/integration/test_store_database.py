@@ -139,3 +139,29 @@ def test_foreign_keys_are_enforced_on_task_deps_and_runs(database: Database) -> 
             )
     finally:
         writer.close()
+
+
+@pytest.mark.parametrize(
+    "directory",
+    ["plain", "with space", "hash#name", "query?mode=memory", "percent%41", "slash%2Fname", "%"],
+)
+def test_database_opens_exactly_the_requested_file(tmp_path: Path, directory: str) -> None:
+    project = tmp_path / directory
+    project.mkdir()
+    requested = project / "state.db"
+    database = Database(requested)
+
+    for open_connection in (database.connect, database.connect_readonly):
+        connection = open_connection()
+        try:
+            opened = connection.execute("PRAGMA database_list").fetchone()["file"]
+        finally:
+            connection.close()
+        assert requested.samefile(opened)
+
+    assert [entry.name for entry in tmp_path.iterdir()] == [directory]
+    assert {entry.name for entry in project.iterdir()} <= {
+        "state.db",
+        "state.db-wal",
+        "state.db-shm",
+    }

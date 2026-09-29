@@ -436,7 +436,7 @@ Refs: 03 §10.
 
 ### Task 51: SQLite path is opened exactly (F16)
 Refs: 05 §3.
-- [ ] `Database._connect` builds an escaped absolute file URI and keeps read-only mode.
+- [x] `Database._connect` builds an escaped absolute file URI and keeps read-only mode.
 - Tests: integration: paths with spaces, `#`, `?` and literal `%` sequences; `PRAGMA database_list` reports the requested file, and no other file is created.
 
 ### Task 52: A slow notification hook cannot block the engine loop (F08)

@@ -69,9 +69,12 @@ class Database:
             if connection is not None:
                 connection.close()
 
+    def _uri(self, mode: str) -> str:
+        return f"{self._path.absolute().as_uri()}?mode={mode}"
+
     def _connect(self, *, mode: str) -> sqlite3.Connection:
         connection = sqlite3.connect(
-            f"file:{self._path}?mode={mode}",
+            self._uri(mode),
             uri=True,
             isolation_level=None,
             check_same_thread=False,

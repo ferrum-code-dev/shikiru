@@ -70,7 +70,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 48: Decomposition delivers tracker changes to children (F07)
 - [x] Task 49: Transitions persist triage results and keep concurrent overrides (F09, F10)
 - [x] Task 50: Dependency graph validation (F11)
-- [ ] Task 51: SQLite path is opened exactly (F16)
+- [x] Task 51: SQLite path is opened exactly (F16)
 - [ ] Task 52: A slow notification hook cannot block the engine loop (F08)
 - [ ] Task 53: Idempotent command replay (F12)
 - [ ] Task 54: Interrupted turns keep operator messages (F13)
