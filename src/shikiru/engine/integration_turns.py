@@ -14,6 +14,7 @@ from shikiru.engine.integration import (
     IntegrationCoordinator,
     IntegrationMetadata,
     PullRequestClosed,
+    UncommittedWork,
 )
 from shikiru.errors import ShikiruError
 from shikiru.prompts.renderer import PromptName
@@ -120,7 +121,12 @@ class IntegrationTurns:
             await self._coordinator.run(current, resolve_conflicts, metadata)
         except IntegrationTurnStopped:
             return
-        except (IntegrationBlocked, IntegrationConflict, PullRequestClosed) as error:
+        except (
+            IntegrationBlocked,
+            IntegrationConflict,
+            PullRequestClosed,
+            UncommittedWork,
+        ) as error:
             current = host.require_task(task.id)
             transition = Transition.escalate(current, error.reason, step=Step.INTEGRATE)
             await host.escalate(current, transition, None, question=str(error))

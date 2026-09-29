@@ -53,6 +53,17 @@ class IntegrationConflict(ShikiruError):
         super().__init__("integration conflicts could not be resolved")
 
 
+class UncommittedWork(ShikiruError):
+    """The task worktree holds uncommitted changes that integration would discard."""
+
+    reason = EscalationReason.UNCOMMITTED_WORK
+
+    def __init__(self, task_id: str, paths: Sequence[str]) -> None:
+        """Build the error for `task_id` listing the porcelain status lines in `paths`."""
+        listed = ", ".join(line.strip() for line in paths)
+        super().__init__(f"{task_id} has uncommitted changes that cannot be integrated: {listed}")
+
+
 class PullRequestClosed(ShikiruError):
     """The task's pull request was closed without being merged."""
 
@@ -419,6 +430,7 @@ class Integrator:
             current = task
             current_metadata = metadata
             task_dir = task_root(self._project_root, current.id)
+            await self._require_committed(current, task_dir)
             base_sha = await self._git.rev_parse(task_dir, repo.base)
             branch_sha = await self._git.rev_parse(task_dir, repo.branch)
             if base_sha != branch_sha and await self._try_rebase(task_dir, repo.base):
@@ -426,6 +438,7 @@ class Integrator:
                     current, lambda: self._continue_rebase(task_dir)
                 )
                 await self._continue_rebase(task_dir)
+            await self._require_committed(current, task_dir)
             commits = await self._strategy.merge(
                 MergeRequest(
                     task_id=current.id,
@@ -436,6 +449,13 @@ class Integrator:
                 )
             )
             return current, current_metadata, commits
+
+    async def _require_committed(self, task: Task, task_dir: Path) -> None:
+        if await self._git.is_rebase_in_progress(task_dir):
+            return
+        status = await self._git.status_porcelain(task_dir)
+        if status:
+            raise UncommittedWork(task.id, status)
 
     async def continue_rebase(self, task: Task) -> None:
         """Continue `task`'s rebase after its conflicts were resolved, if one is in progress."""

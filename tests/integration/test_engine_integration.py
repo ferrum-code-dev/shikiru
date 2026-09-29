@@ -21,6 +21,7 @@ from shikiru.engine.integration import (
     Integrator,
     LocalMerge,
     MergeRequest,
+    UncommittedWork,
 )
 from shikiru.errors import CommandFailed
 from shikiru.process import SubprocessRunner
@@ -307,6 +308,139 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
         "commits": list(result.commits),
         "residual_risks": ["residual risk"],
     }
+
+
+def _integrator(connection: Connection, project_root: Path) -> Integrator:
+    async def keep_worktree(task: Task) -> None:
+        del task
+
+    return Integrator(
+        git=Git(_RUNNER),
+        strategy=_local_merge(project_root, SystemClock(), 0),
+        lock=asyncio.Lock(),
+        project_root=project_root,
+        tasks=TaskStore(connection, SystemClock()),
+        events=EventLog(connection, SystemClock()),
+        finish_task=keep_worktree,
+    )
+
+
+async def _resolve_nothing(
+    task: Task, continue_rebase: Callable[[], Awaitable[None]]
+) -> tuple[Task, IntegrationMetadata]:
+    del continue_rebase
+    return task, IntegrationMetadata("resolved")
+
+
+async def _dirty_task_worktree(
+    connection: Connection, project_root: Path, *, tracked: bool, ahead: bool
+) -> tuple[Task, Path, Path]:
+    task, _ = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    if ahead:
+        (task_root / "committed.txt").write_text("committed\n")
+        await commit_all(_RUNNER, task_root, "task change")
+    output = task_root / ("README.md" if tracked else "plan-output.md")
+    output.write_text("uncommitted\n")
+    return task, task_root, output
+
+
+@pytest.mark.parametrize("ahead", [False, True], ids=["no-op", "ahead"])
+@pytest.mark.parametrize("tracked", [True, False], ids=["tracked", "untracked"])
+async def test_integrator_refuses_uncommitted_work_and_keeps_the_worktree(
+    connection: Connection, tmp_path: Path, *, tracked: bool, ahead: bool
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, task_root, output = await _dirty_task_worktree(
+        connection, project_root, tracked=tracked, ahead=ahead
+    )
+    main_sha = await Git(_RUNNER).rev_parse(project_root, "main")
+
+    with pytest.raises(UncommittedWork) as refused:
+        await _integrator(connection, project_root).run(
+            task, _resolve_nothing, IntegrationMetadata("summary")
+        )
+
+    assert refused.value.reason is EscalationReason.UNCOMMITTED_WORK
+    assert output.name in str(refused.value)
+    final = TaskStore(connection, SystemClock()).get(task.id)
+    assert final is not None
+    assert final.status is Status.INTEGRATING
+    assert output.read_text() == "uncommitted\n"
+    assert task_root.is_dir()
+    assert await Git(_RUNNER).rev_parse(project_root, "main") == main_sha
+
+
+async def test_integrator_finishes_a_clean_no_op_task_as_done(
+    connection: Connection, tmp_path: Path
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, _ = await _task_with_worktree(connection, project_root)
+
+    result = await _integrator(connection, project_root).run(
+        task, _resolve_nothing, IntegrationMetadata("nothing to change")
+    )
+
+    final = TaskStore(connection, SystemClock()).get(task.id)
+    assert final is not None
+    assert final.status is Status.DONE
+    assert result.commits == ()
+
+
+async def test_a_plan_task_with_uncommitted_output_escalates_and_keeps_the_worktree(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.PLAN)
+    await set_role_script(
+        tmux_server, Role.LEADER, [{"kind": "accept", "uncommitted": "plan-output.md"}]
+    )
+
+    flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.ESCALATED
+    assert final.step is Step.INTEGRATE
+    reasons = [escalation.reason for escalation in fetch_open_escalations(flow_env.env.connection)]
+    assert reasons == [EscalationReason.UNCOMMITTED_WORK]
+    worktree = engine_env.project_root / ".shikiru" / "worktrees" / task.id
+    assert (worktree / "plan-output.md").is_file()
+    assert not (engine_env.project_root / "plan-output.md").exists()
+
+
+async def test_post_rebase_acceptance_with_uncommitted_changes_gets_rework_not_a_merge(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    (engine_env.project_root / FAKE_CHANGE_FILENAME).write_text("main\n")
+    await commit_all(_RUNNER, engine_env.project_root, "main change")
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "accept"}, {"kind": "accept"}, {"kind": "accept"}],
+    )
+    dirty_accept: dict[str, object] = {"kind": "accept", "uncommitted": "leader_edit.py"}
+    await set_role_script(
+        tmux_server, Role.LEADER, [{"kind": "accept"}, dirty_accept, dirty_accept]
+    )
+    main_sha = await Git(_RUNNER).rev_parse(engine_env.project_root, "main")
+
+    flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.ESCALATED
+    assert final.counters.conflict_rounds == 2
+    verdicts = flow_env.events.since(0, kinds=[EventKind.VERDICT], task_id=task.id)
+    assert [event.data["decision"] for event in verdicts][-2:] == ["accept", "changes_requested"]
+    assert "leader_edit.py" in verdicts[-1].data["issues"][0]["description"]
+    worktree = engine_env.project_root / ".shikiru" / "worktrees" / task.id
+    assert (worktree / "leader_edit.py").is_file()
+    assert await Git(_RUNNER).rev_parse(engine_env.project_root, "main") == main_sha
 
 
 async def test_taskflow_fake_agent_resolves_conflict_and_repeats_changes_requested_verify(

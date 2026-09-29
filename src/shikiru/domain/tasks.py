@@ -79,6 +79,7 @@ class EscalationReason(StrEnum):
     ITERATIONS_EXHAUSTED = auto()
     INTEGRATION_CONFLICT = auto()
     INTEGRATION_BLOCKED = auto()
+    UNCOMMITTED_WORK = auto()
     PR_CLOSED = auto()
     AGENT_AUTH = auto()
     AGENT_ERROR = auto()

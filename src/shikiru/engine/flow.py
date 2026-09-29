@@ -310,6 +310,8 @@ class TaskFlow:
         report = execution.result.report
         if isinstance(report, ImplementationReport | Verdict):
             self._emit_turn_completed(current, report, execution)
+            if isinstance(report, Verdict):
+                report = await self._reject_uncommitted(current, report, execution.turn_dir)
             return current, report
         message = f"{current.id} integration turn returned an unexpected report"
         raise ShikiruError(message)
@@ -411,7 +413,7 @@ class TaskFlow:
             raise ShikiruError(message)
         outcome = result.report
         self._emit_turn_completed(task, outcome, execution)
-        if step is Step.VERIFY and isinstance(outcome, Verdict) and outcome.decision == "accept":
+        if step is Step.VERIFY and isinstance(outcome, Verdict):
             outcome = await self._reject_uncommitted(task, outcome, execution.turn_dir)
         transition = next_step(task, outcome, self._settings)
         escalated = transition.status is Status.ESCALATED
@@ -920,6 +922,8 @@ class TaskFlow:
         )
 
     async def _reject_uncommitted(self, task: Task, verdict: Verdict, turn_dir: Path) -> Verdict:
+        if verdict.decision != "accept":
+            return verdict
         facts = await self._git_facts.collect(
             task_root(self._project_root, task.id),
             _require_repo(task),

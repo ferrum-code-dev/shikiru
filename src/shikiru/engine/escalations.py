@@ -41,6 +41,9 @@ _HEADLINE_SENTENCES: dict[EscalationReason, str] = {
     EscalationReason.ITERATIONS_EXHAUSTED: "The final review round still requested changes.",
     EscalationReason.INTEGRATION_CONFLICT: "Rebase conflicts could not be resolved automatically.",
     EscalationReason.INTEGRATION_BLOCKED: "The main checkout stayed blocked past the wait budget.",
+    EscalationReason.UNCOMMITTED_WORK: (
+        "The task workspace has uncommitted changes; commit or discard them, then retry."
+    ),
     EscalationReason.PR_CLOSED: "The pull request was closed without merging.",
     EscalationReason.AGENT_AUTH: (
         "The agent cannot access its provider; check credentials, billing, or account status."

@@ -376,9 +376,9 @@ Refs: 07 §2–3.
 
 ### Task 42: Integration never discards uncommitted work (F01)
 Refs: 03 §5–6, invariant 3.
-- [ ] Integration refuses a task worktree with tracked or untracked changes at its shared entry, including the no-op path (branch SHA equals base) and plan tasks, and keeps the worktree.
-- [ ] Post-rebase acceptance after conflict resolution applies the same check; an accepting Leader with uncommitted changes gets the existing rework path, not a merge.
-- [ ] A clean no-op task still finishes `done`.
+- [x] Integration refuses a task worktree with tracked or untracked changes at its shared entry, including the no-op path (branch SHA equals base) and plan tasks, and keeps the worktree.
+- [x] Post-rebase acceptance after conflict resolution applies the same check; an accepting Leader with uncommitted changes gets the existing rework path, not a merge.
+- [x] A clean no-op task still finishes `done`.
 - Tests: integration with real Git: uncommitted tracked and untracked plan output; dirty post-rebase acceptance; clean no-op. Each asserts the task outcome and that the files still exist.
 
 ### Task 43: Holds block every execution path (F04)

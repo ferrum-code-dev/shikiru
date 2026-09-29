@@ -187,7 +187,9 @@ The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's 
 
 Integration runs under the project integration lock. A branch with no commits ahead of `base` merges nothing and finishes cleanly.
 
-**Uncommitted changes.** A verify `accept` on a worktree with uncommitted changes (`git status --porcelain` not empty) never reaches the rebase: the engine replaces it with its own `changes_requested` verdict whose issue lists the files ("Commit what belongs to this task and discard the rest."), stored as `engine-verdict.json` beside the verify turn's report. It is a normal `changes_requested` round (§3), final-round rules included.
+**Uncommitted changes.** A verify `accept` on a worktree with uncommitted changes (`git status --porcelain` not empty) never reaches the rebase: the engine replaces it with its own `changes_requested` verdict whose issue lists the files ("Commit what belongs to this task and discard the rest."), stored as `engine-verdict.json` beside the verify turn's report. It is a normal `changes_requested` round (§3), final-round rules included. The same replacement applies to the post-rebase `accept` (a conflict round, step 1).
+
+Integration itself never discards work: at its entry, and again before the strategy merges, a task worktree whose `git status --porcelain` is not empty (tracked or untracked, plan tasks and a branch equal to `base` included) raises `uncommitted_work` (§8) and the worktree is kept. A rebase already in progress is exempt, its conflict markers being the work in flight.
 
 1. **Rebase** the task branch onto `base`.
    - On conflict, leave the rebase in progress so its conflict markers remain in the worktree. The Implementer `conflicts` turn resolves and stages them, then the engine continues the rebase before the Leader `verify` turn with post-rebase facts.
@@ -241,6 +243,7 @@ Dependents become ready only when their dependencies are `done`.
 | `iterations_exhausted` | Final round still `changes_requested` | answer ★ (one more final round with guidance), accept, cancel |
 | `integration_conflict` | Conflict rounds exhausted | retry ★, cancel |
 | `integration_blocked` | Main checkout blocked beyond `integration_wait` | retry ★, cancel |
+| `uncommitted_work` | The task worktree has uncommitted changes when integration starts or is about to merge | retry ★ (after committing or discarding them, e.g. through takeover), cancel |
 | `pr_closed` | PR closed unmerged | retry ★ (new PR), cancel |
 | `agent_auth` / `agent_error` / `agent_stuck` / `agent_protocol` | §7 | retry [--rung] ★, cancel |
 | `ladder_exhausted` / `quota_exhausted` | §7 | retry [--rung] ★, cancel |
