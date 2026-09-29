@@ -164,7 +164,7 @@ A plugin that is missing or broken fails `start` and `doctor` with its name and 
     leader/  implementer/           # current_turn symlink, view.jsonl (view log), turn.pid while a turn runs
     turns/NN-<step>-i<iteration>/   prompt.md report.schema.json report.kind report.json facts.md helper.json
                                     <role>.stream.jsonl <role>.stderr.log (raw agent output)  messages/ (delivered)
-    messages/<role>/NNN.md          # operator messages queued for the role's next turn
+    messages/<role>/NNN-c<id>.md   # operator messages queued for the role's next turn
     escalations/E-3.md
   probe/repo/  probe/run/           # scratch repository and run dir reused by `doctor --probe`
 ```

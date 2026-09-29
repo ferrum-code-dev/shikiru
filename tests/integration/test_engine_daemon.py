@@ -28,6 +28,7 @@ from shikiru.domain.commands import (
     Resume,
     Retry,
     RetryResolution,
+    Say,
     SetRung,
     Stop,
     Submit,
@@ -50,6 +51,7 @@ from shikiru.domain.tasks import (
 )
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
 from shikiru.engine.escalations import EscalationRaiser
+from shikiru.engine.takeover import HAND_BACK_MESSAGE
 from shikiru.errors import ConfigError
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
@@ -65,6 +67,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, build_tmux, set_role_script, set_script
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
+from tests.support.store import reopen_command
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -76,6 +79,7 @@ if TYPE_CHECKING:
     from shikiru.domain.runs import Run
     from shikiru.store.commands import CommandOutcome, QueuedCommand
     from shikiru.tmux.client import Tmux
+    from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
 _FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
@@ -604,7 +608,9 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
         facts="",
         view_tail="",
     )
-    operator = _Operator(tasks, runs, EventLog(connection, clock), queue, clock, tmux_server)
+    operator = _Operator(
+        tasks, runs, EventLog(connection, clock), queue, clock, tmux_server, connection, tmp_path
+    )
     engine_task = asyncio.create_task(engine.run())
     try:
         yield _Escalated(operator, escalations, task, escalation.id, tmux, session, tasks)
@@ -993,12 +999,25 @@ class _Operator:
     queue: CommandQueue
     clock: FakeClock
     tmux_server: TmuxServer
+    connection: Connection
+    project_root: Path
 
     async def send(self, command: Command) -> CommandOutcome:
         return await _append_and_wait(command, self.queue, self.clock)
 
+    async def replay(self, queued: QueuedCommand) -> CommandOutcome:
+        reopen_command(self.connection, queued.id)
+        return await wait_for_command(queued, self.queue, self.clock)
+
     def task(self, task_id: str) -> Task:
         return _required_task(self.tasks, task_id)
+
+    def message_files(self, task_id: str, text: str) -> list[Path]:
+        return [
+            path
+            for path in run_dir(self.project_root, task_id).rglob("*.md")
+            if path.read_text() == text
+        ]
 
     def turns(self, task_id: str) -> int:
         return len(self.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task_id))
@@ -1044,6 +1063,8 @@ async def _operator_session(
         CommandQueue(connection, clock),
         clock,
         tmux_server,
+        connection,
+        tmp_path,
     )
     engine_task = asyncio.create_task(engine.run())
     try:
@@ -1144,3 +1165,54 @@ async def test_pause_survives_a_takeover_and_its_hand_back_until_resume(
 async def _pane_color(tmux_server: TmuxServer, pane: str) -> str:
     result = await tmux_server.run("show-options", "-p", "-v", "-t", pane, PANE_COLOR_OPTION)
     return result.stdout.strip()
+
+
+async def test_replaying_an_acknowledged_say_neither_duplicates_the_message_nor_its_event(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
+        text = "use the new helper"
+        sent = operator.queue.append(Say(task_id=task_id, role=Role.IMPLEMENTER, text=text))
+        first = await wait_for_command(sent, operator.queue, operator.clock)
+
+        replayed = await operator.replay(sent)
+
+        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
+        assert len(operator.message_files(task_id, text)) == 1
+        queued = operator.events.since(0, kinds=[EventKind.OPERATOR_MESSAGE], task_id=task_id)
+        assert len(queued) == 1
+
+
+async def test_replaying_an_acknowledged_submit_returns_its_task_without_a_second_one(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, _task_id, _run):
+        sent = operator.queue.append(Submit(title="once", request="once", mode=Mode.IMPLEMENT))
+        first = await wait_for_command(sent, operator.queue, operator.clock)
+
+        replayed = await operator.replay(sent)
+
+        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
+        assert replayed.result == first.result
+        assert first.result is not None
+        queued = operator.events.since(0, kinds=[EventKind.TASK_QUEUED])
+        assert [event.task_id for event in queued].count(first.result["task_id"]) == 1
+
+
+async def test_replaying_an_acknowledged_hand_back_is_a_no_op_success(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, run):
+        await operator.send(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+        sent = operator.queue.append(HandBack(task_id=task_id, role=Role.IMPLEMENTER))
+        first = await wait_for_command(sent, operator.queue, operator.clock)
+
+        replayed = await operator.replay(sent)
+
+        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
+        handed = operator.events.since(0, kinds=[EventKind.HANDED_BACK], task_id=task_id)
+        assert len(handed) == 1
+        assert len(operator.message_files(task_id, HAND_BACK_MESSAGE)) == 1
+        live = operator.runs.get_live(task_id, Role.IMPLEMENTER)
+        assert live is not None
+        assert live.id == run.id

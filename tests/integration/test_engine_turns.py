@@ -147,8 +147,8 @@ async def test_queued_operator_message_reaches_only_its_roles_next_prompt(
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
     messages = OperatorMessages(engine_env.project_root)
-    for_implementer = messages.queue(task.id, Role.IMPLEMENTER, "use the new helper")
-    for_leader = messages.queue(task.id, Role.LEADER, "keep scope small")
+    for_implementer = messages.queue(task.id, Role.IMPLEMENTER, "use the new helper", "c1")
+    for_leader = messages.queue(task.id, Role.LEADER, "keep scope small", "c2")
     flow_env = build_flow(engine_env, flow_settings())
 
     await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
@@ -176,7 +176,9 @@ async def test_operator_message_is_redelivered_when_its_turn_fails(
         Role.IMPLEMENTER,
         [{"kind": "fail", "failure_kind": "other"}, {"kind": "accept"}],
     )
-    OperatorMessages(engine_env.project_root).queue(task.id, Role.IMPLEMENTER, "use the helper")
+    OperatorMessages(engine_env.project_root).queue(
+        task.id, Role.IMPLEMENTER, "use the helper", "c1"
+    )
     flow_env = build_flow(engine_env, flow_settings())
 
     await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)

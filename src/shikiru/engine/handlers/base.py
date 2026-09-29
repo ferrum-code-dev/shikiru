@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from shikiru.domain.commands import Command
+from shikiru.domain.commands import Command, HandBack, Say
 from shikiru.domain.tasks import Status, Task
 from shikiru.errors import CommandRejectedError
 
@@ -108,3 +108,11 @@ async def interrupt_task(
     """Stop a task flow before a handler changes its current step or status."""
     if even_if_inactive or task.status in (Status.RUNNING, Status.INTEGRATING):
         await context.cancel_task(task.id)
+
+
+def require_command_id(command: Say | HandBack) -> int:
+    """Return the id the command queue gave `command`, which every replay of it shares."""
+    if command.command_id is None:
+        message = f"{command.kind.value} command has no queue id"
+        raise ValueError(message)
+    return command.command_id

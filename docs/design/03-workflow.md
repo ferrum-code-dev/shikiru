@@ -247,6 +247,12 @@ Dependents become ready only when their dependencies are `done`.
 4. Finish interrupted cleanup: a terminal task is entered together with its terminal event (`task_done`, `task_cancelled`) in one transaction and cleaned up afterwards, worktree last. A `done` or `cancelled` task whose task root still exists is cleaned up again (sessions closed, window closed, worktree removed); its event is never re-emitted.
 5. Pending `commands` are processed by the normal loop.
 
+**Command replay.** Commands are delivered at least once: a command stays `pending` until its handler returns, so an engine that dies between a durable effect and the acknowledgement replays it on restart. Handlers are idempotent by command id, derived from durable state and never from a replay log:
+- `submit`: the queue allocated the task id when appending, so a task with that id already existing is the command's own effect; the replay returns its id. The task insert and `task_queued` commit in one transaction.
+- `say`: the message file name carries the command id (`NNN-c<id>.md`, kept when a failed turn requeues its messages). A message already filed under the id, queued or delivered, is not written again, and `operator_message` (data `command_id`) is appended once.
+- `hand_back`: the run, hold and `handed_back` (data `command_id`) changes commit in one transaction, after the view pane is restarted and the message is filed, both of which are repeatable. A `handed_back` event for the command id means the hand-back took effect: the replay acknowledges it and only repeats the follow-up (resume the step if it is active and not held, refresh titles).
+Commands that only set state to a target value (`prioritize`, `pause`, `set_rung`, and the like) are naturally repeatable.
+
 ## 8. Escalation
 
 | Reason | Raised when | Options (★ = recommended default) |
@@ -307,7 +313,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 
 **`resume` while a role is taken over is rejected** with a message to hand the role back first. There is no implicit hand-back: an interactive pane owns the workspace until every taken-over role is handed back, so no headless turn can run beside the Operator's session (invariant 1).
 
-**`say`** (`Say(task, role, text)`) writes `runs/T/messages/<role>/NNN.md`. A headless turn takes no input mid-turn, so the message is delivered at the start of that role's next turn (§4.3 step 2), never interrupting; interrupting is what take over is for. `say` never sets a hold.
+**`say`** (`Say(task, role, text)`) writes `runs/T/messages/<role>/NNN-c<id>.md` (`<id>` is the command id; a replay files it once, §7). A headless turn takes no input mid-turn, so the message is delivered at the start of that role's next turn (§4.3 step 2), never interrupting; interrupting is what take over is for. `say` never sets a hold.
 
 ## 10. Scheduling
 

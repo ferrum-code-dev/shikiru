@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
-from shikiru.domain.commands import Command, CommandStatus, Submit
+from shikiru.domain.commands import COMMAND_ID_KEY, Command, CommandStatus, HandBack, Say, Submit
 from shikiru.store.database import (
     dump_json,
     format_timestamp,
@@ -25,6 +25,12 @@ if TYPE_CHECKING:
 
 _COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
 _RESULT_ADAPTER: TypeAdapter[dict[str, Any] | None] = TypeAdapter(dict[str, Any] | None)
+
+
+def _identified(command: Command, command_id: int) -> Command:
+    if isinstance(command, (Say, HandBack)):
+        return command.model_copy(update={COMMAND_ID_KEY: command_id})
+    return command
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +86,10 @@ class CommandQueue:
             (CommandStatus.PENDING.value,),
         ).fetchall()
         return [
-            QueuedCommand(id=row["id"], command=load_json(_COMMAND_ADAPTER, row["payload"]))
+            QueuedCommand(
+                id=row["id"],
+                command=_identified(load_json(_COMMAND_ADAPTER, row["payload"]), row["id"]),
+            )
             for row in rows
         ]
 

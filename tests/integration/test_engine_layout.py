@@ -163,7 +163,9 @@ async def test_exited_taken_over_pane_queues_one_hand_back_and_stays_down(
 
     pending = [queued.command for queued in CommandQueue(connection, clock).pending()]
     hand_backs = [command for command in pending if isinstance(command, HandBack)]
-    assert hand_backs == [HandBack(task_id=task_id, role=Role.IMPLEMENTER)]
+    assert [(command.task_id, command.role) for command in hand_backs] == [
+        (task_id, Role.IMPLEMENTER)
+    ]
     assert await tmux.is_pane_dead(operator_pane)
     assert not events.since(0, kinds=[EventKind.PANE_RESTORED], task_id=task_id)
 

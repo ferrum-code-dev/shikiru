@@ -11,6 +11,8 @@ from shikiru.agents.contracts import Rung
 from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import DomainModel, Mode, Role
 
+COMMAND_ID_KEY = "command_id"
+
 
 class CommandStatus(StrEnum):
     """The `commands.status` lifecycle (05 §2)."""
@@ -99,12 +101,16 @@ class SetRung(DomainModel):
 
 
 class Say(DomainModel):
-    """`say T-n <role> "<text>"`: queues a message for the role's next turn."""
+    """`say T-n <role> "<text>"`: queues a message for the role's next turn.
+
+    The queue fills `command_id` so a replayed delivery is recognised.
+    """
 
     kind: Literal[CommandKind.SAY] = CommandKind.SAY
     task_id: str
     role: Role
     text: str
+    command_id: int | None = None
 
 
 class TakeOver(DomainModel):
@@ -116,11 +122,15 @@ class TakeOver(DomainModel):
 
 
 class HandBack(DomainModel):
-    """`hand-back T-n <role>`: returns a taken-over session to the engine."""
+    """`hand-back T-n <role>`: returns a taken-over session to the engine.
+
+    The queue fills `command_id` so a replayed delivery is recognised.
+    """
 
     kind: Literal[CommandKind.HAND_BACK] = CommandKind.HAND_BACK
     task_id: str
     role: Role
+    command_id: int | None = None
 
 
 class ResolutionKind(StrEnum):

@@ -205,6 +205,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 
 **Commands** are pydantic models in `domain.commands`, stored as `kind` plus a JSON `payload`:
 - `Submit` (the command queue allocates its task id from `sequences` when appending)
+- `Say` and `HandBack` carry the queue's row id as `command_id` when the engine reads them, so their effects can be recognised on replay (03 §7)
 - `Prioritize`, `Pause`, `Resume`, `Cancel`, `Retry`, `SetRung`, `Say`, `TakeOver`, `HandBack`, `Resolve`, `Stop`
 
 ## 3. Run files

@@ -7,7 +7,7 @@ CLI, MCP and the dashboard palette are thin adapters over three small services:
 | Service | Responsibility |
 |---|---|
 | `OperatorQueries` | Read-only views over `StateReader`: status, tasks, task detail, escalations (with packet), peek (DB + the role's `view.jsonl`) |
-| `OperatorCommands` | `send(command) -> Ack`. Inserts the typed command row; if the engine is up, waits up to 10 s for `done`/`rejected`; if it's down, returns `queued` ("applies when the engine starts") |
+| `OperatorCommands` | `send(command) -> Ack`. Inserts the typed command row; if the engine is up, waits up to 10 s for `done`/`rejected`; if it's down, returns `queued` ("applies when the engine starts"). Delivery is at least once and handlers are idempotent by command id (03 §7), so a command applied just before an engine restart is acknowledged `done`, never `rejected`, when replayed |
 | `EventFeed` | `read(since, kinds, task)` and `wait(since, kinds, task, timeout)` over `events` |
 
 ## 2. CLI

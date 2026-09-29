@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.clock import SystemClock
-from shikiru.domain.commands import Submit
+from shikiru.domain.commands import CommandStatus, Submit
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
 from shikiru.store.reader import StateReader
@@ -80,3 +80,10 @@ def seed_task(
     )
     assert isinstance(queued.command, Submit)
     return TaskStore(connection, clock).insert_from_submit(queued.command)
+
+
+def reopen_command(connection: Connection, command_id: int) -> None:
+    connection.execute(
+        "UPDATE commands SET status = ?, result = NULL WHERE id = ?",
+        (CommandStatus.PENDING.value, command_id),
+    )

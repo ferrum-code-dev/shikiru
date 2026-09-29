@@ -216,7 +216,11 @@ class LayoutGuard:
             self._record_restored(task.id, role.value)
 
     def _queue_hand_back(self, command: HandBack) -> None:
-        if all(queued.command != command for queued in self._commands.pending()):
+        if not any(
+            isinstance(queued.command, HandBack)
+            and (queued.command.task_id, queued.command.role) == (command.task_id, command.role)
+            for queued in self._commands.pending()
+        ):
             self._commands.append(command)
 
     async def start_view(self, task_id: str, role: Role, pane_id: str) -> None:

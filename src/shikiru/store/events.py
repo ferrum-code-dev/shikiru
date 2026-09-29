@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
+from shikiru.domain.commands import COMMAND_ID_KEY
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.tasks import Role
 from shikiru.store.database import (
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
 
 _EVENT_ROLE_JSON_PATH = "$.role"
+_EVENT_COMMAND_JSON_PATH = f"$.{COMMAND_ID_KEY}"
 
 _DATA_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
@@ -142,6 +144,14 @@ class EventLog:
     ) -> list[Event]:
         """Read every event since `since_id`, optionally filtered by `kinds` and `task_id`."""
         return fetch_events_since(self._connection, since_id, kinds=kinds, task_id=task_id)
+
+    def command_applied(self, kind: EventKind, command_id: int) -> bool:
+        """Report whether a `kind` event already records the effect of command `command_id`."""
+        row = self._connection.execute(
+            "SELECT 1 FROM events WHERE kind = ? AND json_extract(data, ?) = ? LIMIT 1",
+            (kind.value, _EVENT_COMMAND_JSON_PATH, command_id),
+        ).fetchone()
+        return row is not None
 
     def latest_id(self) -> int:
         """Return the current event cursor, or zero when the log is empty."""

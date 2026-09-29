@@ -36,13 +36,16 @@ class SubmitHandler:
         self._context = context
 
     async def handle(self, command: Submit) -> dict[str, object]:
-        task = self._context.tasks.insert_from_submit(command)
-        self._context.events.append(
-            EventKind.TASK_QUEUED,
-            task_id=task.id,
-            message=f"{task.id} queued",
-            data={"priority": task.priority},
-        )
+        task = self._context.tasks.get(command.task_id) if command.task_id is not None else None
+        if task is None:
+            with self._context.atomically():
+                task = self._context.tasks.insert_from_submit(command)
+                self._context.events.append(
+                    EventKind.TASK_QUEUED,
+                    task_id=task.id,
+                    message=f"{task.id} queued",
+                    data={"priority": task.priority},
+                )
         return {"task_id": task.id}
 
 

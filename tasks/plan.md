@@ -447,8 +447,8 @@ Refs: 06 §5.7.
 
 ### Task 53: Idempotent command replay (F12)
 Refs: 03 §7, 06 §2, invariant 5.
-- [ ] At-least-once delivery, idempotent by command id, is written in 03 §7. Database effects and the acknowledgement commit together where possible; `say` file writes and hand-back pane/run/hold changes are repeatable. No generic effect-replay framework.
-- [ ] A restart after the effect but before the acknowledgement neither duplicates guidance, rejects a `submit` whose task exists, nor rejects a hand-back that already took effect.
+- [x] At-least-once delivery, idempotent by command id, is written in 03 §7. Database effects and the acknowledgement commit together where possible; `say` file writes and hand-back pane/run/hold changes are repeatable. No generic effect-replay framework.
+- [x] A restart after the effect but before the acknowledgement neither duplicates guidance, rejects a `submit` whose task exists, nor rejects a hand-back that already took effect.
 - Tests: integration with a crash between durable effect and acknowledgement for `say`, `submit` and `hand_back`.
 
 ### Task 54: Interrupted turns keep operator messages (F13)

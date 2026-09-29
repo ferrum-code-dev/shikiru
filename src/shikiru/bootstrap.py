@@ -535,6 +535,7 @@ def build_engine(
         cancel_task=task_supervisor.cancel_task,
         start_task=task_supervisor.start_task,
         refresh_titles=refresh_titles,
+        atomically=lambda: transaction(connection),
     )
     handlers = HandlerRegistry(
         [
