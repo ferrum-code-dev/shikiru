@@ -44,8 +44,9 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 2. **Agents**: installed plugins whose `doctor()` passes. Choose ladders for leader, implementer and helper.
 3. **Trackers**: glob `tasks/*.md`, `**/plan*.md`, `**/todo*.md`.
 4. **Caches**: existing ignored dirs among common cache names, plus a CoW support check.
-5. **Parallelism and integration mode.**
-6. **Finish**: write `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor`.
+5. **Parallelism**: set the maximum number of active tasks.
+6. **Integration mode**: choose local merge or pull request integration.
+7. **Finish**: write `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor`.
 
 ## 4. MCP (`shikiru mcp`)
 

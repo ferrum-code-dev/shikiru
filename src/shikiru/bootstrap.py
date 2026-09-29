@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
-from shikiru.config.loader import load_session_settings, load_settings
+from shikiru.config.loader import load_default_orchestration, load_session_settings, load_settings
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.daemon import (
     ENGINE_LOGGER_NAME,
@@ -59,7 +59,7 @@ from shikiru.engine.turns import TurnRunner
 from shikiru.errors import ConfigError
 from shikiru.helper.helper import Helper
 from shikiru.operator.commands import OperatorCommands
-from shikiru.operator.detectors import ProjectDetectors
+from shikiru.operator.detectors import InitWizardResult, ProjectDetectors
 from shikiru.operator.doctor import Doctor
 from shikiru.operator.events import EventFeed
 from shikiru.operator.lifecycle import ProjectLifecycle
@@ -68,7 +68,13 @@ from shikiru.operator.probe import AgentProbe
 from shikiru.operator.queries import OperatorQueries
 from shikiru.operator.services import OperatorServices
 from shikiru.operator.sessions import SessionAttacher, SessionLister, SessionRow
-from shikiru.paths import engine_lock_path, engine_log_path, project_state_dir, state_db_path
+from shikiru.paths import (
+    engine_lock_path,
+    engine_log_path,
+    project_config_path,
+    project_state_dir,
+    state_db_path,
+)
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue
@@ -115,6 +121,28 @@ def build_project_detectors(project_root: Path) -> ProjectDetectors:
         project_root,
         git=Git(runner),
         plugin_checks=plugins,
+        cache_cloner=CacheCloner(runner, cow_args=default_cow_args()),
+    )
+
+
+async def run_init_wizard(project_root: Path) -> InitWizardResult | None:
+    """Run the interactive project setup after the shared detector validates D20."""
+    detectors = build_project_detectors(project_root)
+    project = await detectors.detect()
+    config_path = project_config_path(project_root)
+    if await asyncio.to_thread(config_path.is_file):
+        message = f"{config_path} already exists; refusing to overwrite it"
+        raise ConfigError(message)
+    wizard_type = import_module("shikiru.dashboard.wizard").__dict__["InitWizardApp"]
+    wizard = wizard_type(
+        project_root=project_root,
+        project=project,
+        detectors=detectors,
+        doctor=build_doctor(project_root),
+        orchestration_defaults=load_default_orchestration(),
+    )
+    return cast(
+        "InitWizardResult | None", await wizard.run_async(inline=True, inline_no_clear=True)
     )
 
 
@@ -125,7 +153,7 @@ def build_doctor(project_root: Path) -> Doctor:
     registry = AgentRegistry()
     return Doctor(
         project_root,
-        cow_args=default_cow_args(),
+        cache_cloner=CacheCloner(runner, cow_args=default_cow_args()),
         git=Git(runner),
         runner=runner,
         clock=clock,

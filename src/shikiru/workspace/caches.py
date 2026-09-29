@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import platform
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from shikiru.process import SubprocessRunner
 
 _COPY_TIMEOUT_SECONDS = 60.0
 _PROBE_PREFIX = ".shikiru-cow-probe-"
+_PROBE_DIRECTORY_PREFIX = ".shikiru-cow-check-"
 _PROBE_CONTENT = b"shikiru cow probe"
 
 CACHE_COW_UNSUPPORTED_WARNING = (
@@ -80,6 +82,15 @@ class CacheCloner:
                 await self._copy(cow_args, match, destination)
                 copied.append(relative)
         return CacheCloneResult(copied=tuple(copied))
+
+    async def check_support(self, filesystem_root: Path) -> bool:
+        """Check copy-on-write using disposable probe files on `filesystem_root`."""
+        if self._cow_args is None:
+            return False
+        with tempfile.TemporaryDirectory(
+            prefix=_PROBE_DIRECTORY_PREFIX, dir=filesystem_root
+        ) as directory:
+            return await self._cow_supported(self._cow_args, Path(directory))
 
     async def _cow_supported(self, cow_args: tuple[str, ...], worktree_dir: Path) -> bool:
         probe_source = worktree_dir / f"{_PROBE_PREFIX}{uuid4().hex}"

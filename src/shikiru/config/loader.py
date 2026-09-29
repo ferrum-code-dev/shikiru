@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
-from shikiru.config.settings import SessionSettings, Settings
+from shikiru.config.settings import OrchestrationConfig, SessionSettings, Settings
 from shikiru.errors import ConfigError
 from shikiru.paths import PROJECT_CONFIG_RELATIVE_PATH, project_config_path
 
@@ -56,6 +56,24 @@ def load_session_settings(overrides: Sequence[str] = ()) -> SessionSettings:
         raise ConfigError(message) from error
 
 
+def load_default_orchestration() -> OrchestrationConfig:
+    """Return the packaged orchestration values used to seed the init wizard."""
+    defaults, _ = _load_defaults()
+    return OrchestrationConfig.model_validate(defaults["orchestration"])
+
+
+def validate_project_config_text(text: str) -> Settings:
+    """Validate rendered project config against packaged defaults before writing it."""
+    merged, sources = _load_defaults()
+    project_data = _parse_toml_text(text, PROJECT_CONFIG_RELATIVE_PATH)
+    merged = _deep_merge(merged, project_data)
+    _record_sources(sources, project_data, PROJECT_CONFIG_RELATIVE_PATH)
+    try:
+        return Settings.model_validate(merged)
+    except ValidationError as error:
+        raise ConfigError(_format_validation_error(error, sources)) from error
+
+
 def _load_defaults() -> tuple[dict[str, Any], dict[str, str]]:
     defaults_text = (
         resources.files("shikiru.config").joinpath("defaults.toml").read_text(encoding="utf-8")
@@ -67,8 +85,12 @@ def _load_defaults() -> tuple[dict[str, Any], dict[str, str]]:
 
 
 def _parse_toml(path: Path, source: str) -> dict[str, Any]:
+    return _parse_toml_text(path.read_text(encoding="utf-8"), source)
+
+
+def _parse_toml_text(text: str, source: str) -> dict[str, Any]:
     try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
+        return tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
         message = f"{source}: {error}"
         raise ConfigError(message) from error

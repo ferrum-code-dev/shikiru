@@ -11,6 +11,7 @@ from shikiru.errors import ConfigError
 from shikiru.operator.detectors import ProjectDetectors
 from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.process import SubprocessRunner
+from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.factories import TASK_CREATED_AT
@@ -54,7 +55,12 @@ async def test_init_reports_named_plugin_failures_when_no_agent_passes_doctor(
     await init_repo(runner, tmp_path)
     await commit_all(runner, tmp_path, "initial", allow_empty=True)
     checks = PluginChecks(_registry_for(_BrokenAgent()), runner, FakeClock(TASK_CREATED_AT))
-    detectors = ProjectDetectors(tmp_path, git=Git(runner), plugin_checks=checks)
+    detectors = ProjectDetectors(
+        tmp_path,
+        git=Git(runner),
+        plugin_checks=checks,
+        cache_cloner=CacheCloner(runner, cow_args=None),
+    )
 
     with pytest.raises(ConfigError, match="broken: binary: binary is missing"):
         await detectors.detect()

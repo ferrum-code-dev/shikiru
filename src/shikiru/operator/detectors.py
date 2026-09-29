@@ -9,11 +9,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from shikiru.agents.contracts import Rung
+from shikiru.config.loader import validate_project_config_text
 from shikiru.errors import ConfigError
 from shikiru.paths import EXCLUDE_LINE, SHIKIRU_DIR_NAME, project_config_path
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from shikiru.operator.doctor import DoctorReport
     from shikiru.operator.plugin_checks import PluginChecks
+    from shikiru.workspace.caches import CacheCloner
     from shikiru.workspace.git import Git
 
 MAX_SCAN_DEPTH = 4
@@ -49,19 +55,38 @@ class DetectedProject:
     agents: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class InitWizardResult:
+    """The config path and final Doctor result returned when the wizard is complete."""
+
+    config_path: Path
+    doctor_report: DoctorReport | None
+    doctor_error: str | None = None
+
+
 class ProjectDetectors:
     """Detect the repository base, trackers, installed agents and caches for `init`."""
 
-    def __init__(self, root: Path, *, git: Git, plugin_checks: PluginChecks) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        git: Git,
+        plugin_checks: PluginChecks,
+        cache_cloner: CacheCloner,
+    ) -> None:
         """Inspect `root` through injected git and agent-plugin check boundaries."""
         self._root = root.resolve()
         self._git = git
         self._plugin_checks = plugin_checks
+        self._cache_cloner = cache_cloner
 
     async def detect(self) -> DetectedProject:
         """Return deterministic project facts, or an actionable config error."""
-        if not await self._git.is_repository_root(self._root):
-            raise ConfigError(not_repository_root(self._root))
+        await self._validate_root()
+        return await self._detect_project()
+
+    async def _detect_project(self) -> DetectedProject:
         agents = await self._agents()
         if not agents:
             message = "no shikiru.agents plugin is installed"
@@ -76,13 +101,54 @@ class ProjectDetectors:
 
     async def initialize(self) -> Path:
         """Detect facts, write config and exclude `.shikiru/` in the repository."""
+        await self._validate_root()
         config_path = project_config_path(self._root)
         if await asyncio.to_thread(config_path.is_file):
             return config_path
-        project = await self.detect()
-        await asyncio.to_thread(_write_config, config_path, render_config(project))
-        await self._git.append_to_exclude(self._root, EXCLUDE_LINE)
+        project = await self._detect_project()
+        await self._write_and_exclude(config_path, render_config(project))
         return config_path
+
+    async def initialize_config(
+        self,
+        *,
+        trackers: Sequence[str],
+        caches: Sequence[str],
+        ladders: Mapping[str, Sequence[Rung]],
+        max_parallel: int,
+        integration: str,
+    ) -> Path:
+        """Write the wizard's validated configuration and exclude `.shikiru/`."""
+        await self._validate_root()
+        project = await self._detect_project()
+        config_path = project_config_path(self._root)
+        contents = render_config(
+            project,
+            trackers=trackers,
+            caches=caches,
+            ladders=ladders,
+            max_parallel=max_parallel,
+            integration=integration,
+        )
+        validate_project_config_text(contents)
+        await self._write_and_exclude(config_path, contents)
+        return config_path
+
+    async def check_cow_support(self) -> bool:
+        """Probe copy-on-write support using disposable files on the project filesystem."""
+        return await self._cache_cloner.check_support(self._root)
+
+    async def _validate_root(self) -> None:
+        if not await self._git.is_repository_root(self._root):
+            raise ConfigError(not_repository_root(self._root))
+
+    async def _write_and_exclude(self, config_path: Path, contents: str) -> None:
+        try:
+            await asyncio.to_thread(_write_config, config_path, contents)
+        except FileExistsError as error:
+            message = f"{config_path} already exists; refusing to overwrite it"
+            raise ConfigError(message) from error
+        await self._git.append_to_exclude(self._root, EXCLUDE_LINE)
 
     def _trackers(self) -> list[str]:
         candidates: set[str] = set()
@@ -116,20 +182,28 @@ class ProjectDetectors:
         raise ConfigError(message)
 
 
-def render_config(project: DetectedProject) -> str:
+def render_config(
+    project: DetectedProject,
+    *,
+    trackers: Sequence[str] | None = None,
+    caches: Sequence[str] | None = None,
+    ladders: Mapping[str, Sequence[Rung]] | None = None,
+    max_parallel: int | None = None,
+    integration: str | None = None,
+) -> str:
     """Render a complete default config from detected project facts."""
     agent = project.agents[0]
     lines = [
         "[project]",
         f"name = {json.dumps(project.name)}",
-        f"trackers = {json.dumps(list(project.trackers))}",
+        f"trackers = {json.dumps(list(project.trackers if trackers is None else trackers))}",
         "",
     ]
     lines.extend(
         (
             "[repo]",
             f"base = {json.dumps(project.base)}",
-            f"caches = {json.dumps(list(project.caches))}",
+            f"caches = {json.dumps(list(project.caches if caches is None else caches))}",
             "",
         )
     )
@@ -140,26 +214,46 @@ def render_config(project: DetectedProject) -> str:
                 "",
             )
         )
-    rung = f"{{ agent = {json.dumps(agent)}, model = {json.dumps(DEFAULT_MODEL)} }}"
-    lines.extend(
-        (
-            "[roles.leader]",
-            f"ladder = [{rung}]",
-            "",
-            "[roles.implementer]",
-            f"ladder = [{rung}]",
-            "",
-            "[roles.helper]",
-            f"ladder = [{rung}]",
-            "",
-        )
+    selected_ladders = (
+        ladders
+        if ladders is not None
+        else {
+            role: (Rung(agent=agent, model=DEFAULT_MODEL),)
+            for role in ("leader", "implementer", "helper")
+        }
     )
+    for role in ("leader", "implementer", "helper"):
+        lines.append(f"[roles.{role}]")
+        rung_lines = [
+            "{ "
+            + ", ".join(
+                value
+                for value in (
+                    f"agent = {json.dumps(rung.agent)}",
+                    f"model = {json.dumps(rung.model)}",
+                    None if rung.effort is None else f"effort = {json.dumps(rung.effort)}",
+                )
+                if value is not None
+            )
+            + " }"
+            for rung in selected_ladders[role]
+        ]
+        lines.append(f"ladder = [{', '.join(rung_lines)}]")
+        lines.append("")
+    if max_parallel is not None or integration is not None:
+        lines.extend(("[orchestration]",))
+        if max_parallel is not None:
+            lines.append(f"max_parallel = {max_parallel}")
+        if integration is not None:
+            lines.append(f"integration = {json.dumps(integration)}")
+        lines.append("")
     return "\n".join(lines)
 
 
 def _write_config(config_path: Path, contents: str) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(contents)
+    with config_path.open("x", encoding="utf-8") as handle:
+        handle.write(contents)
 
 
 def _files_at_depth(root: Path, max_depth: int) -> list[Path]:

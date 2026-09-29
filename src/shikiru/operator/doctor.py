@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -84,7 +83,7 @@ class Doctor:
         self,
         project_root: Path,
         *,
-        cow_args: Sequence[str] | None,
+        cache_cloner: CacheCloner,
         git: Git,
         runner: SubprocessRunner,
         clock: Clock,
@@ -93,7 +92,7 @@ class Doctor:
     ) -> None:
         """Store the project and injected git, process, clock, plugin and probe boundaries."""
         self._project_root = project_root.resolve()
-        self._cow_args = tuple(cow_args) if cow_args is not None else None
+        self._cache_cloner = cache_cloner
         self._git = git
         self._runner = runner
         self._clock = clock
@@ -217,22 +216,12 @@ class Doctor:
         return DoctorCheck(name=DATABASE_CHECK_NAME, ok=True, detail=f"schema {version}")
 
     async def _cow_check(self) -> DoctorCheck:
-        if self._cow_args is None:
-            return DoctorCheck(
-                name=COW_CHECK_NAME,
-                ok=True,
-                detail=CACHE_COW_UNSUPPORTED_WARNING,
-            )
         try:
-            with tempfile.TemporaryDirectory(prefix="shikiru-doctor-cow-") as directory:
-                result = await CacheCloner(self._runner, cow_args=self._cow_args).clone(
-                    Path(directory), Path(directory), (), ()
-                )
+            supported = await self._cache_cloner.check_support(self._project_root)
         except (OSError, ShikiruError) as error:
             return DoctorCheck(name=COW_CHECK_NAME, ok=False, detail=str(error))
-        if result.warning is not None:
-            return DoctorCheck(name=COW_CHECK_NAME, ok=True, detail=result.warning)
-        return DoctorCheck(name=COW_CHECK_NAME, ok=True, detail="copy-on-write supported")
+        detail = "copy-on-write supported" if supported else CACHE_COW_UNSUPPORTED_WARNING
+        return DoctorCheck(name=COW_CHECK_NAME, ok=True, detail=detail)
 
     async def _plugin_checks(self, settings: Settings) -> list[DoctorCheck]:
         checks: list[DoctorCheck] = []

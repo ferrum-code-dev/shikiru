@@ -348,8 +348,8 @@ Refs: 06 §5.6.
 
 ### Task 29: Init wizard
 Refs: 06 §3.
-- [ ] Inline Textual wizard over `operator/detectors.py` with the 7 steps; writes config, excludes `.shikiru/`, runs doctor.
-- Tests: Textual `run_test` walkthrough on a tmp repository project, and rejection of a non-repository root.
+- [x] Inline Textual wizard over `operator/detectors.py` with the 7 steps; writes config, excludes `.shikiru/`, runs doctor.
+- [x] Tests: Textual `run_test` walkthrough on a tmp repository project, and rejection of a non-repository root.
 
 ### Task 30: Release readiness
 - [ ] All E2E scenarios pass in one `poe e2e` run; coverage ≥ 80%; `poe check` clean.

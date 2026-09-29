@@ -23,6 +23,7 @@ from shikiru.bootstrap import (
     build_project_detectors,
     build_session_tools,
     run_dashboard,
+    run_init_wizard,
     run_palette,
 )
 from shikiru.cli.context import CliState, project_root, state_from
@@ -37,7 +38,12 @@ from shikiru.cli.view import view_command
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import Mode
-from shikiru.errors import EXIT_COMMAND_REJECTED, EXIT_GENERIC_ERROR, ShikiruError, UsageError
+from shikiru.errors import (
+    EXIT_COMMAND_REJECTED,
+    EXIT_GENERIC_ERROR,
+    ShikiruError,
+    UsageError,
+)
 from shikiru.operator.commands import Ack, AckStatus
 from shikiru.operator.lifecycle import CLI_DASH_COMMAND, CLI_ENGINE_COMMAND, PACKAGE_NAME
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
@@ -100,13 +106,18 @@ def init(
     ] = False,
 ) -> None:
     """Initialize a project from detected repositories, plugins and trackers."""
-    if not yes:
-        _fail(UsageError("interactive init is not available yet; use init --yes"))
     state = state_from(context)
     root = state.project.resolve() if state.project is not None else Path.cwd().resolve()
     try:
-        detectors = build_project_detectors(root)
-        config_path = _run(detectors.initialize())
+        if yes:
+            config_path = _run(build_project_detectors(root).initialize())
+        else:
+            result = _run(run_init_wizard(root))
+            if result is None:
+                return
+            if result.doctor_report is None or not result.doctor_report.ok:
+                raise typer.Exit(code=EXIT_GENERIC_ERROR)
+            config_path = result.config_path
     except ShikiruError as error:
         _fail(error)
     _emit_value(state, {"config": str(config_path)}, f"initialized {config_path}")
