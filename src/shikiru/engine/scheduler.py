@@ -18,7 +18,7 @@ from shikiru.domain.scheduling import (
     pick_ready,
 )
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Role, Status, Step, Task
+from shikiru.domain.tasks import Role, Status, StatusReason, Step, Task
 from shikiru.engine.events import emit_step_started
 from shikiru.errors import ShikiruError
 
@@ -133,7 +133,9 @@ class Scheduler:
             )
             current = self._require_task(task.id, "slot assignment")
             if current.repo is None:
-                repo = await self._roots.build(current.id, current.title)
+                repo = await self._roots.build(
+                    current.id, current.title, seed_branch=self._seed_branch(current)
+                )
                 self._tasks.set_repo(current.id, repo)
                 current = self._require_task(task.id, "task-root creation")
             await self._layout.ensure(current)
@@ -164,6 +166,12 @@ class Scheduler:
         )
         emit_step_started(self._events, current, self._settings)
         return True
+
+    def _seed_branch(self, task: Task) -> str | None:
+        parent = self._tasks.get(task.parent_id) if task.parent_id is not None else None
+        if parent is None or parent.status_reason is not StatusReason.SUPERSEDED:
+            return None
+        return parent.repo.branch if parent.repo is not None else None
 
     async def _rollback_dispatch(self, task: Task) -> None:
         current = self._tasks.get(task.id)

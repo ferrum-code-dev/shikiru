@@ -457,6 +457,7 @@ def build_engine(
         resolved_settings.repo,
         CacheCloner(resolved_runner, cow_args=default_cow_args()),
         fetched_bases if resolved_settings.orchestration.integration == "pr" else LocalBaseRefs(),
+        trackers=resolved_settings.project.trackers,
     )
     task_finisher = TaskFinisher(sessions, layout, roots)
     escalation_raiser = EscalationRaiser(escalations_store, events, runs, project_root)

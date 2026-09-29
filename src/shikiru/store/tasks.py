@@ -200,6 +200,7 @@ class TaskStore:
                 for new_task in new_tasks
             ]
             child_dependencies: list[tuple[str, str]] = []
+            await_parent = not transition.repoint_dependents
             for child_id, new_task, depends_on in zip(
                 child_ids, new_tasks, resolved_dependencies, strict=True
             ):
@@ -217,6 +218,8 @@ class TaskStore:
                     overrides={},
                 )
                 child_dependencies.extend((child_id, dependency) for dependency in depends_on)
+                if await_parent and parent.id not in depends_on:
+                    child_dependencies.append((child_id, parent.id))
             self._connection.executemany(
                 "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)", child_dependencies
             )

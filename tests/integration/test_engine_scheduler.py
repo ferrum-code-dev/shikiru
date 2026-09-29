@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -12,13 +13,15 @@ from shikiru.agents.contracts import Rung
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import Submit
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import NewTask
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Status, Step
+from shikiru.domain.tasks import EscalationReason, Status, StatusReason, Step, TaskOrigin
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.titles import TaskTitles
+from shikiru.paths import task_root
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore, fetch_open_escalations
@@ -32,10 +35,12 @@ from shikiru.tmux.client import exact_target
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
+from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.engine import build_decorator, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
+from tests.support.git_repo import commit_all
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -51,6 +56,8 @@ if TYPE_CHECKING:
 
 _FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
 _SAMPLED_CPU_PERCENT = 50.0
+_TRACKER = "TODO.md"
+_IMPLEMENTATION = "impl.py"
 _LAYOUT = LayoutSplit(
     split="h",
     panes=[
@@ -94,7 +101,7 @@ def _settings(*, max_parallel: int = 2, max_cpu_pct: int = 100) -> Settings:
     dashboard = settings.dashboard.model_copy(update={"layout": _LAYOUT})
     return settings.model_copy(
         update={
-            "project": ProjectConfig(name="test", trackers=[]),
+            "project": ProjectConfig(name="test", trackers=[_TRACKER]),
             "orchestration": orchestration,
             "dashboard": dashboard,
         }
@@ -169,7 +176,9 @@ async def scheduler_env(
         runs=RunStore(connection, clock),
         commands=CommandQueue(connection, clock),
     )
-    roots = task_root_builder(SubprocessRunner(), tmp_path, settings.repo)
+    roots = task_root_builder(
+        SubprocessRunner(), tmp_path, settings.repo, trackers=settings.project.trackers
+    )
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
 
     raiser = EscalationRaiser(
@@ -399,3 +408,88 @@ async def test_dispatch_failures_are_reported_and_eventually_escalated(
     assert escalated is not None
     assert escalated.status is Status.ESCALATED
     assert fetch_open_escalations(connection)[0].reason is (EscalationReason.ENGINE_ERROR)
+
+
+async def _parent_with_committed_work(
+    environment: SchedulerFixture, connection: Connection, project_root: Path, files: dict[str, str]
+) -> Task:
+    parent = _submit(connection, environment.clock, title="decomposed parent")
+    repo = await environment.roots.build(parent.id, parent.title)
+    environment.tasks.set_repo(parent.id, repo)
+    root = task_root(project_root, parent.id)
+    for name, content in files.items():
+        (root / name).write_text(content)
+    await commit_all(SubprocessRunner(), root, "parent work")
+    return parent
+
+
+def _decompose(environment: SchedulerFixture, parent: Task, transition: Transition) -> Task:
+    [child] = environment.tasks.apply_scope_change(
+        parent.id,
+        transition,
+        [NewTask(title="child", request="child")],
+        origin=TaskOrigin.LEADER,
+    )
+    return child
+
+
+async def test_plan_children_start_only_after_the_parent_landed_its_tracker_changes(
+    scheduler_env: SchedulerFixture, connection: Connection, tmp_path: Path
+) -> None:
+    parent = await _parent_with_committed_work(
+        scheduler_env, connection, tmp_path, {_TRACKER: "- [ ] child\n"}
+    )
+    integrating = Transition.stay(parent, step=Step.INTEGRATE, status=Status.INTEGRATING)
+    child = _decompose(scheduler_env, parent, integrating)
+
+    blocked = await scheduler_env.scheduler.run_once()
+
+    assert blocked.dispatches == ()
+    waiting = scheduler_env.tasks.get(child.id)
+    assert waiting is not None
+    assert waiting.wait_reason == "dependency"
+    assert not task_root(tmp_path, child.id).exists()
+
+    landed = scheduler_env.tasks.get(parent.id)
+    assert landed is not None
+    assert landed.repo is not None
+    await Git(SubprocessRunner()).merge_ff_only(tmp_path, landed.repo.branch)
+    scheduler_env.tasks.apply_transition(
+        parent.id, Transition.stay(landed, step=Step.INTEGRATE, status=Status.DONE)
+    )
+    released = await scheduler_env.scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in released.dispatches] == [child.id]
+    assert (task_root(tmp_path, child.id) / _TRACKER).read_text() == "- [ ] child\n"
+
+
+async def test_superseded_replacements_receive_only_the_tracker_changes_of_the_rejected_task(
+    scheduler_env: SchedulerFixture, connection: Connection, tmp_path: Path
+) -> None:
+    parent = await _parent_with_committed_work(
+        scheduler_env,
+        connection,
+        tmp_path,
+        {_TRACKER: "- [ ] child\n", _IMPLEMENTATION: "rejected\n"},
+    )
+    superseded = dataclasses.replace(
+        Transition.stay(parent, step=None, status=Status.CANCELLED),
+        status_reason=StatusReason.SUPERSEDED,
+        repoint_dependents=True,
+        enqueue_new_tasks=True,
+    )
+    child = _decompose(scheduler_env, parent, superseded)
+    cancelled = scheduler_env.tasks.get(parent.id)
+    assert cancelled is not None
+    await scheduler_env.roots.cleanup(parent.id, cancelled.repo)
+
+    schedule = await scheduler_env.scheduler.run_once()
+
+    assert schedule.dependency_cancelled == ()
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [child.id]
+    root = task_root(tmp_path, child.id)
+    assert (root / _TRACKER).read_text() == "- [ ] child\n"
+    assert not (root / _IMPLEMENTATION).exists()
+    assert await Git(SubprocessRunner()).status_porcelain(root) == []
+    assert not (tmp_path / _IMPLEMENTATION).exists()
+    assert not (tmp_path / _TRACKER).exists()

@@ -11,6 +11,7 @@ from shikiru.domain.tasks import RepoState
 from shikiru.paths import EXCLUDE_LINE, run_dir, task_root
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from shikiru.config.settings import RepoConfig
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from shikiru.workspace.git import Git
 
 BRANCH_PREFIX = "shikiru/"
+SEED_COMMIT_MESSAGE = "Carry over the tracker changes of the superseded task"
 __all__ = ["EXCLUDE_LINE", "TaskRootBuilder", "branch_name", "run_dir", "slugify", "task_root"]
 
 _SLUG_MAX_LENGTH = 40
@@ -51,17 +53,23 @@ class TaskRootBuilder:
         repo: RepoConfig,
         cache_cloner: CacheCloner,
         base_refs: BaseRefs,
+        *,
+        trackers: Sequence[str],
     ) -> None:
         """Build task roots starting from the ref `base_refs` picks, cloning configured caches."""
         self._git = git
         self._project_root = project_root
         self._repo = repo
+        self._trackers = trackers
         self._cache_cloner = cache_cloner
         self._base_refs = base_refs
         self._warned_cow_unsupported = False
 
-    async def build(self, task_id: str, title: str) -> RepoState:
+    async def build(self, task_id: str, title: str, *, seed_branch: str | None = None) -> RepoState:
         """Build (or reuse) `task_id`'s task root: one worktree of the project repository.
+
+        A new root of a replacement task gets, as its first commit, the tracker changes of
+        `seed_branch` (the superseded task's branch) and nothing else of it (03 §2).
 
         Idempotent: calling this again with the same arguments creates nothing twice, whether
         the branch, the worktree or both already exist.
@@ -79,6 +87,8 @@ class TaskRootBuilder:
                 await self._git.worktree_add_existing_branch(project, root, branch)
             else:
                 await self._git.worktree_add(project, root, new_branch=branch, base=base_ref)
+                if seed_branch is not None:
+                    await self._seed_trackers(root, branch, base_ref, seed_branch)
         if repo.caches:
             clone_result = await self._cache_cloner.clone(
                 project, root, repo.caches, await self._git.ignored_paths(project)
@@ -88,6 +98,24 @@ class TaskRootBuilder:
                 self._warned_cow_unsupported = True
         base_sha = await self._git.rev_parse(project, base_ref)
         return RepoState(base=base, base_ref=base_ref, base_sha=base_sha, branch=branch)
+
+    async def _seed_trackers(
+        self, root: Path, branch: str, base_ref: str, seed_branch: str
+    ) -> None:
+        project = self._project_root
+        if not self._trackers or not await self._git.branch_exists(project, seed_branch):
+            return
+        try:
+            patch = await self._git.diff_patch(
+                project, f"{base_ref}...{seed_branch}", self._trackers
+            )
+            if patch:
+                await self._git.apply_patch(root, patch)
+                await self._git.commit(root, SEED_COMMIT_MESSAGE)
+        except Exception:
+            await self._git.worktree_remove(project, root)
+            await self._git.delete_branch(project, branch)
+            raise
 
     async def cleanup(self, task_id: str, repo: RepoState | None) -> None:
         """Remove the task's worktree, its merged branch, and last its task root (03 §5, §7).

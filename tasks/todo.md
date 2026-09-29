@@ -67,7 +67,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 45: Stale escalation actions cannot resurrect work (F05)
 - [x] Task 46: Turn processes own their descendants (F02)
 - [x] Task 47: Dependents start from the merged base in PR mode (F06)
-- [ ] Task 48: Decomposition delivers tracker changes to children (F07)
+- [x] Task 48: Decomposition delivers tracker changes to children (F07)
 - [ ] Task 49: Transitions persist triage results and keep concurrent overrides (F09, F10)
 - [ ] Task 50: Dependency graph validation (F11)
 - [ ] Task 51: SQLite path is opened exactly (F16)

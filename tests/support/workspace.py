@@ -8,6 +8,7 @@ from shikiru.workspace.git import Git
 from shikiru.workspace.roots import TaskRootBuilder
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from shikiru.config.settings import RepoConfig
@@ -20,6 +21,7 @@ def task_root_builder(
     project_root: Path,
     repo: RepoConfig,
     base_refs: BaseRefs | None = None,
+    trackers: Sequence[str] = (),
 ) -> TaskRootBuilder:
     return TaskRootBuilder(
         Git(runner),
@@ -27,4 +29,5 @@ def task_root_builder(
         repo,
         CacheCloner(runner, cow_args=default_cow_args()),
         base_refs if base_refs is not None else LocalBaseRefs(),
+        trackers=trackers,
     )

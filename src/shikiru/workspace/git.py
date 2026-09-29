@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from shikiru.errors import CommandFailed
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from shikiru.process import ProcessResult, SubprocessRunner
 
 _GIT_BIN = "git"
@@ -17,6 +19,9 @@ _WORKTREE_LIST_PREFIX = "worktree "
 _STATUS_IGNORED_PREFIX = "!! "
 _STATUS_PATH_OFFSET = 3
 _RENAME_COPY_CODES = frozenset(("R", "C"))
+
+_ENGINE_NAME = "Shikiru"
+_ENGINE_EMAIL = "shikiru@localhost"
 
 _MERGE_BASE_IS_ANCESTOR = 0
 _MERGE_BASE_IS_NOT_ANCESTOR = 1
@@ -93,6 +98,28 @@ class Git:
         """Return the full, unformatted path of every file changed in `commit_range`."""
         result = await self._run(repo_dir, "diff", "--name-only", commit_range)
         return [line for line in result.stdout.splitlines() if line]
+
+    async def diff_patch(self, repo_dir: Path, commit_range: str, paths: Sequence[str]) -> str:
+        """Return the binary-safe patch of `paths` changed in `commit_range`, empty if none."""
+        result = await self._run(repo_dir, "diff", "--binary", commit_range, "--", *paths)
+        return result.stdout
+
+    async def apply_patch(self, repo_dir: Path, patch: str) -> None:
+        """Apply `patch` to the index and working tree of `repo_dir`, merging three-way."""
+        await self._run(repo_dir, "apply", "--3way", "--index", input_text=patch)
+
+    async def commit(self, repo_dir: Path, message: str) -> None:
+        """Commit the index of `repo_dir` as the engine's own identity."""
+        await self._run(
+            repo_dir,
+            "-c",
+            f"user.name={_ENGINE_NAME}",
+            "-c",
+            f"user.email={_ENGINE_EMAIL}",
+            "commit",
+            "-m",
+            message,
+        )
 
     async def status_porcelain(self, repo_dir: Path, *, include_ignored: bool = False) -> list[str]:
         """Return one `git status --porcelain` line per entry, optionally including ignored ones."""
@@ -247,5 +274,8 @@ class Git:
         *args: str,
         check: bool = True,
         timeout: float = _COMMAND_TIMEOUT_SECONDS,
+        input_text: str | None = None,
     ) -> ProcessResult:
-        return await self._runner.run([_GIT_BIN, *args], timeout=timeout, cwd=repo_dir, check=check)
+        return await self._runner.run(
+            [_GIT_BIN, *args], timeout=timeout, cwd=repo_dir, check=check, input_text=input_text
+        )

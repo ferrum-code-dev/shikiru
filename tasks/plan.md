@@ -417,8 +417,8 @@ Refs: 03 §6, invariant 4.
 
 ### Task 48: Decomposition delivers tracker changes to children (F07)
 Refs: 03 §2–3, §6, invariant 4.
-- [ ] Design decision first, written in 03 before code: plan children wait until the plan parent's tracker changes are on the base (for example an implicit dependency on the parent's `done`); for `supersede`, the approved replacement tracker entries reach the replacements without integrating the rejected implementation. The dependency cascade on a cancelled parent must not cancel the replacements.
-- [ ] Scheduling and `apply_scope_change` implement the decision; child worktrees contain the tracker entries the parent committed.
+- [x] Design decision first, written in 03 before code: plan children wait until the plan parent's tracker changes are on the base (for example an implicit dependency on the parent's `done`); for `supersede`, the approved replacement tracker entries reach the replacements without integrating the rejected implementation. The dependency cascade on a cancelled parent must not cancel the replacements.
+- [x] Scheduling and `apply_scope_change` implement the decision; child worktrees contain the tracker entries the parent committed.
 - Tests: integration with real Git: a blocked plan integration keeps its children undispatched, then releasing it dispatches them with the tracker entries present; supersede with committed replacement tracker entries leaves them available to the replacements.
 
 ### Task 49: Transitions persist triage results and keep concurrent overrides (F09, F10)

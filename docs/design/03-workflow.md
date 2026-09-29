@@ -86,6 +86,10 @@ queued ──► running ──► integrating ──► done
 - The engine enqueues the new tasks (`origin = leader`) and emits `scope_change`, which is notified.
 - The Operator undoes a change with `cancel T-n`.
 
+**Where new tasks get their tracker entries.** The Leader commits tracker changes in its own task branch, which reaches the base only when that task integrates. Two cases, kept separate:
+- **Plan.** Each new task implicitly depends on the plan task, in addition to its listed dependencies. It is ready only when the plan task is `done` (§6, so the plan's tracker changes are on the verified base ref its root starts from), and a cancelled plan task raises `dependency_cancelled` for it like any cancelled dependency.
+- **Supersede.** The rejected task never integrates and its replacements must not depend on it (a cancelled dependency would cancel them). They have no implicit dependency. Their roots are seeded instead: when the engine creates a replacement's worktree it applies, three-way, the change the superseded branch made to the configured `project.trackers` since it left the base and commits it as the first commit of the replacement branch, so the tracker entries reach the base with the replacement's own integration. Nothing else of the rejected branch is carried over; when no trackers are configured, the superseded branch is gone, or its tracker paths are unchanged, nothing is seeded. A seeding failure removes the fresh worktree and branch and fails the dispatch (§10, step 5) instead of starting without the entries.
+
 ## 3. Review loop
 
 ```
@@ -307,7 +311,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 
 The `Scheduler` runs on every state change and every `orchestration.poll_seconds`.
 
-1. **Ready**: `queued`, not `paused`, all dependencies `done`. A cancelled dependency raises `dependency_cancelled`.
+1. **Ready**: `queued`, not `paused`, all dependencies `done`. A cancelled dependency raises `dependency_cancelled`. Dependencies include the implicit one of a plan task's new tasks on it (§2).
 2. **Order**: `requeued_at` set first, then `priority` descending, then `seq`.
 3. **Dispatch** in order until a gate fails; the task stops there and its reason is written to `wait_reason`. Gates:
    - **slot**: a free slot exists;
