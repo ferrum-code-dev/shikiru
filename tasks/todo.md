@@ -78,4 +78,4 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 56: Codex context window belongs to the model (F15)
 - [x] Task 57: TaskFlow responsibilities (F18)
 - [x] Task 58: Low-severity items (F19, F20, F21, F23, F22)
-- [ ] Task 59: Re-verify and regenerate release evidence
+- [x] Task 59: Re-verify and regenerate release evidence

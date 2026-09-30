@@ -1,5 +1,7 @@
 # Phase 6 Task 30 release-readiness audit
 
+Superseded by [release-readiness-2026-09-30.md](release-readiness-2026-09-30.md), which restates these claims after Tasks 41-58 fixed the 2026-09-29 review findings.
+
 Audit date: 2026-09-29. Baseline: `245ae98` (Task 29). Scope: every numbered section and nested section in `docs/design/01`–`07`, compared with the implementation and its observable tests. Sections that state rationale or policy were checked for consistency with the implementation; they are not represented as runtime test claims.
 
 ## Section-by-section audit

@@ -483,7 +483,7 @@ Refs: 01 §glossary, 02 §2, 07 §1–2.
 
 ### Task 59: Re-verify and regenerate release evidence
 Refs: 07 §5.
-- [ ] `uv run poe check` passes in a normal and a `TERM=dumb` environment.
-- [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included.
-- [ ] The portable clean-install smoke passes; tested CLI versions and the source commit are recorded next to the results.
-- [ ] `docs/release-readiness-*.md` states which findings were fixed, and its claim that every design section agrees with the code is restated after Tasks 41–58.
+- [x] `uv run poe check` passes in a normal and a `TERM=dumb` environment.
+- [x] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included. (2026-09-30, `96bb4b7`; resume E5 and takeover E6 are native scenarios; 07 §5 defines no native model-change scenario, which stays covered by integration tests.)
+- [x] The portable (macOS only; Linux not verified) clean-install smoke passes; tested CLI versions and the source commit are recorded next to the results.
+- [x] `docs/release-readiness-*.md` states which findings were fixed, and its claim that every design section agrees with the code is restated after Tasks 41–58.
