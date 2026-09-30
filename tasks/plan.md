@@ -494,8 +494,8 @@ Source: three independent read-only reviews of `66aeb3a` (F01–F08, F09–F23, 
 
 ### Task 60: The engine survives tick faults and tmux loss
 Refs: 02 §1, 01 D8, 06 §5.7.
-- [ ] A fault in one engine tick (layout restore, scheduling, reconciliation, notification) is logged with the task and cause, retried on the next tick with bounded backoff from `defaults.toml`, and never ends the engine. A vanished tmux server or session is recreated (session and windows restored) instead of raising.
-- [ ] An engine that does stop for an unrecoverable reason records the reason as an event and sends the configured notification; `engine_stopped` carries the reason. 06 documents how to keep the engine running (service-wrapper recipe for launchd and systemd).
+- [x] A fault in one engine tick (layout restore, scheduling, reconciliation, notification) is logged with its cause and traceback (a tick fault is not attributable to one task, so the task is not named), retried on the next tick with bounded backoff from `defaults.toml`, and never ends the engine. A vanished tmux server or session is recreated (session and windows restored) instead of raising.
+- [x] An engine that does stop for an unrecoverable reason records the reason as an event and sends the configured notification; `engine_stopped` carries the reason. 06 documents how to keep the engine running (service-wrapper recipe for launchd and systemd).
 - Tests: integration: `tmux kill-server` while a task is running — the engine keeps running, restores the layout and the task continues; a scheduler exception in one tick does not stop later ticks; an unrecoverable stop notifies.
 
 ### Task 61: Every running task has a live flow

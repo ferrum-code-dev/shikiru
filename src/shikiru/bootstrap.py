@@ -11,6 +11,7 @@ from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_default_orchestration, load_session_settings, load_settings
 from shikiru.engine.agents import AgentPool
+from shikiru.engine.cosmetic_decorator import CosmeticDecorator
 from shikiru.engine.daemon import (
     ENGINE_LOGGER_NAME,
     Engine,
@@ -53,10 +54,12 @@ from shikiru.engine.notifier import NOTIFY_TIMEOUT_SECONDS, Notifier
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.scheduler import Scheduler
+from shikiru.engine.session_guard import SessionGuard
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.supervisor import TaskSupervisor
 from shikiru.engine.takeover import Takeover
 from shikiru.engine.task_facts import TaskFacts
+from shikiru.engine.tick_guard import TickGuard
 from shikiru.engine.titles import TaskTitles
 from shikiru.engine.transitions import TransitionWriter
 from shikiru.engine.turn_context import TurnContextPreparer
@@ -68,7 +71,7 @@ from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.detectors import InitWizardResult, ProjectDetectors
 from shikiru.operator.doctor import Doctor
 from shikiru.operator.events import EventFeed
-from shikiru.operator.lifecycle import ProjectLifecycle
+from shikiru.operator.lifecycle import ProjectLifecycle, home_command
 from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.probe import AgentProbe
 from shikiru.operator.queries import OperatorQueries
@@ -94,7 +97,6 @@ from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.docker import DockerSampler
 from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target
-from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.base_refs import FetchedBaseRefs, LocalBaseRefs
@@ -419,7 +421,7 @@ def build_engine(
     escalations_store = EscalationStore(connection, resolved_clock)
     command_queue = CommandQueue(connection, resolved_clock)
 
-    decorator = PaneDecorator(resolved_tmux)
+    decorator = CosmeticDecorator(resolved_tmux)
     titles = TaskTitles(decorator, runs, resolved_settings)
 
     async def refresh_titles(task: Task) -> None:
@@ -442,6 +444,7 @@ def build_engine(
     )
 
     target = exact_target(session_name(resolved_settings.project.name))
+    logger, log_handler = _configure_engine_logging(project_root)
     layout = LayoutGuard(
         tmux=resolved_tmux,
         view=SessionView(resolved_tmux),
@@ -454,6 +457,15 @@ def build_engine(
         events=events,
         runs=runs,
         commands=command_queue,
+    )
+    session_guard = SessionGuard(
+        tmux=resolved_tmux,
+        view=SessionView(resolved_tmux),
+        session_target=target,
+        project_name=resolved_settings.project.name,
+        project_root=project_root,
+        home_command=home_command(project_root),
+        logger=logger,
     )
     git = Git(resolved_runner)
     fetched_bases = FetchedBaseRefs(git, project_root, resolved_settings.repo.remote)
@@ -608,7 +620,6 @@ def build_engine(
         titles=titles,
     )
     lock_path = engine_lock_path(project_root)
-    logger, log_handler = _configure_engine_logging(project_root)
     return Engine(
         lock_path=lock_path,
         command_queue=command_queue,
@@ -618,6 +629,13 @@ def build_engine(
         task_supervisor=task_supervisor,
         handlers=handlers,
         layout=layout,
+        session_guard=session_guard,
+        tick_guard=TickGuard(
+            events=events,
+            clock=resolved_clock,
+            settings=resolved_settings.orchestration.faults,
+            logger=logger,
+        ),
         reconciler=Reconciler(
             tasks=tasks,
             layout=layout,

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Self
 
 import psutil
 
-from shikiru.domain.events import EventKind
+from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
@@ -25,7 +25,9 @@ if TYPE_CHECKING:
     from shikiru.engine.notification_delivery import NotificationDelivery
     from shikiru.engine.reconcile import Reconciler
     from shikiru.engine.scheduler import Scheduler
+    from shikiru.engine.session_guard import SessionGuard
     from shikiru.engine.supervisor import TaskSupervisor
+    from shikiru.engine.tick_guard import TickGuard
     from shikiru.store.commands import CommandQueue
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
@@ -138,6 +140,8 @@ class Engine:
         task_supervisor: TaskSupervisor,
         handlers: HandlerRegistry,
         layout: LayoutGuard,
+        session_guard: SessionGuard,
+        tick_guard: TickGuard,
         reconciler: Reconciler,
         notifications: NotificationDelivery,
         settings: Settings,
@@ -155,6 +159,10 @@ class Engine:
         self._task_supervisor = task_supervisor
         self._handlers = handlers
         self._layout = layout
+        self._session_guard = session_guard
+        self._tick_guard = tick_guard
+        self._reconciled = False
+        self._stop_reason: str | None = None
         self._reconciler = reconciler
         self._notifications = notifications
         self._settings = settings
@@ -177,7 +185,7 @@ class Engine:
             self._last_notified_event = self._events.latest_id()
             self._notifications.start()
             self._events.append(EventKind.ENGINE_STARTED, message="engine started")
-            await self._reconciler.reconcile()
+            await self._tick_guard.attempt(self._prepare)
             next_tick = self._clock.now()
             while not self._task_supervisor.stop_requested:
                 await self._task_supervisor.supervise(self._logger)
@@ -190,23 +198,37 @@ class Engine:
                 if events_changed:
                     self._last_scheduled_event = max(event.id for event in events_changed)
                 if commands_changed or events_changed or now >= next_tick:
-                    await self._layout.restore(self._tasks.list_active())
-                    schedule = await self._scheduler.run_once()
-                    for dispatch in schedule.dispatches:
-                        await self._task_supervisor.start_task(dispatch.task_id)
-                    scheduled_events = self._events.since(self._last_scheduled_event)
-                    if scheduled_events:
-                        self._last_scheduled_event = max(event.id for event in scheduled_events)
+                    await self._tick_guard.attempt(self._tick)
                     next_tick = now + timedelta(seconds=self._settings.orchestration.poll_seconds)
                 self._queue_notifications()
                 await self._clock.sleep(COMMAND_POLL_SECONDS)
             await self._task_supervisor.supervise(self._logger)
+        except Exception as error:
+            self._stop_reason = f"{type(error).__name__}: {error}"
+            self._logger.exception("engine stopping on an unrecoverable fault")
+            raise
         finally:
             await self._shutdown()
 
     def request_stop(self) -> None:
         """Ask the command loop to stop after acknowledging the current command."""
         self._task_supervisor.request_stop()
+
+    async def _prepare(self) -> None:
+        await self._session_guard.ensure()
+        if not self._reconciled:
+            await self._reconciler.reconcile()
+            self._reconciled = True
+
+    async def _tick(self) -> None:
+        await self._prepare()
+        await self._layout.restore(self._tasks.list_active())
+        schedule = await self._scheduler.run_once()
+        for dispatch in schedule.dispatches:
+            await self._task_supervisor.start_task(dispatch.task_id)
+        scheduled_events = self._events.since(self._last_scheduled_event)
+        if scheduled_events:
+            self._last_scheduled_event = max(event.id for event in scheduled_events)
 
     async def _process_commands(self) -> bool:
         changed = False
@@ -231,8 +253,17 @@ class Engine:
 
     async def _shutdown(self) -> None:
         try:
-            self._events.append(EventKind.ENGINE_STOPPED, message="engine stopped")
+            reason = self._stop_reason
+            stopped = self._events.append(
+                EventKind.ENGINE_STOPPED,
+                message="engine stopped" if reason is None else f"engine stopped: {reason}",
+                data={} if reason is None else {STOP_REASON_KEY: reason},
+            )
             await self._notifications.shutdown()
+            if reason is not None:
+                await self._notifications.deliver_final(
+                    stopped, self._settings.orchestration.faults.stop_notify_seconds
+                )
             await self._task_supervisor.shutdown()
         finally:
             try:

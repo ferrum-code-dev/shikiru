@@ -76,18 +76,7 @@ class ProjectLifecycle:
         await self._session.ensure(
             settings.project.name,
             root,
-            home_command=command_with_overrides(
-                (
-                    sys.executable,
-                    "-m",
-                    PACKAGE_NAME,
-                    "--project",
-                    str(root),
-                    CLI_DASH_COMMAND,
-                    "--home",
-                ),
-                overrides,
-            ),
+            home_command=command_with_overrides(home_command(root), overrides),
         )
         await bind_palette_key(self._tmux, PALETTE_COMMAND)
         started = False
@@ -146,6 +135,11 @@ class ProjectLifecycle:
                 message = "engine did not acquire its lock after start"
                 raise ShikiruError(message)
             await self._clock.sleep(ENGINE_START_POLL_SECONDS)
+
+
+def home_command(root: Path) -> tuple[str, ...]:
+    """Return the command of the session's home window: the dashboard of the project at `root`."""
+    return (sys.executable, "-m", PACKAGE_NAME, "--project", str(root), CLI_DASH_COMMAND, "--home")
 
 
 def command_with_overrides(command: tuple[str, ...], overrides: Sequence[str]) -> tuple[str, ...]:

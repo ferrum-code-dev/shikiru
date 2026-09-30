@@ -129,6 +129,7 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 | Resource sample cadence / CPU averaging window | 2 s / 30 s |
 | Header git data cache | 10 s |
 | Docker sample cadence / command timeout | 5 s / 5 s |
+| Failed-tick retry backoff (`orchestration.faults`) | 2 s doubling to 60 s; 10 consecutive unexpected faults stop the engine; final notification 30 s |
 
 ## 2. State DB (`.shikiru/state.db`)
 
@@ -201,7 +202,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `escalation`, `escalation_resolved`
 - `integration_started`, `pr_opened` (url, branch, commits)
 - `task_done`, `task_cancelled`
-- `pane_restored`, `engine_started`, `engine_stopped`
+- `pane_restored`, `engine_started`, `engine_fault` (error, recoverable), `engine_stopped` (`reason` when the engine stopped on a fault)
 
 **Commands** are pydantic models in `domain.commands`, stored as `kind` plus a JSON `payload`:
 - `Submit` (the command queue allocates its task id from `sequences` when appending)

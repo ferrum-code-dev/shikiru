@@ -81,7 +81,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 59: Re-verify and regenerate release evidence
 
 ## Phase 7b — Independent-review remediation (2026-09-30)
-- [ ] Task 60: The engine survives tick faults and tmux loss
+- [x] Task 60: The engine survives tick faults and tmux loss
 - [ ] Task 61: Every running task has a live flow
 - [ ] Task 62: Escalation packet failures never kill or wedge the engine
 - [ ] Task 63: `supersede` and cancellation never erase unexplained work

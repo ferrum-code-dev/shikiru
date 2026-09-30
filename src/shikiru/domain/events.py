@@ -10,6 +10,8 @@ from pydantic import Field
 
 from shikiru.domain.tasks import DomainModel
 
+STOP_REASON_KEY = "reason"
+
 
 class EventKind(StrEnum):
     """Every event kind the engine can emit."""
@@ -43,6 +45,7 @@ class EventKind(StrEnum):
     PANE_RESTORED = auto()
     ENGINE_STARTED = auto()
     ENGINE_STOPPED = auto()
+    ENGINE_FAULT = auto()
 
 
 class Event(DomainModel):

@@ -78,7 +78,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 ### 5.2 Layout and protection (`LayoutGuard`)
 
 - **Build**: the layout tree is built with `split-window -h|-v -l <size>%`. `{role: pane_id}` is stored in `tasks.panes`.
-- **Guard**: every `poll_seconds`, the guard compares each task window with the DB.
+- **Guard**: every `poll_seconds`, the engine first recreates the session and its home window if the tmux server or session is gone (02 §1), then the guard compares each task window with the DB.
   - A missing pane (killed) is recreated in the layout.
   - A dead `system`, `shell` or view pane is respawned.
   - A dead taken-over pane (the Operator exited the TUI) becomes a `HandBack` (03 §9).
@@ -154,7 +154,7 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 ### 5.7 Notifications
 
-`Notifier`, on `escalation` and `task_done`:
+`Notifier`, on `escalation`, `task_done`, `engine_fault` (the first fault of a failing tick streak, 02 §1) and an `engine_stopped` that carries a `reason` (the engine stopped on a fault rather than on request):
 - runs `tmux display-message` in the session;
 - runs `notify.command`, when set, with the event JSON on stdin (for Slack, ntfy or a remote AI Operator). A non-zero exit, a timeout (2 hours) or a missing command is logged with the event id.
 
@@ -162,7 +162,48 @@ Delivery never runs on the command loop. The `Engine` queues each notifiable eve
 - the queue holds 64 events; when full, the oldest pending event is dropped with a logged warning;
 - a delivery failure is logged and the next event is delivered;
 - the engine loop supervises the task like the task flows: an unexpected failure is logged and the task restarted;
-- on engine stop the task is cancelled, which terminates a running hook, and pending events are dropped, so `stop` never waits for a hook.
+- on engine stop the task is cancelled, which terminates a running hook, and pending events are dropped, so `stop` never waits for a hook. The one exception is the `engine_stopped` event of a fault stop: it is delivered directly, bounded by `orchestration.faults.stop_notify_seconds`.
+
+### 5.8 Keeping the engine running
+
+`shikiru start` spawns the engine detached; nothing restarts it if the process dies (a fault stop, an OOM kill, a reboot). To keep it running, run the hidden entrypoint under a service manager and restart it on failure. A restarted engine reconciles persisted state (03 §7) and recreates the tmux session (02 §1). Give the service the `PATH` your agent CLIs, `git`, `gh` and `tmux` need. `shikiru start` reuses a running engine, so it remains the way to ensure the session and attach.
+
+The unit files below show the shape; they are documented recipes that CI does not run.
+
+systemd user unit, `~/.config/systemd/user/shikiru-myproject.service`:
+
+```ini
+[Unit]
+Description=Shikiru engine (myproject)
+
+[Service]
+ExecStart=/path/to/python -m shikiru --project /path/to/myproject engine
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+launchd agent, `~/Library/LaunchAgents/dev.shikiru.myproject.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.shikiru.myproject</string>
+  <key>ProgramArguments</key><array>
+    <string>/path/to/python</string><string>-m</string><string>shikiru</string>
+    <string>--project</string><string>/path/to/myproject</string><string>engine</string>
+  </array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>10</integer>
+</dict></plist>
+```
+
+`Restart=on-failure` and `SuccessfulExit=false` restart the engine after a fault stop (non-zero exit) but not after `shikiru stop` (exit 0).
 
 ## 6. Visual design: comic strips with a semantic visual language
 

@@ -13,6 +13,7 @@ from shikiru.config.settings import (
     DashboardConfig,
     DashboardMotionConfig,
     DoctorConfig,
+    FaultsConfig,
     ImplementerConfig,
     LayoutSplit,
     NotifyConfig,
@@ -103,6 +104,12 @@ def make_settings(
                 max_quota_wait=28800,
                 integration_wait=1800,
                 helper=300,
+            ),
+            faults=FaultsConfig(
+                backoff_initial_seconds=2,
+                backoff_max_seconds=60,
+                unexpected_fault_limit=10,
+                stop_notify_seconds=30,
             ),
         ),
         roles=RolesConfig(

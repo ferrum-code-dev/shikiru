@@ -36,6 +36,12 @@
 - Clients check liveness with a non-blocking lock attempt.
 - No heartbeat or pid table exists.
 
+**Engine faults.** One `TickGuard` wraps each scheduling tick (session check, startup reconciliation until it has succeeded once, `LayoutGuard.restore`, `Scheduler.run_once`, dispatch). Nothing else in the loop catches tick faults.
+- *Recoverable*: `ShikiruError` (a failed tmux, git or `gh` call, a packet or config error) and `OSError`. The tick is logged with its traceback and retried on a bounded backoff (`orchestration.faults`: `backoff_initial_seconds` doubling up to `backoff_max_seconds`), for as long as the fault lasts. Commands keep being processed meanwhile. The first fault of a streak is recorded as an `engine_fault` event (notified, 06 §5.7); a recovery is logged.
+- *Tmux loss*: each tick first checks the session; when the tmux server or session is gone, the engine recreates it (home window included, running `shikiru dash --home` without any `--set` overrides the engine was not given), after which `LayoutGuard` rebuilds every active task's window and view panes. Headless turn processes are not children of tmux and keep running. Decorations (titles, colours) are cosmetic: a tmux failure while setting them is logged and never fails a flow or a command.
+- *Unexpected*: any other exception is a programming error. It is logged with its traceback, recorded as an `engine_fault` event with `recoverable: false` (so the Operator is notified at the first one) and retried the same way; `unexpected_fault_limit` of them in a row end the engine.
+- *Unrecoverable stop*: an unexpected-fault limit or any exception escaping the loop. The engine logs it, appends `engine_stopped` with `data.reason`, delivers that event to `notify.command` (within `stop_notify_seconds`) and exits non-zero. A requested stop records no reason and notifies nobody. An external supervisor restarts the engine (06 §5.8).
+
 ## 2. Layers and components
 
 Dependencies point downward only. Each layer is an import-linter `layers` contract. `bootstrap` is the only composition root and may import anything.

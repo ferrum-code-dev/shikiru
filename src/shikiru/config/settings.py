@@ -62,6 +62,15 @@ class TimeoutsConfig(ConfigModel):
     helper: int
 
 
+class FaultsConfig(ConfigModel):
+    """`[orchestration.faults]`: how the engine retries a failed tick, in seconds and counts."""
+
+    backoff_initial_seconds: float = Field(gt=0)
+    backoff_max_seconds: float = Field(gt=0)
+    unexpected_fault_limit: int = Field(gt=0)
+    stop_notify_seconds: float = Field(gt=0)
+
+
 class OrchestrationConfig(ConfigModel):
     """`[orchestration]`."""
 
@@ -71,6 +80,7 @@ class OrchestrationConfig(ConfigModel):
     poll_seconds: int
     resources: ResourcesConfig
     timeouts: TimeoutsConfig
+    faults: FaultsConfig
 
 
 class AgentConfig(ConfigModel):

@@ -37,7 +37,7 @@ English names come first everywhere. Kanji marks are decoration only.
 | D5 | Python 3.14, uv, Typer+Rich, Textual, SQLite WAL, tmux ≥ 3.4 | — | Fits the requirements |
 | D6 | One git worktree per task under `.shikiru/worktrees/`; build caches copied copy-on-write | In-place branches; full clones; symlinked caches | Isolation with warm caches at almost no cost |
 | D7 | Leader and Implementer sessions last for the whole task (every turn resumes them); each new task starts clean | Session per step | Keeps review context, like the manual loop |
-| D8 | Detached engine daemon per project; the tmux session is only its view | Engine inside a pane | Pane or terminal loss can't kill orchestration |
+| D8 | Detached engine daemon per project; the tmux session is only its view | Engine inside a pane | Pane or terminal loss can't kill orchestration: a lost tmux server or session is recreated by the engine, and a fault in one tick is retried, not fatal (02 §1) |
 | D9 | SQLite `commands` table as the operator→engine bus | Socket/HTTP API | Local, persistent, and works while the engine is down |
 | D10 | Remote access over SSH (`ls --host`, `attach --host`, `ssh host shikiru mcp`) | Network server | No ports, no auth code |
 | D11 | Every submission is a task that the Leader triages into `implement` or `plan`; `plan` is the one way to decompose work up front (its `new_tasks` own their tracker entries), verify `supersede` the one way after an attempt | Parsing plan files; a `split` triage outcome | Plan formats vary. `split` was a second way to create child tasks (principle 6), orphaned the parent's tracker entry, and small models over-split trivial requests |
