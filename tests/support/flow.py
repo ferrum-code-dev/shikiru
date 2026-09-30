@@ -21,6 +21,7 @@ from shikiru.engine.integration import (
     LocalMerge,
 )
 from shikiru.engine.integration_turns import IntegrationTurns
+from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.task_facts import TaskFacts
 from shikiru.engine.transitions import TransitionWriter
 from shikiru.engine.turn_context import TurnContextPreparer
@@ -171,33 +172,41 @@ def build_flow(
         project_root=env.project_root,
         settings=settings,
     )
+    contexts = TurnContextPreparer(
+        history=history,
+        escalation_store=escalations_store,
+        facts=facts,
+        settings=settings,
+        project_root=env.project_root,
+    )
+    writer = TransitionWriter(
+        tasks=env.tasks, events=system.events, titles=system.titles, settings=settings
+    )
     flow = TaskFlow(
         tasks=env.tasks,
         events=system.events,
         sessions=system.sessions,
         turns=system.turns,
         facts=facts,
-        contexts=TurnContextPreparer(
-            history=history,
-            escalation_store=escalations_store,
-            facts=facts,
-            settings=settings,
-            project_root=env.project_root,
-        ),
+        contexts=contexts,
         escalations=EscalationFiler(
             raiser=escalations,
             history=history,
             facts=facts,
             project_root=env.project_root,
         ),
-        writer=TransitionWriter(
-            tasks=env.tasks, events=system.events, titles=system.titles, settings=settings
+        writer=writer,
+        recovery=TurnRecovery(
+            tasks=env.tasks,
+            events=system.events,
+            quota=QuotaStore(env.connection),
+            clock=flow_clock,
+            writer=writer,
+            contexts=contexts,
+            settings=settings,
         ),
-        titles=system.titles,
         settings=settings,
         project_root=env.project_root,
-        quota=QuotaStore(env.connection),
-        clock=flow_clock,
         integration_turns=IntegrationTurns(
             coordinator=coordinator,
             history=history,

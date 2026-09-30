@@ -8,30 +8,14 @@ the integrating state to the injected coordinator.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
-from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import FailureKind
-from shikiru.domain.events import EventKind
-from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.recovery import (
-    QUOTA_MARGIN,
-    Action,
-    Backoff,
     Completed,
-    Failed,
-    NextRung,
     ProtocolError,
-    RecoveryPolicy,
-    ResumeTurn,
-    RetryTurn,
     TurnCounters,
     TurnResult,
-    WaitForQuota,
-    decide,
-    quota_block_until,
 )
 from shikiru.domain.reports import (
     ImplementationReport,
@@ -58,20 +42,18 @@ _LOGGER = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.steps import Outcome
     from shikiru.domain.tasks import Task
     from shikiru.engine.escalation_filing import EscalationFiler
+    from shikiru.engine.recovery import TurnRecovery
     from shikiru.engine.sessions import SessionManager
     from shikiru.engine.task_facts import TaskFacts
-    from shikiru.engine.titles import TaskTitles
     from shikiru.engine.transitions import TransitionWriter
     from shikiru.engine.turn_context import TurnContextPreparer
     from shikiru.engine.turns import TurnRunner
     from shikiru.prompts.renderer import PromptName
     from shikiru.store.events import EventLog
-    from shikiru.store.quotas import QuotaStore
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
 
@@ -82,6 +64,10 @@ UNCOMMITTED_ISSUE = (
     "Commit what belongs to this task and discard the rest."
 )
 _QUOTA_WAIT_EXHAUSTED_MESSAGE = "quota wait exceeded"
+
+
+def _acting_role(step: Step, role_override: Role | None) -> Role:
+    return role_override if role_override is not None else ACTING_ROLE[step]
 
 
 class TaskFlow:
@@ -98,11 +84,9 @@ class TaskFlow:
         contexts: TurnContextPreparer,
         escalations: EscalationFiler,
         writer: TransitionWriter,
-        titles: TaskTitles,
+        recovery: TurnRecovery,
         settings: Settings,
         project_root: Path,
-        quota: QuotaStore,
-        clock: Clock,
         integration_turns: IntegrationTurns,
         history: ReportHistory,
         runs: RunStore,
@@ -116,11 +100,9 @@ class TaskFlow:
         self._contexts = contexts
         self._escalations = escalations
         self._writer = writer
-        self._titles = titles
+        self._recovery = recovery
         self._settings = settings
         self._project_root = project_root
-        self._quota = quota
-        self._clock = clock
         self._integration_turns = integration_turns
         self._history = history
         self._runs = runs
@@ -252,17 +234,19 @@ class TaskFlow:
             conflict_context=conflict_context,
         )
         while not isinstance(execution.result, Completed):
-            current, counters, stopped, continued = await self._recover(
-                current,
-                current_step,
-                execution,
-                counters,
-                role_override=role_override,
+            role = _acting_role(current_step, role_override)
+            recovery = await self._recovery.recover(
+                current, current_step, role, execution, counters
             )
-            if stopped:
-                return current, counters, None, True
-            if continued is not None:
-                execution = continued
+            current, counters = recovery.task, recovery.counters
+            if recovery.escalation is not None:
+                transition = Transition.escalate(current, recovery.escalation, step=current_step)
+                escalated = await self._escalate(
+                    current, transition, None, result=execution.result, role=role
+                )
+                return escalated, counters, None, True
+            if recovery.execution is not None:
+                execution = recovery.execution
                 continue
             next_step = current.step
             if next_step is None:
@@ -318,192 +302,6 @@ class TaskFlow:
             return await self._reject_uncommitted(task, report, execution.turn_dir)
         return report
 
-    async def _recover(
-        self,
-        task: Task,
-        step: Step,
-        execution: TurnExecution,
-        counters: TurnCounters,
-        *,
-        role_override: Role | None = None,
-    ) -> tuple[Task, TurnCounters, bool, TurnExecution | None]:
-        result = execution.result
-        emit_turn_failed(self._events, task, step, result)
-        role = role_override if role_override is not None else ACTING_ROLE[step]
-        policy = self._recovery_policy(
-            task, role, quota_wait_exhausted=execution.quota_wait_exhausted
-        )
-        action = decide(result, counters, policy)
-        if isinstance(result, Failed) and result.kind is FailureKind.QUOTA:
-            self._block_quota(task, role, result.resets_at)
-        updated, should_return, counters = await self._apply_recovery(
-            task,
-            step,
-            role,
-            execution=execution,
-            result=result,
-            counters=counters,
-            action=action,
-        )
-        continued = updated if isinstance(updated, TurnExecution) else None
-        next_task = self._tasks.require(task.id) if isinstance(updated, TurnExecution) else updated
-        return next_task, counters, should_return, continued
-
-    def _recovery_policy(
-        self, task: Task, role: Role, *, quota_wait_exhausted: bool = False
-    ) -> RecoveryPolicy:
-        current = move_up(task, role, self._settings)
-        different = move_up(task, role, self._settings, different_agent=True)
-        return RecoveryPolicy(
-            now=self._clock.now(),
-            max_quota_wait=timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait),
-            has_next_rung=current is not None,
-            has_next_rung_different_agent=different is not None,
-            quota_wait_exhausted=quota_wait_exhausted,
-        )
-
-    async def _apply_recovery(
-        self,
-        task: Task,
-        step: Step,
-        role: Role,
-        *,
-        execution: TurnExecution,
-        result: TurnResult,
-        counters: TurnCounters,
-        action: Action,
-    ) -> tuple[Task | TurnExecution, bool, TurnCounters]:
-        updated = task
-        next_counters = counters
-        if isinstance(action, WaitForQuota):
-            terminal = await self._wait_for_quota(task, role, action.until)
-            if terminal is not None:
-                updated = dataclasses.replace(
-                    execution,
-                    result=terminal,
-                    quota_wait_exhausted=True,
-                )
-            else:
-                self._contexts.request_continue(task.id)
-                updated = self._tasks.require(task.id)
-        elif isinstance(action, Backoff):
-            await self._clock.sleep(action.delay.total_seconds())
-            updated = self._tasks.require(task.id)
-            next_counters = dataclasses.replace(
-                counters, unavailable_retries=counters.unavailable_retries + 1
-            )
-        elif isinstance(action, RetryTurn):
-            next_counters = dataclasses.replace(counters, other_retries=counters.other_retries + 1)
-        elif isinstance(action, ResumeTurn):
-            self._contexts.request_continue(task.id)
-            updated = self._tasks.require(task.id)
-            next_counters = dataclasses.replace(
-                counters,
-                stall_recoveries=counters.stall_recoveries + 1,
-            )
-        elif isinstance(action, NextRung):
-            return await self._apply_next_rung(task, step, role, result, action)
-        else:
-            return await self._raise_recovery_escalation(task, step, role, action.reason, result)
-        return updated, False, next_counters
-
-    async def _apply_next_rung(
-        self, task: Task, step: Step, role: Role, result: TurnResult, action: NextRung
-    ) -> tuple[Task | TurnExecution, bool, TurnCounters]:
-        if action.different_agent:
-            self._contexts.request_handoff(task.id)
-        updated = await self._move_rung(task, step, role, action.different_agent, result)
-        if updated is not None:
-            return updated, False, TurnCounters()
-        reason = (
-            EscalationReason.QUOTA_EXHAUSTED
-            if action.different_agent
-            else EscalationReason.LADDER_EXHAUSTED
-        )
-        return await self._raise_recovery_escalation(task, step, role, reason, result)
-
-    async def _raise_recovery_escalation(
-        self, task: Task, step: Step, role: Role, reason: EscalationReason, result: TurnResult
-    ) -> tuple[Task, bool, TurnCounters]:
-        transition = Transition.escalate(task, reason, step=step)
-        updated = await self._escalate(task, transition, None, result=result, role=role)
-        return updated, True, TurnCounters()
-
-    async def _move_rung(
-        self,
-        task: Task,
-        step: Step,
-        role: Role,
-        different_agent: bool,
-        result: TurnResult,
-    ) -> Task | None:
-        move = move_up(task, role, self._settings, different_agent=different_agent)
-        if move is None:
-            return None
-        old_rung = pick_rung(task, role, self._settings)
-        transition = dataclasses.replace(
-            Transition.stay(task, step=step, status=task.status),
-            counters=move.counters,
-            rung_index=move.rung_index,
-            overrides=move.overrides,
-        )
-        self._tasks.apply_transition(task.id, transition)
-        updated = self._tasks.require(task.id)
-        new_rung = pick_rung(updated, role, self._settings)
-        self._events.append(
-            EventKind.RUNG_CHANGED,
-            task_id=task.id,
-            message=f"{task.id} {role.value} moved from {old_rung.model} to {new_rung.model}",
-            data={
-                "role": role.value,
-                "from": old_rung.model,
-                "to": new_rung.model,
-                "different_agent": different_agent,
-                "result": type(result).__name__,
-            },
-        )
-        await self._titles.refresh(updated)
-        return updated
-
-    def _block_quota(self, task: Task, role: Role, resets_at: datetime | None) -> None:
-        agent = pick_rung(task, role, self._settings).agent
-        until = quota_block_until(resets_at, self._clock.now())
-        self._quota.block(agent, until, "quota")
-        self._events.append(
-            EventKind.QUOTA_BLOCKED,
-            task_id=task.id,
-            message=f"{agent} quota blocked until {until.isoformat()}",
-            data={"agent": agent, "until": until.isoformat(), "reason": "quota"},
-        )
-
-    async def _wait_for_quota(self, task: Task, role: Role, until: datetime) -> Failed | None:
-        agent = pick_rung(task, role, self._settings).agent
-        deadline = self._clock.now() + timedelta(
-            seconds=self._settings.orchestration.timeouts.max_quota_wait
-        )
-        while True:
-            current = self._quota.block_for(agent)
-            now = self._clock.now()
-            current_until = current.until if current is not None else until
-            if current_until > now:
-                if now >= deadline:
-                    return Failed(
-                        kind=FailureKind.QUOTA,
-                        resets_at=current_until - QUOTA_MARGIN,
-                        message=_QUOTA_WAIT_EXHAUSTED_MESSAGE,
-                    )
-                remaining = min(current_until, deadline) - now
-                await self._clock.sleep(remaining.total_seconds())
-                continue
-            self._quota.clear_block(agent)
-            self._events.append(
-                EventKind.QUOTA_CLEARED,
-                task_id=task.id,
-                message=f"{agent} quota block cleared",
-                data={"agent": agent},
-            )
-            return None
-
     async def _run_turn(
         self,
         task: Task,
@@ -514,7 +312,7 @@ class TaskFlow:
         kind_override: ReportKind | None = None,
         conflict_context: str | None = None,
     ) -> TurnExecution:
-        role = role_override if role_override is not None else ACTING_ROLE[step]
+        role = _acting_role(step, role_override)
         selection = self._sessions.session_for(task, role)
 
         turn_request = await self._contexts.prepare(

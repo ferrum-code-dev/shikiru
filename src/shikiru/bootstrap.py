@@ -51,6 +51,7 @@ from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notification_delivery import NotificationDelivery
 from shikiru.engine.notifier import NOTIFY_TIMEOUT_SECONDS, Notifier
 from shikiru.engine.reconcile import Reconciler
+from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.supervisor import TaskSupervisor
@@ -488,7 +489,24 @@ def build_engine(
     task_facts = TaskFacts(
         git_facts=GitFacts(git), project_root=project_root, settings=resolved_settings
     )
+    contexts = TurnContextPreparer(
+        history=history,
+        escalation_store=escalations_store,
+        facts=task_facts,
+        settings=resolved_settings,
+        project_root=project_root,
+    )
     messages = OperatorMessages(project_root)
+    writer = TransitionWriter(tasks=tasks, events=events, titles=titles, settings=resolved_settings)
+    recovery = TurnRecovery(
+        tasks=tasks,
+        events=events,
+        quota=quotas,
+        clock=resolved_clock,
+        writer=writer,
+        contexts=contexts,
+        settings=resolved_settings,
+    )
     flow = TaskFlow(
         tasks=tasks,
         events=events,
@@ -506,27 +524,17 @@ def build_engine(
             settings=resolved_settings,
         ),
         facts=task_facts,
-        contexts=TurnContextPreparer(
-            history=history,
-            escalation_store=escalations_store,
-            facts=task_facts,
-            settings=resolved_settings,
-            project_root=project_root,
-        ),
+        contexts=contexts,
         escalations=EscalationFiler(
             raiser=escalation_raiser,
             history=history,
             facts=task_facts,
             project_root=project_root,
         ),
-        writer=TransitionWriter(
-            tasks=tasks, events=events, titles=titles, settings=resolved_settings
-        ),
-        titles=titles,
+        writer=writer,
+        recovery=recovery,
         settings=resolved_settings,
         project_root=project_root,
-        quota=quotas,
-        clock=resolved_clock,
         integration_turns=IntegrationTurns(
             coordinator=integrator,
             history=history,
