@@ -16,6 +16,7 @@ from fake_agent.scripted import TICK_A1_ENABLED_VALUE, TICK_A1_ENV_VAR
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import session_name
+from tests.e2e.budgets import ATTEMPT_BUDGETS
 from tests.support.factories import CPU_UNCAPPED_PCT
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.waiting import wait_until
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
 
 CLI_TIMEOUT_SECONDS = 30.0
-TASK_TIMEOUT_SECONDS = 45.0
+TASK_TIMEOUT_SECONDS = ATTEMPT_BUDGETS["fake"].total_seconds()
 BASE_BRANCH = "main"
 TASK_ID = "T-1"
 ACTING_ROLES = ("leader", "implementer")

@@ -38,6 +38,23 @@ from shikiru.store.tasks import TASK_ID_PREFIX
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import session_name
 from shikiru.view_log import view_log_path
+from tests.e2e.budgets import (
+    AUTOMATIC_RERUNS,
+    CLEANUP_TIMEOUT_SECONDS,
+    CLI_TIMEOUT_SECONDS,
+    INVOCATION_BUDGET,
+    WAIT_CEILING_SECONDS,
+    InvocationBudget,
+    outer_timeout_seconds,
+)
+from tests.e2e.diagnostics import (
+    ShikiruFailure,
+    Snapshot,
+    rerun_reason,
+    take_snapshot,
+    write_diagnostics,
+)
+from tests.e2e.watchdog import guarded
 from tests.support.factories import CPU_UNCAPPED_PCT
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.waiting import wait_until
@@ -53,21 +70,15 @@ REAL_E2E_ENV_VAR = "SHIKIRU_E2E"
 REAL_E2E_ENABLED = "1"
 BASE_BRANCH = "main"
 TASK_ID = "T-1"
-CLI_TIMEOUT_SECONDS = 60.0
-ATTEMPT_TIMEOUT_SECONDS = 1800.0
-AUTOMATIC_RERUNS = 1
-CLEANUP_TIMEOUT_SECONDS = 60.0
-OUTER_TIMEOUT_SECONDS = (AUTOMATIC_RERUNS + 1) * (
-    ATTEMPT_TIMEOUT_SECONDS + CLEANUP_TIMEOUT_SECONDS
-) + CLI_TIMEOUT_SECONDS
+DIAGNOSTICS_DIRECTORY = Path(__file__).parents[2] / "build" / "e2e" / "diagnostics"
+DIAGNOSTICS_DATE_FORMAT = "%Y-%m-%d"
+CLOCK = SystemClock()
+INVOCATION = InvocationBudget(CLOCK, INVOCATION_BUDGET)
+INTEGRATION_WAIT_SECONDS = 60
+MAX_QUOTA_WAIT_SECONDS = 300
 RUN_STATUS_LIVE = "live"
 TASK_LIST_KEYS = ("active_tasks", "queued_tasks")
-pytestmark = [
-    pytest.mark.asyncio,
-    pytest.mark.e2e,
-    pytest.mark.real_e2e,
-    pytest.mark.timeout(OUTER_TIMEOUT_SECONDS),
-]
+pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.real_e2e]
 E1_REQUEST = "Implement task A1 from tasks/plan.md"
 E2_REQUEST = "Implement task A2 from tasks/plan.md"
 E2_EDGE_CASE_CALL = 'parse_count("a;b, c")'
@@ -125,7 +136,16 @@ def _require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def _require_shikiru(condition: bool, message: str) -> None:
+    if not condition:
+        raise ShikiruFailure(message)
+
+
 REAL_OVERRIDES = (
+    "--set",
+    f"orchestration.timeouts.integration_wait={INTEGRATION_WAIT_SECONDS}",
+    "--set",
+    f"orchestration.timeouts.max_quota_wait={MAX_QUOTA_WAIT_SECONDS}",
     "--set",
     "orchestration.poll_seconds=1",
     "--set",
@@ -161,7 +181,7 @@ async def _prepare_project(tmp_path: Path) -> PreparedProject:
 def _environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
     tmux_binary = shutil.which("tmux")
     if tmux_binary is None:
-        _require(False, "tmux is required for real-agent E2E")
+        _require_shikiru(False, "tmux is required for real-agent E2E")
         raise AssertionError
     shim_dir = project_root.parent / "tmux-bin"
     shim_dir.mkdir()
@@ -249,13 +269,13 @@ async def _wait_done(
             f"task tree ended before completion: {statuses}",
         )
         status = await _status(project.root, environment, task_id=None)
-        _require(
+        _require_shikiru(
             status is not None and status.get("engine_up") is True,
             "engine stopped before task completed",
         )
         return False
 
-    await wait_until(done, timeout=ATTEMPT_TIMEOUT_SECONDS)
+    await wait_until(done, timeout=WAIT_CEILING_SECONDS)
 
 
 def _cost(statuses: dict[str, object] | list[dict[str, object] | None] | None) -> float | None:
@@ -417,7 +437,7 @@ async def _send_edge_case_during_first_implementation(project: PreparedProject) 
         _require(not _verify_turns(project), "implementation finished before the message was sent")
         return any(turns_dir(project.root, TASK_ID).glob(FIRST_IMPLEMENT_TURN_PATTERN))
 
-    await wait_until(implementing, timeout=ATTEMPT_TIMEOUT_SECONDS)
+    await wait_until(implementing, timeout=WAIT_CEILING_SECONDS)
     services = build_operator(project.root)
     try:
         ack = await services.commands.send_message(TASK_ID, Role.LEADER, E2_MESSAGE)
@@ -459,20 +479,46 @@ type ScenarioBody = Callable[
 ]
 
 
+class AttemptFailed(Exception):
+    def __init__(self, error: Exception, rerun_reason: str | None) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.rerun_reason = rerun_reason
+
+
 async def _run_attempt(
+    scenario: str,
     tmp_path: Path,
     tmux_server: TmuxServer,
     record_cost: Callable[[float | None], None],
     body: ScenarioBody,
+    *,
+    attempt: int,
 ) -> None:
+    timeout = INVOCATION.attempt_timeout_seconds(scenario)
     project = await _prepare_project(tmp_path)
     environment = _environment(project.root, tmux_server)
     state = AttemptState()
+    runner = SubprocessRunner()
+
+    def probe() -> Awaitable[Snapshot]:
+        return take_snapshot(project.root, runner, CLOCK)
+
     try:
-        await asyncio.wait_for(
-            _execute(project, environment, tmux_server, state, body),
-            timeout=ATTEMPT_TIMEOUT_SECONDS,
-        )
+        try:
+            await guarded(
+                _execute(project, environment, tmux_server, state, body),
+                probe=probe,
+                clock=CLOCK,
+                timeout=timeout,
+            )
+        except (AssertionError, OSError, ShikiruError) as error:
+            snapshot = await probe()
+            stamp = CLOCK.now().strftime(DIAGNOSTICS_DATE_FORMAT)
+            path = DIAGNOSTICS_DIRECTORY / f"{stamp}-{scenario}-attempt-{attempt}.txt"
+            write_diagnostics(path, error, snapshot)
+            error.add_note(f"diagnostics: {path}")
+            raise AttemptFailed(error, rerun_reason(error, snapshot)) from error
     finally:
         await _record_observed_cost(project, environment, state, record_cost)
         await _cleanup_attempt(project, environment, state)
@@ -496,6 +542,7 @@ async def _execute(
 
 
 async def _run_with_reruns(
+    scenario: str,
     tmp_path: Path,
     tmux_server: TmuxServer,
     record_cost: Callable[[float | None], None],
@@ -505,10 +552,17 @@ async def _run_with_reruns(
         pytest.skip(f"set {REAL_E2E_ENV_VAR}=1 to run real-agent E2E")
     for attempt in range(AUTOMATIC_RERUNS + 1):
         try:
-            await _run_attempt(tmp_path / f"attempt-{attempt}", tmux_server, record_cost, body)
-        except AssertionError, OSError, ShikiruError, TimeoutError:
-            if attempt == AUTOMATIC_RERUNS:
-                raise
+            await _run_attempt(
+                scenario,
+                tmp_path / f"attempt-{attempt}",
+                tmux_server,
+                record_cost,
+                body,
+                attempt=attempt,
+            )
+        except AttemptFailed as failed:
+            if attempt == AUTOMATIC_RERUNS or failed.rerun_reason is None:
+                raise failed.error from None
         else:
             return
 
@@ -574,7 +628,7 @@ async def _wait_for_implement_turn(project: PreparedProject) -> tuple[ProcessIde
             run = runs.get_live(TASK_ID, Role.IMPLEMENTER)
             return started and pid_path.is_file() and run is not None and bool(run.session_id)
 
-        await wait_until(implementing, timeout=ATTEMPT_TIMEOUT_SECONDS)
+        await wait_until(implementing, timeout=WAIT_CEILING_SECONDS)
         run = runs.get_live(TASK_ID, Role.IMPLEMENTER)
         assert run is not None
         assert run.session_id is not None
@@ -638,28 +692,31 @@ async def _assert_no_duplicate_commits(project: PreparedProject) -> None:
     _require(len(patch_ids) == len(set(patch_ids)), f"duplicate commits: {patches.stdout}")
 
 
+@pytest.mark.timeout(outer_timeout_seconds("e5"))
 async def test_real_agents_e5_restart_resumes_the_interrupted_turn(
     tmp_path: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e5_body)
+    await _run_with_reruns("e5", tmp_path, tmux_server, record_e2e_cost, _e5_body)
 
 
+@pytest.mark.timeout(outer_timeout_seconds("e1"))
 async def test_real_agents_e1_completes_and_integrates(
     tmp_path: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e1_body)
+    await _run_with_reruns("e1", tmp_path, tmux_server, record_e2e_cost, _e1_body)
 
 
+@pytest.mark.timeout(outer_timeout_seconds("e2"))
 async def test_real_agents_e2_delivers_operator_message_to_verify(
     tmp_path: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e2_body)
+    await _run_with_reruns("e2", tmp_path, tmux_server, record_e2e_cost, _e2_body)
 
 
 async def _record_observed_cost(
@@ -739,7 +796,7 @@ async def _run_checked(
     if code != 0:
         operation = " ".join(arguments[:2])
         detail = f"{stdout.strip()} {stderr.strip()}".strip()
-        _require(code == 0, f"{operation} failed with exit {code}: {detail[:1000]}")
+        _require_shikiru(code == 0, f"{operation} failed with exit {code}: {detail[:1000]}")
     return stdout, stderr
 
 
@@ -751,18 +808,20 @@ async def _cleanup_attempt(
     try:
         await asyncio.wait_for(_stop(project, environment), timeout=CLEANUP_TIMEOUT_SECONDS)
     except TimeoutError as error:
-        _require(False, "real-agent cleanup timed out")
+        _require_shikiru(False, "real-agent cleanup timed out")
         raise AssertionError from error
 
 
+@pytest.mark.timeout(outer_timeout_seconds("e3"))
 async def test_real_agents_e3_plans_and_runs_dependent_tasks_in_parallel(
     tmp_path: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e3_body)
+    await _run_with_reruns("e3", tmp_path, tmux_server, record_e2e_cost, _e3_body)
 
 
+@pytest.mark.timeout(outer_timeout_seconds("e4"))
 async def test_real_agents_e4_mcp_operator_resolves_a_product_decision(
     tmp_path: Path,
     tmux_server: TmuxServer,
@@ -773,15 +832,16 @@ async def test_real_agents_e4_mcp_operator_resolves_a_product_decision(
     It proves the MCP escalation flow (`wait_for_events` → `resolve_escalation`) with a fixed
     answer, not a model's judgement.
     """
-    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e4_body)
+    await _run_with_reruns("e4", tmp_path, tmux_server, record_e2e_cost, _e4_body)
 
 
+@pytest.mark.timeout(outer_timeout_seconds("e6"))
 async def test_real_agents_e6_take_over_holds_only_that_task(
     tmp_path: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns(tmp_path, tmux_server, record_e2e_cost, _e6_body)
+    await _run_with_reruns("e6", tmp_path, tmux_server, record_e2e_cost, _e6_body)
 
 
 async def _e3_body(
@@ -821,7 +881,7 @@ async def _wait_parallel_new_task_windows(
         new_task_ids = set(state.task_ids[1:])
         return len(await _open_task_windows(project, tmux_server) & new_task_ids) >= MAX_PARALLEL
 
-    await wait_until(parallel, timeout=ATTEMPT_TIMEOUT_SECONDS)
+    await wait_until(parallel, timeout=WAIT_CEILING_SECONDS)
 
 
 def _assert_dependent_new_tasks(statuses: list[dict[str, object] | None]) -> None:
@@ -919,9 +979,9 @@ def _sole_error(group: BaseExceptionGroup[BaseException]) -> BaseException:
 
 async def _call_tool(session: ClientSession, name: str, arguments: dict[str, object]) -> object:
     result = await session.call_tool(name, arguments)
-    _require(not result.isError, f"MCP {name} failed: {result.content}")
+    _require_shikiru(not result.isError, f"MCP {name} failed: {result.content}")
     content = result.structuredContent
-    _require(content is not None, f"MCP {name} returned no structured content")
+    _require_shikiru(content is not None, f"MCP {name} returned no structured content")
     assert content is not None
     return content[MCP_RESULT_KEY] if set(content) == {MCP_RESULT_KEY} else content
 
@@ -955,7 +1015,7 @@ async def _wait_for_decision_escalation(session: ClientSession) -> str:
             escalation_ids.append(cast("str", event.data["escalation_id"]))
         return bool(escalation_ids)
 
-    await wait_until(escalated, timeout=ATTEMPT_TIMEOUT_SECONDS)
+    await wait_until(escalated, timeout=WAIT_CEILING_SECONDS)
     return escalation_ids[0]
 
 
@@ -1047,7 +1107,7 @@ async def _wait_second_task_done_while_first_held(
         )
         return second == Status.DONE.value
 
-    await wait_until(second_done, timeout=ATTEMPT_TIMEOUT_SECONDS)
+    await wait_until(second_done, timeout=WAIT_CEILING_SECONDS)
 
 
 def _task_events(project: PreparedProject, *kinds: EventKind) -> list[Event]:

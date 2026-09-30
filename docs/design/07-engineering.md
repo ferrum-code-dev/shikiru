@@ -82,9 +82,25 @@ Plugin offline checks replay protocol fixtures committed under `tests/fixtures/a
 
 **Runs**:
 - Each scenario copies the fixture, runs `init --yes`, then starts with global `--set` rung overrides for the cheapest test rungs; it asserts only observable outcomes.
-- Each scenario has a 30-minute timeout and one automatic rerun.
+- Each scenario attempt has its own budget (table below), and the invocation has one (60 minutes; an attempt gets the smaller of its budget and what is left). No attempt may take 30 minutes.
+- The E2E engine configuration shortens the waits that matter only when something is wrong, without changing what a scenario verifies: `orchestration.timeouts.integration_wait=60` (default 1800), so a merge blocked by a dirty operator checkout escalates as `integration_blocked` within a minute, and `orchestration.timeouts.max_quota_wait=300` (default 28800), so a quota wait escalates instead of hanging. `timeouts.stall`, `timeouts.tool`, the recovery backoff and `pr_wait` are left alone: a stall stop is behaviour the scenarios may exercise, the backoff is capped at 60 s and `pr_wait` only applies to the PR strategy.
+- **Stall detector** (`tests/e2e/watchdog.py`): an attempt fails at once when no new event was recorded and no turn process (`turn.pid` of a running turn) was alive for 4 minutes. A stall or a budget timeout fails with the last event, the recent events, every task's status, step, holds and wait reason, `git status` of the operator checkout and the tail of `.shikiru/logs/engine.log`.
+- **Reruns**: one automatic rerun, only for agent flakiness, judged from the attempt's diagnostics and never when the engine recorded an `engine_fault`: an agent wrote in the operator checkout (an `integration_waiting` event or a dirty checkout after the failure, which also covers the stall and timeout a blocked merge causes), or an agent skipped a rule so the delivered work is wrong (a plain assertion on the outcome). A Shikiru, lifecycle, CLI, MCP or cleanup failure, and a stall or timeout without such evidence, fail without a rerun.
+- Every failed attempt writes `build/e2e/diagnostics/<date>-<scenario>-attempt-<n>.txt` (error, every event, task states, checkout status, log tail) and names the path in the failure, so a failed run is diagnosable without rerunning.
 - `poe e2e` writes `build/e2e/<date>.json` (scenario, pass/fail, agent-reported cost or `null` when no agent reported one) together with the run's `source_commit`, `source_dirty` (uncommitted changes in the tree), `tool_versions` (claude, codex, tmux, git, python; `null` for a tool that is not installed) and `started_at`/`finished_at` (UTC). The file is temporary and git-ignored.
 - A plan AC that names an E2E scenario is ticked only after a passing `poe e2e` run; the ticking commit message states the run date, scenarios and cost.
+
+| Scenario | Attempt budget | Measured duration |
+|---|---|---|
+| fake-agent operator flow | 45 s | about 12 s |
+| E1 | 10 min | about 3-4 min |
+| E2 | 10 min | about 3-4 min |
+| E3 | 20 min | about 7-9 min (the slowest) |
+| E4 | 10 min | about 3-4 min |
+| E5 | 10 min | about 3-4 min |
+| E6 | 12 min | about 4-5 min |
+
+Budgets are 2-3 times the slowest passing run. Measured: the passing invocation of 2026-09-30 took 24 m 52 s for the fake scenario and E1-E6 together, and E3's task timestamps in the 2026-09-30 run show about 7 minutes from plan to the last merge; the other rows are that total shared out (the per-scenario times were not recorded, so they are estimates). A run that exceeds its row is a finding, not a reason to raise the row unseen. The 2026-09-30 E3 stall (a Codex implementer also wrote the plan, tracker and test files into the operator checkout by absolute path, and the merge then waited the full 30 minutes for a clean checkout twice over) is the case the `integration_wait` setting, the `integration_waiting` event and the stall detector exist for. Shikiru cannot prevent an agent from writing outside its worktree (01 §6), so this is an agent-behaviour limit, and the diagnostics name it.
 
 | # | Scenario | Proves |
 |---|---|---|
