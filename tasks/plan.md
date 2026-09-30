@@ -488,8 +488,8 @@ Refs: 01 §glossary, 02 §2, 07 §1–2.
 ### Task 59: Re-verify and regenerate release evidence
 Refs: 07 §5.
 - [x] `uv run poe check` passes in a normal and a `TERM=dumb` environment.
-- [x] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included. (2026-09-30, `96bb4b7`; resume E5 and takeover E6 are native scenarios; 07 §5 defines no native model-change scenario, which stays covered by integration tests.)
-- [x] The portable (macOS only; Linux not verified) clean-install smoke passes; tested CLI versions and the source commit are recorded next to the results.
+- [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included. Met: E1–E6 passed in one run on 2026-09-30 at `96bb4b7`, with resume (E5) and takeover (E6) as native scenarios. Not met: 07 §5 defines no native model-change scenario, so model change is covered only by plugin and integration tests and, since Task 73, by the live contract checks (Codex passed on 2026-09-30; Claude skipped, no alternate model configured), not by `poe e2e`.
+- [ ] The portable clean-install smoke passes; tested CLI versions and the source commit are recorded next to the results. Met on macOS (2026-09-30, `96bb4b7`), with the CLI versions and source commit recorded. Not met: the script is macOS-only and Linux is unverified, so "portable" is not demonstrated; Task 74 states Linux as verified or unverified.
 - [x] `docs/release-readiness-*.md` states which findings were fixed, and its claim that every design section agrees with the code is restated after Tasks 41–58.
 
 ## Phase 7b — Independent-review remediation (2026-09-30)

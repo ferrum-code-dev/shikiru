@@ -78,7 +78,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 56: Codex context window belongs to the model (F15)
 - [x] Task 57: TaskFlow responsibilities (F18)
 - [x] Task 58: Low-severity items (F19, F20, F21, F23, F22)
-- [x] Task 59: Re-verify and regenerate release evidence
+- [ ] Task 59: Re-verify and regenerate release evidence (reopened by Task 73: no native model-change E2E scenario; clean-install smoke verified on macOS only)
 
 ## Phase 7b — Independent-review remediation (2026-09-30)
 - [x] Task 60: The engine survives tick faults and tmux loss
