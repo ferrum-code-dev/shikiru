@@ -34,7 +34,7 @@
    - time only via `clock.Clock`;
    - agent specifics only in `plugins/agents/*`;
    - all enforced by lint.
-5. **Values**: operator tunables go in `defaults.toml` (05 §1). Protocol constants are named module constants. No other literals.
+5. **Values**: operator tunables go in `defaults.toml` (05 §1). Protocol constants are named module constants. No other literals. This stays, and so does the no-comments rule in item 8: they make review uniform and mechanical and can be checked by lint, whereas a judgement-based allowance for local literals or rationale comments would not be.
 6. **Async**: the engine is asyncio. Blocking work goes through `asyncio.to_thread` or async subprocesses.
 7. **Errors**: a `ShikiruError` hierarchy with user-facing messages. The CLI maps errors to exit codes. No bare `except`, no silent fallbacks.
 8. **No comments**: names explain. Docstrings only on public contracts (`agents.contracts`, `DashboardWidget`, operator services, report and command models) and their implementations.
