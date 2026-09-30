@@ -49,11 +49,8 @@ from shikiru.domain.tasks import EscalationReason, Role, Status, Step, TaskOrigi
 from shikiru.engine.events import emit_step_started
 from shikiru.engine.history import ENGINE_VERDICT_FILENAME, ReportHistory
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
-from shikiru.engine.turns import TurnRequest
 from shikiru.errors import ShikiruError, UsageError
-from shikiru.paths import run_dir, task_root
-from shikiru.prompts.renderer import PromptName
-from shikiru.workspace.facts import render_facts
+from shikiru.paths import run_dir
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,19 +61,19 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung, Usage
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
-    from shikiru.domain.reports import Report
     from shikiru.domain.steps import Outcome
-    from shikiru.domain.tasks import RepoState, Task
+    from shikiru.domain.tasks import Task
     from shikiru.engine.escalations import EscalationRaiser
     from shikiru.engine.sessions import SessionManager
+    from shikiru.engine.task_facts import TaskFacts
     from shikiru.engine.titles import TaskTitles
+    from shikiru.engine.turn_context import TurnContextPreparer
     from shikiru.engine.turns import TurnRunner
-    from shikiru.store.escalations import EscalationStore
+    from shikiru.prompts.renderer import PromptName
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
-    from shikiru.workspace.facts import GitFacts
 
 
 ESCALATION_PANE_TAIL_LINES = 60
@@ -89,24 +86,6 @@ UNCOMMITTED_ISSUE = (
     "Commit what belongs to this task and discard the rest."
 )
 _QUOTA_WAIT_EXHAUSTED_MESSAGE = "quota wait exceeded"
-
-
-def _template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKind]:
-    if step is Step.TRIAGE:
-        return PromptName.TRIAGE, ReportKind.TRIAGE
-    if step is Step.PLAN:
-        return PromptName.PLAN, ReportKind.PLAN
-    if step is Step.IMPLEMENT:
-        template = PromptName.IMPLEMENT if iteration <= 1 else PromptName.REWORK
-        return template, ReportKind.IMPLEMENTATION
-    if step is Step.CONSULT:
-        return PromptName.CONSULT, ReportKind.CONSULT
-    if step is Step.VERIFY:
-        return PromptName.VERIFY, ReportKind.VERDICT
-    if step is Step.INTEGRATE:
-        return PromptName.CONFLICTS, ReportKind.IMPLEMENTATION
-    message = f"TaskFlow has no turn template for step {step!r}"
-    raise ShikiruError(message)
 
 
 def _turn_summary(outcome: Outcome) -> str:
@@ -185,14 +164,6 @@ def _escalation_narrative(
     return question, attempted
 
 
-@dataclass(frozen=True)
-class _TurnPlan:
-    template: PromptName
-    kind: ReportKind
-    context: dict[str, object]
-    facts: str
-
-
 @dataclass
 class _TurnExecution:
     result: TurnResult
@@ -215,9 +186,9 @@ class TaskFlow:
         events: EventLog,
         sessions: SessionManager,
         turns: TurnRunner,
-        git_facts: GitFacts,
+        facts: TaskFacts,
+        contexts: TurnContextPreparer,
         escalations: EscalationRaiser,
-        escalation_store: EscalationStore,
         titles: TaskTitles,
         settings: Settings,
         project_root: Path,
@@ -232,9 +203,9 @@ class TaskFlow:
         self._events = events
         self._sessions = sessions
         self._turns = turns
-        self._git_facts = git_facts
+        self._facts = facts
+        self._contexts = contexts
         self._escalations = escalations
-        self._escalation_store = escalation_store
         self._titles = titles
         self._settings = settings
         self._project_root = project_root
@@ -243,8 +214,6 @@ class TaskFlow:
         self._integration_turns = integration_turns
         self._history = history
         self._runs = runs
-        self._force_handoff: set[str] = set()
-        self._continue_next: set[str] = set()
         self._resumed: set[str] = set()
 
     async def run(self, task_id: str, *, resumed: bool = False) -> None:
@@ -497,7 +466,7 @@ class TaskFlow:
                     quota_wait_exhausted=True,
                 )
             else:
-                self._continue_next.add(task.id)
+                self._contexts.request_continue(task.id)
                 updated = self.require_task(task.id)
         elif isinstance(action, Backoff):
             await self._clock.sleep(action.delay.total_seconds())
@@ -508,7 +477,7 @@ class TaskFlow:
         elif isinstance(action, RetryTurn):
             next_counters = dataclasses.replace(counters, other_retries=counters.other_retries + 1)
         elif isinstance(action, ResumeTurn):
-            self._continue_next.add(task.id)
+            self._contexts.request_continue(task.id)
             updated = self.require_task(task.id)
             next_counters = dataclasses.replace(
                 counters,
@@ -524,7 +493,7 @@ class TaskFlow:
         self, task: Task, step: Step, role: Role, result: TurnResult, action: NextRung
     ) -> tuple[Task | _TurnExecution, bool, TurnCounters]:
         if action.different_agent:
-            self._force_handoff.add(task.id)
+            self._contexts.request_handoff(task.id)
         updated = await self._move_rung(task, step, role, action.different_agent, result)
         if updated is not None:
             return updated, False, TurnCounters()
@@ -670,7 +639,7 @@ class TaskFlow:
         if task.repo is None:
             return ""
         try:
-            return await self._facts_text(task)
+            return await self._facts.text(task)
         except ShikiruError as error:
             return FACTS_UNAVAILABLE.format(error=error)
 
@@ -700,28 +669,13 @@ class TaskFlow:
         role = role_override if role_override is not None else ACTING_ROLE[step]
         selection = self._sessions.session_for(task, role)
 
-        history = self._history.load(task.id)
-        continue_turn = task.id in self._continue_next
-        if continue_turn:
-            template_override = PromptName.CONTINUE
-        plan = await self._plan_turn(
+        turn_request = await self._contexts.prepare(
             task,
             step,
-            history,
-            fresh=selection.handoff and not continue_turn,
+            session_handoff=selection.handoff,
             template_override=template_override,
             kind_override=kind_override,
             conflict_context=conflict_context,
-        )
-        if continue_turn:
-            self._continue_next.discard(task.id)
-        turn_request = TurnRequest(
-            step=step,
-            iteration=task.iteration,
-            kind=plan.kind,
-            template=plan.template,
-            context=plan.context,
-            facts=plan.facts,
         )
         usage_before = selection.run.usage
         resumed = task.id in self._resumed
@@ -775,61 +729,6 @@ class TaskFlow:
             usage_before=usage_before,
             usage_after=live_run.usage,
         )
-
-    async def _plan_turn(
-        self,
-        task: Task,
-        step: Step,
-        history: list[tuple[str, Report]],
-        *,
-        fresh: bool,
-        template_override: PromptName | None = None,
-        kind_override: ReportKind | None = None,
-        conflict_context: str | None = None,
-    ) -> _TurnPlan:
-        template, kind = _template_for_step(step, task.iteration)
-        if template_override is not None:
-            template = template_override
-        if kind_override is not None:
-            kind = kind_override
-        force_handoff = task.id in self._force_handoff
-        context: dict[str, object] = {
-            "request": task.request,
-            "workspace": str(task_root(self._project_root, task.id)),
-            "trackers": list(self._settings.project.trackers),
-            "reports": self._history.context(history),
-        }
-        if template is PromptName.CONSULT:
-            answer = (
-                self._escalation_store.latest_answer(task.id)
-                if task.counters.consults == 0
-                else None
-            )
-            context["question"] = (
-                answer if answer is not None else self._history.latest_question(history)
-            )
-        handoff = (fresh and bool(history)) or force_handoff
-        needs_facts = template in (PromptName.VERIFY, PromptName.CONFLICTS) or handoff
-        facts_text = await self._facts_text(task) if needs_facts else ""
-        if handoff:
-            template = PromptName.HANDOFF
-        self._force_handoff.discard(task.id)
-        if needs_facts:
-            context["facts"] = facts_text
-        if template is PromptName.VERIFY:
-            context["base"] = _require_repo(task).base_ref
-            context["final_round"] = task.iteration >= self._settings.orchestration.max_iterations
-        if template is PromptName.CONFLICTS:
-            context["conflict"] = conflict_context or ""
-        return _TurnPlan(template=template, kind=kind, context=context, facts=facts_text)
-
-    async def _facts_text(self, task: Task) -> str:
-        facts = await self._git_facts.collect(
-            task_root(self._project_root, task.id),
-            _require_repo(task),
-            self._settings.project.trackers,
-        )
-        return render_facts(facts)
 
     async def apply(self, task: Task, transition: Transition, outcome: Outcome | None) -> Task:
         """Apply a task transition and refresh its visible title."""
@@ -933,11 +832,7 @@ class TaskFlow:
     async def _reject_uncommitted(self, task: Task, verdict: Verdict, turn_dir: Path) -> Verdict:
         if verdict.decision != "accept":
             return verdict
-        facts = await self._git_facts.collect(
-            task_root(self._project_root, task.id),
-            _require_repo(task),
-            self._settings.project.trackers,
-        )
+        facts = await self._facts.collect(task)
         if not facts.status:
             return verdict
         issue = Issue(
@@ -1000,10 +895,3 @@ class TaskFlow:
             apply_state=lambda: self._persist(task, transition, outcome),
         )
         return self.require_task(task.id)
-
-
-def _require_repo(task: Task) -> RepoState:
-    if task.repo is None:
-        message = f"{task.id} has no task root yet"
-        raise ShikiruError(message)
-    return task.repo

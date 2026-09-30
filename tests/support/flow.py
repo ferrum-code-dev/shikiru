@@ -20,6 +20,8 @@ from shikiru.engine.integration import (
     LocalMerge,
 )
 from shikiru.engine.integration_turns import IntegrationTurns
+from shikiru.engine.task_facts import TaskFacts
+from shikiru.engine.turn_context import TurnContextPreparer
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import transaction
@@ -162,14 +164,25 @@ def build_flow(
             finish_task=finish_task,
         )
     history = ReportHistory(env.project_root)
+    facts = TaskFacts(
+        git_facts=GitFacts(Git(SubprocessRunner())),
+        project_root=env.project_root,
+        settings=settings,
+    )
     flow = TaskFlow(
         tasks=env.tasks,
         events=system.events,
         sessions=system.sessions,
         turns=system.turns,
-        git_facts=GitFacts(Git(SubprocessRunner())),
+        facts=facts,
+        contexts=TurnContextPreparer(
+            history=history,
+            escalation_store=escalations_store,
+            facts=facts,
+            settings=settings,
+            project_root=env.project_root,
+        ),
         escalations=escalations,
-        escalation_store=escalations_store,
         titles=system.titles,
         settings=settings,
         project_root=env.project_root,

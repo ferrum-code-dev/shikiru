@@ -54,7 +54,9 @@ from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.supervisor import TaskSupervisor
 from shikiru.engine.takeover import Takeover
+from shikiru.engine.task_facts import TaskFacts
 from shikiru.engine.titles import TaskTitles
+from shikiru.engine.turn_context import TurnContextPreparer
 from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
 from shikiru.errors import ConfigError
@@ -481,6 +483,9 @@ def build_engine(
         task_finisher=task_finisher,
     )
     history = ReportHistory(project_root)
+    task_facts = TaskFacts(
+        git_facts=GitFacts(git), project_root=project_root, settings=resolved_settings
+    )
     messages = OperatorMessages(project_root)
     flow = TaskFlow(
         tasks=tasks,
@@ -498,9 +503,15 @@ def build_engine(
             project_root=project_root,
             settings=resolved_settings,
         ),
-        git_facts=GitFacts(git),
+        facts=task_facts,
+        contexts=TurnContextPreparer(
+            history=history,
+            escalation_store=escalations_store,
+            facts=task_facts,
+            settings=resolved_settings,
+            project_root=project_root,
+        ),
         escalations=escalation_raiser,
-        escalation_store=escalations_store,
         titles=titles,
         settings=resolved_settings,
         project_root=project_root,
