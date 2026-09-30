@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -58,6 +59,7 @@ from shikiru.domain.recovery import (
 )
 from shikiru.domain.tasks import EscalationReason
 from shikiru.plugins.agents.codex.agent import CodexAgent, create
+from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import (
     ADD_DIR_FLAG,
     CODEX_HOME_ENV_VAR,
@@ -70,7 +72,7 @@ from shikiru.plugins.agents.codex.options import (
     SANDBOX_FLAG,
     WORKSPACE_WRITE_SANDBOX,
 )
-from shikiru.plugins.agents.codex.turn import CodexTurnParser, CodexTurnSequence
+from shikiru.plugins.agents.codex.turn import CodexTurnParser, CodexTurnSequence, context_window
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
 
@@ -87,6 +89,7 @@ _EFFORT = "low"
 _TEST_CONTEXT_WINDOW = 100_000
 _ROLLOUT_CONTEXT_WINDOW = 250_000
 _COMPACT_AT_PCT = 80.0
+_PERCENT = 100
 _TURN_TIMEOUT_SECONDS = 60.0
 _LIVE_REPORT_TIMEOUT_SECONDS = 180.0
 _LIVE_REPORT_PYTEST_TIMEOUT_SECONDS = 190.0
@@ -116,6 +119,7 @@ _MIDTURN_ROLLOUT = "rollout_midturn_compaction_live_redacted.jsonl"
 _SESSION_MIDTURN = "session-midturn-live-redacted"
 _SESSION_RECOVERY = "session-recovery"
 _RERUN_ROLLOUT = "rollout_rerun_compaction.jsonl"
+_MODEL_CHANGE_ROLLOUT = "rollout_model_change_turn_context_live_redacted.jsonl"
 _LIVE_COMPACT_AT_PCT = 15.0
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 _SESSION_FIRST = "session-first"
@@ -554,6 +558,28 @@ class TestCodexHeadlessContract(AgentContractSuite):
     def headless_ask_prompt(self) -> str:
         return _LIVE_ASK_PROMPT
 
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [(_OTHER_MODEL, _CONTEXT_WINDOW), (_LIVE_MODEL, _TEST_CONTEXT_WINDOW)],
+        ids=[
+            "the model of the latest turn uses the observed window",
+            "another model uses its cache",
+        ],
+    )
+    def test_model_change_rollout_window_belongs_to_the_model_that_reported_it(
+        self, tmp_path: Path, model: str, expected: int
+    ) -> None:
+        home = tmp_path / "codex-home"
+        session_dir = home / "sessions" / "2030" / "01" / "01"
+        session_dir.mkdir(parents=True)
+        rollout = session_dir / f"rollout-2030-01-01T00-00-00-{_SESSION_RESUMED}.jsonl"
+        rollout.write_text((_FIXTURES_DIR / _MODEL_CHANGE_ROLLOUT).read_text(), encoding="utf-8")
+        _write_model_cache(
+            home, [(_OTHER_MODEL, _TEST_CONTEXT_WINDOW), (_LIVE_MODEL, _TEST_CONTEXT_WINDOW)]
+        )
+
+        assert context_window(home, model, _SESSION_RESUMED) == expected
+
     def test_turn_inherits_operator_environment_and_uses_turn_codex_home(
         self, tmp_path: Path, operator_codex_home: Path
     ) -> None:
@@ -865,23 +891,69 @@ class TestCodexHeadlessContract(AgentContractSuite):
         self, tmp_path: Path
     ) -> None:
         self._require_live()
+        home = codex_home()
         first = self.build_spec(tmp_path, resume_session_id=None)
         await _init_live_repo(first.cwd)
         nonce = uuid4().hex
-        session_id, usage = _latest_usage(
-            await self._run_turn(_with_prompt(first, RESUME_NONCE_PROMPT.format(nonce=nonce)))
+        first = _with_prompt(first, RESUME_NONCE_PROMPT.format(nonce=nonce))
+        first_limit = self._emitted_limit(first)
+        assert first_limit == _limit_for(_cached_window(home, self._model()))
+        session_id, usage = _latest_usage(await self._run_turn(first))
+        resumed = _with_prompt(
+            self.build_spec(
+                tmp_path, resume_session_id=session_id, usage=usage, model=self._other_model()
+            ),
+            RESUME_RECALL_PROMPT,
         )
-        resumed = self.build_spec(
-            tmp_path,
-            resume_session_id=session_id,
-            usage=usage,
-            model=self._other_model(),
-        )
+        resumed_limit = self._emitted_limit(resumed)
 
-        signals = await self._run_turn(_with_prompt(resumed, RESUME_RECALL_PROMPT))
+        signals = await self._run_turn(resumed)
 
         message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
         assert nonce in message
+        assert resumed_limit == _limit_for(_cached_window(home, self._other_model()))
+        observed = _rollout_windows(home, session_id)
+        assert observed[-1][0] == self._other_model()
+        assert self._emitted_limit(resumed) == _limit_for(observed[-1][1])
+        back = _with_model(resumed, self._model())
+        assert self._emitted_limit(back) == _limit_for(_cached_window(home, self._model()))
+
+    def _emitted_limit(self, spec: TurnSpec) -> int:
+        agent = cast("CodexAgent", self._build_agent())
+        argv = agent.process_sequence(spec).start(spec).argv
+        assert MODEL_FLAG in argv
+        assert argv[argv.index(MODEL_FLAG) + 1] == spec.rung.model
+        setting = f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}="
+        (limit,) = [value.removeprefix(setting) for value in argv if value.startswith(setting)]
+        return int(limit)
+
+
+def _with_model(spec: TurnSpec, model: str) -> TurnSpec:
+    return replace(spec, rung=replace(spec.rung, model=model))
+
+
+def _limit_for(window: int) -> int:
+    return int(window * _COMPACT_AT_PCT / _PERCENT)
+
+
+def _cached_window(home: Path, model: str) -> int:
+    cache = json.loads((home / MODELS_CACHE_FILENAME).read_text(encoding="utf-8"))
+    (entry,) = [item for item in cache["models"] if item["slug"] == model]
+    return int(entry["context_window"])
+
+
+def _rollout_windows(home: Path, session_id: str) -> list[tuple[str, int]]:
+    (path,) = (home / "sessions").glob(f"**/rollout-*-{session_id}.jsonl")
+    model = ""
+    windows: list[tuple[str, int]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        entry = json.loads(line)
+        payload = entry.get("payload", {})
+        if entry.get("type") == "turn_context":
+            model = payload["model"]
+        elif payload.get("type") == "token_count" and payload.get("info"):
+            windows.append((model, payload["info"]["model_context_window"]))
+    return windows
 
 
 def _record(

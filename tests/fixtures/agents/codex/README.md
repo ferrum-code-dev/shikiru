@@ -28,6 +28,19 @@ the compaction history, session metadata and account identifiers are removed.
 The `token_count` right after each `compacted` entry reports 0 input tokens,
 so `post_tokens` comes from the first non-zero one after it.
 
+## Model-change rollout capture
+
+`rollout_model_change_turn_context_live_redacted.jsonl` is the `turn_context` and
+`token_count` entries of a genuine rollout from codex-cli 0.159.2 on 2026-09-30:
+a first turn on `gpt-5.6-luna`, then `codex exec resume` on `gpt-5.6-terra`
+(subscription access, low reasoning effort, scratch repository). It is the only
+fixture carrying `turn_context` entries, whose `payload.model` the plugin pairs
+with the next `token_count` to decide which model a window was observed for.
+Timestamps are zeroed; in each `turn_context` only the model, effort and summary
+are kept (turn ID and working directory are redacted; sandbox, permission and
+workspace details are removed), and in each `token_count` the quota windows keep
+only their percentages and window lengths.
+
 ## OpenRouter custom-provider capture
 
 `turn_openrouter_live_redacted.jsonl`, `rollout_openrouter_live_redacted.jsonl`

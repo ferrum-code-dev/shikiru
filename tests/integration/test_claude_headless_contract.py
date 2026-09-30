@@ -83,6 +83,10 @@ _SESSION_RESUMED = "session-resumed"
 _HOOK_SESSION = "session-hook-live-redacted"
 _HOOK_MODULE = "shikiru.plugins.agents.claude.hook"
 _DEFAULT_LIMIT_TOKENS = 160_000
+_STANDARD_WINDOW_TOKENS = 200_000
+_EXTENDED_WINDOW_TOKENS = 1_000_000
+_DEFAULT_COMPACT_AT_PCT = 80
+_PERCENT = 100
 _LIVE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_MODEL"
 _LIVE_CHANGE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL"
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
@@ -753,6 +757,26 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         signals = await self._run_turn(replace(resumed, prompt=RESUME_RECALL_PROMPT))
         message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
         assert nonce in message, "resumed turn did not recall the nonce"
+        assert self._emitted_limit(first) == _window_limit(first.rung.model)
+        assert self._emitted_limit(resumed) == _window_limit(changed_model)
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [("sonnet", 160_000), ("sonnet[1m]", 800_000)],
+        ids=["standard window", "extended window"],
+    )
+    def test_emitted_compaction_limit_follows_the_selected_model(
+        self, tmp_path: Path, model: str, expected: int
+    ) -> None:
+        spec = self.build_spec(tmp_path, resume_session_id=None, model=model)
+
+        assert self._emitted_limit(spec) == expected
+
+    def _emitted_limit(self, spec: TurnSpec) -> int:
+        argv = cast("ClaudeAgent", self._build_agent()).process_sequence(spec).start(spec).argv
+        settings = json.loads(argv[argv.index("--settings") + 1])
+        command = settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
+        return int(shlex.split(command)[-1])
 
     def headless_ask_schema_model(self) -> type[BaseModel]:
         return _AskResult
@@ -896,6 +920,11 @@ def _record(name: str, stderr: str, session_id: str) -> RecordedStream:
         expected_signals=[],
         session_id=session_id,
     )
+
+
+def _window_limit(model: str) -> int:
+    window = _EXTENDED_WINDOW_TOKENS if model.endswith("[1m]") else _STANDARD_WINDOW_TOKENS
+    return window * _DEFAULT_COMPACT_AT_PCT // _PERCENT
 
 
 def _hook_settings(turn_dir: Path, limit_tokens: int) -> str:
