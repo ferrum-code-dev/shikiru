@@ -1,25 +1,32 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from shikiru.clock import SystemClock
+from tests.support.e2e_provenance import source_state, tool_versions
+
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from _pytest.config import Config
     from _pytest.main import Session
     from _pytest.nodes import Item
     from _pytest.reports import TestReport
 
 
-RESULTS_DIRECTORY = Path(__file__).parents[2] / "build" / "e2e"
+SOURCE_ROOT = Path(__file__).parents[2]
+RESULTS_DIRECTORY = SOURCE_ROOT / "build" / "e2e"
+CLOCK = SystemClock()
 RESULTS_DATE_FORMAT = "%Y-%m-%d"
 RESULTS_FILENAME_SUFFIX = ".json"
 RESULTS_TEMP_SUFFIX = ".tmp"
-RESULTS_SCHEMA_VERSION = 1
+RESULTS_SCHEMA_VERSION = 2
 RESULTS_STATUS_PASSED = "passed"
 RESULTS_STATUS_FAILED = "failed"
 RESULTS_STATUS_SKIPPED = "skipped"
@@ -28,6 +35,7 @@ REPORT_PHASE_SETUP = "setup"
 _COSTS: dict[str, float | None] = {}
 _REPORTS: dict[str, TestReport] = {}
 _REAL_E2E_NODEIDS: set[str] = set()
+_STARTED: list[datetime] = []
 
 
 @pytest.fixture
@@ -56,6 +64,7 @@ def pytest_collection_modifyitems(config: Config, items: list[Item]) -> None:
     _COSTS.clear()
     _REPORTS.clear()
     _REAL_E2E_NODEIDS.clear()
+    _STARTED[:] = [CLOCK.now()]
     _REAL_E2E_NODEIDS.update(
         item.nodeid for item in items if item.get_closest_marker("real_e2e") is not None
     )
@@ -72,9 +81,14 @@ def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
     if _is_xdist_worker(session.config) or not _REPORTS:
         return
     scenarios = [_scenario_result(nodeid, report) for nodeid, report in sorted(_REPORTS.items())]
+    finished = CLOCK.now()
     payload = {
         "schema_version": RESULTS_SCHEMA_VERSION,
-        "date": datetime.now(UTC).date().strftime(RESULTS_DATE_FORMAT),
+        "date": finished.date().strftime(RESULTS_DATE_FORMAT),
+        "started_at": _STARTED[0].isoformat(),
+        "finished_at": finished.isoformat(),
+        **asyncio.run(source_state(SOURCE_ROOT)),
+        "tool_versions": asyncio.run(tool_versions()),
         "exit_status": exitstatus,
         "scenarios": scenarios,
     }
