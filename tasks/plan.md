@@ -463,8 +463,8 @@ Refs: 03 §8, invariant 5.
 
 ### Task 56: Codex context window belongs to the model (F15)
 Refs: 04 §5.
-- [ ] Design 04 §5 and the implementation associate each observed window with its model and use it only for that model; a rung change to another model drops the old window and uses the new model's cache. Session resume is unchanged.
-- [ ] The existing test that prescribes the rollout-first precedence is changed with the design.
+- [x] Design 04 §5 and the implementation associate each observed window with its model and use it only for that model; a rung change to another model drops the old window and uses the new model's cache. Session resume is unchanged.
+- [x] The existing test that prescribes the rollout-first precedence is changed with the design.
 - Tests: contract-level integration: change model in both directions between models with different windows; the compaction threshold follows the selected model.
 
 ### Task 57: TaskFlow responsibilities (F18)

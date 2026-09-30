@@ -87,6 +87,9 @@ _POST_TOKENS_FIELD = "post_tokens"
 _MODELS_FIELD = "models"
 _MODEL_SLUG_FIELD = "slug"
 _MODEL_CONTEXT_WINDOW_FIELD = "context_window"
+_TURN_CONTEXT_TYPE = "turn_context"
+_MODEL_FIELD = "model"
+_CONTEXT_WINDOW_INFO_FIELD = "model_context_window"
 _PERCENT = 100
 _UNAVAILABLE_STATUS_MIN = 500
 _UNAVAILABLE_STATUS_MAX = 599
@@ -392,12 +395,27 @@ class CodexTurnSequence(TurnProcessSequence):
 
 
 def context_window(home: Path, model: str, session_id: str | None = None) -> int | None:
-    """Return the latest session window, or the model cache before the first turn."""
-    entries = _read_rollout(_rollout_path(home, session_id))
-    latest = latest_token_count(entries)
-    if latest is not None and latest[2] is not None:
-        return latest[2]
-    return _cached_context_window(home, model)
+    """Return the window observed for this model in the session, else the model cache."""
+    observed = _observed_window(_read_rollout(_rollout_path(home, session_id)), model)
+    return observed if observed is not None else _cached_context_window(home, model)
+
+
+def _observed_window(entries: Sequence[Mapping[str, Any]], model: str) -> int | None:
+    current_model: object = None
+    window: int | None = None
+    window_model: object = None
+    for entry in entries:
+        payload = _mapping(entry.get(_PAYLOAD_FIELD))
+        if payload is None:
+            continue
+        if entry.get(_TYPE_FIELD) == _TURN_CONTEXT_TYPE:
+            current_model = payload.get(_MODEL_FIELD)
+        elif payload.get(_TYPE_FIELD) == _TOKEN_COUNT_TYPE:
+            info = _mapping(payload.get(_INFO_FIELD))
+            value = info.get(_CONTEXT_WINDOW_INFO_FIELD) if info is not None else None
+            if isinstance(value, int):
+                window, window_model = value, current_model
+    return window if window_model == model else None
 
 
 def _cached_context_window(home: Path, model: str) -> int | None:

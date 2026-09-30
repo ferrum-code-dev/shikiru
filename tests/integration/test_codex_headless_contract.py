@@ -319,6 +319,45 @@ class TestCodexHeadlessContract(AgentContractSuite):
             ),
         ]
 
+    def _model_change_cases(self, tmp_path: Path) -> Sequence[InvocationCase]:
+        windows = {_MODEL: _TEST_CONTEXT_WINDOW, _OTHER_MODEL: _ROLLOUT_CONTEXT_WINDOW}
+        cases: list[InvocationCase] = []
+        for selected, previous in ((_OTHER_MODEL, _MODEL), (_MODEL, _OTHER_MODEL)):
+            spec = self.build_spec(
+                tmp_path / f"change-to-{selected}",
+                resume_session_id="session-changed",
+                model=selected,
+            )
+            home = Path(spec.env[CODEX_HOME_ENV_VAR])
+            _write_model_cache(home, list(windows.items()))
+            _write_rollout_window(home, spec.session_id, windows[previous], previous)
+            limit = int(windows[selected] * _COMPACT_AT_PCT / 100)
+            cases.append(
+                InvocationCase(
+                    name=f"a model change to {selected} drops the window of {previous}",
+                    options={"compact_at_pct": _COMPACT_AT_PCT},
+                    spec=spec,
+                    expected_argv=[
+                        (
+                            "codex",
+                            "exec",
+                            RESUME_SUBCOMMAND,
+                            "session-changed",
+                            "--json",
+                            MODEL_FLAG,
+                            selected,
+                            CONFIG_FLAG,
+                            f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
+                            CONFIG_FLAG,
+                            f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}={limit}",
+                            spec.prompt,
+                        )
+                    ],
+                    expected_env=[{CODEX_HOME_ENV_VAR: spec.env[CODEX_HOME_ENV_VAR]}],
+                )
+            )
+        return cases
+
     def error_streams(self) -> Sequence[RecordedStream]:
         return []
 
@@ -350,7 +389,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
             model=_OTHER_MODEL,
         )
         resumed_home = Path(resumed.env[CODEX_HOME_ENV_VAR])
-        _write_rollout_window(resumed_home, resumed.session_id, _ROLLOUT_CONTEXT_WINDOW)
+        _write_rollout_window(
+            resumed_home, resumed.session_id, _ROLLOUT_CONTEXT_WINDOW, _OTHER_MODEL
+        )
         resumed_argv = (
             "codex",
             "exec",
@@ -388,6 +429,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
             usage=provider_spec.usage,
         )
         return [
+            *self._model_change_cases(tmp_path),
             InvocationCase(
                 name="new turns use workspace-write and grant the run and git common directories",
                 options={"compact_at_pct": _COMPACT_AT_PCT},
@@ -396,7 +438,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 expected_env=[{CODEX_HOME_ENV_VAR: new_spec.env[CODEX_HOME_ENV_VAR]}],
             ),
             InvocationCase(
-                name="resumed model changes use the latest rollout context window",
+                name="a resumed session uses the rollout window of the same model",
                 options={"compact_at_pct": _COMPACT_AT_PCT},
                 spec=resumed,
                 expected_argv=[resumed_argv],
@@ -872,7 +914,9 @@ def _write_model_cache(home: Path, models: Sequence[tuple[str, int]]) -> None:
     (home / MODELS_CACHE_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _write_rollout_window(home: Path, session_id: str | None, context_window: int) -> None:
+def _write_rollout_window(
+    home: Path, session_id: str | None, context_window: int, model: str
+) -> None:
     if session_id is None:
         message = "a resumed invocation needs a session id"
         raise AssertionError(message)
@@ -891,7 +935,8 @@ def _write_rollout_window(home: Path, session_id: str | None, context_window: in
             "rate_limits": None,
         },
     }
-    rollout.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+    turn_context = {"type": "turn_context", "payload": {"model": model}}
+    rollout.write_text(json.dumps(turn_context) + "\n" + json.dumps(entry) + "\n", encoding="utf-8")
 
 
 def _replace_cwd(spec: TurnSpec, cwd: Path, suffix: str) -> TurnSpec:
