@@ -38,7 +38,7 @@ from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
-from tests.support.engine import build_decorator, build_tmux
+from tests.support.engine import build_decorator, build_evidence, build_tmux
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
@@ -190,6 +190,7 @@ async def scheduler_env(
         tmp_path,
         atomically=lambda: transaction(connection),
         titles=titles,
+        evidence=build_evidence(tmp_path),
     )
     dependency_callback = DependencyEscalator(tasks, raiser)
     dispatch_failure_callback = DispatchFailureEscalator(tasks, raiser)
@@ -507,7 +508,19 @@ def _block_packet_directory(project_root: Path, task_id: str) -> None:
     blocked.write_text("not a directory")
 
 
-async def test_a_dependency_escalation_whose_packet_cannot_be_written_leaves_the_task_unescalated(
+def _assert_escalated_despite_packet_failure(
+    scheduler_env: SchedulerFixture, connection: Connection, task_id: str
+) -> None:
+    stored = scheduler_env.tasks.get(task_id)
+    assert stored is not None
+    assert stored.status is Status.ESCALATED
+    (escalation,) = fetch_open_escalations(connection)
+    assert escalation.task_id == task_id
+    faults = EventLog(connection, scheduler_env.clock).since(0, kinds=[EventKind.ENGINE_FAULT])
+    assert [fault.task_id for fault in faults] == [task_id]
+
+
+async def test_a_dependency_escalation_whose_packet_cannot_be_written_still_escalates_the_task(
     scheduler_env: SchedulerFixture, connection: Connection, tmp_path: Path
 ) -> None:
     dependency = _submit(connection, scheduler_env.clock, title="cancelled")
@@ -521,16 +534,12 @@ async def test_a_dependency_escalation_whose_packet_cannot_be_written_leaves_the
     )
     _block_packet_directory(tmp_path, dependent.id)
 
-    with pytest.raises(FileExistsError):
-        await scheduler_env.scheduler.run_once()
+    await scheduler_env.scheduler.run_once()
 
-    stored = scheduler_env.tasks.get(dependent.id)
-    assert stored is not None
-    assert stored.status is not Status.ESCALATED
-    assert fetch_open_escalations(connection) == []
+    _assert_escalated_despite_packet_failure(scheduler_env, connection, dependent.id)
 
 
-async def test_a_dispatch_escalation_whose_packet_cannot_be_written_leaves_the_task_unescalated(
+async def test_a_dispatch_escalation_whose_packet_cannot_be_written_still_escalates_the_task(
     scheduler_env: SchedulerFixture,
     connection: Connection,
     tmux_server: TmuxServer,
@@ -542,10 +551,6 @@ async def test_a_dispatch_escalation_whose_packet_cannot_be_written_leaves_the_t
     await scheduler_env.scheduler.run_once()
     await scheduler_env.scheduler.run_once()
 
-    with pytest.raises(FileExistsError):
-        await scheduler_env.scheduler.run_once()
+    await scheduler_env.scheduler.run_once()
 
-    stored = scheduler_env.tasks.get(task.id)
-    assert stored is not None
-    assert stored.status is not Status.ESCALATED
-    assert fetch_open_escalations(connection) == []
+    _assert_escalated_despite_packet_failure(scheduler_env, connection, task.id)

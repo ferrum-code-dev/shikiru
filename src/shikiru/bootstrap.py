@@ -21,6 +21,7 @@ from shikiru.engine.daemon import (
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
+from shikiru.engine.evidence import EvidenceCollector
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.handlers import (
     CancelHandler,
@@ -478,6 +479,11 @@ def build_engine(
         trackers=resolved_settings.project.trackers,
     )
     task_finisher = TaskFinisher(sessions, layout, roots)
+    history = ReportHistory(project_root)
+    task_facts = TaskFacts(
+        git_facts=GitFacts(git), project_root=project_root, settings=resolved_settings
+    )
+    evidence = EvidenceCollector(history=history, facts=task_facts, project_root=project_root)
     escalation_raiser = EscalationRaiser(
         escalations_store,
         events,
@@ -485,6 +491,7 @@ def build_engine(
         project_root,
         atomically=lambda: transaction(connection),
         titles=titles,
+        evidence=evidence,
     )
     integrator = _build_integrator(
         project_root=project_root,
@@ -496,10 +503,6 @@ def build_engine(
         tasks=tasks,
         events=events,
         task_finisher=task_finisher,
-    )
-    history = ReportHistory(project_root)
-    task_facts = TaskFacts(
-        git_facts=GitFacts(git), project_root=project_root, settings=resolved_settings
     )
     contexts = TurnContextPreparer(
         history=history,
@@ -537,12 +540,7 @@ def build_engine(
         ),
         facts=task_facts,
         contexts=contexts,
-        escalations=EscalationFiler(
-            raiser=escalation_raiser,
-            history=history,
-            facts=task_facts,
-            project_root=project_root,
-        ),
+        escalations=EscalationFiler(raiser=escalation_raiser, evidence=evidence),
         writer=writer,
         recovery=recovery,
         settings=resolved_settings,

@@ -20,8 +20,11 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.escalations import EscalationRaiser
+from shikiru.engine.evidence import EvidenceCollector
+from shikiru.engine.history import ReportHistory
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.sessions import SessionManager
+from shikiru.engine.task_facts import TaskFacts
 from shikiru.engine.titles import TaskTitles
 from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
@@ -38,6 +41,8 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.session import SessionView
+from shikiru.workspace.facts import GitFacts
+from shikiru.workspace.git import Git
 from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import task_root
 from tests.support.clock import FakeClock
@@ -84,6 +89,19 @@ def build_tmux(tmux_server: TmuxServer) -> Tmux:
     return Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
 
 
+def build_evidence(project_root: Path) -> EvidenceCollector:
+    """An `EvidenceCollector` reading the reports, git facts and turn tails under `project_root`."""
+    return EvidenceCollector(
+        history=ReportHistory(project_root),
+        facts=TaskFacts(
+            git_facts=GitFacts(Git(SubprocessRunner())),
+            project_root=project_root,
+            settings=fake_engine_settings(),
+        ),
+        project_root=project_root,
+    )
+
+
 def build_raiser(
     connection: Connection, clock: Clock, project_root: Path, *, tmux: Tmux | None = None
 ) -> EscalationRaiser:
@@ -97,6 +115,7 @@ def build_raiser(
         project_root,
         atomically=lambda: transaction(connection),
         titles=TaskTitles(decorator, runs, fake_engine_settings()),
+        evidence=build_evidence(project_root),
     )
 
 

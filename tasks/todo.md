@@ -83,7 +83,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 ## Phase 7b — Independent-review remediation (2026-09-30)
 - [x] Task 60: The engine survives tick faults and tmux loss
 - [x] Task 61: Every running task has a live flow
-- [ ] Task 62: Escalation packet failures never kill or wedge the engine
+- [x] Task 62: Escalation packet failures never kill or wedge the engine
 - [ ] Task 63: `supersede` and cancellation never erase unexplained work
 - [ ] Task 64: Operator rung pins survive every transition
 - [ ] Task 65: Holds cover every remaining execution path

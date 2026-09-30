@@ -54,8 +54,13 @@ class Reconciler:
         for task in self._tasks.list_all():
             if task.status in _TERMINAL and task_root(self._project_root, task.id).exists():
                 await self._finish_task(task)
+        await self.restore_escalations()
         for task in active:
+            if task.status in _IN_FLIGHT and not task.held:
+                await self._resume_task(task.id)
+
+    async def restore_escalations(self) -> None:
+        """Give every escalated task an open escalation with its packet on disk (03 §7, §8)."""
+        for task in self._tasks.list_active():
             if task.status is Status.ESCALATED:
                 await self._restore_escalation(task)
-            elif task.status in _IN_FLIGHT and not task.held:
-                await self._resume_task(task.id)

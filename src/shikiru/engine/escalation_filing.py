@@ -1,35 +1,21 @@
-"""Gathers the evidence of a task escalation and files it with the `EscalationRaiser` (03 §8)."""
+"""Files a task flow's escalation with its gathered evidence (03 §8)."""
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import role_dir
 from shikiru.domain.recovery import Failed, ProtocolError, Stalled
 from shikiru.domain.reports import ConsultAnswer, ImplementationReport, Verdict
-from shikiru.domain.steps import ACTING_ROLE
 from shikiru.domain.tasks import EscalationReason
-from shikiru.errors import ShikiruError
-from shikiru.paths import run_dir
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from shikiru.domain.recovery import TurnResult
     from shikiru.domain.steps import Outcome
     from shikiru.domain.tasks import Role, Step, Task
     from shikiru.engine.escalations import EscalationRaiser
-    from shikiru.engine.history import ReportHistory
-    from shikiru.engine.task_facts import TaskFacts
-
-_LOGGER = logging.getLogger(__name__)
-
-ESCALATION_PANE_TAIL_LINES = 60
-"""Lines of pane scrollback captured as escalation evidence (03 §8)."""
-
-FACTS_UNAVAILABLE = "(facts unavailable: {error})"
+    from shikiru.engine.evidence import EvidenceCollector
 
 
 def escalation_narrative(
@@ -70,21 +56,12 @@ def escalation_narrative(
 
 
 class EscalationFiler:
-    """Collects reports, workspace facts and the pane tail, then records the escalation."""
+    """Collects the evidence, then records the escalation."""
 
-    def __init__(
-        self,
-        *,
-        raiser: EscalationRaiser,
-        history: ReportHistory,
-        facts: TaskFacts,
-        project_root: Path,
-    ) -> None:
-        """Record escalations through `raiser` with evidence from the task's files and git."""
+    def __init__(self, *, raiser: EscalationRaiser, evidence: EvidenceCollector) -> None:
+        """Record escalations through `raiser` with evidence from `evidence`."""
         self._raiser = raiser
-        self._history = history
-        self._facts = facts
-        self._project_root = project_root
+        self._evidence = evidence
 
     async def raise_escalation(
         self,
@@ -100,40 +77,15 @@ class EscalationFiler:
     ) -> None:
         """Build the packet and commit `apply_state` with the escalation for a task flow."""
         narrative_question, attempted = escalation_narrative(reason, outcome, result)
-        if question is None:
-            question = narrative_question
-        try:
-            history = self._history.load(task.id)
-        except Exception:
-            _LOGGER.exception("could not load report history for escalation of %s", task.id)
-            history = []
+        evidence = await self._evidence.collect(task, step, role)
         await self._raiser.raise_escalation(
             task,
             step=step,
             reason=reason,
-            question=question,
+            question=narrative_question if question is None else question,
             attempted=attempted,
-            reports=self._history.context(history),
-            facts=await self._workspace_facts(task),
-            view_tail=self._view_tail(task, step, role),
+            reports=evidence.reports,
+            facts=evidence.facts,
+            view_tail=evidence.view_tail,
             apply_state=apply_state,
         )
-
-    async def _workspace_facts(self, task: Task) -> str:
-        if task.repo is None:
-            return ""
-        try:
-            return await self._facts.text(task)
-        except ShikiruError as error:
-            return FACTS_UNAVAILABLE.format(error=error)
-
-    def _view_tail(self, task: Task, step: Step | None, role_override: Role | None) -> str:
-        role = role_override
-        if role is None and step is not None:
-            role = ACTING_ROLE[step]
-        if role is None:
-            return ""
-        path = role_dir(run_dir(self._project_root, task.id), role.value) / "view.jsonl"
-        if not path.is_file():
-            return ""
-        return "\n".join(path.read_text().splitlines()[-ESCALATION_PANE_TAIL_LINES:])

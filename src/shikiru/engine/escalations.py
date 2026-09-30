@@ -11,6 +11,7 @@ another action set to choose from.
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.tasks import Step, Task
+    from shikiru.engine.evidence import EvidenceCollector
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
@@ -140,14 +142,20 @@ class EscalationRaiser:
         *,
         atomically: Callable[[], AbstractContextManager[object]],
         titles: TaskTitles,
+        evidence: EvidenceCollector,
     ) -> None:
-        """Persist through `escalations`/`events` in `atomically`, refresh titles via `titles`."""
+        """Persist through `escalations`/`events` in `atomically`, refresh titles via `titles`.
+
+        `evidence` supplies the recorded reports, facts and turn tail of a restored packet.
+        """
         self._escalations = escalations
         self._events = events
         self._runs = runs
         self._project_root = project_root
         self._atomically = atomically
         self._titles = titles
+        self._evidence = evidence
+        self._unwritable: set[Path] = set()
 
     async def raise_escalation(
         self,
@@ -166,7 +174,9 @@ class EscalationRaiser:
 
         `apply_state` persists the task's escalated state and returns the task as stored. The
         packet file is written first and removed again if the transaction fails, so an escalated
-        task never lacks its escalation. Titles refresh after the commit (03 §8).
+        task never lacks its escalation. A packet that cannot be written does not fail the
+        escalation: the row commits and `restore_packet` rewrites the file once the cause is gone
+        (03 §8). Titles refresh after the commit.
         """
         options = options_for(reason)
         context = PacketContext(
@@ -184,7 +194,8 @@ class EscalationRaiser:
         )
         headline = _headline(context)
         escalation_id = self._escalations.reserve_id()
-        packet_path = self._write_packet(task.id, escalation_id, context)
+        packet_path = self._packet_path(task.id, escalation_id)
+        self._write_packet(task.id, packet_path, context)
         try:
             with self._atomically():
                 updated = apply_state()
@@ -229,40 +240,57 @@ class EscalationRaiser:
                 apply_state=lambda: task,
             )
             return
-        self._restore_missing_packets(task, open_ones)
+        for escalation in self._without_packet(open_ones):
+            context = await self._restored_context(task, escalation)
+            self._write_packet(task.id, Path(escalation.packet_path), context)
 
-    def _restore_missing_packets(self, task: Task, open_ones: Sequence[Escalation]) -> None:
-        for escalation in open_ones:
-            path = Path(escalation.packet_path)
-            if not path.exists():
-                self._write_packet_at(path, self._restored_context(task, escalation))
+    @staticmethod
+    def _without_packet(escalations: Sequence[Escalation]) -> list[Escalation]:
+        return [e for e in escalations if not Path(e.packet_path).exists()]
 
-    def _restored_context(self, task: Task, escalation: Escalation) -> PacketContext:
+    async def _restored_context(self, task: Task, escalation: Escalation) -> PacketContext:
+        evidence = await self._evidence.collect(task, escalation.step)
         return PacketContext(
             task_id=task.id,
             step=escalation.step,
             reason=escalation.reason,
             timeline=self._timeline(task.id),
             attempted=RESTORED_PACKET_ATTEMPTED,
-            reports="",
-            facts="",
-            view_tail="",
+            reports=self._reports_evidence(evidence.reports),
+            facts=evidence.facts,
+            view_tail=evidence.view_tail,
             sessions=self._sessions_evidence(task.id),
             question=escalation.headline,
             options=escalation.options,
         )
 
-    def _write_packet(self, task_id: str, escalation_id: str, context: PacketContext) -> Path:
-        path = self._packet_path(task_id, escalation_id)
-        self._write_packet_at(path, context)
-        return path
+    def _write_packet(self, task_id: str, path: Path, context: PacketContext) -> None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(path.name + PACKET_TEMPORARY_SUFFIX)
+            try:
+                temporary.write_text(render_packet(context))
+                temporary.replace(path)
+            except OSError:
+                with suppress(OSError):
+                    temporary.unlink(missing_ok=True)
+                raise
+        except OSError as error:
+            self._report_unwritable(task_id, path, error)
+        else:
+            self._unwritable.discard(path)
 
-    @staticmethod
-    def _write_packet_at(path: Path, context: PacketContext) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(path.name + PACKET_TEMPORARY_SUFFIX)
-        temporary.write_text(render_packet(context))
-        temporary.replace(path)
+    def _report_unwritable(self, task_id: str, path: Path, error: OSError) -> None:
+        if path in self._unwritable:
+            return
+        self._unwritable.add(path)
+        _LOGGER.error("escalation packet %s could not be written", path, exc_info=error)
+        self._events.append(
+            EventKind.ENGINE_FAULT,
+            task_id=task_id,
+            message=f"escalation packet {path.name} could not be written: {error}",
+            data={"error": type(error).__name__, "recoverable": True, "packet": str(path)},
+        )
 
     async def _refresh_titles(self, task: Task) -> None:
         try:

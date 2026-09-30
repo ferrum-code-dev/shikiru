@@ -11,6 +11,7 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.tasks import Role
 from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import EscalationRaiser
+from shikiru.engine.evidence import EvidenceCollector
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import (
@@ -131,6 +132,13 @@ def build_flow(
     resolved_turn_clock = turn_clock if turn_clock is not None else flow_clock
     system = env.build_turn_system(settings, clock=resolved_turn_clock)
     escalations_store = EscalationStore(env.connection, flow_clock)
+    history = ReportHistory(env.project_root)
+    facts = TaskFacts(
+        git_facts=GitFacts(Git(SubprocessRunner())),
+        project_root=env.project_root,
+        settings=settings,
+    )
+    evidence = EvidenceCollector(history=history, facts=facts, project_root=env.project_root)
     escalations = EscalationRaiser(
         escalations_store,
         system.events,
@@ -138,6 +146,7 @@ def build_flow(
         env.project_root,
         atomically=lambda: transaction(env.connection),
         titles=system.titles,
+        evidence=evidence,
     )
     coordinator = _NoOpIntegrationCoordinator()
     if local_integration or strategy is not None:
@@ -166,12 +175,6 @@ def build_flow(
             events=system.events,
             finish_task=finish_task,
         )
-    history = ReportHistory(env.project_root)
-    facts = TaskFacts(
-        git_facts=GitFacts(Git(SubprocessRunner())),
-        project_root=env.project_root,
-        settings=settings,
-    )
     contexts = TurnContextPreparer(
         history=history,
         escalation_store=escalations_store,
@@ -189,12 +192,7 @@ def build_flow(
         turns=system.turns,
         facts=facts,
         contexts=contexts,
-        escalations=EscalationFiler(
-            raiser=escalations,
-            history=history,
-            facts=facts,
-            project_root=env.project_root,
-        ),
+        escalations=EscalationFiler(raiser=escalations, evidence=evidence),
         writer=writer,
         recovery=TurnRecovery(
             tasks=env.tasks,

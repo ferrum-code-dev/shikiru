@@ -505,8 +505,8 @@ Refs: 03 §2, §7, §10; invariant 5.
 
 ### Task 62: Escalation packet failures never kill or wedge the engine
 Refs: 03 §8; invariant 5.
-- [ ] A failure writing an escalation packet (unwritable directory, disk full) is handled at every call site (`TaskFlow`, scheduler dispatch and dependency escalations, reconciliation): the engine keeps running, the task remains actionable (the escalation is retried on the next tick or the task stays `escalated` with its row), and the failure is logged and shown as an `engine_error`; a restart does not fail the same way forever.
-- [ ] A packet restored from durable state carries the recorded reports, facts and turn tail that still exist, not only the headline question.
+- [x] A failure writing an escalation packet (unwritable directory, disk full) is handled at every call site (`TaskFlow`, scheduler dispatch and dependency escalations, reconciliation): the engine keeps running, the task remains actionable (the escalation is retried on the next tick or the task stays `escalated` with its row), and the failure is logged and shown as an `engine_error`; a restart does not fail the same way forever.
+- [x] A packet restored from durable state carries the recorded reports, facts and turn tail that still exist, not only the headline question.
 - Tests: integration: failure after the state write inside the transaction, failure while writing the packet on the flow path, the scheduler path and reconcile; recovery after the failure is removed ends with an open, actionable escalation with its evidence.
 
 ### Task 63: `supersede` and cancellation never erase unexplained work

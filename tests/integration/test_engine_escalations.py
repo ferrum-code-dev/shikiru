@@ -8,22 +8,34 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.agents.contracts import Rung
+from shikiru.agents.contracts import Rung, role_dir
 from shikiru.clock import SystemClock
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, ReportKind
+from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.tasks import EscalationReason, Role, Step
 from shikiru.engine.escalations import PacketContext, render_packet
+from shikiru.errors import ShikiruError
+from shikiru.paths import run_dir, turns_dir
 from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
+from shikiru.store.tasks import TaskStore
 from tests.support.engine import build_raiser
+from tests.support.factories import make_verdict
 from tests.support.store import seed_task
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from shikiru.domain.escalation import Escalation
+    from shikiru.domain.tasks import Task
+    from shikiru.engine.escalations import EscalationRaiser
     from tests.support.store import Connection
 
 _STAR = "★"
+_STATE_FAILURE = "state write failed"
 
 
 def _context_for(reason: EscalationReason) -> PacketContext:
@@ -107,27 +119,81 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     assert len(raised_events) == 1
 
 
-async def test_packet_creation_failure_does_not_open_an_empty_escalation(
+async def _raise(
+    raiser: EscalationRaiser, task: Task, apply_state: Callable[[], Task]
+) -> Escalation:
+    return await raiser.raise_escalation(
+        task,
+        step=Step.VERIFY,
+        reason=EscalationReason.DECISION_REQUIRED,
+        question="What next?",
+        attempted="Nothing yet.",
+        reports=(),
+        facts="",
+        view_tail="",
+        apply_state=apply_state,
+    )
+
+
+async def test_a_failure_after_the_state_write_rolls_back_state_row_event_and_packet(
     connection: Connection, tmp_path: Path
 ) -> None:
     clock = SystemClock()
+    tasks = TaskStore(connection, clock)
+    raiser = build_raiser(connection, clock, tmp_path)
+    task = seed_task(connection, clock, title="State failure")
+
+    def write_then_fail() -> Task:
+        tasks.set_wait_reason(task.id, WaitReason.DEPENDENCY)
+        raise ShikiruError(_STATE_FAILURE)
+
+    with pytest.raises(ShikiruError, match=_STATE_FAILURE):
+        await _raise(raiser, task, write_then_fail)
+
+    stored = tasks.get(task.id)
+    assert stored is not None
+    assert stored.wait_reason is None
+    assert fetch_open_escalations(connection) == []
+    assert not await asyncio.to_thread(
+        lambda: list((run_dir(tmp_path, task.id) / "escalations").glob("*"))
+    )
+    events = EventLog(connection, clock)
+    assert events.since(0, kinds=[EventKind.ESCALATION], task_id=task.id) == []
+
+
+async def test_an_unwritable_packet_directory_still_escalates_and_the_packet_follows_the_repair(
+    connection: Connection, tmp_path: Path
+) -> None:
+    clock = SystemClock()
+    events = EventLog(connection, clock)
     raiser = build_raiser(connection, clock, tmp_path)
     task = seed_task(connection, clock, title="Packet failure")
-    blocked_parent = tmp_path / ".shikiru" / "runs" / task.id / "escalations"
-    blocked_parent.parent.mkdir(parents=True)
-    blocked_parent.write_text("not a directory")
+    root = run_dir(tmp_path, task.id)
+    blocked = root / "escalations"
+    blocked.parent.mkdir(parents=True)
+    blocked.write_text("not a directory")
+    turn = turns_dir(tmp_path, task.id) / "001-verify"
+    turn.mkdir(parents=True)
+    (turn / REPORT_KIND_FILENAME).write_text(ReportKind.VERDICT.value)
+    (turn / REPORT_FILENAME).write_text(make_verdict("changes_requested").model_dump_json())
+    view = role_dir(root, Role.LEADER.value) / "view.jsonl"
+    view.parent.mkdir(parents=True)
+    view.write_text('{"signal":"TurnEnded","last_message":"kept evidence"}\n')
 
-    with pytest.raises(FileExistsError):
-        await raiser.raise_escalation(
-            task,
-            step=Step.VERIFY,
-            reason=EscalationReason.DECISION_REQUIRED,
-            question="What next?",
-            attempted="Nothing yet.",
-            reports=(),
-            facts="",
-            view_tail="",
-            apply_state=lambda: task,
-        )
+    escalation = await _raise(raiser, task, lambda: task)
+    for _ in range(3):
+        await raiser.ensure_actionable(task)
 
-    assert fetch_open_escalations(connection) == []
+    assert [e.id for e in fetch_open_escalations(connection)] == [escalation.id]
+    faults = events.since(0, kinds=[EventKind.ENGINE_FAULT], task_id=task.id)
+    assert len(faults) == 1
+    assert faults[0].data["recoverable"] is True
+    assert not await asyncio.to_thread(Path(escalation.packet_path).exists)
+
+    blocked.unlink()
+    await raiser.ensure_actionable(task)
+
+    packet = await asyncio.to_thread(Path(escalation.packet_path).read_text)
+    assert "Missing tests" in packet
+    assert "kept evidence" in packet
+    assert len(fetch_open_escalations(connection)) == 1
