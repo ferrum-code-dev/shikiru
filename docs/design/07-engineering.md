@@ -99,3 +99,14 @@ Plugin offline checks replay protocol fixtures committed under `tests/fixtures/a
 - quota wait and resume, unavailable backoff, ladder moves;
 - turn process exiting without a result, stall stop and resume, failure classification by the Helper, report rebuild;
 - PR strategy, plan mode, remote attach argv, pane restoration, take over and hand back, queued `say`.
+
+**Platforms and the clean-install smoke**:
+
+`scripts/release-readiness-smoke.sh` installs the checkout into a disposable HOME and runs the CLI flows with the fake agent on a private tmux socket. It feature-detects the platform: util-linux `script -q -e -c` versus BSD `script -q FILE cmd` (`script --version`), `sha256sum` versus `shasum -a 256`, and a `PATH` made of the directories of `uv`, `tmux`, `git` and `python3` plus `getconf PATH`. Its scratch directory is `/tmp` unless `SHIKIRU_SMOKE_TMPDIR` is set: it must stay short because the private tmux socket path has to stay under about 100 characters (the OS limit is 104 on macOS and 108 on Linux), and the script refuses to run when it would not.
+
+| Platform | Status |
+|---|---|
+| macOS | Verified: the smoke passes; `poe check` runs here |
+| GNU/Linux | The script is written for it but NOT verified by a run |
+
+Linux notes from the code: process identity compares `psutil` start times with a tolerance because they derive from the boot time there and move when the clock is stepped (`ProcessIdentity.matches`); tmux ≥ 3.4 and git ≥ 2.45 apply on both platforms.

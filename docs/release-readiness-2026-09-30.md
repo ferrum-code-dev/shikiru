@@ -73,8 +73,9 @@ Source: `/tmp/shikiru-review-2026-09-29.md` (review of `e56832b`).
 6. A persistent escalation-packet write failure leaves the task running idle until restart, and a packet restored after a restart lacks the original reports and facts (it is rebuilt from the timeline, sessions and escalation row).
 7. Resolved (Task 68): the two E2E tests use `CPU_UNCAPPED_PCT` like the integration tests.
 8. Command acknowledgement is not in the same transaction as the command's effect; replay is idempotent by command id, which makes this safe.
-9. The clean-install smoke is macOS-only; Linux was not verified.
+9. The clean-install smoke is written for macOS and GNU/Linux (Task 70: `script` invocation, `sha256sum`/`shasum`, PATH built from the environment, `SHIKIRU_SMOKE_TMPDIR`). It passed on macOS after that change; Linux has NOT been verified by a run.
 10. F22 kept the literal and no-comment conventions, pending owner decision.
+11. **Open item, owner decision needed: no LICENSE.** The repository has no LICENSE file and no `license` field in `pyproject.toml`. A license must be chosen and added before any public distribution.
 
 ## Do all design sections agree with the code?
 

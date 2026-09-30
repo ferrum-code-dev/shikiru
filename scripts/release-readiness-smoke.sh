@@ -7,11 +7,14 @@ UV_BIN="$(command -v uv)"
 TMUX_BIN="$(command -v tmux)"
 GIT_BIN="$(command -v git)"
 PYTHON_BIN="$(command -v python3)"
+SCRIPT_BIN="$(command -v script)"
+SMOKE_TMPDIR="${SHIKIRU_SMOKE_TMPDIR:-/tmp}"
+SOCKET_PATH_LIMIT=100
 DATE="$(date +%F)"
 ARTIFACT_DIR="$ROOT/build/release-readiness"
 ARTIFACT="$ARTIFACT_DIR/clean-install-$DATE.json"
 LOG="$ARTIFACT_DIR/clean-install-$DATE.log"
-RUN_ROOT="$(mktemp -d /tmp/shikiru-release-smoke.XXXXXX)"
+RUN_ROOT="$(mktemp -d "$SMOKE_TMPDIR/shikiru-release-smoke.XXXXXX")"
 HOME_DIR="$RUN_ROOT/home"
 CACHE_DIR="$RUN_ROOT/cache"
 TOOL_DIR="$RUN_ROOT/uv/tools"
@@ -25,12 +28,30 @@ HOME_DASHBOARD_CHECK="not run"
 PICKER_CHECK="not run"
 SMALL_CLIENT_SIZE="not run"
 
+sha256() {
+    if command -v sha256sum > /dev/null; then
+        sha256sum "$@"
+    else
+        shasum -a 256 "$@"
+    fi
+}
+
 mkdir -p "$ARTIFACT_DIR" "$HOME_DIR" "$CACHE_DIR/xdg" "$CACHE_DIR/config" \
     "$CACHE_DIR/data" "$CACHE_DIR/state" "$CACHE_DIR/uv" "$TOOL_DIR" "$TOOL_BIN_DIR" \
     "$TMUX_TMPDIR" "$TMUX_SHIM_DIR" "$RUN_ROOT/tmp"
 : > "$LOG"
 
-PATH="$TOOL_BIN_DIR:$TMUX_SHIM_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+TOOL_PATH=""
+for tool in "$UV_BIN" "$TMUX_BIN" "$GIT_BIN" "$PYTHON_BIN"; do
+    TOOL_PATH="$TOOL_PATH:$(dirname "$tool")"
+done
+PATH="$TOOL_BIN_DIR:$TMUX_SHIM_DIR$TOOL_PATH:$(getconf PATH)"
+SOCKET_PATH="$TMUX_TMPDIR/tmux-$(id -u)/$SOCKET_NAME"
+if (( ${#SOCKET_PATH} > SOCKET_PATH_LIMIT )); then
+    printf 'tmux socket path is %d characters, over %d; set SHIKIRU_SMOKE_TMPDIR to a shorter directory\n' \
+        "${#SOCKET_PATH}" "$SOCKET_PATH_LIMIT" >&2
+    exit 1
+fi
 RUNTIME_ENV=(
     "HOME=$HOME_DIR"
     "XDG_CACHE_HOME=$CACHE_DIR/xdg"
@@ -123,12 +144,12 @@ finish() {
     SOURCE_FINGERPRINT="$(
         {
             "$GIT_BIN" -C "$ROOT" diff HEAD --binary
-            shasum -a 256 "$ROOT/scripts/release-readiness-smoke.sh"
-            shasum -a 256 "$ROOT/tests/support/release_wait.py"
+            sha256 "$ROOT/scripts/release-readiness-smoke.sh"
+            sha256 "$ROOT/tests/support/release_wait.py"
             if [[ -f "$ROOT/docs/release-readiness-2026-09-29.md" ]]; then
-                shasum -a 256 "$ROOT/docs/release-readiness-2026-09-29.md"
+                sha256 "$ROOT/docs/release-readiness-2026-09-29.md"
             fi
-        } | shasum -a 256 | awk '{print $1}'
+        } | sha256 | awk '{print $1}'
     )"
     SMOKE_EXIT_STATUS="$exit_status" "$PYTHON_BIN" - "$ARTIFACT" "$DATE" "$SOURCE_COMMIT" "$SOURCE_FINGERPRINT" "$SMOKE_STAGE" "$HOME_DASHBOARD_CHECK" "$PICKER_CHECK" "$SMALL_CLIENT_SIZE" <<'PY'
 import json
@@ -377,8 +398,13 @@ tmux_run detach-client -t "$SMALL_CLIENT"
 PICKER_CHECK="normal 120x38 displayed both rows and Escape cancelled; small 68x16 scrolled to and attached the second row"
 
 ATTACH_LOG="$RUN_ROOT/attach.log"
-env -i "${RUNTIME_ENV[@]}" /usr/bin/script -q "$ATTACH_LOG" "$TOOL_BIN" --project "$WORK_PROJECT" attach quickstart \
-    > "$RUN_ROOT/attach-driver.log" 2>&1 &
+ATTACH_COMMAND=("$TOOL_BIN" --project "$WORK_PROJECT" attach quickstart)
+if "$SCRIPT_BIN" --version > /dev/null 2>&1; then
+    ATTACH_PTY=("$SCRIPT_BIN" -q -e -c "$(printf '%q ' "${ATTACH_COMMAND[@]}")" "$ATTACH_LOG")
+else
+    ATTACH_PTY=("$SCRIPT_BIN" -q "$ATTACH_LOG" "${ATTACH_COMMAND[@]}")
+fi
+env -i "${RUNTIME_ENV[@]}" "${ATTACH_PTY[@]}" > "$RUN_ROOT/attach-driver.log" 2>&1 &
 ATTACH_PID=$!
 ATTACH_CLIENT="$(wait_for_client '=[shikiru] quickstart')"
 [[ -n "$ATTACH_CLIENT" ]]

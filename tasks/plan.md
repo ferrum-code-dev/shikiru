@@ -557,9 +557,9 @@ Refs: 04 §6, 06 §5.7; F02.
 
 ### Task 70: Trust boundary, permissions and platform support
 Refs: 01, 04 §4–5, README.
-- [ ] The trust boundary is documented in README and the design: Claude runs in `bypassPermissions` by default, Codex gets the shared `.git` as a writable root, worktree isolation is a prompt convention; use only on repositories and hosts the operator trusts.
-- [ ] State, run and log directories are created private (owner-only); log and run growth is bounded by a documented, configured retention or explicitly documented as unbounded.
-- [ ] `scripts/release-readiness-smoke.sh` is written for both macOS and GNU/Linux (`script` invocation, `sha256sum`/`shasum`, `PATH` not hard-coded, `TMPDIR`-aware short socket path) and the design states which platforms are verified: macOS yes; Linux only if a run is actually made (say so). No LICENSE is added: that is the owner's choice and is listed in the release notes as open.
+- [x] The trust boundary is documented in README and the design: Claude runs in `bypassPermissions` by default, Codex gets the shared `.git` as a writable root, worktree isolation is a prompt convention; use only on repositories and hosts the operator trusts.
+- [x] State, run and log directories are created private (owner-only); log and run growth is bounded by a documented, configured retention or explicitly documented as unbounded.
+- [x] `scripts/release-readiness-smoke.sh` is written for both macOS and GNU/Linux (`script` invocation, `sha256sum`/`shasum`, `PATH` not hard-coded, `TMPDIR`-aware short socket path) and the design states which platforms are verified: macOS yes; Linux only if a run is actually made (say so). No LICENSE is added: that is the owner's choice and is listed in the release notes as open.
 - Tests: integration for directory modes; the smoke re-run on macOS.
 
 ### Task 71: Comment rule and lint claims (F22 decision, F20)

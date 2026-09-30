@@ -63,6 +63,12 @@ Shikiru runs AI agents unattended with your user's privileges. Use it only on re
 
 Logs and run files live under `.shikiru/`. The engine log rotates by size (`[logging]` in the config, 10 MiB and 3 backups by default). Run directories (`.shikiru/runs/`: prompts, reports, raw agent output and transcripts) are not pruned and grow with the work done; Shikiru has no pruning command, so delete the directories of finished tasks yourself when space matters.
 
+## Platform support
+
+- macOS is verified: `uv run poe check` and `scripts/release-readiness-smoke.sh` run there.
+- GNU/Linux: the smoke script is written for it but NOT verified by a run. Process identity uses `psutil` start times with a tolerance for clock steps on Linux.
+- tmux 3.4+ and git 2.45+ on both. The smoke keeps its scratch directory under a short path (`/tmp`, or `SHIKIRU_SMOKE_TMPDIR`) because the private tmux socket path must stay under about 100 characters.
+
 ## Documentation
 
 - Design: [`docs/design`](docs/design/README.md)
