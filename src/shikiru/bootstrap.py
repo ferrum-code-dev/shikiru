@@ -18,6 +18,7 @@ from shikiru.engine.daemon import (
     engine_is_running,
 )
 from shikiru.engine.dependency import DependencyEscalator
+from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.handlers import (
@@ -511,7 +512,12 @@ def build_engine(
             settings=resolved_settings,
             project_root=project_root,
         ),
-        escalations=escalation_raiser,
+        escalations=EscalationFiler(
+            raiser=escalation_raiser,
+            history=history,
+            facts=task_facts,
+            project_root=project_root,
+        ),
         titles=titles,
         settings=resolved_settings,
         project_root=project_root,

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import FailureKind, role_dir
+from shikiru.agents.contracts import FailureKind
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.recovery import (
@@ -50,12 +50,10 @@ from shikiru.engine.events import emit_step_started
 from shikiru.engine.history import ENGINE_VERDICT_FILENAME, ReportHistory
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
 from shikiru.errors import ShikiruError, UsageError
-from shikiru.paths import run_dir
 
 _LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from shikiru.agents.contracts import Rung, Usage
@@ -63,7 +61,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.domain.steps import Outcome
     from shikiru.domain.tasks import Task
-    from shikiru.engine.escalations import EscalationRaiser
+    from shikiru.engine.escalation_filing import EscalationFiler
     from shikiru.engine.sessions import SessionManager
     from shikiru.engine.task_facts import TaskFacts
     from shikiru.engine.titles import TaskTitles
@@ -76,10 +74,6 @@ if TYPE_CHECKING:
     from shikiru.store.tasks import TaskStore
 
 
-ESCALATION_PANE_TAIL_LINES = 60
-"""Lines of pane scrollback captured as escalation evidence (03 §8)."""
-
-FACTS_UNAVAILABLE = "(facts unavailable: {error})"
 UNCOMMITTED_SUMMARY = "The workspace has uncommitted changes, so it cannot be integrated."
 UNCOMMITTED_ISSUE = (
     "Uncommitted changes in the workspace: {paths}. "
@@ -128,42 +122,6 @@ def _usage_delta(before: Usage, after: Usage) -> dict[str, int | float | None]:
     }
 
 
-def _escalation_narrative(
-    reason: EscalationReason,
-    outcome: Outcome | None,
-    result: TurnResult | None = None,
-) -> tuple[str, str]:
-    question = "An Operator decision is needed to continue."
-    attempted = "Automatic recovery has no option left"
-    if reason is EscalationReason.ITERATIONS_EXHAUSTED:
-        question = "The final round still requested changes; choose accept, supersede or cancel."
-        attempted = "Implement and verify cycled to the configured iteration limit."
-    elif reason is EscalationReason.ENGINE_ERROR:
-        attempted = "The engine raised an error no automatic recovery covers."
-    elif isinstance(outcome, ConsultAnswer) and outcome.escalation is not None:
-        question = outcome.escalation.question
-        attempted = "The Leader escalated during a consult turn."
-    elif isinstance(outcome, Verdict) and outcome.escalation is not None:
-        question = outcome.escalation.question
-        attempted = "The Leader escalated during verification."
-    elif isinstance(outcome, ImplementationReport):
-        question = outcome.question
-        attempted = "The Implementer's question exceeded the consult limit."
-    elif isinstance(result, Failed):
-        question = result.message
-        attempted = f"The agent reported a {result.kind.value} failure."
-    elif isinstance(result, Stalled):
-        question = "The agent's turn stream stopped progressing."
-        attempted = "Automatic stall recovery was exhausted."
-    elif isinstance(result, ProtocolError):
-        question = "The agent did not produce a valid report."
-        attempted = "The Helper could not rebuild it."
-    elif result is not None:
-        question = "The agent session could not continue."
-        attempted = f"Recovery ended with {type(result).__name__}."
-    return question, attempted
-
-
 @dataclass
 class _TurnExecution:
     result: TurnResult
@@ -188,7 +146,7 @@ class TaskFlow:
         turns: TurnRunner,
         facts: TaskFacts,
         contexts: TurnContextPreparer,
-        escalations: EscalationRaiser,
+        escalations: EscalationFiler,
         titles: TaskTitles,
         settings: Settings,
         project_root: Path,
@@ -602,60 +560,6 @@ class TaskFlow:
         data.update({"step": step.value, "result": type(result).__name__})
         self._events.append(EventKind.TURN_FAILED, task_id=task.id, message=message, data=data)
 
-    async def raise_escalation(
-        self,
-        task: Task,
-        step: Step | None,
-        reason: EscalationReason,
-        outcome: Outcome | None,
-        *,
-        question: str | None = None,
-        result: TurnResult | None = None,
-        role: Role | None = None,
-        apply_state: Callable[[], Task],
-    ) -> None:
-        """Build the packet and commit `apply_state` with the escalation for a task flow."""
-        narrative_question, attempted = _escalation_narrative(reason, outcome, result)
-        if question is None:
-            question = narrative_question
-        try:
-            history = self._history.load(task.id)
-        except Exception:
-            _LOGGER.exception("could not load report history for escalation of %s", task.id)
-            history = []
-        await self._escalations.raise_escalation(
-            task,
-            step=step,
-            reason=reason,
-            question=question,
-            attempted=attempted,
-            reports=self._history.context(history),
-            facts=await self._escalation_facts(task),
-            view_tail=await self._view_tail(task, step, role_override=role),
-            apply_state=apply_state,
-        )
-
-    async def _escalation_facts(self, task: Task) -> str:
-        if task.repo is None:
-            return ""
-        try:
-            return await self._facts.text(task)
-        except ShikiruError as error:
-            return FACTS_UNAVAILABLE.format(error=error)
-
-    async def _view_tail(
-        self, task: Task, step: Step | None, *, role_override: Role | None = None
-    ) -> str:
-        role = role_override
-        if role is None and step is not None:
-            role = ACTING_ROLE[step]
-        if role is None:
-            return ""
-        path = role_dir(run_dir(self._project_root, task.id), role.value) / "view.jsonl"
-        if not path.is_file():
-            return ""
-        return "\n".join(path.read_text().splitlines()[-ESCALATION_PANE_TAIL_LINES:])
-
     async def _run_turn(
         self,
         task: Task,
@@ -884,7 +788,7 @@ class TaskFlow:
         if transition.status is not Status.ESCALATED or transition.escalation_reason is None:
             message = f"{task.id} escalation has no escalated status or reason"
             raise ShikiruError(message)
-        await self.raise_escalation(
+        await self._escalations.raise_escalation(
             task,
             transition.step,
             transition.escalation_reason,

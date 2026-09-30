@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from shikiru.config.settings import AgentConfig, RepoConfig
 from shikiru.domain.commands import Submit
 from shikiru.domain.tasks import Role
+from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.history import ReportHistory
@@ -182,7 +183,12 @@ def build_flow(
             settings=settings,
             project_root=env.project_root,
         ),
-        escalations=escalations,
+        escalations=EscalationFiler(
+            raiser=escalations,
+            history=history,
+            facts=facts,
+            project_root=env.project_root,
+        ),
         titles=system.titles,
         settings=settings,
         project_root=env.project_root,
