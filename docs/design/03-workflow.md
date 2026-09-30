@@ -211,6 +211,7 @@ Integration itself never discards work: at its entry, and again before the strat
    - **`LocalMerge`** (`integration = "merge"`):
      - Pre-check: `merge-base --is-ancestor base branch`, and, if `base` is checked out in the main checkout, no overlap between its dirty paths and the changed paths.
      - If a check fails: retry every `INTEGRATION_RETRY` (2 min) for up to `timeouts.integration_wait`, then `integration_blocked`.
+     - The wait is never silent: when it begins because the checkout is dirty on paths the merge touches, one `integration_waiting` event (task id, `paths` = the blocking dirty paths) is recorded and notified (06 §5.7). It is recorded once per merge attempt, not per retry; a base that moved past the branch does not record it. An agent that wrote into the operator's checkout instead of its worktree shows up this way: Shikiru cannot attribute checkout edits to an agent (the operator edits it too), so it has no separate detector.
      - Then: `git merge --ff-only` if `base` is checked out, else `git update-ref refs/heads/<base> <new> <old>`.
      - Every mutating git call of the engine (merge, rebase, apply, commit, worktree add/remove, branch delete, update-ref, fetch, push) is stopped gracefully on cancellation: SIGTERM, which git handles by removing its own lock files, then SIGKILL after `GIT_STOP_GRACE`. A killed git would leave `index.lock` or a half-updated tree in the operator's checkout, which a later run would see as a dirty overlap.
    - **`PullRequest`** (`integration = "pr"`):

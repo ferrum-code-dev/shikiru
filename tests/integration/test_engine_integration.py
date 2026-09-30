@@ -23,6 +23,7 @@ from shikiru.engine.integration import (
     MergeRequest,
     UncommittedWork,
 )
+from shikiru.engine.notifier import Notifier
 from shikiru.errors import CommandFailed
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
@@ -58,9 +59,15 @@ async def _repo(path: Path, filename: str = "README.md") -> Path:
     return path
 
 
-def _local_merge(project_root: Path, clock: Clock, integration_wait: int) -> LocalMerge:
+def _local_merge(
+    project_root: Path, clock: Clock, integration_wait: int, events: EventLog
+) -> LocalMerge:
     return LocalMerge(
-        Git(_RUNNER), clock, project_root=project_root, integration_wait=integration_wait
+        Git(_RUNNER),
+        clock,
+        events=events,
+        project_root=project_root,
+        integration_wait=integration_wait,
     )
 
 
@@ -104,9 +111,9 @@ async def test_local_merge_fast_forwards_base_and_reports_commits(
     (task_root / "README.md").write_text("task\n")
     await commit_all(_RUNNER, task_root, "task change")
 
-    result = await _local_merge(project_root, SystemClock(), 1).merge(
-        _request(task, state, task_root)
-    )
+    result = await _local_merge(
+        project_root, SystemClock(), 1, EventLog(connection, SystemClock())
+    ).merge(_request(task, state, task_root))
 
     assert (project_root / "README.md").read_text() == "task\n"
     assert result
@@ -123,9 +130,9 @@ async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
     (task_root / "README.md").write_text("release task\n")
     await commit_all(_RUNNER, task_root, "release change")
 
-    result = await _local_merge(project_root, SystemClock(), 1).merge(
-        _request(task, state, task_root)
-    )
+    result = await _local_merge(
+        project_root, SystemClock(), 1, EventLog(connection, SystemClock())
+    ).merge(_request(task, state, task_root))
 
     assert result
     assert await Git(_RUNNER).rev_parse(project_root, "release") == await Git(_RUNNER).rev_parse(
@@ -145,7 +152,9 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
     (project_root / "README.md").write_text("operator\n")
     clock = FakeClock(TASK_CREATED_AT)
     merge_task = asyncio.create_task(
-        _local_merge(project_root, clock, 300).merge(_request(task, state, task_root))
+        _local_merge(project_root, clock, 300, EventLog(connection, clock)).merge(
+            _request(task, state, task_root)
+        )
     )
     await wait_until(clock.has_pending_sleep, timeout=5)
     (project_root / "README.md").write_text("base\n")
@@ -160,6 +169,41 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
     assert (project_root / "README.md").read_text() == "task\n"
 
 
+async def test_local_merge_records_one_notified_event_naming_the_blocking_paths(
+    connection: Connection, tmp_path: Path
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, state = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    (task_root / "README.md").write_text("task\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (project_root / "README.md").write_text("operator\n")
+    clock = FakeClock(TASK_CREATED_AT)
+    events = EventLog(connection, clock)
+    merge_task = asyncio.create_task(
+        _local_merge(project_root, clock, 600, events).merge(_request(task, state, task_root))
+    )
+
+    for _ in range(3):
+        await wait_until(clock.has_pending_sleep, timeout=5)
+        clock.advance(120)
+    await wait_until(clock.has_pending_sleep, timeout=5)
+
+    waiting = events.since(0, kinds=[EventKind.INTEGRATION_WAITING])
+    assert len(waiting) == 1
+    assert waiting[0].task_id == task.id
+    assert waiting[0].data["paths"] == ["README.md"]
+    assert "README.md" in waiting[0].message
+    assert Notifier.wants(waiting[0])
+    (project_root / "README.md").write_text("base\n")
+    await _RUNNER.run(
+        ["git", "restore", "--", "README.md"], cwd=project_root, timeout=10, check=True
+    )
+    clock.advance(120)
+    assert await merge_task
+    assert len(events.since(0, kinds=[EventKind.INTEGRATION_WAITING])) == 1
+
+
 async def test_local_merge_escalates_when_dirty_overlap_never_clears(
     connection: Connection, tmp_path: Path
 ) -> None:
@@ -172,9 +216,9 @@ async def test_local_merge_escalates_when_dirty_overlap_never_clears(
     clock = FakeClock(TASK_CREATED_AT)
     integration_wait_seconds = 120
     merge_task = asyncio.create_task(
-        _local_merge(project_root, clock, integration_wait_seconds).merge(
-            _request(task, state, task_root)
-        )
+        _local_merge(
+            project_root, clock, integration_wait_seconds, EventLog(connection, clock)
+        ).merge(_request(task, state, task_root))
     )
 
     await wait_until(clock.has_pending_sleep, timeout=5)
@@ -218,7 +262,9 @@ async def test_local_merge_waits_for_a_dirty_directory_ancestor(
     await init_repo(_RUNNER, dirty_directory)
     clock = FakeClock(TASK_CREATED_AT)
     merge_task = asyncio.create_task(
-        _local_merge(project_root, clock, 300).merge(_request(task, state, task_root))
+        _local_merge(project_root, clock, 300, EventLog(connection, clock)).merge(
+            _request(task, state, task_root)
+        )
     )
     await wait_until(clock.has_pending_sleep, timeout=5)
     shutil.rmtree(dirty_directory)
@@ -243,7 +289,9 @@ async def test_local_merge_blocks_when_base_moved_past_the_rebased_branch(
     base_sha = await Git(_RUNNER).rev_parse(project_root, "main")
 
     with pytest.raises(IntegrationBlocked):
-        await _local_merge(project_root, SystemClock(), 0).merge(_request(task, state, task_root))
+        await _local_merge(
+            project_root, SystemClock(), 0, EventLog(connection, SystemClock())
+        ).merge(_request(task, state, task_root))
 
     assert await Git(_RUNNER).rev_parse(project_root, "main") == base_sha
 
@@ -288,7 +336,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
 
     result = await Integrator(
         git=Git(_RUNNER),
-        strategy=_local_merge(project_root, SystemClock(), 1),
+        strategy=_local_merge(project_root, SystemClock(), 1, events),
         lock=asyncio.Lock(),
         project_root=project_root,
         tasks=tasks,
@@ -321,7 +369,7 @@ def _integrator(connection: Connection, project_root: Path) -> Integrator:
 
     return Integrator(
         git=Git(_RUNNER),
-        strategy=_local_merge(project_root, SystemClock(), 0),
+        strategy=_local_merge(project_root, SystemClock(), 0, EventLog(connection, SystemClock())),
         lock=asyncio.Lock(),
         project_root=project_root,
         tasks=TaskStore(connection, SystemClock()),

@@ -129,6 +129,12 @@ class _PrecheckFailed(Exception):
     pass
 
 
+class _CheckoutDirty(_PrecheckFailed):
+    def __init__(self, paths: tuple[str, ...]) -> None:
+        super().__init__(", ".join(paths))
+        self.paths = paths
+
+
 type ContinueRebase = Callable[[], Awaitable[None]]
 type ConflictResolver = Callable[
     [Task, ContinueRebase], Awaitable[tuple[Task, IntegrationMetadata]]
@@ -182,11 +188,21 @@ class LocalMerge:
     """Apply a rebased branch locally using fast-forward or a compare-and-swap ref update."""
 
     def __init__(
-        self, git: Git, clock: Clock, *, project_root: Path, integration_wait: int
+        self,
+        git: Git,
+        clock: Clock,
+        *,
+        events: EventLog,
+        project_root: Path,
+        integration_wait: int,
     ) -> None:
-        """Use `git` on `project_root` for repository operations and `clock` for retry deadlines."""
+        """Use `git` on `project_root` for repository operations and `clock` for retry deadlines.
+
+        A wait for a dirty checkout is recorded once in `events` as `integration_waiting`.
+        """
         self._git = git
         self._clock = clock
+        self._events = events
         self._project_root = project_root
         self._integration_wait = integration_wait
 
@@ -200,6 +216,7 @@ class LocalMerge:
         task_root_path = request.task_root
         repo = request.repo
         deadline = self._clock.now() + timedelta(seconds=self._integration_wait)
+        announced = False
         while True:
             try:
                 candidate = await self._precheck(project_root, task_root_path, repo)
@@ -207,7 +224,10 @@ class LocalMerge:
                     if request.held():
                         raise IntegrationHeld
                     await self._apply(project_root, repo, candidate)
-            except _PrecheckFailed, CommandFailed:
+            except (_PrecheckFailed, CommandFailed) as error:
+                if isinstance(error, _CheckoutDirty) and not announced:
+                    announced = True
+                    self._announce_wait(request.task_id, error.paths)
                 if request.held():
                     raise IntegrationHeld from None
                 remaining = (deadline - self._clock.now()).total_seconds()
@@ -217,6 +237,15 @@ class LocalMerge:
                 continue
             break
         return candidate.commits if candidate is not None else ()
+
+    def _announce_wait(self, task_id: str, paths: tuple[str, ...]) -> None:
+        self._events.append(
+            EventKind.INTEGRATION_WAITING,
+            task_id=task_id,
+            message=f"{task_id} waits to integrate: the project checkout has uncommitted "
+            f"changes on {', '.join(paths)}",
+            data={"paths": list(paths)},
+        )
 
     async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
         """Return at once: `merge` already landed the branch in its base."""
@@ -245,8 +274,9 @@ class LocalMerge:
                 await self._git.diff_name_only(task_root_path, f"{base_sha}...{branch_sha}")
             )
             dirty = await self._git.dirty_paths(project_root)
-            if _paths_overlap(changed, dirty):
-                raise _PrecheckFailed
+            blocking = _blocking_paths(changed, dirty)
+            if blocking:
+                raise _CheckoutDirty(blocking)
         commits = tuple(await self._git.log_oneline(task_root_path, f"{base_sha}..{branch_sha}"))
         return _MergeCandidate(
             base_sha=base_sha,
@@ -256,18 +286,15 @@ class LocalMerge:
         )
 
 
-def _paths_overlap(changed: set[str], dirty: set[str]) -> bool:
-    for left in changed:
-        normalized_left = left.rstrip("/")
-        for right in dirty:
-            normalized_right = right.rstrip("/")
-            if (
-                normalized_left == normalized_right
-                or normalized_left.startswith(f"{normalized_right}/")
-                or normalized_right.startswith(f"{normalized_left}/")
-            ):
-                return True
-    return False
+def _blocking_paths(changed: set[str], dirty: set[str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(right for right in dirty if any(_overlaps(left, right) for left in changed))
+    )
+
+
+def _overlaps(left: str, right: str) -> bool:
+    left, right = left.rstrip("/"), right.rstrip("/")
+    return left == right or left.startswith(f"{right}/") or right.startswith(f"{left}/")
 
 
 class PullRequest:

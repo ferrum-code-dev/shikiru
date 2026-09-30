@@ -13,7 +13,14 @@ if TYPE_CHECKING:
     from shikiru.process import SubprocessRunner
     from shikiru.tmux.client import Tmux
 
-_NOTIFIABLE = frozenset({EventKind.ESCALATION, EventKind.TASK_DONE, EventKind.ENGINE_FAULT})
+_NOTIFIABLE = frozenset(
+    {
+        EventKind.ESCALATION,
+        EventKind.TASK_DONE,
+        EventKind.ENGINE_FAULT,
+        EventKind.INTEGRATION_WAITING,
+    }
+)
 NOTIFY_TIMEOUT_SECONDS = 7200.0
 
 
@@ -39,7 +46,7 @@ class Notifier:
 
     @staticmethod
     def wants(event: Event) -> bool:
-        """Return whether `event` is an escalation, completion, engine fault or failure stop."""
+        """Return whether `event` is an escalation, completion, fault, merge wait or fault stop."""
         return event.kind in _NOTIFIABLE or (
             event.kind is EventKind.ENGINE_STOPPED and STOP_REASON_KEY in event.data
         )

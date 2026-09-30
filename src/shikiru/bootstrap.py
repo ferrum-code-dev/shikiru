@@ -727,6 +727,7 @@ def _build_integrator(
             strategy = LocalMerge(
                 git,
                 clock,
+                events=events,
                 project_root=project_root,
                 integration_wait=settings.orchestration.timeouts.integration_wait,
             )

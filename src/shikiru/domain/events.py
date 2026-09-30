@@ -39,6 +39,7 @@ class EventKind(StrEnum):
     ESCALATION = auto()
     ESCALATION_RESOLVED = auto()
     INTEGRATION_STARTED = auto()
+    INTEGRATION_WAITING = auto()
     PR_OPENED = auto()
     TASK_DONE = auto()
     TASK_RETRIED = auto()

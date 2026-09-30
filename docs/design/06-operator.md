@@ -154,7 +154,7 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 ### 5.7 Notifications
 
-`Notifier`, on `escalation`, `task_done`, `engine_fault` (the first fault of a failing tick streak, 02 §1) and an `engine_stopped` that carries a `reason` (the engine stopped on a fault rather than on request):
+`Notifier`, on `escalation`, `task_done`, `integration_waiting` (a local merge waits for a dirty checkout, 03 §6), `engine_fault` (the first fault of a failing tick streak, 02 §1) and an `engine_stopped` that carries a `reason` (the engine stopped on a fault rather than on request):
 - runs `tmux display-message` in the session;
 - runs `notify.command`, when set, with the event JSON on stdin (for Slack, ntfy or a remote AI Operator). A non-zero exit, a timeout (2 hours) or a missing command is logged with the event id.
 

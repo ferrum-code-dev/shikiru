@@ -182,6 +182,7 @@ def build_flow(
             or LocalMerge(
                 git,
                 flow_clock,
+                events=system.events,
                 project_root=env.project_root,
                 integration_wait=settings.orchestration.timeouts.integration_wait,
             ),
