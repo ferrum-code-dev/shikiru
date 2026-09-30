@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 from shikiru.config.settings import AgentConfig, RepoConfig
 from shikiru.domain.commands import SetRung, Submit
 from shikiru.domain.tasks import Role, Status
+from shikiru.engine.acceptance import AcceptanceGuard
 from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.evidence import EvidenceCollector
@@ -203,7 +204,7 @@ def build_flow(
         events=system.events,
         sessions=system.sessions,
         turns=system.turns,
-        facts=facts,
+        acceptance=AcceptanceGuard(events=system.events, facts=facts),
         contexts=contexts,
         escalations=EscalationFiler(raiser=escalations, evidence=evidence),
         writer=writer,

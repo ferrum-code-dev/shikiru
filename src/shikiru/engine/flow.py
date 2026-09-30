@@ -19,7 +19,6 @@ from shikiru.domain.recovery import (
 )
 from shikiru.domain.reports import (
     ImplementationReport,
-    Issue,
     ReportKind,
     Verdict,
 )
@@ -27,31 +26,25 @@ from shikiru.domain.steps import ACTING_ROLE, Transition, first_step, next_step
 from shikiru.domain.tasks import EscalationReason, Role, Status, Step
 from shikiru.engine.events import (
     emit_nudge,
-    emit_turn_completed,
     emit_turn_failed,
     emit_turn_started,
-    emit_verdict,
 )
-from shikiru.engine.history import ENGINE_VERDICT_FILENAME
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
 from shikiru.engine.turn_context import ORDINARY_TURN, NextTurn
 from shikiru.engine.turn_execution import TurnExecution
 from shikiru.engine.turns import TurnHeld
 from shikiru.errors import ShikiruError, UsageError
-from shikiru.private import write_private_text
 
 _LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from shikiru.config.settings import Settings
     from shikiru.domain.steps import Outcome
     from shikiru.domain.tasks import Task
+    from shikiru.engine.acceptance import AcceptanceGuard
     from shikiru.engine.escalation_filing import EscalationFiler
     from shikiru.engine.recovery import TurnRecovery
     from shikiru.engine.sessions import SessionManager
-    from shikiru.engine.task_facts import TaskFacts
     from shikiru.engine.transitions import TransitionWriter
     from shikiru.engine.turn_context import TurnContextPreparer
     from shikiru.engine.turns import TurnRunner
@@ -59,14 +52,6 @@ if TYPE_CHECKING:
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
-
-
-_WORK_ENDING_DECISIONS = frozenset({"accept", "supersede"})
-UNCOMMITTED_SUMMARY = "The workspace has uncommitted changes, so it cannot be integrated."
-UNCOMMITTED_ISSUE = (
-    "Uncommitted changes in the workspace: {paths}. "
-    "Commit what belongs to this task and discard the rest."
-)
 
 
 def _acting_role(step: Step, role_override: Role | None) -> Role:
@@ -83,7 +68,7 @@ class TaskFlow:
         events: EventLog,
         sessions: SessionManager,
         turns: TurnRunner,
-        facts: TaskFacts,
+        acceptance: AcceptanceGuard,
         contexts: TurnContextPreparer,
         escalations: EscalationFiler,
         writer: TransitionWriter,
@@ -97,7 +82,7 @@ class TaskFlow:
         self._events = events
         self._sessions = sessions
         self._turns = turns
-        self._facts = facts
+        self._acceptance = acceptance
         self._contexts = contexts
         self._escalations = escalations
         self._writer = writer
@@ -175,7 +160,7 @@ class TaskFlow:
             raise ShikiruError(message)
         report = execution.result.report
         if isinstance(report, ImplementationReport | Verdict):
-            return current, await self._settle(current, report, execution)
+            return current, await self._acceptance.settle(current, report, execution)
         message = f"{current.id} integration turn returned an unexpected report"
         raise ShikiruError(message)
 
@@ -277,7 +262,7 @@ class TaskFlow:
         if not isinstance(result, Completed):
             message = f"{task.id} completed-step handler received {type(result).__name__}"
             raise ShikiruError(message)
-        outcome = await self._settle(task, result.report, execution)
+        outcome = await self._acceptance.settle(task, result.report, execution)
         try:
             task, escalated = await self.advance(task, outcome)
         except UsageError as error:
@@ -297,14 +282,6 @@ class TaskFlow:
     def _reload(self, task_id: str) -> tuple[Task, bool]:
         task = self._tasks.require(task_id)
         return task, task.held
-
-    async def _settle[R: Outcome](
-        self, task: Task, report: R, execution: TurnExecution
-    ) -> R | Verdict:
-        emit_turn_completed(self._events, task, report, execution)
-        if isinstance(report, Verdict):
-            return await self._reject_uncommitted(task, report, execution.turn_dir)
-        return report
 
     async def _run_turn(
         self,
@@ -379,25 +356,6 @@ class TaskFlow:
         emit_turn_failed(self._events, task, step, ProtocolError())
         transition = Transition.escalate(task, EscalationReason.AGENT_PROTOCOL, step=step)
         return await self._escalate(task, transition, outcome, question=str(error))
-
-    async def _reject_uncommitted(self, task: Task, verdict: Verdict, turn_dir: Path) -> Verdict:
-        if verdict.decision not in _WORK_ENDING_DECISIONS:
-            return verdict
-        facts = await self._facts.collect(task)
-        if not facts.status:
-            return verdict
-        issue = Issue(
-            severity="blocker",
-            description=UNCOMMITTED_ISSUE.format(
-                paths=", ".join(line.strip() for line in facts.status)
-            ),
-        )
-        rejection = Verdict(
-            decision="changes_requested", summary=UNCOMMITTED_SUMMARY, issues=[issue]
-        )
-        write_private_text(turn_dir / ENGINE_VERDICT_FILENAME, rejection.model_dump_json(indent=2))
-        emit_verdict(self._events, task, rejection, rejection.summary)
-        return rejection
 
     async def escalate(
         self,

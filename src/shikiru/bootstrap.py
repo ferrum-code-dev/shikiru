@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_default_orchestration, load_session_settings, load_settings
+from shikiru.engine.acceptance import AcceptanceGuard
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.cosmetic_decorator import CosmeticDecorator
 from shikiru.engine.daemon import (
@@ -545,7 +546,7 @@ def build_engine(
             project_root=project_root,
             settings=resolved_settings,
         ),
-        facts=task_facts,
+        acceptance=AcceptanceGuard(events=events, facts=task_facts),
         contexts=contexts,
         escalations=EscalationFiler(raiser=escalation_raiser, evidence=evidence),
         writer=writer,
