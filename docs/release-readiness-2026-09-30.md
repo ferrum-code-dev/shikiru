@@ -31,14 +31,14 @@ The first E2E run of 2026-09-30 (`99c2006`, 36m59s, 1 failed, 6 passed) failed E
 
 ### Live model-change contract checks (Task 73)
 
-Run natively on 2026-09-30 at `b8de3d0`, Codex CLI 0.159.2 and Claude Code 2.1.284 (subscription access, no API spend recorded):
+Run natively on 2026-09-30 (Codex at `b8de3d0`, Claude at `a2b8bad`), Codex CLI 0.159.2 and Claude Code 2.1.284 (subscription access, no API spend recorded):
 
 | Command | Result |
 |---|---|
 | `SHIKIRU_E2E=1 uv run pytest --no-cov -n 0 tests/integration/test_codex_headless_contract.py -k live_model_change` | Passed in about 10 s: a `gpt-5.6-luna` turn, then `codex exec resume` on `gpt-5.6-terra`; the nonce is recalled, each turn's emitted `-c model_auto_compact_token_limit` equals 80% of the selected model's window (both 258,400 tokens, so 206,720), and after the switch the real rollout's last `turn_context` names terra and its `token_count` window is what the next terra turn uses |
-| `SHIKIRU_E2E=1 uv run pytest --no-cov -n 0 tests/integration/test_claude_headless_contract.py -k live_model_change` | Skipped: neither `SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL` nor `ANTHROPIC_DEFAULT_SONNET_MODEL` is set on this host, and no alternate model was invented. The Claude assertion (the hook's compaction limit follows the selected model's window, 200,000 tokens, or 1,000,000 with a `[1m]` suffix) is written but unexercised live; an offline contract test covers it on the emitted argv |
+| `SHIKIRU_E2E=1 SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL=sonnet uv run pytest --no-cov -n 0 tests/integration/test_claude_headless_contract.py -k live_model_change -q` | Passed in 10.67 s on `a2b8bad` (run by the coordinator; subscription turns, no API spend recorded): base model the test's default haiku, changed to `sonnet`; the nonce is recalled and each turn's hook compaction limit equals the selected model's window (200,000 tokens, so 160,000). Without the variable the check skips (no alternate model configured on this host by default) |
 
-Both Codex models report the same window, so the live run proves the limit is taken from each turn's model and that the real `turn_context` format parses, but cannot tell a per-model window from a shared one; the offline test with a genuine redacted rollout (`rollout_model_change_turn_context_live_redacted.jsonl`) covers a window that differs between models.
+Claude's two models use the same 200,000-token window, so that run likewise cannot distinguish a per-model window. Both Codex models report the same window, so the live run proves the limit is taken from each turn's model and that the real `turn_context` format parses, but cannot tell a per-model window from a shared one; the offline test with a genuine redacted rollout (`rollout_model_change_turn_context_live_redacted.jsonl`) covers a window that differs between models.
 
 ### Platform limits of this evidence
 
