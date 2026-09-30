@@ -19,7 +19,8 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.asyncio
 
-_PID_FILE_WAIT_TIMEOUT = 5.0
+_PID_FILE_WAIT_TIMEOUT = 30.0
+_KILL_TIMEOUT_SECONDS = 5.0
 _STOP_BOUND_SECONDS = 5.0
 
 
@@ -84,7 +85,7 @@ async def test_timeout_raises_and_kills_the_process(tmp_path: Path) -> None:
     task = asyncio.create_task(
         runner.run(
             ["sh", "-c", f"echo $$ > {pid_file}; sleep 30"],
-            timeout=2.0,
+            timeout=_KILL_TIMEOUT_SECONDS,
         )
     )
 

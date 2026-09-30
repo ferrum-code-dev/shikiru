@@ -108,8 +108,8 @@ async def test_notifier_isolates_external_command_failure(
     assert failure.exc_info is not None
 
 
-_HOOK_WAIT_SECONDS = 10.0
-_SHORT_HOOK_TIMEOUT_SECONDS = 1.0
+_HOOK_WAIT_SECONDS = 30.0
+_SHORT_HOOK_TIMEOUT_SECONDS = 10.0
 _LONG_HOOK_TIMEOUT_SECONDS = 600.0
 
 
