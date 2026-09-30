@@ -589,6 +589,16 @@ Refs: 07 §5.
 - [ ] The clean-install smoke passes on macOS at the final commit; Linux is stated as verified or unverified.
 - [ ] A new `docs/release-readiness-*.md` states which reviewer items were fixed, restates the design-agreement claim after Tasks 60–73 and lists remaining limitations honestly.
 
+### Task 74a: Bounded E2E scenarios
+Refs: 07 §5. Owner request 2026-10-01: E2E must check real scenarios but be bounded so agents work for a short time.
+- [ ] Every real-agent scenario has its own attempt budget sized from measured durations (about 2–3 times the slowest passing run, in minutes, not the current flat 30 min `ATTEMPT_TIMEOUT_SECONDS`), and a whole-invocation budget; no scenario may take 30 minutes per attempt.
+- [ ] A scenario that makes no progress fails fast: a stall detector ends an attempt when no new event was recorded and no turn process is alive for a few minutes, and the failure names the last event, the task states and the engine log tail.
+- [ ] The E2E engine configuration shortens waits that only matter when something is wrong (for example `timeouts.integration_wait`, currently 1800 s, to about a minute) so a blocked merge escalates and fails the attempt quickly instead of waiting out its budget.
+- [ ] The automatic rerun stays at one, but a rerun happens only for the failure classes the design names as agent flakiness (07 §5), and each attempt's diagnostics (events, task states, `git status` of the operator checkout) are written next to the results.
+- [ ] Root cause of the 2026-09-30 E3 stall is determined from the preserved run files (a live agent edited the operator checkout outside its worktree while LocalMerge waited for a clean checkout): if Shikiru can prevent or detect it (prompt, cwd or writable roots, an early `dirty operator checkout` escalation that names the paths), fix it; otherwise document it as an agent-behaviour limit and make the E2E failure message name it.
+- Tests: unit/integration tests of the budget table and the stall detector with `FakeClock`; `poe check` green; measured scenario durations recorded in 07 §5.
+
+
 ## Phase 8 — Operator Workspace
 
 Specification: [Operator Workspace](../docs/tui-workspace.md), requested 2026-09-30. It defines the target experience; current behaviour changes only as the tasks below ship. Phase 7b comes first. Retain the engine's single-writer model, typed operator commands, agent-independent signals, tmux role views, SSH access, honest usage reporting and semantic comic-strip visual language.
