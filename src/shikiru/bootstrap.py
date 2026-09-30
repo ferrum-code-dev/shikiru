@@ -535,6 +535,7 @@ def build_engine(
             messages=messages,
             events=events,
             runs=runs,
+            tasks=tasks,
             project_root=project_root,
             settings=resolved_settings,
         ),

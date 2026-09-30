@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from shikiru.config.settings import AgentConfig, RepoConfig
 from shikiru.domain.commands import SetRung, Submit
@@ -117,6 +117,16 @@ class FlowEnv:
     titles: TaskTitles
 
 
+class CountingLock(asyncio.Lock):
+    def __init__(self) -> None:
+        super().__init__()
+        self.acquisitions = 0
+
+    async def acquire(self) -> Literal[True]:
+        self.acquisitions += 1
+        return await super().acquire()
+
+
 def build_flow(
     env: EngineEnv,
     settings: Settings,
@@ -125,6 +135,7 @@ def build_flow(
     turn_clock: Clock | None = None,
     local_integration: bool = False,
     strategy: IntegrationStrategy | None = None,
+    lock: asyncio.Lock | None = None,
 ) -> FlowEnv:
     """Build one flow and its production turn collaborators with fake CLI processes.
 
@@ -171,7 +182,7 @@ def build_flow(
                 project_root=env.project_root,
                 integration_wait=settings.orchestration.timeouts.integration_wait,
             ),
-            lock=asyncio.Lock(),
+            lock=lock if lock is not None else asyncio.Lock(),
             project_root=env.project_root,
             tasks=env.tasks,
             events=system.events,

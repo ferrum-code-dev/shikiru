@@ -373,8 +373,9 @@ async def test_unrecoverable_report_escalates_as_agent_protocol(
     assert helper_event.data == {"role": Role.LEADER.value, "reason": "no report"}
 
 
-async def test_a_pause_set_during_a_quota_wait_stops_the_continue_turn_until_resumed(
-    engine_env: EngineEnv, tmux_server: TmuxServer
+@pytest.mark.parametrize("hold", [Hold.PAUSED, Hold.INTERVENTION])
+async def test_a_hold_set_during_a_quota_wait_stops_the_continue_turn_until_resumed(
+    engine_env: EngineEnv, tmux_server: TmuxServer, hold: Hold
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     flow_task, task_id = await _start_flow(
@@ -393,7 +394,7 @@ async def test_a_pause_set_during_a_quota_wait_stops_the_continue_turn_until_res
     quota = QuotaStore(engine_env.connection)
     await wait_until(lambda: quota.block_for(FAKE_RUNG.agent) is not None, timeout=10)
     await wait_until(clock.has_pending_sleep, timeout=10)
-    engine_env.tasks.set_holds(task_id, frozenset({Hold.PAUSED}))
+    engine_env.tasks.set_holds(task_id, frozenset({hold}))
     turns_before = len(list((run_dir(engine_env.project_root, task_id) / "turns").iterdir()))
 
     await _drive(flow_task, clock)

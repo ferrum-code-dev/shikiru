@@ -145,8 +145,11 @@ class IntegrationStrategy(Protocol):
         """Merge the task branch into its base, or start doing so, and return its commits."""
         ...
 
-    async def settle(self, task_id: str, repo: RepoState) -> None:
-        """Wait until `task_id`'s started integration has landed in its base `repo`."""
+    async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
+        """Wait until `task_id`'s started integration has landed in its base `repo`.
+
+        Raises `IntegrationHeld` instead of starting another wait step once `held()` is true.
+        """
         ...
 
 
@@ -197,6 +200,8 @@ class LocalMerge:
                         raise IntegrationHeld
                     await self._apply(project_root, repo, candidate)
             except _PrecheckFailed, CommandFailed:
+                if request.held():
+                    raise IntegrationHeld from None
                 remaining = (deadline - self._clock.now()).total_seconds()
                 if remaining <= 0:
                     raise IntegrationBlocked from None
@@ -205,9 +210,9 @@ class LocalMerge:
             break
         return candidate.commits if candidate is not None else ()
 
-    async def settle(self, task_id: str, repo: RepoState) -> None:
+    async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
         """Return at once: `merge` already landed the branch in its base."""
-        del task_id, repo
+        del task_id, repo, held
 
     async def _apply(self, project_root: Path, repo: RepoState, candidate: _MergeCandidate) -> None:
         if candidate.base_checked_out:
@@ -321,18 +326,24 @@ class PullRequest:
         )
         return commits
 
-    async def settle(self, task_id: str, repo: RepoState) -> None:
+    async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
         """Poll the open pull request until it is merged or closed, then verify the merged base.
 
-        Raises `PullRequestClosed` for a closed one, and `IntegrationBlocked` when the merged
-        commit cannot be fetched from and verified on the remote base.
+        Raises `PullRequestClosed` for a closed one, `IntegrationBlocked` when the merged
+        commit cannot be fetched from and verified on the remote base, and `IntegrationHeld`
+        before any poll once `held()` is true.
         """
         opened = self._open_pull_request(task_id)
         if opened is None:
             return
         self._tasks.set_slot(task_id, None)
         self._tasks.set_wait_reason(task_id, WaitReason.PR_OPEN)
-        while (status := await self._status(opened.url)).state is PullRequestState.OPEN:
+        while True:
+            if held():
+                raise IntegrationHeld
+            status = await self._status(opened.url)
+            if status.state is not PullRequestState.OPEN:
+                break
             await self._clock.sleep(PR_POLL.total_seconds())
         self._tasks.set_wait_reason(task_id, None)
         if status.state is PullRequestState.CLOSED:
@@ -406,7 +417,7 @@ class Integrator:
             current, current_metadata, commits = await self._apply(
                 task, repo, resolve_conflicts, metadata
             )
-        await self._strategy.settle(current.id, repo)
+        await self._strategy.settle(current.id, repo, lambda: self._is_held(current.id))
         summary = IntegrationSummary(
             summary=current_metadata.summary,
             commits=commits,
@@ -443,13 +454,13 @@ class Integrator:
         metadata: IntegrationMetadata,
     ) -> tuple[Task, IntegrationMetadata, tuple[str, ...]]:
         async with self._lock:
+            self._require_not_held(task.id)
             self._events.append(
                 EventKind.INTEGRATION_STARTED,
                 task_id=task.id,
                 message=f"{task.id} integration started",
                 data={"branch": repo.branch, "base": repo.base},
             )
-            self._require_not_held(task.id)
             current = task
             current_metadata = metadata
             task_dir = task_root(self._project_root, current.id)
@@ -458,9 +469,9 @@ class Integrator:
             branch_sha = await self._git.rev_parse(task_dir, repo.branch)
             if base_sha != branch_sha and await self._try_rebase(task_dir, repo.base_ref):
                 current, current_metadata = await resolve_conflicts(
-                    current, lambda: self._continue_rebase(task_dir)
+                    current, lambda: self._continue_rebase(current.id, task_dir)
                 )
-                await self._continue_rebase(task_dir)
+                await self._continue_rebase(current.id, task_dir)
             await self._require_committed(current, task_dir)
             self._require_not_held(current.id)
             commits = await self._strategy.merge(
@@ -495,7 +506,7 @@ class Integrator:
 
     async def continue_rebase(self, task: Task) -> None:
         """Continue `task`'s rebase after its conflicts were resolved, if one is in progress."""
-        await self._continue_rebase(task_root(self._project_root, task.id))
+        await self._continue_rebase(task.id, task_root(self._project_root, task.id))
 
     async def _try_rebase(self, task_dir: Path, base: str) -> bool:
         try:
@@ -506,9 +517,10 @@ class Integrator:
             return True
         return False
 
-    async def _continue_rebase(self, task_dir: Path) -> None:
+    async def _continue_rebase(self, task_id: str, task_dir: Path) -> None:
         if not await self._git.is_rebase_in_progress(task_dir):
             return
+        self._require_not_held(task_id)
         try:
             await self._git.rebase_continue(task_dir)
         except CommandFailed:

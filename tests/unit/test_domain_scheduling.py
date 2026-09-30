@@ -54,13 +54,14 @@ def _gates(
     )
 
 
-def test_only_queued_unpaused_tasks_with_finished_dependencies_are_ready() -> None:
+@pytest.mark.parametrize("hold", list(Hold))
+def test_only_queued_unheld_tasks_with_finished_dependencies_are_ready(hold: Hold) -> None:
     queued = make_task(id="T-1", seq=1, status=Status.QUEUED)
     running = make_task(id="T-2", seq=2, status=Status.RUNNING)
-    paused = make_task(id="T-3", seq=3, status=Status.QUEUED, holds=frozenset({Hold.PAUSED}))
+    held = make_task(id="T-3", seq=3, status=Status.QUEUED, holds=frozenset({hold}))
     waiting = make_task(id="T-4", seq=4, status=Status.QUEUED, depends_on=["T-1"])
 
-    schedule = pick_ready([queued, running, paused, waiting], _gates(agents=_agents_for("T-1")))
+    schedule = pick_ready([queued, running, held, waiting], _gates(agents=_agents_for("T-1")))
 
     assert [d.task_id for d in schedule.dispatches] == ["T-1"]
     assert schedule.wait_reasons["T-3"] is WaitReason.PAUSED

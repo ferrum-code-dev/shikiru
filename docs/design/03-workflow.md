@@ -220,7 +220,15 @@ Integration itself never discards work: at its entry, and again before the strat
      - The open PR is the task's latest `pr_opened` not followed by a `pr_closed` escalation. A resumed integration (§7) polls it instead of rebasing, pushing or opening another.
 3. **Done**: the `done` status and `task_done` (summary, commits, residual risks) land in one transaction; then the window closes and the worktree is removed, last (§7).
 
-**Holds.** A `paused` or `intervention` hold (§9) is checked at every turn boundary by one rule (`Task.held`): before each step, before integration starts, before each integration turn, after waiting for the integration lock or for base access and before the rebase and the merge, and by the `Reconciler` before it resumes a task (§7). A Git operation that is already running finishes; no further step, turn, rebase, push or merge starts while a hold is set, and a turn's recovery (a quota or backoff wait, a stall `continue`) rechecks the hold before its follow-up turn. Only observing an already open pull request continues, since it starts nothing. The task keeps its status, worktree and slot, and `resume` re-enters integration from its persisted state.
+**Holds.** A `paused` or `intervention` hold (§9) is one rule, `Task.held`, checked wherever the next external effect would start:
+- before each step, before integration starts, before each integration turn, and by the `Reconciler` before it resumes a task (§7);
+- in the `TurnRunner`, immediately before every agent process is spawned, nudges (§4.3) and the turns of a quota, backoff or stall recovery included; this also closes the window between the step's hold check and the spawn, and a turn that ends without a valid report is not nudged while held;
+- after the wait for the integration lock and before `INTEGRATION_STARTED` is emitted, before the rebase and the merge, and before `git rebase --continue` after a conflict turn;
+- in the `LocalMerge` wait for base access: when a retry finds the hold set the wait ends quietly as held, so a held task never escalates as `integration_blocked` from the wait budget;
+- before every poll of an open pull request;
+- by the scheduler: a queued task with a hold is not dispatched and takes no slot (§10).
+
+A Git or `gh` operation that is already running finishes; no further step, turn, rebase, push, merge or poll starts while a hold is set. The push and pull request creation of one merge are a single step behind the merge check, so an observed open pull request may appear after a hold was set. The task keeps its status, worktree and slot, and `resume` re-enters integration from its persisted state; a polling task resumes polling the same pull request.
 
 Dependents become ready only when their dependencies are `done`.
 
@@ -327,7 +335,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 
 The `Scheduler` runs on every state change and every `orchestration.poll_seconds`.
 
-1. **Ready**: `queued`, not `paused`, all dependencies `done`. A cancelled dependency raises `dependency_cancelled`. Scope changes never leave a cycle, so a dependency wait always ends (§2). Dependencies include the implicit one of a plan task's new tasks on it (§2).
+1. **Ready**: `queued`, not held (no `paused` or `intervention` hold, §9; a held task's `wait_reason` is `paused`), all dependencies `done`. A cancelled dependency raises `dependency_cancelled`. Scope changes never leave a cycle, so a dependency wait always ends (§2). Dependencies include the implicit one of a plan task's new tasks on it (§2).
 2. **Order**: `requeued_at` set first, then `priority` descending, then `seq`.
 3. **Dispatch** in order until a gate fails; the task stops there and its reason is written to `wait_reason`. Gates:
    - **slot**: a free slot exists;

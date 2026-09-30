@@ -35,6 +35,7 @@ from shikiru.engine.events import (
 from shikiru.engine.history import ENGINE_VERDICT_FILENAME
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
 from shikiru.engine.turn_execution import TurnExecution
+from shikiru.engine.turns import TurnHeld
 from shikiru.errors import ShikiruError, UsageError
 
 _LOGGER = logging.getLogger(__name__)
@@ -229,6 +230,8 @@ class TaskFlow:
             kind_override=kind_override,
             conflict_context=conflict_context,
         )
+        if execution is None:
+            return self._tasks.require(current.id), counters, None, True
         while not isinstance(execution.result, Completed):
             role = _acting_role(current_step, role_override)
             recovery = await self._recovery.recover(
@@ -260,6 +263,8 @@ class TaskFlow:
                 kind_override=kind_override,
                 conflict_context=conflict_context,
             )
+            if execution is None:
+                return self._tasks.require(current.id), counters, None, True
         return current, counters, execution, False
 
     async def _complete_step_turn(
@@ -307,7 +312,7 @@ class TaskFlow:
         template_override: PromptName | None = None,
         kind_override: ReportKind | None = None,
         conflict_context: str | None = None,
-    ) -> TurnExecution:
+    ) -> TurnExecution | None:
         role = _acting_role(step, role_override)
         selection = self._sessions.session_for(task, role)
 
@@ -339,9 +344,12 @@ class TaskFlow:
         def on_nudge() -> None:
             emit_nudge(self._events, task, step, role)
 
-        result, turn_dir, selection = await self._turns.run(
-            task, role, selection, turn_request, on_nudge=on_nudge
-        )
+        try:
+            result, turn_dir, selection = await self._turns.run(
+                task, role, selection, turn_request, on_nudge=on_nudge
+            )
+        except TurnHeld:
+            return None
         live_run = self._runs.get_live(task.id, role)
         if live_run is None:
             message = f"{task.id} {role.value} run disappeared after its turn"

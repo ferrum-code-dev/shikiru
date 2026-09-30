@@ -527,7 +527,7 @@ Refs: 03 §1.1, §7; F10.
 
 ### Task 65: Holds cover every remaining execution path
 Refs: 03 §6, §10; invariant 2.
-- [ ] Nudge turns, the scheduler (a queued task with the intervention hold is not dispatched into a slot), `git rebase --continue` after a conflict turn, PR polling and the window between the hold check and process spawn all honour `Task.held`; `INTEGRATION_STARTED` is emitted only after the hold check; a paused task cannot escalate as `integration_blocked` from the lock wait budget. 03 §6 lists these paths.
+- [x] Nudge turns, the scheduler (a queued task with the intervention hold is not dispatched into a slot), `git rebase --continue` after a conflict turn, PR polling and the window between the hold check and process spawn all honour `Task.held`; `INTEGRATION_STARTED` is emitted only after the hold check; a paused task cannot escalate as `integration_blocked` from the lock wait budget. 03 §6 lists these paths.
 - Tests: integration: pause during a nudge, during a conflict turn before `rebase --continue`, during PR polling, and just before spawn starts no further process; retrying a taken-over task does not take a slot; the quota-wait hold test fails on the pre-Task-43 code (it currently passes there).
 
 ### Task 66: Command replay and crash windows

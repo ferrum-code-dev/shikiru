@@ -216,6 +216,7 @@ def build_turn_system(
         messages=OperatorMessages(project_root),
         events=events,
         runs=runs,
+        tasks=TaskStore(connection, clock),
         project_root=project_root,
         settings=settings,
     )

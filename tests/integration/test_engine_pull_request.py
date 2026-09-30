@@ -14,7 +14,7 @@ from shikiru.domain.escalation import transition_for_resolution
 from shikiru.domain.events import EventKind
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Mode, Status, Step
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Status, Step
 from shikiru.engine.integration import PR_POLL, PullRequest
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
@@ -300,3 +300,36 @@ async def test_a_merged_pull_request_missing_from_the_remote_base_blocks_done(
     blocked = engine_env.tasks.get(task.id)
     assert blocked is not None
     assert blocked.status is Status.ESCALATED
+
+
+async def test_a_pause_during_pr_polling_stops_polling_until_the_task_is_resumed(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    clock = engine_env.clock
+    assert isinstance(clock, FakeClock)
+    await init_project_repo(engine_env.project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    run = _Run(engine_env, settings, task.id)
+    await _await_poll(fake_github, clock, 1)
+
+    engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
+    await _land(clock, run.flow)
+
+    assert fake_github.views() == 1
+    held = engine_env.tasks.get(task.id)
+    assert held is not None
+    assert held.status is Status.INTEGRATING
+
+    engine_env.tasks.set_holds(task.id, frozenset())
+    await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
+    run.start()
+    await _land(clock, run.flow)
+
+    done = engine_env.tasks.get(task.id)
+    assert done is not None
+    assert done.status is Status.DONE

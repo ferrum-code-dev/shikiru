@@ -15,7 +15,7 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import NewTask
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Status, StatusReason, Step, TaskOrigin
+from shikiru.domain.tasks import EscalationReason, Hold, Status, StatusReason, Step, TaskOrigin
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
@@ -367,6 +367,26 @@ async def test_resource_gate_blocks_at_zero_and_dispatches_at_hundred(
     passing = await _scheduler(scheduler_env, _settings(max_cpu_pct=CPU_UNCAPPED_PCT)).run_once()
 
     assert [dispatch.task_id for dispatch in passing.dispatches] == [task.id]
+
+
+async def test_a_queued_task_under_intervention_takes_no_slot(
+    scheduler_env: SchedulerFixture, connection: Connection
+) -> None:
+    taken_over = _submit(connection, scheduler_env.clock, title="taken over")
+    scheduler_env.tasks.set_holds(taken_over.id, frozenset({Hold.INTERVENTION}))
+
+    schedule = await scheduler_env.scheduler.run_once()
+
+    assert schedule.dispatches == ()
+    waiting = scheduler_env.tasks.get(taken_over.id)
+    assert waiting is not None
+    assert waiting.status is Status.QUEUED
+    assert waiting.slot is None
+
+    scheduler_env.tasks.set_holds(taken_over.id, frozenset())
+    resumed = await scheduler_env.scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in resumed.dispatches] == [taken_over.id]
 
 
 async def test_quota_gate_persists_wait_reason(

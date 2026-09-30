@@ -7,7 +7,7 @@ from enum import StrEnum, auto
 from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING
 
-from shikiru.domain.tasks import Hold, Status
+from shikiru.domain.tasks import Status
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -93,7 +93,7 @@ def _group_queued_tasks(
     for task in tasks:
         if task.status != Status.QUEUED:
             continue
-        if Hold.PAUSED in task.holds:
+        if task.held:
             wait_reasons[task.id] = WaitReason.PAUSED
             continue
         deps = [by_id[dep_id] for dep_id in task.depends_on]

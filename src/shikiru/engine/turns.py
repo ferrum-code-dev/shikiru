@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from shikiru.prompts.renderer import PromptName, PromptRenderer
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
+    from shikiru.store.tasks import TaskStore
     from shikiru.workspace.messages import OperatorMessages
 
 NUDGE_LIMIT = 2
@@ -66,6 +67,10 @@ _NUDGE_MESSAGE = (
     "at the end of {prompt_path}."
 )
 _LOGGER = logging.getLogger(__name__)
+
+
+class TurnHeld(Exception):
+    """A task hold was set before the turn's agent process could start."""
 
 
 class _HelperCall(TypedDict):
@@ -123,6 +128,7 @@ class TurnRunner:
         messages: OperatorMessages,
         events: EventLog,
         runs: RunStore,
+        tasks: TaskStore,
         project_root: Path,
         settings: Settings,
     ) -> None:
@@ -134,6 +140,7 @@ class TurnRunner:
         self._messages = messages
         self._events = events
         self._runs = runs
+        self._tasks = tasks
         self._project_root = project_root
         self._settings = settings
 
@@ -149,6 +156,7 @@ class TurnRunner:
         """Run one workflow turn and any resumed nudge turns to a normalized result.
 
         Operator messages delivered into the turn return to the queue unless it completes.
+        Raises `TurnHeld`, before any agent process starts, when the task is held (03 §6).
         """
         turn_dir = self._prepare_turn_dir(
             run_dir(self._project_root, task.id), task.id, role, request
@@ -181,6 +189,10 @@ class TurnRunner:
         nudges = 0
         last_message = ""
         while True:
+            if self._tasks.require(task.id).held:
+                raise TurnHeld
+            if nudges:
+                on_nudge()
             agent = self._agents.get(selection.rung.agent)
             turn_spec = AgentTurnSpec(
                 rung=selection.rung,
@@ -221,7 +233,6 @@ class TurnRunner:
                 rebuilt = await self._rebuild(task, selection, turn_dir, request, last_message)
                 return rebuilt, selection
             nudges += 1
-            on_nudge()
             prompt = _NUDGE_MESSAGE.format(prompt_path=prompt_path)
             selection = self._sessions.session_for(task, role)
 
