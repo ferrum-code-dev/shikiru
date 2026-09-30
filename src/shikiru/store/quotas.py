@@ -9,7 +9,7 @@ from shikiru.agents.contracts import QuotaWindow
 from shikiru.store.database import format_timestamp, parse_required_timestamp, parse_timestamp
 
 if TYPE_CHECKING:
-    import sqlite3
+    import sqlite3  # noqa: TID251
     from datetime import datetime
 
 

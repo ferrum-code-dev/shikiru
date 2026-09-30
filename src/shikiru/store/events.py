@@ -18,7 +18,7 @@ from shikiru.store.database import (
 )
 
 if TYPE_CHECKING:
-    import sqlite3
+    import sqlite3  # noqa: TID251
     from collections.abc import Sequence
 
     from shikiru.clock import Clock

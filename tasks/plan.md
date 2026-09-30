@@ -564,8 +564,8 @@ Refs: 01, 04 §4–5, README.
 
 ### Task 71: Comment rule and lint claims (F22 decision, F20)
 Refs: 07 §2; owner decision 2026-09-30.
-- [ ] Unnecessary comments are removed from `src/`, `tests/` and `scripts/`. A mechanical check in `poe check` rejects a comment unless it is a tool directive (`noqa`, `type:`, `pyright:`, `pragma`, shebang, encoding) or carries the documented in-place exclusion marker with a reason; the few comments that truly need to stay carry it. 07 §2 states the rule, the check and the marker.
-- [ ] The lint claims are exact: the agent-plugin contract is a denylist, so a test fails when a top-level package exists that is neither on the list nor in the allowed set; 02 §2 and 07 §2 name what is enforced by which tool; the `store/**` clock/subprocess exemption is narrowed to the modules that need it; `time.process_time` and `time.thread_time` are banned.
+- [x] Unnecessary comments are removed from `src/`, `tests/` and `scripts/`. A mechanical check in `poe check` rejects a comment unless it is a tool directive (`noqa`, `type:`, `pyright:`, `pragma`, shebang, encoding) or carries the documented in-place exclusion marker with a reason; the few comments that truly need to stay carry it. 07 §2 states the rule, the check and the marker.
+- [x] The lint claims are exact: the agent-plugin contract is a denylist, so a test fails when a top-level package exists that is neither on the list nor in the allowed set; 02 §2 and 07 §2 name what is enforced by which tool; the `store/**` clock/subprocess exemption is narrowed to the modules that need it; `time.process_time` and `time.thread_time` are banned.
 - Tests: unit tests of the comment checker (directive, marker, violation); the package-completeness test.
 
 ### Task 72: TaskFlow residuals (F18)

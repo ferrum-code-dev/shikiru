@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sqlite3
+import sqlite3  # noqa: TID251
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 

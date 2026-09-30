@@ -116,6 +116,10 @@ ignore = [
 "time.monotonic_ns" = { msg = "Time only via shikiru.clock.Clock" }
 "time.perf_counter" = { msg = "Time only via shikiru.clock.Clock" }
 "time.perf_counter_ns" = { msg = "Time only via shikiru.clock.Clock" }
+"time.process_time" = { msg = "Time only via shikiru.clock.Clock" }
+"time.process_time_ns" = { msg = "Time only via shikiru.clock.Clock" }
+"time.thread_time" = { msg = "Time only via shikiru.clock.Clock" }
+"time.thread_time_ns" = { msg = "Time only via shikiru.clock.Clock" }
 "datetime.datetime.now" = { msg = "Time only via shikiru.clock.Clock" }
 "datetime.datetime.utcnow" = { msg = "Time only via shikiru.clock.Clock" }
 "datetime.datetime.today" = { msg = "Time only via shikiru.clock.Clock" }
@@ -143,7 +147,7 @@ runtime-evaluated-decorators = [
 "tests/fake_agent/src/fake_agent/headless.py" = ["ARG002", "PLR0917"] # HeadlessAgent.ask's exact signature (04 §1); the fake ignores every argument but serves canned answers
 "src/shikiru/plugins/agents/claude/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature (04 §1)
 "src/shikiru/plugins/agents/codex/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature (04 §1)
-"src/shikiru/store/**" = ["TID251", "S608"]
+"src/shikiru/store/**" = ["S608"]
 "src/shikiru/workspace/**" = ["ASYNC240"] # local worktree filesystem ops, as blocking as sqlite3
 "tests/support/git_repo.py" = ["ASYNC240"]
 "src/shikiru/process.py" = ["TID251"]
@@ -184,7 +188,7 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Engine boundary (AGENTS.md): shikiru.engine imports only shikiru.agents.contracts"
+name = "Engine boundary (AGENTS.md): of the agents packages shikiru.engine imports only shikiru.agents.contracts"
 type = "forbidden"
 source_modules = ["shikiru.engine"]
 forbidden_modules = [
@@ -242,12 +246,19 @@ forbidden_modules = [
   "shikiru.domain",
   "shikiru.config",
   "shikiru.paths",
+  "shikiru.private",
   "shikiru.view_log",
+  "shikiru.__main__",
   "shikiru.agents.registry",
   "shikiru.agents.testing",
   "shikiru.plugins.widgets",
 ]
 allow_indirect_imports = "True"
+
+[[tool.importlinter.contracts]]
+name = "Agent plugins (02 §2): the Claude and Codex plugins do not import each other"
+type = "independence"
+modules = ["shikiru.plugins.agents.claude", "shikiru.plugins.agents.codex"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

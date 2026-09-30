@@ -25,7 +25,7 @@ from shikiru.store.database import (
 from shikiru.store.tasks import TASK_ID_PREFIX, TASK_SEQUENCE
 
 if TYPE_CHECKING:
-    import sqlite3
+    import sqlite3  # noqa: TID251
 
     from shikiru.clock import Clock
 

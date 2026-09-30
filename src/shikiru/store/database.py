@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sqlite3
+import sqlite3  # noqa: TID251
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from importlib import resources
