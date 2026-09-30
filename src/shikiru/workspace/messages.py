@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from itertools import chain
 from typing import TYPE_CHECKING
 
-from shikiru.paths import MESSAGES_DIR_NAME, queued_messages_dir, run_dir
+from shikiru.paths import MESSAGES_DIR_NAME, queued_messages_dir, run_dir, turns_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,7 +37,7 @@ class OperatorMessages:
             return existing
         directory = queued_messages_dir(self._project_root, task_id, role.value)
         directory.mkdir(parents=True, exist_ok=True)
-        number = max((_number(path) for path in _messages(directory)), default=0) + 1
+        number = self._last_number(task_id) + 1
         path = _message_path(directory, number, key)
         _write_atomically(path, text)
         return path
@@ -52,20 +53,30 @@ class OperatorMessages:
         return [path.rename(target / path.name) for path in queued]
 
     def requeue(self, task_id: str, role: Role, turn_dir: Path) -> None:
-        """Return `turn_dir`'s delivered messages to the role's queue, ahead of newer ones."""
+        """Return `turn_dir`'s delivered messages to the role's queue, ahead of newer ones.
+
+        Each message moves back under its own name, and numbers only grow, so the queue order is
+        the filing order; one that has not moved yet when the process dies is returned by the
+        next call, never lost.
+        """
         delivered_dir = turn_dir / MESSAGES_DIR_NAME
         delivered = _messages(delivered_dir) if delivered_dir.is_dir() else []
         if not delivered:
             return
         directory = queued_messages_dir(self._project_root, task_id, role.value)
         directory.mkdir(parents=True, exist_ok=True)
-        pending = [*delivered, *_messages(directory)]
-        entries = [(_key(path), path.read_text()) for path in pending]
-        for path in pending:
-            path.unlink()
+        for path in delivered:
+            path.rename(directory / path.name)
         delivered_dir.rmdir()
-        for number, (key, text) in enumerate(entries, start=1):
-            _write_atomically(_message_path(directory, number, key), text)
+
+    def _last_number(self, task_id: str) -> int:
+        queued = run_dir(self._project_root, task_id).glob(
+            f"{MESSAGES_DIR_NAME}/*/*{MESSAGE_SUFFIX}"
+        )
+        delivered = turns_dir(self._project_root, task_id).glob(
+            f"*/{MESSAGES_DIR_NAME}/*{MESSAGE_SUFFIX}"
+        )
+        return max((_number(path) for path in chain(queued, delivered)), default=0)
 
     def _find(self, task_id: str, key: str) -> Path | None:
         pattern = f"*{MESSAGE_KEY_SEPARATOR}{key}{MESSAGE_SUFFIX}"
@@ -79,10 +90,6 @@ def command_message_key(command_id: int) -> str:
 
 def _number(path: Path) -> int:
     return int(path.stem.partition(MESSAGE_KEY_SEPARATOR)[0])
-
-
-def _key(path: Path) -> str:
-    return path.stem.partition(MESSAGE_KEY_SEPARATOR)[2]
 
 
 def _write_atomically(path: Path, text: str) -> None:

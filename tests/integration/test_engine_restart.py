@@ -662,6 +662,10 @@ async def test_a_restarted_engine_hands_the_messages_of_the_turn_it_lost_to_the_
 
         await wait_until(reached, timeout=_WAIT_SECONDS)
         await engine.kill(engine_lock_path(tmp_path))
+        pid_path = role_dir(run_dir(tmp_path, task_id), Role.IMPLEMENTER.value) / TURN_PID_NAME
+        lost_turn = read_turn_pid(pid_path)
+        os.kill(lost_turn.pid, signal.SIGKILL)
+        await wait_until(lambda: not _RUNNER.is_running(lost_turn), timeout=_WAIT_SECONDS)
         messages.queue(task_id, Role.IMPLEMENTER, "newer guidance", "c2")
         clock = FakeClock(TASK_CREATED_AT)
         await _run_until_finished(project, task_id, Status.DONE, engines.build(clock), clock)

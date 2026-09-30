@@ -7,13 +7,17 @@ import os
 import signal
 from typing import TYPE_CHECKING
 
+import pytest
+
 from shikiru.agents.contracts import role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import HELPER_REPORT_FILENAME, REPORT_FILENAME
+from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Mode, Role, Status, Step
 from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
 from shikiru.engine.turns import NUDGE_LIMIT
+from shikiru.paths import PROMPT_OVERRIDES_RELATIVE_PATH, turns_dir
 from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_NAME, set_role_script
@@ -23,12 +27,12 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
-
     from tests.support.engine import EngineEnv
     from tests.support.tmux import TmuxServer
 
 _FLOW_TIMEOUT_SECONDS = 60
+_READ_ONLY_DIRECTORY = 0o500
+_WRITABLE_DIRECTORY = 0o700
 
 
 async def test_fake_cli_accept_writes_the_report_and_turn_files(
@@ -244,3 +248,55 @@ async def test_messages_delivered_to_a_killed_turn_lead_the_replacement_prompt(
     assert [path.read_text() for path in delivered] == ["first guidance", "newer guidance"]
     prompt = (replacement / "prompt.md").read_text()
     assert prompt.index(str(delivered[0])) < prompt.index(str(delivered[1]))
+
+
+def test_a_failed_requeue_leaves_the_delivered_messages_where_they_were(tmp_path: Path) -> None:
+    messages = OperatorMessages(tmp_path)
+    messages.queue("T-1", Role.IMPLEMENTER, "first guidance", "c1")
+    turn_dir = turns_dir(tmp_path, "T-1") / "01-implement-i1"
+    messages.deliver("T-1", Role.IMPLEMENTER, turn_dir)
+    queued = messages.queue("T-1", Role.IMPLEMENTER, "newer guidance", "c2")
+    queue_dir = queued.parent
+    queue_dir.chmod(_READ_ONLY_DIRECTORY)
+    try:
+        with pytest.raises(OSError, match="Permission denied"):
+            messages.requeue("T-1", Role.IMPLEMENTER, turn_dir)
+    finally:
+        queue_dir.chmod(_WRITABLE_DIRECTORY)
+
+    assert [path.read_text() for path in (turn_dir / "messages").iterdir()] == ["first guidance"]
+
+    messages.requeue("T-1", Role.IMPLEMENTER, turn_dir)
+
+    restored = sorted(queue_dir.iterdir())
+    assert [path.read_text() for path in restored] == ["first guidance", "newer guidance"]
+    assert [path.name for path in restored] == ["001-c1.md", "002-c2.md"]
+
+
+async def test_messages_delivered_before_a_failed_prompt_render_reach_the_next_turn(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
+    OperatorMessages(engine_env.project_root).queue(
+        task.id, Role.IMPLEMENTER, "use the helper", "c1"
+    )
+    override = engine_env.project_root / PROMPT_OVERRIDES_RELATIVE_PATH / "implement.md.j2"
+    override.parent.mkdir(parents=True)
+    override.write_text("{{ undefined_variable }}")
+    flow_env = build_flow(engine_env, flow_settings())
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    override.unlink()
+    failed = engine_env.tasks.require(task.id)
+    engine_env.tasks.apply_transition(
+        task.id, Transition.stay(failed, step=Step.IMPLEMENT, status=Status.RUNNING)
+    )
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+
+    turns = run_dir(engine_env.project_root, task.id) / "turns"
+    *_, replacement = sorted(path for path in turns.iterdir() if "-implement-i1" in path.name)
+    [delivered] = (replacement / "messages").iterdir()
+    assert delivered.read_text() == "use the helper"
+    assert str(delivered) in (replacement / "prompt.md").read_text()

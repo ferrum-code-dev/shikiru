@@ -271,6 +271,7 @@ class TurnRunner:
         self._requeue_unreported(task_run_dir, task_id, role)
         (turn_dir / REPORT_FILENAME).unlink(missing_ok=True)
         (turn_dir / HELPER_REPORT_FILENAME).unlink(missing_ok=True)
+        self._point_current_turn(task_run_dir, role, turn_dir)
         delivered = self._messages.deliver(task_id, role, turn_dir)
         context = {**request.context, OPERATOR_MESSAGES_KEY: [str(path) for path in delivered]}
         (turn_dir / PROMPT_FILENAME).write_text(self._renderer.render(request.template, context))
@@ -280,7 +281,6 @@ class TurnRunner:
         (turn_dir / REPORT_KIND_FILENAME).write_text(request.kind.value)
         if request.facts:
             (turn_dir / FACTS_FILENAME).write_text(request.facts)
-        self._point_current_turn(task_run_dir, role, turn_dir)
         return turn_dir
 
     def _requeue_unreported(self, task_run_dir: Path, task_id: str, role: Role) -> None:
