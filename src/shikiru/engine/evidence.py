@@ -6,10 +6,10 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import role_dir
 from shikiru.domain.steps import ACTING_ROLE
 from shikiru.errors import ShikiruError
 from shikiru.paths import run_dir
+from shikiru.view_log import view_log_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,7 +71,7 @@ class EvidenceCollector:
             role = ACTING_ROLE[step]
         if role is None:
             return ""
-        path = role_dir(run_dir(self._project_root, task.id), role.value) / "view.jsonl"
+        path = view_log_path(run_dir(self._project_root, task.id), role.value)
         if not path.is_file():
             return ""
         return "\n".join(path.read_text().splitlines()[-ESCALATION_PANE_TAIL_LINES:])
