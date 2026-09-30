@@ -44,9 +44,11 @@ class TurnProcesses:
         self._project_root = project_root
 
     def record(self, run_dir: Path, role: Role, pid: int) -> None:
-        """Write `role`'s `turn.pid` with the identity of its running process `pid`."""
+        """Write `role`'s `turn.pid` with the identity of `pid`, or of its group once it left."""
         path = turn_pid_path(run_dir, role)
         identity = self._runner.identify(pid)
+        if identity is None and self._runner.group_is_running(pid):
+            identity = ProcessIdentity(pid, None)
         if identity is None:
             path.unlink(missing_ok=True)
             return
@@ -71,6 +73,6 @@ class TurnProcesses:
         if not self._runner.signal_group(identity, signal.SIGTERM):
             return
         deadline = self._clock.now() + timedelta(seconds=TURN_STOP_GRACE)
-        while self._runner.is_running(identity) and self._clock.now() < deadline:
+        while self._runner.group_is_running(identity.pid) and self._clock.now() < deadline:
             await self._clock.sleep(EXIT_POLL_SECONDS)
         self._runner.signal_group(identity, signal.SIGKILL)

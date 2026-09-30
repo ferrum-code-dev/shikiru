@@ -11,6 +11,7 @@ import psutil
 
 from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.errors import ShikiruError
+from shikiru.process import ProcessIdentity, identify_pid
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -85,11 +86,7 @@ class EngineLock:
                     started_at = float(contents[1])
                 except ValueError:
                     return None
-                try:
-                    actual_started_at = psutil.Process(pid).create_time()
-                except psutil.NoSuchProcess, psutil.ZombieProcess:
-                    return None
-                return pid if actual_started_at == started_at else None
+                return pid if ProcessIdentity(pid, started_at).matches(identify_pid(pid)) else None
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         return None
 

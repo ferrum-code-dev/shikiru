@@ -551,8 +551,8 @@ Refs: 05 §2, 03 §1.1; F06, F09.
 
 ### Task 69: Process ownership residuals
 Refs: 04 §6, 06 §5.7; F02.
-- [ ] Notification hooks run in their own process group and are killed as a group on timeout, cancellation or shutdown; mutating git calls run by the engine are not SIGKILLed mid-operation on cancel (bounded graceful stop or shield); a turn process that died before its identity was recorded is still cleaned up; process identity compares start times with a tolerance so a clock step on Linux cannot make a live group look dead.
-- [ ] A descendant that calls `setsid` is documented as outside the guarantee, with the reason.
+- [x] Notification hooks run in their own process group and are killed as a group on timeout, cancellation or shutdown; mutating git calls run by the engine are not SIGKILLed mid-operation on cancel (bounded graceful stop or shield); a turn process that died before its identity was recorded is still cleaned up; process identity compares start times with a tolerance so a clock step on Linux cannot make a live group look dead.
+- [x] A descendant that calls `setsid` is documented as outside the guarantee, with the reason.
 - Tests: integration with real processes for each; unit test for the identity tolerance.
 
 ### Task 70: Trust boundary, permissions and platform support

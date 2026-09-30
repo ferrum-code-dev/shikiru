@@ -116,6 +116,7 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 | Dashboard change poll | 500 ms |
 | `TURN_STOP_GRACE` | 10 s |
 | `GIT_STOP_GRACE` | 10 s |
+| `START_TIME_TOLERANCE_SECONDS` | 10 s |
 | `NOTIFY_TIMEOUT_SECONDS` | 7200 s |
 | Escalation evidence | 60 view lines per role |
 | Command ack wait | 10 s |

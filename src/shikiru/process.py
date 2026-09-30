@@ -28,6 +28,8 @@ STDERR_DRAIN_TIMEOUT = 2.0
 _STDERR_READ_SIZE = 65536
 _STDOUT_READ_SIZE = 65536
 _STDERR_TAIL_CHARS = 4000
+START_TIME_TOLERANCE_SECONDS = 10.0
+_NO_SIGNAL = cast("signal.Signals", 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,10 +84,41 @@ async def _end_process(
 
 @dataclass(frozen=True, slots=True)
 class ProcessIdentity:
-    """A process id with its start time, which together never match a reused pid."""
+    """A process id with its start time, which together never match a reused pid.
+
+    A process group whose leader had already exited when it was recorded has no start time.
+    """
 
     pid: int
-    started_at: float
+    started_at: float | None
+
+    def matches(self, live: ProcessIdentity | None) -> bool:
+        """Return whether `live` is this very process, allowing for a shifted start time.
+
+        Start times derive from the boot time on Linux and move when the clock is stepped, so
+        they match within `START_TIME_TOLERANCE_SECONDS`. A reused pid starts a process later
+        than that, since no pid is reissued so quickly.
+        """
+        if live is None or live.pid != self.pid:
+            return False
+        if self.started_at is None or live.started_at is None:
+            return self.started_at is live.started_at
+        return abs(live.started_at - self.started_at) <= START_TIME_TOLERANCE_SECONDS
+
+
+def identify_pid(pid: int) -> ProcessIdentity | None:
+    """Return the identity of process `pid`, or `None` when no inspectable process runs.
+
+    An exited (or zombie) process has no identity, and neither has one the caller may not
+    inspect, since every process this engine starts is its own.
+    """
+    try:
+        process = psutil.Process(pid)
+        if process.status() == psutil.STATUS_ZOMBIE:
+            return None
+        return ProcessIdentity(pid, process.create_time())
+    except psutil.NoSuchProcess, psutil.AccessDenied:
+        return None
 
 
 class SpawnedProcess:
@@ -275,22 +308,16 @@ class SubprocessRunner:
             os.close(null_fd)
 
     def identify(self, pid: int) -> ProcessIdentity | None:
-        """Return the identity of process `pid`, or `None` when no inspectable process runs.
-
-        An exited (or zombie) process has no identity, and neither has one the caller may not
-        inspect, since every process this engine starts is its own.
-        """
-        try:
-            process = psutil.Process(pid)
-            if process.status() == psutil.STATUS_ZOMBIE:
-                return None
-            return ProcessIdentity(pid, process.create_time())
-        except psutil.NoSuchProcess, psutil.AccessDenied:
-            return None
+        """Return the identity of process `pid`, or `None` when no inspectable process runs."""
+        return identify_pid(pid)
 
     def is_running(self, identity: ProcessIdentity) -> bool:
         """Return whether the very process `identity` names still runs."""
-        return self.identify(identity.pid) == identity
+        return identity.matches(self.identify(identity.pid))
+
+    def group_is_running(self, pgid: int) -> bool:
+        """Return whether any process of group `pgid` still runs."""
+        return _killpg(pgid, _NO_SIGNAL)
 
     def signal_group(self, identity: ProcessIdentity, signum: signal.Signals) -> bool:
         """Send `signum` to the process group `identity` leads; return whether it was sent.
@@ -298,7 +325,8 @@ class SubprocessRunner:
         A group outlives its leader while any member runs, and no pid equal to a live group id is
         reused, so only a pid now held by a different process is refused.
         """
-        if self.identify(identity.pid) not in (None, identity):
+        live = self.identify(identity.pid)
+        if live is not None and not identity.matches(live):
             return False
         return _killpg(identity.pid, signum)
 
