@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Protocol
 
 from shikiru.domain.recovery import TurnCounters
 from shikiru.domain.reports import ConsultAnswer, ImplementationReport, ReportKind, Verdict
-from shikiru.domain.steps import Transition, next_step
-from shikiru.domain.tasks import Role, Status, Step, Task
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import Role, Step, Task
 from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationConflict,
@@ -23,7 +23,6 @@ from shikiru.prompts.renderer import PromptName
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from shikiru.config.settings import Settings
     from shikiru.domain.recovery import TurnResult
     from shikiru.domain.steps import Outcome
     from shikiru.engine.history import ReportHistory
@@ -59,8 +58,10 @@ class IntegrationTurnHost(Protocol):
         """Run an integration report through TaskFlow's shared turn loop."""
         ...
 
-    async def apply(self, task: Task, transition: Transition, outcome: Outcome | None) -> Task:
-        """Apply a domain transition and refresh its task title."""
+    async def advance(
+        self, task: Task, outcome: Outcome, *, role: Role | None = None
+    ) -> tuple[Task, bool]:
+        """Apply the transition a report earns, escalating when it says so."""
         ...
 
     async def escalate(
@@ -76,10 +77,6 @@ class IntegrationTurnHost(Protocol):
         """Apply and packet an escalation through TaskFlow's shared boundary."""
         ...
 
-    def require_task(self, task_id: str) -> Task:
-        """Reload a task or raise when it disappeared during its flow."""
-        ...
-
 
 class IntegrationTurns:
     """Coordinate conflict, consult and post-rebase verify turns."""
@@ -89,13 +86,11 @@ class IntegrationTurns:
         *,
         coordinator: IntegrationCoordinator,
         history: ReportHistory,
-        settings: Settings,
         tasks: TaskStore,
     ) -> None:
         """Use the task turn host while coordinating the integration protocol."""
         self._coordinator = coordinator
         self._history = history
-        self._settings = settings
         self._tasks = tasks
 
     async def run(self, task: Task, host: IntegrationTurnHost) -> None:
@@ -128,7 +123,7 @@ class IntegrationTurns:
             PullRequestClosed,
             UncommittedWork,
         ) as error:
-            current = host.require_task(task.id)
+            current = self._tasks.require(task.id)
             transition = Transition.escalate(current, error.reason, step=Step.INTEGRATE)
             await host.escalate(current, transition, None, question=str(error))
 
@@ -198,10 +193,7 @@ class IntegrationTurns:
         if not isinstance(outcome, Verdict):
             message = f"{task.id} post-rebase turn produced no verdict"
             raise ShikiruError(message)
-        transition = next_step(current, outcome, self._settings)
-        escalated = transition.status is Status.ESCALATED
+        updated, escalated = await host.advance(current, outcome, role=Role.LEADER)
         if escalated:
-            await host.escalate(current, transition, outcome, role=Role.LEADER)
             raise IntegrationTurnStopped
-        updated = await host.apply(current, transition, outcome)
         return updated, outcome

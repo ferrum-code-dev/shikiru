@@ -36,16 +36,13 @@ from shikiru.domain.recovery import (
 from shikiru.domain.reports import (
     ImplementationReport,
     Issue,
-    PlanReport,
     ReportKind,
-    TriageReport,
     Verdict,
 )
 from shikiru.domain.steps import ACTING_ROLE, Transition, first_step, next_step
-from shikiru.domain.tasks import EscalationReason, Role, Status, Step, TaskOrigin
+from shikiru.domain.tasks import EscalationReason, Role, Status, Step
 from shikiru.engine.events import (
     emit_nudge,
-    emit_step_started,
     emit_turn_completed,
     emit_turn_failed,
     emit_turn_started,
@@ -69,6 +66,7 @@ if TYPE_CHECKING:
     from shikiru.engine.sessions import SessionManager
     from shikiru.engine.task_facts import TaskFacts
     from shikiru.engine.titles import TaskTitles
+    from shikiru.engine.transitions import TransitionWriter
     from shikiru.engine.turn_context import TurnContextPreparer
     from shikiru.engine.turns import TurnRunner
     from shikiru.prompts.renderer import PromptName
@@ -99,6 +97,7 @@ class TaskFlow:
         facts: TaskFacts,
         contexts: TurnContextPreparer,
         escalations: EscalationFiler,
+        writer: TransitionWriter,
         titles: TaskTitles,
         settings: Settings,
         project_root: Path,
@@ -116,6 +115,7 @@ class TaskFlow:
         self._facts = facts
         self._contexts = contexts
         self._escalations = escalations
+        self._writer = writer
         self._titles = titles
         self._settings = settings
         self._project_root = project_root
@@ -148,9 +148,9 @@ class TaskFlow:
             self._resumed.discard(task_id)
 
     async def _run(self, task_id: str) -> None:
-        task = self.require_task(task_id)
+        task = self._tasks.require(task_id)
         if task.step is None:
-            task = await self.apply(task, first_step(task), None)
+            task = await self._writer.apply(task, first_step(task), None)
         recovery_counters = TurnCounters()
         while task.status is Status.RUNNING:
             step = task.step
@@ -163,8 +163,8 @@ class TaskFlow:
             if should_return:
                 return
         if task.status is Status.INTEGRATING:
-            task = self.require_task(task.id)
-            if not task.held:
+            task, held = self._reload(task.id)
+            if not held:
                 await self._integration_turns.run(task, self)
 
     async def run_report_turn(
@@ -176,8 +176,8 @@ class TaskFlow:
         kind: ReportKind,
     ) -> tuple[Task, ImplementationReport | Verdict]:
         """Run one integration report through the shared turn and recovery loop."""
-        task = self.require_task(task.id)
-        if task.held:
+        task, held = self._reload(task.id)
+        if held:
             raise IntegrationTurnStopped
         current, _, execution, stopped = await self._run_until_completed(
             task,
@@ -194,10 +194,7 @@ class TaskFlow:
             raise ShikiruError(message)
         report = execution.result.report
         if isinstance(report, ImplementationReport | Verdict):
-            emit_turn_completed(self._events, current, report, execution)
-            if isinstance(report, Verdict):
-                report = await self._reject_uncommitted(current, report, execution.turn_dir)
-            return current, report
+            return current, await self._settle(current, report, execution)
         message = f"{current.id} integration turn returned an unexpected report"
         raise ShikiruError(message)
 
@@ -210,8 +207,8 @@ class TaskFlow:
         conflict_context: str | None = None,
     ) -> tuple[Task, TurnCounters, bool]:
         """Run one domain step through the task's turn and recovery loop."""
-        task = self.require_task(task.id)
-        if task.held:
+        task, held = self._reload(task.id)
+        if held:
             return task, counters, True
         return await self._run_step_turn(task, step, counters, conflict_context=conflict_context)
 
@@ -271,8 +268,8 @@ class TaskFlow:
             if next_step is None:
                 message = f"{current.id} recovery left the task with no step"
                 raise ShikiruError(message)
-            current = self.require_task(current.id)
-            if current.held:
+            current, held = self._reload(current.id)
+            if held:
                 return current, counters, None, True
             current_step = next_step
             execution = await self._run_turn(
@@ -292,23 +289,34 @@ class TaskFlow:
         if not isinstance(result, Completed):
             message = f"{task.id} completed-step handler received {type(result).__name__}"
             raise ShikiruError(message)
-        outcome = result.report
-        emit_turn_completed(self._events, task, outcome, execution)
-        if step is Step.VERIFY and isinstance(outcome, Verdict):
-            outcome = await self._reject_uncommitted(task, outcome, execution.turn_dir)
-        transition = next_step(task, outcome, self._settings)
-        escalated = transition.status is Status.ESCALATED
+        outcome = await self._settle(task, result.report, execution)
         try:
-            if escalated:
-                task = await self._escalate(task, transition, outcome)
-            else:
-                task = await self.apply(task, transition, outcome)
+            task, escalated = await self.advance(task, outcome)
         except UsageError as error:
             task = await self._escalate_scope_change_protocol(task, step, outcome, error)
             return task, TurnCounters(), True
-        if escalated:
-            return task, TurnCounters(), True
-        return task, TurnCounters(), False
+        return task, TurnCounters(), escalated
+
+    async def advance(
+        self, task: Task, outcome: Outcome, *, role: Role | None = None
+    ) -> tuple[Task, bool]:
+        """Apply the transition `outcome` earns `task`; report whether it escalated."""
+        transition = next_step(task, outcome, self._settings)
+        if transition.status is Status.ESCALATED:
+            return await self._escalate(task, transition, outcome, role=role), True
+        return await self._writer.apply(task, transition, outcome), False
+
+    def _reload(self, task_id: str) -> tuple[Task, bool]:
+        task = self._tasks.require(task_id)
+        return task, task.held
+
+    async def _settle[R: Outcome](
+        self, task: Task, report: R, execution: TurnExecution
+    ) -> R | Verdict:
+        emit_turn_completed(self._events, task, report, execution)
+        if isinstance(report, Verdict):
+            return await self._reject_uncommitted(task, report, execution.turn_dir)
+        return report
 
     async def _recover(
         self,
@@ -338,7 +346,7 @@ class TaskFlow:
             action=action,
         )
         continued = updated if isinstance(updated, TurnExecution) else None
-        next_task = self.require_task(task.id) if isinstance(updated, TurnExecution) else updated
+        next_task = self._tasks.require(task.id) if isinstance(updated, TurnExecution) else updated
         return next_task, counters, should_return, continued
 
     def _recovery_policy(
@@ -377,10 +385,10 @@ class TaskFlow:
                 )
             else:
                 self._contexts.request_continue(task.id)
-                updated = self.require_task(task.id)
+                updated = self._tasks.require(task.id)
         elif isinstance(action, Backoff):
             await self._clock.sleep(action.delay.total_seconds())
-            updated = self.require_task(task.id)
+            updated = self._tasks.require(task.id)
             next_counters = dataclasses.replace(
                 counters, unavailable_retries=counters.unavailable_retries + 1
             )
@@ -388,7 +396,7 @@ class TaskFlow:
             next_counters = dataclasses.replace(counters, other_retries=counters.other_retries + 1)
         elif isinstance(action, ResumeTurn):
             self._contexts.request_continue(task.id)
-            updated = self.require_task(task.id)
+            updated = self._tasks.require(task.id)
             next_counters = dataclasses.replace(
                 counters,
                 stall_recoveries=counters.stall_recoveries + 1,
@@ -440,7 +448,7 @@ class TaskFlow:
             overrides=move.overrides,
         )
         self._tasks.apply_transition(task.id, transition)
-        updated = self.require_task(task.id)
+        updated = self._tasks.require(task.id)
         new_rung = pick_rung(updated, role, self._settings)
         self._events.append(
             EventKind.RUNG_CHANGED,
@@ -554,47 +562,6 @@ class TaskFlow:
             usage_after=live_run.usage,
         )
 
-    async def apply(self, task: Task, transition: Transition, outcome: Outcome | None) -> Task:
-        """Apply a task transition and refresh its visible title."""
-        updated = self._persist(task, transition, outcome)
-        await self._titles.refresh(updated)
-        return updated
-
-    def _persist(self, task: Task, transition: Transition, outcome: Outcome | None) -> Task:
-        """Write a task transition, emitting its step event, and return the stored task."""
-        if transition.enqueue_new_tasks:
-            if outcome is None:
-                message = f"{task.id}'s transition enqueues new tasks but has no outcome"
-                raise ShikiruError(message)
-            self._apply_new_tasks(task, transition, outcome)
-        else:
-            self._tasks.apply_transition(task.id, transition)
-            if transition.status in (Status.DONE, Status.CANCELLED):
-                self._tasks.set_slot(task.id, None)
-            if isinstance(outcome, TriageReport):
-                self._tasks.set_mode(task.id, outcome.mode)
-        updated = self.require_task(task.id)
-        if (
-            task.step != updated.step
-            and updated.step is not None
-            and updated.status
-            in (
-                Status.RUNNING,
-                Status.INTEGRATING,
-            )
-        ):
-            emit_step_started(self._events, updated, self._settings)
-        return updated
-
-    def _apply_new_tasks(self, task: Task, transition: Transition, outcome: Outcome) -> None:
-        if not isinstance(outcome, PlanReport | Verdict):
-            message = f"{task.id}'s transition enqueues new tasks from a {type(outcome).__name__}"
-            raise ShikiruError(message)
-        children = self._tasks.apply_scope_change(
-            task.id, transition, outcome.new_tasks, origin=TaskOrigin.LEADER
-        )
-        self._emit_scope_change(task, outcome, [child.id for child in children])
-
     async def _escalate_engine_error(self, task: Task, error: Exception) -> None:
         transition = Transition.escalate_current(task, EscalationReason.ENGINE_ERROR)
         await self._escalate(task, transition, None, question=str(error))
@@ -605,18 +572,6 @@ class TaskFlow:
         emit_turn_failed(self._events, task, step, ProtocolError())
         transition = Transition.escalate(task, EscalationReason.AGENT_PROTOCOL, step=step)
         return await self._escalate(task, transition, outcome, question=str(error))
-
-    def _emit_scope_change(
-        self, task: Task, outcome: PlanReport | Verdict, new_ids: list[str]
-    ) -> None:
-        if not outcome.new_tasks and not outcome.scope_changes:
-            return
-        self._events.append(
-            EventKind.SCOPE_CHANGE,
-            task_id=task.id,
-            message=f"{task.id} scope changed: {len(new_ids)} new task(s)",
-            data={"new_task_ids": new_ids, "scope_changes": list(outcome.scope_changes)},
-        )
 
     async def _reject_uncommitted(self, task: Task, verdict: Verdict, turn_dir: Path) -> Verdict:
         if verdict.decision != "accept":
@@ -636,14 +591,6 @@ class TaskFlow:
         (turn_dir / ENGINE_VERDICT_FILENAME).write_text(rejection.model_dump_json(indent=2))
         emit_verdict(self._events, task, rejection, rejection.summary)
         return rejection
-
-    def require_task(self, task_id: str) -> Task:
-        """Reload a task or raise when it disappeared during its flow."""
-        task = self._tasks.get(task_id)
-        if task is None:
-            message = f"{task_id} vanished while its flow was running"
-            raise ShikiruError(message)
-        return task
 
     async def escalate(
         self,
@@ -681,6 +628,6 @@ class TaskFlow:
             question=question,
             result=result,
             role=role,
-            apply_state=lambda: self._persist(task, transition, outcome),
+            apply_state=lambda: self._writer.persist(task, transition, outcome),
         )
-        return self.require_task(task.id)
+        return self._tasks.require(task.id)

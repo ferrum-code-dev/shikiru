@@ -22,6 +22,7 @@ from shikiru.engine.integration import (
 )
 from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.task_facts import TaskFacts
+from shikiru.engine.transitions import TransitionWriter
 from shikiru.engine.turn_context import TurnContextPreparer
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
@@ -189,6 +190,9 @@ def build_flow(
             facts=facts,
             project_root=env.project_root,
         ),
+        writer=TransitionWriter(
+            tasks=env.tasks, events=system.events, titles=system.titles, settings=settings
+        ),
         titles=system.titles,
         settings=settings,
         project_root=env.project_root,
@@ -197,7 +201,6 @@ def build_flow(
         integration_turns=IntegrationTurns(
             coordinator=coordinator,
             history=history,
-            settings=settings,
             tasks=env.tasks,
         ),
         history=history,

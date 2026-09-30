@@ -21,7 +21,7 @@ from shikiru.domain.tasks import (
     Task,
     TaskOrigin,
 )
-from shikiru.errors import UsageError
+from shikiru.errors import ShikiruError, UsageError
 from shikiru.store.database import (
     dump_json,
     format_timestamp,
@@ -314,6 +314,14 @@ class TaskStore:
     def get(self, task_id: str) -> Task | None:
         """Read one task by id, or `None` if it doesn't exist."""
         return fetch_task(self._connection, task_id)
+
+    def require(self, task_id: str) -> Task:
+        """Read one task by id, or raise when it disappeared."""
+        task = self.get(task_id)
+        if task is None:
+            message = f"{task_id} vanished while its flow was running"
+            raise ShikiruError(message)
+        return task
 
     def list_active(self) -> list[Task]:
         """Read every task holding a slot: `running`, `integrating` or `escalated`."""

@@ -57,6 +57,7 @@ from shikiru.engine.supervisor import TaskSupervisor
 from shikiru.engine.takeover import Takeover
 from shikiru.engine.task_facts import TaskFacts
 from shikiru.engine.titles import TaskTitles
+from shikiru.engine.transitions import TransitionWriter
 from shikiru.engine.turn_context import TurnContextPreparer
 from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
@@ -518,6 +519,9 @@ def build_engine(
             facts=task_facts,
             project_root=project_root,
         ),
+        writer=TransitionWriter(
+            tasks=tasks, events=events, titles=titles, settings=resolved_settings
+        ),
         titles=titles,
         settings=resolved_settings,
         project_root=project_root,
@@ -526,7 +530,6 @@ def build_engine(
         integration_turns=IntegrationTurns(
             coordinator=integrator,
             history=history,
-            settings=resolved_settings,
             tasks=tasks,
         ),
         history=history,
