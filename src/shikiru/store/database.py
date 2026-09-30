@@ -9,6 +9,7 @@ from importlib import resources
 from typing import TYPE_CHECKING
 
 from shikiru.errors import DatabaseError
+from shikiru.private import create_private_file, make_private_dir
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -40,6 +41,8 @@ class Database:
         The engine uses this for every state table; clients (CLI, MCP) use it only to append
         `commands` rows and, for `Submit`, to allocate the task id from `sequences` (01 §3).
         """
+        make_private_dir(self._path.parent)
+        create_private_file(self._path)
         connection = self._connect(mode="rwc")
         connection.execute("PRAGMA journal_mode = WAL")
         _migrate(connection)

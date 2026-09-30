@@ -10,6 +10,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Task
 from shikiru.errors import ShikiruError
 from shikiru.paths import task_root
+from shikiru.private import make_private_dir
 from shikiru.tmux.client import FORMAT_PANE_ID
 from shikiru.tmux.decorator import render_title
 from shikiru.view_log import view_argv
@@ -104,7 +105,7 @@ class LayoutGuard:
 
     async def _create(self, task: Task) -> Task:
         root = task_root(self._project_root, task.id)
-        root.mkdir(parents=True, exist_ok=True)
+        make_private_dir(root)
         fields = {"task_id": task.id, "title": task.title}
         window_name = render_title(self._settings.dashboard.titles.window, fields)
         base = await self._view.create_task_window(

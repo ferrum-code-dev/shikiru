@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.tasks import RepoState
 from shikiru.paths import EXCLUDE_LINE, run_dir, task_root
+from shikiru.private import make_private_dir
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -75,7 +76,7 @@ class TaskRootBuilder:
         the branch, the worktree or both already exist.
         """
         root = task_root(self._project_root, task_id)
-        root.parent.mkdir(parents=True, exist_ok=True)
+        make_private_dir(root.parent)
         branch = branch_name(task_id, title)
         project = self._project_root
         repo = self._repo

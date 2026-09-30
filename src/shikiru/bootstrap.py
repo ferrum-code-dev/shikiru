@@ -86,6 +86,7 @@ from shikiru.paths import (
     project_state_dir,
     state_db_path,
 )
+from shikiru.private import create_private_file, make_private_dir, tighten_state_dir
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue
@@ -414,7 +415,6 @@ def build_engine(
     )
     helper_rung = resolved_settings.roles.helper.ladder[0]
     helper = Helper(agent_pool.get(helper_rung.agent))
-    project_state_dir(project_root).mkdir(parents=True, exist_ok=True)
     connection = Database(state_db_path(project_root)).connect()
     tasks = TaskStore(connection, resolved_clock)
     runs = RunStore(connection, resolved_clock)
@@ -447,6 +447,7 @@ def build_engine(
 
     target = exact_target(session_name(resolved_settings.project.name))
     logger, log_handler = _configure_engine_logging(project_root)
+    _tighten_state_dir(project_root, logger)
     layout = LayoutGuard(
         tmux=resolved_tmux,
         view=SessionView(resolved_tmux),
@@ -703,9 +704,19 @@ def _build_integrator(
     )
 
 
+def _tighten_state_dir(project_root: Path, logger: logging.Logger) -> None:
+    state_dir = project_state_dir(project_root)
+    tightened = tighten_state_dir(state_dir)
+    if tightened:
+        logger.info(
+            "removed group and other access from %d paths under %s", len(tightened), state_dir
+        )
+
+
 def _configure_engine_logging(project_root: Path) -> tuple[logging.Logger, logging.FileHandler]:
     log_path = engine_log_path(project_root)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    make_private_dir(log_path.parent)
+    create_private_file(log_path)
     logger = logging.getLogger(ENGINE_LOGGER_NAME)
     handler = logging.FileHandler(log_path)
     logger.addHandler(handler)

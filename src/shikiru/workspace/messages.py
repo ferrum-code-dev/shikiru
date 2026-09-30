@@ -6,6 +6,7 @@ from itertools import chain
 from typing import TYPE_CHECKING
 
 from shikiru.paths import MESSAGES_DIR_NAME, queued_messages_dir, run_dir, turns_dir
+from shikiru.private import make_private_dir, write_private_text
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,7 +37,7 @@ class OperatorMessages:
         if existing is not None:
             return existing
         directory = queued_messages_dir(self._project_root, task_id, role.value)
-        directory.mkdir(parents=True, exist_ok=True)
+        make_private_dir(directory)
         number = self._last_number(task_id) + 1
         path = _message_path(directory, number, key)
         _write_atomically(path, text)
@@ -49,7 +50,7 @@ class OperatorMessages:
         if not queued:
             return []
         target = turn_dir / MESSAGES_DIR_NAME
-        target.mkdir(parents=True, exist_ok=True)
+        make_private_dir(target)
         return [path.rename(target / path.name) for path in queued]
 
     def requeue(self, task_id: str, role: Role, turn_dir: Path) -> None:
@@ -64,7 +65,7 @@ class OperatorMessages:
         if not delivered:
             return
         directory = queued_messages_dir(self._project_root, task_id, role.value)
-        directory.mkdir(parents=True, exist_ok=True)
+        make_private_dir(directory)
         for path in delivered:
             path.rename(directory / path.name)
         delivered_dir.rmdir()
@@ -94,7 +95,7 @@ def _number(path: Path) -> int:
 
 def _write_atomically(path: Path, text: str) -> None:
     partial = path.with_name(path.name + PARTIAL_SUFFIX)
-    partial.write_text(text)
+    write_private_text(partial, text)
     partial.replace(path)
 
 

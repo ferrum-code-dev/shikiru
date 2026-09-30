@@ -37,6 +37,7 @@ from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnSt
 from shikiru.engine.turn_execution import TurnExecution
 from shikiru.engine.turns import TurnHeld
 from shikiru.errors import ShikiruError, UsageError
+from shikiru.private import write_private_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -390,7 +391,7 @@ class TaskFlow:
         rejection = Verdict(
             decision="changes_requested", summary=UNCOMMITTED_SUMMARY, issues=[issue]
         )
-        (turn_dir / ENGINE_VERDICT_FILENAME).write_text(rejection.model_dump_json(indent=2))
+        write_private_text(turn_dir / ENGINE_VERDICT_FILENAME, rejection.model_dump_json(indent=2))
         emit_verdict(self._events, task, rejection, rejection.summary)
         return rejection
 

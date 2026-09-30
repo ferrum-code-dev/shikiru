@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import role_dir
 from shikiru.paths import RUNS_DIR_NAME, project_state_dir
+from shikiru.private import make_private_dir, write_private_text
 from shikiru.process import TURN_STOP_GRACE, ProcessIdentity
 
 if TYPE_CHECKING:
@@ -52,9 +53,9 @@ class TurnProcesses:
         if identity is None:
             path.unlink(missing_ok=True)
             return
-        path.parent.mkdir(parents=True, exist_ok=True)
+        make_private_dir(path.parent)
         staged = path.with_suffix(_STAGED_SUFFIX)
-        staged.write_text(json.dumps(asdict(identity)))
+        write_private_text(staged, json.dumps(asdict(identity)))
         staged.replace(path)
 
     @staticmethod

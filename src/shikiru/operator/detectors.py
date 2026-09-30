@@ -13,6 +13,7 @@ from shikiru.agents.contracts import Rung
 from shikiru.config.loader import validate_project_config_text
 from shikiru.errors import ConfigError
 from shikiru.paths import EXCLUDE_LINE, SHIKIRU_DIR_NAME, project_config_path
+from shikiru.private import make_private_dir
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -253,7 +254,7 @@ def render_config(
 
 
 def _write_config(config_path: Path, contents: str) -> None:
-    config_path.parent.mkdir(parents=True, exist_ok=True)
+    make_private_dir(config_path.parent)
     with config_path.open("x", encoding="utf-8") as handle:
         handle.write(contents)
 

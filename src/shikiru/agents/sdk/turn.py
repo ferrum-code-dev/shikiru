@@ -13,6 +13,7 @@ from shikiru.agents.contracts import (
     TurnFailed,
     TurnSpec,
 )
+from shikiru.private import append_private_bytes, make_private_dir
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -37,9 +38,8 @@ def stderr_log_path(turn_dir: Path, role: str) -> Path:
 
 
 def _append_raw(path: Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("ab") as handle:
-        handle.write(content)
+    make_private_dir(path.parent)
+    append_private_bytes(path, content)
 
 
 class TurnParser(Protocol):

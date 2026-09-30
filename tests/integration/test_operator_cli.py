@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import shlex
+import stat
 import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -242,3 +243,16 @@ async def test_init_rejects_a_project_root_that_is_not_a_repository_root(
     assert code != 0
     assert str(project) in stderr
     assert not (project / ".shikiru" / "config.toml").exists()
+
+
+async def test_init_and_submit_create_the_state_directory_and_database_owner_only(
+    tmp_path: Path,
+) -> None:
+    await _git_project(tmp_path)
+
+    assert (await _cli(tmp_path, "init", "--yes"))[0] == 0
+    assert (await _cli(tmp_path, "submit", "private task"))[0] == 0
+
+    state_dir = tmp_path / ".shikiru"
+    assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE((state_dir / "state.db").stat().st_mode) & 0o077 == 0

@@ -25,6 +25,7 @@ from shikiru.agents.contracts import (
 from shikiru.domain.activity import is_stalled, seconds_until_stall
 from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import ProtocolError, Stalled
+from shikiru.private import append_private_text, make_private_dir
 from shikiru.ui.glyphs import GLYPH_STALLED, ROLE_GLYPHS
 from shikiru.ui.tokens import HOLD_COLOR, ROLE_COLORS
 from shikiru.view_log import (
@@ -217,7 +218,7 @@ class TurnMonitor:
         self, run_dir: Path, turn_dir: Path, role: Role, rung: Rung, signal: AgentSignal
     ) -> None:
         path = view_log_path(run_dir, role.value)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        make_private_dir(path.parent)
         row = {
             VIEW_TIME_KEY: self._clock.now().isoformat(),
             VIEW_TURN_KEY: turn_dir.name,
@@ -225,8 +226,7 @@ class TurnMonitor:
             VIEW_SIGNAL_KEY: type(signal).__name__,
             **asdict(signal),
         }
-        with path.open("a") as handle:
-            handle.write(json.dumps(row, default=_json_value) + _LINE_ENDING)
+        append_private_text(path, json.dumps(row, default=_json_value) + _LINE_ENDING)
 
 
 def _json_value(value: object) -> str:

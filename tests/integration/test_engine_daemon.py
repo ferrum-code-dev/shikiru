@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import stat
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -1467,3 +1468,79 @@ async def test_a_cleanup_failure_after_a_committed_cancel_does_not_reject_it(
         assert escalated.operator.task(escalated.task.id).status is Status.CANCELLED
         faults = escalated.operator.events.since(0, kinds=[EventKind.ENGINE_FAULT])
         assert [fault.task_id for fault in faults] == [escalated.task.id]
+
+
+_LOOSE_DIRECTORY = 0o755
+_LOOSE_FILE = 0o644
+_NO_GROUP_OR_OTHER = 0o077
+_AGENT_OWNED = "fake_state"
+
+
+def _modes_below(state_dir: Path) -> dict[Path, int]:
+    modes: dict[Path, int] = {}
+    for directory, subdirectories, names in state_dir.walk():
+        if directory.name == _AGENT_OWNED:
+            subdirectories.clear()
+            continue
+        files = [] if directory.name == "worktrees" else names
+        subdirectories[:] = [] if directory.name == "worktrees" else subdirectories
+        for path in (directory, *(directory / name for name in files)):
+            if not path.is_symlink():
+                modes[path] = stat.S_IMODE(path.stat().st_mode)
+    return modes
+
+
+async def test_a_running_engine_keeps_every_shikiru_file_and_directory_owner_only(
+    tmp_path: Path, tmux_server: TmuxServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await init_project_repo(tmp_path)
+    state_dir = tmp_path / ".shikiru"
+    old_run = state_dir / "runs" / "T-0"
+    old_run.mkdir(parents=True)
+    worktree_file = state_dir / "worktrees" / "T-0" / "src.py"
+    worktree_file.parent.mkdir(parents=True)
+    worktree_file.write_text("x = 1\n")
+    old_log = old_run / "implementer" / "view.jsonl"
+    old_log.parent.mkdir()
+    old_log.write_text("{}\n")
+    for path in (state_dir, state_dir / "runs", old_run, old_log.parent):
+        path.chmod(_LOOSE_DIRECTORY)
+    old_log.chmod(_LOOSE_FILE)
+    worktree_file.chmod(_LOOSE_FILE)
+    set_script(monkeypatch, [{"kind": "stall"}])
+    clock = FakeClock(TASK_CREATED_AT)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(
+        tmp_path,
+        engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT),
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
+    connection = Database(state_dir / "state.db").connect()
+    queue = CommandQueue(connection, clock)
+    engine_task = asyncio.create_task(engine.run())
+    submitted = await _submit(
+        Submit(title="private", request="private", mode=Mode.IMPLEMENT), queue, clock
+    )
+    await _wait_for_session(RunStore(connection, clock), clock, submitted)
+    new_view = run_dir(tmp_path, submitted) / "implementer" / "view.jsonl"
+
+    async def viewed() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(0.25)
+        return new_view.exists()
+
+    await wait_until(viewed, timeout=10)
+    modes = _modes_below(state_dir)
+    await _append_and_wait(Stop(), queue, clock)
+    await engine_task
+    connection.close()
+
+    assert {state_dir / "state.db-wal", state_dir / "logs" / "engine.log", new_view} <= modes.keys()
+    for path, mode in {**modes, **_modes_below(state_dir)}.items():
+        assert mode & _NO_GROUP_OR_OTHER == 0, (path, oct(mode))
+        if path.is_dir():
+            assert mode == _WRITABLE_DIRECTORY, (path, oct(mode))
+    assert stat.S_IMODE(worktree_file.stat().st_mode) == _LOOSE_FILE

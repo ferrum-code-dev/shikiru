@@ -23,6 +23,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason
 from shikiru.errors import ShikiruError
 from shikiru.paths import run_dir
+from shikiru.private import make_private_dir, write_private_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -268,10 +269,10 @@ class EscalationRaiser:
 
     def _write_packet(self, task_id: str, path: Path, context: PacketContext) -> None:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            make_private_dir(path.parent)
             temporary = path.with_name(path.name + PACKET_TEMPORARY_SUFFIX)
             try:
-                temporary.write_text(render_packet(context))
+                write_private_text(temporary, render_packet(context))
                 temporary.replace(path)
             except OSError:
                 with suppress(OSError):

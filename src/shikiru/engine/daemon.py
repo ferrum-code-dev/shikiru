@@ -11,6 +11,7 @@ import psutil
 
 from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.errors import ShikiruError
+from shikiru.private import create_private_file, make_private_dir
 from shikiru.process import ProcessIdentity, identify_pid
 
 if TYPE_CHECKING:
@@ -51,7 +52,8 @@ class EngineLock:
 
     def acquire(self) -> None:
         """Acquire the lock without blocking, or raise `EngineAlreadyRunningError`."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        make_private_dir(self._path.parent)
+        create_private_file(self._path)
         self._file = self._path.open("a+")
         try:
             fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)

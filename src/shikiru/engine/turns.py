@@ -37,6 +37,7 @@ from shikiru.errors import ShikiruError
 from shikiru.helper.helper import FailureClassification
 from shikiru.helper.models import Unrecoverable
 from shikiru.paths import run_dir, task_root, turns_dir
+from shikiru.private import make_private_dir, write_private_text
 from shikiru.prompts.renderer import OPERATOR_MESSAGES_KEY
 from shikiru.view_log import TURN_DIR_ITERATION_MARKER, TURN_DIR_SEPARATOR
 from shikiru.workspace.reports import InvalidTurnReportError, load_turn_report
@@ -265,22 +266,24 @@ class TurnRunner:
         self, task_run_dir: Path, task_id: str, role: Role, request: TurnRequest
     ) -> Path:
         turns_root = turns_dir(self._project_root, task_id)
-        turns_root.mkdir(parents=True, exist_ok=True)
+        make_private_dir(turns_root)
         turn_dir = turns_root / _turn_dir_name(_turn_count(turns_root) + 1, request)
-        turn_dir.mkdir(parents=True, exist_ok=True)
+        make_private_dir(turn_dir)
         self._requeue_unreported(task_run_dir, task_id, role)
         (turn_dir / REPORT_FILENAME).unlink(missing_ok=True)
         (turn_dir / HELPER_REPORT_FILENAME).unlink(missing_ok=True)
         self._point_current_turn(task_run_dir, role, turn_dir)
         delivered = self._messages.deliver(task_id, role, turn_dir)
         context = {**request.context, OPERATOR_MESSAGES_KEY: [str(path) for path in delivered]}
-        (turn_dir / PROMPT_FILENAME).write_text(self._renderer.render(request.template, context))
-        (turn_dir / REPORT_SCHEMA_FILENAME).write_text(
-            json.dumps(schema_for(request.kind), indent=2)
+        write_private_text(
+            turn_dir / PROMPT_FILENAME, self._renderer.render(request.template, context)
         )
-        (turn_dir / REPORT_KIND_FILENAME).write_text(request.kind.value)
+        write_private_text(
+            turn_dir / REPORT_SCHEMA_FILENAME, json.dumps(schema_for(request.kind), indent=2)
+        )
+        write_private_text(turn_dir / REPORT_KIND_FILENAME, request.kind.value)
         if request.facts:
-            (turn_dir / FACTS_FILENAME).write_text(request.facts)
+            write_private_text(turn_dir / FACTS_FILENAME, request.facts)
         return turn_dir
 
     def _requeue_unreported(self, task_run_dir: Path, task_id: str, role: Role) -> None:
@@ -297,7 +300,7 @@ class TurnRunner:
     @staticmethod
     def _point_current_turn(task_run_dir: Path, role: Role, turn_dir: Path) -> None:
         link = role_dir(task_run_dir, role.value) / CURRENT_TURN_LINK_NAME
-        link.parent.mkdir(parents=True, exist_ok=True)
+        make_private_dir(link.parent)
         if link.is_symlink() or link.exists():
             link.unlink()
         link.symlink_to(turn_dir)
@@ -385,7 +388,7 @@ class TurnRunner:
                 data={"role": selection.run.role.value, "reason": report.unrecoverable},
             )
             return ProtocolError()
-        (turn_dir / HELPER_REPORT_FILENAME).write_text(report.model_dump_json(indent=2))
+        write_private_text(turn_dir / HELPER_REPORT_FILENAME, report.model_dump_json(indent=2))
         return Completed(report=report, rebuilt=True)
 
 
