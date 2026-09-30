@@ -187,7 +187,7 @@ The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's 
   - **Copy-on-write**: the filesystem (APFS; btrfs/XFS) creates only metadata that points at the same data blocks.
   - A 5 GB `node_modules` or `target` "copies" in about a second and uses no extra disk; only files that one side later modifies get their own blocks.
   - Every task gets a warm, fully independent cache.
-- **Shared resources**: `SHIKIRU_SLOT` and `SHIKIRU_TASK` let project scripts separate ports and Docker Compose project names.
+- **Shared resources**: `SHIKIRU_SLOT` and `SHIKIRU_TASK` let project scripts separate ports and Docker Compose project names (slots are `0..max_parallel-1`, so `PORT=$((3000 + SHIKIRU_SLOT))` gives 3000 and 3001 for two slots).
 - **Git hygiene**: `.shikiru/` is added to the repository's `.git/info/exclude`.
 - **Cleanup** on a terminal status: `git worktree remove --force`, and the branch is deleted once merged. The task root goes last, with or without a repo; symlinks in it are removed, never followed.
 

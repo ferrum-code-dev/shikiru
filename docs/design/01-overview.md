@@ -89,6 +89,6 @@ English names come first everywhere. Kanji marks are decoration only.
 | Turn | One prompt → report exchange: one agent process on a new or resumed session |
 | Run | One agent session bound to a task and role. It survives resumes, take-overs and same-agent model changes |
 | Rung | `{agent, model, effort}` entry of a ladder |
-| Slot | Parallel lane `1..max_parallel`, exported as `SHIKIRU_SLOT` |
+| Slot | Parallel lane `0..max_parallel-1`, exported as `SHIKIRU_SLOT` (with `max_parallel = 2`, tasks see `SHIKIRU_SLOT=0` and `SHIKIRU_SLOT=1`) |
 | Hold | Task pause: `paused` and `intervention` (a taken-over session) are stored on the task and cleared by `resume` or hand back; the quota wait is derived from the agent's block and clears automatically |
 | Escalation | Critical issue that needs an Operator decision: `E-<n>` |
