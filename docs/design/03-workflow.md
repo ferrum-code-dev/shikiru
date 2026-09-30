@@ -21,7 +21,7 @@
 | `counters` | Persisted: `rejections_on_rung` (reset whenever the Implementer's rung changes: an automatic move, `set_rung` to a different rung, `retry --rung`), `consults` (reset each iteration), `conflict_rounds` (reset per integration attempt). Resolving an escalation resets the counter behind its reason |
 | `rung_index` | Per role, persisted. Never decreases |
 | `overrides` | Operator rungs per role |
-| `repo` | `{base, base_sha, branch}`, set when the task root is built |
+| `repo` | `{base, base_ref, base_sha, branch}`, set when the task root is built |
 | `slot`, `window_id`, `panes` | `panes` maps `{role: pane_id}` (the only place pane ids are stored) |
 | `wait_reason` | Written by the scheduler, and `PR open` by `PullRequest` (§6) |
 | `requeued_at` | Set when resumed after an escalation; gives precedence |

@@ -135,7 +135,7 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 ## 2. State DB (`.shikiru/state.db`)
 
 - SQLite WAL mode, `busy_timeout = 5000`.
-- Migrations tracked by `PRAGMA user_version`.
+- Migrations tracked by `PRAGMA user_version`. A migration rewrites stored JSON when a model gains a required field (e.g. `repo.base_ref` defaults to the stored `base`, the ref tasks of that era started from), so models stay strict.
 - Readers use short read transactions and `PRAGMA data_version` to detect changes.
 - Timestamps are UTC ISO-8601.
 
@@ -153,7 +153,7 @@ CREATE TABLE tasks (
   counters TEXT NOT NULL DEFAULT '{}',            -- rejections_on_rung, consults, conflict_rounds
   rung_index TEXT NOT NULL DEFAULT '{}',          -- {role: n}
   overrides TEXT NOT NULL DEFAULT '{}',           -- {role: {agent, model, effort}}
-  repo TEXT,                                      -- {base, base_sha, branch}; null until the task root exists
+  repo TEXT,                                      -- {base, base_ref, base_sha, branch}; null until the task root exists
   slot INTEGER, window_id TEXT, panes TEXT NOT NULL DEFAULT '{}',
   wait_reason TEXT, requeued_at TEXT, summary TEXT,
   created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT

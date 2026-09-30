@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.store.database import Database, format_timestamp
+from shikiru.store.tasks import TaskStore
+from tests.support.clock import FakeClock
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -102,6 +104,43 @@ def test_headless_migration_keeps_sessions_and_removes_agent_state(
             migrated.execute("UPDATE runs SET cost_basis = NULL WHERE id = 1")
     finally:
         migrated.close()
+
+
+def test_tasks_stored_before_base_ref_existed_load_with_their_base_as_the_ref(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "before-base-ref.db"
+    legacy = sqlite3.connect(path)
+    try:
+        for name in (
+            "001_initial.sql",
+            "002_headless_turns.sql",
+            "003_drop_command_handled_at.sql",
+        ):
+            legacy.executescript(
+                resources.files("shikiru.store.migrations").joinpath(name).read_text("utf-8")
+            )
+        legacy.execute(
+            "INSERT INTO tasks (id, seq, origin, title, request, status, step, repo, created_at) "
+            "VALUES ('T-1', 1, 'operator', 'old', 'old', 'running', 'implement', ?, ?)",
+            (
+                '{"base": "main", "base_sha": "abc123", "branch": "shikiru/T-1-old"}',
+                format_timestamp(START),
+            ),
+        )
+        legacy.execute("PRAGMA user_version = 3")
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    connection = Database(path).connect()
+    try:
+        [task] = TaskStore(connection, FakeClock(START)).list_active()
+    finally:
+        connection.close()
+
+    assert task.repo is not None
+    assert (task.repo.base, task.repo.base_ref, task.repo.base_sha) == ("main", "main", "abc123")
 
 
 def test_connect_readonly_cannot_write(database: Database) -> None:
