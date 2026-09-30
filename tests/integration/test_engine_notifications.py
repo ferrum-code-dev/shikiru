@@ -5,8 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shlex
+import signal
+from contextlib import suppress
 from typing import TYPE_CHECKING
+
+import pytest
 
 from shikiru.domain.events import EventKind
 from shikiru.engine.notifier import Notifier
@@ -17,11 +22,10 @@ from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
 from tests.support.engine import build_tmux
 from tests.support.factories import TASK_CREATED_AT
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -102,3 +106,44 @@ async def test_notifier_isolates_external_command_failure(
     )
     assert str(event.id) in failure.getMessage()
     assert failure.exc_info is not None
+
+
+_HOOK_WAIT_SECONDS = 10.0
+_SHORT_HOOK_TIMEOUT_SECONDS = 1.0
+_LONG_HOOK_TIMEOUT_SECONDS = 600.0
+
+
+@pytest.mark.parametrize("cancelled", [False, True], ids=["timeout", "cancellation"])
+async def test_hook_descendants_die_with_the_hook(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path, *, cancelled: bool
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    runner = SubprocessRunner()
+    pid_file = tmp_path / "descendant.pid"
+    script = f"sleep 1000 & echo $! > {pid_file}; wait"
+    notifier = Notifier(
+        build_tmux(tmux_server),
+        runner,
+        session_target=exact_target(session_name("missing")),
+        command=f"/bin/sh -c {shlex.quote(script)}",
+        timeout_seconds=_LONG_HOOK_TIMEOUT_SECONDS if cancelled else _SHORT_HOOK_TIMEOUT_SECONDS,
+    )
+    event = EventLog(connection, clock).append(EventKind.TASK_DONE, message="done")
+    delivery = asyncio.create_task(notifier.notify(event))
+    try:
+        await wait_until(
+            lambda: pid_file.exists() and bool(pid_file.read_text()), _HOOK_WAIT_SECONDS
+        )
+        descendant = runner.identify(int(pid_file.read_text()))
+        assert descendant is not None
+        if cancelled:
+            delivery.cancel()
+            with suppress(asyncio.CancelledError):
+                await delivery
+        else:
+            await delivery
+
+        await wait_until(lambda: not runner.is_running(descendant), _HOOK_WAIT_SECONDS)
+    finally:
+        with suppress(ProcessLookupError, ValueError):
+            os.kill(int(pid_file.read_text()), signal.SIGKILL)

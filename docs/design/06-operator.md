@@ -162,6 +162,7 @@ Delivery never runs on the command loop. The `Engine` queues each notifiable eve
 - the queue holds 64 events; when full, the oldest pending event is dropped with a logged warning;
 - a delivery failure is logged and the next event is delivered;
 - the engine loop supervises the task like the task flows: an unexpected failure is logged and the task restarted;
+- a hook runs in its own process group, which is SIGKILLed on its timeout and on cancellation, so no descendant it started outlives the hook (03 §4.2);
 - on engine stop the task is cancelled, which terminates a running hook, and pending events are dropped, so `stop` never waits for a hook. The one exception is the `engine_stopped` event of a fault stop: it is delivered directly, bounded by `orchestration.faults.stop_notify_seconds`.
 
 ### 5.8 Keeping the engine running

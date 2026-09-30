@@ -53,6 +53,33 @@ def _killpg(pgid: int, signum: signal.Signals) -> bool:
     return True
 
 
+async def _end_process(
+    process: asyncio.subprocess.Process, *, grace: float | None, group: bool
+) -> None:
+    """End `process` (its whole group when `group`): SIGTERM and `grace` seconds, then SIGKILL.
+
+    Without a `grace` the process is SIGKILLed at once. A group is always SIGKILLed once its
+    leader has exited, so no descendant outlives it.
+    """
+
+    def send(signum: signal.Signals) -> None:
+        if group:
+            _killpg(process.pid, signum)
+        else:
+            with suppress(ProcessLookupError):
+                process.send_signal(signum)
+
+    if process.returncode is None and grace is not None:
+        send(signal.SIGTERM)
+        with suppress(TimeoutError):
+            await asyncio.wait_for(process.wait(), timeout=grace)
+    if process.returncode is None:
+        send(signal.SIGKILL)
+    await process.wait()
+    if group:
+        send(signal.SIGKILL)
+
+
 @dataclass(frozen=True, slots=True)
 class ProcessIdentity:
     """A process id with its start time, which together never match a reused pid."""
@@ -134,12 +161,7 @@ class SpawnedProcess:
     async def stop(self, *, grace: float = TURN_STOP_GRACE) -> None:
         """Signal the process group with SIGTERM, then SIGKILL after `grace`, and reap it."""
         async with self._stop_lock:
-            if self._process.returncode is None:
-                _killpg(self._process.pid, signal.SIGTERM)
-                with suppress(TimeoutError):
-                    await asyncio.wait_for(self._process.wait(), timeout=grace)
-                if self._process.returncode is None:
-                    _killpg(self._process.pid, signal.SIGKILL)
+            await _end_process(self._process, grace=grace, group=True)
             await self.wait()
 
     async def _read_stderr(self) -> None:
@@ -162,8 +184,15 @@ class SubprocessRunner:
         env: Mapping[str, str] | None = None,
         input_text: str | None = None,
         check: bool = False,
+        own_group: bool = False,
+        stop_grace: float | None = None,
     ) -> ProcessResult:
-        """Run `argv` and return its result, honouring `timeout` and killing it on expiry."""
+        """Run `argv` and return its result, honouring `timeout`.
+
+        On expiry or cancellation the process is SIGKILLed, or with a `stop_grace` given SIGTERMed
+        and killed only when it outlasts that many seconds. With `own_group` it leads its own
+        process group, which is ended with it so no descendant outlives the call.
+        """
         argv_tuple = tuple(argv)
         process = await asyncio.create_subprocess_exec(
             *argv_tuple,
@@ -172,6 +201,7 @@ class SubprocessRunner:
             stdin=asyncio.subprocess.PIPE if input_text is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=own_group,
         )
         input_bytes = input_text.encode() if input_text is not None else None
         try:
@@ -180,10 +210,10 @@ class SubprocessRunner:
                     process.communicate(input_bytes), timeout=timeout
                 )
             except TimeoutError:
-                await self._kill_and_wait(process)
+                await self._end_and_wait(process, grace=stop_grace, group=own_group)
                 raise CommandTimeoutError(argv_tuple, timeout) from None
             except asyncio.CancelledError:
-                await self._kill_and_wait(process)
+                await self._end_and_wait(process, grace=stop_grace, group=own_group)
                 raise
         finally:
             self._close_transport(process)
@@ -289,19 +319,14 @@ class SubprocessRunner:
             raise ProcessReplacementError(argv_tuple, error) from error
 
     @staticmethod
-    async def _kill_and_wait(process: asyncio.subprocess.Process) -> None:
-        cleanup = asyncio.create_task(SubprocessRunner._kill(process))
+    async def _end_and_wait(
+        process: asyncio.subprocess.Process, *, grace: float | None, group: bool
+    ) -> None:
+        cleanup = asyncio.create_task(_end_process(process, grace=grace, group=group))
         try:
             await asyncio.shield(cleanup)
         except asyncio.CancelledError:
             await cleanup
-
-    @staticmethod
-    async def _kill(process: asyncio.subprocess.Process) -> None:
-        if process.returncode is None:
-            with suppress(ProcessLookupError):
-                process.kill()
-        await process.wait()
 
     @staticmethod
     def _close_transport(process: asyncio.subprocess.Process) -> None:

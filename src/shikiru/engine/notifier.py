@@ -57,7 +57,11 @@ class Notifier:
                 argv = tuple(shlex.split(self._command))
                 payload = json.dumps(event.model_dump(mode="json"))
                 await self._runner.run(
-                    argv, timeout=self._timeout_seconds, input_text=payload, check=True
+                    argv,
+                    timeout=self._timeout_seconds,
+                    input_text=payload,
+                    check=True,
+                    own_group=True,
                 )
             except Exception:
                 self._logger.exception("external notification failed for event %s", event.id)
