@@ -621,8 +621,8 @@ def build_engine(
         layout=layout,
         roots=roots,
         events=events,
-        on_dependency_cancelled=DependencyEscalator(tasks, escalation_raiser),
-        on_dispatch_failure=DispatchFailureEscalator(tasks, escalation_raiser),
+        on_dependency_cancelled=DependencyEscalator(writer, escalation_raiser),
+        on_dispatch_failure=DispatchFailureEscalator(writer, escalation_raiser),
         titles=titles,
     )
     lock_path = engine_lock_path(project_root)

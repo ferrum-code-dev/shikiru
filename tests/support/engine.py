@@ -26,6 +26,7 @@ from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.task_facts import TaskFacts
 from shikiru.engine.titles import TaskTitles
+from shikiru.engine.transitions import TransitionWriter
 from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
 from shikiru.helper.helper import Helper
@@ -116,6 +117,21 @@ def build_raiser(
         atomically=lambda: transaction(connection),
         titles=TaskTitles(decorator, runs, fake_engine_settings()),
         evidence=build_evidence(project_root),
+    )
+
+
+def build_writer(
+    connection: Connection, clock: Clock, *, tmux: Tmux | None = None
+) -> TransitionWriter:
+    """A `TransitionWriter` over `connection`, refreshing titles through `tmux` when given."""
+    runs = RunStore(connection, clock)
+    decorator = PaneDecorator(tmux if tmux is not None else Tmux(SubprocessRunner()))
+    settings = fake_engine_settings()
+    return TransitionWriter(
+        tasks=TaskStore(connection, clock),
+        events=EventLog(connection, clock),
+        titles=TaskTitles(decorator, runs, settings),
+        settings=settings,
     )
 
 

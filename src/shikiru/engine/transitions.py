@@ -48,6 +48,8 @@ class TransitionWriter:
             self._tasks.apply_transition(task.id, transition)
             if transition.status in (Status.DONE, Status.CANCELLED):
                 self._tasks.set_slot(task.id, None)
+            if transition.status is Status.ESCALATED:
+                self._tasks.set_wait_reason(task.id, None)
         updated = self._tasks.require(task.id)
         if (
             task.step != updated.step

@@ -21,7 +21,6 @@ from shikiru.domain.escalation import EscalationOption, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason
-from shikiru.errors import ShikiruError
 from shikiru.paths import run_dir
 from shikiru.private import make_private_dir, write_private_text
 
@@ -33,10 +32,10 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Step, Task
     from shikiru.engine.evidence import EvidenceCollector
     from shikiru.engine.titles import TaskTitles
+    from shikiru.engine.transitions import TransitionWriter
     from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
-    from shikiru.store.tasks import TaskStore
 
 ESCALATIONS_DIR_NAME = "escalations"
 PACKET_FILENAME_SUFFIX = ".md"
@@ -324,23 +323,12 @@ class EscalationRaiser:
         return "\n".join(lines)
 
 
-def escalate_stored(tasks: TaskStore, task: Task, transition: Transition) -> Task:
-    """Persist `transition` for a not-yet-running `task`, clear its wait reason, reload it."""
-    tasks.apply_transition(task.id, transition)
-    tasks.set_wait_reason(task.id, None)
-    current = tasks.get(task.id)
-    if current is None:
-        message = f"{task.id} vanished during escalation"
-        raise ShikiruError(message)
-    return current
-
-
 class DispatchFailureEscalator:
     """Escalate a task after repeated failures while preparing its dispatch."""
 
-    def __init__(self, tasks: TaskStore, raiser: EscalationRaiser) -> None:
-        """Use the task store for the state change and `raiser` for the escalation."""
-        self._tasks = tasks
+    def __init__(self, writer: TransitionWriter, raiser: EscalationRaiser) -> None:
+        """Use `writer` for the state change and `raiser` for the escalation."""
+        self._writer = writer
         self._raiser = raiser
 
     async def __call__(self, task: Task, error: Exception) -> None:
@@ -355,5 +343,5 @@ class DispatchFailureEscalator:
             reports=(),
             facts="",
             view_tail="",
-            apply_state=lambda: escalate_stored(self._tasks, task, transition),
+            apply_state=lambda: self._writer.persist(task, transition, None),
         )

@@ -6,20 +6,19 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason
-from shikiru.engine.escalations import escalate_stored
 
 if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from shikiru.engine.escalations import EscalationRaiser
-    from shikiru.store.tasks import TaskStore
+    from shikiru.engine.transitions import TransitionWriter
 
 
 class DependencyEscalator:
     """Apply and packet a dependency-cancelled escalation through one boundary."""
 
-    def __init__(self, tasks: TaskStore, raiser: EscalationRaiser) -> None:
-        """Use `tasks` for the state transition and `raiser` for the operator packet."""
-        self._tasks = tasks
+    def __init__(self, writer: TransitionWriter, raiser: EscalationRaiser) -> None:
+        """Use `writer` for the state transition and `raiser` for the operator packet."""
+        self._writer = writer
         self._raiser = raiser
 
     async def __call__(self, task: Task) -> None:
@@ -34,5 +33,5 @@ class DependencyEscalator:
             reports=(),
             facts="",
             view_tail="",
-            apply_state=lambda: escalate_stored(self._tasks, task, transition),
+            apply_state=lambda: self._writer.persist(task, transition, None),
         )

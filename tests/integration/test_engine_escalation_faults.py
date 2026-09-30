@@ -12,7 +12,6 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Role, Status, Step
-from shikiru.engine.escalations import escalate_stored
 from shikiru.paths import project_state_dir, run_dir
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
@@ -22,7 +21,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.session import SessionView
 from tests.integration.test_engine_daemon import engine_settings
 from tests.support.clock import FakeClock
-from tests.support.engine import build_raiser, build_registry, build_tmux
+from tests.support.engine import build_raiser, build_registry, build_tmux, build_writer
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until
@@ -193,6 +192,7 @@ async def test_a_restart_with_an_unwritable_packet_directory_keeps_running_and_r
         world.leave_turn_evidence(task.id, Role.IMPLEMENTER)
         escalated = Transition.escalate_current(task, EscalationReason.AGENT_ERROR)
         raiser = build_raiser(world.connection, world.clock, tmp_path)
+        writer = build_writer(world.connection, world.clock)
         await raiser.raise_escalation(
             task,
             step=Step.IMPLEMENT,
@@ -202,7 +202,7 @@ async def test_a_restart_with_an_unwritable_packet_directory_keeps_running_and_r
             reports=(),
             facts="",
             view_tail="",
-            apply_state=lambda: escalate_stored(world.tasks, task, escalated),
+            apply_state=lambda: writer.persist(task, escalated, None),
         )
         assert world.fault_events(task.id) == 1
         async with _running(world, tmux_server) as served:
