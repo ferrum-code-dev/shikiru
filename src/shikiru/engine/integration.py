@@ -125,7 +125,7 @@ type ContinueRebase = Callable[[], Awaitable[None]]
 type ConflictResolver = Callable[
     [Task, ContinueRebase], Awaitable[tuple[Task, IntegrationMetadata]]
 ]
-type TaskFinisher = Callable[[Task], Awaitable[None]]
+type TaskFinisher = Callable[[Task], Awaitable[Path | None]]
 
 
 @dataclass(frozen=True, slots=True)

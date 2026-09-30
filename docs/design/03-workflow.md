@@ -44,7 +44,7 @@ queued ──► running ──► integrating ──► done
 | `integrating` | yes, except while a PR is open (§6) |
 | `escalated` | no. The worktree, sessions and window stay. On re-dispatch the task gets its previous slot if free; otherwise its next turns resume the sessions under the new `SHIKIRU_SLOT` |
 | `done` | — terminal: window closed, worktrees removed, run files kept |
-| `cancelled` | — terminal: window closed, worktrees removed, run files kept |
+| `cancelled` | — terminal: window closed, worktrees removed (one with uncommitted work is kept, §6), run files kept |
 
 **Holds**:
 - `paused` and `intervention` are task-scoped (§9).
@@ -89,7 +89,7 @@ A completed triage persists its `title` and `complexity` with the transition, so
 
 **Where new tasks get their tracker entries.** The Leader commits tracker changes in its own task branch, which reaches the base only when that task integrates. Two cases, kept separate:
 - **Plan.** Each new task implicitly depends on the plan task, in addition to its listed dependencies. It is ready only when the plan task is `done` (§6, so the plan's tracker changes are on the verified base ref its root starts from), and a cancelled plan task raises `dependency_cancelled` for it like any cancelled dependency.
-- **Supersede.** The rejected task never integrates and its replacements must not depend on it (a cancelled dependency would cancel them). They have no implicit dependency. Their roots are seeded instead: when the engine creates a replacement's worktree it applies, three-way, the change the superseded branch made to the configured `project.trackers` since it left the base and commits it as the first commit of the replacement branch, so the tracker entries reach the base with the replacement's own integration. Nothing else of the rejected branch is carried over; when no trackers are configured, the superseded branch is gone, or its tracker paths are unchanged, nothing is seeded. A seeding failure removes the fresh worktree and branch and fails the dispatch (§10, step 5) instead of starting without the entries.
+- **Supersede.** The rejected task never integrates and its replacements must not depend on it (a cancelled dependency would cancel them). They have no implicit dependency. Their roots are seeded instead: when the engine creates a replacement's worktree it applies, three-way, the change the superseded branch made to the configured `project.trackers` since it left the base and commits it as the first commit of the replacement branch, so the tracker entries reach the base with the replacement's own integration. Nothing else of the rejected branch is carried over; when no trackers are configured, the superseded branch is gone, or its tracker paths are unchanged, nothing is seeded. A `supersede` verdict is subject to the uncommitted-changes rule of §6: a verdict on a dirty worktree is replaced by the engine's `changes_requested`, so tracker edits left uncommitted are committed (or discarded) before the task is superseded and reach the seed. A seeding failure removes the fresh worktree and branch and fails the dispatch (§10, step 5) instead of starting without the entries.
 
 ## 3. Review loop
 
@@ -195,7 +195,9 @@ The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's 
 
 Integration runs under the project integration lock. A branch with no commits ahead of `base` merges nothing and finishes cleanly.
 
-**Uncommitted changes.** A verify `accept` on a worktree with uncommitted changes (`git status --porcelain` not empty) never reaches the rebase: the engine replaces it with its own `changes_requested` verdict whose issue lists the files ("Commit what belongs to this task and discard the rest."), stored as `engine-verdict.json` beside the verify turn's report. It is a normal `changes_requested` round (§3), final-round rules included. The same replacement applies to the post-rebase `accept` (a conflict round, step 1).
+**Uncommitted changes.** A verify `accept` or `supersede` on a worktree with uncommitted changes (`git status --porcelain` not empty) never reaches the rebase: the engine replaces it with its own `changes_requested` verdict whose issue lists the files ("Commit what belongs to this task and discard the rest."), stored as `engine-verdict.json` beside the verify turn's report. It is a normal `changes_requested` round (§3), final-round rules included. The same replacement applies to the post-rebase `accept` (a conflict round, step 1). Files that git ignores are outside the guard (`git status --porcelain` does not list them): ignored output is disposable and is removed with the worktree.
+
+Terminal cleanup never erases uncommitted work either: every path that removes a task worktree (`done`, `superseded`, `cancel`, an escalation's `cancel`, startup cleanup) keeps a worktree whose `git status --porcelain` is not empty, together with its branch, and reports its path (the `kept_worktree` field of the command result). The Operator commits or discards the work and removes the worktree.
 
 Integration itself never discards work: at its entry, and again before the strategy merges, a task worktree whose `git status --porcelain` is not empty (tracked or untracked, plan tasks and a branch equal to `base` included) raises `uncommitted_work` (§8) and the worktree is kept. A rebase already in progress is exempt, its conflict markers being the work in flight.
 
@@ -284,7 +286,7 @@ Commands that only set state to a target value (`prioritize`, `pause`, `set_rung
 - `answer` runs a consult turn (the Leader receives the Operator's text), then continues with implement at the same iteration; for `iterations_exhausted` the next verify is again a final round.
 - `retry` re-runs the failed step.
 - `accept` integrates.
-- `cancel` cancels the task and keeps the branch.
+- `cancel` cancels the task and keeps the branch; a worktree with uncommitted work (an `uncommitted_work` escalation, typically) is kept too and its path is returned in the result (§6).
 
 **Atomicity.** Every path that escalates a task (a step outcome, an integration turn, a dispatch failure, a cancelled dependency) goes through the one `EscalationRaiser`. The packet file is written first, atomically (temporary file, then rename); then the escalated task state, the escalation row and the `escalation` event commit in one transaction, and the packet is removed again if that transaction fails. A task is therefore never `escalated` without an open escalation; a failure before the commit leaves the task in its previous state for the ordinary error handling. A packet that cannot be written (unwritable directory, full disk) is not such a failure: the escalation is the row, and the file is a rendering of it. The state, row and event still commit, so the task is `escalated` and actionable at once (invariant 5); the write failure is logged and recorded once per packet and engine run as an `engine_fault` event of the task (notified, 06 §5.7), and the packet is rewritten by the per-tick restoration (§7 step 5) when the directory is writable again. Only a failure of the transaction itself (state, row or event) rolls back and removes the packet. Title refresh runs after the commit and its failure is logged, never raised.
 

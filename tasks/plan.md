@@ -511,9 +511,9 @@ Refs: 03 §8; invariant 5.
 
 ### Task 63: `supersede` and cancellation never erase unexplained work
 Refs: 03 §2, §6, §8; invariant 3.
-- [ ] A `supersede` verdict is subject to the same uncommitted-work rule as `accept`: the Leader's dirty worktree is returned as `changes_requested` (or escalated as `uncommitted_work`) before the task is cancelled, so tracker entries and other work reach the replacements' seed or are explicitly accounted for. 03 says so.
-- [ ] Cancelling an `uncommitted_work` escalation keeps the dirty worktree (and its branch) in place and tells the operator where it is, instead of removing it; the cancel option text states this.
-- [ ] Ignored plan output is documented as outside the guard, or included in it (say which, tested).
+- [x] A `supersede` verdict is subject to the same uncommitted-work rule as `accept`: the Leader's dirty worktree is returned as `changes_requested` (or escalated as `uncommitted_work`) before the task is cancelled, so tracker entries and other work reach the replacements' seed or are explicitly accounted for. 03 says so.
+- [x] Cancelling an `uncommitted_work` escalation keeps the dirty worktree (and its branch) in place and tells the operator where it is, instead of removing it; the cancel option text states this.
+- [x] Ignored plan output is documented as outside the guard, or included in it (say which, tested).
 - Tests: integration with real git: supersede with an uncommitted tracker edit; cancel of an `uncommitted_work` escalation keeps the files; the replacement receives the tracker entries.
 
 ### Task 64: Operator rung pins survive every transition

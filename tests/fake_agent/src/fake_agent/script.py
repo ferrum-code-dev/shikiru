@@ -55,6 +55,7 @@ class SupersedeStep(_StepModel):
 
     kind: Literal["supersede"] = "supersede"
     new_tasks: list[NewTaskSpec]
+    uncommitted: str = ""
 
 
 class ChangesRequestedStep(_StepModel):

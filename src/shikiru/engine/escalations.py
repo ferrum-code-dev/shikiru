@@ -74,7 +74,9 @@ _CONSEQUENCES: dict[ResolutionKind, str] = {
     ResolutionKind.ANSWER: "Give the Leader guidance; the task continues from a consult turn.",
     ResolutionKind.RETRY: "Re-run the step that raised this escalation.",
     ResolutionKind.ACCEPT: "Integrate the work as it stands.",
-    ResolutionKind.CANCEL: "Cancel the task; its branch is kept.",
+    ResolutionKind.CANCEL: (
+        "Cancel the task; its branch is kept, and its worktree too when it holds uncommitted work."
+    ),
 }
 
 

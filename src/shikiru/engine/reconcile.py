@@ -30,7 +30,7 @@ class Reconciler:
         layout: LayoutGuard,
         processes: TurnProcesses,
         resume_task: Callable[[str], Awaitable[None]],
-        finish_task: Callable[[Task], Awaitable[None]],
+        finish_task: Callable[[Task], Awaitable[Path | None]],
         restore_escalation: Callable[[Task], Awaitable[None]],
         project_root: Path,
     ) -> None:

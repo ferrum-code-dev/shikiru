@@ -19,8 +19,10 @@ from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, StatusReason, Step
 from shikiru.engine.handlers.base import HandlerContext
 from shikiru.engine.handlers.tasks import SetRungHandler
+from shikiru.process import SubprocessRunner
 from shikiru.store.database import transaction
 from shikiru.store.escalations import fetch_open_escalations
+from shikiru.workspace.git import Git
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_ALIAS, FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
 from tests.support.flow import (
@@ -356,6 +358,41 @@ async def test_a_supersede_verdict_cancels_the_task_and_enqueues_new_tasks(
     assert final.status_reason is StatusReason.SUPERSEDED
     children = [t for t in engine_env.tasks.list_all() if t.parent_id == task.id]
     assert [child.title for child in children] == ["redo it properly"]
+
+
+async def test_a_supersede_verdict_on_a_dirty_worktree_is_sent_back_and_keeps_the_edit(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    replacement = {"title": "redo it properly", "request": "redo"}
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [
+            {"kind": "supersede", "new_tasks": [replacement], "uncommitted": "TODO.md"},
+            {"kind": "supersede", "new_tasks": [replacement]},
+        ],
+    )
+
+    flow_env = await _run_flow(engine_env, task.id, settings)
+
+    verdicts = flow_env.events.since(0, kinds=[EventKind.VERDICT], task_id=task.id)
+    assert [event.data["decision"] for event in verdicts] == [
+        "supersede",
+        "changes_requested",
+        "supersede",
+    ]
+    assert "TODO.md" in verdicts[1].data["issues"][0]["description"]
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status_reason is StatusReason.SUPERSEDED
+    assert final.repo is not None
+    committed = await Git(SubprocessRunner()).diff_name_only(
+        engine_env.project_root, f"{final.repo.base}...{final.repo.branch}"
+    )
+    assert "TODO.md" in committed
 
 
 _HIGH_RUNG = Rung(agent=FAKE_AGENT_NAME, model="fake-high", effort=None)

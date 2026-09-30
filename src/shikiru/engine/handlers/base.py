@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from shikiru.domain.commands import Command, HandBack, Say
@@ -13,7 +14,6 @@ from shikiru.errors import CommandRejectedError
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
-    from pathlib import Path
 
     from shikiru.store.escalations import EscalationStore
     from shikiru.store.events import EventLog
@@ -22,9 +22,10 @@ if TYPE_CHECKING:
 
 
 TaskCallback = Callable[[str], Awaitable[None]]
-TerminalCallback = Callable[[Task], Awaitable[None]]
+TerminalCallback = Callable[[Task], Awaitable[Path | None]]
 RefreshCallback = Callable[[Task], Awaitable[None]]
 
+KEPT_WORKTREE_KEY = "kept_worktree"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -108,6 +109,11 @@ async def interrupt_task(
     """Stop a task flow before a handler changes its current step or status."""
     if even_if_inactive or task.status in (Status.RUNNING, Status.INTEGRATING):
         await context.cancel_task(task.id)
+
+
+def kept_worktree_result(kept: Path | None) -> dict[str, object]:
+    """Tell the operator where uncommitted work kept a cancelled task's worktree (03 §8)."""
+    return {} if kept is None else {KEPT_WORKTREE_KEY: str(kept)}
 
 
 def require_command_id(command: Say | HandBack) -> int:

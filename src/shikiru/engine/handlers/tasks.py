@@ -20,6 +20,7 @@ from shikiru.domain.tasks import Hold, Status
 from shikiru.engine.handlers.base import (
     HandlerContext,
     interrupt_task,
+    kept_worktree_result,
     refresh_titles,
     reject_terminal,
     require_task,
@@ -153,8 +154,12 @@ class CancelHandler:
             message = f"task {task.id} disappeared after cancellation"
             raise CommandRejectedError(message)
         await refresh_titles(self._context, updated.id)
-        await self._context.finish_task(updated)
-        return {"task_id": task.id, "status": Status.CANCELLED.value}
+        kept = await self._context.finish_task(updated)
+        return {
+            "task_id": task.id,
+            "status": Status.CANCELLED.value,
+            **kept_worktree_result(kept),
+        }
 
 
 class RetryHandler:

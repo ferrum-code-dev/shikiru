@@ -117,16 +117,20 @@ class TaskRootBuilder:
             await self._git.delete_branch(project, branch)
             raise
 
-    async def cleanup(self, task_id: str, repo: RepoState | None) -> None:
+    async def cleanup(self, task_id: str, repo: RepoState | None) -> Path | None:
         """Remove the task's worktree, its merged branch, and last its task root (03 §5, §7).
 
         Idempotent and tolerant of a worktree already removed. Never deletes an unmerged branch,
-        and never follows a symlink out of the task root.
+        never follows a symlink out of the task root, and never erases uncommitted work: a
+        worktree with tracked or untracked changes (git-ignored files excepted) and its branch
+        stay, and the kept task root is returned.
         """
         project = self._project_root
         root = task_root(project, task_id)
         if repo is not None:
             if await self._git.worktree_exists(project, root):
+                if await self._git.status_porcelain(root):
+                    return root
                 await self._git.worktree_remove(project, root)
             if await self._git.branch_exists(
                 project, repo.branch
@@ -134,3 +138,4 @@ class TaskRootBuilder:
                 await self._git.delete_branch(project, repo.branch)
         if root.exists():
             shutil.rmtree(root)
+        return None

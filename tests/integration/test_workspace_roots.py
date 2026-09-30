@@ -132,6 +132,38 @@ async def test_cleanup_removes_the_worktree_and_deletes_the_branch_only_when_mer
     assert (branch_name(_TASK_ID, _TASK_TITLE) in branches) is branch_kept
 
 
+_CLEANUP_DIRT_CASES = {
+    "tracked_edit": ("README.md", False, True),
+    "untracked_file": ("plan-output.md", False, True),
+    "ignored_output_is_outside_the_guard": ("out.log", True, False),
+}
+
+
+@pytest.mark.parametrize(
+    ("filename", "ignored", "kept"), _CLEANUP_DIRT_CASES.values(), ids=_CLEANUP_DIRT_CASES.keys()
+)
+async def test_cleanup_keeps_a_worktree_with_uncommitted_work_but_not_one_with_only_ignored_files(
+    tmp_path: Path, *, filename: str, ignored: bool, kept: bool
+) -> None:
+    project_root = tmp_path / "project"
+    await _init_repo_with_commit(project_root)
+    if ignored:
+        (project_root / ".gitignore").write_text("*.log\n")
+        await commit_all(SubprocessRunner(), project_root, "ignore logs")
+    builder = _builder(project_root)
+    state = await builder.build(_TASK_ID, _TASK_TITLE)
+    root = task_root(project_root, _TASK_ID)
+    (root / filename).write_text("work\n")
+
+    retained = await builder.cleanup(_TASK_ID, state)
+
+    assert (retained == root) is kept
+    assert root.exists() is kept
+    assert (root / filename).exists() is kept
+    branches = await _local_branches(SubprocessRunner(), project_root)
+    assert (branch_name(_TASK_ID, _TASK_TITLE) in branches) is kept
+
+
 async def test_append_to_exclude_adds_exactly_one_line_when_the_file_already_ends_in_a_newline(
     tmp_path: Path,
 ) -> None:

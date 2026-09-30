@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from shikiru.store.tasks import TaskStore
 
 
+_WORK_ENDING_DECISIONS = frozenset({"accept", "supersede"})
 UNCOMMITTED_SUMMARY = "The workspace has uncommitted changes, so it cannot be integrated."
 UNCOMMITTED_ISSUE = (
     "Uncommitted changes in the workspace: {paths}. "
@@ -367,7 +368,7 @@ class TaskFlow:
         return await self._escalate(task, transition, outcome, question=str(error))
 
     async def _reject_uncommitted(self, task: Task, verdict: Verdict, turn_dir: Path) -> Verdict:
-        if verdict.decision != "accept":
+        if verdict.decision not in _WORK_ENDING_DECISIONS:
             return verdict
         facts = await self._facts.collect(task)
         if not facts.status:

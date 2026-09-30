@@ -19,12 +19,15 @@ from shikiru.domain.tasks import EscalationReason, Status
 from shikiru.engine.handlers.base import (
     HandlerContext,
     interrupt_task,
+    kept_worktree_result,
     refresh_titles,
     require_task,
 )
 from shikiru.errors import CommandRejectedError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.tasks import Task
 
@@ -59,12 +62,16 @@ class ResolveHandler:
                 data={"escalation_id": escalation.id, "resolution": command.resolution.kind.value},
             )
         await refresh_titles(self._context, task.id)
-        if isinstance(command.resolution, CancelResolution):
+        kept = (
             await self._finish_cancel(task)
+            if isinstance(command.resolution, CancelResolution)
+            else None
+        )
         return {
             "escalation_id": escalation.id,
             "task_id": task.id,
             "status": transition.status.value,
+            **kept_worktree_result(kept),
         }
 
     def _open_escalation(self, command: Resolve) -> Escalation:
@@ -122,12 +129,12 @@ class ResolveHandler:
         self._context.tasks.apply_transition(task.id, transition)
         self._context.tasks.set_requeued(task.id)
 
-    async def _finish_cancel(self, task: Task) -> None:
+    async def _finish_cancel(self, task: Task) -> Path | None:
         updated = self._context.tasks.get(task.id)
         if updated is None:
             message = f"task {task.id} disappeared after cancellation"
             raise CommandRejectedError(message)
-        await self._context.finish_task(updated)
+        return await self._context.finish_task(updated)
 
     def _drop_cancelled_dependencies(self, task_id: str, dependencies: list[str]) -> None:
         keep: list[str] = []

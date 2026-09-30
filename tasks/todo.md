@@ -84,7 +84,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 60: The engine survives tick faults and tmux loss
 - [x] Task 61: Every running task has a live flow
 - [x] Task 62: Escalation packet failures never kill or wedge the engine
-- [ ] Task 63: `supersede` and cancellation never erase unexplained work
+- [x] Task 63: `supersede` and cancellation never erase unexplained work
 - [ ] Task 64: Operator rung pins survive every transition
 - [ ] Task 65: Holds cover every remaining execution path
 - [ ] Task 66: Command replay and crash windows
@@ -96,3 +96,22 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [ ] Task 72: TaskFlow residuals (F18)
 - [ ] Task 73: Test gaps and evidence quality
 - [ ] Task 74: Final verification and release evidence (Phase 7b)
+
+## Phase 8 — Operator Workspace
+
+Target: [Operator Workspace](../docs/tui-workspace.md); acceptance criteria: [plan.md](plan.md#phase-8--operator-workspace). Implement after Phase 7b.
+
+- [ ] Task 75: Workspace design alignment and shared visual shell
+- [ ] Task 76: Selectable task browser and search
+- [ ] Task 77: Task detail and navigation to existing windows
+- [ ] Task 78: Contextual actions and searchable palette
+- [ ] Task 79: Durable command feedback and ownership banners
+- [ ] Task 80: Home overview and attention composition
+- [ ] Task 81: Escalation resolution with structured evidence
+- [ ] Task 82: Blocker navigation and task families
+- [ ] Task 83: Completion history and task evidence timeline
+- [ ] Task 84: Honest usage and secondary diagnostics
+- [ ] Task 85: Responsive layouts and accessible refresh behaviour
+- [ ] Task 86: Markdown and JSON evidence export
+- [ ] Task 87: Operator documentation and workflow walkthroughs
+- [ ] Task 88: Workspace release verification and evidence

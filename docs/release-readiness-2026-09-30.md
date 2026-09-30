@@ -43,7 +43,7 @@ Source: `/tmp/shikiru-review-2026-09-29.md` (review of `e56832b`).
 | F02 | Agent shutdown does not own descendants or bound pipe draining | 46 | `68c5cf7` | Fixed |
 | F03 | Takeover ownership released while native agents remain active | 44 | `e7c0c1e` | Fixed |
 | F04 | Integration bypasses persisted task holds | 43 | `564d7c9` | Fixed; PR polling after entry stays ungated by design (limitation 2) |
-| F05 | Stale escalation actions can resurrect canceled tasks | 45 | `9acc604` | Fixed; cancelling an `uncommitted_work` escalation still removes the worktree (limitation 1) |
+| F05 | Stale escalation actions can resurrect canceled tasks | 45 | `9acc604` | Fixed; cancelling an `uncommitted_work` escalation keeps the dirty worktree |
 | F06 | PR completion leaves dependent work on a stale local base | 47 | `611c5ea` | Fixed; local merged-branch cleanup may remain (limitation 4) |
 | F07 | Decomposition does not deliver parent tracker changes to children | 48 | `4431d5f` | Fixed |
 | F08 | Notification hook blocks command processing and scheduling | 52 | `48e25a1` | Fixed |
@@ -65,7 +65,7 @@ Source: `/tmp/shikiru-review-2026-09-29.md` (review of `e56832b`).
 
 ## Known limitations
 
-1. Cancelling an `uncommitted_work` escalation still removes the worktree.
+1. Resolved (Task 63): cancelling keeps a dirty worktree and reports its path.
 2. Pull-request polling is not hold-gated after entry (03 section 6 states that observing an already open PR continues).
 3. `RepoState.base_ref` is a required field.
 4. Local branch cleanup in PR mode may leave the merged branch.

@@ -15,7 +15,7 @@ from fake_agent.agent import FakeAgent, FakeOptions
 
 from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung
 from shikiru.bootstrap import build_engine
-from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
+from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig, RepoConfig
 from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
@@ -52,6 +52,7 @@ from shikiru.domain.tasks import (
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
 from shikiru.engine.takeover import HAND_BACK_MESSAGE
 from shikiru.errors import ConfigError
+from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
 from shikiru.store.escalations import EscalationStore, fetch_open_escalations
@@ -74,6 +75,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_sett
 from tests.support.flow import init_project_repo
 from tests.support.store import reopen_command
 from tests.support.waiting import wait_until
+from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -699,6 +701,28 @@ async def test_direct_cancel_and_retry_settle_the_escalation_so_a_stale_resolve_
         assert operator.task(task_id).status is expected_status
         assert escalated.escalation_status() is EscalationStatus.RESOLVED
         assert escalated.resolved_events() == 0
+
+
+async def test_cancelling_a_task_keeps_a_dirty_worktree_and_tells_the_operator_where_it_is(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        operator, task_id = escalated.operator, escalated.task.id
+        await init_project_repo(tmp_path)
+        builder = task_root_builder(SubprocessRunner(), tmp_path, RepoConfig())
+        escalated.tasks.set_repo(task_id, await builder.build(task_id, escalated.task.title))
+        dirty = task_root(tmp_path, task_id) / "TODO.md"
+        dirty.write_text("tracker entry\n")
+
+        outcome = await operator.send(
+            Resolve(escalation_id=escalated.escalation_id, resolution=CancelResolution())
+        )
+
+        assert outcome.status is CommandStatus.DONE
+        assert outcome.result is not None
+        assert outcome.result["kept_worktree"] == str(task_root(tmp_path, task_id))
+        assert dirty.read_text() == "tracker entry\n"
+        assert operator.task(task_id).status is Status.CANCELLED
 
 
 async def test_a_resolved_escalation_cannot_be_resolved_again(
