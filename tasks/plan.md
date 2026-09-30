@@ -544,9 +544,9 @@ Refs: 03 §6; invariant 4.
 
 ### Task 68: Compatibility and leftovers
 Refs: 05 §2, 03 §1.1; F06, F09.
-- [ ] `RepoState.base_ref` loads from state written before it existed (default or migration), tested with a pre-Task-47 database row.
-- [ ] `Submit.complexity` is optional: an explicit `--complexity normal` is kept and triage does not replace it; the mode write of a triage report and its transition are one UPDATE.
-- [ ] The two remaining E2E tests that cap CPU at 100 use the shared gate setting.
+- [x] `RepoState.base_ref` loads from state written before it existed (default or migration), tested with a pre-Task-47 database row.
+- [x] `Submit.complexity` is optional: an explicit `--complexity normal` is kept and triage does not replace it; the mode write of a triage report and its transition are one UPDATE.
+- [x] The two remaining E2E tests that cap CPU at 100 use the shared gate setting.
 - Tests: integration for each.
 
 ### Task 69: Process ownership residuals

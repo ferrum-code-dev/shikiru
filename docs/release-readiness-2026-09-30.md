@@ -55,7 +55,7 @@ Source: `/tmp/shikiru-review-2026-09-29.md` (review of `e56832b`).
 | F14 | Escalated state without an actionable escalation | 55 | `5f45ab8` | Fixed; persistent packet-write failure and restored packet content (limitation 6) |
 | F15 | Codex model change reuses the previous model's window | 56 | `c8362f0` | Fixed |
 | F16 | Reserved path characters redirect SQLite to another file | 51 | `fce47fa` | Fixed |
-| F17 | Layout-sensitive assertion fails the gate | 41 | `d57286d` | Fixed; the gate passes with and without `TERM=dumb`. `1d7db7a` removed one saturable CPU cap in tests; two E2E tests still cap CPU at 100 (limitation 7) |
+| F17 | Layout-sensitive assertion fails the gate | 41 | `d57286d` | Fixed; the gate passes with and without `TERM=dumb`. `1d7db7a` removed the saturable CPU caps in integration tests; Task 68 removed the last two in the E2E tests (limitation 7) |
 | F18 | TaskFlow concentrates independently changing policies | 57 | `3979889`, `1e57b0b`, `6cab575`, `79b9259`, `1197b02`, `69ea0ba` | Fixed (turn context, escalation filing, event projection, one turn-boundary path, recovery extracted) |
 | F19 | Live-view test covers replay, not live delivery | 58 | `99c2006` | Fixed |
 | F20 | Claimed architecture enforcement exceeds lint contracts | 58 | `bfd3dc3` | Fixed for import and clock rules; the semantic agent-name rule and `loop.time()` stay review conventions, now documented as such |
@@ -71,7 +71,7 @@ Source: `/tmp/shikiru-review-2026-09-29.md` (review of `e56832b`).
 4. Resolved (Task 67): the local branch of a `done` task is removed with its worktree in PR mode too.
 5. Resolved (Task 68): `submit` complexity is optional; an explicit `--complexity normal` is kept and only an unset complexity takes the triaged one.
 6. A persistent escalation-packet write failure leaves the task running idle until restart, and a packet restored after a restart lacks the original reports and facts (it is rebuilt from the timeline, sessions and escalation row).
-7. Two E2E tests still cap CPU at 100.
+7. Resolved (Task 68): the two E2E tests use `CPU_UNCAPPED_PCT` like the integration tests.
 8. Command acknowledgement is not in the same transaction as the command's effect; replay is idempotent by command id, which makes this safe.
 9. The clean-install smoke is macOS-only; Linux was not verified.
 10. F22 kept the literal and no-comment conventions, pending owner decision.
@@ -99,6 +99,6 @@ The 2026-09-29 audit claimed every section agrees. After Tasks 41-58 that claim 
 2. 03 section 7 describes the restored packet as rewritten "from durable state", which is accurate, but it is weaker evidence than a packet filed at escalation time (no reports, facts or turn tail). The design does not say so (limitation 6).
 3. The 07 section 5 E3 description (dependent new tasks) does not mention the implicit plan edge that made the E3 assertion stale; the assertion is fixed and the description remains valid.
 4. 02 section 3 is an illustrative tree; it lists the new engine modules but is not exhaustive by intent.
-5. Two E2E tests still cap CPU at 100 (limitation 7), which conflicts in spirit with the fix in `1d7db7a`.
+5. Resolved (Task 68): the two E2E CPU caps of 100 now use the uncapped gate setting.
 
 No other discrepancy was found in the sampled parts. The honest conclusion: the sections changed by Tasks 41-58 agree with the code in every claim checked above, with the residual items listed; this is not a claim that every line of every design section was re-verified.

@@ -16,6 +16,7 @@ from fake_agent.scripted import TICK_A1_ENABLED_VALUE, TICK_A1_ENV_VAR
 from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import session_name
+from tests.support.factories import CPU_UNCAPPED_PCT
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.waiting import wait_until
 
@@ -226,7 +227,7 @@ async def test_fake_agent_operator_flow_completes_and_integrates(
         "--set",
         "orchestration.poll_seconds=1",
         "--set",
-        "orchestration.resources.max_cpu_pct=100",
+        f"orchestration.resources.max_cpu_pct={CPU_UNCAPPED_PCT}",
         "--set",
         "orchestration.resources.min_free_ram_gb=0",
         "--set",

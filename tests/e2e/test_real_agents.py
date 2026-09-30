@@ -38,6 +38,7 @@ from shikiru.store.tasks import TASK_ID_PREFIX
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import session_name
 from shikiru.view_log import view_log_path
+from tests.support.factories import CPU_UNCAPPED_PCT
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.waiting import wait_until
 
@@ -128,7 +129,7 @@ REAL_OVERRIDES = (
     "--set",
     "orchestration.poll_seconds=1",
     "--set",
-    "orchestration.resources.max_cpu_pct=100",
+    f"orchestration.resources.max_cpu_pct={CPU_UNCAPPED_PCT}",
     "--set",
     "orchestration.resources.min_free_ram_gb=0",
     "--set",

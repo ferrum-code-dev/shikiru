@@ -89,7 +89,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 65: Holds cover every remaining execution path
 - [x] Task 66: Command replay and crash windows
 - [x] Task 67: PR mode is live and current
-- [ ] Task 68: Compatibility and leftovers
+- [x] Task 68: Compatibility and leftovers
 - [ ] Task 69: Process ownership residuals
 - [ ] Task 70: Trust boundary, permissions and platform support
 - [ ] Task 71: Comment rule and lint claims (F22 decision, F20)
