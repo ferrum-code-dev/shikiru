@@ -144,6 +144,8 @@ The engine writes `runs/T/<role>/turn.pid` while the process runs, so a restarte
 
 Each turn process is started in its own process group, which the engine owns: `stop()` sends SIGTERM to the group, SIGKILLs it after `TURN_STOP_GRACE`, and always SIGKILLs it once the direct child has exited, so no descendant outlives its turn. Reading stderr after the exit is bounded by `STDERR_DRAIN_TIMEOUT`; a descendant that escaped the group and still holds the pipe cannot block `stop()`. The recorded pid is the group's id.
 
+**Outside the guarantee.** A descendant that calls `setsid` (or `setpgid` into another group) leaves the turn's group, so neither `stop()` nor orphan cleanup can reach it. Only a cgroup (Linux) or a job object would contain such a process, and Shikiru does not use them: it supports macOS and Linux with plain POSIX process groups. This holds for notification hooks (06 §5.7) as well.
+
 ### 4.3 TurnRunner
 
 `run(task, role, TurnSpec) → TurnResult`, where the result is one of:
@@ -210,6 +212,7 @@ Integration itself never discards work: at its entry, and again before the strat
      - Pre-check: `merge-base --is-ancestor base branch`, and, if `base` is checked out in the main checkout, no overlap between its dirty paths and the changed paths.
      - If a check fails: retry every `INTEGRATION_RETRY` (2 min) for up to `timeouts.integration_wait`, then `integration_blocked`.
      - Then: `git merge --ff-only` if `base` is checked out, else `git update-ref refs/heads/<base> <new> <old>`.
+     - Every mutating git call of the engine (merge, rebase, apply, commit, worktree add/remove, branch delete, update-ref, fetch, push) is stopped gracefully on cancellation: SIGTERM, which git handles by removing its own lock files, then SIGKILL after `GIT_STOP_GRACE`. A killed git would leave `index.lock` or a half-updated tree in the operator's checkout, which a later run would see as a dirty overlap.
    - **`PullRequest`** (`integration = "pr"`):
      - `git push -u <repo.remote> <branch>` and `gh pr create --base <base> --head <branch>`, titled with the task title and with the accepted summary as its body. `pr_opened` records the PR URL and commits.
      - The task branch is Shikiru's; a re-push after a rebase uses `--force-with-lease` against the last pushed sha. An open PR already on that head and base (the engine died before `pr_opened`) is adopted instead of opening another.

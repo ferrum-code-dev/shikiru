@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 _GIT_BIN = "git"
 _COMMAND_TIMEOUT_SECONDS = 30.0
 _PUSH_TIMEOUT_SECONDS = 300.0
+GIT_STOP_GRACE = 10.0
 _WORKTREE_LIST_PREFIX = "worktree "
 _STATUS_IGNORED_PREFIX = "!! "
 _STATUS_PATH_OFFSET = 3
@@ -38,17 +39,28 @@ class Git:
         self, repo_dir: Path, worktree_path: Path, *, new_branch: str, base: str
     ) -> None:
         """Add a worktree at `worktree_path` on new branch `new_branch`, starting from `base`."""
-        await self._run(repo_dir, "worktree", "add", "-b", new_branch, str(worktree_path), base)
+        await self._run(
+            repo_dir,
+            "worktree",
+            "add",
+            "-b",
+            new_branch,
+            str(worktree_path),
+            base,
+            mutating=True,
+        )
 
     async def worktree_add_existing_branch(
         self, repo_dir: Path, worktree_path: Path, branch: str
     ) -> None:
         """Add a worktree at `worktree_path` checking out the already-existing `branch`."""
-        await self._run(repo_dir, "worktree", "add", str(worktree_path), branch)
+        await self._run(repo_dir, "worktree", "add", str(worktree_path), branch, mutating=True)
 
     async def worktree_remove(self, repo_dir: Path, worktree_path: Path) -> None:
         """Remove the worktree at `worktree_path`, discarding any local changes in it."""
-        await self._run(repo_dir, "worktree", "remove", "--force", str(worktree_path))
+        await self._run(
+            repo_dir, "worktree", "remove", "--force", str(worktree_path), mutating=True
+        )
 
     async def worktree_exists(self, repo_dir: Path, worktree_path: Path) -> bool:
         """Return whether `worktree_path` is a registered worktree of the repo at `repo_dir`."""
@@ -63,7 +75,7 @@ class Git:
 
     async def delete_branch(self, repo_dir: Path, branch: str) -> None:
         """Force-delete local branch `branch` in the repo at `repo_dir`."""
-        await self._run(repo_dir, "branch", "-D", branch)
+        await self._run(repo_dir, "branch", "-D", branch, mutating=True)
 
     async def current_branch(self, repo_dir: Path) -> str:
         """Return the name of the branch currently checked out in `repo_dir`."""
@@ -106,7 +118,7 @@ class Git:
 
     async def apply_patch(self, repo_dir: Path, patch: str) -> None:
         """Apply `patch` to the index and working tree of `repo_dir`, merging three-way."""
-        await self._run(repo_dir, "apply", "--3way", "--index", input_text=patch)
+        await self._run(repo_dir, "apply", "--3way", "--index", input_text=patch, mutating=True)
 
     async def commit(self, repo_dir: Path, message: str) -> None:
         """Commit the index of `repo_dir` as the engine's own identity."""
@@ -119,6 +131,7 @@ class Git:
             "commit",
             "-m",
             message,
+            mutating=True,
         )
 
     async def status_porcelain(self, repo_dir: Path, *, include_ignored: bool = False) -> list[str]:
@@ -157,15 +170,15 @@ class Git:
 
     async def rebase(self, repo_dir: Path, base: str) -> None:
         """Rebase the current branch onto `base`, raising when git reports a conflict."""
-        await self._run(repo_dir, "rebase", base)
+        await self._run(repo_dir, "rebase", base, mutating=True)
 
     async def rebase_continue(self, repo_dir: Path) -> None:
         """Continue a rebase after its conflicts have been resolved and staged."""
-        await self._run(repo_dir, "-c", "core.editor=true", "rebase", "--continue")
+        await self._run(repo_dir, "-c", "core.editor=true", "rebase", "--continue", mutating=True)
 
     async def merge_ff_only(self, repo_dir: Path, branch: str) -> None:
         """Fast-forward the checked-out base branch to `branch` only."""
-        await self._run(repo_dir, "merge", "--ff-only", branch)
+        await self._run(repo_dir, "merge", "--ff-only", branch, mutating=True)
 
     async def update_ref(
         self, repo_dir: Path, branch: str, new_sha: str, expected_old_sha: str
@@ -177,6 +190,7 @@ class Git:
             f"refs/heads/{branch}",
             new_sha,
             expected_old_sha,
+            mutating=True,
         )
 
     async def remote_branch_sha(self, repo_dir: Path, remote: str, branch: str) -> str | None:
@@ -194,7 +208,13 @@ class Git:
     async def fetch(self, repo_dir: Path, remote: str, refspec: str) -> None:
         """Fetch `refspec` from `remote`, updating only the refs the refspec names."""
         await self._run(
-            repo_dir, "fetch", "--no-tags", remote, refspec, timeout=_PUSH_TIMEOUT_SECONDS
+            repo_dir,
+            "fetch",
+            "--no-tags",
+            remote,
+            refspec,
+            timeout=_PUSH_TIMEOUT_SECONDS,
+            mutating=True,
         )
 
     async def push(self, repo_dir: Path, remote: str, branch: str, *, lease: str | None) -> None:
@@ -204,7 +224,14 @@ class Git:
         """
         lease_args = () if lease is None else (f"--force-with-lease={branch}:{lease}",)
         await self._run(
-            repo_dir, "push", *lease_args, "-u", remote, branch, timeout=_PUSH_TIMEOUT_SECONDS
+            repo_dir,
+            "push",
+            *lease_args,
+            "-u",
+            remote,
+            branch,
+            timeout=_PUSH_TIMEOUT_SECONDS,
+            mutating=True,
         )
 
     async def dirty_paths(self, repo_dir: Path) -> set[str]:
@@ -270,7 +297,13 @@ class Git:
         check: bool = True,
         timeout: float = _COMMAND_TIMEOUT_SECONDS,
         input_text: str | None = None,
+        mutating: bool = False,
     ) -> ProcessResult:
         return await self._runner.run(
-            [_GIT_BIN, *args], timeout=timeout, cwd=repo_dir, check=check, input_text=input_text
+            [_GIT_BIN, *args],
+            timeout=timeout,
+            cwd=repo_dir,
+            check=check,
+            input_text=input_text,
+            stop_grace=GIT_STOP_GRACE if mutating else None,
         )
