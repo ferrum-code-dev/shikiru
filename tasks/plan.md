@@ -487,3 +487,99 @@ Refs: 07 §5.
 - [x] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included. (2026-09-30, `96bb4b7`; resume E5 and takeover E6 are native scenarios; 07 §5 defines no native model-change scenario, which stays covered by integration tests.)
 - [x] The portable (macOS only; Linux not verified) clean-install smoke passes; tested CLI versions and the source commit are recorded next to the results.
 - [x] `docs/release-readiness-*.md` states which findings were fixed, and its claim that every design section agrees with the code is restated after Tasks 41–58.
+
+## Phase 7b — Independent-review remediation (2026-09-30)
+
+Source: three independent read-only reviews of `66aeb3a` (F01–F08, F09–F23, whole-system release readiness), whose verdict was "ready for supervised use only". Every item below was found by a reviewer reading code and, where noted there, reproduced on real SQLite, Git and tmux; each task first writes a failing test that reproduces its item (or shows by reading that the item is not real, and says so), then fixes it. The Phase 7 invariants apply. Owner decisions recorded 2026-09-30: all reviewer items are in scope; F22 — the "no other literals" and "no comments" rules stay, unnecessary comments are removed, and a genuinely needed comment gets an in-place exclusion marker.
+
+### Task 60: The engine survives tick faults and tmux loss
+Refs: 02 §1, 01 D8, 06 §5.7.
+- [ ] A fault in one engine tick (layout restore, scheduling, reconciliation, notification) is logged with the task and cause, retried on the next tick with bounded backoff from `defaults.toml`, and never ends the engine. A vanished tmux server or session is recreated (session and windows restored) instead of raising.
+- [ ] An engine that does stop for an unrecoverable reason records the reason as an event and sends the configured notification; `engine_stopped` carries the reason. 06 documents how to keep the engine running (service-wrapper recipe for launchd and systemd).
+- Tests: integration: `tmux kill-server` while a task is running — the engine keeps running, restores the layout and the task continues; a scheduler exception in one tick does not stop later ticks; an unrecoverable stop notifies.
+
+### Task 61: Every running task has a live flow
+Refs: 03 §2, §7, §10; invariant 5.
+- [ ] Each engine tick ensures every `running`/`integrating` task that is not held has a live flow, and starts the missing one; a flow that ended without settling its task (an exception out of `TaskFlow.run`, an `answer` resolution racing the previous flow's tail, a failed escalation) no longer leaves the task `running` and idle until a restart. `supervisor.start_task` never silently skips a task whose old flow is finishing.
+- Tests: integration: an `answer` resolved while the old flow is still finishing its title refresh ends with one live flow; a flow killed by an exception is restarted or the task escalated; no duplicate flows for one task.
+
+### Task 62: Escalation packet failures never kill or wedge the engine
+Refs: 03 §8; invariant 5.
+- [ ] A failure writing an escalation packet (unwritable directory, disk full) is handled at every call site (`TaskFlow`, scheduler dispatch and dependency escalations, reconciliation): the engine keeps running, the task remains actionable (the escalation is retried on the next tick or the task stays `escalated` with its row), and the failure is logged and shown as an `engine_error`; a restart does not fail the same way forever.
+- [ ] A packet restored from durable state carries the recorded reports, facts and turn tail that still exist, not only the headline question.
+- Tests: integration: failure after the state write inside the transaction, failure while writing the packet on the flow path, the scheduler path and reconcile; recovery after the failure is removed ends with an open, actionable escalation with its evidence.
+
+### Task 63: `supersede` and cancellation never erase unexplained work
+Refs: 03 §2, §6, §8; invariant 3.
+- [ ] A `supersede` verdict is subject to the same uncommitted-work rule as `accept`: the Leader's dirty worktree is returned as `changes_requested` (or escalated as `uncommitted_work`) before the task is cancelled, so tracker entries and other work reach the replacements' seed or are explicitly accounted for. 03 says so.
+- [ ] Cancelling an `uncommitted_work` escalation keeps the dirty worktree (and its branch) in place and tells the operator where it is, instead of removing it; the cancel option text states this.
+- [ ] Ignored plan output is documented as outside the guard, or included in it (say which, tested).
+- Tests: integration with real git: supersede with an uncommitted tracker edit; cancel of an `uncommitted_work` escalation keeps the files; the replacement receives the tracker entries.
+
+### Task 64: Operator rung pins survive every transition
+Refs: 03 §1.1, §7; F10.
+- [ ] Every path that writes rung overrides (`changes_requested` at `escalate_after`, recovery rung moves, retry, `set_rung`) changes only the role it moves and preserves overrides set concurrently by the operator; `set_rung` resets `rejections_on_rung` as 03 §1.1 says (or the design is corrected with the reason).
+- Tests: integration: a `set_rung` acknowledged while a turn runs survives a verify `changes_requested` that reaches `escalate_after` and a recovery move up a rung; counters follow the documented rule.
+
+### Task 65: Holds cover every remaining execution path
+Refs: 03 §6, §10; invariant 2.
+- [ ] Nudge turns, the scheduler (a queued task with the intervention hold is not dispatched into a slot), `git rebase --continue` after a conflict turn, PR polling and the window between the hold check and process spawn all honour `Task.held`; `INTEGRATION_STARTED` is emitted only after the hold check; a paused task cannot escalate as `integration_blocked` from the lock wait budget. 03 §6 lists these paths.
+- Tests: integration: pause during a nudge, during a conflict turn before `rebase --continue`, during PR polling, and just before spawn starts no further process; retrying a taken-over task does not take a slot; the quota-wait hold test fails on the pre-Task-43 code (it currently passes there).
+
+### Task 66: Command replay and crash windows
+Refs: 03 §4.3, §7, §9; invariant 5.
+- [ ] `take_over` is idempotent and crash-atomic (hold, run mark, pane respawn and event recover to a consistent state on replay); replayed `cancel`, `resolve`, `retry`, `set_rung`, `pause` and `take_over` report the effect that already applied instead of a rejection and append no duplicate events; a cleanup failure after a committed cancel or resolution does not turn its acknowledgement into a rejection.
+- [ ] Message queue writes are crash-safe: `requeue` writes before it unlinks; delivery into a turn directory cannot strand a message when the process dies before `current_turn` is repointed (the next turn finds it).
+- Tests: integration with a crash between each effect and the acknowledgement for each command; a real SIGKILL of the fake agent after delivery (the existing turn-process test passes on the pre-Task-54 code and must be replaced by one that fails there).
+
+### Task 67: PR mode is live and current
+Refs: 03 §6; invariant 4.
+- [ ] PR polling has a liveness rule: a conflicted, closed, failing-CI or over-budget PR escalates (with the reason) instead of polling forever; `cancel` closes an open PR of the task; the local branch of a merged PR is removed.
+- [ ] A task root built after a sibling PR merged, or after the remote base moved, starts from the refreshed base (fetch before building), not from a stale `refs/shikiru/bases/<base>`.
+- Tests: integration with real git, a bare remote and the fake `gh`: conflicted PR, closed PR, failing CI, cancel with an open PR, merged-branch cleanup, and a base moved by an unrelated push.
+
+### Task 68: Compatibility and leftovers
+Refs: 05 §2, 03 §1.1; F06, F09.
+- [ ] `RepoState.base_ref` loads from state written before it existed (default or migration), tested with a pre-Task-47 database row.
+- [ ] `Submit.complexity` is optional: an explicit `--complexity normal` is kept and triage does not replace it; the mode write of a triage report and its transition are one UPDATE.
+- [ ] The two remaining E2E tests that cap CPU at 100 use the shared gate setting.
+- Tests: integration for each.
+
+### Task 69: Process ownership residuals
+Refs: 04 §6, 06 §5.7; F02.
+- [ ] Notification hooks run in their own process group and are killed as a group on timeout, cancellation or shutdown; mutating git calls run by the engine are not SIGKILLed mid-operation on cancel (bounded graceful stop or shield); a turn process that died before its identity was recorded is still cleaned up; process identity compares start times with a tolerance so a clock step on Linux cannot make a live group look dead.
+- [ ] A descendant that calls `setsid` is documented as outside the guarantee, with the reason.
+- Tests: integration with real processes for each; unit test for the identity tolerance.
+
+### Task 70: Trust boundary, permissions and platform support
+Refs: 01, 04 §4–5, README.
+- [ ] The trust boundary is documented in README and the design: Claude runs in `bypassPermissions` by default, Codex gets the shared `.git` as a writable root, worktree isolation is a prompt convention; use only on repositories and hosts the operator trusts.
+- [ ] State, run and log directories are created private (owner-only); log and run growth is bounded by a documented, configured retention or explicitly documented as unbounded.
+- [ ] `scripts/release-readiness-smoke.sh` is written for both macOS and GNU/Linux (`script` invocation, `sha256sum`/`shasum`, `PATH` not hard-coded, `TMPDIR`-aware short socket path) and the design states which platforms are verified: macOS yes; Linux only if a run is actually made (say so). No LICENSE is added: that is the owner's choice and is listed in the release notes as open.
+- Tests: integration for directory modes; the smoke re-run on macOS.
+
+### Task 71: Comment rule and lint claims (F22 decision, F20)
+Refs: 07 §2; owner decision 2026-09-30.
+- [ ] Unnecessary comments are removed from `src/`, `tests/` and `scripts/`. A mechanical check in `poe check` rejects a comment unless it is a tool directive (`noqa`, `type:`, `pyright:`, `pragma`, shebang, encoding) or carries the documented in-place exclusion marker with a reason; the few comments that truly need to stay carry it. 07 §2 states the rule, the check and the marker.
+- [ ] The lint claims are exact: the agent-plugin contract is a denylist, so a test fails when a top-level package exists that is neither on the list nor in the allowed set; 02 §2 and 07 §2 name what is enforced by which tool; the `store/**` clock/subprocess exemption is narrowed to the modules that need it; `time.process_time` and `time.thread_time` are banned.
+- Tests: unit tests of the comment checker (directive, marker, violation); the package-completeness test.
+
+### Task 72: TaskFlow residuals (F18)
+Refs: 02 §2; `refactor:` commits only.
+- [ ] The dirty-worktree acceptance policy and its constants move out of `TaskFlow` into a focused collaborator; the `escalate` pass-through, the 4-tuple with mutually exclusive slots and `TaskFlow` passing itself to the integration host are removed or replaced by a narrow interface; the handoff/continue flags shared by `TurnContextPreparer` and `TurnRecovery` have one explicit owner; `VIEW_LOG_NAME` replaces the hard-coded `"view.jsonl"`; `escalate_stored` shares its persistence with `TransitionWriter`; the 02 file list is complete.
+- [ ] Behaviour tests are unchanged and green.
+
+### Task 73: Test gaps and evidence quality
+Refs: 07 §3, §5.
+- [ ] F06/F07 are covered through `bootstrap.py` wiring and the real plan/supersede flow (PR-mode plan children included), not hand-built transitions.
+- [ ] Live model-change checks assert the emitted `model_auto_compact_token_limit` follows the selected model (Claude and Codex), and were run natively on the resulting revision with the real rollout format; the result is recorded.
+- [ ] The E2E results artifact records the source commit, CLI versions and start/end timestamps.
+- [ ] The Task 59 ACs that were ticked with annotations are restated strictly (unticked with a reason where not met).
+- Tests: the above.
+
+### Task 74: Final verification and release evidence (Phase 7b)
+Refs: 07 §5.
+- [ ] `uv run poe check` passes in a normal and a `TERM=dumb` environment.
+- [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (date, scenarios, duration, cost, commit, CLI versions).
+- [ ] The clean-install smoke passes on macOS at the final commit; Linux is stated as verified or unverified.
+- [ ] A new `docs/release-readiness-*.md` states which reviewer items were fixed, restates the design-agreement claim after Tasks 60–73 and lists remaining limitations honestly.

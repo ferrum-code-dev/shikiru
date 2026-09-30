@@ -79,3 +79,20 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 57: TaskFlow responsibilities (F18)
 - [x] Task 58: Low-severity items (F19, F20, F21, F23, F22)
 - [x] Task 59: Re-verify and regenerate release evidence
+
+## Phase 7b — Independent-review remediation (2026-09-30)
+- [ ] Task 60: The engine survives tick faults and tmux loss
+- [ ] Task 61: Every running task has a live flow
+- [ ] Task 62: Escalation packet failures never kill or wedge the engine
+- [ ] Task 63: `supersede` and cancellation never erase unexplained work
+- [ ] Task 64: Operator rung pins survive every transition
+- [ ] Task 65: Holds cover every remaining execution path
+- [ ] Task 66: Command replay and crash windows
+- [ ] Task 67: PR mode is live and current
+- [ ] Task 68: Compatibility and leftovers
+- [ ] Task 69: Process ownership residuals
+- [ ] Task 70: Trust boundary, permissions and platform support
+- [ ] Task 71: Comment rule and lint claims (F22 decision, F20)
+- [ ] Task 72: TaskFlow residuals (F18)
+- [ ] Task 73: Test gaps and evidence quality
+- [ ] Task 74: Final verification and release evidence (Phase 7b)
