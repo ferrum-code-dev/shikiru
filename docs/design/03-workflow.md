@@ -265,7 +265,12 @@ Dependents become ready only when their dependencies are `done`.
 - `submit`: the queue allocated the task id when appending, so a task with that id already existing is the command's own effect; the replay returns its id. The task insert and `task_queued` commit in one transaction.
 - `say`: the message file name carries the command id (`NNN-c<id>.md`, kept when a failed turn requeues its messages). A message already filed under the id, queued or delivered, is not written again, and `operator_message` (data `command_id`) is appended once.
 - `hand_back`: the run, hold and `handed_back` (data `command_id`) changes commit in one transaction, after the view pane is restarted and the message is filed, both of which are repeatable. A `handed_back` event for the command id means the hand-back took effect: the replay acknowledges it and only repeats the follow-up (resume the step if it is active and not held, refresh titles).
-Commands that only set state to a target value (`prioritize`, `pause`, `set_rung`, and the like) are naturally repeatable.
+- `take_over`: the run mark, the `intervention` hold and `taken_over` (data `command_id`) commit in one transaction, after the running turn is stopped; the pane respawn follows and is repeatable. A `taken_over` event for the command id means the take over took effect: the replay acknowledges it and only respawns the pane, while the role is still taken over, then refreshes titles. A second `take_over` by a different command is rejected as before.
+- `cancel`: the terminal transition with `task_cancelled` (data `command_id`) and the escalation settlement commit together. A `task_cancelled` event for the command id means it took effect: the replay acknowledges `cancelled` and repeats the terminal cleanup, which is idempotent. A cleanup failure after the commit is logged and recorded as a recoverable `engine_fault`, and the command is still acknowledged; reconcile repeats the cleanup of every terminal task whose root remains (§7 restart).
+- `resolve`: `escalation_resolved` carries the `command_id`; the replay acknowledges the resolution with the task's current status, repeats the cleanup of a `cancel` resolution the same tolerant way as `cancel`, and appends nothing.
+- `retry`: the requeue, the escalation settlement and `task_retried` (data `command_id`) commit together; a replay that finds the event acknowledges without interrupting or requeueing the task again, so a turn the retry already started keeps running.
+- `set_rung` and `pause` set state to a target value: a role already on the rung, or a task already paused, is success with no further change and no event. Each change and its event commit in one transaction.
+Commands that only set a value (`prioritize`) are naturally repeatable.
 
 ## 8. Escalation
 
@@ -318,7 +323,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 
 **Take over** (`TakeOver(task, role)`, by `Takeover`):
 1. If a turn is running on the task, `turn.stop()` and cancel the current step; the session persists.
-2. Set the `intervention` hold on **that task** and mark the run `taken_over`.
+2. Set the `intervention` hold on **that task**, mark the run `taken_over` and append `taken_over`, in one transaction (§7 replay).
 3. Respawn the role's pane in the task root with the plugin's `interactive_command(session_id, run dir)`, with the turn environment of §4.1. The Operator answers any dialog the TUI shows. With no session yet, take over is rejected.
 - **While held**: no turns start for the task. The pane border turns operator magenta and the title shows `⌨ operator`.
 

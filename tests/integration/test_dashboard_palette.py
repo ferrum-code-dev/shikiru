@@ -226,7 +226,9 @@ async def test_palette_takeover_queues_a_task_role_command(
 
         queued = queue.pending()
         assert len(queued) == 1
-        assert queued[0].command == TakeOver(task_id=task.id, role=Role.LEADER)
+        assert queued[0].command == TakeOver(
+            task_id=task.id, role=Role.LEADER, command_id=queued[0].id
+        )
         assert "queued" in _static_text(screen, "#palette-result")
 
 

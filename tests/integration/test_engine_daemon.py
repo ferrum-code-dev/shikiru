@@ -89,6 +89,8 @@ if TYPE_CHECKING:
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
+_READ_ONLY_DIRECTORY = 0o500
+_WRITABLE_DIRECTORY = 0o700
 _FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
 _SECOND_RUNG = Rung(agent="fake", model="fake-2", effort=None)
 _LAYOUT = LayoutSplit(
@@ -1290,3 +1292,132 @@ async def test_replaying_an_acknowledged_hand_back_is_a_no_op_success(
         live = operator.runs.get_live(task_id, Role.IMPLEMENTER)
         assert live is not None
         assert live.id == run.id
+
+
+async def _acknowledged_twice(
+    operator: _Operator, command: Command
+) -> tuple[CommandOutcome, CommandOutcome]:
+    sent = operator.queue.append(command)
+    first = await wait_for_command(sent, operator.queue, operator.clock)
+    return first, await operator.replay(sent)
+
+
+async def test_replaying_an_acknowledged_cancel_reports_it_without_a_second_event(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
+        first, replayed = await _acknowledged_twice(operator, Cancel(task_id=task_id))
+
+        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
+        assert operator.task(task_id).status is Status.CANCELLED
+        assert len(operator.events.since(0, kinds=[EventKind.TASK_CANCELLED])) == 1
+
+
+async def test_replaying_an_acknowledged_retry_leaves_the_restarted_turn_running(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
+        turns = operator.turns(task_id)
+        sent = operator.queue.append(Retry(task_id=task_id))
+        first = await wait_for_command(sent, operator.queue, operator.clock)
+        await operator.advance_until(lambda: operator.turns(task_id) > turns)
+        restarted_turns = operator.turns(task_id)
+
+        replayed = await operator.replay(sent)
+
+        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
+        assert operator.task(task_id).status is not Status.QUEUED
+        assert operator.turns(task_id) == restarted_turns
+        assert len(operator.events.since(0, kinds=[EventKind.TASK_RETRIED])) == 1
+
+
+async def test_replaying_an_acknowledged_set_rung_appends_no_second_event(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
+        command = SetRung(task_id=task_id, role=Role.IMPLEMENTER, rung=_SECOND_RUNG)
+
+        first, replayed = await _acknowledged_twice(operator, command)
+
+        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
+        assert operator.task(task_id).overrides[Role.IMPLEMENTER] == _SECOND_RUNG
+        assert len(operator.events.since(0, kinds=[EventKind.RUNG_CHANGED])) == 1
+
+
+async def test_replaying_an_acknowledged_pause_appends_no_second_event(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
+        first, replayed = await _acknowledged_twice(operator, Pause(task_id=task_id, now=True))
+
+        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
+        assert operator.task(task_id).holds == {Hold.PAUSED}
+        assert len(operator.events.since(0, kinds=[EventKind.HOLD_SET], task_id=task_id)) == 1
+
+
+async def test_replaying_a_take_over_whose_pane_was_lost_respawns_it_without_a_second_event(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, run):
+        sent = operator.queue.append(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+        first = await wait_for_command(sent, operator.queue, operator.clock)
+        pane = operator.task(task_id).panes[Role.IMPLEMENTER]
+        await tmux_server.run("respawn-pane", "-k", "-t", pane, "/bin/sh")
+        lost_pid = await operator.pane_pid(task_id, Role.IMPLEMENTER)
+
+        replayed = await operator.replay(sent)
+
+        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
+        assert await operator.pane_pid(task_id, Role.IMPLEMENTER) != lost_pid
+        assert len(operator.events.since(0, kinds=[EventKind.TAKEN_OVER])) == 1
+        assert operator.task(task_id).holds == {Hold.INTERVENTION}
+        owned = operator.runs.get_taken_over(task_id, Role.IMPLEMENTER)
+        assert owned is not None
+        assert owned.id == run.id
+
+
+@pytest.mark.parametrize(
+    ("resolution", "expected_status"),
+    [(CancelResolution(), Status.CANCELLED), (RetryResolution(), Status.QUEUED)],
+    ids=["cancel", "retry"],
+)
+async def test_replaying_an_acknowledged_resolve_reports_it_without_a_second_event(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    resolution: CancelResolution | RetryResolution,
+    expected_status: Status,
+) -> None:
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        operator = escalated.operator
+
+        first, replayed = await _acknowledged_twice(
+            operator, Resolve(escalation_id=escalated.escalation_id, resolution=resolution)
+        )
+
+        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
+        assert operator.task(escalated.task.id).status is expected_status
+        assert escalated.resolved_events() == 1
+
+
+@pytest.mark.parametrize(
+    "command",
+    [Cancel(task_id="T-1"), Resolve(escalation_id="E-1", resolution=CancelResolution())],
+    ids=["cancel", "resolve"],
+)
+async def test_a_cleanup_failure_after_a_committed_cancel_does_not_reject_it(
+    tmp_path: Path, tmux_server: TmuxServer, command: Cancel | Resolve
+) -> None:
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        locked = task_root(tmp_path, escalated.task.id) / "locked"
+        locked.mkdir(parents=True)
+        (locked / "file").write_text("x")
+        locked.chmod(_READ_ONLY_DIRECTORY)
+        try:
+            outcome = await escalated.operator.send(command)
+        finally:
+            locked.chmod(_WRITABLE_DIRECTORY)
+
+        assert outcome.status is CommandStatus.DONE
+        assert escalated.operator.task(escalated.task.id).status is Status.CANCELLED
+        faults = escalated.operator.events.since(0, kinds=[EventKind.ENGINE_FAULT])
+        assert [fault.task_id for fault in faults] == [escalated.task.id]

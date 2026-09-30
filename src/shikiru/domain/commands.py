@@ -39,6 +39,12 @@ class CommandKind(StrEnum):
     STOP = auto()
 
 
+class IdentifiedCommand(DomainModel):
+    """A command whose effects are recognised on replay by the queue row id it is read with."""
+
+    command_id: int | None = None
+
+
 class Submit(DomainModel):
     """`submit "<request>" [flags]`: the queue allocates the task id when appending it."""
 
@@ -77,14 +83,14 @@ class Resume(DomainModel):
     task_id: str
 
 
-class Cancel(DomainModel):
+class Cancel(IdentifiedCommand):
     """`cancel T-n`: cancels a task and keeps its branch."""
 
     kind: Literal[CommandKind.CANCEL] = CommandKind.CANCEL
     task_id: str
 
 
-class Retry(DomainModel):
+class Retry(IdentifiedCommand):
     """`retry T-n`: cancels and re-runs the task's current step."""
 
     kind: Literal[CommandKind.RETRY] = CommandKind.RETRY
@@ -100,7 +106,7 @@ class SetRung(DomainModel):
     rung: Rung
 
 
-class Say(DomainModel):
+class Say(IdentifiedCommand):
     """`say T-n <role> "<text>"`: queues a message for the role's next turn.
 
     The queue fills `command_id` so a replayed delivery is recognised.
@@ -110,10 +116,9 @@ class Say(DomainModel):
     task_id: str
     role: Role
     text: str
-    command_id: int | None = None
 
 
-class TakeOver(DomainModel):
+class TakeOver(IdentifiedCommand):
     """`take-over T-n <role>`: stops the turn and opens the role's session in its pane."""
 
     kind: Literal[CommandKind.TAKE_OVER] = CommandKind.TAKE_OVER
@@ -121,7 +126,7 @@ class TakeOver(DomainModel):
     role: Role
 
 
-class HandBack(DomainModel):
+class HandBack(IdentifiedCommand):
     """`hand-back T-n <role>`: returns a taken-over session to the engine.
 
     The queue fills `command_id` so a replayed delivery is recognised.
@@ -130,7 +135,6 @@ class HandBack(DomainModel):
     kind: Literal[CommandKind.HAND_BACK] = CommandKind.HAND_BACK
     task_id: str
     role: Role
-    command_id: int | None = None
 
 
 class ResolutionKind(StrEnum):
@@ -174,7 +178,7 @@ Resolution = Annotated[
 ]
 
 
-class Resolve(DomainModel):
+class Resolve(IdentifiedCommand):
     """`resolve E-n <...>`: resolves an open escalation."""
 
     kind: Literal[CommandKind.RESOLVE] = CommandKind.RESOLVE

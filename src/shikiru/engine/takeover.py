@@ -66,32 +66,52 @@ class Takeover:
         self._refresh_titles = refresh_titles
         self._atomically = atomically
 
-    async def take_over(self, task: Task, role: Role) -> None:
-        """Stop `task`'s turn, hold it and run `role`'s session interactively in its pane."""
-        if self._runs.get_taken_over(task.id, role) is not None:
-            message = f"{task.id} {role.value} is already taken over"
-            raise CommandRejectedError(message)
-        run = self._runs.get_live(task.id, role)
-        if run is None or run.session_id is None:
-            message = f"{task.id} has no {role.value} session to take over"
-            raise CommandRejectedError(message)
-        pane_id = _role_pane(task, role)
-        if task.status in _ACTIVE_STATUSES:
-            await self._cancel_task(task.id)
-        self._tasks.set_holds(task.id, self._current(task.id).holds | {Hold.INTERVENTION})
-        self._runs.mark_taken_over(run.id)
+    async def take_over(self, task: Task, role: Role, command_id: int) -> None:
+        """Stop `task`'s turn, hold it and run `role`'s session interactively in its pane.
+
+        The run mark, hold and event (naming `command_id`) commit together before the pane is
+        respawned; a replay after that commit skips them and only respawns the pane, which is
+        repeatable, while the role is still taken over.
+        """
+        if not self._events.command_applied(EventKind.TAKEN_OVER, command_id):
+            if self._runs.get_taken_over(task.id, role) is not None:
+                message = f"{task.id} {role.value} is already taken over"
+                raise CommandRejectedError(message)
+            run = self._runs.get_live(task.id, role)
+            if run is None or run.session_id is None:
+                message = f"{task.id} has no {role.value} session to take over"
+                raise CommandRejectedError(message)
+            _role_pane(task, role)
+            if task.status in _ACTIVE_STATUSES:
+                await self._cancel_task(task.id)
+            with self._atomically():
+                self._runs.mark_taken_over(run.id)
+                self._tasks.set_holds(task.id, self._current(task.id).holds | {Hold.INTERVENTION})
+                self._events.append(
+                    EventKind.TAKEN_OVER,
+                    task_id=task.id,
+                    message=f"{task.id} {role.value} taken over",
+                    data={
+                        "role": role.value,
+                        "session_id": run.session_id,
+                        COMMAND_ID_KEY: command_id,
+                    },
+                )
+        owned = self._runs.get_taken_over(task.id, role)
+        if owned is not None and owned.session_id is not None:
+            await self._respawn_interactive(
+                self._current(task.id), role, owned.agent, owned.session_id
+            )
+        await self._refresh_titles(self._current(task.id))
+
+    async def _respawn_interactive(
+        self, task: Task, role: Role, agent: str, session_id: str
+    ) -> None:
         root = task_root(self._project_root, task.id)
         task_run_dir = run_dir(self._project_root, task.id)
-        argv = self._agents.get(run.agent).interactive_command(run.session_id, task_run_dir)
+        argv = self._agents.get(agent).interactive_command(session_id, task_run_dir)
         env = turn_environment(task, role, task_run_dir, self._project_name)
-        await self._tmux.respawn_pane(pane_id, argv, env=env, cwd=root)
-        await self._refresh_titles(self._current(task.id))
-        self._events.append(
-            EventKind.TAKEN_OVER,
-            task_id=task.id,
-            message=f"{task.id} {role.value} taken over",
-            data={"role": role.value, "session_id": run.session_id},
-        )
+        await self._tmux.respawn_pane(_role_pane(task, role), argv, env=env, cwd=root)
 
     async def hand_back(self, task: Task, role: Role, command_id: int) -> None:
         """Return `role`'s taken-over session to the engine and re-run the current step.

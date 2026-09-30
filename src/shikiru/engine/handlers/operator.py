@@ -61,7 +61,7 @@ class TakeOverHandler:
     async def handle(self, command: TakeOver) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
-        await self._takeover.take_over(task, command.role)
+        await self._takeover.take_over(task, command.role, require_command_id(command))
         return {"task_id": task.id, "role": command.role.value}
 
 

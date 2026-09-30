@@ -532,8 +532,8 @@ Refs: 03 §6, §10; invariant 2.
 
 ### Task 66: Command replay and crash windows
 Refs: 03 §4.3, §7, §9; invariant 5.
-- [ ] `take_over` is idempotent and crash-atomic (hold, run mark, pane respawn and event recover to a consistent state on replay); replayed `cancel`, `resolve`, `retry`, `set_rung`, `pause` and `take_over` report the effect that already applied instead of a rejection and append no duplicate events; a cleanup failure after a committed cancel or resolution does not turn its acknowledgement into a rejection.
-- [ ] Message queue writes are crash-safe: `requeue` writes before it unlinks; delivery into a turn directory cannot strand a message when the process dies before `current_turn` is repointed (the next turn finds it).
+- [x] `take_over` is idempotent and crash-atomic (hold, run mark, pane respawn and event recover to a consistent state on replay); replayed `cancel`, `resolve`, `retry`, `set_rung`, `pause` and `take_over` report the effect that already applied instead of a rejection and append no duplicate events; a cleanup failure after a committed cancel or resolution does not turn its acknowledgement into a rejection.
+- [x] Message queue writes are crash-safe: `requeue` writes before it unlinks; delivery into a turn directory cannot strand a message when the process dies before `current_turn` is repointed (the next turn finds it).
 - Tests: integration with a crash between each effect and the acknowledgement for each command; a real SIGKILL of the fake agent after delivery (the existing turn-process test passes on the pre-Task-54 code and must be replaced by one that fails there).
 
 ### Task 67: PR mode is live and current

@@ -41,6 +41,7 @@ class EventKind(StrEnum):
     INTEGRATION_STARTED = auto()
     PR_OPENED = auto()
     TASK_DONE = auto()
+    TASK_RETRIED = auto()
     TASK_CANCELLED = auto()
     PANE_RESTORED = auto()
     ENGINE_STARTED = auto()

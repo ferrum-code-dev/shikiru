@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 
 from shikiru.domain.commands import (
+    COMMAND_ID_KEY,
     Cancel,
     Pause,
     Prioritize,
@@ -20,10 +21,13 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Role, Status
 from shikiru.engine.handlers.base import (
     HandlerContext,
+    command_replayed,
+    finish_task_quietly,
     interrupt_task,
     kept_worktree_result,
     refresh_titles,
     reject_terminal,
+    require_command_id,
     require_task,
 )
 from shikiru.errors import CommandRejectedError
@@ -82,13 +86,14 @@ class PauseHandler:
         if command.now:
             await interrupt_task(self._context, task)
         if Hold.PAUSED not in task.holds:
-            self._context.tasks.set_holds(task.id, task.holds | {Hold.PAUSED})
-            self._context.events.append(
-                EventKind.HOLD_SET,
-                task_id=task.id,
-                message=f"{task.id} paused",
-                data={"hold": Hold.PAUSED.value, "now": command.now},
-            )
+            with self._context.atomically():
+                self._context.tasks.set_holds(task.id, task.holds | {Hold.PAUSED})
+                self._context.events.append(
+                    EventKind.HOLD_SET,
+                    task_id=task.id,
+                    message=f"{task.id} paused",
+                    data={"hold": Hold.PAUSED.value, "now": command.now},
+                )
         await refresh_titles(self._context, task.id)
         return {"task_id": task.id, "paused": True, "now": command.now}
 
@@ -135,27 +140,25 @@ class CancelHandler:
 
     async def handle(self, command: Cancel) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
-        reject_terminal(task)
-        await interrupt_task(self._context, task)
-        current = self._context.tasks.get(task.id)
-        if current is None:
-            message = f"task {task.id} disappeared while cancelling"
-            raise CommandRejectedError(message)
-        with self._context.atomically():
-            self._context.tasks.finish(
-                task.id,
-                Transition.stay(current, step=current.step, status=Status.CANCELLED),
-                EventKind.TASK_CANCELLED,
-                message=f"{task.id} cancelled",
-                data={"reason": "cancelled by operator"},
-            )
-            self._context.escalations.settle_open(task.id, ResolutionKind.CANCEL.value)
-        updated = self._context.tasks.get(task.id)
-        if updated is None:
-            message = f"task {task.id} disappeared after cancellation"
-            raise CommandRejectedError(message)
+        if not command_replayed(self._context, EventKind.TASK_CANCELLED, command):
+            reject_terminal(task)
+            await interrupt_task(self._context, task)
+            current = require_task(self._context, task.id)
+            with self._context.atomically():
+                self._context.tasks.finish(
+                    task.id,
+                    Transition.stay(current, step=current.step, status=Status.CANCELLED),
+                    EventKind.TASK_CANCELLED,
+                    message=f"{task.id} cancelled",
+                    data={
+                        "reason": "cancelled by operator",
+                        COMMAND_ID_KEY: require_command_id(command),
+                    },
+                )
+                self._context.escalations.settle_open(task.id, ResolutionKind.CANCEL.value)
+        updated = require_task(self._context, task.id)
         await refresh_titles(self._context, updated.id)
-        kept = await self._context.finish_task(updated)
+        kept = await finish_task_quietly(self._context, updated)
         return {
             "task_id": task.id,
             "status": Status.CANCELLED.value,
@@ -173,23 +176,27 @@ class RetryHandler:
 
     async def handle(self, command: Retry) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
-        reject_terminal(task)
-        await interrupt_task(self._context, task)
-        current = self._context.tasks.get(task.id)
-        if current is None:
-            message = f"task {task.id} disappeared while retrying"
-            raise CommandRejectedError(message)
-        counters = current.counters.model_copy(update={"consults": 0, "conflict_rounds": 0})
-        transition = dataclasses.replace(
-            Transition.stay(current, step=current.step, status=Status.QUEUED),
-            counters=counters,
-        )
-        with self._context.atomically():
-            self._context.tasks.apply_transition(current.id, transition)
-            self._context.tasks.set_requeued(current.id)
-            self._context.escalations.settle_open(current.id, ResolutionKind.RETRY.value)
-        await refresh_titles(self._context, current.id)
-        return {"task_id": current.id, "status": Status.QUEUED.value}
+        if not command_replayed(self._context, EventKind.TASK_RETRIED, command):
+            reject_terminal(task)
+            await interrupt_task(self._context, task)
+            current = require_task(self._context, task.id)
+            counters = current.counters.model_copy(update={"consults": 0, "conflict_rounds": 0})
+            transition = dataclasses.replace(
+                Transition.stay(current, step=current.step, status=Status.QUEUED),
+                counters=counters,
+            )
+            with self._context.atomically():
+                self._context.tasks.apply_transition(current.id, transition)
+                self._context.tasks.set_requeued(current.id)
+                self._context.escalations.settle_open(current.id, ResolutionKind.RETRY.value)
+                self._context.events.append(
+                    EventKind.TASK_RETRIED,
+                    task_id=current.id,
+                    message=f"{current.id} retried",
+                    data={COMMAND_ID_KEY: require_command_id(command)},
+                )
+        await refresh_titles(self._context, task.id)
+        return {"task_id": task.id, "status": require_task(self._context, task.id).status.value}
 
 
 class SetRungHandler:
@@ -204,25 +211,27 @@ class SetRungHandler:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
         old = task.overrides.get(command.role)
-        counters = task.counters
-        if command.role is Role.IMPLEMENTER and old != command.rung:
-            counters = reset_for_rung_change(counters)
-        transition = dataclasses.replace(
-            Transition.stay(task, step=task.step, status=task.status),
-            counters=counters,
-            set_overrides={command.role: command.rung},
-        )
-        self._context.tasks.apply_transition(task.id, transition)
-        self._context.events.append(
-            EventKind.RUNG_CHANGED,
-            task_id=task.id,
-            message=f"{task.id} {command.role.value} rung set to {command.rung.model}",
-            data={
-                "role": command.role.value,
-                "from": old.model if old is not None else None,
-                "to": command.rung.model,
-                "operator": True,
-            },
-        )
+        if old != command.rung:
+            counters = task.counters
+            if command.role is Role.IMPLEMENTER:
+                counters = reset_for_rung_change(counters)
+            transition = dataclasses.replace(
+                Transition.stay(task, step=task.step, status=task.status),
+                counters=counters,
+                set_overrides={command.role: command.rung},
+            )
+            with self._context.atomically():
+                self._context.tasks.apply_transition(task.id, transition)
+                self._context.events.append(
+                    EventKind.RUNG_CHANGED,
+                    task_id=task.id,
+                    message=f"{task.id} {command.role.value} rung set to {command.rung.model}",
+                    data={
+                        "role": command.role.value,
+                        "from": old.model if old is not None else None,
+                        "to": command.rung.model,
+                        "operator": True,
+                    },
+                )
         await refresh_titles(self._context, task.id)
         return {"task_id": task.id, "role": command.role.value, "model": command.rung.model}

@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
-from shikiru.domain.commands import COMMAND_ID_KEY, Command, CommandStatus, HandBack, Say, Submit
+from shikiru.domain.commands import (
+    COMMAND_ID_KEY,
+    Command,
+    CommandStatus,
+    IdentifiedCommand,
+    Submit,
+)
 from shikiru.store.database import (
     dump_json,
     format_timestamp,
@@ -28,7 +34,7 @@ _RESULT_ADAPTER: TypeAdapter[dict[str, Any] | None] = TypeAdapter(dict[str, Any]
 
 
 def _identified(command: Command, command_id: int) -> Command:
-    if isinstance(command, (Say, HandBack)):
+    if isinstance(command, IdentifiedCommand):
         return command.model_copy(update={COMMAND_ID_KEY: command_id})
     return command
 

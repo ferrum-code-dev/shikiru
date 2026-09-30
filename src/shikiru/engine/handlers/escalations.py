@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.domain.commands import (
+    COMMAND_ID_KEY,
     AcceptResolution,
     AnswerResolution,
     CancelResolution,
@@ -18,16 +19,17 @@ from shikiru.domain.steps import ACTING_ROLE, Transition
 from shikiru.domain.tasks import EscalationReason, Status
 from shikiru.engine.handlers.base import (
     HandlerContext,
+    command_replayed,
+    finish_task_quietly,
     interrupt_task,
     kept_worktree_result,
     refresh_titles,
+    require_command_id,
     require_task,
 )
 from shikiru.errors import CommandRejectedError
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.tasks import Task
 
@@ -41,7 +43,26 @@ class ResolveHandler:
         self._context = context
 
     async def handle(self, command: Resolve) -> dict[str, object]:
-        escalation = self._open_escalation(command)
+        if command_replayed(self._context, EventKind.ESCALATION_RESOLVED, command):
+            escalation = self._escalation(command.escalation_id)
+        else:
+            escalation = self._open_escalation(command)
+            await self._apply(command, escalation)
+        task = require_task(self._context, escalation.task_id)
+        await refresh_titles(self._context, task.id)
+        kept = (
+            await finish_task_quietly(self._context, task)
+            if isinstance(command.resolution, CancelResolution)
+            else None
+        )
+        return {
+            "escalation_id": escalation.id,
+            "task_id": task.id,
+            "status": task.status.value,
+            **kept_worktree_result(kept),
+        }
+
+    async def _apply(self, command: Resolve, escalation: Escalation) -> None:
         task = require_task(self._context, escalation.task_id)
         if task.status is not Status.ESCALATED:
             message = (
@@ -59,26 +80,22 @@ class ResolveHandler:
                 EventKind.ESCALATION_RESOLVED,
                 task_id=task.id,
                 message=f"{escalation.id} resolved with {command.resolution.kind.value}",
-                data={"escalation_id": escalation.id, "resolution": command.resolution.kind.value},
+                data={
+                    "escalation_id": escalation.id,
+                    "resolution": command.resolution.kind.value,
+                    COMMAND_ID_KEY: require_command_id(command),
+                },
             )
-        await refresh_titles(self._context, task.id)
-        kept = (
-            await self._finish_cancel(task)
-            if isinstance(command.resolution, CancelResolution)
-            else None
-        )
-        return {
-            "escalation_id": escalation.id,
-            "task_id": task.id,
-            "status": transition.status.value,
-            **kept_worktree_result(kept),
-        }
+
+    def _escalation(self, escalation_id: str) -> Escalation:
+        escalation = self._context.escalations.get(escalation_id)
+        if escalation is None:
+            message = f"escalation {escalation_id} does not exist"
+            raise CommandRejectedError(message)
+        return escalation
 
     def _open_escalation(self, command: Resolve) -> Escalation:
-        escalation = self._context.escalations.get(command.escalation_id)
-        if escalation is None:
-            message = f"escalation {command.escalation_id} does not exist"
-            raise CommandRejectedError(message)
+        escalation = self._escalation(command.escalation_id)
         if escalation.status is not EscalationStatus.OPEN:
             message = f"escalation {command.escalation_id} is already resolved"
             raise CommandRejectedError(message)
@@ -128,13 +145,6 @@ class ResolveHandler:
             return
         self._context.tasks.apply_transition(task.id, transition)
         self._context.tasks.set_requeued(task.id)
-
-    async def _finish_cancel(self, task: Task) -> Path | None:
-        updated = self._context.tasks.get(task.id)
-        if updated is None:
-            message = f"task {task.id} disappeared after cancellation"
-            raise CommandRejectedError(message)
-        return await self._context.finish_task(updated)
 
     def _drop_cancelled_dependencies(self, task_id: str, dependencies: list[str]) -> None:
         keep: list[str] = []

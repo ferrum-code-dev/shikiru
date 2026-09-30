@@ -201,12 +201,12 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `hold_set`, `hold_cleared`, `taken_over`, `handed_back`, `operator_message`
 - `escalation`, `escalation_resolved`
 - `integration_started`, `pr_opened` (url, branch, commits)
-- `task_done`, `task_cancelled`
+- `task_retried`, `task_done`, `task_cancelled`
 - `pane_restored`, `engine_started`, `engine_fault` (error, recoverable), `engine_stopped` (`reason` when the engine stopped on a fault)
 
 **Commands** are pydantic models in `domain.commands`, stored as `kind` plus a JSON `payload`:
 - `Submit` (the command queue allocates its task id from `sequences` when appending)
-- `Say` and `HandBack` carry the queue's row id as `command_id` when the engine reads them, so their effects can be recognised on replay (03 §7)
+- `Say`, `HandBack`, `TakeOver`, `Cancel`, `Retry` and `Resolve` carry the queue's row id as `command_id` when the engine reads them (`IdentifiedCommand`), and the event recording their effect repeats it, so a replay recognises the effect (03 §7)
 - `Prioritize`, `Pause`, `Resume`, `Cancel`, `Retry`, `SetRung`, `Say`, `TakeOver`, `HandBack`, `Resolve`, `Stop`
 
 ## 3. Run files

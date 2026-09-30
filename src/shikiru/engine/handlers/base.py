@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from shikiru.domain.commands import Command, HandBack, Say
+from shikiru.domain.commands import Command, IdentifiedCommand
+from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Status, Task
 from shikiru.errors import CommandRejectedError
 
@@ -103,6 +104,24 @@ async def refresh_titles(context: HandlerContext, task_id: str) -> None:
         _LOGGER.exception("title refresh failed for %s", task_id)
 
 
+async def finish_task_quietly(context: HandlerContext, task: Task) -> Path | None:
+    """Run terminal cleanup after a committed terminal state; a failure never rejects the command.
+
+    Reconcile repeats the cleanup of every terminal task whose root remains (03 §7).
+    """
+    try:
+        return await context.finish_task(task)
+    except Exception as error:
+        _LOGGER.exception("terminal cleanup failed for %s", task.id)
+        context.events.append(
+            EventKind.ENGINE_FAULT,
+            task_id=task.id,
+            message=f"{task.id} cleanup after {task.status.value} failed: {error}",
+            data={"error": type(error).__name__, "recoverable": True},
+        )
+        return None
+
+
 async def interrupt_task(
     context: HandlerContext, task: Task, *, even_if_inactive: bool = False
 ) -> None:
@@ -116,9 +135,14 @@ def kept_worktree_result(kept: Path | None) -> dict[str, object]:
     return {} if kept is None else {KEPT_WORKTREE_KEY: str(kept)}
 
 
-def require_command_id(command: Say | HandBack) -> int:
+def command_replayed(context: HandlerContext, kind: EventKind, command: IdentifiedCommand) -> bool:
+    """Report whether `command` already took effect, which only a `kind` event naming it proves."""
+    return context.events.command_applied(kind, require_command_id(command))
+
+
+def require_command_id(command: IdentifiedCommand) -> int:
     """Return the id the command queue gave `command`, which every replay of it shares."""
     if command.command_id is None:
-        message = f"{command.kind.value} command has no queue id"
+        message = f"{type(command).__name__} command has no queue id"
         raise ValueError(message)
     return command.command_id
