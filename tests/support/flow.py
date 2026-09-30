@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal
 
 from shikiru.config.settings import AgentConfig, RepoConfig
 from shikiru.domain.commands import SetRung, Submit
-from shikiru.domain.tasks import Role
+from shikiru.domain.tasks import Role, Status
 from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.evidence import EvidenceCollector
@@ -167,7 +167,7 @@ def build_flow(
 
         async def finish_task(task: Task) -> None:
             system.sessions.close_task(task.id)
-            await builder.cleanup(task.id, task.repo)
+            await builder.cleanup(task.id, task.repo, integrated=task.status is Status.DONE)
             if task.window_id is None:
                 raise AssertionError
             await SessionView(env.tmux).close_task_window(task.window_id)

@@ -44,7 +44,7 @@ Source: `/tmp/shikiru-review-2026-09-29.md` (review of `e56832b`).
 | F03 | Takeover ownership released while native agents remain active | 44 | `e7c0c1e` | Fixed |
 | F04 | Integration bypasses persisted task holds | 43 | `564d7c9` | Fixed; nudges, the spawn window, `rebase --continue`, PR polling and the scheduler were gated later (Task 65) |
 | F05 | Stale escalation actions can resurrect canceled tasks | 45 | `9acc604` | Fixed; cancelling an `uncommitted_work` escalation keeps the dirty worktree |
-| F06 | PR completion leaves dependent work on a stale local base | 47 | `611c5ea` | Fixed; local merged-branch cleanup may remain (limitation 4) |
+| F06 | PR completion leaves dependent work on a stale local base | 47 | `611c5ea` | Fixed; the local merged-branch cleanup is resolved by Task 67 (limitation 4) |
 | F07 | Decomposition does not deliver parent tracker changes to children | 48 | `4431d5f` | Fixed |
 | F08 | Notification hook blocks command processing and scheduling | 52 | `48e25a1` | Fixed |
 | F09 | Triage discards the selected complexity and title | 49 | `d8cf6a9` | Fixed; explicit `--complexity normal` is replaced by triage (limitation 5) |
@@ -68,7 +68,7 @@ Source: `/tmp/shikiru-review-2026-09-29.md` (review of `e56832b`).
 1. Resolved (Task 63): cancelling keeps a dirty worktree and reports its path.
 2. Resolved (Task 65): pull-request polling checks the hold before every poll and stops quietly while one is set.
 3. `RepoState.base_ref` is a required field.
-4. Local branch cleanup in PR mode may leave the merged branch.
+4. Resolved (Task 67): the local branch of a `done` task is removed with its worktree in PR mode too.
 5. An explicit `--complexity normal` cannot be told from the default and is replaced by triage.
 6. A persistent escalation-packet write failure leaves the task running idle until restart, and a packet restored after a restart lacks the original reports and facts (it is rebuilt from the timeline, sessions and escalation row).
 7. Two E2E tests still cap CPU at 100.

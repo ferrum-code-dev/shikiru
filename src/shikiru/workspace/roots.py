@@ -117,13 +117,18 @@ class TaskRootBuilder:
             await self._git.delete_branch(project, branch)
             raise
 
-    async def cleanup(self, task_id: str, repo: RepoState | None) -> Path | None:
+    async def cleanup(
+        self, task_id: str, repo: RepoState | None, *, integrated: bool = False
+    ) -> Path | None:
         """Remove the task's worktree, its merged branch, and last its task root (03 §5, §7).
 
-        Idempotent and tolerant of a worktree already removed. Never deletes an unmerged branch,
-        never follows a symlink out of the task root, and never erases uncommitted work: a
-        worktree with tracked or untracked changes (git-ignored files excepted) and its branch
-        stay, and the kept task root is returned.
+        The branch is merged when it is an ancestor of the local base or when the caller says
+        the task is `integrated` (a pull request merged on the remote leaves the local base
+        behind, and a squash leaves the branch out of its history). Idempotent and tolerant of
+        a worktree already removed. Never deletes an unmerged branch, never follows a symlink
+        out of the task root, and never erases uncommitted work: a worktree with tracked or
+        untracked changes (git-ignored files excepted) and its branch stay, and the kept task
+        root is returned.
         """
         project = self._project_root
         root = task_root(project, task_id)
@@ -132,9 +137,10 @@ class TaskRootBuilder:
                 if await self._git.status_porcelain(root):
                     return root
                 await self._git.worktree_remove(project, root)
-            if await self._git.branch_exists(
-                project, repo.branch
-            ) and await self._git.merge_base_is_ancestor(project, repo.branch, repo.base):
+            if await self._git.branch_exists(project, repo.branch) and (
+                integrated
+                or await self._git.merge_base_is_ancestor(project, repo.branch, repo.base)
+            ):
                 await self._git.delete_branch(project, repo.branch)
         if root.exists():
             shutil.rmtree(root)

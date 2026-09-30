@@ -158,6 +158,15 @@ async def _git(repo_dir: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+async def _local_branch_exists(project_root: Path, branch: str) -> bool:
+    result = await _RUNNER.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        timeout=10,
+        cwd=project_root,
+    )
+    return result.returncode == 0
+
+
 async def _merge_remotely(
     github: FakeGitHub, remote_dir: Path, number: int, style: MergeStyle
 ) -> None:
@@ -193,11 +202,8 @@ async def _assert_landed(
     [done] = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
     assert len(opened) == pr_count
     assert done.data["commits"] == opened[-1].data["commits"] != []
-    branch = task.repo.branch
-    assert await _git(remote_dir, "rev-parse", branch) == await _git(
-        env.project_root, "rev-parse", branch
-    )
-    await _git(env.project_root, "merge-base", "--is-ancestor", task.repo.base, branch)
+    assert await _git(remote_dir, "rev-parse", task.repo.branch)
+    assert not await _local_branch_exists(env.project_root, task.repo.branch)
 
 
 @pytest.mark.parametrize("case", _CASES.values(), ids=_CASES.keys())
@@ -271,6 +277,7 @@ async def test_dependents_start_from_the_merged_remote_base(
     ).build("T-2", "Use the retries")
 
     assert delivered
+    assert not await _local_branch_exists(project_root, task.repo.branch)
     for path in delivered.splitlines():
         assert (task_root(project_root, "T-2") / path).exists()
     assert dependent.base == task.repo.base
@@ -400,3 +407,30 @@ async def test_a_pull_request_paused_past_its_budget_does_not_escalate_until_res
     clock.advance(settings.orchestration.timeouts.pr_wait)
 
     assert fetch_open_escalations(engine_env.connection) == []
+
+
+async def test_the_branch_of_a_merged_pull_request_stays_with_a_worktree_kept_for_uncommitted_work(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    clock = engine_env.clock
+    assert isinstance(clock, FakeClock)
+    await init_project_repo(engine_env.project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    assert task.repo is not None
+    run = _Run(engine_env, settings, task.id)
+    await _await_poll(fake_github, clock, 1)
+
+    (task_root(engine_env.project_root, task.id) / "scratch.txt").write_text("unsaved work\n")
+    await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.SQUASH)
+    await _land(clock, run.flow)
+
+    done = engine_env.tasks.get(task.id)
+    assert done is not None
+    assert done.status is Status.DONE
+    assert (task_root(engine_env.project_root, task.id) / "scratch.txt").exists()
+    assert await _local_branch_exists(engine_env.project_root, task.repo.branch)

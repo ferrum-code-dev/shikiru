@@ -46,6 +46,6 @@ class TaskFinisher:
         await self._layout.close(task)
         if task.status is Status.CANCELLED:
             await self._pull_requests.close_open(task.id)
-        kept = await self._roots.cleanup(task.id, task.repo)
+        kept = await self._roots.cleanup(task.id, task.repo, integrated=task.status is Status.DONE)
         self._finished_tasks.add(task.id)
         return kept
