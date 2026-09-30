@@ -355,8 +355,12 @@ def test_liveness_check_does_not_create_a_missing_lock_path(tmp_path: Path) -> N
     assert not lock_path.exists()
 
 
-async def test_engine_log_captures_child_errors_and_detaches_on_shutdown(tmp_path: Path) -> None:
-    engine = build_engine(tmp_path, engine_settings(), registry=build_registry())
+async def test_engine_log_captures_child_errors_and_detaches_on_shutdown(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    engine = build_engine(
+        tmp_path, engine_settings(), tmux=build_tmux(tmux_server), registry=build_registry()
+    )
     log_path = tmp_path / ".shikiru" / "logs" / "engine.log"
     child_logger = logging.getLogger("shikiru.engine.test")
     child_logger.error("child module failure")
