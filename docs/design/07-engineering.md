@@ -13,7 +13,7 @@
 | Metrics | psutil |
 | MCP | official `mcp` SDK (FastMCP, stdio) |
 | External | tmux ≥ 3.4, git ≥ 2.45; optional `gh`, `docker` |
-| Quality | ruff (format + `select = ["ALL"]` with a short documented ignore list, `banned-api` rules from 02 §2), basedpyright `strict`, import-linter (02 §2 layers), vulture |
+| Quality | ruff (format + `select = ["ALL"]` with a short documented ignore list, `banned-api` rules from 02 §2), basedpyright `strict`, import-linter (02 §2 layers), the comment check (§2.8), vulture |
 | Tests | pytest, pytest-asyncio, pytest-timeout, coverage (`fail_under = 80`, `patch = ["subprocess"]`, `parallel = true`) |
 
 ## 2. Conventions
@@ -33,14 +33,14 @@
    - subprocesses only via `process.SubprocessRunner`;
    - time only via `clock.Clock`;
    - agent specifics only in `plugins/agents/*`;
-   - all enforced by lint.
-5. **Values**: operator tunables go in `defaults.toml` (05 §1). Protocol constants are named module constants. No other literals. This stays, and so does the no-comments rule in item 8: they make review uniform and mechanical and can be checked by lint, whereas a judgement-based allowance for local literals or rationale comments would not be.
+   - enforced by the tools named in 02 §2 (import-linter, ruff `banned-api`).
+5. **Values**: operator tunables go in `defaults.toml` (05 §1). Protocol constants are named module constants. No other literals. This stays, and so does the no-comments rule in item 8: they keep review uniform. Only the comment rule is checked by a tool (item 8); the literal rule is a review convention, because no lint rule separates a named constant from a local magic value without also rejecting idiomatic code.
 6. **Async**: the engine is asyncio. Blocking work goes through `asyncio.to_thread` or async subprocesses.
 7. **Errors**: a `ShikiruError` hierarchy with user-facing messages. The CLI maps errors to exit codes. No bare `except`, no silent fallbacks.
-8. **No comments**: names explain. Docstrings only on public contracts (`agents.contracts`, `DashboardWidget`, operator services, report and command models) and their implementations.
+8. **No comments**: names explain. A comment that is genuinely needed carries the in-place exclusion marker `# keep: <reason>`; the reason is required. `uv run poe comments` (`tests/support/comment_rule.py`, part of `poe check`) tokenizes `src/`, `tests/` and `scripts/` Python files and fails on every comment other than a shebang or encoding line, a tool directive (`noqa`, `type: ignore`, `pyright:`, `pragma:`, `fmt:`, `ruff:`, `pylint:`) or a `keep:` comment with a non-empty reason. Shell scripts are not checked. Docstrings only on public contracts (`agents.contracts`, `DashboardWidget`, operator services, report and command models) and their implementations.
 9. **Commits**: conventional commits, one logical change each. Refactorings go in separate `refactor:` commits.
 10. **Gates**:
-    - `uv run poe check` (format, lint, imports, types, dead code, non-E2E tests with coverage) must pass before every commit.
+    - `uv run poe check` (format, lint, comments, imports, types, dead code, non-E2E tests with coverage) must pass before every commit.
     - `uv run poe e2e` runs real-agent scenarios.
 
 ## 3. Tests
