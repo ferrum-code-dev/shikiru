@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from shikiru.engine.lifecycle import TaskFinisher
     from shikiru.store.tasks import TaskStore
 
+_IN_FLIGHT = (Status.RUNNING, Status.INTEGRATING)
+
 
 class TaskSupervisor:
     """Start, interrupt and reap the task flows owned by one engine daemon."""
@@ -35,12 +37,18 @@ class TaskSupervisor:
         self._stop.set()
 
     async def start_task(self, task_id: str) -> None:
-        """Schedule a task flow once, leaving supervision in this object."""
+        """Schedule a task flow unless one is still live; `ensure_flows` covers a finishing one."""
         self._start(task_id, resumed=False)
 
     async def resume_task(self, task_id: str) -> None:
         """Schedule the flow of a task whose step an engine restart interrupted (03 §7)."""
         self._start(task_id, resumed=True)
+
+    async def ensure_flows(self) -> None:
+        """Start a resumed flow for each unheld running or integrating task without one (03 §7)."""
+        for task in self._tasks.list_active():
+            if task.status in _IN_FLIGHT and not task.held:
+                self._start(task.id, resumed=True)
 
     def _start(self, task_id: str, *, resumed: bool) -> None:
         existing = self._flow_tasks.get(task_id)

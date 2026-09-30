@@ -500,7 +500,7 @@ Refs: 02 §1, 01 D8, 06 §5.7.
 
 ### Task 61: Every running task has a live flow
 Refs: 03 §2, §7, §10; invariant 5.
-- [ ] Each engine tick ensures every `running`/`integrating` task that is not held has a live flow, and starts the missing one; a flow that ended without settling its task (an exception out of `TaskFlow.run`, an `answer` resolution racing the previous flow's tail, a failed escalation) no longer leaves the task `running` and idle until a restart. `supervisor.start_task` never silently skips a task whose old flow is finishing.
+- [x] Each engine tick ensures every `running`/`integrating` task that is not held has a live flow, and starts the missing one; a flow that ended without settling its task (an exception out of `TaskFlow.run`, an `answer` resolution racing the previous flow's tail, a failed escalation) no longer leaves the task `running` and idle until a restart. `supervisor.start_task` never silently skips a task whose old flow is finishing.
 - Tests: integration: an `answer` resolved while the old flow is still finishing its title refresh ends with one live flow; a flow killed by an exception is restarted or the task escalated; no duplicate flows for one task.
 
 ### Task 62: Escalation packet failures never kill or wedge the engine

@@ -226,6 +226,7 @@ class Engine:
         schedule = await self._scheduler.run_once()
         for dispatch in schedule.dispatches:
             await self._task_supervisor.start_task(dispatch.task_id)
+        await self._task_supervisor.ensure_flows()
         scheduled_events = self._events.since(self._last_scheduled_event)
         if scheduled_events:
             self._last_scheduled_event = max(event.id for event in scheduled_events)
