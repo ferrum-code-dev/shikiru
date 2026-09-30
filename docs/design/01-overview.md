@@ -80,7 +80,17 @@ English names come first everywhere. Kanji marks are decoration only.
   - a CLI verb per operator action, duplicating the dashboard and MCP
   - tests touching the operator's tmux server
 
-## 6. Glossary
+## 6. Trust boundary
+
+Shikiru orchestrates; it does not sandbox. Agents run as the Operator's user, in the Operator's environment, on the Operator's host:
+- Claude Code defaults to `--permission-mode bypassPermissions` (04 §4), so it can run any command and change any file the user can.
+- Codex runs in `workspace-write` with the run directory and the repository's shared `.git` directory as extra writable roots (04 §5). A task can therefore alter refs, hooks and config that every worktree shares.
+- Worktree isolation is a prompt convention and a scheduling rule (D6), not an enforced boundary. An agent can reach the main checkout and other tasks' worktrees.
+- The same holds for notification commands the Operator configures and the commands in the project's own instructions.
+
+Shikiru must be used only on repositories and hosts the Operator trusts. Remote access is SSH (D10), so host access equals Shikiru access.
+
+## 7. Glossary
 
 | Term | Meaning |
 |---|---|

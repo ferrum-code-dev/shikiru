@@ -135,6 +135,8 @@ Claude reads access from the Operator's native Claude settings and environment. 
 | `args` | `["--permission-mode", "bypassPermissions"]` | Extra CLI args; must keep the turn unattended |
 | `compact_at_pct` | `80` | Context use that triggers compaction (obligation 8) |
 
+Trust: the default skips every permission prompt, so the agent can run any command and edit any file the Operator's user can. `--add-dir` only widens the working directories (the run directory); it confines nothing. See the trust boundary in 01 §6.
+
 **Turn**:
 
 ```
@@ -200,6 +202,7 @@ codex exec resume <thread_id> --json -m <m> -c model_reasoning_effort="<e>" <arg
 ```
 
 - `exec resume` has no `--sandbox` flag and keeps the session's sandbox.
+- Trust: `workspace-write` confines writes to the task root and the writable roots, but the shared git common dir is one of them. A task can change refs, hooks and config of the main repository and so of every worktree. Network and other access follow the Operator's native Codex settings (01 §6).
 - A worktree's git metadata lives in the main repository's `.git`, so the git common dir must be a writable root or commits fail. *Verify in implementation* that `--add-dir` grants it and persists across `exec resume`; otherwise pass it as `sandbox_workspace_write.writable_roots`.
 - A model change is the next `exec resume` with the new `-m`; the context is kept (verified).
 
