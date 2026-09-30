@@ -34,6 +34,7 @@ from shikiru.engine.events import (
 )
 from shikiru.engine.history import ENGINE_VERDICT_FILENAME
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
+from shikiru.engine.turn_context import ORDINARY_TURN, NextTurn
 from shikiru.engine.turn_execution import TurnExecution
 from shikiru.engine.turns import TurnHeld
 from shikiru.errors import ShikiruError, UsageError
@@ -259,6 +260,7 @@ class TaskFlow:
             execution = await self._run_turn(
                 current,
                 current_step,
+                next_turn=recovery.next_turn,
                 role_override=role_override,
                 template_override=template_override,
                 kind_override=kind_override,
@@ -313,6 +315,7 @@ class TaskFlow:
         template_override: PromptName | None = None,
         kind_override: ReportKind | None = None,
         conflict_context: str | None = None,
+        next_turn: NextTurn = ORDINARY_TURN,
     ) -> TurnExecution | None:
         role = _acting_role(step, role_override)
         selection = self._sessions.session_for(task, role)
@@ -321,6 +324,7 @@ class TaskFlow:
             task,
             step,
             session_handoff=selection.handoff,
+            next_turn=next_turn,
             template_override=template_override,
             kind_override=kind_override,
             conflict_context=conflict_context,

@@ -27,6 +27,7 @@ from shikiru.domain.recovery import (
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason
 from shikiru.engine.events import emit_turn_failed
+from shikiru.engine.turn_context import ORDINARY_TURN, NextTurn
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -36,13 +37,13 @@ if TYPE_CHECKING:
     from shikiru.domain.recovery import Action, TurnResult
     from shikiru.domain.tasks import Role, Step, Task
     from shikiru.engine.transitions import TransitionWriter
-    from shikiru.engine.turn_context import TurnContextPreparer
     from shikiru.engine.turn_execution import TurnExecution
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.tasks import TaskStore
 
 _QUOTA_WAIT_EXHAUSTED_MESSAGE = "quota wait exceeded"
+_CONTINUE = NextTurn(continue_turn=True)
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class RecoveryStep:
     counters: TurnCounters
     execution: TurnExecution | None = None
     escalation: EscalationReason | None = None
+    next_turn: NextTurn = ORDINARY_TURN
 
 
 class TurnRecovery:
@@ -66,16 +68,14 @@ class TurnRecovery:
         quota: QuotaStore,
         clock: Clock,
         writer: TransitionWriter,
-        contexts: TurnContextPreparer,
         settings: Settings,
     ) -> None:
-        """Recover through the ladder, the quota blocks, the clock and the next turn's context."""
+        """Recover through the ladder, the quota blocks and the clock."""
         self._tasks = tasks
         self._events = events
         self._quota = quota
         self._clock = clock
         self._writer = writer
-        self._contexts = contexts
         self._settings = settings
 
     async def recover(
@@ -146,24 +146,22 @@ class TurnRecovery:
             )
             return RecoveryStep(self._tasks.require(task.id), retried)
         if isinstance(action, ResumeTurn):
-            self._contexts.request_continue(task.id)
             resumed = dataclasses.replace(counters, stall_recoveries=counters.stall_recoveries + 1)
-            return RecoveryStep(self._tasks.require(task.id), resumed)
+            return RecoveryStep(self._tasks.require(task.id), resumed, next_turn=_CONTINUE)
         terminal = await self._wait_for_quota(task, role, action.until)
         if terminal is None:
-            self._contexts.request_continue(task.id)
-            return RecoveryStep(self._tasks.require(task.id), counters)
+            return RecoveryStep(self._tasks.require(task.id), counters, next_turn=_CONTINUE)
         exhausted = dataclasses.replace(execution, result=terminal, quota_wait_exhausted=True)
         return RecoveryStep(self._tasks.require(task.id), counters, execution=exhausted)
 
     async def _next_rung(
         self, task: Task, step: Step, role: Role, result: TurnResult, action: NextRung
     ) -> RecoveryStep:
-        if action.different_agent:
-            self._contexts.request_handoff(task.id)
         updated = await self._move_rung(task, step, role, action.different_agent, result)
         if updated is not None:
-            return RecoveryStep(updated, TurnCounters())
+            return RecoveryStep(
+                updated, TurnCounters(), next_turn=NextTurn(handoff=action.different_agent)
+            )
         reason = (
             EscalationReason.QUOTA_EXHAUSTED
             if action.different_agent

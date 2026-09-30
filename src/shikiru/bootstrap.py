@@ -526,7 +526,6 @@ def build_engine(
         quota=quotas,
         clock=resolved_clock,
         writer=writer,
-        contexts=contexts,
         settings=resolved_settings,
     )
     flow = TaskFlow(

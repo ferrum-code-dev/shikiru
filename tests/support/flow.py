@@ -213,7 +213,6 @@ def build_flow(
             quota=QuotaStore(env.connection),
             clock=flow_clock,
             writer=writer,
-            contexts=contexts,
             settings=settings,
         ),
         settings=settings,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from shikiru.domain.reports import ReportKind
@@ -20,6 +21,17 @@ if TYPE_CHECKING:
     from shikiru.engine.history import ReportHistory
     from shikiru.engine.task_facts import TaskFacts
     from shikiru.store.escalations import EscalationStore
+
+
+@dataclass(frozen=True)
+class NextTurn:
+    """How recovery wants the next turn started: as a handoff or as a continuation."""
+
+    handoff: bool = False
+    continue_turn: bool = False
+
+
+ORDINARY_TURN = NextTurn()
 
 
 def template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKind]:
@@ -42,7 +54,7 @@ def template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKin
 
 
 class TurnContextPreparer:
-    """Builds each turn's `TurnRequest` and remembers how recovery wants the next one started."""
+    """Builds each turn's `TurnRequest`."""
 
     def __init__(
         self,
@@ -59,16 +71,6 @@ class TurnContextPreparer:
         self._facts = facts
         self._settings = settings
         self._project_root = project_root
-        self._force_handoff: set[str] = set()
-        self._continue_next: set[str] = set()
-
-    def request_handoff(self, task_id: str) -> None:
-        """Start `task_id`'s next turn as a handoff to a different agent."""
-        self._force_handoff.add(task_id)
-
-    def request_continue(self, task_id: str) -> None:
-        """Start `task_id`'s next turn as a continuation of its interrupted one."""
-        self._continue_next.add(task_id)
 
     async def prepare(
         self,
@@ -76,13 +78,14 @@ class TurnContextPreparer:
         step: Step,
         *,
         session_handoff: bool,
+        next_turn: NextTurn = ORDINARY_TURN,
         template_override: PromptName | None = None,
         kind_override: ReportKind | None = None,
         conflict_context: str | None = None,
     ) -> TurnRequest:
         """Build the request of `task`'s next `step` turn."""
         history = self._history.load(task.id)
-        continue_turn = task.id in self._continue_next
+        continue_turn = next_turn.continue_turn
         if continue_turn:
             template_override = PromptName.CONTINUE
         template, kind = template_for_step(step, task.iteration)
@@ -106,12 +109,11 @@ class TurnContextPreparer:
                 answer if answer is not None else self._history.latest_question(history)
             )
         fresh = session_handoff and not continue_turn
-        handoff = (fresh and bool(history)) or task.id in self._force_handoff
+        handoff = (fresh and bool(history)) or next_turn.handoff
         needs_facts = template in (PromptName.VERIFY, PromptName.CONFLICTS) or handoff
         facts_text = await self._facts.text(task) if needs_facts else ""
         if handoff:
             template = PromptName.HANDOFF
-        self._force_handoff.discard(task.id)
         if needs_facts:
             context["facts"] = facts_text
         if template is PromptName.VERIFY:
@@ -119,7 +121,6 @@ class TurnContextPreparer:
             context["final_round"] = task.iteration >= self._settings.orchestration.max_iterations
         if template is PromptName.CONFLICTS:
             context["conflict"] = conflict_context or ""
-        self._continue_next.discard(task.id)
         return TurnRequest(
             step=step,
             iteration=task.iteration,
