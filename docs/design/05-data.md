@@ -91,6 +91,10 @@ shell = "Shell · {cwd}"
 [notify]
 command = ""                                    # optional; event JSON on stdin for escalation and task_done
 
+[logging]
+engine_log_max_bytes = 10485760                 # rotate `logs/engine.log` at this size
+engine_log_backups = 3                          # rotated files kept (`engine.log.1` ...)
+
 [doctor]
 probe_timeout = 180                             # seconds per `doctor --probe` live turn
 probe_stream_tail_lines = 20                    # stream lines shown when a probe fails
@@ -215,6 +219,8 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 ## 3. Run files
 
 See 02 §5. `report.kind` names the report model of the turn. `helper.json` exists only for rebuilt reports. `view.jsonl` holds one line per signal (`ts`, `turn`, `signal` type, its fields); only the engine appends and only `shikiru view` and peek read it.
+
+**Growth**: the engine log is the only bounded file: it rotates by size (`[logging]`) and keeps a fixed number of rotated files. Run directories (prompts, reports, raw streams, `view.jsonl`, transcripts of every turn) are never pruned, not even for terminal tasks, and grow with the work done. Shikiru has no pruning command by design (YAGNI): the Operator deletes `.shikiru/runs/T-n/` of finished tasks when space matters, after the task is `done` or `cancelled` and its escalation packets are no longer needed.
 
 ## 4. Report models (`domain.reports`, pydantic → JSON Schema)
 

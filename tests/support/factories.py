@@ -16,6 +16,7 @@ from shikiru.config.settings import (
     FaultsConfig,
     ImplementerConfig,
     LayoutSplit,
+    LoggingConfig,
     NotifyConfig,
     OrchestrationConfig,
     PaneLeaf,
@@ -142,6 +143,7 @@ def make_settings(
         ),
         notify=NotifyConfig(command=""),
         doctor=DoctorConfig(probe_timeout=180, probe_stream_tail_lines=20),
+        logging=LoggingConfig(engine_log_max_bytes=10485760, engine_log_backups=3),
     )
 
 

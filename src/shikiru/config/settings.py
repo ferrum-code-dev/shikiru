@@ -186,6 +186,13 @@ class DoctorConfig(ConfigModel):
     probe_stream_tail_lines: int
 
 
+class LoggingConfig(ConfigModel):
+    """`[logging]`: engine log rotation (05 §1)."""
+
+    engine_log_max_bytes: int = Field(gt=0)
+    engine_log_backups: int = Field(ge=0)
+
+
 class Settings(ConfigModel):
     """The full merged and validated Shikiru configuration."""
 
@@ -198,6 +205,7 @@ class Settings(ConfigModel):
     dashboard: DashboardConfig
     notify: NotifyConfig
     doctor: DoctorConfig
+    logging: LoggingConfig
 
     def ladder_rungs(self) -> list[Rung]:
         """Return every configured rung: leader, implementer, complexity overrides, helper."""

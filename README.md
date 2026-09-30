@@ -61,6 +61,8 @@ Shikiru runs AI agents unattended with your user's privileges. Use it only on re
 - **Worktree isolation is not enforced.** Each task works in its own git worktree, and the prompts tell the agent to stay there, but nothing stops an agent from touching other paths, the main checkout or other tasks' worktrees.
 - Shikiru keeps `.shikiru/` (state, prompts, reports, logs, transcripts) owner-only, but it is not a sandbox. It does not limit what agents, configured notification commands or the commands in the project's own instructions can do.
 
+Logs and run files live under `.shikiru/`. The engine log rotates by size (`[logging]` in the config, 10 MiB and 3 backups by default). Run directories (`.shikiru/runs/`: prompts, reports, raw agent output and transcripts) are not pruned and grow with the work done; Shikiru has no pruning command, so delete the directories of finished tasks yourself when space matters.
+
 ## Documentation
 
 - Design: [`docs/design`](docs/design/README.md)

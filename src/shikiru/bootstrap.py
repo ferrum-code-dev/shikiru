@@ -86,7 +86,7 @@ from shikiru.paths import (
     project_state_dir,
     state_db_path,
 )
-from shikiru.private import create_private_file, make_private_dir, tighten_state_dir
+from shikiru.private import PrivateRotatingFileHandler, make_private_dir, tighten_state_dir
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue
@@ -116,7 +116,7 @@ if TYPE_CHECKING:
 
     from mcp.server.fastmcp import FastMCP
 
-    from shikiru.config.settings import Settings
+    from shikiru.config.settings import LoggingConfig, Settings
     from shikiru.domain.tasks import Task
 
 
@@ -446,7 +446,7 @@ def build_engine(
     )
 
     target = exact_target(session_name(resolved_settings.project.name))
-    logger, log_handler = _configure_engine_logging(project_root)
+    logger, log_handler = _configure_engine_logging(project_root, resolved_settings.logging)
     _tighten_state_dir(project_root, logger)
     layout = LayoutGuard(
         tmux=resolved_tmux,
@@ -713,12 +713,15 @@ def _tighten_state_dir(project_root: Path, logger: logging.Logger) -> None:
         )
 
 
-def _configure_engine_logging(project_root: Path) -> tuple[logging.Logger, logging.FileHandler]:
+def _configure_engine_logging(
+    project_root: Path, config: LoggingConfig
+) -> tuple[logging.Logger, logging.FileHandler]:
     log_path = engine_log_path(project_root)
     make_private_dir(log_path.parent)
-    create_private_file(log_path)
     logger = logging.getLogger(ENGINE_LOGGER_NAME)
-    handler = logging.FileHandler(log_path)
+    handler = PrivateRotatingFileHandler(
+        log_path, maxBytes=config.engine_log_max_bytes, backupCount=config.engine_log_backups
+    )
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False

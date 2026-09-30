@@ -16,7 +16,14 @@ from fake_agent.agent import FakeAgent, FakeOptions
 
 from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung
 from shikiru.bootstrap import build_engine
-from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig, RepoConfig
+from shikiru.config.settings import (
+    AgentConfig,
+    LayoutSplit,
+    LoggingConfig,
+    PaneLeaf,
+    ProjectConfig,
+    RepoConfig,
+)
 from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
@@ -1544,3 +1551,28 @@ async def test_a_running_engine_keeps_every_shikiru_file_and_directory_owner_onl
         if path.is_dir():
             assert mode == _WRITABLE_DIRECTORY, (path, oct(mode))
     assert stat.S_IMODE(worktree_file.stat().st_mode) == _LOOSE_FILE
+
+
+async def test_the_engine_log_rotates_at_the_configured_size_and_keeps_a_bounded_number_of_files(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    max_bytes, backups = 400, 2
+    settings = engine_settings().model_copy(
+        update={
+            "logging": LoggingConfig(engine_log_max_bytes=max_bytes, engine_log_backups=backups)
+        }
+    )
+    engine = build_engine(
+        tmp_path, settings, tmux=build_tmux(tmux_server), registry=build_registry()
+    )
+    logger = logging.getLogger("shikiru.engine.test")
+    for number in range(100):
+        logger.error("line %03d %s", number, "x" * 40)
+    engine.request_stop()
+    await engine.run()
+
+    logs = sorted((tmp_path / ".shikiru" / "logs").iterdir())
+    assert [path.name for path in logs] == ["engine.log", "engine.log.1", "engine.log.2"]
+    assert all(path.stat().st_size <= max_bytes for path in logs)
+    assert all(stat.S_IMODE(path.stat().st_mode) & _NO_GROUP_OR_OTHER == 0 for path in logs)
+    assert "line 099" in logs[0].read_text()

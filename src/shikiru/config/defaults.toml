@@ -65,6 +65,10 @@ shell = "Shell · {cwd}"
 [notify]
 command = ""
 
+[logging]
+engine_log_max_bytes = 10485760
+engine_log_backups = 3
+
 [doctor]
 probe_timeout = 180
 probe_stream_tail_lines = 20
