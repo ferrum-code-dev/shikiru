@@ -579,6 +579,7 @@ Refs: 07 §3, §5.
 - [ ] Live model-change checks assert the emitted `model_auto_compact_token_limit` follows the selected model (Claude and Codex), and were run natively on the resulting revision with the real rollout format; the result is recorded.
 - [ ] The E2E results artifact records the source commit, CLI versions and start/end timestamps.
 - [ ] The Task 59 ACs that were ticked with annotations are restated strictly (unticked with a reason where not met).
+- [ ] Flake hunt: `uv run poe check` failed once (1 failed, 846 passed, at `17d1d8f`, test not identified) and then passed in 10 consecutive runs, also under full CPU load. Run the ordinary suite repeatedly with failure capture (for example 20 runs with `--junitxml` or a saved log per run), identify the flaky test(s), fix the cause (no sleeps, no shared state, no host-load dependence) and record the number of clean runs.
 - Tests: the above.
 
 ### Task 74: Final verification and release evidence (Phase 7b)
