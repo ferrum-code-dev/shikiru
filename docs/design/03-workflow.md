@@ -44,7 +44,7 @@ queued ──► running ──► integrating ──► done
 | `integrating` | yes, except while a PR is open (§6) |
 | `escalated` | no. The worktree, sessions and window stay. On re-dispatch the task gets its previous slot if free; otherwise its next turns resume the sessions under the new `SHIKIRU_SLOT` |
 | `done` | — terminal: window closed, worktrees removed, run files kept |
-| `cancelled` | — terminal: window closed, worktrees removed (one with uncommitted work is kept, §6), run files kept |
+| `cancelled` | — terminal: window closed, the task's open pull request closed (§6), worktrees removed (one with uncommitted work is kept, §6), run files kept |
 
 **Holds**:
 - `paused` and `intervention` are task-scoped (§9).
@@ -218,6 +218,7 @@ Integration itself never discards work: at its entry, and again before the strat
      - `MERGED` → the merged base is fetched and verified (below), then done. `CLOSED` → `pr_closed`, whose `retry` pushes again and opens a new PR.
      - **Merged base.** A merged PR lands on the remote base, never on the local branch, and the operator's checkout, index and local changes are never reset, pulled or merged. On `MERGED` the engine reads the PR's `mergeCommit` (`gh pr view <url> --json state,mergeCommit`), fetches `+refs/heads/<base>:refs/shikiru/bases/<base>` from `repo.remote`, and verifies that the merge commit is the fetched ref or its ancestor (`merge-base --is-ancestor`). That holds for merge, squash and rebase merges alike, since the PR head itself is not an ancestor after a squash or rebase. Only then is the task `done`, so its dependents are not ready before the verified base exists. A failed fetch or a merge commit missing from the fetched base raises `integration_blocked` (§8); its `retry` fetches and verifies again without touching the PR.
      - **Base ref.** The ref new task roots start from is one injected rule. `merge` mode: the local base branch. `pr` mode: `refs/shikiru/bases/<base>` once a PR has merged and the engine fetched it, before that the local base branch. The ref is Shikiru's own, so operator fetches and local commits never move it.
+     - **Cancel.** Terminal cleanup of a `cancelled` task closes its open PR (`gh pr close`; a PR that is no longer open is left alone), after the window and before the worktree goes, so a cancelled task's PR cannot be merged by hand. A failure to close is an `engine_fault` like any cleanup failure (§7): the cancel stays acknowledged, the worktree stays, and the next engine start repeats the cleanup, closing included. A cancelled task whose root is already gone is not retried.
      - The open PR is the task's latest `pr_opened` not followed by a `pr_closed` escalation. A resumed integration (§7) polls it instead of rebasing, pushing or opening another.
 3. **Done**: the `done` status and `task_done` (summary, commits, residual risks) land in one transaction; then the window closes and the worktree is removed, last (§7).
 

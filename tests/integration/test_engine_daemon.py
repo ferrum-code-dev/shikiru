@@ -62,6 +62,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.decorator import PANE_COLOR_OPTION
 from shikiru.tmux.session import SessionView
 from shikiru.ui.tokens import HOLD_COLOR, OPERATOR_COLOR
+from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
 from tests.support.engine import (
@@ -86,6 +87,7 @@ if TYPE_CHECKING:
     from shikiru.domain.runs import Run
     from shikiru.store.commands import CommandOutcome, QueuedCommand
     from shikiru.tmux.client import Tmux
+    from tests.support.github import FakeGitHub
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -677,6 +679,50 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
         with suppress(asyncio.CancelledError, Exception):
             await engine_task
         connection.close()
+
+
+async def _open_pull_request_of(escalated: _Escalated, project_root: Path) -> None:
+    url = await GitHub(SubprocessRunner()).create_pull_request(
+        project_root, base="main", head="shikiru/T-1-stale-me", title="stale me", body="summary"
+    )
+    escalated.operator.events.append(
+        EventKind.PR_OPENED,
+        task_id=escalated.task.id,
+        message="opened",
+        data={"url": url, "branch": "shikiru/T-1-stale-me", "commits": ["c1"]},
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [Cancel(task_id="T-1"), Resolve(escalation_id="E-1", resolution=CancelResolution())],
+    ids=["cancel", "resolve"],
+)
+async def test_cancelling_a_task_closes_its_open_pull_request(
+    tmp_path: Path, tmux_server: TmuxServer, fake_github: FakeGitHub, command: Cancel | Resolve
+) -> None:
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        await _open_pull_request_of(escalated, tmp_path)
+
+        outcome = await escalated.operator.send(command)
+
+        assert outcome.status is CommandStatus.DONE
+        assert fake_github.pull_requests()[0]["state"] == PullRequestState.CLOSED
+
+
+async def test_a_pull_request_that_cannot_be_closed_is_a_recorded_fault_not_a_rejection(
+    tmp_path: Path, tmux_server: TmuxServer, fake_github: FakeGitHub
+) -> None:
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        await _open_pull_request_of(escalated, tmp_path)
+        fake_github.break_pull_requests()
+
+        outcome = await escalated.operator.send(Cancel(task_id=escalated.task.id))
+
+        assert outcome.status is CommandStatus.DONE
+        assert escalated.operator.task(escalated.task.id).status is Status.CANCELLED
+        faults = escalated.operator.events.since(0, kinds=[EventKind.ENGINE_FAULT])
+        assert [fault.task_id for fault in faults] == [escalated.task.id]
 
 
 @pytest.mark.parametrize(

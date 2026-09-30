@@ -71,6 +71,10 @@ class FakeGitHub:
         path = self.state / fake_gh.PULLS_DIR / f"{number}.json"
         path.write_text(json.dumps({**json.loads(path.read_text()), **fields}))
 
+    def break_pull_requests(self) -> None:
+        for path in (self.state / fake_gh.PULLS_DIR).glob("*.json"):
+            path.write_text("{")
+
     def views(self) -> int:
         log = self.state / fake_gh.CALLS_LOG
         lines = log.read_text().splitlines() if log.exists() else []

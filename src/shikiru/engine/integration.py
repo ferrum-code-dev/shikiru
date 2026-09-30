@@ -399,6 +399,28 @@ def _open_pull_request(events: Sequence[Event]) -> _OpenPullRequest | None:
     return opened
 
 
+class PullRequestCloser:
+    """Close a task's open pull request when the task is cancelled (03 §6)."""
+
+    def __init__(self, *, github: GitHub, events: EventLog, project_root: Path) -> None:
+        """Close through `github` from `project_root` the PR that `events` record as open."""
+        self._github = github
+        self._events = events
+        self._project_root = project_root
+
+    async def close_open(self, task_id: str) -> None:
+        """Close `task_id`'s open pull request, if it has one that is still open."""
+        events = self._events.since(
+            0, kinds=[EventKind.PR_OPENED, EventKind.ESCALATION], task_id=task_id
+        )
+        opened = _open_pull_request(events)
+        if opened is None:
+            return
+        status = await self._github.pull_request_status(self._project_root, opened.url)
+        if status.state is PullRequestState.OPEN:
+            await self._github.close_pull_request(self._project_root, opened.url)
+
+
 class Integrator:
     """Own the project integration lock, rebase protocol and terminal cleanup."""
 

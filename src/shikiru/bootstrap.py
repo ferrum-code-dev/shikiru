@@ -45,6 +45,7 @@ from shikiru.engine.integration import (
     Integrator,
     LocalMerge,
     PullRequest,
+    PullRequestCloser,
 )
 from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.layout_guard import LayoutGuard
@@ -478,7 +479,12 @@ def build_engine(
         fetched_bases if resolved_settings.orchestration.integration == "pr" else LocalBaseRefs(),
         trackers=resolved_settings.project.trackers,
     )
-    task_finisher = TaskFinisher(sessions, layout, roots)
+    task_finisher = TaskFinisher(
+        sessions,
+        layout,
+        roots,
+        PullRequestCloser(github=GitHub(resolved_runner), events=events, project_root=project_root),
+    )
     history = ReportHistory(project_root)
     task_facts = TaskFacts(
         git_facts=GitFacts(git), project_root=project_root, settings=resolved_settings

@@ -114,6 +114,10 @@ class GitHub:
             ),
         )
 
+    async def close_pull_request(self, repo_dir: Path, url: str) -> None:
+        """Close the open pull request at `url` without merging it."""
+        await self._run(repo_dir, "pr", "close", url)
+
     async def _run(self, repo_dir: Path, *args: str) -> ProcessResult:
         return await self._runner.run(
             [_GH_BIN, *args], timeout=_COMMAND_TIMEOUT_SECONDS, cwd=repo_dir, check=True
