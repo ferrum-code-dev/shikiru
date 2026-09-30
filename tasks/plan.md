@@ -2,6 +2,8 @@
 
 Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`](todo.md).
 
+Phase 8 target specification: [Operator Workspace](../docs/tui-workspace.md). Its tasks update the normative design as each slice ships.
+
 **Rules**:
 - Follow `CLAUDE.md`/`AGENTS.md` and 07 §2–3.
 - Work on one task at a time.
@@ -15,6 +17,8 @@ Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`
 - Phase 4b moves agents to headless turns on resumed sessions with panes as live views (D1 revised, D21, D22, D23). Its tasks are numbered 31–39 so earlier numbers stay stable; do them before Phase 5. Task 38 (code health) runs alongside: its correctness items first, the rest together with the Phase 4b tasks they touch.
 - Phases 5–6 complete resilience, operator surfaces and onboarding.
 - Phase 7 (Tasks 41–59) remediates the 2026-09-29 review. Task 41 comes first because it makes the gate reliable; then follow the listed order, since high-severity work and operator-control fixes precede the rest.
+- Phase 7b (Tasks 60–74) completes the independent-review remediation before Phase 8 relies on its operator-control and work-preservation behaviour.
+- Phase 8 (Tasks 75–88) delivers the Operator Workspace: navigation and task actions first, then attention/evidence views, responsive behaviour, exports and final documentation/verification. Follow the listed order and keep refactorings in separate commits.
 
 ---
 
@@ -583,3 +587,119 @@ Refs: 07 §5.
 - [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (date, scenarios, duration, cost, commit, CLI versions).
 - [ ] The clean-install smoke passes on macOS at the final commit; Linux is stated as verified or unverified.
 - [ ] A new `docs/release-readiness-*.md` states which reviewer items were fixed, restates the design-agreement claim after Tasks 60–73 and lists remaining limitations honestly.
+
+## Phase 8 — Operator Workspace
+
+Specification: [Operator Workspace](../docs/tui-workspace.md), requested 2026-09-30. It defines the target experience; current behaviour changes only as the tasks below ship. Phase 7b comes first. Retain the engine's single-writer model, typed operator commands, agent-independent signals, tmux role views, SSH access, honest usage reporting and semantic comic-strip visual language.
+
+Each task updates the relevant sections of 01–07 and the workspace specification if implementation resolves a detail differently. Add contracts only with a consuming feature. All tests follow 07 §3: observable behaviour against real boundaries, no mocks of Shikiru classes, no tests of framework features or wording, and no new snapshot catalogue.
+
+### Task 75: Workspace design alignment and shared visual shell
+Refs: [Workspace §1–3, §13, §15](../docs/tui-workspace.md#13-visual-system), 01 D18, 02 §2/4, 06 §5.4/§6.
+- [ ] Record the workspace composition decision in 01 and its responsibilities in 02; update 06 to distinguish the home workspace, task detail and secondary views. Link the target specification from the design index and README, clearly distinguishing planned and shipped behaviour.
+- [ ] Introduce shared background, surface, neutral border, text and focus tokens; apply them to the dashboard shell, palette and evidence modals while preserving role/state meanings, width-safe glyphs and monochrome cues.
+- [ ] Add the shell's visible focus, contextual footer, help and section expansion/back navigation, using current widgets. Keep Textual/Rich and existing plugin entry points; document placement/order of configured built-ins and reachable third-party Extensions. No configured plugin is silently dropped.
+- Tests: Textual integration: navigate/expand/return to a section with keyboard and mouse, preserve focus, reach a configured external widget, and read state/focus without colour. Assert behaviour and width properties, not token inventories or screenshots.
+
+### Task 76: Selectable task browser and search
+Refs: Workspace §5/§7/§15, 03 §10, 06 §5.4.
+- [ ] Add ready-to-render task rows and bounded read queries consumed by an interactive browser. ID, title and state remain accessible; Active, Waiting, History and All membership/order follow §5.1, with queued tasks in scheduler dispatch order.
+- [ ] Search task ID/title and combine it with filters; show matching count and distinguish an empty project from an empty search result.
+- [ ] Preserve selected task ID, filter/search and scroll across state updates and row reordering. When selection leaves a filter, retain its detail/context until deliberate navigation; keep the selected visible row in view.
+- [ ] Update 02's component list, 06's widget contract/navigation and 05 only for introduced settings. Preserve existing widget fields/callbacks; new capabilities are additive and have consumers.
+- Tests: Textual over real SQLite: search by title, combine a filter, reorder tasks while selected, complete the selected task, clear search, and load more history without resetting selection. Unit tests only for new domain projection rules.
+
+### Task 77: Task detail and navigation to existing windows
+Refs: Workspace §6/§7, 02 §2, 06 §5.1/§5.4/§6.2.
+- [ ] Render shared task detail from operator queries: situation, expanded strip, latest report/verdict, request/ACs, recorded evidence, workspace/session metadata and actions. Mark reported tests and engine-computed facts with their source; distinguish unavailable evidence.
+- [ ] `dash --task` opens detail fixed to its task, with task-scoped activity/usage and a compact global attention indicator. Home Enter opens/focuses the selected task detail and Escape restores browser context.
+- [ ] Open an existing task/role pane through injected navigation callbacks that resolve the current target at activation. A missing or terminal task window produces a readable result without recreating workflow resources.
+- [ ] Document task-view composition and narrow identity/title requirements in 06; preserve plan/implement, setup, consult, rework and integration meanings.
+- Tests: real SQLite/Git reports plus Textual and `tmux_server`: inspect a task's latest verdict, return to the same browser position, switch to its existing window, and inspect a completed task after window/worktree cleanup without recreating them.
+
+### Task 78: Contextual actions and searchable palette
+Refs: Workspace §7–8, 03 §9, 06 §5.2/§5.5.
+- [ ] The shared palette offers searchable actions and task selection by ID/title. Carry the selected task/role from detail and the originating task/role pane from the tmux popup; show editable targets and advanced submission/rung fields.
+- [ ] Prepare applicable actions and disabled reasons through the operator layer using domain state; revalidate when dispatching and preserve the engine's authoritative rejection. Widgets do not implement workflow eligibility or construct commands.
+- [ ] Display action timing and consequences: message/rung changes apply to the next turn; pause differs from pause-now; takeover holds the task; resume/hand-back respect remaining restrictions. Cancellation and stop expose scope/work-preservation consequences in the action form.
+- [ ] Update 03/06 descriptions and 02/06 contracts for the consumed context/navigation callbacks; preserve the small CLI surface and conditional tmux palette binding.
+- Tests: Textual and `tmux_server`: message and change rung without typing the task ID, change the target deliberately, open the popup from a role pane, and reject an action whose target state changed. Existing fake-agent boundary tests establish timing.
+
+### Task 79: Durable command feedback and ownership banners
+Refs: Workspace §9/§15, 05 §2, 06 §1/§5.5, 03 §7/§9.
+- [ ] Expose bounded read-only command history/status through `StateReader` and operator queries. Show Sending, Pending, Applied or Rejected with command ID, target and returned result; preserve stored command statuses and distinguish engine-stopped queueing from acknowledgement timeout.
+- [ ] Track pending outcomes after the palette closes and recover them after dashboard restart, including commands from another dashboard or MCP. A pending form cannot accidentally submit the same action again on refresh or return.
+- [ ] Applied message feedback describes guidance queued for the role's next turn. Persistent ownership banners name taken-over roles and all remaining holds; hand back and resume issue their own explicit existing commands.
+- [ ] Document the read API, outcome vocabulary and acknowledgement-versus-delivery distinction in 02/05/06. Add no command writer, acknowledgement path or navigation-state table.
+- Tests: real SQLite/fake engine and Textual: command completes after the acknowledgement wait, palette closes while pending, dashboard restarts, another client submits, rejection appears, and hand back leaves another ownership/pause hold visible. Assert one applied command effect.
+
+### Task 80: Home overview and attention composition
+Refs: Workspace §3–4, 06 §5.4/§5.7, 01 D18/D21.
+- [ ] Compose the home header, Attention/Running/Waiting summaries, task browser/detail, and recent project decisions/activity. Counts follow the specified definitions and distinguish task categories from slot occupancy.
+- [ ] Attention groups open escalations, diagnosed stalls and recorded engine faults; informational retries, quota waits and deliberate pauses retain their own meanings. Engine lock liveness stays distinct from fault and signal observations.
+- [ ] Summaries navigate to their content, decisions stay visible until durable resolution, and a missing packet shows its evidence error while retaining durable escalation information. Global task-window attention routes back to home.
+- [ ] Update 06 composition/attention rules and 02 data sources; use existing recorded faults and activity rules without a heartbeat, new long-wait policy or external notification system.
+- Tests: seeded real state plus fake-agent transitions: paused/PR-waiting tasks and slots count correctly, escalation resolves from another client, unavailable packet retains the decision, recovery does not appear as an open decision, and attention updates without stealing focus.
+
+### Task 81: Escalation resolution with structured evidence
+Refs: Workspace §10.1, 03 §8, 06 §5.4–5.5/§6.4.
+- [ ] Present the question, recommended alternative, consequences and allowed resolution fields before expandable reports, facts, timeline and tails. Keep the complete original packet accessible and preserve agent alternatives versus engine resolution-kind semantics.
+- [ ] Route the selected escalation through the shared palette with its exact ID; map choices using the validated resolution contract, including answer/rung requirements.
+- [ ] Refresh forms when another Operator resolves/cancels the task; disable stale submission, preserve entered text for copying and show engine rejections from later races without resubmitting.
+- [ ] Update 03/06 packet and resolution presentation, keeping escalation state/evidence and existing work-preservation rules authoritative.
+- Tests: Textual over real SQLite/fake engine: inspect consequences and full evidence, submit each applicable resolution class, resolve from another client while editing, and handle packet-read failure and the submission race.
+
+### Task 82: Blocker navigation and task families
+Refs: Workspace §10.2–10.3, 03 §2/§6/§10, 06 §5.4.
+- [ ] Show specific dependency/slot/resource/quota/pause/ownership/PR blockers with their available evidence and navigation. Distinguish dashboard resource sample age, scheduler reason, provider quota reset and engine retry/probe time.
+- [ ] Group children under parents with expand/collapse and filter-matched ancestor context. Show dependencies/dependents separately and superseded replacements only when supported by recorded evidence.
+- [ ] Keep plan-parent integration separate from child implementation completion; show exact family outcome counts. Show submitted/recorded queue age without inventing current-blocker duration, ETA or guaranteed start position.
+- [ ] Update 02/06 consumed relationship/blocker view contracts and 03's operator-facing explanations; reuse dispatch/domain rules and existing stored graph relationships.
+- Tests: real SQLite/Git/fake-agent decomposition and supersede: follow a blocked dependency, navigate back with selection intact, see active children under a done parent, search a child with ancestor context, and distinguish unknown quota resets and cancelled replacements.
+
+### Task 83: Completion history and task evidence timeline
+Refs: Workspace §11, 05 §2–3, 06 §2/§5.4.
+- [ ] Make historical task detail usable after terminal cleanup; retain recorded cancellation/supersede reasons, reports, decisions and integration outcome without inventing terminal failure states for recovered turn errors.
+- [ ] Add bounded timeline/evidence queries and filters by role, turn and category. Distinguish engine events from normalized agent signals, preserve source ordering and identify missing timestamps/evidence or an incomplete live JSONL row.
+- [ ] Live evidence follows until the Operator scrolls away; provide an explicit Follow latest action. Updates and pagination preserve reading position and selected evidence identity.
+- [ ] Update 02/05/06 query, source-ordering and retained-evidence descriptions. Read recorded files without a second consumer of agent stdout or agent-specific parsing in the UI.
+- Tests: real SQLite and recorded normalized files: browse a closed task, page/filter a long timeline, receive a partial then complete live row, preserve selection while new events arrive, and resume following explicitly. Test ordering through public behaviour, not implementation helpers.
+
+### Task 84: Honest usage and secondary diagnostics
+Refs: Workspace §12, 01 D21/D23, 04 §1, 06 §5.4.
+- [ ] Expose project recorded totals and selected-task usage with explicit scope, tokens, cost basis and priced/unknown-run coverage. Separate billed and API-equivalent totals and label partial subtotals; show unknown values distinctly from measured zero.
+- [ ] Preserve only reliable reported context and quota windows, including reset/observation age. Add no inferred pricing, spend budget, completion percentage, ETA, daily charts or time-period labels unsupported by queries.
+- [ ] Move host/process-tree resources, Docker and recorded engine-fault evidence into reachable diagnostics. Distinguish empty, unavailable, stale and failed samples; failures leave unrelated task data readable.
+- [ ] Update 05/06 metric definitions, scope, sampling/observation labels and widget placement; keep expensive reads off motion refreshes.
+- Tests: real runs/quotas and samplers: mixed cost bases, partial pricing, unknown/zero values, per-task versus project totals, aged quota observations, unavailable Docker and a failed sample without lost task navigation.
+
+### Task 85: Responsive layouts and accessible refresh behaviour
+Refs: Workspace §7/§13–14, 06 §5.4/§6, 07 §3.
+- [ ] Choose wide browser/detail or compact list/detail from actual pane dimensions. At 48 and 36 columns keep task ID/title, state, hold/blocker and all action/result controls reachable; short panes collapse summaries and keep content scrollable.
+- [ ] Resizing preserves selection, focus, search and scroll; focused rows/forms remain visible. Footer/help, keyboard and mouse paths operate under `NO_COLOR` and disabled animation with textual state/ownership cues.
+- [ ] Preserve the signal-driven motion rules and 4 Hz cap; static motion settings still allow state/countdown refresh. No tmux split rearrangement or blank/clipped critical panels is introduced.
+- [ ] Document named layout limits, compact strip/row forms and terminal support in 05/06/07. Retain the snapshot limit and avoid operator breakpoint settings without a concrete need.
+- Tests: Textual size/interaction matrix for wide, 48-column, 36-column, short and very small panes, monochrome and static frames. Assert reachable critical content, stable identity/focus and width bounds; visually inspect representative home/task/form states and record findings.
+
+### Task 86: Markdown and JSON evidence export
+Refs: Workspace §11/§15, 02 §2, 05 §3, 06 §5.5.
+- [ ] Add a read-only operator export use case consumed by task detail/palette, with an injected local file writer. Export request, task outcome/relationships, available reports/facts/timeline, session/rung metadata and usage provenance; signal excerpts are an explicit inclusion option.
+- [ ] Markdown and JSON contain a format version, task ID, export time and unavailable sections; preserve recorded source ordering and unknown costs, and escape/fence embedded content. Export does not imply a complete agent transcript or reconstruct cleaned worktrees.
+- [ ] Destination selection, explicit overwrite choice, success and write failures are visible. Export never queues a workflow command or changes engine state; no recorder, timed playback, HTML renderer or network service is added.
+- [ ] Document contents, format/version, destination behaviour and retained-evidence limits in 02/05/06 and the workspace specification.
+- Tests: integration with real task records/files: parse JSON, verify meaningful Markdown evidence and hostile fenced text boundaries, export after worktree cleanup, mark missing sections, and handle existing/unwritable destinations while database task/event/command state stays unchanged.
+
+### Task 87: Operator documentation and workflow walkthroughs
+Refs: Workspace §16, 01–07, README.
+- [ ] Reconcile 01–07 with the completed workspace: decision log, responsibilities/file list, action timing/ownership, read/export contracts, widget placement/defaults, keyboard navigation, visual/compact forms and testing requirements. Update the design index and workspace implementation status.
+- [ ] Rewrite README dashboard/navigation examples around shipped home/task views, contextual actions and evidence inspection; document palette access from tmux, pending outcomes, usage provenance and export limits without duplicating the CLI action surface.
+- [ ] Run and document the eight workspace walkthroughs with the fake agent, including another Operator's escalation resolution, remaining takeover holds, engine-down pending command recovery and terminal history after window cleanup.
+- [ ] Every published shortcut, example and screenshot/terminal sketch agrees with actual behaviour; planned or unverified capabilities are labelled. Keep the workspace specification and task references internally consistent.
+- Verification: inspect real Textual/tmux flows and the produced export artifacts; review documentation links and examples. No tests that pin prose or screenshots.
+
+### Task 88: Workspace release verification and evidence
+Refs: Workspace §16, 07 §5.
+- [ ] `uv run poe check` passes normally and with `TERM=dumb` on the resulting revision, preserving coverage ≥ 80% and architecture boundaries.
+- [ ] Real-agent E1–E6 pass in one `poe e2e` run on that revision; record date, scenarios, duration, source commit, CLI versions and reported cost or unknown cost as appropriate.
+- [ ] Clean-install smoke and the documented workspace entry/navigation paths pass on macOS; Linux is reported as verified only after an actual run. Record representative home/task pane sizes, monochrome/static operation and remaining limitations.
+- [ ] A new `docs/release-readiness-*.md` records Phase 8 delivery, fake-agent walkthrough evidence, final checks and design agreement. Tick Tasks 75–88 only after their own ACs are met; planning this phase does not count as implementation.
