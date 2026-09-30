@@ -475,11 +475,11 @@ Refs: 02 §2, 07 §1; `refactor:` commits only.
 
 ### Task 58: Low-severity items (F19, F20, F21, F23, F22)
 Refs: 01 §glossary, 02 §2, 07 §1–2.
-- [ ] F19: one deterministic live-tail scenario in `test_view.py`: start the view, append a partial then complete JSONL row, assert the output before the turn completes; include a terminal or failure outcome.
-- [ ] F20: import-linter contracts for the stated `plugins.agents.*` import boundary, and `banned-api` entries for wall and monotonic clock calls; or 02 §2 says which rules are lint-enforced and which are review conventions.
-- [ ] F21: `scripts/release-readiness-smoke.sh` uses a portable temporary directory; it is proven on macOS and on Linux where available. A CI workflow for the non-paid gate is optional and not part of this task.
-- [ ] F23: 01 §glossary documents slots `0..max_parallel-1` (implementation and tests win), with a matching `SHIKIRU_SLOT` example.
-- [ ] F22 (design opinion, needs an owner decision, no code churn): either relax the "no other literals" and "no comments" rules in 07 §2 and AGENTS.md to allow local syntax literals and short rationale comments, or record that they stay. Apply a relaxed rule only in code touched by other tasks.
+- [x] F19: one deterministic live-tail scenario in `test_view.py`: start the view, append a partial then complete JSONL row, assert the output before the turn completes; include a terminal or failure outcome.
+- [x] F20: import-linter contracts for the stated `plugins.agents.*` import boundary, and `banned-api` entries for wall and monotonic clock calls; or 02 §2 says which rules are lint-enforced and which are review conventions.
+- [x] F21: `scripts/release-readiness-smoke.sh` uses a portable temporary directory; it is proven on macOS and on Linux where available. A CI workflow for the non-paid gate is optional and not part of this task.
+- [x] F23: 01 §glossary documents slots `0..max_parallel-1` (implementation and tests win), with a matching `SHIKIRU_SLOT` example.
+- [x] F22 (design opinion, needs an owner decision, no code churn): either relax the "no other literals" and "no comments" rules in 07 §2 and AGENTS.md to allow local syntax literals and short rationale comments, or record that they stay. Apply a relaxed rule only in code touched by other tasks.
 
 ### Task 59: Re-verify and regenerate release evidence
 Refs: 07 §5.
