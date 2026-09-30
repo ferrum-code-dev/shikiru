@@ -105,9 +105,10 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `NotificationDelivery` | Bounded queue and one supervised task delivering notifications off the command loop (06 §5.7) |
 
 **Enforced rules** (lint, not convention):
-- import-linter layers as above;
-- ruff `banned-api`: `sqlite3` only in `store`, `subprocess`/`asyncio.create_subprocess_*` only in `process`, `time.sleep`/`asyncio.sleep` only through `clock`;
-- nothing outside `plugins/agents/*` names an agent CLI, stream or session-log format, or quota source.
+- import-linter: the layers above, the engine boundary, the widget plugin boundary and the agent plugin boundary (`plugins.agents` may not import any other Shikiru package than those listed for it above);
+- ruff `banned-api`: `sqlite3` only in `store`, `subprocess`/`asyncio.create_subprocess_*` only in `process`, and the sleep, wall-clock and monotonic-clock entry points (`time.sleep`, `asyncio.sleep`, `time.time`, `time.monotonic`, `time.perf_counter` and their `_ns` forms, `datetime.now`, `utcnow`, `today`) only in `clock`, with per-file exceptions for the modules that own the boundary and for the E2E results file name.
+
+**Review conventions** (no tool checks them): nothing outside `plugins/agents/*` names an agent CLI, stream or session-log format, or quota source, since import-linter cannot see semantic coupling; and event-loop time (`loop.time()`) is not used outside `clock`.
 
 ## 3. Project structure
 

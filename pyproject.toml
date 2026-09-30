@@ -109,6 +109,16 @@ ignore = [
 "asyncio.create_subprocess_shell" = { msg = "Subprocesses only via shikiru.process.SubprocessRunner" }
 "time.sleep" = { msg = "Time only via shikiru.clock.Clock" }
 "asyncio.sleep" = { msg = "Time only via shikiru.clock.Clock" }
+"time.time" = { msg = "Time only via shikiru.clock.Clock" }
+"time.time_ns" = { msg = "Time only via shikiru.clock.Clock" }
+"time.monotonic" = { msg = "Time only via shikiru.clock.Clock" }
+"time.monotonic_ns" = { msg = "Time only via shikiru.clock.Clock" }
+"time.perf_counter" = { msg = "Time only via shikiru.clock.Clock" }
+"time.perf_counter_ns" = { msg = "Time only via shikiru.clock.Clock" }
+"datetime.datetime.now" = { msg = "Time only via shikiru.clock.Clock" }
+"datetime.datetime.utcnow" = { msg = "Time only via shikiru.clock.Clock" }
+"datetime.datetime.today" = { msg = "Time only via shikiru.clock.Clock" }
+"datetime.date.today" = { msg = "Time only via shikiru.clock.Clock" }
 
 [tool.ruff.lint.flake8-type-checking]
 # pydantic evaluates field annotations at class-definition time, so imports used only as field
@@ -139,6 +149,8 @@ runtime-evaluated-decorators = [
 "src/shikiru/clock.py" = ["TID251"]
 "src/shikiru/config/loader.py" = ["ANN401"]
 "tests/support/waiting.py" = ["TID251"]
+"tests/e2e/conftest.py" = ["TID251"] # dates the real-agent results file with the wall clock
+"tests/integration/test_e2e_results.py" = ["TID251"] # computes the same wall-clock results file name
 "tests/support/store.py" = ["TID251"]
 "tests/integration/test_store_database.py" = ["TID251"]
 "tests/support/store_reader_process.py" = ["T201"]
@@ -205,6 +217,34 @@ forbidden_modules = [
   "shikiru.tmux",
   "shikiru.workspace",
   "shikiru.process",
+]
+allow_indirect_imports = "True"
+
+[[tool.importlinter.contracts]]
+name = "Agent plugins (02 §2): plugins.agents imports only agents.contracts, agents.sdk, process, clock and errors"
+type = "forbidden"
+source_modules = ["shikiru.plugins.agents"]
+forbidden_modules = [
+  "shikiru.bootstrap",
+  "shikiru.cli",
+  "shikiru.mcp",
+  "shikiru.dashboard",
+  "shikiru.operator",
+  "shikiru.engine",
+  "shikiru.workspace",
+  "shikiru.tmux",
+  "shikiru.prompts",
+  "shikiru.helper",
+  "shikiru.ui",
+  "shikiru.telemetry",
+  "shikiru.store",
+  "shikiru.domain",
+  "shikiru.config",
+  "shikiru.paths",
+  "shikiru.view_log",
+  "shikiru.agents.registry",
+  "shikiru.agents.testing",
+  "shikiru.plugins.widgets",
 ]
 allow_indirect_imports = "True"
 
