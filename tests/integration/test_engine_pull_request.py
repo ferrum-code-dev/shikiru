@@ -17,6 +17,7 @@ from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Status, Step
 from shikiru.engine.integration import PR_POLL, PullRequest
+from shikiru.errors import CommandFailed
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
@@ -434,3 +435,61 @@ async def test_the_branch_of_a_merged_pull_request_stays_with_a_worktree_kept_fo
     assert done.status is Status.DONE
     assert (task_root(engine_env.project_root, task.id) / "scratch.txt").exists()
     assert await _local_branch_exists(engine_env.project_root, task.repo.branch)
+
+
+async def _push_unrelated_change(remote_dir: Path, clone_dir: Path, filename: str) -> None:
+    await _git(clone_dir.parent, "clone", "--branch", "main", str(remote_dir), str(clone_dir))
+    (clone_dir / filename).write_text("unrelated\n")
+    await commit_all(_RUNNER, clone_dir, "unrelated change")
+    await _git(clone_dir, "push", "origin", "main")
+
+
+async def test_a_task_root_starts_from_the_remote_base_as_it_is_now(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    del fake_github
+    settings = flow_settings()
+    project_root = engine_env.project_root
+    await init_project_repo(project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(project_root, remote_dir, settings.repo.remote)
+    builder = task_root_builder(
+        _RUNNER,
+        project_root,
+        settings.repo,
+        FetchedBaseRefs(Git(_RUNNER), project_root, settings.repo.remote),
+    )
+    await builder.build("T-1", "Before the push")
+
+    await _push_unrelated_change(remote_dir, tmp_path_factory.mktemp("other") / "clone", "new.txt")
+    later = await builder.build("T-2", "After the push")
+
+    assert (task_root(project_root, "T-2") / "new.txt").exists()
+    assert later.base_sha == await _git(remote_dir, "rev-parse", "main")
+
+
+async def test_a_task_root_is_not_built_from_a_stale_base_when_the_remote_cannot_be_fetched(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    del fake_github
+    settings = flow_settings()
+    project_root = engine_env.project_root
+    await init_project_repo(project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(project_root, remote_dir, settings.repo.remote)
+    await _git(project_root, "remote", "set-url", settings.repo.remote, str(remote_dir / "gone"))
+    builder = task_root_builder(
+        _RUNNER,
+        project_root,
+        settings.repo,
+        FetchedBaseRefs(Git(_RUNNER), project_root, settings.repo.remote),
+    )
+
+    with pytest.raises(CommandFailed):
+        await builder.build("T-1", "Offline")
+
+    assert not task_root(project_root, "T-1").exists()

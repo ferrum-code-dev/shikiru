@@ -88,7 +88,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 64: Operator rung pins survive every transition
 - [x] Task 65: Holds cover every remaining execution path
 - [x] Task 66: Command replay and crash windows
-- [ ] Task 67: PR mode is live and current
+- [x] Task 67: PR mode is live and current
 - [ ] Task 68: Compatibility and leftovers
 - [ ] Task 69: Process ownership residuals
 - [ ] Task 70: Trust boundary, permissions and platform support

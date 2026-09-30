@@ -40,7 +40,11 @@ class LocalBaseRefs:
 
 
 class FetchedBaseRefs:
-    """`integration = "pr"`: work lands on the remote base, which the engine fetches (03 §6)."""
+    """`integration = "pr"`: work lands on the remote base, which the engine fetches (03 §6).
+
+    Every root starts from the freshly fetched remote base, so local commits that were never
+    pushed are not in it.
+    """
 
     def __init__(self, git: Git, project_root: Path, remote: str) -> None:
         """Fetch from `remote` into Shikiru's own refs of the repository at `project_root`."""
@@ -49,9 +53,11 @@ class FetchedBaseRefs:
         self._remote = remote
 
     async def resolve(self, base: str) -> str:
-        """Return the fetched remote base once a merge verified it, else the local `base`."""
-        ref = self._ref(base)
-        return ref if await self._git.ref_exists(self._project_root, ref) else base
+        """Fetch the remote `base` and return the ref it was fetched into.
+
+        Raises `CommandFailed` when the fetch fails: a root is never built from a stale ref.
+        """
+        return await self._fetch(base)
 
     async def sync(self, base: str, merge_commit: str | None) -> None:
         """Fetch the remote `base` and verify it contains the pull request's `merge_commit`.
@@ -59,13 +65,13 @@ class FetchedBaseRefs:
         Never touches the local branch, the index or the working tree of the project checkout.
         Raises `MergedBaseUnavailable` when the merge commit is missing or not on the base.
         """
-        ref = self._ref(base)
-        await self._git.fetch(self._project_root, self._remote, f"+{_HEADS_PREFIX}{base}:{ref}")
+        ref = await self._fetch(base)
         if merge_commit is None or not await self._git.merge_base_is_ancestor(
             self._project_root, merge_commit, ref
         ):
             raise MergedBaseUnavailable(base, merge_commit)
 
-    @staticmethod
-    def _ref(base: str) -> str:
-        return f"{BASE_REF_PREFIX}{base}"
+    async def _fetch(self, base: str) -> str:
+        ref = f"{BASE_REF_PREFIX}{base}"
+        await self._git.fetch(self._project_root, self._remote, f"+{_HEADS_PREFIX}{base}:{ref}")
+        return ref

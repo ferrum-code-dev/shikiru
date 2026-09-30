@@ -538,8 +538,8 @@ Refs: 03 §4.3, §7, §9; invariant 5.
 
 ### Task 67: PR mode is live and current
 Refs: 03 §6; invariant 4.
-- [ ] PR polling has a liveness rule: a conflicted, closed, failing-CI or over-budget PR escalates (with the reason) instead of polling forever; `cancel` closes an open PR of the task; the local branch of a merged PR is removed.
-- [ ] A task root built after a sibling PR merged, or after the remote base moved, starts from the refreshed base (fetch before building), not from a stale `refs/shikiru/bases/<base>`.
+- [x] PR polling has a liveness rule: a conflicted, closed, failing-CI or over-budget PR escalates (with the reason) instead of polling forever; `cancel` closes an open PR of the task; the local branch of a merged PR is removed.
+- [x] A task root built after a sibling PR merged, or after the remote base moved, starts from the refreshed base (fetch before building), not from a stale `refs/shikiru/bases/<base>`.
 - Tests: integration with real git, a bare remote and the fake `gh`: conflicted PR, closed PR, failing CI, cancel with an open PR, merged-branch cleanup, and a base moved by an unrelated push.
 
 ### Task 68: Compatibility and leftovers
