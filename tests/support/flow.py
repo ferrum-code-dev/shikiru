@@ -206,13 +206,11 @@ def build_flow(
             settings=settings,
         ),
         settings=settings,
-        project_root=env.project_root,
         integration_turns=IntegrationTurns(
             coordinator=coordinator,
             history=history,
             tasks=env.tasks,
         ),
-        history=history,
         runs=env.runs,
     )
     return FlowEnv(

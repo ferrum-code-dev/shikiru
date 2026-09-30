@@ -469,9 +469,9 @@ Refs: 04 §5.
 
 ### Task 57: TaskFlow responsibilities (F18)
 Refs: 02 §2, 07 §1; `refactor:` commits only.
-- [ ] After Tasks 42, 43 and 49 the shared hold, acceptance and persistence rules each have one implementation used by ordinary steps and integration turns.
-- [ ] Recovery/quota waiting, prompt-context and escalation-evidence preparation move into focused collaborators wired in `bootstrap.py`. `TaskFlow` stays the sequencing layer; no one-method classes and no workflow framework.
-- [ ] Behaviour tests are unchanged and green.
+- [x] After Tasks 42, 43 and 49 the shared hold, acceptance and persistence rules each have one implementation used by ordinary steps and integration turns.
+- [x] Recovery/quota waiting, prompt-context and escalation-evidence preparation move into focused collaborators wired in `bootstrap.py`. `TaskFlow` stays the sequencing layer; no one-method classes and no workflow framework.
+- [x] Behaviour tests are unchanged and green.
 
 ### Task 58: Low-severity items (F19, F20, F21, F23, F22)
 Refs: 01 §glossary, 02 §2, 07 §1–2.

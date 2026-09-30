@@ -1,9 +1,9 @@
 """`TaskFlow`: runs a task's steps to `integrate` or an escalation (03-workflow.md §2-3).
 
-Every rule of the review loop lives in `domain.steps.next_step`; this module only orchestrates
-around it: resolving each step's turn, applying the resulting `Transition`, inserting any new
-tasks a plan/supersede carries, raising an escalation when one is reached, and delegating
-the integrating state to the injected coordinator.
+Every rule of the review loop lives in `domain.steps.next_step`; this module only sequences
+around it: running each step's turn, delegating recovery, context, evidence and persistence to
+their collaborators, escalating when the loop says so, and delegating the integrating state to
+the injected coordinator.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from shikiru.engine.events import (
     emit_turn_started,
     emit_verdict,
 )
-from shikiru.engine.history import ENGINE_VERDICT_FILENAME, ReportHistory
+from shikiru.engine.history import ENGINE_VERDICT_FILENAME
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
 from shikiru.engine.turn_execution import TurnExecution
 from shikiru.errors import ShikiruError, UsageError
@@ -63,7 +63,6 @@ UNCOMMITTED_ISSUE = (
     "Uncommitted changes in the workspace: {paths}. "
     "Commit what belongs to this task and discard the rest."
 )
-_QUOTA_WAIT_EXHAUSTED_MESSAGE = "quota wait exceeded"
 
 
 def _acting_role(step: Step, role_override: Role | None) -> Role:
@@ -86,9 +85,7 @@ class TaskFlow:
         writer: TransitionWriter,
         recovery: TurnRecovery,
         settings: Settings,
-        project_root: Path,
         integration_turns: IntegrationTurns,
-        history: ReportHistory,
         runs: RunStore,
     ) -> None:
         """Wire the step loop, recovery, report history and integration turns."""
@@ -102,9 +99,7 @@ class TaskFlow:
         self._writer = writer
         self._recovery = recovery
         self._settings = settings
-        self._project_root = project_root
         self._integration_turns = integration_turns
-        self._history = history
         self._runs = runs
         self._resumed: set[str] = set()
 

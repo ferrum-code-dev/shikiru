@@ -87,7 +87,12 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `Engine` | Main loop: poll commands → dispatch to handlers, tick the scheduler, supervise one coroutine per active task. Nothing else |
 | `handlers/*` | One `CommandHandler` per command model, found through a registry `dict[type[Command], CommandHandler]` |
 | `Scheduler` | Ready set, gates, slot assignment; persists `tasks.wait_reason` |
-| `TaskFlow` | Runs a task's steps as async functions (`triage`, `plan`, `implement`, `consult`, `verify`, `integrate`) and applies `domain` transitions and recovery actions |
+| `TaskFlow` | The sequencing layer: runs a task's steps (`triage`, `plan`, `implement`, `consult`, `verify`, `integrate`), calls `domain.steps.next_step` at every turn boundary and hands integration turns the same boundary (hold check, dirty-worktree rejection of an accepting verdict, transition or escalation) that ordinary steps use |
+| `TurnContextPreparer` | Builds each turn's `TurnRequest` (template, prompt context, facts) and remembers whether recovery wants the next turn continued or handed off |
+| `TurnRecovery` | Carries out the `domain.recovery.decide` action for a failed turn: retries, back-off, quota blocks and waits, rung moves. It returns what the flow does next and never escalates |
+| `EscalationFiler` | Gathers an escalation's evidence (default question and attempts, report history, workspace facts, pane tail) and files it with the `EscalationRaiser` |
+| `TransitionWriter` | The single place a `domain` `Transition` becomes stored task state, step and scope-change events and a refreshed title |
+| `TaskFacts` | Collects and renders a task worktree's git facts for prompts, escalation evidence and the acceptance check |
 | `SessionManager` | Decides the session a role's next turn runs on: new, resume (also with a new model), or new with `handoff`; stores `session_id` and the resume command on the run |
 | `TurnMonitor` | The single consumer of one `Turn.signals()`: persists session facts (session id, usage, quota, last message), appends the role's view log, updates pane decorations, and stops the turn when `domain.activity.is_stalled` says so |
 | `TurnRunner` | One turn: turn dir, queued operator messages, `start_turn`, await the monitor, report validation, nudge turns, Helper rebuild and failure classification. Returns a `TurnResult`; never escalates |
@@ -123,6 +128,7 @@ src/shikiru/
   ui/           tokens.py glyphs.py status.py strip.py bubbles.py splash.py gauge.py stream.py
   telemetry/    resources.py docker.py
   engine/       daemon.py supervisor.py lifecycle.py scheduler.py dependency.py flow.py agents.py sessions.py monitor.py turns.py
+                turn_context.py turn_execution.py recovery.py escalation_filing.py transitions.py task_facts.py
                 takeover.py integration.py integration_turns.py escalations.py reconcile.py layout_guard.py titles.py history.py events.py notifier.py notification_delivery.py
     handlers/   base.py tasks.py operator.py escalations.py engine.py
   operator/     queries.py commands.py services.py events.py strip_views.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py

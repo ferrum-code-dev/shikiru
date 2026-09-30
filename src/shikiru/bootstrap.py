@@ -534,13 +534,11 @@ def build_engine(
         writer=writer,
         recovery=recovery,
         settings=resolved_settings,
-        project_root=project_root,
         integration_turns=IntegrationTurns(
             coordinator=integrator,
             history=history,
             tasks=tasks,
         ),
-        history=history,
         runs=runs,
     )
     task_supervisor = TaskSupervisor(tasks, flow, task_finisher)
