@@ -59,6 +59,7 @@ from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.session_guard import SessionGuard
 from shikiru.engine.sessions import SessionManager
+from shikiru.engine.step_runner import StepRunner
 from shikiru.engine.supervisor import TaskSupervisor
 from shikiru.engine.takeover import Takeover
 from shikiru.engine.task_facts import TaskFacts
@@ -66,6 +67,7 @@ from shikiru.engine.tick_guard import TickGuard
 from shikiru.engine.titles import TaskTitles
 from shikiru.engine.transitions import TransitionWriter
 from shikiru.engine.turn_context import TurnContextPreparer
+from shikiru.engine.turn_loop import TurnLoop
 from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
 from shikiru.errors import ConfigError
@@ -119,6 +121,7 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import LoggingConfig, Settings
     from shikiru.domain.tasks import Task
+    from shikiru.engine.integration import IntegrationCoordinator
 
 
 def build_clock() -> Clock:
@@ -396,6 +399,54 @@ def build_mcp_server(
     return factory(services), services
 
 
+def _build_flow(
+    *,
+    tasks: TaskStore,
+    events: EventLog,
+    runs: RunStore,
+    sessions: SessionManager,
+    turns: TurnRunner,
+    contexts: TurnContextPreparer,
+    recovery: TurnRecovery,
+    writer: TransitionWriter,
+    raiser: EscalationRaiser,
+    evidence: EvidenceCollector,
+    facts: TaskFacts,
+    history: ReportHistory,
+    integrator: IntegrationCoordinator,
+    settings: Settings,
+) -> TaskFlow:
+    filer = EscalationFiler(raiser=raiser, evidence=evidence, writer=writer, tasks=tasks)
+    turn_loop = TurnLoop(
+        tasks=tasks,
+        events=events,
+        sessions=sessions,
+        turns=turns,
+        contexts=contexts,
+        recovery=recovery,
+        escalations=filer,
+        runs=runs,
+    )
+    steps = StepRunner(
+        loop=turn_loop,
+        acceptance=AcceptanceGuard(events=events, facts=facts),
+        escalations=filer,
+        writer=writer,
+        events=events,
+        settings=settings,
+    )
+    return TaskFlow(
+        tasks=tasks,
+        writer=writer,
+        steps=steps,
+        turn_loop=turn_loop,
+        escalations=filer,
+        integration_turns=IntegrationTurns(
+            coordinator=integrator, history=history, tasks=tasks, steps=steps, escalations=filer
+        ),
+    )
+
+
 def build_engine(
     project_root: Path,
     settings: Settings | None = None,
@@ -529,9 +580,10 @@ def build_engine(
         writer=writer,
         settings=resolved_settings,
     )
-    flow = TaskFlow(
+    flow = _build_flow(
         tasks=tasks,
         events=events,
+        runs=runs,
         sessions=sessions,
         turns=TurnRunner(
             agents=agent_pool,
@@ -546,18 +598,15 @@ def build_engine(
             project_root=project_root,
             settings=resolved_settings,
         ),
-        acceptance=AcceptanceGuard(events=events, facts=task_facts),
         contexts=contexts,
-        escalations=EscalationFiler(raiser=escalation_raiser, evidence=evidence),
-        writer=writer,
         recovery=recovery,
+        writer=writer,
+        raiser=escalation_raiser,
+        evidence=evidence,
+        facts=task_facts,
+        history=history,
+        integrator=integrator,
         settings=resolved_settings,
-        integration_turns=IntegrationTurns(
-            coordinator=integrator,
-            history=history,
-            tasks=tasks,
-        ),
-        runs=runs,
     )
     task_supervisor = TaskSupervisor(tasks, flow, task_finisher)
     handler_context = HandlerContext(

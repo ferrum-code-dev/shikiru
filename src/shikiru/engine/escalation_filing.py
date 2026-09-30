@@ -6,16 +6,17 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.recovery import Failed, ProtocolError, Stalled
 from shikiru.domain.reports import ConsultAnswer, ImplementationReport, Verdict
-from shikiru.domain.tasks import EscalationReason
+from shikiru.domain.tasks import EscalationReason, Status
+from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from shikiru.domain.recovery import TurnResult
-    from shikiru.domain.steps import Outcome
-    from shikiru.domain.tasks import Role, Step, Task
+    from shikiru.domain.steps import Outcome, Transition
+    from shikiru.domain.tasks import Role, Task
     from shikiru.engine.escalations import EscalationRaiser
     from shikiru.engine.evidence import EvidenceCollector
+    from shikiru.engine.transitions import TransitionWriter
+    from shikiru.store.tasks import TaskStore
 
 
 def escalation_narrative(
@@ -56,36 +57,48 @@ def escalation_narrative(
 
 
 class EscalationFiler:
-    """Collects the evidence, then records the escalation."""
+    """Collects the evidence, then persists the escalated state and records the escalation."""
 
-    def __init__(self, *, raiser: EscalationRaiser, evidence: EvidenceCollector) -> None:
-        """Record escalations through `raiser` with evidence from `evidence`."""
+    def __init__(
+        self,
+        *,
+        raiser: EscalationRaiser,
+        evidence: EvidenceCollector,
+        writer: TransitionWriter,
+        tasks: TaskStore,
+    ) -> None:
+        """Record escalations through `raiser` with evidence from `evidence`, state via `writer`."""
         self._raiser = raiser
         self._evidence = evidence
+        self._writer = writer
+        self._tasks = tasks
 
-    async def raise_escalation(
+    async def escalate(
         self,
         task: Task,
-        step: Step | None,
-        reason: EscalationReason,
+        transition: Transition,
         outcome: Outcome | None,
         *,
         question: str | None = None,
         result: TurnResult | None = None,
         role: Role | None = None,
-        apply_state: Callable[[], Task],
-    ) -> None:
-        """Build the packet and commit `apply_state` with the escalation for a task flow."""
+    ) -> Task:
+        """Apply the escalating `transition` with its packet and return the stored task."""
+        reason = transition.escalation_reason
+        if transition.status is not Status.ESCALATED or reason is None:
+            message = f"{task.id} escalation has no escalated status or reason"
+            raise ShikiruError(message)
         narrative_question, attempted = escalation_narrative(reason, outcome, result)
-        evidence = await self._evidence.collect(task, step, role)
+        evidence = await self._evidence.collect(task, transition.step, role)
         await self._raiser.raise_escalation(
             task,
-            step=step,
+            step=transition.step,
             reason=reason,
             question=narrative_question if question is None else question,
             attempted=attempted,
             reports=evidence.reports,
             facts=evidence.facts,
             view_tail=evidence.view_tail,
-            apply_state=apply_state,
+            apply_state=lambda: self._writer.persist(task, transition, outcome),
         )
+        return self._tasks.require(task.id)

@@ -26,9 +26,11 @@ from shikiru.engine.integration import (
 )
 from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.recovery import TurnRecovery
+from shikiru.engine.step_runner import StepRunner
 from shikiru.engine.task_facts import TaskFacts
 from shikiru.engine.transitions import TransitionWriter
 from shikiru.engine.turn_context import TurnContextPreparer
+from shikiru.engine.turn_loop import TurnLoop
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import transaction
@@ -199,15 +201,13 @@ def build_flow(
     writer = TransitionWriter(
         tasks=env.tasks, events=system.events, titles=system.titles, settings=settings
     )
-    flow = TaskFlow(
+    filer = EscalationFiler(raiser=escalations, evidence=evidence, writer=writer, tasks=env.tasks)
+    turn_loop = TurnLoop(
         tasks=env.tasks,
         events=system.events,
         sessions=system.sessions,
         turns=system.turns,
-        acceptance=AcceptanceGuard(events=system.events, facts=facts),
         contexts=contexts,
-        escalations=EscalationFiler(raiser=escalations, evidence=evidence),
-        writer=writer,
         recovery=TurnRecovery(
             tasks=env.tasks,
             events=system.events,
@@ -216,13 +216,30 @@ def build_flow(
             writer=writer,
             settings=settings,
         ),
+        escalations=filer,
+        runs=env.runs,
+    )
+    steps = StepRunner(
+        loop=turn_loop,
+        acceptance=AcceptanceGuard(events=system.events, facts=facts),
+        escalations=filer,
+        writer=writer,
+        events=system.events,
         settings=settings,
+    )
+    flow = TaskFlow(
+        tasks=env.tasks,
+        writer=writer,
+        steps=steps,
+        turn_loop=turn_loop,
+        escalations=filer,
         integration_turns=IntegrationTurns(
             coordinator=coordinator,
             history=history,
             tasks=env.tasks,
+            steps=steps,
+            escalations=filer,
         ),
-        runs=env.runs,
     )
     return FlowEnv(
         flow=flow,
