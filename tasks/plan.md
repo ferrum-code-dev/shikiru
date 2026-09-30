@@ -570,8 +570,8 @@ Refs: 07 §2; owner decision 2026-09-30.
 
 ### Task 72: TaskFlow residuals (F18)
 Refs: 02 §2; `refactor:` commits only.
-- [ ] The dirty-worktree acceptance policy and its constants move out of `TaskFlow` into a focused collaborator; the `escalate` pass-through, the 4-tuple with mutually exclusive slots and `TaskFlow` passing itself to the integration host are removed or replaced by a narrow interface; the handoff/continue flags shared by `TurnContextPreparer` and `TurnRecovery` have one explicit owner; `VIEW_LOG_NAME` replaces the hard-coded `"view.jsonl"`; `escalate_stored` shares its persistence with `TransitionWriter`; the 02 file list is complete.
-- [ ] Behaviour tests are unchanged and green.
+- [x] The dirty-worktree acceptance policy and its constants move out of `TaskFlow` into a focused collaborator; the `escalate` pass-through, the 4-tuple with mutually exclusive slots and `TaskFlow` passing itself to the integration host are removed or replaced by a narrow interface; the handoff/continue flags shared by `TurnContextPreparer` and `TurnRecovery` have one explicit owner; `VIEW_LOG_NAME` replaces the hard-coded `"view.jsonl"`; `escalate_stored` shares its persistence with `TransitionWriter`; the 02 file list is complete.
+- [x] Behaviour tests are unchanged and green.
 
 ### Task 73: Test gaps and evidence quality
 Refs: 07 §3, §5.

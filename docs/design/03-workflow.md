@@ -240,7 +240,7 @@ Dependents become ready only when their dependencies are `done`.
 
 ## 7. Recovery
 
-`TaskFlow` passes every non-`Completed` `TurnResult` to the pure `recovery.decide(result, counters, policy) → Action`, then applies the action:
+The `TurnLoop` passes every non-`Completed` `TurnResult` to the pure `recovery.decide(result, counters, policy) → Action`, then applies the action:
 
 | Result | Action |
 |---|---|
