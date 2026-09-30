@@ -488,8 +488,8 @@ Refs: 01 §glossary, 02 §2, 07 §1–2.
 ### Task 59: Re-verify and regenerate release evidence
 Refs: 07 §5.
 - [x] `uv run poe check` passes in a normal and a `TERM=dumb` environment.
-- [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included. Met: E1–E6 passed in one run on 2026-09-30 at `96bb4b7`, with resume (E5) and takeover (E6) as native scenarios. Not met: 07 §5 defines no native model-change scenario, so model change is covered only by plugin and integration tests and, since Task 73, by the live contract checks (Codex passed on 2026-09-30; Claude skipped, no alternate model configured), not by `poe e2e`.
-- [ ] The portable clean-install smoke passes; tested CLI versions and the source commit are recorded next to the results. Met on macOS (2026-09-30, `96bb4b7`), with the CLI versions and source commit recorded. Not met: the script is macOS-only and Linux is unverified, so "portable" is not demonstrated; Task 74 states Linux as verified or unverified.
+- [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included. Met: E1–E6 passed in one bounded run on 2026-09-30/10-01 at `6116446` (31 m 11 s, one automatic E3 rerun; Task 74), with resume (E5) and takeover (E6) as native scenarios. Not met: 07 §5 defines no native model-change scenario, so model change is covered only by plugin and integration tests and, since Task 73, by the live contract checks (Codex passed on 2026-09-30; Claude skipped, no alternate model configured), not by `poe e2e`.
+- [ ] The portable clean-install smoke passes; tested CLI versions and the source commit are recorded next to the results. Met on macOS (2026-10-01, `6116446`), with the CLI versions and source commit recorded. Not met: the script is macOS-only and Linux is unverified, so "portable" is not demonstrated; Task 74 states Linux as verified or unverified.
 - [x] `docs/release-readiness-*.md` states which findings were fixed, and its claim that every design section agrees with the code is restated after Tasks 41–58.
 
 ## Phase 7b — Independent-review remediation (2026-09-30)
@@ -584,10 +584,10 @@ Refs: 07 §3, §5.
 
 ### Task 74: Final verification and release evidence (Phase 7b)
 Refs: 07 §5.
-- [ ] `uv run poe check` passes in a normal and a `TERM=dumb` environment.
-- [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (date, scenarios, duration, cost, commit, CLI versions).
-- [ ] The clean-install smoke passes on macOS at the final commit; Linux is stated as verified or unverified.
-- [ ] A new `docs/release-readiness-*.md` states which reviewer items were fixed, restates the design-agreement claim after Tasks 60–73 and lists remaining limitations honestly.
+- [x] `uv run poe check` passes in a normal and a `TERM=dumb` environment. Met at `6116446` (894 passed, 15 skipped, 89.62% both) and at `3615b39`; 8 further plain test runs without a failure.
+- [x] `poe e2e` E1–E6 pass in one run on the resulting revision (date, scenarios, duration, cost, commit, CLI versions). Met at `6116446`: 7 passed in 31 m 11 s with one automatic rerun of E3 (attempt 0 escalated after a Codex git index-lock denial, cause not established). Per-scenario wall times are not recorded by the artifact, so 07 §5 keeps its estimates.
+- [x] The clean-install smoke passes on macOS at the final commit; Linux is stated as verified or unverified. Passed on macOS at `6116446` (the evidence commit changes only documentation); Linux is stated as not verified.
+- [x] A new `docs/release-readiness-*.md` (`docs/release-readiness-2026-10-01-phase7b.md`) states which reviewer items were fixed, restates the design-agreement claim after Tasks 60–73 and lists remaining limitations honestly.
 
 ### Task 74a: Bounded E2E scenarios
 Refs: 07 §5. Owner request 2026-10-01: E2E must check real scenarios but be bounded so agents work for a short time.

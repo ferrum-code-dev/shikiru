@@ -96,7 +96,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 72: TaskFlow residuals (F18)
 - [x] Task 73: Test gaps and evidence quality
 - [x] Task 74a: Bounded E2E scenarios
-- [ ] Task 74: Final verification and release evidence (Phase 7b)
+- [x] Task 74: Final verification and release evidence (Phase 7b)
 
 ## Phase 8 — Operator Workspace
 
