@@ -15,7 +15,6 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.tasks import (
-    DEFAULT_COMPLEXITY,
     Counters,
     EscalationReason,
     Mode,
@@ -58,6 +57,7 @@ class Transition:
     set_overrides: dict[Role, Rung] = field(default_factory=dict)
     cleared_overrides: dict[Role, Rung] = field(default_factory=dict)
     complexity: ComplexityName | None = None
+    mode: Mode | None = None
     title: str | None = None
     status_reason: StatusReason | None = None
     escalation_reason: EscalationReason | None = None
@@ -105,7 +105,7 @@ def first_step(task: Task) -> Transition:
 
 
 def _triaged_complexity(task: Task, outcome: TriageReport) -> ComplexityName | None:
-    return outcome.complexity if task.complexity == DEFAULT_COMPLEXITY else None
+    return outcome.complexity if task.complexity is None else None
 
 
 def _from_triage(task: Task, outcome: TriageReport) -> Transition:
@@ -114,7 +114,10 @@ def _from_triage(task: Task, outcome: TriageReport) -> Transition:
     else:
         base = Transition.stay(task, step=Step.PLAN)
     return dataclasses.replace(
-        base, complexity=_triaged_complexity(task, outcome), title=outcome.title
+        base,
+        complexity=_triaged_complexity(task, outcome),
+        mode=outcome.mode,
+        title=outcome.title,
     )
 
 

@@ -61,7 +61,7 @@ def seed_task(
     depends_on: Sequence[str] = (),
     priority: int = 0,
     mode: Mode | None = None,
-    complexity: ComplexityName = "normal",
+    complexity: ComplexityName | None = None,
     leader: Rung | None = None,
     implementer: Rung | None = None,
 ) -> Task:

@@ -87,6 +87,35 @@ def test_triage_plan_moves_to_plan_step() -> None:
     assert transition.step is Step.PLAN
 
 
+@pytest.mark.parametrize("mode", [Mode.IMPLEMENT, Mode.PLAN])
+def test_triage_transition_carries_the_triaged_mode(mode: Mode) -> None:
+    transition = _next(make_task(step=Step.TRIAGE), make_triage_report(mode=mode))
+
+    assert transition.mode is mode
+
+
+_TRIAGED_COMPLEXITY_CASES = {
+    "unset_takes_the_triaged": (None, "high"),
+    "explicit_normal_is_kept": ("normal", None),
+    "explicit_low_is_kept": ("low", None),
+}
+
+
+@pytest.mark.parametrize(
+    ("submitted", "expected"),
+    _TRIAGED_COMPLEXITY_CASES.values(),
+    ids=_TRIAGED_COMPLEXITY_CASES.keys(),
+)
+def test_triage_replaces_only_an_unset_complexity(
+    submitted: str | None, expected: str | None
+) -> None:
+    task = make_task(step=Step.TRIAGE, complexity=submitted)
+
+    transition = _next(task, make_triage_report(complexity="high"))
+
+    assert transition.complexity == expected
+
+
 def test_plan_moves_to_integrate_and_enqueues_new_tasks() -> None:
     task = make_task(step=Step.PLAN)
 

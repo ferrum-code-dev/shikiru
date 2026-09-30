@@ -20,6 +20,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import (
     Counters,
     Hold,
+    Mode,
     RepoState,
     Role,
     Status,
@@ -124,6 +125,20 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(
     assert reloaded.overrides == transition.set_overrides
     assert reloaded.started_at == clock.now()
     assert reloaded.status_reason is StatusReason.SUPERSEDED
+
+
+def test_transition_sets_the_mode_in_the_same_write(connection: Connection) -> None:
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    task = _submit(connection, clock, "t")
+
+    store.apply_transition(
+        task.id, dataclasses.replace(Transition.stay(task, step=Step.PLAN), mode=Mode.PLAN)
+    )
+    assert store.require(task.id).mode is Mode.PLAN
+
+    store.apply_transition(task.id, Transition.stay(task, step=Step.PLAN))
+    assert store.require(task.id).mode is Mode.PLAN
 
 
 _STALE_PIN = Rung(agent="claude", model="haiku", effort=None)

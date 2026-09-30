@@ -11,6 +11,7 @@ from shikiru.domain.reports import SIBLING_REFERENCE_PREFIX, resolve_dependency
 from shikiru.domain.scheduling import find_dependency_cycle
 from shikiru.domain.tasks import (
     ACTIVE_STATUSES,
+    DEFAULT_COMPLEXITY,
     Counters,
     Hold,
     Mode,
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from shikiru.clock import Clock
+    from shikiru.config.settings import ComplexityName
     from shikiru.domain.commands import Submit
     from shikiru.domain.events import EventKind
     from shikiru.domain.reports import NewTask
@@ -56,7 +58,8 @@ _PANES_ADAPTER: TypeAdapter[dict[Role, str]] = TypeAdapter(dict[Role, str])
 _REPO_ADAPTER: TypeAdapter[RepoState] = TypeAdapter(RepoState)
 
 _TASK_COLUMNS = (
-    "id, seq, parent_id, origin, title, request, mode, complexity, priority, status, step, "
+    "id, seq, parent_id, origin, title, request, mode, complexity, complexity_explicit, "
+    "priority, status, step, "
     "status_reason, holds, iteration, counters, rung_index, overrides, repo, slot, window_id, "
     "panes, wait_reason, requeued_at, summary, created_at, started_at, finished_at"
 )
@@ -71,7 +74,7 @@ def _row_to_task(row: sqlite3.Row, depends_on: Sequence[str]) -> Task:
         title=row["title"],
         request=row["request"],
         mode=Mode(row["mode"]) if row["mode"] is not None else None,
-        complexity=row["complexity"],
+        complexity=row["complexity"] if row["complexity_explicit"] else None,
         priority=row["priority"],
         depends_on=list(depends_on),
         status=Status(row["status"]),
@@ -213,7 +216,7 @@ class TaskStore:
                     title=new_task.title,
                     request=new_task.request,
                     mode=None,
-                    complexity="normal",
+                    complexity=None,
                     priority=new_task.priority,
                     depends_on=(),
                     overrides={},
@@ -239,7 +242,7 @@ class TaskStore:
         title: str,
         request: str,
         mode: Mode | None,
-        complexity: str,
+        complexity: ComplexityName | None,
         priority: int,
         depends_on: Sequence[str],
         overrides: dict[Role, Rung],
@@ -247,9 +250,9 @@ class TaskStore:
         self._connection.execute(
             """
             INSERT INTO tasks (
-              id, seq, parent_id, origin, title, request, mode, complexity, priority,
-              status, overrides, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              id, seq, parent_id, origin, title, request, mode, complexity,
+              complexity_explicit, priority, status, overrides, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -259,7 +262,8 @@ class TaskStore:
                 title,
                 request,
                 mode.value if mode is not None else None,
-                complexity,
+                complexity or DEFAULT_COMPLEXITY,
+                complexity is not None,
                 priority,
                 Status.QUEUED.value,
                 dump_json(_OVERRIDES_ADAPTER, overrides),
@@ -303,10 +307,6 @@ class TaskStore:
             message = f"scope change creates a dependency cycle: {', '.join(cycle)}"
             raise UsageError(message)
 
-    def set_mode(self, task_id: str, mode: Mode) -> None:
-        """Persist the mode selected by a completed triage turn."""
-        self._connection.execute("UPDATE tasks SET mode = ? WHERE id = ?", (mode.value, task_id))
-
     def _fetch_or_raise(self, task_id: str) -> Task:
         task = fetch_task(self._connection, task_id)
         return require_after_insert(task, f"task {task_id} vanished immediately after insert")
@@ -347,7 +347,9 @@ class TaskStore:
             UPDATE tasks SET
               step = ?, status = ?, status_reason = ?, iteration = ?,
               counters = ?, rung_index = ?, overrides = ?,
-              complexity = COALESCE(?, complexity), title = COALESCE(?, title),
+              complexity = COALESCE(?, complexity),
+              complexity_explicit = complexity_explicit OR ? IS NOT NULL,
+              mode = COALESCE(?, mode), title = COALESCE(?, title),
               started_at = CASE WHEN ? = ? AND started_at IS NULL THEN ? ELSE started_at END,
               finished_at = CASE WHEN ? IN (?, ?) AND finished_at IS NULL
                 THEN ? ELSE finished_at END
@@ -362,6 +364,8 @@ class TaskStore:
                 dump_json(_RUNG_INDEX_ADAPTER, transition.rung_index),
                 dump_json(_OVERRIDES_ADAPTER, overrides),
                 transition.complexity,
+                transition.complexity,
+                transition.mode.value if transition.mode is not None else None,
                 transition.title,
                 status,
                 Status.RUNNING.value,

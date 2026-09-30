@@ -82,11 +82,15 @@ _MODE_OPTIONS = (
     ("Implement", Mode.IMPLEMENT.value),
     ("Plan", Mode.PLAN.value),
 )
-_COMPLEXITY_OPTIONS = (("Low", "low"), ("Normal", "normal"), ("High", "high"))
+_COMPLEXITY_OPTIONS = (
+    ("Triage decides", ""),
+    ("Low", "low"),
+    ("Normal", "normal"),
+    ("High", "high"),
+)
 _RESOLUTION_OPTIONS = tuple((kind.value.title(), kind.value) for kind in ResolutionKind)
 _EMPTY = ""
 _SELECT_REQUIRED = "Select an item"
-_DEFAULT_COMPLEXITY: ComplexityName = "normal"
 _TAKEOVER_SELECTION_FAILURE = "take-over succeeded, but the role pane could not be selected"
 
 PaneSelector = Callable[[str], Awaitable[None]]
@@ -202,7 +206,7 @@ class PaletteScreen(ModalScreen[None]):
             )
             action_select.value = self._initial_action
         cast("Select[str]", self.query_one("#mode", Select)).value = _EMPTY
-        cast("Select[str]", self.query_one("#complexity", Select)).value = _DEFAULT_COMPLEXITY
+        cast("Select[str]", self.query_one("#complexity", Select)).value = _EMPTY
         cast("Select[str]", self.query_one("#role", Select)).value = Role.LEADER.value
         self.query_one("#priority", Input).value = "0"
         self._route_action = self._selected_value("action")
@@ -498,8 +502,10 @@ class PaletteScreen(ModalScreen[None]):
         value = self._selected_value("mode")
         return Mode(value) if value else None
 
-    def _complexity(self) -> ComplexityName:
-        value = self._value("complexity")
+    def _complexity(self) -> ComplexityName | None:
+        value = self._selected_value("complexity")
+        if not value:
+            return None
         if value in {"low", "normal", "high"}:
             return cast("ComplexityName", value)
         message = f"unsupported complexity: {value}"

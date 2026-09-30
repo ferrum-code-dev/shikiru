@@ -96,7 +96,7 @@ probe_timeout = 180                             # seconds per `doctor --probe` l
 probe_stream_tail_lines = 20                    # stream lines shown when a probe fails
 ```
 
-**`submit` flags**, applying to that task only: `--mode implement|plan`, `--complexity low|normal|high`, `--priority N`, `--after T-n` (repeatable), `--leader a:m:e`, `--implementer a:m:e`.
+**`submit` flags**, applying to that task only: `--mode implement|plan`, `--complexity low|normal|high` (omitted: triage decides), `--priority N`, `--after T-n` (repeatable), `--leader a:m:e`, `--implementer a:m:e`.
 
 **Protocol constants** are named module constants, not configuration:
 
@@ -146,7 +146,7 @@ CREATE TABLE tasks (
   id TEXT PRIMARY KEY, seq INTEGER UNIQUE NOT NULL,
   parent_id TEXT REFERENCES tasks(id), origin TEXT NOT NULL,
   title TEXT NOT NULL, request TEXT NOT NULL,
-  mode TEXT, complexity TEXT NOT NULL DEFAULT 'normal', priority INTEGER NOT NULL DEFAULT 0,
+  mode TEXT, complexity TEXT NOT NULL DEFAULT 'normal', complexity_explicit INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL, step TEXT, status_reason TEXT,
   holds TEXT NOT NULL DEFAULT '[]',               -- ["paused","intervention"]
   iteration INTEGER NOT NULL DEFAULT 0,

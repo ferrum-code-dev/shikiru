@@ -53,7 +53,7 @@ class Submit(DomainModel):
     title: str
     request: str
     mode: Mode | None = None
-    complexity: ComplexityName = "normal"
+    complexity: ComplexityName | None = None
     priority: int = 0
     depends_on: list[str] = Field(default_factory=list)
     leader: Rung | None = None

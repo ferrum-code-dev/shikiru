@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from shikiru.domain.tasks import Counters, Role, Task
+from shikiru.domain.tasks import DEFAULT_COMPLEXITY, Counters, Role, Task
 
 if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
@@ -16,7 +16,7 @@ def _ladder_for(role: Role, task: Task, settings: Settings) -> list[Rung]:
     if role is Role.LEADER:
         return settings.roles.leader.ladder
     if role is Role.IMPLEMENTER:
-        return settings.roles.implementer.ladder_for(task.complexity)
+        return settings.roles.implementer.ladder_for(task.complexity or DEFAULT_COMPLEXITY)
     return settings.roles.helper.ladder
 
 

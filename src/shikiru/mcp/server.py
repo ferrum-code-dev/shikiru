@@ -108,7 +108,7 @@ def _register_command_tools(server: FastMCP, services: OperatorServices) -> None
         request: str,
         title: str | None = None,
         mode: Mode | None = None,
-        complexity: ComplexityName = "normal",
+        complexity: ComplexityName | None = None,
         priority: int = 0,
         depends_on: list[str] | None = None,
         leader: str | None = None,

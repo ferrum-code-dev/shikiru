@@ -407,20 +407,22 @@ def _implementer_models(flow_env: FlowEnv, task_id: str) -> list[str]:
 
 
 _TRIAGE_COMPLEXITY_CASES = {
-    "default_complexity_takes_the_triaged_one": ("normal", "fake-high"),
-    "operator_complexity_keeps_its_ladder": ("low", "fake-1"),
+    "unset_complexity_takes_the_triaged_one": (None, "high", "fake-high"),
+    "explicit_normal_is_kept": ("normal", "normal", "fake-1"),
+    "explicit_low_is_kept": ("low", "low", "fake-1"),
 }
 
 
 @pytest.mark.parametrize(
-    ("submitted", "expected_model"),
+    ("submitted", "expected_complexity", "expected_model"),
     _TRIAGE_COMPLEXITY_CASES.values(),
     ids=_TRIAGE_COMPLEXITY_CASES.keys(),
 )
 async def test_triage_persists_title_and_complexity_for_the_next_turn(
     engine_env: EngineEnv,
     tmux_server: TmuxServer,
-    submitted: ComplexityName,
+    submitted: ComplexityName | None,
+    expected_complexity: ComplexityName,
     expected_model: str,
 ) -> None:
     settings = flow_settings()
@@ -443,7 +445,7 @@ async def test_triage_persists_title_and_complexity_for_the_next_turn(
     final = engine_env.tasks.get(task.id)
     assert final is not None
     assert final.title == "Triaged title"
-    assert final.complexity == ("high" if submitted == "normal" else submitted)
+    assert final.complexity == expected_complexity
     assert _implementer_models(flow_env, task.id) == [expected_model]
 
 

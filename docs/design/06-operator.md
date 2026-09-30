@@ -140,7 +140,7 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 ### 5.5 Palette
 
-- `PaletteApp` offers: submit, prioritise, pause/resume, take over (then select that pane) / hand back, cancel, retry, change rung, message agent, peek, resolve escalation (a form with the packet and options), stop engine.
+- `PaletteApp` offers: submit (complexity defaults to "Triage decides"), prioritise, pause/resume, take over (then select that pane) / hand back, cancel, retry, change rung, message agent, peek, resolve escalation (a form with the packet and options), stop engine.
 - It opens as a tmux popup (`prefix + Space`), and `Ctrl+P` in `dash` pushes the same screen.
 - Every action calls `OperatorCommands` and shows the `Ack`.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
-from shikiru.domain.reports import PlanReport, TriageReport, Verdict
+from shikiru.domain.reports import PlanReport, Verdict
 from shikiru.domain.tasks import Status, TaskOrigin
 from shikiru.engine.events import emit_step_started
 from shikiru.errors import ShikiruError
@@ -48,8 +48,6 @@ class TransitionWriter:
             self._tasks.apply_transition(task.id, transition)
             if transition.status in (Status.DONE, Status.CANCELLED):
                 self._tasks.set_slot(task.id, None)
-            if isinstance(outcome, TriageReport):
-                self._tasks.set_mode(task.id, outcome.mode)
         updated = self._tasks.require(task.id)
         if (
             task.step != updated.step

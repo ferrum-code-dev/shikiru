@@ -47,7 +47,7 @@ Source: `/tmp/shikiru-review-2026-09-29.md` (review of `e56832b`).
 | F06 | PR completion leaves dependent work on a stale local base | 47 | `611c5ea` | Fixed; the local merged-branch cleanup is resolved by Task 67 (limitation 4) |
 | F07 | Decomposition does not deliver parent tracker changes to children | 48 | `4431d5f` | Fixed |
 | F08 | Notification hook blocks command processing and scheduling | 52 | `48e25a1` | Fixed |
-| F09 | Triage discards the selected complexity and title | 49 | `d8cf6a9` | Fixed; explicit `--complexity normal` is replaced by triage (limitation 5) |
+| F09 | Triage discards the selected complexity and title | 49 | `d8cf6a9` | Fixed; limitation 5 is resolved by Task 68 |
 | F10 | Completed turn overwrites a concurrent rung change | 49 | `d8cf6a9` | Fixed |
 | F11 | Dependency cycles accepted and wait forever | 50 | `ca14f8f` | Fixed |
 | F12 | Pending command replay not idempotent | 53 | `4737276` | Fixed; acknowledgement is not in the effect's transaction (limitation 8) |
@@ -69,7 +69,7 @@ Source: `/tmp/shikiru-review-2026-09-29.md` (review of `e56832b`).
 2. Resolved (Task 65): pull-request polling checks the hold before every poll and stops quietly while one is set.
 3. `RepoState.base_ref` is a required field.
 4. Resolved (Task 67): the local branch of a `done` task is removed with its worktree in PR mode too.
-5. An explicit `--complexity normal` cannot be told from the default and is replaced by triage.
+5. Resolved (Task 68): `submit` complexity is optional; an explicit `--complexity normal` is kept and only an unset complexity takes the triaged one.
 6. A persistent escalation-packet write failure leaves the task running idle until restart, and a packet restored after a restart lacks the original reports and facts (it is rebuilt from the timeline, sessions and escalation row).
 7. Two E2E tests still cap CPU at 100.
 8. Command acknowledgement is not in the same transaction as the command's effect; replay is idempotent by command id, which makes this safe.

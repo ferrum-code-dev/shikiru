@@ -214,7 +214,7 @@ def submit(
     *,
     request: Annotated[str, typer.Argument(help="Task request.")],
     mode: Annotated[Mode | None, typer.Option("--mode")] = None,
-    complexity: Annotated[ComplexityName, typer.Option("--complexity")] = "normal",
+    complexity: Annotated[ComplexityName | None, typer.Option("--complexity")] = None,
     priority: Annotated[int, typer.Option("--priority")] = 0,
     depends_on: Annotated[list[str] | None, typer.Option("--after")] = None,
     leader: Annotated[str | None, typer.Option("--leader")] = None,

@@ -10,7 +10,7 @@
 | `parent_id`, `origin` | `origin` is `operator` or `leader` |
 | `title`, `request` | `request` is the verbatim text |
 | `mode` | `implement` or `plan`. `NULL` until triage, unless `submit --mode` sets it |
-| `complexity` | `low`, `normal` or `high` (default `normal`) |
+| `complexity` | `low`, `normal` or `high`. Unset (`submit` without `--complexity`) until triage decides; an explicit value, `normal` included, is never replaced. The ladder uses `normal` while it is unset |
 | `priority` | Integer; higher runs first |
 | `depends_on` | Task ids |
 | `status` | §1.2 |
@@ -66,7 +66,7 @@ queued ──► running ──► integrating ──► done
 - A `changes_requested` in the final round raises `iterations_exhausted`.
 
 **Triage** is read-only (the prompt forbids edits). Implement and rework turns tick the task's own tracker entry per project conventions; `plan` turns restructure entries (each new task gets its own, and ticks it when done); verify turns never change code or tests (anything missing or wrong is `changes_requested`) and edit only trackers, on scope changes, committing those edits.
-A completed triage persists its `title` and `complexity` with the transition, so the next turn uses the ladder for that complexity (§3). An operator complexity other than the default `normal` keeps precedence over the triaged one; an explicit `--complexity normal` cannot be told from the default and is replaced.
+A completed triage persists its `title` and `complexity` with the transition, so the next turn uses the ladder for that complexity (§3). An operator-chosen complexity (any of the three, `normal` included) keeps precedence over the triaged one; only an unset complexity takes the triaged value. The triaged `mode` is written in the same UPDATE as the transition.
 `submit --mode` skips triage. The title is then the first line of the request, cut to 60 characters.
 
 **Templates.** Every template:

@@ -132,7 +132,7 @@ class Task(DomainModel):
     title: str
     request: str
     mode: Mode | None = None
-    complexity: ComplexityName = DEFAULT_COMPLEXITY
+    complexity: ComplexityName | None = None
     priority: int = 0
     depends_on: list[str] = Field(default_factory=list)
     status: Status

@@ -107,7 +107,7 @@ class OperatorCommands:
         *,
         title: str | None = None,
         mode: Mode | None = None,
-        complexity: ComplexityName = "normal",
+        complexity: ComplexityName | None = None,
         priority: int = 0,
         depends_on: Sequence[str] = (),
         leader: Rung | None = None,

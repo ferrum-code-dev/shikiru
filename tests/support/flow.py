@@ -87,7 +87,7 @@ async def build_flow_task(
     *,
     title: str = "Add retries",
     mode: Mode | None = None,
-    complexity: ComplexityName = "normal",
+    complexity: ComplexityName | None = None,
 ) -> Task:
     """Insert a queued task with real leader/implementer panes and a git worktree."""
     tasks = env.tasks
