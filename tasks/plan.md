@@ -575,11 +575,11 @@ Refs: 02 §2; `refactor:` commits only.
 
 ### Task 73: Test gaps and evidence quality
 Refs: 07 §3, §5.
-- [ ] F06/F07 are covered through `bootstrap.py` wiring and the real plan/supersede flow (PR-mode plan children included), not hand-built transitions.
-- [ ] Live model-change checks assert the emitted `model_auto_compact_token_limit` follows the selected model (Claude and Codex), and were run natively on the resulting revision with the real rollout format; the result is recorded.
-- [ ] The E2E results artifact records the source commit, CLI versions and start/end timestamps.
-- [ ] The Task 59 ACs that were ticked with annotations are restated strictly (unticked with a reason where not met).
-- [ ] Flake hunt: `uv run poe check` failed once (1 failed, 846 passed, at `17d1d8f`, test not identified) and then passed in 10 consecutive runs, also under full CPU load. Run the ordinary suite repeatedly with failure capture (for example 20 runs with `--junitxml` or a saved log per run), identify the flaky test(s), fix the cause (no sleeps, no shared state, no host-load dependence) and record the number of clean runs.
+- [x] F06/F07 are covered through `bootstrap.py` wiring and the real plan/supersede flow (PR-mode plan children included), not hand-built transitions.
+- [ ] Live model-change checks assert the emitted `model_auto_compact_token_limit` follows the selected model (Claude and Codex), and were run natively on the resulting revision with the real rollout format; the result is recorded. Met for Codex (run at `b8de3d0`, real rollout parsed, redacted fixture and offline test added, recorded in `docs/release-readiness-2026-09-30.md`). Not met for Claude: Claude emits no `model_auto_compact_token_limit` (its hook limit follows the `[1m]` suffix), the assertion is written and covered offline, but the live run was skipped because no alternate model is configured on this host.
+- [x] The E2E results artifact records the source commit, CLI versions and start/end timestamps.
+- [x] The Task 59 ACs that were ticked with annotations are restated strictly (unticked with a reason where not met).
+- [ ] Flake hunt: `uv run poe check` failed once (1 failed, 846 passed, at `17d1d8f`, test not identified) and then passed in 10 consecutive runs, also under full CPU load. Run the ordinary suite repeatedly with failure capture (for example 20 runs with `--junitxml` or a saved log per run), identify the flaky test(s), fix the cause (no sleeps, no shared state, no host-load dependence) and record the number of clean runs. Not met: no failure reproduced, so no test was identified. 20 consecutive `pytest --no-cov` runs (10 workers, 866 passed each, 6 of them while `poe check` ran on the same host), one run with `-n 2`, one under 12 nice'd CPU spinners, and 12 runs of the Task 60-71 timing-sensitive files (plus the new decomposition tests) under 20 un-nice'd spinners all passed; the suite uses no random order. Residual risk: `test_hook_descendants_die_with_the_hook[timeout]` uses a real 1 s hook timeout, so a host stall above 1 s before the shell writes its pid file would fail it.
 - Tests: the above.
 
 ### Task 74: Final verification and release evidence (Phase 7b)
