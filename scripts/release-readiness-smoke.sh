@@ -11,7 +11,7 @@ DATE="$(date +%F)"
 ARTIFACT_DIR="$ROOT/build/release-readiness"
 ARTIFACT="$ARTIFACT_DIR/clean-install-$DATE.json"
 LOG="$ARTIFACT_DIR/clean-install-$DATE.log"
-RUN_ROOT="$(mktemp -d /private/tmp/shikiru-release-smoke.XXXXXX)"
+RUN_ROOT="$(mktemp -d /tmp/shikiru-release-smoke.XXXXXX)"
 HOME_DIR="$RUN_ROOT/home"
 CACHE_DIR="$RUN_ROOT/cache"
 TOOL_DIR="$RUN_ROOT/uv/tools"
@@ -205,7 +205,7 @@ defaults = files("shikiru.config").joinpath("defaults.toml")
 assert defaults.is_file()
 assert "sample_seconds = 2" in defaults.read_text()
 module_path = Path(shikiru.__file__).resolve()
-assert module_path.is_relative_to(Path(os.environ["UV_TOOL_DIR"]))
+assert module_path.is_relative_to(Path(os.environ["UV_TOOL_DIR"]).resolve())
 assert not module_path.is_relative_to(Path.cwd())
 agents = {entry.name for entry in entry_points(group="shikiru.agents")}
 widgets = {entry.name for entry in entry_points(group="shikiru.widgets")}
