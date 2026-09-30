@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -28,7 +27,6 @@ from shikiru.domain.recovery import (
     RecoveryPolicy,
     ResumeTurn,
     RetryTurn,
-    Stalled,
     TurnCounters,
     TurnResult,
     WaitForQuota,
@@ -36,7 +34,6 @@ from shikiru.domain.recovery import (
     quota_block_until,
 )
 from shikiru.domain.reports import (
-    ConsultAnswer,
     ImplementationReport,
     Issue,
     PlanReport,
@@ -46,9 +43,17 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.steps import ACTING_ROLE, Transition, first_step, next_step
 from shikiru.domain.tasks import EscalationReason, Role, Status, Step, TaskOrigin
-from shikiru.engine.events import emit_step_started
+from shikiru.engine.events import (
+    emit_nudge,
+    emit_step_started,
+    emit_turn_completed,
+    emit_turn_failed,
+    emit_turn_started,
+    emit_verdict,
+)
 from shikiru.engine.history import ENGINE_VERDICT_FILENAME, ReportHistory
 from shikiru.engine.integration_turns import IntegrationTurns, IntegrationTurnStopped
+from shikiru.engine.turn_execution import TurnExecution
 from shikiru.errors import ShikiruError, UsageError
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,7 +61,6 @@ _LOGGER = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from shikiru.agents.contracts import Rung, Usage
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.steps import Outcome
@@ -80,58 +84,6 @@ UNCOMMITTED_ISSUE = (
     "Commit what belongs to this task and discard the rest."
 )
 _QUOTA_WAIT_EXHAUSTED_MESSAGE = "quota wait exceeded"
-
-
-def _turn_summary(outcome: Outcome) -> str:
-    if isinstance(outcome, TriageReport):
-        return outcome.title
-    if isinstance(outcome, ConsultAnswer):
-        return outcome.answer if outcome.decision == "answer" else "escalate"
-    return outcome.summary
-
-
-def _turn_question(outcome: Outcome) -> str:
-    return outcome.question if isinstance(outcome, ImplementationReport) else ""
-
-
-def _turn_outcome(outcome: Outcome) -> str:
-    if isinstance(outcome, TriageReport):
-        return outcome.mode.value
-    if isinstance(outcome, PlanReport):
-        return "completed"
-    if isinstance(outcome, ConsultAnswer):
-        return outcome.decision
-    if isinstance(outcome, ImplementationReport):
-        return outcome.status
-    return outcome.decision
-
-
-def _usage_delta(before: Usage, after: Usage) -> dict[str, int | float | None]:
-    if after.cost_usd is None:
-        cost_delta = None
-    elif before.cost_usd is None:
-        cost_delta = after.cost_usd
-    else:
-        cost_delta = after.cost_usd - before.cost_usd
-    return {
-        "input_tokens": after.input_tokens - before.input_tokens,
-        "output_tokens": after.output_tokens - before.output_tokens,
-        "cache_read_tokens": after.cache_read_tokens - before.cache_read_tokens,
-        "cache_write_tokens": after.cache_write_tokens - before.cache_write_tokens,
-        "cost_usd": cost_delta,
-    }
-
-
-@dataclass
-class _TurnExecution:
-    result: TurnResult
-    task_id: str
-    role: Role
-    turn_dir: Path
-    rung: Rung
-    usage_before: Usage
-    usage_after: Usage
-    quota_wait_exhausted: bool = False
 
 
 class TaskFlow:
@@ -242,7 +194,7 @@ class TaskFlow:
             raise ShikiruError(message)
         report = execution.result.report
         if isinstance(report, ImplementationReport | Verdict):
-            self._emit_turn_completed(current, report, execution)
+            emit_turn_completed(self._events, current, report, execution)
             if isinstance(report, Verdict):
                 report = await self._reject_uncommitted(current, report, execution.turn_dir)
             return current, report
@@ -291,7 +243,7 @@ class TaskFlow:
         template_override: PromptName | None = None,
         kind_override: ReportKind | None = None,
         conflict_context: str | None = None,
-    ) -> tuple[Task, TurnCounters, _TurnExecution | None, bool]:
+    ) -> tuple[Task, TurnCounters, TurnExecution | None, bool]:
         current = task
         current_step = step
         execution = await self._run_turn(
@@ -334,14 +286,14 @@ class TaskFlow:
         return current, counters, execution, False
 
     async def _complete_step_turn(
-        self, task: Task, step: Step, execution: _TurnExecution
+        self, task: Task, step: Step, execution: TurnExecution
     ) -> tuple[Task, TurnCounters, bool]:
         result = execution.result
         if not isinstance(result, Completed):
             message = f"{task.id} completed-step handler received {type(result).__name__}"
             raise ShikiruError(message)
         outcome = result.report
-        self._emit_turn_completed(task, outcome, execution)
+        emit_turn_completed(self._events, task, outcome, execution)
         if step is Step.VERIFY and isinstance(outcome, Verdict):
             outcome = await self._reject_uncommitted(task, outcome, execution.turn_dir)
         transition = next_step(task, outcome, self._settings)
@@ -362,13 +314,13 @@ class TaskFlow:
         self,
         task: Task,
         step: Step,
-        execution: _TurnExecution,
+        execution: TurnExecution,
         counters: TurnCounters,
         *,
         role_override: Role | None = None,
-    ) -> tuple[Task, TurnCounters, bool, _TurnExecution | None]:
+    ) -> tuple[Task, TurnCounters, bool, TurnExecution | None]:
         result = execution.result
-        self._emit_turn_failed(task, step, result)
+        emit_turn_failed(self._events, task, step, result)
         role = role_override if role_override is not None else ACTING_ROLE[step]
         policy = self._recovery_policy(
             task, role, quota_wait_exhausted=execution.quota_wait_exhausted
@@ -385,8 +337,8 @@ class TaskFlow:
             counters=counters,
             action=action,
         )
-        continued = updated if isinstance(updated, _TurnExecution) else None
-        next_task = self.require_task(task.id) if isinstance(updated, _TurnExecution) else updated
+        continued = updated if isinstance(updated, TurnExecution) else None
+        next_task = self.require_task(task.id) if isinstance(updated, TurnExecution) else updated
         return next_task, counters, should_return, continued
 
     def _recovery_policy(
@@ -408,11 +360,11 @@ class TaskFlow:
         step: Step,
         role: Role,
         *,
-        execution: _TurnExecution,
+        execution: TurnExecution,
         result: TurnResult,
         counters: TurnCounters,
         action: Action,
-    ) -> tuple[Task | _TurnExecution, bool, TurnCounters]:
+    ) -> tuple[Task | TurnExecution, bool, TurnCounters]:
         updated = task
         next_counters = counters
         if isinstance(action, WaitForQuota):
@@ -449,7 +401,7 @@ class TaskFlow:
 
     async def _apply_next_rung(
         self, task: Task, step: Step, role: Role, result: TurnResult, action: NextRung
-    ) -> tuple[Task | _TurnExecution, bool, TurnCounters]:
+    ) -> tuple[Task | TurnExecution, bool, TurnCounters]:
         if action.different_agent:
             self._contexts.request_handoff(task.id)
         updated = await self._move_rung(task, step, role, action.different_agent, result)
@@ -544,22 +496,6 @@ class TaskFlow:
             )
             return None
 
-    def _emit_turn_failed(self, task: Task, step: Step, result: TurnResult) -> None:
-        if isinstance(result, Failed):
-            message = result.message
-            data = {"kind": result.kind.value, "resets_at": result.resets_at}
-        elif isinstance(result, Stalled):
-            message = "agent stalled"
-            data = {}
-        elif isinstance(result, ProtocolError):
-            message = "agent protocol error"
-            data = {}
-        else:
-            message = type(result).__name__
-            data = {}
-        data.update({"step": step.value, "result": type(result).__name__})
-        self._events.append(EventKind.TURN_FAILED, task_id=task.id, message=message, data=data)
-
     async def _run_turn(
         self,
         task: Task,
@@ -569,7 +505,7 @@ class TaskFlow:
         template_override: PromptName | None = None,
         kind_override: ReportKind | None = None,
         conflict_context: str | None = None,
-    ) -> _TurnExecution:
+    ) -> TurnExecution:
         role = role_override if role_override is not None else ACTING_ROLE[step]
         selection = self._sessions.session_for(task, role)
 
@@ -587,7 +523,7 @@ class TaskFlow:
         completed = self._turns.completed_turn(task.id, role, turn_request) if resumed else None
         if completed is not None:
             result, turn_dir = completed
-            return _TurnExecution(
+            return TurnExecution(
                 result=result,
                 task_id=task.id,
                 role=role,
@@ -596,26 +532,10 @@ class TaskFlow:
                 usage_before=usage_before,
                 usage_after=usage_before,
             )
-        self._events.append(
-            EventKind.TURN_STARTED,
-            task_id=task.id,
-            message=f"{task.id} {role.value} turn started",
-            data={
-                "step": step.value,
-                "role": role.value,
-                "iteration": task.iteration,
-                "agent": selection.rung.agent,
-                "model": selection.rung.model,
-            },
-        )
+        emit_turn_started(self._events, task, step, role, selection.rung)
 
         def on_nudge() -> None:
-            self._events.append(
-                EventKind.NUDGE,
-                task_id=task.id,
-                message=f"{task.id} {role.value} nudge",
-                data={"step": step.value, "role": role.value},
-            )
+            emit_nudge(self._events, task, step, role)
 
         result, turn_dir, selection = await self._turns.run(
             task, role, selection, turn_request, on_nudge=on_nudge
@@ -624,7 +544,7 @@ class TaskFlow:
         if live_run is None:
             message = f"{task.id} {role.value} run disappeared after its turn"
             raise ShikiruError(message)
-        return _TurnExecution(
+        return TurnExecution(
             result=result,
             task_id=task.id,
             role=role,
@@ -682,7 +602,7 @@ class TaskFlow:
     async def _escalate_scope_change_protocol(
         self, task: Task, step: Step, outcome: Outcome, error: UsageError
     ) -> Task:
-        self._emit_turn_failed(task, step, ProtocolError())
+        emit_turn_failed(self._events, task, step, ProtocolError())
         transition = Transition.escalate(task, EscalationReason.AGENT_PROTOCOL, step=step)
         return await self._escalate(task, transition, outcome, question=str(error))
 
@@ -696,41 +616,6 @@ class TaskFlow:
             task_id=task.id,
             message=f"{task.id} scope changed: {len(new_ids)} new task(s)",
             data={"new_task_ids": new_ids, "scope_changes": list(outcome.scope_changes)},
-        )
-
-    def _emit_turn_completed(self, task: Task, outcome: Outcome, execution: _TurnExecution) -> None:
-        summary = _turn_summary(outcome)
-        usage_delta = _usage_delta(execution.usage_before, execution.usage_after)
-        self._events.append(
-            EventKind.TURN_COMPLETED,
-            task_id=task.id,
-            message=summary,
-            data={
-                "step": task.step.value if task.step is not None else None,
-                "iteration": task.iteration,
-                "role": execution.role.value,
-                "agent": execution.rung.agent,
-                "model": execution.rung.model,
-                "outcome": _turn_outcome(outcome),
-                "summary": summary,
-                "question": _turn_question(outcome),
-                "usage_delta": usage_delta,
-            },
-        )
-        if isinstance(outcome, Verdict):
-            self._emit_verdict(task, outcome, summary)
-
-    def _emit_verdict(self, task: Task, verdict: Verdict, summary: str) -> None:
-        self._events.append(
-            EventKind.VERDICT,
-            task_id=task.id,
-            message=summary,
-            data={
-                "decision": verdict.decision,
-                "summary": summary,
-                "issues": [issue.model_dump() for issue in verdict.issues],
-                "residual_risks": list(verdict.residual_risks),
-            },
         )
 
     async def _reject_uncommitted(self, task: Task, verdict: Verdict, turn_dir: Path) -> Verdict:
@@ -749,7 +634,7 @@ class TaskFlow:
             decision="changes_requested", summary=UNCOMMITTED_SUMMARY, issues=[issue]
         )
         (turn_dir / ENGINE_VERDICT_FILENAME).write_text(rejection.model_dump_json(indent=2))
-        self._emit_verdict(task, rejection, rejection.summary)
+        emit_verdict(self._events, task, rejection, rejection.summary)
         return rejection
 
     def require_task(self, task_id: str) -> Task:
