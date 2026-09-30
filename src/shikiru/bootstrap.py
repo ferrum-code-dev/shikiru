@@ -684,6 +684,7 @@ def _build_integrator(
                 project_root=project_root,
                 remote=settings.repo.remote,
                 base_refs=fetched_bases,
+                pr_wait=settings.orchestration.timeouts.pr_wait,
             )
     return Integrator(
         git=git,

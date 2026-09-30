@@ -59,6 +59,7 @@ class TimeoutsConfig(ConfigModel):
     tool: int
     max_quota_wait: int
     integration_wait: int
+    pr_wait: int
     helper: int
 
 

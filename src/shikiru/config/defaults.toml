@@ -21,6 +21,7 @@ stall = 1200
 tool = 7200
 max_quota_wait = 28800
 integration_wait = 1800
+pr_wait = 604800
 helper = 300
 
 [orchestration.faults]

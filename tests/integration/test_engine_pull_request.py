@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -23,6 +24,7 @@ from shikiru.workspace.base_refs import FetchedBaseRefs
 from shikiru.workspace.git import Git
 from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.roots import task_root
+from tests.support import fake_gh
 from tests.support.clock import FakeClock
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import commit_all
@@ -31,8 +33,6 @@ from tests.support.waiting import wait_until
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Task
     from tests.support.engine import EngineEnv
@@ -98,6 +98,7 @@ class _Run:
             project_root=env.project_root,
             remote=self._settings.repo.remote,
             base_refs=FetchedBaseRefs(Git(_RUNNER), env.project_root, self._settings.repo.remote),
+            pr_wait=self._settings.orchestration.timeouts.pr_wait,
         )
         flow = build_flow(env, self._settings, strategy=strategy).flow
         return asyncio.create_task(flow.run(self._task_id, resumed=resumed))
@@ -333,3 +334,69 @@ async def test_a_pause_during_pr_polling_stops_polling_until_the_task_is_resumed
     done = engine_env.tasks.get(task.id)
     assert done is not None
     assert done.status is Status.DONE
+
+
+_FAILING_CHECK = {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "FAILURE"}
+_PASSING_CHECK = {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"}
+
+
+@pytest.mark.parametrize(
+    ("fields", "stalled"),
+    [
+        ({"mergeable": "CONFLICTING"}, "conflicting"),
+        ({"statusCheckRollup": [_PASSING_CHECK, _FAILING_CHECK]}, "failing checks"),
+        ({}, "unmerged"),
+    ],
+    ids=["conflict", "failing checks", "over budget"],
+)
+async def test_an_open_pull_request_that_cannot_land_escalates_once_with_its_url_and_state(
+    fields: dict[str, object],
+    stalled: str,
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    clock = engine_env.clock
+    assert isinstance(clock, FakeClock)
+    await init_project_repo(engine_env.project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    run = _Run(engine_env, settings, task.id)
+    await _await_poll(fake_github, clock, 1)
+
+    fake_github.set_fields(1, **fields)
+    await _land(clock, run.flow)
+
+    [escalation] = fetch_open_escalations(engine_env.connection)
+    assert escalation.reason is EscalationReason.INTEGRATION_BLOCKED
+    packet = await asyncio.to_thread(Path(escalation.packet_path).read_text)
+    assert f"{fake_gh.URL_PREFIX}1" in packet
+    assert stalled in packet
+    blocked = engine_env.tasks.get(task.id)
+    assert blocked is not None
+    assert blocked.status is Status.ESCALATED
+    assert blocked.wait_reason is None
+
+
+async def test_a_pull_request_paused_past_its_budget_does_not_escalate_until_resumed(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    clock = engine_env.clock
+    assert isinstance(clock, FakeClock)
+    await init_project_repo(engine_env.project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    run = _Run(engine_env, settings, task.id)
+    await _await_poll(fake_github, clock, 1)
+
+    engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
+    await _land(clock, run.flow)
+    clock.advance(settings.orchestration.timeouts.pr_wait)
+
+    assert fetch_open_escalations(engine_env.connection) == []

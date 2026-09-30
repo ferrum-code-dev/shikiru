@@ -41,6 +41,7 @@ stall = 1200                                    # no stream event while no tool 
 tool = 7200                                     # no stream event while a tool runs
 max_quota_wait = 28800
 integration_wait = 1800
+pr_wait = 604800                                # an open PR unmerged this long escalates
 helper = 300                                    # maximum duration for helper turns
 
 [agents.claude]                                 # table name = plugin entry point

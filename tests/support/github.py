@@ -9,7 +9,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -33,7 +33,7 @@ class FakeGitHub:
 
     state: Path
 
-    def pull_requests(self) -> list[dict[str, str]]:
+    def pull_requests(self) -> list[dict[str, Any]]:
         pulls = self.state / fake_gh.PULLS_DIR
         count = len(list(pulls.glob("*.json")))
         return [json.loads((pulls / f"{n}.json").read_text()) for n in range(1, count + 1)]
@@ -66,6 +66,10 @@ class FakeGitHub:
         path = self.state / fake_gh.PULLS_DIR / f"{number}.json"
         record = json.loads(path.read_text())
         path.write_text(json.dumps({**record, "state": state.value}))
+
+    def set_fields(self, number: int, **fields: object) -> None:
+        path = self.state / fake_gh.PULLS_DIR / f"{number}.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), **fields}))
 
     def views(self) -> int:
         log = self.state / fake_gh.CALLS_LOG

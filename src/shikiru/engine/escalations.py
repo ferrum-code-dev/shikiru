@@ -53,7 +53,7 @@ _HEADLINE_SENTENCES: dict[EscalationReason, str] = {
     EscalationReason.DECISION_REQUIRED: "The Leader needs an Operator decision to continue.",
     EscalationReason.ITERATIONS_EXHAUSTED: "The final review round still requested changes.",
     EscalationReason.INTEGRATION_CONFLICT: "Rebase conflicts could not be resolved automatically.",
-    EscalationReason.INTEGRATION_BLOCKED: "The main checkout stayed blocked past the wait budget.",
+    EscalationReason.INTEGRATION_BLOCKED: "Integration is blocked: see the question.",
     EscalationReason.UNCOMMITTED_WORK: (
         "The task workspace has uncommitted changes; commit or discard them, then retry."
     ),

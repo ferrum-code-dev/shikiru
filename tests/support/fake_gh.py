@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 URL_PREFIX = "https://github.invalid/shikiru/fake/pull/"
 PULLS_DIR = "pulls"
@@ -13,7 +14,7 @@ HOLD_CREATE = "hold-create"
 _OPEN = "OPEN"
 
 
-def _records(state: Path) -> list[tuple[str, dict[str, str]]]:
+def _records(state: Path) -> list[tuple[str, dict[str, Any]]]:
     pulls = state / PULLS_DIR
     count = len(list(pulls.glob("*.json")))
     return [
@@ -26,9 +27,11 @@ def _create(state: Path, options: list[str]) -> str:
     values = dict(zip(options[::2], options[1::2], strict=True))
     pulls = state / PULLS_DIR
     number = len(list(pulls.glob("*.json"))) + 1
-    record = {
+    record: dict[str, Any] = {
         "state": _OPEN,
         "mergeCommit": None,
+        "mergeable": "MERGEABLE",
+        "statusCheckRollup": [],
         "base": values["--base"],
         "head": values["--head"],
         "title": values["--title"],
@@ -60,8 +63,14 @@ def _view(state: Path, url: str, options: list[str]) -> str:
     return json.dumps({field: record[field] for field in fields})
 
 
+def _close(state: Path, url: str) -> str:
+    path = state / PULLS_DIR / f"{url.removeprefix(URL_PREFIX)}.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "state": "CLOSED"}))
+    return ""
+
+
 def main(argv: list[str]) -> int:
-    """Serve `gh pr create`, `gh pr list` and `gh pr view URL --json FIELDS`; reject the rest.
+    """Serve `gh pr create`, `list`, `close URL` and `view URL --json FIELDS`; reject the rest.
 
     While the `HOLD_CREATE` FIFO exists, `pr create` records its pull request and then blocks
     before printing it, as if the engine died between opening and recording it."""
@@ -76,6 +85,8 @@ def main(argv: list[str]) -> int:
             output = _list(state, options)
         case ["pr", "view", url, *options]:
             output = _view(state, url, options)
+        case ["pr", "close", url]:
+            output = _close(state, url)
         case _:
             sys.stderr.write(f"fake gh does not support {args}\n")
             return 1

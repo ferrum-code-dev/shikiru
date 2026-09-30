@@ -18,6 +18,14 @@ _GH_BIN = "gh"
 _COMMAND_TIMEOUT_SECONDS = 60.0
 _STATE_FIELD = "state"
 _MERGE_COMMIT_FIELD = "mergeCommit"
+_MERGEABLE_FIELD = "mergeable"
+_CHECKS_FIELD = "statusCheckRollup"
+_CONFLICTING = "CONFLICTING"
+_CHECK_CONCLUSION_FIELD = "conclusion"
+_CHECK_STATE_FIELD = "state"
+_FAILING_CHECK_RESULTS = frozenset(
+    ("FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE", "ACTION_REQUIRED")
+)
 _OID_FIELD = "oid"
 _URL_FIELD = "url"
 _OPEN_STATE_FILTER = "open"
@@ -33,10 +41,12 @@ class PullRequestState(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PullRequestStatus:
-    """A pull request's state and, once merged, the commit it landed as on its base."""
+    """A pull request's state, whether it can land, and the commit it landed as once merged."""
 
     state: PullRequestState
     merge_commit: str | None
+    conflicting: bool
+    checks_failing: bool
 
 
 class GitHub:
@@ -88,15 +98,20 @@ class GitHub:
         return lines[-1]
 
     async def pull_request_status(self, repo_dir: Path, url: str) -> PullRequestStatus:
-        """Return the current state and merge commit of the pull request at `url`."""
-        result = await self._run(
-            repo_dir, "pr", "view", url, "--json", f"{_STATE_FIELD},{_MERGE_COMMIT_FIELD}"
-        )
+        """Return the state, merge commit, conflict and check results of the PR at `url`."""
+        fields = (_STATE_FIELD, _MERGE_COMMIT_FIELD, _MERGEABLE_FIELD, _CHECKS_FIELD)
+        result = await self._run(repo_dir, "pr", "view", url, "--json", ",".join(fields))
         view = json.loads(result.stdout)
         merge_commit = view[_MERGE_COMMIT_FIELD]
         return PullRequestStatus(
-            PullRequestState(view[_STATE_FIELD]),
-            merge_commit[_OID_FIELD] if merge_commit is not None else None,
+            state=PullRequestState(view[_STATE_FIELD]),
+            merge_commit=merge_commit[_OID_FIELD] if merge_commit is not None else None,
+            conflicting=view[_MERGEABLE_FIELD] == _CONFLICTING,
+            checks_failing=any(
+                {check.get(_CHECK_CONCLUSION_FIELD), check.get(_CHECK_STATE_FIELD)}
+                & _FAILING_CHECK_RESULTS
+                for check in view[_CHECKS_FIELD]
+            ),
         )
 
     async def _run(self, repo_dir: Path, *args: str) -> ProcessResult:

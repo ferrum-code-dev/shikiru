@@ -45,6 +45,14 @@ class IntegrationBlocked(ShikiruError):
         super().__init__(message)
 
 
+class PullRequestStalled(IntegrationBlocked):
+    """An open pull request cannot land: it conflicts, fails its checks or waited too long."""
+
+    def __init__(self, url: str, state: str) -> None:
+        """Build the error for the PR at `url`, saying which `state` it is stuck in."""
+        super().__init__(f"pull request {url} is {state}")
+
+
 class IntegrationHeld(Exception):
     """A task hold was set before integration could start its next external effect."""
 
@@ -276,10 +284,12 @@ class PullRequest:
         project_root: Path,
         remote: str,
         base_refs: FetchedBaseRefs,
+        pr_wait: int,
     ) -> None:
         """Push to `remote` from `project_root`; record the PR in `events`, waits in `tasks`.
 
         A merged PR's base is fetched and verified through `base_refs` before the task is done.
+        An open PR that stays unmerged for `pr_wait` seconds escalates.
         """
         self._git = git
         self._github = github
@@ -289,6 +299,7 @@ class PullRequest:
         self._project_root = project_root
         self._remote = remote
         self._base_refs = base_refs
+        self._pr_wait = pr_wait
 
     def started(self, task_id: str) -> tuple[str, ...] | None:
         """Return the commits of `task_id`'s open pull request, if it has one."""
@@ -330,20 +341,27 @@ class PullRequest:
         """Poll the open pull request until it is merged or closed, then verify the merged base.
 
         Raises `PullRequestClosed` for a closed one, `IntegrationBlocked` when the merged
-        commit cannot be fetched from and verified on the remote base, and `IntegrationHeld`
-        before any poll once `held()` is true.
+        commit cannot be fetched from and verified on the remote base, when the open PR
+        conflicts or has failing checks, or when it stays unmerged for `pr_wait` seconds
+        (counted from the start of each wait), and `IntegrationHeld` before any poll once
+        `held()` is true.
         """
         opened = self._open_pull_request(task_id)
         if opened is None:
             return
         self._tasks.set_slot(task_id, None)
         self._tasks.set_wait_reason(task_id, WaitReason.PR_OPEN)
+        deadline = self._clock.now() + timedelta(seconds=self._pr_wait)
         while True:
             if held():
                 raise IntegrationHeld
             status = await self._status(opened.url)
             if status.state is not PullRequestState.OPEN:
                 break
+            stalled = _stalled(status, expired=self._clock.now() >= deadline)
+            if stalled is not None:
+                self._tasks.set_wait_reason(task_id, None)
+                raise PullRequestStalled(opened.url, stalled)
             await self._clock.sleep(PR_POLL.total_seconds())
         self._tasks.set_wait_reason(task_id, None)
         if status.state is PullRequestState.CLOSED:
@@ -361,6 +379,14 @@ class PullRequest:
             0, kinds=[EventKind.PR_OPENED, EventKind.ESCALATION], task_id=task_id
         )
         return _open_pull_request(events)
+
+
+def _stalled(status: PullRequestStatus, *, expired: bool) -> str | None:
+    if status.conflicting:
+        return "conflicting with its base"
+    if status.checks_failing:
+        return "failing checks"
+    return "unmerged beyond the wait budget" if expired else None
 
 
 def _open_pull_request(events: Sequence[Event]) -> _OpenPullRequest | None:

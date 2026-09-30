@@ -92,7 +92,9 @@ def _row(at: datetime, turn: str, signal: str) -> str:
 
 def _motion_settings(project_dir: Path) -> Settings:
     settings = load_settings(project_dir)
-    timeouts = TimeoutsConfig(stall=2, tool=5, max_quota_wait=60, integration_wait=30, helper=10)
+    timeouts = TimeoutsConfig(
+        stall=2, tool=5, max_quota_wait=60, integration_wait=30, pr_wait=60, helper=10
+    )
     return settings.model_copy(
         update={
             "orchestration": settings.orchestration.model_copy(update={"timeouts": timeouts}),

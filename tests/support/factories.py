@@ -55,6 +55,7 @@ DEFAULT_AGENTS = {"claude": AgentConfig(), "codex": AgentConfig()}
 MAX_ITERATIONS = 5
 CPU_UNCAPPED_PCT = 101
 ESCALATE_AFTER = 2
+PR_WAIT_SECONDS = 3600
 
 TASK_CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -103,6 +104,7 @@ def make_settings(
                 tool=7200,
                 max_quota_wait=28800,
                 integration_wait=1800,
+                pr_wait=PR_WAIT_SECONDS,
                 helper=300,
             ),
             faults=FaultsConfig(

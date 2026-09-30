@@ -17,7 +17,9 @@ from tests.support.clock import FakeClock
 from tests.support.factories import make_settings
 
 _START = datetime(2026, 1, 1, tzinfo=UTC)
-_TIMEOUTS = TimeoutsConfig(stall=3, tool=5, max_quota_wait=60, integration_wait=30, helper=10)
+_TIMEOUTS = TimeoutsConfig(
+    stall=3, tool=5, max_quota_wait=60, integration_wait=30, pr_wait=60, helper=10
+)
 
 
 def _state(
@@ -77,7 +79,7 @@ def test_spinner_freezes_on_the_last_active_tick_after_the_stream_window() -> No
     state = MotionState(
         animations=state.animations,
         timeouts=TimeoutsConfig(
-            stall=30, tool=60, max_quota_wait=60, integration_wait=30, helper=10
+            stall=30, tool=60, max_quota_wait=60, integration_wait=30, pr_wait=60, helper=10
         ),
         refresh_hz=state.refresh_hz,
         stream_active_seconds=state.stream_active_seconds,
