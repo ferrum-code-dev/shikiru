@@ -831,7 +831,7 @@ def _assert_dependent_new_tasks(statuses: list[dict[str, object] | None]) -> Non
         for task in tasks
         if (depends_on := task.get("depends_on"))
         and isinstance(depends_on, list)
-        and set(cast("list[object]", depends_on)) <= new_task_ids
+        and set(cast("list[object]", depends_on)) & new_task_ids
     ]
     _require(
         len(tasks) >= MAX_PARALLEL and bool(dependent),
