@@ -522,7 +522,7 @@ Refs: 03 §2, §6, §8; invariant 3.
 
 ### Task 64: Operator rung pins survive every transition
 Refs: 03 §1.1, §7; F10.
-- [ ] Every path that writes rung overrides (`changes_requested` at `escalate_after`, recovery rung moves, retry, `set_rung`) changes only the role it moves and preserves overrides set concurrently by the operator; `set_rung` resets `rejections_on_rung` as 03 §1.1 says (or the design is corrected with the reason).
+- [x] Every path that writes rung overrides (`changes_requested` at `escalate_after`, recovery rung moves, retry, `set_rung`) changes only the role it moves and preserves overrides set concurrently by the operator; `set_rung` resets `rejections_on_rung` as 03 §1.1 says (or the design is corrected with the reason).
 - Tests: integration: a `set_rung` acknowledged while a turn runs survives a verify `changes_requested` that reaches `escalate_after` and a recovery move up a rung; counters follow the documented rule.
 
 ### Task 65: Holds cover every remaining execution path

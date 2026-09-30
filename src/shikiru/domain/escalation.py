@@ -84,7 +84,7 @@ def transition_for_resolution(
 ) -> Transition:
     """Build the state transition for one validated escalation resolution."""
     counters = reset_for_resolution(task.counters, reason)
-    overrides = dict(task.overrides)
+    set_overrides: dict[Role, Rung] = {}
     target_step = step or task.step
     status = Status.QUEUED
     if resolution is ResolutionKind.ANSWER:
@@ -98,7 +98,7 @@ def transition_for_resolution(
         if role is None:
             message = "a rung resolution requires its acting role"
             raise ValueError(message)
-        overrides[role] = rung
+        set_overrides[role] = rung
         counters = reset_for_rung_change(counters)
     return Transition(
         step=target_step,
@@ -106,7 +106,7 @@ def transition_for_resolution(
         iteration=task.iteration,
         counters=counters,
         rung_index=dict(task.rung_index),
-        overrides=overrides,
+        set_overrides=set_overrides,
     )
 
 

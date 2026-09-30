@@ -334,16 +334,19 @@ class TaskStore:
     def apply_transition(self, task_id: str, transition: Transition) -> None:
         """Persist `transition`'s step, status, iteration, counters, rungs and triage results.
 
-        Overrides, complexity and title are written only when the transition sets them, so a
-        concurrent operator override survives the turn that was running (03 §2-3, §6-7).
+        Overrides are merged into the stored row: the transition sets its own roles and clears a
+        role only while it still holds the rung the transition saw, so a concurrent operator
+        override survives the turn that was running (03 §2-3, §6-7). Complexity and title are
+        written only when the transition sets them.
         """
+        overrides = self._merged_overrides(task_id, transition)
         now = format_timestamp(self._clock.now())
         status = transition.status.value
         self._connection.execute(
             """
             UPDATE tasks SET
               step = ?, status = ?, status_reason = ?, iteration = ?,
-              counters = ?, rung_index = ?, overrides = COALESCE(?, overrides),
+              counters = ?, rung_index = ?, overrides = ?,
               complexity = COALESCE(?, complexity), title = COALESCE(?, title),
               started_at = CASE WHEN ? = ? AND started_at IS NULL THEN ? ELSE started_at END,
               finished_at = CASE WHEN ? IN (?, ?) AND finished_at IS NULL
@@ -357,9 +360,7 @@ class TaskStore:
                 transition.iteration,
                 dump_json(_COUNTERS_ADAPTER, transition.counters),
                 dump_json(_RUNG_INDEX_ADAPTER, transition.rung_index),
-                None
-                if transition.overrides is None
-                else dump_json(_OVERRIDES_ADAPTER, transition.overrides),
+                dump_json(_OVERRIDES_ADAPTER, overrides),
                 transition.complexity,
                 transition.title,
                 status,
@@ -372,6 +373,15 @@ class TaskStore:
                 task_id,
             ),
         )
+
+    def _merged_overrides(self, task_id: str, transition: Transition) -> dict[Role, Rung]:
+        stored = self.require(task_id).overrides
+        kept = {
+            role: rung
+            for role, rung in stored.items()
+            if transition.cleared_overrides.get(role) != rung
+        }
+        return {**kept, **transition.set_overrides}
 
     def set_holds(self, task_id: str, holds: frozenset[Hold]) -> None:
         """Persist `task_id`'s task-scoped holds (03 §1.2, §9)."""

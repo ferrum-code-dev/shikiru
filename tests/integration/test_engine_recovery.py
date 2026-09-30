@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.config.settings import AgentConfig
+from shikiru.domain.commands import SetRung
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step
 from shikiru.store.escalations import fetch_open_escalations
@@ -16,7 +20,13 @@ from shikiru.workspace.roots import run_dir
 from tests.support.clock import FakeClock
 from tests.support.engine import FAKE_AGENT_ALIAS, FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
 from tests.support.factories import TASK_CREATED_AT
-from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
+from tests.support.flow import (
+    apply_set_rung,
+    build_flow,
+    build_flow_task,
+    flow_settings,
+    init_project_repo,
+)
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -402,3 +412,80 @@ async def test_a_pause_set_during_a_quota_wait_stops_the_continue_turn_until_res
     final = engine_env.tasks.get(task_id)
     assert final is not None
     assert final.status is Status.INTEGRATING
+
+
+_PINNED_RUNG = Rung(agent=FAKE_AGENT_NAME, model="fake-pinned", effort=None)
+_FAR_RESET = TASK_CREATED_AT + timedelta(hours=2)
+_UNAVAILABLE = {"kind": "fail", "failure_kind": "unavailable"}
+_RUNG_MOVE_CASES = {
+    "up_a_rung": (
+        [_UNAVAILABLE, _UNAVAILABLE, _UNAVAILABLE, {**_UNAVAILABLE, "release_fifo": "{fifo}"}],
+        FAKE_AGENT_NAME,
+    ),
+    "to_a_different_agent": (
+        [
+            {
+                "kind": "fail",
+                "failure_kind": "quota",
+                "resets_at": _FAR_RESET.isoformat(),
+                "release_fifo": "{fifo}",
+            }
+        ],
+        FAKE_AGENT_ALIAS,
+    ),
+}
+
+
+@pytest.mark.parametrize("pinned_role", [Role.LEADER, Role.IMPLEMENTER])
+@pytest.mark.parametrize(
+    ("failures", "moved_agent"), _RUNG_MOVE_CASES.values(), ids=_RUNG_MOVE_CASES.keys()
+)
+async def test_a_rung_set_during_a_failing_turn_survives_the_recovery_move(
+    engine_env: EngineEnv,
+    tmux_server: TmuxServer,
+    tmp_path: Path,
+    *,
+    failures: list[dict[str, object]],
+    moved_agent: str,
+    pinned_role: Role,
+) -> None:
+    release = tmp_path / "release-failure"
+    os.mkfifo(release)
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _rung_settings(Rung(agent=moved_agent, model="fake-2", effort=None))
+    timeouts = settings.orchestration.timeouts.model_copy(update={"max_quota_wait": 120})
+    settings = settings.model_copy(
+        update={"orchestration": settings.orchestration.model_copy(update={"timeouts": timeouts})}
+    )
+    script = [
+        {key: str(release) if value == "{fifo}" else value for key, value in step.items()}
+        for step in failures
+    ]
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[*script, {"kind": "accept"}],
+    )
+
+    flow_env = build_flow(engine_env, settings, clock=clock)
+
+    def gated_turn_running() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(1)
+        started = flow_env.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task_id)
+        return len(started) == len(failures)
+
+    await wait_until(gated_turn_running, timeout=20)
+    await apply_set_rung(
+        engine_env,
+        flow_env,
+        SetRung(task_id=task_id, role=pinned_role, rung=_PINNED_RUNG),
+    )
+    await asyncio.to_thread(release.write_text, "go")
+    await _drive(flow_task, clock)
+
+    final = engine_env.tasks.require(task_id)
+    assert final.overrides == {pinned_role: _PINNED_RUNG}
+    assert final.rung_index[Role.IMPLEMENTER] == 1

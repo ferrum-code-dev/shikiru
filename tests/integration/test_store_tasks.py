@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -107,7 +109,7 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(
         iteration=2,
         counters=Counters(consults=1, rejections_on_rung=1),
         rung_index={Role.LEADER: 1},
-        overrides={Role.IMPLEMENTER: Rung(agent="codex", model="sol", effort="high")},
+        set_overrides={Role.IMPLEMENTER: Rung(agent="codex", model="sol", effort="high")},
         status_reason=StatusReason.SUPERSEDED,
     )
     store.apply_transition(task.id, transition)
@@ -119,9 +121,67 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(
     assert reloaded.iteration == 2
     assert reloaded.counters == transition.counters
     assert reloaded.rung_index == transition.rung_index
-    assert reloaded.overrides == transition.overrides
+    assert reloaded.overrides == transition.set_overrides
     assert reloaded.started_at == clock.now()
     assert reloaded.status_reason is StatusReason.SUPERSEDED
+
+
+_STALE_PIN = Rung(agent="claude", model="haiku", effort=None)
+_OPERATOR_PIN = Rung(agent="codex", model="sol", effort="high")
+
+
+@dataclass(frozen=True)
+class _OverrideMergeCase:
+    stored: dict[Role, Rung]
+    set_overrides: dict[Role, Rung]
+    cleared_overrides: dict[Role, Rung]
+    expected: dict[Role, Rung]
+
+
+_OVERRIDE_MERGE_CASES = {
+    "clear_keeps_the_other_role": _OverrideMergeCase(
+        {Role.LEADER: _OPERATOR_PIN, Role.IMPLEMENTER: _STALE_PIN},
+        {},
+        {Role.IMPLEMENTER: _STALE_PIN},
+        {Role.LEADER: _OPERATOR_PIN},
+    ),
+    "clear_keeps_a_pin_set_since_the_snapshot": _OverrideMergeCase(
+        {Role.IMPLEMENTER: _OPERATOR_PIN},
+        {},
+        {Role.IMPLEMENTER: _STALE_PIN},
+        {Role.IMPLEMENTER: _OPERATOR_PIN},
+    ),
+    "set_keeps_the_other_role": _OverrideMergeCase(
+        {Role.LEADER: _OPERATOR_PIN},
+        {Role.IMPLEMENTER: _STALE_PIN},
+        {},
+        {Role.LEADER: _OPERATOR_PIN, Role.IMPLEMENTER: _STALE_PIN},
+    ),
+}
+
+
+@pytest.mark.parametrize("case", _OVERRIDE_MERGE_CASES.values(), ids=_OVERRIDE_MERGE_CASES.keys())
+def test_apply_transition_merges_overrides_against_the_stored_row(
+    connection: Connection, case: _OverrideMergeCase
+) -> None:
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    task = _submit(connection, clock, "t")
+    store.apply_transition(
+        task.id,
+        dataclasses.replace(Transition.stay(task, step=None), set_overrides=case.stored),
+    )
+
+    store.apply_transition(
+        task.id,
+        dataclasses.replace(
+            Transition.stay(task, step=Step.IMPLEMENT),
+            set_overrides=case.set_overrides,
+            cleared_overrides=case.cleared_overrides,
+        ),
+    )
+
+    assert store.require(task.id).overrides == case.expected
 
 
 def test_apply_transition_sets_finished_at_once_for_a_terminal_status(
@@ -131,7 +191,7 @@ def test_apply_transition_sets_finished_at_once_for_a_terminal_status(
     store = TaskStore(connection, clock)
     task = _submit(connection, clock, "t")
     done = Transition(
-        step=None, status=Status.DONE, iteration=0, counters=Counters(), rung_index={}, overrides={}
+        step=None, status=Status.DONE, iteration=0, counters=Counters(), rung_index={}
     )
 
     store.apply_transition(task.id, done)
@@ -208,7 +268,6 @@ def test_list_active_and_all_preserve_status_partition(connection: Connection) -
             iteration=1,
             counters=Counters(),
             rung_index={},
-            overrides={},
         ),
     )
 
@@ -231,7 +290,6 @@ def test_scope_change_rejects_missing_task_dependency_before_mutating(
         iteration=0,
         counters=Counters(),
         rung_index={},
-        overrides={},
         status_reason=StatusReason.SUPERSEDED,
         repoint_dependents=True,
         enqueue_new_tasks=True,
@@ -272,7 +330,6 @@ def test_scope_change_resolves_forward_sibling_dependencies_atomically(
         iteration=0,
         counters=Counters(),
         rung_index={},
-        overrides={},
         status_reason=StatusReason.SUPERSEDED,
         repoint_dependents=True,
         enqueue_new_tasks=True,
@@ -320,7 +377,6 @@ def test_scope_change_that_closes_a_dependency_cycle_writes_nothing(
         iteration=0,
         counters=Counters(),
         rung_index={},
-        overrides={},
         status_reason=StatusReason.SUPERSEDED,
         repoint_dependents=True,
         enqueue_new_tasks=True,

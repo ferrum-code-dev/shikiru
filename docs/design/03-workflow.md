@@ -18,7 +18,7 @@
 | `status_reason` | e.g. `superseded`, `cancelled by operator` |
 | `holds` | Task-scoped: `paused`, `intervention` |
 | `iteration` | Implement → verify rounds so far |
-| `counters` | Persisted: `rejections_on_rung` (reset on rung change), `consults` (reset each iteration), `conflict_rounds` (reset per integration attempt). Resolving an escalation resets the counter behind its reason |
+| `counters` | Persisted: `rejections_on_rung` (reset whenever the Implementer's rung changes: an automatic move, `set_rung` to a different rung, `retry --rung`), `consults` (reset each iteration), `conflict_rounds` (reset per integration attempt). Resolving an escalation resets the counter behind its reason |
 | `rung_index` | Per role, persisted. Never decreases |
 | `overrides` | Operator rungs per role |
 | `repo` | `{base, base_sha, branch}`, set when the task root is built |
@@ -239,7 +239,7 @@ Dependents become ready only when their dependencies are `done`.
 
 **Rungs**:
 - The resolved rung is `overrides[role]` if set, otherwise the ladder at `rung_index[role]`.
-- A step's transition writes `overrides` only when the step itself changes them (`move_up`), so an operator `rung` acknowledged while a turn runs survives that turn and applies to the next.
+- A transition never writes the `overrides` of the snapshot it was decided on. The store merges it into the stored row in the same write: it sets the roles it names (`set_rung`, `retry --rung`) and clears a role (an automatic `move_up`) only while the stored override is still the one the decision saw. An operator `rung` acknowledged while a turn runs therefore survives that turn, whether it completes, is rejected at `escalate_after` or recovers to another rung, and applies to the next.
 - The Leader uses `roles.leader.ladder`. The Implementer uses `roles.implementer.complexity.<c>.ladder`, falling back to `roles.implementer.ladder`.
 - Each rung change emits `rung_changed`.
 

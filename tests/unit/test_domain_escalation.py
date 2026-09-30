@@ -133,4 +133,4 @@ def test_resolution_transition_resets_only_its_counter(
     assert transition.status is Status.QUEUED
     assert transition.counters == case.expected_counters
     if case.rung is not None:
-        assert transition.overrides == {Role.IMPLEMENTER: case.rung}
+        assert transition.set_overrides == {Role.IMPLEMENTER: case.rung}

@@ -23,6 +23,7 @@ class _StepModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     quota_windows: list[QuotaWindowStep] = Field(default_factory=list)
+    release_fifo: str = ""
 
 
 class NewTaskSpec(_StepModel):
@@ -45,7 +46,6 @@ class AcceptStep(_StepModel):
     uncommitted: str = ""
     corrupt_report: bool = False
     stall_after_report: bool = False
-    release_fifo: str = ""
     triage_title: str = "fake triage"
     triage_complexity: ComplexityName = "normal"
 

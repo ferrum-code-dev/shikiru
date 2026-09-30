@@ -257,7 +257,7 @@ def test_verify_changes_requested_at_escalate_after_keeps_the_new_iterations_con
     assert transition.counters.consults == 0
 
 
-def test_verify_changes_requested_bumping_the_rung_clears_an_operator_override() -> None:
+def test_verify_changes_requested_bumping_the_rung_clears_the_observed_override() -> None:
     override = Rung(agent="claude", model="haiku", effort=None)
     task = make_task(
         step=Step.VERIFY,
@@ -267,7 +267,8 @@ def test_verify_changes_requested_bumping_the_rung_clears_an_operator_override()
 
     transition = _next(task, make_verdict(decision="changes_requested"))
 
-    assert transition.overrides == {}
+    assert transition.cleared_overrides == {Role.IMPLEMENTER: override}
+    assert transition.set_overrides == {}
 
 
 def test_verify_changes_requested_at_the_top_of_the_ladder_keeps_counting() -> None:

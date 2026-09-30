@@ -128,9 +128,13 @@ def _read_release(release_fifo: str) -> None:
     Path(release_fifo).read_text()
 
 
-async def _report(context: ScriptContext, step: TurnStep, prompt: str, current_turn: Path) -> None:
-    if isinstance(step, AcceptStep) and step.release_fifo:
+async def _await_release(step: TurnStep) -> None:
+    if step.release_fifo:
         await asyncio.to_thread(_read_release, step.release_fifo)
+
+
+async def _report(context: ScriptContext, step: TurnStep, prompt: str, current_turn: Path) -> None:
+    await _await_release(step)
     _emit({"event": _EVENT_TOOL_STARTED, "name": _REPORT_TOOL_NAME, "detail": _REPORT_TOOL_DETAIL})
     await submit_scripted_report(context, step, prompt)
     if isinstance(step, AcceptStep) and step.corrupt_report:
@@ -171,6 +175,7 @@ async def _run_turn(session_id: str, prompt: str, compact_at_pct: float | None) 
     if isinstance(step, StallStep):
         await asyncio.Event().wait()
     if isinstance(step, FailStep):
+        await _await_release(step)
         _failure(step)
         return 0
     if isinstance(step, NoReportStep):

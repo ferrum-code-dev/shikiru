@@ -46,10 +46,10 @@ def reset_for_integration_attempt(counters: Counters) -> Counters:
 
 @dataclass(frozen=True)
 class RungMove:
-    """The new `rung_index`, `overrides` and `counters` after moving `role` up one rung."""
+    """The new `rung_index`, the override to clear and `counters` after moving a role up."""
 
     rung_index: dict[Role, int]
-    overrides: dict[Role, Rung]
+    cleared_overrides: dict[Role, Rung]
     counters: Counters
 
 
@@ -60,8 +60,10 @@ def move_up(
 
     Comparing against the resolved rung, not `ladder[rung_index]`, matters because that rung may
     be an operator override; `different_agent=True` then skips ladder rungs on that override's
-    agent too. Moving up clears `role`'s override: an automatic move replaces a manual pin, since
-    keeping the override would make the move a no-op and could loop recovery on a blocked agent.
+    agent too. Moving up clears `role`'s override as observed in `task`: an automatic move replaces
+    a manual pin, since keeping it would make the move a no-op and could loop recovery on a
+    blocked agent. The store clears it only while it still equals that observed rung, so a pin the
+    operator set since survives.
     For the Implementer, `rejections_on_rung` also resets, since it counts rework at one rung.
 
     Returns `None` once no further rung satisfies `different_agent` above the current one; the
@@ -76,10 +78,9 @@ def move_up(
             continue
         rung_index = dict(task.rung_index)
         rung_index[role] = index
-        overrides = dict(task.overrides)
-        overrides.pop(role, None)
+        cleared = {role: task.overrides[role]} if role in task.overrides else {}
         counters = (
             reset_for_rung_change(task.counters) if role is Role.IMPLEMENTER else task.counters
         )
-        return RungMove(rung_index=rung_index, overrides=overrides, counters=counters)
+        return RungMove(rung_index=rung_index, cleared_overrides=cleared, counters=counters)
     return None

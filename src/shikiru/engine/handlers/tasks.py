@@ -15,8 +15,9 @@ from shikiru.domain.commands import (
     Submit,
 )
 from shikiru.domain.events import EventKind
+from shikiru.domain.ladder import reset_for_rung_change
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Hold, Status
+from shikiru.domain.tasks import Hold, Role, Status
 from shikiru.engine.handlers.base import (
     HandlerContext,
     interrupt_task,
@@ -202,12 +203,14 @@ class SetRungHandler:
     async def handle(self, command: SetRung) -> dict[str, object]:
         task = require_task(self._context, command.task_id)
         reject_terminal(task)
-        overrides = dict(task.overrides)
-        old = overrides.get(command.role)
-        overrides[command.role] = command.rung
+        old = task.overrides.get(command.role)
+        counters = task.counters
+        if command.role is Role.IMPLEMENTER and old != command.rung:
+            counters = reset_for_rung_change(counters)
         transition = dataclasses.replace(
             Transition.stay(task, step=task.step, status=task.status),
-            overrides=overrides,
+            counters=counters,
+            set_overrides={command.role: command.rung},
         )
         self._context.tasks.apply_transition(task.id, transition)
         self._context.events.append(

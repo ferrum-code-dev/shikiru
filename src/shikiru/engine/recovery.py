@@ -187,7 +187,7 @@ class TurnRecovery:
             Transition.stay(task, step=step, status=task.status),
             counters=move.counters,
             rung_index=move.rung_index,
-            overrides=move.overrides,
+            cleared_overrides=move.cleared_overrides,
         )
         updated = await self._writer.apply(task, transition, None)
         new_rung = pick_rung(updated, role, self._settings)

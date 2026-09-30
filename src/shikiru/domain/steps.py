@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from shikiru.domain.ladder import move_up, reset_for_integration_attempt, reset_for_new_iteration
@@ -55,7 +55,8 @@ class Transition:
     iteration: int
     counters: Counters
     rung_index: dict[Role, int]
-    overrides: dict[Role, Rung] | None = None
+    set_overrides: dict[Role, Rung] = field(default_factory=dict)
+    cleared_overrides: dict[Role, Rung] = field(default_factory=dict)
     complexity: ComplexityName | None = None
     title: str | None = None
     status_reason: StatusReason | None = None
@@ -151,13 +152,13 @@ def _changes_requested(task: Task, settings: Settings) -> Transition:
         return Transition.escalate(task, EscalationReason.ITERATIONS_EXHAUSTED, step=Step.VERIFY)
     rejections = task.counters.rejections_on_rung + 1
     rung_index = dict(task.rung_index)
-    overrides = None
+    cleared_overrides: dict[Role, Rung] = {}
     counters = task.counters.model_copy(update={"rejections_on_rung": rejections})
     if rejections >= settings.roles.implementer.escalate_after:
         move = move_up(task, Role.IMPLEMENTER, settings)
         if move is not None:
             rung_index = move.rung_index
-            overrides = move.overrides
+            cleared_overrides = move.cleared_overrides
             counters = move.counters
     counters = reset_for_new_iteration(counters)
     return Transition(
@@ -166,7 +167,7 @@ def _changes_requested(task: Task, settings: Settings) -> Transition:
         iteration=task.iteration + 1,
         counters=counters,
         rung_index=rung_index,
-        overrides=overrides,
+        cleared_overrides=cleared_overrides,
     )
 
 

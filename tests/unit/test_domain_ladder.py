@@ -82,7 +82,7 @@ class _MoveUpCase:
     role: Role
     different_agent: bool
     expected_index: int | None
-    expected_overrides: dict[Role, Rung]
+    expected_cleared: dict[Role, Rung]
     expected_counters: Counters
 
 
@@ -157,7 +157,7 @@ class _MoveUpCase:
                 Role.IMPLEMENTER,
                 False,
                 1,
-                {},
+                {Role.IMPLEMENTER: _ACTIVE_OVERRIDE},
                 Counters(rejections_on_rung=0, consults=2),
             ),
             id="clears-override-and-resets-implementer-rejections",
@@ -186,7 +186,7 @@ def test_move_up_selects_the_next_allowed_rung_and_updates_role_state(case: _Mov
         return
     assert move is not None
     assert move.rung_index[case.role] == case.expected_index
-    assert move.overrides == case.expected_overrides
+    assert move.cleared_overrides == case.expected_cleared
     assert move.counters == case.expected_counters
 
 

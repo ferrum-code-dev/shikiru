@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from shikiru.config.settings import AgentConfig, RepoConfig
-from shikiru.domain.commands import Submit
+from shikiru.domain.commands import SetRung, Submit
 from shikiru.domain.tasks import Role
 from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.evidence import EvidenceCollector
 from shikiru.engine.flow import TaskFlow
+from shikiru.engine.handlers.base import HandlerContext
+from shikiru.engine.handlers.tasks import SetRungHandler
 from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import (
     IntegrationMetadata,
@@ -218,3 +220,28 @@ def build_flow(
         escalations=escalations_store,
         titles=system.titles,
     )
+
+
+async def apply_set_rung(env: EngineEnv, flow_env: FlowEnv, command: SetRung) -> None:
+    """Run the operator's `set_rung` handler against the same stores a flow is using."""
+
+    async def unused(_task_id: str) -> None:
+        raise AssertionError
+
+    async def unused_task(_task: Task) -> None:
+        raise AssertionError
+
+    context = HandlerContext(
+        tasks=env.tasks,
+        escalations=flow_env.escalations,
+        events=flow_env.events,
+        runs=env.runs,
+        project_root=env.project_root,
+        cancel_task=unused,
+        start_task=unused,
+        finish_task=unused_task,
+        stop_engine=lambda: None,
+        refresh_titles=flow_env.titles.refresh,
+        atomically=lambda: transaction(env.connection),
+    )
+    await SetRungHandler(context).handle(command)
