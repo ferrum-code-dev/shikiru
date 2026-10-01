@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import json
 import os
 import signal
+import sys
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
@@ -179,3 +181,40 @@ async def test_stop_returns_only_after_the_engine_released_its_lock(
 
         await project.cli("start")
         assert project.engine_pid() not in {None, engine_pid}
+
+
+async def test_a_second_signal_ends_the_engine_by_force_and_a_restart_resumes(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with engine_project(tmp_path, tmux_server) as project:
+        engine = await RUNNER.spawn(
+            [sys.executable, "-m", "shikiru", "--project", str(project.root), *SETTINGS, "engine"],
+            cwd=project.root,
+            env=project.environment,
+        )
+        try:
+            await wait_until(lambda: project.engine_pid() == engine.pid, timeout=WAIT_SECONDS)
+            await project.cli("submit", "Implement task A1 from tasks/plan.md")
+            await wait_until(lambda: project.turn_identity() is not None, timeout=WAIT_SECONDS)
+            identity = project.turn_identity()
+            assert identity is not None
+
+            os.kill(engine.pid, signal.SIGSTOP)
+            os.kill(engine.pid, signal.SIGTERM)
+            os.kill(engine.pid, signal.SIGINT)
+            os.kill(engine.pid, signal.SIGCONT)
+            returncode = await asyncio.wait_for(engine.wait(), timeout=WAIT_SECONDS)
+        finally:
+            await engine.stop(grace=0)
+
+        assert returncode != 0
+        assert project.engine_pid() is None
+        assert not RUNNER.group_is_running(identity.pid)
+        assert project.task_status() is Status.RUNNING
+
+        await project.cli("start")
+        await wait_until(
+            lambda: project.turn_identity() not in {None, identity}, timeout=WAIT_SECONDS
+        )
+        await wait_until(project.open_gate, timeout=WAIT_SECONDS)
+        await wait_until(lambda: project.task_status() is Status.DONE, timeout=WAIT_SECONDS)
