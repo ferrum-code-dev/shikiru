@@ -102,6 +102,7 @@ def transition_for_resolution(
         set_overrides[role] = rung
         counters = reset_for_rung_change(counters)
     return Transition(
+        base=task,
         step=target_step,
         status=status,
         iteration=task.iteration,

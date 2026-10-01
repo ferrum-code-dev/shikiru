@@ -164,8 +164,8 @@ CREATE TABLE tasks (
   status TEXT NOT NULL, step TEXT, status_reason TEXT,
   holds TEXT NOT NULL DEFAULT '[]',               -- ["paused","intervention"]
   iteration INTEGER NOT NULL DEFAULT 0,
-  counters TEXT NOT NULL DEFAULT '{}',            -- rejections_on_rung, consults, conflict_rounds
-  rung_index TEXT NOT NULL DEFAULT '{}',          -- {role: n}
+  counters TEXT NOT NULL DEFAULT '{}',            -- rejections_on_rung, consults, conflict_rounds; a turn's transition writes only what it changed, an operator rung wins (03 §3)
+  rung_index TEXT NOT NULL DEFAULT '{}',          -- {role: n}; never overwritten from a stale snapshot (03 §3)
   overrides TEXT NOT NULL DEFAULT '{}',           -- {role: {agent, model, effort}}
   repo TEXT,                                      -- {base, base_ref, base_sha, branch}; null until the task root exists
   slot INTEGER, window_id TEXT, panes TEXT NOT NULL DEFAULT '{}',

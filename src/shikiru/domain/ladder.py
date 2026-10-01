@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
     from shikiru.config.settings import Settings
 
+REJECTIONS_FIELD = "rejections_on_rung"
+
 
 def _ladder_for(role: Role, task: Task, settings: Settings) -> list[Rung]:
     if role is Role.LEADER:
@@ -31,7 +33,7 @@ def pick_rung(task: Task, role: Role, settings: Settings) -> Rung:
 
 def reset_for_rung_change(counters: Counters) -> Counters:
     """`rejections_on_rung` resets whenever the Implementer's rung changes (03 §1.1)."""
-    return counters.model_copy(update={"rejections_on_rung": 0})
+    return counters.model_copy(update={REJECTIONS_FIELD: 0})
 
 
 def reset_for_new_iteration(counters: Counters) -> Counters:

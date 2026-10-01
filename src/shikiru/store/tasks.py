@@ -334,12 +334,16 @@ class TaskStore:
     def apply_transition(self, task_id: str, transition: Transition) -> None:
         """Persist `transition`'s step, status, iteration, counters, rungs and triage results.
 
-        Overrides are merged into the stored row: the transition sets its own roles and clears a
-        role only while it still holds the rung the transition saw, so a concurrent operator
-        override survives the turn that was running (03 §2-3, §6-7). Complexity and title are
-        written only when the transition sets them.
+        The decision is reconciled with the stored row in the same write
+        (`Transition.rebased_onto`): only what it changed relative to its `base` is applied, and a
+        rung the operator set since wins over the turn's rung move and rejection count (03 §3).
+        Overrides merge the same way: the transition sets its own roles and clears a role only
+        while it still holds the rung the transition saw. Complexity and title are written only
+        when the transition sets them.
         """
-        overrides = self._merged_overrides(task_id, transition)
+        current = self.require(task_id)
+        overrides = self._merged_overrides(current, transition)
+        transition = transition.rebased_onto(current)
         now = format_timestamp(self._clock.now())
         status = transition.status.value
         self._connection.execute(
@@ -378,11 +382,11 @@ class TaskStore:
             ),
         )
 
-    def _merged_overrides(self, task_id: str, transition: Transition) -> dict[Role, Rung]:
-        stored = self.require(task_id).overrides
+    @staticmethod
+    def _merged_overrides(current: Task, transition: Transition) -> dict[Role, Rung]:
         kept = {
             role: rung
-            for role, rung in stored.items()
+            for role, rung in current.overrides.items()
             if transition.cleared_overrides.get(role) != rung
         }
         return {**kept, **transition.set_overrides}

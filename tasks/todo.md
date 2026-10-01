@@ -115,7 +115,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [ ] Task 74m: Regression power of the Codex sandbox and reconcile fixes
 - [ ] Task 74n: Documentation and evidence corrections
 - [ ] Task 74o: Test-value audit of the older suite
-- [ ] Task 74q: A turn completion never overwrites operator-owned task state (F10)
+- [x] Task 74q: A turn completion never overwrites operator-owned task state (F10)
 - [ ] Task 74r: The no-literals rule is enforced like the no-comments rule (F22)
 - [ ] Task 74s: Engine start, tmux and process hygiene (stability)
 - [ ] Task 74t: Bounded resources and configurable timeouts (stability)

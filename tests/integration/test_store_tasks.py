@@ -105,6 +105,7 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(
     task = _submit(connection, clock, "t")
 
     transition = Transition(
+        base=task,
         step=Step.IMPLEMENT,
         status=Status.RUNNING,
         iteration=2,
@@ -125,6 +126,48 @@ def test_transition_round_trips_step_status_counters_rungs_and_overrides(
     assert reloaded.overrides == transition.set_overrides
     assert reloaded.started_at == clock.now()
     assert reloaded.status_reason is StatusReason.SUPERSEDED
+
+
+def test_a_transition_decided_on_a_stale_snapshot_keeps_what_changed_since(
+    connection: Connection,
+) -> None:
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    pinned = Rung(agent="codex", model="sol", effort="high")
+    task = _submit(connection, clock, "t")
+    store.apply_transition(
+        task.id,
+        dataclasses.replace(
+            Transition.stay(task, step=Step.IMPLEMENT),
+            counters=Counters(rejections_on_rung=2),
+        ),
+    )
+    snapshot = store.require(task.id)
+    store.apply_transition(
+        task.id,
+        dataclasses.replace(
+            Transition.stay(snapshot, step=Step.IMPLEMENT),
+            counters=Counters(rejections_on_rung=0, consults=1),
+            set_overrides={Role.IMPLEMENTER: pinned},
+        ),
+    )
+
+    store.apply_transition(
+        task.id,
+        dataclasses.replace(
+            Transition.stay(snapshot, step=Step.VERIFY),
+            iteration=snapshot.iteration + 1,
+            counters=Counters(rejections_on_rung=3),
+            rung_index={Role.IMPLEMENTER: 1},
+        ),
+    )
+
+    stored = store.require(task.id)
+    assert stored.step is Step.VERIFY
+    assert stored.iteration == snapshot.iteration + 1
+    assert stored.counters == Counters(rejections_on_rung=0, consults=1)
+    assert stored.rung_index == {}
+    assert stored.overrides == {Role.IMPLEMENTER: pinned}
 
 
 def test_transition_sets_the_mode_in_the_same_write(connection: Connection) -> None:
@@ -206,7 +249,7 @@ def test_apply_transition_sets_finished_at_once_for_a_terminal_status(
     store = TaskStore(connection, clock)
     task = _submit(connection, clock, "t")
     done = Transition(
-        step=None, status=Status.DONE, iteration=0, counters=Counters(), rung_index={}
+        base=task, step=None, status=Status.DONE, iteration=0, counters=Counters(), rung_index={}
     )
 
     store.apply_transition(task.id, done)
@@ -278,6 +321,7 @@ def test_list_active_and_all_preserve_status_partition(connection: Connection) -
     store.apply_transition(
         running.id,
         Transition(
+            base=running,
             step=Step.IMPLEMENT,
             status=Status.RUNNING,
             iteration=1,
@@ -300,6 +344,7 @@ def test_scope_change_rejects_missing_task_dependency_before_mutating(
     parent = _submit(connection, clock, "parent")
     dependent = _submit(connection, clock, "dependent", depends_on=[parent.id])
     transition = Transition(
+        base=parent,
         step=None,
         status=Status.DONE,
         iteration=0,
@@ -340,6 +385,7 @@ def test_scope_change_resolves_forward_sibling_dependencies_atomically(
     dependent = _submit(connection, clock, "dependent", depends_on=[parent.id])
     unrelated = _submit(connection, clock, "unrelated")
     transition = Transition(
+        base=parent,
         step=None,
         status=Status.DONE,
         iteration=0,
@@ -387,6 +433,7 @@ def test_scope_change_that_closes_a_dependency_cycle_writes_nothing(
     parent = _submit(connection, clock, "parent")
     dependent = _submit(connection, clock, "dependent", depends_on=[parent.id])
     transition = Transition(
+        base=parent,
         step=None,
         status=Status.DONE,
         iteration=0,

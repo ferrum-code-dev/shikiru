@@ -17,7 +17,7 @@ from shikiru.domain.commands import ResolutionKind, SetRung
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, StatusReason, Step
+from shikiru.domain.tasks import Counters, EscalationReason, Mode, Role, Status, StatusReason, Step
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.workspace.git import Git
@@ -514,8 +514,110 @@ async def test_a_rung_set_during_verify_survives_the_rejection_that_moves_the_la
 
     final = engine_env.tasks.require(task.id)
     assert final.overrides == {pinned_role: _PINNED_RUNG}
-    assert final.rung_index[Role.IMPLEMENTER] == 1
+    assert final.rung_index.get(Role.IMPLEMENTER, 0) == 0
     assert _role_models(flow_env, task.id, pinned_role)[-1] == "fake-pinned"
+
+
+@dataclass(frozen=True)
+class _InFlightPinCase:
+    gated_role: Role
+    escalate_after: int
+    max_iterations: int
+    starting_iteration: int
+    implementer_steps: list[dict[str, object]]
+    leader_steps: list[dict[str, object]]
+    implementer_models: list[str]
+
+
+_GATE: dict[str, object] = {"release_fifo": "{fifo}"}
+_ACCEPT: dict[str, object] = {"kind": "accept"}
+_REJECT: dict[str, object] = {"kind": "changes_requested"}
+_IN_FLIGHT_PIN_CASES = {
+    "accepted_implementation": _InFlightPinCase(
+        gated_role=Role.IMPLEMENTER,
+        escalate_after=5,
+        max_iterations=5,
+        starting_iteration=0,
+        implementer_steps=[{**_ACCEPT, **_GATE}],
+        leader_steps=[_ACCEPT],
+        implementer_models=["fake-1"],
+    ),
+    "rejected_verification": _InFlightPinCase(
+        gated_role=Role.LEADER,
+        escalate_after=5,
+        max_iterations=5,
+        starting_iteration=0,
+        implementer_steps=[_ACCEPT, _ACCEPT],
+        leader_steps=[{**_REJECT, **_GATE}, _ACCEPT],
+        implementer_models=["fake-1", "fake-pinned"],
+    ),
+    "rung_escalating_rejection": _InFlightPinCase(
+        gated_role=Role.LEADER,
+        escalate_after=1,
+        max_iterations=5,
+        starting_iteration=0,
+        implementer_steps=[_ACCEPT, _ACCEPT],
+        leader_steps=[{**_REJECT, **_GATE}, _ACCEPT],
+        implementer_models=["fake-1", "fake-pinned"],
+    ),
+    "iterations_exhausted_escalation": _InFlightPinCase(
+        gated_role=Role.LEADER,
+        escalate_after=5,
+        max_iterations=1,
+        starting_iteration=1,
+        implementer_steps=[_ACCEPT],
+        leader_steps=[{**_REJECT, **_GATE}],
+        implementer_models=["fake-1"],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", _IN_FLIGHT_PIN_CASES.values(), ids=_IN_FLIGHT_PIN_CASES.keys())
+async def test_a_rung_set_during_a_turn_is_never_undone_by_the_turn_completing(
+    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path, case: _InFlightPinCase
+) -> None:
+    release = tmp_path / "release-turn"
+    os.mkfifo(release)
+    settings = flow_settings(escalate_after=case.escalate_after, max_iterations=case.max_iterations)
+    second_rung = Rung(agent=FAKE_AGENT_NAME, model="fake-2", effort=None)
+    implementer = settings.roles.implementer.model_copy(update={"ladder": [FAKE_RUNG, second_rung]})
+    settings = settings.model_copy(
+        update={"roles": settings.roles.model_copy(update={"implementer": implementer})}
+    )
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    engine_env.tasks.apply_transition(
+        task.id,
+        dataclasses.replace(
+            Transition.stay(task, step=Step.IMPLEMENT),
+            iteration=case.starting_iteration,
+            counters=Counters(rejections_on_rung=1),
+        ),
+    )
+
+    def gated(steps: list[dict[str, object]]) -> list[dict[str, object]]:
+        return [
+            {key: str(release) if value == "{fifo}" else value for key, value in step.items()}
+            for step in steps
+        ]
+
+    await set_role_script(tmux_server, Role.IMPLEMENTER, gated(case.implementer_steps))
+    await set_role_script(tmux_server, Role.LEADER, gated(case.leader_steps))
+    flow_env = build_flow(engine_env, settings)
+    flow_task = asyncio.create_task(flow_env.flow.run(task.id))
+    await wait_until(lambda: bool(_role_models(flow_env, task.id, case.gated_role)), timeout=30)
+
+    await apply_set_rung(
+        engine_env, flow_env, SetRung(task_id=task.id, role=Role.IMPLEMENTER, rung=_PINNED_RUNG)
+    )
+    await asyncio.to_thread(release.write_text, "go")
+    await asyncio.wait_for(flow_task, timeout=_TIMEOUT_SECONDS)
+
+    final = engine_env.tasks.require(task.id)
+    assert final.overrides == {Role.IMPLEMENTER: _PINNED_RUNG}
+    assert final.counters.rejections_on_rung == 0
+    assert final.rung_index.get(Role.IMPLEMENTER, 0) == 0
+    assert _implementer_models(flow_env, task.id) == case.implementer_models
 
 
 _REJECTIONS_BEFORE_PIN = 3

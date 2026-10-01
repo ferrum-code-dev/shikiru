@@ -488,4 +488,4 @@ async def test_a_rung_set_during_a_failing_turn_survives_the_recovery_move(
 
     final = engine_env.tasks.require(task_id)
     assert final.overrides == {pinned_role: _PINNED_RUNG}
-    assert final.rung_index[Role.IMPLEMENTER] == 1
+    assert final.rung_index.get(Role.IMPLEMENTER, 0) == 0

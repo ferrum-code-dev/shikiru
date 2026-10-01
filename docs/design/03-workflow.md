@@ -259,7 +259,7 @@ The `TurnLoop` passes every non-`Completed` `TurnResult` to the pure `recovery.d
 
 **Rungs**:
 - The resolved rung is `overrides[role]` if set, otherwise the ladder at `rung_index[role]`.
-- A transition never writes the `overrides` of the snapshot it was decided on. The store merges it into the stored row in the same write: it sets the roles it names (`set_rung`, `retry --rung`) and clears a role (an automatic `move_up`) only while the stored override is still the one the decision saw. An operator `rung` acknowledged while a turn runs therefore survives that turn, whether it completes, is rejected at `escalate_after` or recovers to another rung, and applies to the next.
+- A transition carries the task snapshot it was decided on and never writes that snapshot back. The store reconciles it with the stored row in the same write: it applies only the fields the decision changed relative to the snapshot (iteration, each counter, each role's `rung_index`; `overrides` are merged: the decision sets the roles it names and clears a role only while the stored override is still the one it saw). An operator `set_rung` acknowledged while a turn runs therefore survives that turn, whether it completes, is rejected or escalates, and applies to the next. When the operator repinned a role during the turn, the operator's choice wins over the turn's own rung move for that role: its `rung_index` stays as stored, and for the Implementer `rejections_on_rung` stays at the value `set_rung` reset it to, since the turn's rejection was earned on the previous rung.
 - The Leader uses `roles.leader.ladder`. The Implementer uses `roles.implementer.complexity.<c>.ladder`, falling back to `roles.implementer.ladder`.
 - Each rung change emits `rung_changed`.
 

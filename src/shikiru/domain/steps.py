@@ -6,7 +6,12 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from shikiru.domain.ladder import move_up, reset_for_integration_attempt, reset_for_new_iteration
+from shikiru.domain.ladder import (
+    REJECTIONS_FIELD,
+    move_up,
+    reset_for_integration_attempt,
+    reset_for_new_iteration,
+)
 from shikiru.domain.reports import (
     ConsultAnswer,
     ImplementationReport,
@@ -47,8 +52,13 @@ ACTING_ROLE: dict[Step, Role] = {
 
 @dataclass(frozen=True)
 class Transition:
-    """The task's new step/status/iteration/counters/rungs, plus side effects as data."""
+    """The task's new step/status/iteration/counters/rungs, plus side effects as data.
 
+    `base` is the task snapshot the decision was computed from; `rebased_onto` reconciles the
+    decision with the row as it is when the decision is written (03 §3).
+    """
+
+    base: Task
     step: Step | None
     status: Status
     iteration: int
@@ -64,10 +74,46 @@ class Transition:
     repoint_dependents: bool = False
     enqueue_new_tasks: bool = False
 
+    def rebased_onto(self, current: Task) -> Transition:
+        """Keep what changed since `base` and apply only what this decision itself changed.
+
+        A role whose override differs between `base` and `current` was repinned by the operator
+        while the turn ran: its rung index and, for the Implementer, `rejections_on_rung` stay as
+        stored, so neither the turn's rejection nor an automatic move undoes the pin. Every other
+        iteration, counter and rung index takes the decision's value only where the decision
+        changed it relative to `base`.
+        """
+        repinned = {
+            role for role in Role if current.overrides.get(role) != self.base.overrides.get(role)
+        }
+        changed = {
+            name: value
+            for name, value in self.counters
+            if value != getattr(self.base.counters, name)
+            and not (name == REJECTIONS_FIELD and Role.IMPLEMENTER in repinned)
+        }
+        rung_index = dict(current.rung_index)
+        rung_index.update(
+            {
+                role: index
+                for role, index in self.rung_index.items()
+                if role not in repinned and index != self.base.rung_index.get(role)
+            }
+        )
+        return dataclasses.replace(
+            self,
+            iteration=self.iteration
+            if self.iteration != self.base.iteration
+            else current.iteration,
+            counters=current.counters.model_copy(update=changed),
+            rung_index=rung_index,
+        )
+
     @staticmethod
     def stay(task: Task, *, step: Step | None, status: Status = Status.RUNNING) -> Transition:
         """Build a transition that keeps every field of `task` except `step` and `status`."""
         return Transition(
+            base=task,
             step=step,
             status=status,
             iteration=task.iteration,
@@ -165,6 +211,7 @@ def _changes_requested(task: Task, settings: Settings) -> Transition:
             counters = move.counters
     counters = reset_for_new_iteration(counters)
     return Transition(
+        base=task,
         step=Step.IMPLEMENT,
         status=Status.RUNNING,
         iteration=task.iteration + 1,
