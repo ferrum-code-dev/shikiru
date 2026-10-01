@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import shlex
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import NotifyConfig
-from shikiru.domain.commands import Submit
+from shikiru.domain.commands import Resume, Submit
 from shikiru.domain.events import STOP_REASON_KEY, EventKind
-from shikiru.domain.tasks import Mode, Role, Status
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
 from shikiru.engine.tick_guard import EngineFaultLimitError
+from shikiru.engine.turn_processes import turn_pid_path
+from shikiru.paths import run_dir, task_root
+from shikiru.private import make_private_dir
+from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
@@ -22,6 +29,7 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import SessionView, session_name
+from shikiru.workspace.github import GitHub
 from tests.integration.test_engine_daemon import engine_settings, wait_for_command
 from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, build_tmux, set_script
@@ -30,10 +38,12 @@ from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable
     from pathlib import Path
 
+    from shikiru.domain.tasks import Task
     from shikiru.engine.daemon import Engine
+    from tests.support.github import FakeGitHub
     from tests.support.tmux import TmuxServer
 
 _TARGET = exact_target(session_name("test"))
@@ -85,9 +95,11 @@ async def _engine(
     hook: str = "",
     flaky: tuple[int, Exception] | None = None,
     fault_limit: int | None = None,
+    max_parallel: int = 1,
+    seed: Callable[[Database, FakeClock, Path], Awaitable[None]] | None = None,
 ) -> AsyncGenerator[_Harness]:
     clock = FakeClock(TASK_CREATED_AT)
-    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=max_parallel)
     orchestration = settings.orchestration
     if fault_limit is not None:
         faults = orchestration.faults.model_copy(update={"unexpected_fault_limit": fault_limit})
@@ -101,6 +113,8 @@ async def _engine(
     if flaky is not None:
         tmux = _FlakyTmux(tmux_server, *flaky)
     engine = build_engine(project, settings, clock=clock, tmux=tmux, registry=build_registry())
+    if seed is not None:
+        await seed(Database(project / ".shikiru" / "state.db"), clock, project)
     harness = _Harness(project, engine, clock)
     try:
         yield harness
@@ -109,6 +123,49 @@ async def _engine(
             engine.request_stop()
             await harness.until(harness.task.done)
         harness.connection.close()
+
+
+async def _seed_tasks(
+    database: Database, clock: FakeClock, project: Path, *, held_running: bool = False
+) -> None:
+    connection = database.connect()
+    try:
+        tasks = TaskStore(connection, clock)
+        events = EventLog(connection, clock)
+        queue = CommandQueue(connection, clock)
+
+        def insert(title: str) -> Task:
+            queued = queue.append(Submit(title=title, request=title))
+            assert isinstance(queued.command, Submit)
+            return tasks.insert_from_submit(queued.command)
+
+        cancelled = insert("cancelled")
+        tasks.apply_transition(
+            cancelled.id, Transition.stay(cancelled, step=Step.IMPLEMENT, status=Status.CANCELLED)
+        )
+        make_private_dir(task_root(project, cancelled.id))
+        url = await GitHub(SubprocessRunner()).create_pull_request(
+            project, base="main", head="shikiru/T-1-cancelled", title="cancelled", body="summary"
+        )
+        events.append(
+            EventKind.PR_OPENED,
+            task_id=cancelled.id,
+            message="opened",
+            data={"url": url, "branch": "shikiru/T-1-cancelled", "commits": ["c1"]},
+        )
+        running = insert("running")
+        tasks.apply_transition(
+            running.id,
+            dataclasses.replace(
+                Transition.stay(running, step=Step.IMPLEMENT, status=Status.RUNNING), iteration=1
+            ),
+        )
+        tasks.set_slot(running.id, 1)
+        if held_running:
+            tasks.set_holds(running.id, frozenset({Hold.PAUSED}))
+        insert("queued")
+    finally:
+        connection.close()
 
 
 async def _submit_running(harness: _Harness) -> str:
@@ -180,3 +237,66 @@ async def test_an_unrecoverable_stop_records_its_reason_and_notifies(
         stopped = harness.events.since(0, kinds=[EventKind.ENGINE_STOPPED])[0]
         assert "boom" in str(stopped.data[STOP_REASON_KEY])
         assert str(stopped.data[STOP_REASON_KEY]) in payload.read_text()
+
+
+async def _advance(harness: _Harness, seconds: int) -> None:
+    deadline = harness.clock.now() + timedelta(seconds=seconds)
+
+    async def reached() -> bool:
+        if harness.clock.has_pending_sleep():
+            harness.clock.advance(10)
+        return harness.clock.now() >= deadline
+
+    await wait_until(reached, _WAIT_SECONDS)
+
+
+async def test_a_failing_cleanup_does_not_stop_dispatch_or_resume(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    fake_github: FakeGitHub,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_script(monkeypatch, [{"kind": "stall"}])
+
+    async def seed(database: Database, clock: FakeClock, project: Path) -> None:
+        await _seed_tasks(database, clock, project)
+        fake_github.break_pull_requests()
+
+    async with _engine(tmp_path, tmux_server, max_parallel=2, seed=seed) as harness:
+        await harness.until(lambda: harness.runs.get_live("T-2", Role.IMPLEMENTER) is not None)
+        await harness.until(
+            lambda: (
+                "T-3"
+                in [e.task_id for e in harness.events.since(0, kinds=[EventKind.TASK_STARTED])]
+            )
+        )
+
+        faults = harness.events.since(0, kinds=[EventKind.ENGINE_FAULT])
+        assert [fault.task_id for fault in faults] == ["T-1"]
+        assert not harness.task.done()
+
+
+async def test_a_retried_reconcile_never_ends_a_turn_that_started_after_it(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    fake_github: FakeGitHub,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_script(monkeypatch, [{"kind": "stall"}])
+
+    async def seed(database: Database, clock: FakeClock, project: Path) -> None:
+        await _seed_tasks(database, clock, project, held_running=True)
+        fake_github.break_pull_requests()
+
+    async with _engine(tmp_path, tmux_server, max_parallel=2, seed=seed) as harness:
+        await harness.until(lambda: EventKind.ENGINE_FAULT in harness.kinds())
+        harness.queue.append(Resume(task_id="T-2"))
+        await harness.until(lambda: harness.runs.get_live("T-2", Role.IMPLEMENTER) is not None)
+
+        await _advance(harness, 300)
+
+        task = harness.tasks.get("T-2")
+        assert task is not None
+        assert task.status is Status.RUNNING
+        assert harness.runs.get_live("T-2", Role.IMPLEMENTER) is not None
+        assert turn_pid_path(run_dir(tmp_path, "T-2"), Role.IMPLEMENTER).exists()

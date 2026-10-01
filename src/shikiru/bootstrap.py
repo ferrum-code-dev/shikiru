@@ -701,6 +701,7 @@ def build_engine(
             resume_task=task_supervisor.resume_task,
             finish_task=task_finisher.finish_task,
             restore_escalation=escalation_raiser.ensure_actionable,
+            faults=fault_reporter,
             project_root=project_root,
         ),
         notifications=NotificationDelivery(notifier),

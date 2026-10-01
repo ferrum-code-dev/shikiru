@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -10,6 +11,7 @@ from shikiru.domain.events import EventKind
 from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
     from datetime import datetime
     from logging import Logger
 
@@ -67,3 +69,12 @@ class FaultReporter:
             streak.recorded_at = now
             streak.occurrences = 0
         return recoverable
+
+    @asynccontextmanager
+    async def isolate(self, scope: str, *, task_id: str | None = None) -> AsyncGenerator[None]:
+        """Absorb any fault of the block: log it with its traceback and record it for `task_id`."""
+        try:
+            yield
+        except Exception as error:
+            self._logger.exception("%s failed", scope)
+            self.report(error, scope=scope, task_id=task_id)

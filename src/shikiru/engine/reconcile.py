@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.domain.tasks import Task
+    from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.turn_processes import TurnProcesses
     from shikiru.store.tasks import TaskStore
@@ -32,35 +33,54 @@ class Reconciler:
         resume_task: Callable[[str], Awaitable[None]],
         finish_task: Callable[[Task], Awaitable[Path | None]],
         restore_escalation: Callable[[Task], Awaitable[None]],
+        faults: FaultReporter,
         project_root: Path,
     ) -> None:
-        """Resume in-flight tasks, finish terminal ones, restore escalations of escalated ones."""
+        """Resume in-flight tasks, finish terminal ones, restore escalations of escalated ones.
+
+        A fault in one step or task is recorded through `faults`; the rest goes on.
+        """
         self._tasks = tasks
         self._layout = layout
         self._processes = processes
         self._resume_task = resume_task
         self._finish_task = finish_task
         self._restore_escalation = restore_escalation
+        self._faults = faults
         self._project_root = project_root
+        self._orphans_ended = False
 
     async def reconcile(self) -> None:
         """Bring a restarted engine back in line with the persisted state (03 §7).
 
-        Pending commands need nothing here: the engine loop processes them as usual.
+        Pending commands need nothing here: the engine loop processes them as usual. A fault in
+        one step or one task is recorded and never stops the others; orphaned turn processes are
+        ended once per engine start, never after the engine could have started a turn of its own.
         """
         active = self._tasks.list_active()
-        await self._layout.restore(active)
-        await self._processes.end_orphans()
-        for task in self._tasks.list_all():
-            if task.status in _TERMINAL and task_root(self._project_root, task.id).exists():
+        terminal = [
+            task
+            for task in self._tasks.list_all()
+            if task.status in _TERMINAL and task_root(self._project_root, task.id).exists()
+        ]
+        async with self._faults.isolate("reconcile layout"):
+            await self._layout.restore(active)
+        if not self._orphans_ended:
+            self._orphans_ended = True
+            async with self._faults.isolate("reconcile orphaned turns"):
+                await self._processes.end_orphans()
+        for task in terminal:
+            async with self._faults.isolate("reconcile cleanup", task_id=task.id):
                 await self._finish_task(task)
         await self.restore_escalations()
         for task in active:
             if task.status in _IN_FLIGHT and not task.held:
-                await self._resume_task(task.id)
+                async with self._faults.isolate("reconcile resume", task_id=task.id):
+                    await self._resume_task(task.id)
 
     async def restore_escalations(self) -> None:
         """Give every escalated task an open escalation with its packet on disk (03 §7, §8)."""
         for task in self._tasks.list_active():
             if task.status is Status.ESCALATED:
-                await self._restore_escalation(task)
+                async with self._faults.isolate("escalation restore", task_id=task.id):
+                    await self._restore_escalation(task)
