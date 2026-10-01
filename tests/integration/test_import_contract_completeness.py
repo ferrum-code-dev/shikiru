@@ -11,8 +11,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 _PACKAGE = _ROOT / "src" / "shikiru"
 _PLUGIN_SOURCE = "shikiru.plugins.agents"
 _ENGINE_SOURCE = "shikiru.engine"
+_WIDGET_SOURCE = "shikiru.plugins.widgets"
+_DASHBOARD = "shikiru.dashboard"
 _AGENTS = "shikiru.agents"
 _PLUGIN_ALLOWED = frozenset({"agents", "clock", "errors", "process", "plugins"})
+_WIDGET_ALLOWED = frozenset({"dashboard", "ui", "plugins"})
+_WIDGET_ALLOWED_DASHBOARD = frozenset({"contract"})
 _ENGINE_ALLOWED_AGENTS = frozenset({"contracts"})
 _PLUGIN_ALLOWED_AGENTS = frozenset({"contracts", "sdk"})
 
@@ -39,6 +43,9 @@ def _children(package: Path) -> set[str]:
         (_PLUGIN_SOURCE, _PACKAGE, "shikiru", _PLUGIN_ALLOWED),
         (_PLUGIN_SOURCE, _PACKAGE / "agents", _AGENTS, _PLUGIN_ALLOWED_AGENTS),
         (_ENGINE_SOURCE, _PACKAGE / "agents", _AGENTS, _ENGINE_ALLOWED_AGENTS),
+        (_WIDGET_SOURCE, _PACKAGE, "shikiru", _WIDGET_ALLOWED),
+        (_WIDGET_SOURCE, _PACKAGE / "dashboard", _DASHBOARD, _WIDGET_ALLOWED_DASHBOARD),
+        (_WIDGET_SOURCE, _PACKAGE / "plugins", "shikiru.plugins", frozenset({"widgets"})),
     ],
 )
 def test_every_module_is_forbidden_or_explicitly_allowed(

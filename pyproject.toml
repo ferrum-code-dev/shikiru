@@ -196,30 +196,40 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Widget plugins (02 §2): plugins.widgets imports only dashboard.contract and ui"
+name = "Widget plugins (02 §2): plugins.widgets imports only shikiru.dashboard.contract and shikiru.ui"
 type = "forbidden"
 source_modules = ["shikiru.plugins.widgets"]
 forbidden_modules = [
-  "shikiru.config",
-  "shikiru.domain",
-  "shikiru.store",
-  "shikiru.operator",
+  "shikiru.__main__",
+  "shikiru.agents",
   "shikiru.bootstrap",
+  "shikiru.cli",
+  "shikiru.clock",
+  "shikiru.config",
+  "shikiru.dashboard.activity",
   "shikiru.dashboard.app",
+  "shikiru.dashboard.motion",
+  "shikiru.dashboard.palette",
   "shikiru.dashboard.services",
+  "shikiru.dashboard.session_picker",
   "shikiru.dashboard.views",
-  "shikiru.config.loader",
-  "shikiru.store.database",
-  "shikiru.store.tasks",
-  "shikiru.store.commands",
-  "shikiru.store.escalations",
-  "shikiru.store.events",
-  "shikiru.store.quotas",
-  "shikiru.store.runs",
+  "shikiru.dashboard.wizard",
+  "shikiru.domain",
   "shikiru.engine",
-  "shikiru.tmux",
-  "shikiru.workspace",
+  "shikiru.errors",
+  "shikiru.helper",
+  "shikiru.mcp",
+  "shikiru.operator",
+  "shikiru.paths",
+  "shikiru.plugins.agents",
+  "shikiru.private",
   "shikiru.process",
+  "shikiru.prompts",
+  "shikiru.store",
+  "shikiru.telemetry",
+  "shikiru.tmux",
+  "shikiru.view_log",
+  "shikiru.workspace",
 ]
 allow_indirect_imports = "True"
 

@@ -62,7 +62,7 @@ process                                     imports errors
 clock                                       no internal imports
 ───────────────────────────────────────────
 plugins.agents.*  → agents.contracts, agents.sdk, process, clock, errors only; loaded by agents.registry from bootstrap
-plugins.widgets.* → dashboard.contract, ui only (all data arrives as view models through WidgetContext, 06 §5.4)
+plugins.widgets.* → dashboard.contract, ui only (all data arrives as view models through WidgetContext, 06 §5.4); enforced as an exact whitelist
 ```
 
 | Package | Responsibility | Key types |
@@ -127,8 +127,8 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `NotificationDelivery` | Bounded queue and one supervised task delivering notifications off the command loop (06 §5.7) |
 
 **Enforced rules** (by tool, not convention):
-- import-linter: the layers above; the engine boundary (a `forbidden` contract: `engine` may not import `agents.registry`, `agents.sdk` or `agents.testing`, so of the agents packages it imports only `agents.contracts`; it is not a whitelist of every package the engine may import); the widget plugin boundary; the agent plugin boundary; and an `independence` contract so `plugins.agents.claude` and `plugins.agents.codex` never import each other (they share code only through `agents.sdk`);
-- the agent plugin boundary and the engine boundary are denylists, so a new package would pass silently: `tests/integration/test_import_contract_completeness.py` fails when a top-level module under `src/shikiru`, or a module under `shikiru.agents`, is neither on the contract's forbidden list nor in the test's explicitly allowed set, forcing a decision when one is added;
+- import-linter: the layers above; the engine boundary (a `forbidden` contract: `engine` may not import `agents.registry`, `agents.sdk` or `agents.testing`, so of the agents packages it imports only `agents.contracts`; it is not a whitelist of every package the engine may import); the widget plugin boundary (a denylist that names every other top-level package and every `dashboard` module except `contract`, so only `dashboard.contract` and `ui` remain importable); the agent plugin boundary; and an `independence` contract so `plugins.agents.claude` and `plugins.agents.codex` never import each other (they share code only through `agents.sdk`);
+- the widget, agent plugin and engine boundaries are denylists, so a new package would pass silently: `tests/integration/test_import_contract_completeness.py` fails when a top-level module under `src/shikiru`, a module under `shikiru.agents` (agent plugins and engine), a module under `shikiru.dashboard` or `shikiru.plugins` (widgets), is neither on the contract's forbidden list nor in the test's explicitly allowed set, forcing a decision when one is added;
 - ruff `banned-api`: `sqlite3` only in `store`, `subprocess`/`asyncio.create_subprocess_*` only in `process`, and the sleep, wall-clock, monotonic, CPU-time and performance-counter entry points (`time.sleep`, `asyncio.sleep`, `time.time`, `time.monotonic`, `time.perf_counter`, `time.process_time`, `time.thread_time` and their `_ns` forms, `datetime.now`, `utcnow`, `today`) only in `clock`. Per-file exceptions: `process.py` and `clock.py` (own the boundary), `tests/support/waiting.py` (the one place tests poll), the store test helpers and `tests/integration/test_store_database.py`, and the E2E results file name (`tests/e2e/conftest.py`, `tests/integration/test_e2e_results.py`). `store` has no file exemption: its eight `import sqlite3` lines carry a line-level `# noqa: TID251`, so time and subprocess use inside `store` is still rejected;
 - the comment check (`poe comments`, 07 §2.8).
 
@@ -139,33 +139,33 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 ```
 pyproject.toml
 src/shikiru/
-  bootstrap.py  process.py  clock.py  errors.py  paths.py  view_log.py  __main__.py
+  bootstrap.py  process.py  clock.py  errors.py  paths.py  private.py  view_log.py  __main__.py
   config/       settings.py loader.py defaults.toml
-  domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py runs.py fencing.py
+  domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py runs.py fencing.py faults.py motion.py
   store/        database.py migrations/ tasks.py runs.py escalations.py quotas.py events.py commands.py reader.py
   agents/       contracts.py registry.py
     sdk/        turn.py reset_time.py
     testing/    contract_suite.py resume.py
-  workspace/    roots.py caches.py facts.py git.py github.py messages.py reports.py
+  workspace/    roots.py base_refs.py caches.py facts.py git.py github.py messages.py reports.py
   tmux/         client.py session.py layout.py decorator.py
   prompts/      renderer.py templates/
   helper/       helper.py models.py
-  ui/           tokens.py glyphs.py status.py strip.py bubbles.py splash.py gauge.py stream.py
+  ui/           tokens.py age.py glyphs.py status.py strip.py bubbles.py splash.py gauge.py stream.py
   telemetry/    resources.py docker.py
-  engine/       daemon.py tick_guard.py session_guard.py supervisor.py lifecycle.py scheduler.py dependency.py agents.py sessions.py
+  engine/       daemon.py tick_guard.py fault_reporter.py session_guard.py supervisor.py lifecycle.py scheduler.py dependency.py agents.py sessions.py
                 flow.py step_runner.py turn_loop.py acceptance.py turn_context.py turn_execution.py recovery.py
                 monitor.py turns.py turn_processes.py
                 escalation_filing.py evidence.py escalations.py transitions.py task_facts.py history.py events.py
                 takeover.py integration.py integration_turns.py reconcile.py layout_guard.py titles.py cosmetic_decorator.py
                 notifier.py notification_delivery.py pull_request_closing.py
     handlers/   base.py tasks.py operator.py escalations.py engine.py
-  operator/     queries.py commands.py services.py events.py strip_views.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py
+  operator/     queries.py commands.py services.py events.py strip_views.py sessions.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py
   cli/          app.py context.py report.py view.py render.py
   mcp/          server.py
-  dashboard/    app.py contract.py services.py views.py palette.py wizard.py
+  dashboard/    app.py contract.py services.py views.py palette.py wizard.py activity.py motion.py session_picker.py
   plugins/
-    agents/claude/  agent.py turn.py headless.py options.py
-    agents/codex/   agent.py turn.py headless.py options.py home.py quota.py usage.py
+    agents/claude/  agent.py turn.py headless.py options.py context.py hook.py
+    agents/codex/   agent.py turn.py headless.py options.py home.py quota.py usage.py sandbox.py sandbox_probe.py
     widgets/        header.py strips.py escalations.py queue.py dialogue.py usage.py resources.py docker.py
 tests/  unit/ integration/ e2e/ support/ (tmux fixture, fake clock, wait_until) fixtures/ (sample-project, agent samples)
   fake_agent/   test-only package (uv dev dependency) with its own `shikiru.agents` entry point `fake`
