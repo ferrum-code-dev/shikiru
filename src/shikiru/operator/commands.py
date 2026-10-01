@@ -26,7 +26,9 @@ from shikiru.domain.commands import (
     TakeOver,
 )
 from shikiru.domain.tasks import TASK_TITLE_MAX_LENGTH
+from shikiru.errors import DatabaseError
 from shikiru.store.commands import CommandQueue, CommandStatus
+from shikiru.store.database import OperationalDatabaseError
 
 if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
@@ -64,7 +66,10 @@ class Ack(BaseModel):
 
 
 class OperatorCommands:
-    """Append typed commands and wait briefly for a running engine's acknowledgement."""
+    """Append typed commands and wait briefly for a running engine's acknowledgement.
+
+    A database that stays locked past its busy timeout raises `DatabaseError`; nothing is queued.
+    """
 
     def __init__(
         self,
@@ -80,7 +85,11 @@ class OperatorCommands:
 
     async def send(self, command: Command) -> Ack:
         """Queue `command`, returning done/rejected or queued when the engine is down."""
-        queued = self._queue.append(command)
+        try:
+            queued = self._queue.append(command)
+        except OperationalDatabaseError as error:
+            message = f"the state database is busy and the command was not queued: {error}"
+            raise DatabaseError(message) from error
         if not self._engine_up():
             return _queued_ack(queued.id, queued.command, QUEUED_MESSAGE)
         deadline = self._clock.now() + timedelta(seconds=COMMAND_ACK_WAIT_SECONDS)

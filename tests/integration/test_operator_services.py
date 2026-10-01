@@ -11,6 +11,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ConsultAnswer
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, RepoState, Role, Status
+from shikiru.errors import DatabaseError
 from shikiru.operator.commands import (
     COMMAND_ACK_WAIT_SECONDS,
     AckStatus,
@@ -20,6 +21,7 @@ from shikiru.operator.events import EventFeed
 from shikiru.operator.queries import PEEK_TAIL_LINES, OperatorQueries, OperatorQueryError
 from shikiru.paths import run_dir
 from shikiru.store.commands import CommandQueue
+from shikiru.store.database import Database, transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
@@ -92,6 +94,24 @@ async def test_commands_return_done_ack_after_engine_marks_command(
 
     assert ack.status is AckStatus.DONE
     assert ack.result == {"accepted": True}
+
+
+async def test_a_command_queued_while_the_database_is_locked_fails_as_a_shikiru_error(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "state.db")
+    holder = database.connect()
+    client = database.connect()
+    client.execute("PRAGMA busy_timeout = 50")
+    clock = FakeClock(START)
+    commands = OperatorCommands(CommandQueue(client, clock), clock, engine_up=lambda: True)
+
+    with transaction(holder, immediate=True), pytest.raises(DatabaseError):
+        await commands.submit_task("while locked")
+
+    assert CommandQueue(client, clock).pending() == []
+    holder.close()
+    client.close()
 
 
 def _queries(
