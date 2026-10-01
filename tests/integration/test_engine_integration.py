@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
+import signal
 import stat
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,6 +22,7 @@ from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
 from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationMetadata,
+    IntegrationSummary,
     Integrator,
     LocalMerge,
     MergeRequest,
@@ -720,6 +724,7 @@ touch '{seen}'
 sleep 300
 """
 _SHORT_GIT_TIMEOUT_SECONDS = 1.0
+_SCENARIO_WAIT_SECONDS = 10.0
 
 
 async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict(
@@ -774,3 +779,131 @@ async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict
     assert result.commits
     assert conflicts_resolved == []
     assert (project_root / "task.txt").read_text() == "task\n"
+
+
+@dataclass
+class _RebaseScenario:
+    connection: Connection
+    project_root: Path
+    task: Task
+    task_root: Path
+    seen: Path
+    task_sha: str
+    git: Git
+    conflicts_resolved: list[str]
+
+    def integrator(self) -> Integrator:
+        events = EventLog(self.connection, SystemClock())
+
+        async def keep_worktree(task_value: Task) -> None:
+            del task_value
+
+        return Integrator(
+            git=self.git,
+            strategy=_local_merge(self.project_root, SystemClock(), 0, events),
+            base_refs=LocalBaseRefs(),
+            lock=asyncio.Lock(),
+            project_root=self.project_root,
+            tasks=TaskStore(self.connection, SystemClock()),
+            events=events,
+            finish_task=keep_worktree,
+        )
+
+    async def resolve(
+        self, task_value: Task, continue_rebase: Callable[[], Awaitable[None]]
+    ) -> tuple[Task, IntegrationMetadata]:
+        del continue_rebase
+        self.conflicts_resolved.append(task_value.id)
+        return task_value, IntegrationMetadata("resolved")
+
+    async def integrate(self) -> IntegrationSummary:
+        return await self.integrator().run(self.task, self.resolve, IntegrationMetadata("summary"))
+
+    async def assert_rebased_without_a_conflict_turn(self) -> None:
+        result = await self.integrate()
+        assert result.commits
+        assert self.conflicts_resolved == []
+        assert (self.project_root / "task.txt").read_text() == "task\n"
+
+
+async def _rebase_scenario(connection: Connection, tmp_path: Path) -> _RebaseScenario:
+    project_root = await _repo(tmp_path / "project")
+    task, _ = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    (task_root / "task.txt").write_text("task\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (project_root / "other.txt").write_text("other\n")
+    await commit_all(_RUNNER, project_root, "base moves on")
+    git = Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT)
+    task_sha = await git.rev_parse(task_root, "HEAD")
+    hook = project_root / ".git" / "hooks" / "reference-transaction"
+    seen = tmp_path / "seen"
+    hook.write_text(_STUCK_ONCE_HOOK.format(seen=seen))
+    hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
+    return _RebaseScenario(connection, project_root, task, task_root, seen, task_sha, git, [])
+
+
+async def test_a_cancelled_rebase_is_undone_and_not_mistaken_for_a_conflict(
+    connection: Connection, tmp_path: Path
+) -> None:
+    scenario = await _rebase_scenario(connection, tmp_path)
+    running = asyncio.create_task(scenario.integrate())
+    await wait_until(scenario.seen.exists, _SCENARIO_WAIT_SECONDS)
+
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+
+    assert not await scenario.git.is_rebase_in_progress(scenario.task_root)
+    assert await scenario.git.rev_parse(scenario.task_root, "HEAD") == scenario.task_sha
+    await scenario.assert_rebased_without_a_conflict_turn()
+
+
+async def test_a_rebase_left_by_a_killed_engine_is_reset_and_redone(
+    connection: Connection, tmp_path: Path
+) -> None:
+    scenario = await _rebase_scenario(connection, tmp_path)
+    killed = await _RUNNER.spawn(["git", "rebase", "main"], cwd=scenario.task_root)
+    await wait_until(scenario.seen.exists, _SCENARIO_WAIT_SECONDS)
+    os.killpg(killed.pid, signal.SIGKILL)
+    await killed.wait()
+    assert await scenario.git.is_rebase_in_progress(scenario.task_root)
+
+    await scenario.assert_rebased_without_a_conflict_turn()
+
+
+async def test_a_rebase_stopped_on_conflicts_is_still_handed_to_the_conflict_turn(
+    connection: Connection, tmp_path: Path
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, _ = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    (task_root / "README.md").write_text("task\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (project_root / "README.md").write_text("main\n")
+    await commit_all(_RUNNER, project_root, "main change")
+    await _RUNNER.run(["git", "rebase", "main"], cwd=task_root, timeout=_SCENARIO_WAIT_SECONDS)
+    conflicts_resolved: list[str] = []
+
+    async def resolve(
+        task_value: Task, continue_rebase: Callable[[], Awaitable[None]]
+    ) -> tuple[Task, IntegrationMetadata]:
+        conflicts_resolved.append(task_value.id)
+        (task_root / "README.md").write_text("resolved\n")
+        await _RUNNER.run(
+            ["git", "add", "README.md"], cwd=task_root, timeout=_SCENARIO_WAIT_SECONDS
+        )
+        await continue_rebase()
+        return task_value, IntegrationMetadata("resolved")
+
+    scenario = _RebaseScenario(
+        connection, project_root, task, task_root, tmp_path, "", _git(), conflicts_resolved
+    )
+    await scenario.integrator().run(task, resolve, IntegrationMetadata("summary"))
+
+    assert conflicts_resolved == [task.id]
+    assert (project_root / "README.md").read_text() == "resolved\n"
+
+
+def _git() -> Git:
+    return Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT)

@@ -300,6 +300,11 @@ class Git:
         apply_dir = await self._git_path(repo_dir, "rebase-apply")
         return merge_dir.exists() or apply_dir.exists()
 
+    async def unmerged_paths(self, repo_dir: Path) -> list[str]:
+        """Return the paths with unresolved merge conflicts in `repo_dir`."""
+        result = await self._run(repo_dir, "diff", "--name-only", "--diff-filter=U")
+        return [line for line in result.stdout.splitlines() if line]
+
     async def append_to_exclude(self, repo_dir: Path, line: str) -> None:
         """Append `line` to this repo's shared `info/exclude`, unless it is already there."""
         exclude_path = await self._exclude_path(repo_dir)

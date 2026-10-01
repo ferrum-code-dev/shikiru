@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
@@ -18,7 +19,6 @@ from shikiru.workspace.facts import describe_off_branch
 from shikiru.workspace.github import PullRequestState
 
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
@@ -667,17 +667,32 @@ class Integrator:
         await self._continue_rebase(task.id, task_root(self._project_root, task.id))
 
     async def _try_rebase(self, task_dir: Path, base: str) -> bool:
+        if await self._git.is_rebase_in_progress(task_dir):
+            if await self._git.unmerged_paths(task_dir):
+                return True
+            await self._git.rebase_abort(task_dir)
         try:
             await self._git.rebase(task_dir, base)
-        except CommandTimeoutError:
-            if await self._git.is_rebase_in_progress(task_dir):
-                await self._git.rebase_abort(task_dir)
+        except CommandTimeoutError, asyncio.CancelledError:
+            await self._abort_interrupted_rebase(task_dir)
             raise
         except CommandFailed:
             if not await self._git.is_rebase_in_progress(task_dir):
                 raise
             return True
         return False
+
+    async def _abort_interrupted_rebase(self, task_dir: Path) -> None:
+        abort = asyncio.create_task(self._abort_rebase(task_dir))
+        try:
+            await asyncio.shield(abort)
+        except asyncio.CancelledError:
+            await abort
+            raise
+
+    async def _abort_rebase(self, task_dir: Path) -> None:
+        if await self._git.is_rebase_in_progress(task_dir):
+            await self._git.rebase_abort(task_dir)
 
     async def _continue_rebase(self, task_id: str, task_dir: Path) -> None:
         if not await self._git.is_rebase_in_progress(task_dir):
