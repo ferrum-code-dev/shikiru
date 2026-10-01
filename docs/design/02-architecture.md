@@ -48,7 +48,7 @@
 Dependencies point downward only. Each layer is an import-linter `layers` contract. `bootstrap` is the only composition root and may import anything.
 
 ```
-bootstrap                                   build_engine(), build_operator(), build_dashboard()
+bootstrap                                   build_engine(), build_engine_process(), build_operator(), run_dashboard()
 ───────────────────────────────────────────
 cli · mcp · dashboard · agents.testing     interfaces (agents.testing is imported only by tests)
 operator                                    queries, commands, event feed

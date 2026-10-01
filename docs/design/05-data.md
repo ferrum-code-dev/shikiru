@@ -29,6 +29,7 @@ max_parallel = 2
 max_iterations = 5
 integration = "merge"                           # merge | pr
 poll_seconds = 2
+shutdown_seconds = 15                           # orderly stop bound before the engine is ended by force (03 §7)
 dispatch_budget_seconds = 10                    # total wait of one tick for task roots it starts (fetch, copy)
 
 [orchestration.resources]
@@ -46,6 +47,13 @@ pr_wait = 604800                                # an open PR unmerged this long 
 helper = 300                                    # maximum duration for helper turns
 cache_copy = 600                                # one `repo.caches` copy-on-write copy
 git_command = 120                               # one git call (status, worktree add/remove, rebase, merge)
+
+[orchestration.faults]                          # a failed tick is retried with backoff (02 §1)
+backoff_initial_seconds = 2
+backoff_max_seconds = 60
+unexpected_fault_limit = 10                     # consecutive unexpected faults that stop the engine
+stop_notify_seconds = 30                        # time allowed to deliver the final notification
+repeat_notify_seconds = 300                     # one `engine_fault` event per fault per this long
 
 [orchestration.network]                         # remote calls of integration = "pr"
 fetch_timeout_seconds = 30                      # a base fetch (task root build, merged-base check)
@@ -82,6 +90,7 @@ ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
 
 [dashboard]
 widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
+animations = true                               # false renders static frames (06 §6.5)
 docker_refresh_seconds = 5
 docker_timeout_seconds = 5
 repo_status_cache_seconds = 10
@@ -89,6 +98,14 @@ layout = { split = "h", panes = [
   { pane = "system", size = 30 },
   { split = "v", panes = [ { pane = "leader" }, { pane = "implementer" }, { pane = "shell", size = 20 } ] },
 ] }
+
+[dashboard.motion]
+refresh_hz = 4                                  # at most 4
+stream_active_seconds = 10                      # a panel spinner runs this long after the last stream signal
+stamp_flash_milliseconds = 400
+escalation_pulse_hz = 1
+task_event_limit = 50                           # events read per task for the motion state
+merge_event_limit = 20
 
 [dashboard.titles]                              # fields: 06 §5.3
 window = "{task_id} {title:.24}"
@@ -136,7 +153,10 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 | `TURN_STOP_GRACE` | 10 s |
 | `GIT_STOP_GRACE` | 10 s |
 | `START_TIME_TOLERANCE_SECONDS` | 10 s |
-| `NOTIFY_TIMEOUT_SECONDS` | 7200 s |
+| `STDOUT_DRAIN_TIMEOUT` / `STDERR_DRAIN_TIMEOUT` | 2 s / 2 s (03 §4.2) |
+| `STDERR_KEPT_BYTES` | 1 MiB of a process's stderr (04 §2) |
+| `TASK_TITLE_MAX_LENGTH` | 60 characters |
+| `BUSY_TIMEOUT_MS` | 5000 ms (§2) |
 | Escalation evidence | 60 view lines per role |
 | Command ack wait | 10 s |
 | `QUOTA_MARGIN` | 60 s |

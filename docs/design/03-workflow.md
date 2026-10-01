@@ -146,7 +146,7 @@ Each turn process is started in its own process group, which the engine owns: `s
 
 Every helper call run through `SubprocessRunner.run` (git, `gh`, tmux, the agents' version and sandbox probes, doctor probes, notification hooks) follows the same rule for its timeout and cancellation: it leads its own group, and the group is SIGKILLed, so a hook or MCP server a timed-out call started cannot outlive it. The engine's mutating git calls (§6) additionally stop the group gracefully on cancellation and sweep it once git has exited.
 
-**Outside the guarantee.** A descendant that calls `setsid` (or `setpgid` into another group) leaves the turn's group, so neither `stop()` nor orphan cleanup can reach it. Only a cgroup (Linux) or a job object would contain such a process, and Shikiru does not use them: it supports macOS and Linux with plain POSIX process groups. This holds for notification hooks (06 §5.7) as well.
+**Outside the guarantee.** A descendant that calls `setsid` (or `setpgid` into another group) leaves the turn's group, so neither `stop()` nor orphan cleanup can reach it. Only a cgroup (Linux) or a job object would contain such a process, and Shikiru does not use them: it is designed for macOS and Linux with plain POSIX process groups, verified on macOS only (07 §5). This holds for notification hooks (06 §5.7) as well.
 
 ### 4.3 TurnRunner
 
