@@ -31,8 +31,7 @@ CLOCK = SystemClock()
 SAMPLE_SECONDS = 0.3
 SERVICE_SECONDS = 0.5
 DRAIN_POLL_SECONDS = 1.0
-STOP_TIMEOUT_SECONDS = 60.0
-QUIET_SECONDS = 3.0
+DELIVERY_WAIT_SECONDS = 45.0
 
 
 class ArenaRun:
@@ -77,6 +76,7 @@ class ArenaRun:
                 await asyncio.gather(*intake)
                 self._intake_over.set()
                 await self._drain_tasks()
+                await self._await_delivery()
                 self._stop.set()
         finally:
             self._stop.set()
@@ -131,6 +131,11 @@ class ArenaRun:
                 and not self._arena.commands().pending()
             ):
                 return
+            await CLOCK.sleep(DRAIN_POLL_SECONDS)
+
+    async def _await_delivery(self) -> None:
+        deadline = CLOCK.now() + timedelta(seconds=DELIVERY_WAIT_SECONDS)
+        while CLOCK.now() < deadline and self._checker.undelivered():
             await CLOCK.sleep(DRAIN_POLL_SECONDS)
 
     async def _finish(self) -> None:

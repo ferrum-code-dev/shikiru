@@ -29,11 +29,21 @@ CLOCK = SystemClock()
 RUNNER = SubprocessRunner()
 TURN_WAIT_SECONDS = 15.0
 PHASE_WAIT_SECONDS = 25.0
-PHASE_POLL_SECONDS = 0.05
+PHASE_POLL_SECONDS = 0.01
 TURN_POLL_SECONDS = 0.2
 GH_SUBCOMMANDS = ("create", "view", "list", "close")
 GH_FAILURES = (1, 2, 3)
 MILLIS = 1000
+DEFAULT_GRACE_SECONDS = 6.0
+GRACE_SECONDS = {
+    FaultKind.TMUX_LOSS: 5.0,
+    FaultKind.TURN_KILL: 3.0,
+    FaultKind.DB_LOCK: 3.0,
+    FaultKind.GH_FAIL: 2.0,
+    FaultKind.GIT_HOOK_FAIL: 2.0,
+    FaultKind.HOOK_STUCK: 3.0,
+    FaultKind.ENGINE_FREEZE: 4.0,
+}
 
 
 class ChaosInjector:
@@ -46,7 +56,8 @@ class ChaosInjector:
         self._tally = tally
 
     async def inject(self, fault: ScheduledFault) -> None:
-        self._supervisor.disturb(fault.duration_seconds)
+        grace = GRACE_SECONDS.get(fault.kind, DEFAULT_GRACE_SECONDS) + fault.duration_seconds
+        self._supervisor.disturb(grace)
         outcome = await self._perform(fault)
         if outcome is not None:
             self._tally.fault(fault.kind)

@@ -26,9 +26,9 @@ if TYPE_CHECKING:
 
 RUNNER = SubprocessRunner()
 GIT_TIMEOUT_SECONDS = 30.0
-SETTLE_SECONDS = 5.0
-COMMAND_SETTLE_SECONDS = 30.0
-NOTIFY_SETTLE_SECONDS = 45.0
+SETTLE_SECONDS = 4.0
+COMMAND_SETTLE_SECONDS = 20.0
+NOTIFY_SETTLE_SECONDS = 30.0
 SCAN_INTERVAL = timedelta(seconds=2)
 HELD_SAMPLES = 2
 BASE_BRANCH = "main"
@@ -39,18 +39,22 @@ COMPLETED = "completed"
 
 
 class Persistence:
-    """Confirms a state-based finding only once it has been observed continuously."""
+    """Confirms a state-based finding once it was observed for `settle_seconds` of stable time."""
 
     def __init__(self, settle_seconds: float) -> None:
-        self._settle = timedelta(seconds=settle_seconds)
-        self._first: dict[Hashable, datetime] = {}
+        self._settle = settle_seconds
+        self._stable_seconds: dict[Hashable, float] = {}
+        self._last: datetime | None = None
 
-    def confirmed(self, observed: dict[Hashable, Violation], now: datetime) -> list[Violation]:
-        self._first = {key: self._first.get(key, now) for key in observed}
-        return [v for key, v in observed.items() if now - self._first[key] >= self._settle]
-
-    def reset(self) -> None:
-        self._first.clear()
+    def confirmed(
+        self, observed: dict[Hashable, Violation], now: datetime, *, stable: bool
+    ) -> list[Violation]:
+        elapsed = (now - self._last).total_seconds() if self._last is not None and stable else 0.0
+        self._last = now
+        self._stable_seconds = {
+            key: self._stable_seconds.get(key, 0.0) + elapsed for key in observed
+        }
+        return [v for key, v in observed.items() if self._stable_seconds[key] >= self._settle]
 
 
 @dataclass(slots=True)
@@ -70,30 +74,28 @@ class InvariantChecker:
         self._notices = Persistence(NOTIFY_SETTLE_SECONDS)
         self._seen_turns: set[tuple[int, float | None]] = set()
         self._held_samples: dict[str, int] = {}
+        self._beside: dict[str, int] = {}
         self._last_scan: datetime | None = None
+        self._scanned: dict[str, int] = {}
 
     def sample(self, now: datetime, *, stable: bool) -> list[Violation]:
-        """Invariants 1, 2 and 5 over the current state; the last waits for a stable engine."""
+        """Invariants 1, 2 and 5 over the current state; findings must outlast the settle time."""
         reader = self._arena.reader
         assert reader is not None
         tasks = reader.list_tasks()
         found = self._held_turns(tasks)
-        observed = self._two_owners(tasks, now)
-        if stable:
-            observed |= self._escalations(tasks)
-            found += self._commands.confirmed(self._pending_commands(), now)
-            found += self._notices.confirmed(self._undelivered(), now)
-        else:
-            self._commands.reset()
-            self._notices.reset()
-        return found + self._structure.confirmed(observed, now)
+        structure = self._two_owners(tasks, now) | self._escalations(tasks)
+        found += self._structure.confirmed(structure, now, stable=stable)
+        found += self._commands.confirmed(self._pending_commands(), now, stable=stable)
+        found += self._notices.confirmed(self.undelivered(), now, stable=stable)
+        return found
 
     def _held_turns(self, tasks: list[Task]) -> list[Violation]:
         held_before = dict(self._held_samples)
         self._held_samples = {
             task.id: held_before.get(task.id, 0) + 1 if task.holds else 0 for task in tasks
         }
-        found: list[Violation] = []
+        found = self._beside_takeover(tasks)
         for turn in self._arena.turn_processes():
             key = (turn.identity.pid, turn.identity.started_at)
             if key in self._seen_turns:
@@ -112,34 +114,45 @@ class InvariantChecker:
                 )
         return found
 
+    def _beside_takeover(self, tasks: list[Task]) -> list[Violation]:
+        running = {turn.task_id for turn in self._arena.turn_processes()}
+        before = self._beside
+        self._beside = {
+            task.id: before.get(task.id, 0) + 1
+            for task in tasks
+            if Hold.INTERVENTION in task.holds and task.id in running
+        }
+        return [
+            Violation(1, task_id, "a headless turn runs beside a taken-over session")
+            for task_id, samples in self._beside.items()
+            if samples >= HELD_SAMPLES
+        ]
+
     def _two_owners(self, tasks: list[Task], now: datetime) -> dict[Hashable, Violation]:
         observed: dict[Hashable, Violation] = {}
         live = self._arena.turn_processes()
-        scan = self._last_scan is None or now - self._last_scan >= SCAN_INTERVAL
+        if self._last_scan is None or now - self._last_scan >= SCAN_INTERVAL:
+            self._last_scan = now
+            self._scanned = {
+                task.id: self._agent_groups(task)
+                for task in tasks
+                if task.status not in TERMINAL and self._arena.worktree(task.id).exists()
+            }
         for task in tasks:
             if task.status in TERMINAL:
                 continue
             turns = [turn for turn in live if turn.task_id == task.id]
             if len({turn.identity.pid for turn in turns}) > 1:
-                observed[1, task.id, "turns"] = Violation(
-                    1, task.id, f"{len(turns)} live recorded turn processes"
-                )
-            if Hold.INTERVENTION in task.holds and turns:
-                observed[1, task.id, "takeover"] = Violation(
-                    1, task.id, "a headless turn runs beside a taken-over session"
-                )
-            if scan and self._arena.worktree(task.id).exists():
-                groups = {
-                    processes.group_of(p)
-                    for p in processes.agents_in(self._arena.worktree(task.id))
-                }
-                if len(groups - {None}) > 1:
-                    observed[1, task.id, "scan"] = Violation(
-                        1, task.id, f"agent processes of {len(groups)} groups share the worktree"
-                    )
-        if scan:
-            self._last_scan = now
+                message = f"{len(turns)} live recorded turn processes"
+                observed[1, task.id, "turns"] = Violation(1, task.id, message)
+            if self._scanned.get(task.id, 0) > 1:
+                message = f"agent processes of {self._scanned[task.id]} groups share the worktree"
+                observed[1, task.id, "scan"] = Violation(1, task.id, message)
         return observed
+
+    def _agent_groups(self, task: Task) -> int:
+        groups = {processes.group_of(p) for p in processes.agents_in(self._arena.worktree(task.id))}
+        return len(groups - {None})
 
     def _pending_commands(self) -> dict[Hashable, Violation]:
         return {
@@ -174,7 +187,7 @@ class InvariantChecker:
                 )
         return observed
 
-    def _undelivered(self) -> dict[Hashable, Violation]:
+    def undelivered(self) -> dict[Hashable, Violation]:
         reader = self._arena.reader
         assert reader is not None
         notified = self._arena.notified()
@@ -193,6 +206,7 @@ class InvariantChecker:
         tasks = {task.id: task for task in reader.list_tasks()}
         events = reader.events_since(0)
         found = self._engine_faults(events)
+        found += self.undelivered().values()
         found += self._commands_resolved()
         found += self._not_terminal(tasks, terminal_by)
         for task in tasks.values():
