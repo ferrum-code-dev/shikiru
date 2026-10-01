@@ -39,6 +39,10 @@ class CodexOptions(BaseModel):
     compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=100)
 
 
+TESTED_CODEX_VERSION = "0.159.2"
+SANDBOX_PROBE_TIMEOUT_SECONDS = 60.0
+SANDBOX_PROBE_PARENT = (".cache", "shikiru")
+SANDBOX_PROBE_PREFIX = "codex-sandbox-"
 GIT_DIRS_ARGV = (
     "git",
     "rev-parse",

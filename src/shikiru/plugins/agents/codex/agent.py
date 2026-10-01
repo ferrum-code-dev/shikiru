@@ -25,9 +25,11 @@ from shikiru.plugins.agents.codex.options import (
     LOGIN_STATUS_ARGV,
     NO_DAEMON_FLAG,
     RESUME_SUBCOMMAND,
+    TESTED_CODEX_VERSION,
     VERSION_ARGV,
     CodexOptions,
 )
+from shikiru.plugins.agents.codex.sandbox_probe import CodexSandboxProbe
 from shikiru.plugins.agents.codex.turn import CodexTurnSequence, context_window
 
 if TYPE_CHECKING:
@@ -46,6 +48,7 @@ _OPENAI_BASE_URL_FIELD = "openai_base_url"
 _PROFILES_FIELD = "profiles"
 _PROFILE_FIELD = "profile"
 _CONTEXT_WINDOW_CHECK = "context_window"
+_UNTESTED_VERSION_DETAIL = "{version} (warning: verified with {tested}; re-check the sandbox probe)"
 _UNKNOWN_WINDOW_DETAIL = (
     "no known context window for {models} in Codex's model list; "
     "compaction at compact_at_pct cannot be applied"
@@ -66,6 +69,7 @@ class CodexAgent:
         self._options = options
         self._reset_time = ResetTimeParser(clock)
         self._codex_home = codex_home()
+        self._sandbox_probe = CodexSandboxProbe(runner)
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Codex process-per-turn exchange."""
@@ -110,7 +114,12 @@ class CodexAgent:
                 CheckResult("version", False, unavailable),
                 CheckResult("login", False, unavailable),
             ]
-        checks = [binary, await self._check_version(), await self._check_login()]
+        checks = [
+            binary,
+            await self._check_version(),
+            await self._check_login(),
+            await self._sandbox_probe.check(),
+        ]
         if models:
             checks.append(self._check_context_windows(models))
         return checks
@@ -179,6 +188,8 @@ class CodexAgent:
         except (FileNotFoundError, ShikiruError) as error:
             return CheckResult("version", False, str(error))
         detail = result.stdout.strip() or result.stderr.strip()
+        if result.returncode == 0 and TESTED_CODEX_VERSION not in detail:
+            detail = _UNTESTED_VERSION_DETAIL.format(version=detail, tested=TESTED_CODEX_VERSION)
         return CheckResult("version", result.returncode == 0, detail)
 
     async def _check_login(self) -> CheckResult:

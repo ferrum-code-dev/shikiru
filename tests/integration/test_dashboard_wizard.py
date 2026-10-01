@@ -211,7 +211,7 @@ async def test_init_wizard_walkthrough_saves_choices_and_shows_doctor(
     _private_doctor_runtime(monkeypatch, tmp_path)
     app = await _app(tmp_path)
 
-    async with app.run_test(size=(64, 18)) as pilot:
+    async with app.run_test(size=(64, 20)) as pilot:
         assert app.query_one("#wizard-page-0").display
         assert app.query_one("#wizard-next").region.bottom <= app.size.height
         await _set_agents_and_trackers(pilot, tmp_path)
@@ -260,7 +260,7 @@ async def test_init_wizard_keeps_config_and_exposes_failed_doctor_report(
     monkeypatch.setenv("PATH", f"{executable_dir}{os.pathsep}{os.environ['PATH']}")
     app = await _app(tmp_path)
 
-    async with app.run_test(size=(64, 18)) as pilot:
+    async with app.run_test(size=(64, 20)) as pilot:
         await _click_next(pilot)
         await _replace_input(pilot, "#leader-ladder", "fake:smoke:low")
         await _replace_input(pilot, "#implementer-ladder", "fake:smoke:low")
@@ -296,7 +296,7 @@ async def test_cow_probe_error_remains_visible_after_navigation(tmp_path: Path) 
     await _git_project(tmp_path)
     app = await _app_with_cow_probe_error(tmp_path)
 
-    async with app.run_test(size=(64, 18)) as pilot:
+    async with app.run_test(size=(64, 20)) as pilot:
         await _click_next(pilot)
         await _replace_input(pilot, "#leader-ladder", "fake:smoke:low")
         await _replace_input(pilot, "#implementer-ladder", "fake:smoke:low")
@@ -315,7 +315,7 @@ async def test_init_wizard_cancellation_does_not_write_project_state(tmp_path: P
     await _git_project(tmp_path)
     app = await _app(tmp_path)
 
-    async with app.run_test(size=(64, 18)) as pilot:
+    async with app.run_test(size=(64, 20)) as pilot:
         await pilot.press("escape")
 
     assert app.return_value is None

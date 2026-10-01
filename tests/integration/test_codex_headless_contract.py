@@ -678,7 +678,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
     ) -> None:
         capture_path = tmp_path / "headless-environment.txt"
         _install_fake_codex(tmp_path / "bin")
-        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
         agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
         headless = agent.headless()
@@ -716,7 +716,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         )
         capture_path = tmp_path / "doctor-environment.txt"
         _install_fake_codex(tmp_path / "bin")
-        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
         agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
 
@@ -725,18 +725,26 @@ class TestCodexHeadlessContract(AgentContractSuite):
         login = next(check for check in checks if check.name == "login")
         assert all(check.ok for check in checks)
         assert "not verified" in login.detail
-        assert capture_path.read_text().splitlines() == [
+        calls = capture_path.read_text().splitlines()
+        invocations, environments = (
+            calls[0::5],
+            [calls[index : index + 5][1:] for index in range(0, len(calls), 5)],
+        )
+        assert [invocation.split()[0] for invocation in invocations] == [
             "--version",
-            str(operator_codex_home),
-            _SYNTHETIC_OPENAI_KEY,
-            _SYNTHETIC_CODEX_KEY,
-            _SYNTHETIC_PROVIDER_KEY,
             "--version",
-            str(operator_codex_home),
-            _SYNTHETIC_OPENAI_KEY,
-            _SYNTHETIC_CODEX_KEY,
-            _SYNTHETIC_PROVIDER_KEY,
+            "sandbox",
         ]
+        assert all(
+            environment
+            == [
+                str(operator_codex_home),
+                _SYNTHETIC_OPENAI_KEY,
+                _SYNTHETIC_CODEX_KEY,
+                _SYNTHETIC_PROVIDER_KEY,
+            ]
+            for environment in environments
+        )
 
     @pytest.mark.asyncio
     async def test_doctor_fails_for_a_configured_model_without_a_known_window(
@@ -744,7 +752,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
     ) -> None:
         _write_model_cache(operator_codex_home, [(_MODEL, _TEST_CONTEXT_WINDOW)])
         _install_fake_codex(tmp_path / "bin")
-        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "doctor-environment.txt"))
         agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
 
@@ -1085,6 +1093,12 @@ def _install_fake_codex(directory: Path) -> None:
         'if [ "$1" = "--version" ]; then\n'
         "  printf '%s\\n' 'codex-cli 0.156.1'\n"
         "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = "sandbox" ]; then\n'
+        "  shift\n"
+        '  while [ "$1" != "--" ]; do shift; done\n'
+        "  shift\n"
+        '  exec "$@"\n'
         "fi\n"
         'if [ "$1" = "login" ]; then\n'
         "  printf '%s\\n' 'Not logged in'\n"
