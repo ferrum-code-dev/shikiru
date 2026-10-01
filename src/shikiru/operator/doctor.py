@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 
 from shikiru.agents.contracts import DOCTOR_TIMEOUT_SECONDS
 from shikiru.config.loader import load_settings
+from shikiru.domain.versions import Version, parse_version
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import not_repository_root
 from shikiru.paths import project_config_path, state_db_path
@@ -36,11 +37,13 @@ if TYPE_CHECKING:
 
 SESSION_SUFFIX_LENGTH = 8
 TMUX_VERSION_ARGS = ("tmux", "-V")
+TMUX_MINIMUM_VERSION = (3, 4)
 TMUX_SESSION_PREFIX = "shikiru-doctor-"
 TMUX_SESSION_NAME = "probe"
 _NO_TMUX_CONFIG = Path("/dev/null")
 GIT_COMMAND = "git"
 GIT_VERSION_ARGS = (GIT_COMMAND, "--version")
+GIT_MINIMUM_VERSION = (2, 45)
 GIT_CHECK_NAME = "git"
 TMUX_CHECK_NAME = "tmux"
 REPOSITORY_CHECK_NAME = "repository"
@@ -152,7 +155,8 @@ class Doctor:
                 timeout=DOCTOR_TIMEOUT_SECONDS,
                 check=False,
             )
-            if version.returncode == 0:
+            problem = _version_problem(version, TMUX_MINIMUM_VERSION)
+            if problem is None:
                 await tmux.new_session(
                     f"{TMUX_SESSION_NAME}-{uuid.uuid4().hex[:SESSION_SUFFIX_LENGTH]}",
                     cwd=self._project_root,
@@ -161,7 +165,7 @@ class Doctor:
                     size=DETACHED_SIZE,
                 )
             check = DoctorCheck(
-                name=TMUX_CHECK_NAME, ok=version.returncode == 0, detail=_process_detail(version)
+                name=TMUX_CHECK_NAME, ok=problem is None, detail=problem or _process_detail(version)
             )
         except (OSError, ShikiruError) as error:
             check = DoctorCheck(name=TMUX_CHECK_NAME, ok=False, detail=str(error))
@@ -184,10 +188,11 @@ class Doctor:
             )
         except (OSError, ShikiruError) as error:
             return DoctorCheck(name=GIT_CHECK_NAME, ok=False, detail=str(error))
+        problem = _version_problem(result, GIT_MINIMUM_VERSION)
         return DoctorCheck(
             name=GIT_CHECK_NAME,
-            ok=result.returncode == 0,
-            detail=_process_detail(result),
+            ok=problem is None,
+            detail=problem or _process_detail(result),
         )
 
     async def _repository_check(self) -> DoctorCheck:
@@ -253,6 +258,18 @@ class Doctor:
 
 def _process_detail(result: ProcessResult) -> str:
     return result.stdout.strip() or result.stderr.strip() or f"exit {result.returncode}"
+
+
+def _version_problem(result: ProcessResult, minimum: Version) -> str | None:
+    detail = _process_detail(result)
+    if result.returncode != 0:
+        return detail
+    found = parse_version(detail)
+    if found is None:
+        return f"{detail}: no version found"
+    if found < minimum:
+        return f"{detail}: {minimum[0]}.{minimum[1]} or newer is required"
+    return None
 
 
 def _error_detail(error: BaseException) -> str:

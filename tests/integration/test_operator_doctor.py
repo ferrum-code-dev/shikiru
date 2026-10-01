@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -106,6 +107,54 @@ async def test_doctor_reports_core_and_configured_plugin_checks(tmp_path: Path) 
     assert all(check["ok"] for check in checks.values())
     assert code == 0
     assert (root / ".shikiru" / "state.db").is_file()
+
+
+FAKE_VERSION_SCRIPT = """#!/bin/sh
+if [ "$1" = "{flag}" ]; then echo "{output}"; exit 0; fi
+exec {real} "$@"
+"""
+
+
+def _tool_reporting(directory: Path, tool: str, flag: str, output: str) -> Path:
+    real = shutil.which(tool)
+    assert real is not None
+    script = directory / tool
+    script.write_text(FAKE_VERSION_SCRIPT.format(flag=flag, output=output, real=real))
+    script.chmod(0o755)
+    return directory
+
+
+@pytest.mark.parametrize(
+    ("tool", "flag", "output", "ok"),
+    [
+        ("tmux", "-V", "tmux 3.3a", False),
+        ("tmux", "-V", "tmux 3.4", True),
+        ("tmux", "-V", "tmux 3.10", True),
+        ("tmux", "-V", "tmux master", False),
+        ("git", "--version", "git version 2.44.0", False),
+        ("git", "--version", "git version 2.45.0", True),
+        ("git", "--version", "git version 2.100.1", True),
+    ],
+)
+async def test_doctor_fails_a_tool_older_than_the_documented_floor(
+    tmp_path: Path, tool: str, flag: str, output: str, ok: bool
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    root = await _project(project)
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    _tool_reporting(shims, tool, flag, output)
+
+    code, stdout, _ = await _cli(
+        root, "--json", "doctor", PATH=f"{shims}{os.pathsep}{os.environ['PATH']}"
+    )
+
+    check = {check["name"]: check for check in json.loads(stdout)["checks"]}[tool]
+    assert check["ok"] is ok
+    assert (code == 0) is ok
+    if not ok:
+        assert output in check["detail"]
 
 
 def _sockets_in(directory: Path) -> list[Path]:

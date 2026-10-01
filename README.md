@@ -67,7 +67,7 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 
 - macOS is verified: `uv run poe check` and `scripts/release-readiness-smoke.sh` run there.
 - GNU/Linux: the smoke script is written for it but NOT verified by a run. Process identity uses `psutil` start times with a tolerance for clock steps on Linux.
-- tmux 3.4+ and git 2.45+ on both. The smoke keeps its scratch directory under a short path (`/tmp`, or `SHIKIRU_SMOKE_TMPDIR`) because the private tmux socket path must stay under about 100 characters.
+- tmux 3.4+ and git 2.45+ on both; `shikiru doctor` fails below these floors. Every run so far used tmux 3.7c and git 2.55.0: the floors are chosen, not tested lower (07 §5). The smoke keeps its scratch directory under a short path (`/tmp`, or `SHIKIRU_SMOKE_TMPDIR`) because the private tmux socket path must stay under about 100 characters.
 
 ## Documentation
 
@@ -76,4 +76,4 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 
 ## Requirements
 
-Python 3.14+, tmux 3.4+, git 2.45+, and at least one supported agent CLI (`claude`, `codex`).
+Python 3.14+, tmux 3.4+, git 2.45+ (checked by `shikiru doctor`), and at least one supported agent CLI (`claude`, `codex`).
