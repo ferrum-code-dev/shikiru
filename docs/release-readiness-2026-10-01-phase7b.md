@@ -123,3 +123,9 @@ Reconciled with the 2026-09-30 document: its limitations 1, 2, 4, 5 and 7 are re
 18. **Phase 8 (operator workspace)** is planned and not implemented; nothing in this evidence covers it.
 
 Limitations 9 to 11, 13 and 14 come from Task notes and reviewer findings recorded in `tasks/plan.md` and the 2026-09-30 document; they were not re-tested on this revision beyond the passing suite.
+
+## Phase 7c: Codex sandbox roots (Task 74b)
+
+- Free probes on Codex 0.159.2 (macOS, project outside `$TMPDIR` under `~/.cache`): `codex sandbox -c sandbox_mode="workspace-write" -c sandbox_workspace_write.writable_roots=[<common .git>]` in a linked worktree denies `<common>/worktrees/<id>/index.lock` (`Operation not permitted`) while the common directory itself is writable; adding `git rev-parse --absolute-git-dir` as a root makes `git commit` pass. `-P :workspace` ignores `sandbox_workspace_write`; `codex sandbox` needs the worktree as cwd, not `-C`.
+- Live check, 2026-10-01, Codex 0.159.2, first turn then `exec resume` on the test's other model: `SHIKIRU_E2E=1 uv run pytest --no-cov -n 0 tests/integration/test_codex_headless_contract.py -k worktree_commits -q` passed (1 passed, 18 s) with the repository, worktree and run directory under `~/.cache/shikiru-e2e/`, and no denial marker in either turn's stream. The session rollout shows `writable_roots` = run directory, worktree git directory and common `.git` on both the first and the resumed turn.
+- Not verified: a host without `approvals_reviewer = auto_review` (this host has it, which masked the earlier denial), a host with its own `default_permissions` profile, Codex versions other than 0.159.2 and Linux (`codex sandbox` there uses another backend). `shikiru doctor` now probes the sandbox and warns when the version is not 0.159.2. The full `poe e2e` was not re-run for this task (Task 74h).

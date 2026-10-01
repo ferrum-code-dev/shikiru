@@ -25,6 +25,7 @@ pytest_plugins = [
     "tests.support.engine",
     "tests.support.github",
     "tests.support.process_tree",
+    "tests.support.project_dir",
 ]
 
 

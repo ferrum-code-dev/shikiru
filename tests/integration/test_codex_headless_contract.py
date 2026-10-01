@@ -38,6 +38,7 @@ from shikiru.agents.contracts import (
     UsageReported,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
+from shikiru.agents.sdk.turn import stream_log_path
 from shikiru.agents.testing import (
     AgentContractSuite,
     CompactionCase,
@@ -74,6 +75,7 @@ from shikiru.plugins.agents.codex.options import (
 )
 from shikiru.plugins.agents.codex.turn import CodexTurnParser, CodexTurnSequence, context_window
 from shikiru.process import SubprocessRunner
+from tests.e2e.diagnostics import SANDBOX_DENIAL_MARKERS
 from tests.support.clock import FakeClock
 
 if TYPE_CHECKING:
@@ -832,8 +834,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert all(check.ok for check in checks)
 
     @pytest.mark.asyncio
-    async def test_live_worktree_commits_survive_exec_resume(self, tmp_path: Path) -> None:
+    async def test_live_worktree_commits_survive_exec_resume(self, e2e_project_dir: Path) -> None:
         self._require_live()
+        tmp_path = e2e_project_dir
         main_repo = tmp_path / "main"
         worktree = tmp_path / "worktree"
         main_repo.mkdir()
@@ -876,6 +879,10 @@ class TestCodexHeadlessContract(AgentContractSuite):
         )
         resumed = _replace_cwd(resumed, worktree, "second-turn")
         await self._run_turn(_with_prompt(resumed, _LIVE_SECOND_COMMIT_PROMPT))
+        for turn in (first, resumed):
+            transcript = stream_log_path(turn.turn_dir, turn.role).read_text(errors="replace")
+            denied = [marker for marker in SANDBOX_DENIAL_MARKERS if marker in transcript]
+            assert not denied, f"sandbox denial {denied} in {turn.turn_dir}"
         second_commit = await runner.run(
             ["git", "show", f"HEAD:{_SECOND_FILE}"], timeout=30, cwd=worktree, check=True
         )
