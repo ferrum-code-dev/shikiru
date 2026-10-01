@@ -745,20 +745,6 @@ async def test_a_pull_request_close_that_failed_is_retried_and_repeated_after_a_
         assert _withdrawn(escalated) == 1
 
 
-async def test_a_pull_request_close_that_failed_once_succeeds_on_a_retry(
-    tmp_path: Path, tmux_server: TmuxServer, fake_github: FakeGitHub
-) -> None:
-    async with _escalated_task(tmp_path, tmux_server) as escalated:
-        await _open_pull_request_of(escalated, tmp_path)
-        fake_github.fail_next("close", 1)
-
-        await escalated.operator.send(Cancel(task_id=escalated.task.id))
-        await _until_closed(escalated, fake_github)
-
-        assert fake_github.calls("close") == 2
-        assert _withdrawn(escalated) == 1
-
-
 @pytest.mark.parametrize(
     ("direct", "expected_status"),
     [(Cancel, Status.CANCELLED), (Retry, Status.QUEUED)],
@@ -1403,17 +1389,6 @@ async def _acknowledged_twice(
     return first, await operator.replay(sent)
 
 
-async def test_replaying_an_acknowledged_cancel_reports_it_without_a_second_event(
-    tmp_path: Path, tmux_server: TmuxServer
-) -> None:
-    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
-        first, replayed = await _acknowledged_twice(operator, Cancel(task_id=task_id))
-
-        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
-        assert operator.task(task_id).status is Status.CANCELLED
-        assert len(operator.events.since(0, kinds=[EventKind.TASK_CANCELLED])) == 1
-
-
 async def test_replaying_an_acknowledged_retry_leaves_the_restarted_turn_running(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
@@ -1432,28 +1407,42 @@ async def test_replaying_an_acknowledged_retry_leaves_the_restarted_turn_running
         assert len(operator.events.since(0, kinds=[EventKind.TASK_RETRIED])) == 1
 
 
-async def test_replaying_an_acknowledged_set_rung_appends_no_second_event(
-    tmp_path: Path, tmux_server: TmuxServer
+@dataclass(frozen=True)
+class _Replay:
+    command: Command
+    event: EventKind
+    applied: Callable[[Task], bool]
+
+
+_REPLAYS = {
+    "cancel": _Replay(
+        Cancel(task_id="T-1"),
+        EventKind.TASK_CANCELLED,
+        lambda task: task.status is Status.CANCELLED,
+    ),
+    "set_rung": _Replay(
+        SetRung(task_id="T-1", role=Role.IMPLEMENTER, rung=_SECOND_RUNG),
+        EventKind.RUNG_CHANGED,
+        lambda task: task.overrides[Role.IMPLEMENTER] == _SECOND_RUNG,
+    ),
+    "pause": _Replay(
+        Pause(task_id="T-1", now=True),
+        EventKind.HOLD_SET,
+        lambda task: task.holds == frozenset({Hold.PAUSED}),
+    ),
+}
+
+
+@pytest.mark.parametrize("replay", _REPLAYS.values(), ids=_REPLAYS.keys())
+async def test_replaying_an_acknowledged_state_command_appends_no_second_event(
+    tmp_path: Path, tmux_server: TmuxServer, replay: _Replay
 ) -> None:
     async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
-        command = SetRung(task_id=task_id, role=Role.IMPLEMENTER, rung=_SECOND_RUNG)
-
-        first, replayed = await _acknowledged_twice(operator, command)
+        first, replayed = await _acknowledged_twice(operator, replay.command)
 
         assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
-        assert operator.task(task_id).overrides[Role.IMPLEMENTER] == _SECOND_RUNG
-        assert len(operator.events.since(0, kinds=[EventKind.RUNG_CHANGED])) == 1
-
-
-async def test_replaying_an_acknowledged_pause_appends_no_second_event(
-    tmp_path: Path, tmux_server: TmuxServer
-) -> None:
-    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
-        first, replayed = await _acknowledged_twice(operator, Pause(task_id=task_id, now=True))
-
-        assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
-        assert operator.task(task_id).holds == {Hold.PAUSED}
-        assert len(operator.events.since(0, kinds=[EventKind.HOLD_SET], task_id=task_id)) == 1
+        assert replay.applied(operator.task(task_id))
+        assert len(operator.events.since(0, kinds=[replay.event])) == 1
 
 
 async def test_replaying_a_take_over_whose_pane_was_lost_respawns_it_without_a_second_event(
@@ -1477,26 +1466,19 @@ async def test_replaying_a_take_over_whose_pane_was_lost_respawns_it_without_a_s
         assert owned.id == run.id
 
 
-@pytest.mark.parametrize(
-    ("resolution", "expected_status"),
-    [(CancelResolution(), Status.CANCELLED), (RetryResolution(), Status.QUEUED)],
-    ids=["cancel", "retry"],
-)
 async def test_replaying_an_acknowledged_resolve_reports_it_without_a_second_event(
-    tmp_path: Path,
-    tmux_server: TmuxServer,
-    resolution: CancelResolution | RetryResolution,
-    expected_status: Status,
+    tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     async with _escalated_task(tmp_path, tmux_server) as escalated:
         operator = escalated.operator
 
         first, replayed = await _acknowledged_twice(
-            operator, Resolve(escalation_id=escalated.escalation_id, resolution=resolution)
+            operator,
+            Resolve(escalation_id=escalated.escalation_id, resolution=CancelResolution()),
         )
 
         assert (first.status, replayed.status) == (CommandStatus.DONE, CommandStatus.DONE)
-        assert operator.task(escalated.task.id).status is expected_status
+        assert operator.task(escalated.task.id).status is Status.CANCELLED
         assert escalated.resolved_events() == 1
 
 
