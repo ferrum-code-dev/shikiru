@@ -19,7 +19,7 @@ from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
 from shikiru.paths import run_dir, turns_dir
 from shikiru.store.escalations import Escalation
-from shikiru.view_log import view_log_path
+from shikiru.view_log import ordered_turn_dirs, view_log_path
 from shikiru.workspace.reports import load_turn_report
 
 if TYPE_CHECKING:
@@ -289,7 +289,7 @@ class OperatorQueries:
         if not task_turns_dir.is_dir():
             return []
         reports: list[ReportRow] = []
-        for turn_dir in sorted(path for path in task_turns_dir.iterdir() if path.is_dir()):
+        for turn_dir in ordered_turn_dirs(task_turns_dir):
             loaded = load_turn_report(turn_dir)
             if loaded is None:
                 continue

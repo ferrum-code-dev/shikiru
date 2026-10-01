@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 _EVENT_ROLE_JSON_PATH = "$.role"
 _EVENT_COMMAND_JSON_PATH = f"$.{COMMAND_ID_KEY}"
 
+COMMAND_APPLIED_SQL = "SELECT 1 FROM events WHERE kind = ? AND json_extract(data, ?) = ? LIMIT 1"
+
 _DATA_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
 
@@ -148,7 +150,7 @@ class EventLog:
     def command_applied(self, kind: EventKind, command_id: int) -> bool:
         """Report whether a `kind` event already records the effect of command `command_id`."""
         row = self._connection.execute(
-            "SELECT 1 FROM events WHERE kind = ? AND json_extract(data, ?) = ? LIMIT 1",
+            COMMAND_APPLIED_SQL,
             (kind.value, _EVENT_COMMAND_JSON_PATH, command_id),
         ).fetchone()
         return row is not None

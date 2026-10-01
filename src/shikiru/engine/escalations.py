@@ -11,6 +11,7 @@ another action set to choose from.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -243,8 +244,10 @@ class EscalationRaiser:
             )
             return
         for escalation in self._without_packet(open_ones):
-            context = await self._restored_context(task, escalation)
-            self._write_packet(task.id, Path(escalation.packet_path), context)
+            path = Path(escalation.packet_path)
+            if self._packet_directory_ready(task.id, path):
+                context = await self._restored_context(task, escalation)
+                self._write_packet(task.id, path, context)
 
     @staticmethod
     def _without_packet(escalations: Sequence[Escalation]) -> list[Escalation]:
@@ -265,6 +268,17 @@ class EscalationRaiser:
             question=escalation.headline,
             options=escalation.options,
         )
+
+    def _packet_directory_ready(self, task_id: str, path: Path) -> bool:
+        try:
+            make_private_dir(path.parent)
+            if not os.access(path.parent, os.W_OK | os.X_OK):
+                message = f"{path.parent} is not writable"
+                raise PermissionError(message)
+        except OSError as error:
+            self._report_unwritable(task_id, path, error)
+            return False
+        return True
 
     def _write_packet(self, task_id: str, path: Path, context: PacketContext) -> None:
         try:

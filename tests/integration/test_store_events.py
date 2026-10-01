@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.domain.commands import COMMAND_ID_KEY
 from shikiru.domain.events import EventKind
-from shikiru.store.events import EventLog
+from shikiru.store.events import COMMAND_APPLIED_SQL, EventLog
 from tests.support.clock import FakeClock
 
 if TYPE_CHECKING:
@@ -56,3 +57,13 @@ def test_data_round_trips_through_the_json_column(connection: Connection) -> Non
     assert appended.data == payload
     [reloaded] = log.since(0)
     assert reloaded.data == payload
+
+
+def test_command_applied_lookup_is_bounded_by_the_kind_index(connection: Connection) -> None:
+    plan = connection.execute(
+        f"EXPLAIN QUERY PLAN {COMMAND_APPLIED_SQL}",
+        (EventKind.TAKEN_OVER.value, f"$.{COMMAND_ID_KEY}", 1),
+    ).fetchall()
+
+    details = " ".join(row["detail"] for row in plan)
+    assert "idx_events_kind" in details

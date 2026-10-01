@@ -9,6 +9,7 @@ from shikiru.domain.reports import ImplementationReport, PlanReport, Report, Ver
 from shikiru.engine.integration import IntegrationMetadata
 from shikiru.engine.turns import read_turn_report
 from shikiru.paths import turns_dir
+from shikiru.view_log import ordered_turn_dirs
 from shikiru.workspace.reports import InvalidTurnReportError
 
 if TYPE_CHECKING:
@@ -35,11 +36,8 @@ class ReportHistory:
         turns_root = turns_dir(self._project_root, task_id)
         if not turns_root.is_dir():
             return []
-        turn_dirs = sorted(
-            (entry for entry in turns_root.iterdir() if entry.is_dir()), key=lambda path: path.name
-        )
         history: list[tuple[str, Report]] = []
-        for turn_dir in turn_dirs:
+        for turn_dir in ordered_turn_dirs(turns_root):
             try:
                 report = read_turn_report(turn_dir)
             except InvalidTurnReportError:

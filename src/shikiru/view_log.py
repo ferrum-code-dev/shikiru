@@ -33,6 +33,14 @@ CLI_VIEW_COMMAND = "view"
 CLI_PROJECT_FLAG = "--project"
 
 
+def ordered_turn_dirs(turns_root: Path) -> list[Path]:
+    """Return the turn directories of `turns_root` ordered by turn number, however many digits."""
+    return sorted(
+        (entry for entry in turns_root.iterdir() if entry.is_dir()),
+        key=lambda entry: int(entry.name.partition(TURN_DIR_SEPARATOR)[0]),
+    )
+
+
 def view_argv(project_root: Path, task_id: str, role: str) -> tuple[str, ...]:
     """Return the argv of `role`'s read-only view pane for `task_id` (06 §5.1)."""
     return shikiru_argv(CLI_PROJECT_FLAG, str(project_root), CLI_VIEW_COMMAND, task_id, role)

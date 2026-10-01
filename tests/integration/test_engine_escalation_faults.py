@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shikiru.agents.contracts import role_dir
 from shikiru.bootstrap import build_engine
+from shikiru.config.settings import RepoConfig
 from shikiru.domain.commands import Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Role, Status, Step
-from shikiru.paths import project_state_dir, run_dir
+from shikiru.paths import project_state_dir, run_dir, task_root
+from shikiru.process import ProcessResult, SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
 from shikiru.store.escalations import fetch_open_escalations
@@ -25,9 +27,10 @@ from tests.support.engine import build_raiser, build_registry, build_tmux, build
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until
+from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import AsyncGenerator, Callable, Sequence
     from pathlib import Path
 
     from shikiru.domain.tasks import Task
@@ -91,13 +94,27 @@ async def _world(project: Path, tmux_server: TmuxServer) -> AsyncGenerator[_Worl
     yield _World(project, clock)
 
 
+class _WorktreeGitCalls(SubprocessRunner):
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.calls = 0
+
+    async def run(self, argv: Sequence[str], **kwargs: Any) -> ProcessResult:
+        if kwargs.get("cwd") == self.root:
+            self.calls += 1
+        return await super().run(argv, **kwargs)
+
+
 @asynccontextmanager
-async def _running(world: _World, tmux_server: TmuxServer) -> AsyncGenerator[asyncio.Task[None]]:
+async def _running(
+    world: _World, tmux_server: TmuxServer, runner: SubprocessRunner | None = None
+) -> AsyncGenerator[asyncio.Task[None]]:
     settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     engine = build_engine(
         world.project,
         settings,
         clock=world.clock,
+        runner=runner,
         tmux=build_tmux(tmux_server),
         registry=build_registry(),
     )
@@ -214,3 +231,38 @@ async def test_a_restart_with_an_unwritable_packet_directory_keeps_running_and_r
 
             blocked.unlink()
             await _assert_repaired(world, task.id)
+
+
+async def test_an_unwritable_packet_directory_does_not_rerun_git_evidence_every_tick(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _world(tmp_path, tmux_server) as world:
+        task = world.submit("escalated with a worktree")
+        repo = await task_root_builder(SubprocessRunner(), tmp_path, RepoConfig()).build(
+            task.id, task.title
+        )
+        world.tasks.set_repo(task.id, repo)
+        blocked = world.block_packets(task.id)
+        escalated = Transition.escalate_current(task, EscalationReason.AGENT_ERROR)
+        writer = build_writer(world.connection, world.clock)
+        await build_raiser(world.connection, world.clock, tmp_path).raise_escalation(
+            task,
+            step=Step.IMPLEMENT,
+            reason=EscalationReason.AGENT_ERROR,
+            question="The agent kept failing.",
+            attempted="Retried.",
+            reports=(),
+            facts="",
+            view_tail="",
+            apply_state=lambda: writer.persist(task, escalated, None),
+        )
+        runner = _WorktreeGitCalls(task_root(tmp_path, task.id))
+        async with _running(world, tmux_server, runner) as served:
+            await _settle(world)
+            collected = runner.calls
+            await _settle(world)
+
+            assert not served.done()
+            assert runner.calls == collected
+            blocked.unlink()
+            await _assert_repaired(world, task.id, evidence=False)
