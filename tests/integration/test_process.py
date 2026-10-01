@@ -24,29 +24,17 @@ _KILL_TIMEOUT_SECONDS = 5.0
 _STOP_BOUND_SECONDS = 5.0
 
 
-async def test_run_returns_stdout_and_zero_returncode() -> None:
+async def test_run_feeds_stdin_runs_in_the_given_cwd_and_returns_the_exit_status_without_raising(
+    tmp_path: Path,
+) -> None:
     runner = SubprocessRunner()
 
-    result = await runner.run(["echo", "hello"], timeout=5)
+    result = await runner.run(
+        ["sh", "-c", "cat; echo; pwd; exit 7"], timeout=5, input_text="from stdin", cwd=tmp_path
+    )
 
-    assert result.returncode == 0
-    assert result.stdout.strip() == "hello"
-
-
-async def test_run_passes_input_to_stdin() -> None:
-    runner = SubprocessRunner()
-
-    result = await runner.run(["cat"], timeout=5, input_text="from stdin")
-
-    assert result.stdout == "from stdin"
-
-
-async def test_run_executes_in_the_given_cwd(tmp_path: Path) -> None:
-    runner = SubprocessRunner()
-
-    result = await runner.run(["pwd"], timeout=5, cwd=tmp_path)
-
-    assert result.stdout.strip() == str(tmp_path)
+    assert result.returncode == 7
+    assert result.stdout.split() == ["from", "stdin", str(tmp_path)]
 
 
 async def test_run_passes_the_given_env_and_nothing_else() -> None:
@@ -69,14 +57,6 @@ async def test_check_raises_command_failed_on_non_zero_exit() -> None:
 
     assert excinfo.value.returncode == 3
     assert "oops" in excinfo.value.stderr
-
-
-async def test_without_check_non_zero_exit_does_not_raise() -> None:
-    runner = SubprocessRunner()
-
-    result = await runner.run(["sh", "-c", "exit 7"], timeout=5)
-
-    assert result.returncode == 7
 
 
 async def test_timeout_raises_and_kills_the_process(tmp_path: Path) -> None:

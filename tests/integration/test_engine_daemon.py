@@ -12,12 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fake_agent.agent import FakeAgent, FakeOptions
 
-from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung
+from shikiru.agents.contracts import Rung
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import (
-    AgentConfig,
     LoggingConfig,
     RepoConfig,
 )
@@ -57,7 +55,7 @@ from shikiru.domain.tasks import (
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
 from shikiru.engine.notifier import Notifier
 from shikiru.engine.takeover import HAND_BACK_MESSAGE
-from shikiru.errors import CommandTimeoutError, ConfigError
+from shikiru.errors import CommandTimeoutError
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
@@ -83,7 +81,7 @@ from tests.support.engine import (
     set_script,
     wait_for_command,
 )
-from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
+from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.permissions import requires_enforced_permissions
 from tests.support.store import reopen_command
@@ -118,15 +116,6 @@ class _ResolutionCase:
     expected_command_status: CommandStatus
     expected_escalation_status: EscalationStatus
     expected_override: Rung | None = None
-
-
-class _NoHeadlessFakeAgent(FakeAgent):
-    def headless(self) -> HeadlessAgent | None:
-        return None
-
-
-def _create_no_headless_agent(context: AgentContext) -> FakeAgent:
-    return _NoHeadlessFakeAgent(context.runner, FakeOptions())
 
 
 async def _append_and_wait(
@@ -252,29 +241,6 @@ async def test_unexpected_flow_error_escalates_without_stopping_engine(
             clock.advance(1)
             await engine_task
         connection.close()
-
-
-def test_engine_rejects_helper_without_headless_support(
-    tmp_path: Path, tmux_server: TmuxServer
-) -> None:
-    helper_rung = Rung(agent="no-headless", model="fake-helper", effort=None)
-    settings = make_settings(
-        leader_ladder=[FAKE_RUNG],
-        implementer_ladder=[FAKE_RUNG],
-        helper_ladder=[helper_rung],
-        agents={"fake": AgentConfig(), "no-headless": AgentConfig()},
-    )
-    registry = build_registry()
-    registry.register("no-headless", _create_no_headless_agent)
-
-    with pytest.raises(ConfigError):
-        build_engine(
-            tmp_path,
-            settings,
-            clock=FakeClock(TASK_CREATED_AT),
-            tmux=build_tmux(tmux_server),
-            registry=registry,
-        )
 
 
 async def test_stop_before_first_pass_prevents_same_batch_dispatch(

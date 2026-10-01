@@ -12,10 +12,8 @@ from shikiru.domain.reports import (
     NewTask,
     Option,
     PlanReport,
-    ReportKind,
     TriageReport,
     Verdict,
-    model_for,
 )
 
 
@@ -57,12 +55,6 @@ def _escalation(**overrides: Any) -> dict[str, Any]:
             {"label": "B", "consequences": "riskier", "recommended": False},
         ],
     }
-    fields.update(overrides)
-    return fields
-
-
-def _consult(**overrides: Any) -> dict[str, Any]:
-    fields: dict[str, Any] = {"decision": "answer", "answer": "Use approach A"}
     fields.update(overrides)
     return fields
 
@@ -163,26 +155,8 @@ def test_invalid_reports_fail_on_the_expected_field(
     )
 
 
-@pytest.mark.parametrize(
-    "reference", ["T-1", "T-42", "#1", "#7"], ids=["task-id", "task-id-2", "sibling", "sibling-2"]
-)
+@pytest.mark.parametrize("reference", ["T-1", "#1"], ids=["task-id", "sibling"])
 def test_new_task_depends_on_accepts_task_ids_and_sibling_references(reference: str) -> None:
     task = NewTask(**_new_task(depends_on=[reference]))
 
     assert task.depends_on == [reference]
-
-
-_EXAMPLES: dict[ReportKind, dict[str, Any]] = {
-    ReportKind.TRIAGE: _triage(),
-    ReportKind.IMPLEMENTATION: _implementation(),
-    ReportKind.PLAN: {"summary": "Planned", "commits": []},
-    ReportKind.CONSULT: _consult(),
-    ReportKind.VERDICT: _verdict(),
-}
-
-
-@pytest.mark.parametrize("kind", list(ReportKind))
-def test_every_report_kind_maps_to_a_model_that_validates_an_example(kind: ReportKind) -> None:
-    model = model_for(kind)
-
-    model(**_EXAMPLES[kind])

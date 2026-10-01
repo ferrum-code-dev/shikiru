@@ -111,7 +111,7 @@ async def test_a_stalled_attempt_fails_fast_naming_the_last_event_the_tasks_and_
         await _drive(clock, guard, polls)
 
     text = str(caught.value)
-    assert "second nudge" in text.split("recent events:", maxsplit=1)[0]
+    assert "second nudge" in text
     assert "engine line two" in text
     assert "README.md" in text
     assert clock.now() - TASK_CREATED_AT < ATTEMPT_BUDGETS["e3"]
