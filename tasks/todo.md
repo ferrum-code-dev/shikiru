@@ -119,7 +119,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 74r: The no-literals rule is enforced like the no-comments rule (F22)
 - [x] Task 74s: Engine start, tmux and process hygiene (stability)
 - [x] Task 74t: Bounded resources and configurable timeouts (stability)
-- [ ] Task 74u: Soak and chaos run (stability evidence)
+- [x] Task 74u: Soak and chaos run (stability evidence)
 - [ ] Task 74p: Phase 7d verification, re-review and release evidence
 
 ## Phase 8 — Operator Workspace
