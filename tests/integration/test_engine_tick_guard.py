@@ -11,7 +11,8 @@ from shikiru.config.settings import FaultsConfig
 from shikiru.domain.events import EventKind
 from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.tick_guard import EngineFaultLimitError, TickGuard
-from shikiru.errors import CommandFailed
+from shikiru.errors import CommandFailed, InvariantError
+from shikiru.store.database import OperationalDatabaseError
 from shikiru.store.events import EventLog
 from tests.support.clock import FakeClock
 from tests.support.factories import TASK_CREATED_AT
@@ -52,7 +53,9 @@ def _ticks(connection: Connection, error: Exception) -> tuple[_Ticks, EventLog]:
     events = EventLog(connection, clock)
     logger = logging.getLogger("tick-guard-test")
     reporter = FaultReporter(events=events, clock=clock, settings=_FAULTS, logger=logger)
-    guard = TickGuard(reporter=reporter, clock=clock, settings=_FAULTS, logger=logger)
+    guard = TickGuard(
+        reporter=reporter, clock=clock, settings=_FAULTS, logger=logger, scope="engine tick"
+    )
     return _Ticks(guard, clock, error), events
 
 
@@ -125,3 +128,25 @@ async def test_a_flapping_fault_is_recorded_at_most_once_per_interval_and_a_new_
         "CommandFailed",
         "CommandFailed",
     ]
+
+
+@pytest.mark.parametrize(
+    ("error", "recoverable"),
+    [
+        (CommandFailed(("git",), 1, "boom"), True),
+        (OSError("disk full"), True),
+        (OperationalDatabaseError("database is locked"), True),
+        (InvariantError("T-1 vanished while refreshing its task window"), False),
+        (ValueError("bug"), False),
+    ],
+    ids=["tool failure", "filesystem", "database", "invariant", "programming error"],
+)
+async def test_only_environmental_faults_are_recoverable(
+    connection: Connection, error: Exception, recoverable: bool
+) -> None:
+    ticks, events = _ticks(connection, error)
+
+    await ticks.run(1)
+
+    (fault,) = events.since(0, kinds=[EventKind.ENGINE_FAULT])
+    assert fault.data["recoverable"] is recoverable

@@ -22,7 +22,7 @@ from shikiru.domain.tasks import (
     Task,
     TaskOrigin,
 )
-from shikiru.errors import ShikiruError, UsageError
+from shikiru.errors import InvariantError, UsageError
 from shikiru.store.database import (
     dump_json,
     format_timestamp,
@@ -320,7 +320,7 @@ class TaskStore:
         task = self.get(task_id)
         if task is None:
             message = f"{task_id} vanished while its flow was running"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         return task
 
     def list_active(self) -> list[Task]:

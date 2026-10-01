@@ -20,7 +20,7 @@ from shikiru.domain.scheduling import (
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, StatusReason, Step, Task
 from shikiru.engine.events import emit_step_started
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 
 if TYPE_CHECKING:
     from shikiru.clock import Clock
@@ -81,14 +81,14 @@ class Scheduler:
             task = self._tasks.get(task_id)
             if task is None:
                 message = f"{task_id} vanished before dependency cancellation"
-                raise ShikiruError(message)
+                raise InvariantError(message)
             await self._on_dependency_cancelled(task)
         successful_dispatches: list[Dispatch] = []
         for dispatch in schedule.dispatches:
             task = self._tasks.get(dispatch.task_id)
             if task is None:
                 message = f"{dispatch.task_id} vanished before dispatch"
-                raise ShikiruError(message)
+                raise InvariantError(message)
             if await self._dispatch(task, dispatch.slot):
                 successful_dispatches.append(dispatch)
         return dataclasses.replace(schedule, dispatches=tuple(successful_dispatches))
@@ -192,5 +192,5 @@ class Scheduler:
         current = self._tasks.get(task_id)
         if current is None:
             message = f"{task_id} vanished after {operation}"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         return current

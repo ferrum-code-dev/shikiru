@@ -10,7 +10,7 @@ from shikiru.domain.steps import Transition, next_step
 from shikiru.domain.tasks import EscalationReason, Status, Step
 from shikiru.engine.events import emit_turn_failed
 from shikiru.engine.turn_loop import TurnOverrides, TurnsStopped
-from shikiru.errors import ShikiruError, UsageError
+from shikiru.errors import InvariantError, UsageError
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
@@ -94,7 +94,7 @@ class StepRunner:
         report: Report = result.report
         if not isinstance(report, ImplementationReport | Verdict):
             message = f"{result.task.id} integration turn returned an unexpected report"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         return result.task, await self._acceptance.settle(result.task, report, result.execution)
 
     async def advance(

@@ -33,7 +33,7 @@ from shikiru.domain.reports import (
     REPORT_SCHEMA_FILENAME,
     schema_for,
 )
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError, ShikiruError
 from shikiru.helper.helper import FailureClassification
 from shikiru.helper.models import Unrecoverable
 from shikiru.paths import run_dir, task_root, turns_dir
@@ -105,7 +105,7 @@ def turn_environment(
     """Return the environment every agent process of `task`'s `role` runs with (03 §4.1)."""
     if task.slot is None:
         message = f"{task.id} has no assigned slot; a turn needs a dispatched task"
-        raise ShikiruError(message)
+        raise InvariantError(message)
     return {
         RUN_DIR_ENV_VAR: str(run_dir_path),
         ROLE_ENV_VAR: role.value,

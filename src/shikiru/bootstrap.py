@@ -694,6 +694,14 @@ def build_engine(
             clock=resolved_clock,
             settings=resolved_settings.orchestration.faults,
             logger=logger,
+            scope="engine tick",
+        ),
+        command_guard=TickGuard(
+            reporter=fault_reporter,
+            clock=resolved_clock,
+            settings=resolved_settings.orchestration.faults,
+            logger=logger,
+            scope="command loop",
         ),
         reconciler=Reconciler(
             tasks=tasks,

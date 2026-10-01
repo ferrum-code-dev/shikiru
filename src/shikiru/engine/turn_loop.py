@@ -11,7 +11,7 @@ from shikiru.engine.events import emit_nudge, emit_turn_started
 from shikiru.engine.turn_context import ORDINARY_TURN, NextTurn
 from shikiru.engine.turn_execution import TurnExecution
 from shikiru.engine.turns import TurnHeld
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 
 if TYPE_CHECKING:
     from shikiru.domain.recovery import TurnCounters
@@ -133,7 +133,7 @@ class TurnLoop:
                 continue
             if current.step is None:
                 message = f"{current.id} recovery left the task with no step"
-                raise ShikiruError(message)
+                raise InvariantError(message)
             current_step = current.step
             current = self._tasks.require(current.id)
             if current.held:
@@ -184,7 +184,7 @@ class TurnLoop:
         live_run = self._runs.get_live(task.id, role)
         if live_run is None:
             message = f"{task.id} {role.value} run disappeared after its turn"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         return TurnExecution(
             result=result,
             task_id=task.id,

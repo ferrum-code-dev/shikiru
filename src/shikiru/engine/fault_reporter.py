@@ -8,7 +8,8 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError, ShikiruError
+from shikiru.store.database import OperationalDatabaseError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -19,8 +20,13 @@ if TYPE_CHECKING:
     from shikiru.config.settings import FaultsConfig
     from shikiru.store.events import EventLog
 
-RECOVERABLE_FAULTS = (ShikiruError, OSError)
-"""Environmental faults (a failed tmux, git or filesystem call), retried while they last."""
+RECOVERABLE_FAULTS = (ShikiruError, OSError, OperationalDatabaseError)
+"""Environmental faults (a failed tmux, git, file or database call), retried while they last."""
+
+
+def is_recoverable(error: Exception) -> bool:
+    """Return whether `error` is environmental; an `InvariantError` is a logic bug, never one."""
+    return isinstance(error, RECOVERABLE_FAULTS) and not isinstance(error, InvariantError)
 
 
 @dataclass
@@ -52,7 +58,9 @@ class FaultReporter:
 
         Returns whether it is a recoverable fault.
         """
-        recoverable = isinstance(error, RECOVERABLE_FAULTS)
+        recoverable = isinstance(error, RECOVERABLE_FAULTS) and not isinstance(
+            error, InvariantError
+        )
         kind = type(error).__name__
         now = self._clock.now()
         key = (scope, task_id, kind)

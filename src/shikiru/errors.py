@@ -19,6 +19,10 @@ class ShikiruError(Exception):
     exit_code: int = EXIT_GENERIC_ERROR
 
 
+class InvariantError(ShikiruError):
+    """An invariant the engine relies on does not hold: a logic bug, not an environmental fault."""
+
+
 class UsageError(ShikiruError):
     """The operator invoked a command incorrectly."""
 

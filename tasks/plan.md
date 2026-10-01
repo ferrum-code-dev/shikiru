@@ -613,10 +613,10 @@ Refs: 04 §5, 01 §6.
 
 ### Task 74c: Reconcile and the tick fail per item, not per engine
 Refs: 02 §1, 03 §7; reviewer findings.
-- [ ] Reconciliation isolates each step and each task: a failing cleanup (for example `gh pr close` for a cancelled PR task) is logged and recorded as an `engine_fault` and does not stop scheduling, `ensure_flows` or escalation restore; `end_orphans` runs once per engine start, never again on a retry (no kill of a live turn).
-- [ ] `layout.restore` isolates a failing task window so one bad pane does not starve every other task; a persistent per-task fault is re-notified at a bounded interval while it lasts and visible in `status`.
-- [ ] The command loop (`pending`, handlers, `mark_done`) is inside the fault barrier; environmental database errors (`sqlite3.OperationalError`: locked, disk full) are recoverable faults; internal "vanished/no step" invariant errors are reported as `engine_error` faults with the task, not as environmental.
-- [ ] The tick guard's backoff cannot overflow (iterative cap) and `engine_fault` events are deduplicated per error class while a fault flaps (rate-limited), without hiding a new class.
+- [x] Reconciliation isolates each step and each task: a failing cleanup (for example `gh pr close` for a cancelled PR task) is logged and recorded as an `engine_fault` and does not stop scheduling, `ensure_flows` or escalation restore; `end_orphans` runs once per engine start, never again on a retry (no kill of a live turn).
+- [x] `layout.restore` isolates a failing task window so one bad pane does not starve every other task; a persistent per-task fault is re-notified at a bounded interval (`repeat_notify_seconds`) while it lasts, as `engine_fault` events with the task id and a `repeat` count; the `status` display of the fault streak is Task 74d.
+- [x] The command loop (`pending`, handlers, `mark_done`) is inside the fault barrier; environmental database errors (`sqlite3.OperationalError`: locked, disk full) are recoverable faults; internal "vanished/no step" invariant errors (`InvariantError`) are recorded as unexpected faults (`recoverable: false`, with the task where isolated per task), not as environmental.
+- [x] The tick guard's backoff cannot overflow (iterative cap) and `engine_fault` events are deduplicated per error class while a fault flaps (rate-limited), without hiding a new class.
 - Tests: integration with real SQLite/git/tmux and failing `gh`/tmux/SQLite: queued task still dispatches, unheld running task still resumes, pause/resume then retry of reconcile does not kill a live turn, one bad pane does not block another task, 1100 consecutive faults do not stop the engine, a flapping fault records a bounded number of events.
 
 ### Task 74d: Notifications cannot silence an escalation

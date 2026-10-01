@@ -9,7 +9,7 @@ from shikiru.domain.reports import ReportKind
 from shikiru.domain.tasks import Step
 from shikiru.engine.task_facts import require_repo
 from shikiru.engine.turns import TurnRequest
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 from shikiru.paths import task_root
 from shikiru.prompts.renderer import PromptName
 
@@ -50,7 +50,7 @@ def template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKin
     if step is Step.INTEGRATE:
         return PromptName.CONFLICTS, ReportKind.IMPLEMENTATION
     message = f"TaskFlow has no turn template for step {step!r}"
-    raise ShikiruError(message)
+    raise InvariantError(message)
 
 
 class TurnContextPreparer:

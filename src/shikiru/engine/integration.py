@@ -10,7 +10,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
-from shikiru.errors import CommandFailed, ShikiruError
+from shikiru.errors import CommandFailed, InvariantError, ShikiruError
 from shikiru.paths import task_root
 from shikiru.workspace.base_refs import MergedBaseUnavailable
 from shikiru.workspace.github import PullRequestState
@@ -485,7 +485,7 @@ class Integrator:
         repo = task.repo
         if repo is None:
             message = f"{task.id} has no task root to integrate"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         current, current_metadata = task, metadata
         commits = self._strategy.started(task.id)
         if commits is None:
@@ -502,7 +502,7 @@ class Integrator:
         updated = self._tasks.get(current.id)
         if updated is None:
             message = f"{current.id} vanished before integration could finish"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         self._tasks.finish(
             current.id,
             _done_transition(updated),
@@ -517,7 +517,7 @@ class Integrator:
         done = self._tasks.get(current.id)
         if done is None:
             message = f"{current.id} vanished after integration completed"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         await self._finish_task(done)
         return summary
 
@@ -565,7 +565,7 @@ class Integrator:
         current = self._tasks.get(task_id)
         if current is None:
             message = f"{task_id} vanished during integration"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         return current.held
 
     def _require_not_held(self, task_id: str) -> None:

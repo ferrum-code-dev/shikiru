@@ -18,7 +18,7 @@ from shikiru.engine.integration import (
     UncommittedWork,
 )
 from shikiru.engine.step_runner import TurnStopped
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 from shikiru.prompts.renderer import PromptName
 
 if TYPE_CHECKING:
@@ -122,16 +122,16 @@ class IntegrationTurns:
         if step is Step.CONSULT:
             if not isinstance(latest, ConsultAnswer):
                 message = f"{current.id} integration consult produced no answer"
-                raise ShikiruError(message)
+                raise InvariantError(message)
             return current, latest.answer, False
         if not isinstance(latest, ImplementationReport):
             message = f"{current.id} conflicts turn produced no implementation report"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         if latest.status == "completed":
             return current, context, True
         if current.step is not Step.CONSULT:
             message = f"{current.id} conflict report did not route to consult"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         return current, context, False
 
     async def _verify_conflicts(self, task: Task) -> tuple[Task, Verdict]:
@@ -143,7 +143,7 @@ class IntegrationTurns:
         )
         if not isinstance(outcome, Verdict):
             message = f"{task.id} post-rebase turn produced no verdict"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         updated, escalated = await self._steps.advance(current, outcome, role=Role.LEADER)
         if escalated:
             raise TurnStopped

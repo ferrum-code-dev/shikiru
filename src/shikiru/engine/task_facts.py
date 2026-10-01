@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 from shikiru.paths import task_root
 from shikiru.workspace.facts import render_facts
 
@@ -20,7 +20,7 @@ def require_repo(task: Task) -> RepoState:
     """Return the task's repo state or raise when its task root does not exist yet."""
     if task.repo is None:
         message = f"{task.id} has no task root yet"
-        raise ShikiruError(message)
+        raise InvariantError(message)
     return task.repo
 
 

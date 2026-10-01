@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from pydantic import TypeAdapter
 
 BUSY_TIMEOUT_MS = 5000
+OperationalDatabaseError = sqlite3.OperationalError
+"""A database fault of the environment: locked, full or unreadable (02 §1)."""
 _MIGRATIONS_PACKAGE = "shikiru.store.migrations"
 _MIGRATION_SUFFIX = ".sql"
 _MIGRATION_NUMBER_SEPARATOR = "_"

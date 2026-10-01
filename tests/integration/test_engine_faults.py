@@ -23,7 +23,7 @@ from shikiru.errors import CommandFailed
 from shikiru.paths import run_dir, task_root
 from shikiru.private import make_private_dir
 from shikiru.process import SubprocessRunner
-from shikiru.store.commands import CommandQueue
+from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
@@ -344,4 +344,21 @@ async def test_one_bad_task_window_does_not_starve_other_tasks_and_is_renotified
 
         assert [fault.task_id for fault in faults()] == [broken, broken]
         assert faults()[1].data["repeat"] > 1
+        assert not harness.task.done()
+
+
+async def test_a_database_error_in_the_command_path_does_not_stop_the_engine(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _engine(tmp_path, tmux_server) as harness:
+        harness.connection.execute("ALTER TABLE commands RENAME TO commands_away")
+        await harness.until(lambda: EventKind.ENGINE_FAULT in harness.kinds())
+        fault = harness.events.since(0, kinds=[EventKind.ENGINE_FAULT])[0]
+        harness.connection.execute("ALTER TABLE commands_away RENAME TO commands")
+        queued = harness.queue.append(Submit(title="after", request="after", mode=Mode.IMPLEMENT))
+
+        outcome = await wait_for_command(queued, harness.queue, harness.clock)
+
+        assert outcome.status is CommandStatus.DONE
+        assert fault.data["recoverable"] is True
         assert not harness.task.done()

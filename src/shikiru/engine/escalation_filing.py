@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from shikiru.domain.recovery import Failed, ProtocolError, Stalled
 from shikiru.domain.reports import ConsultAnswer, ImplementationReport, Verdict
 from shikiru.domain.tasks import EscalationReason, Status
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 
 if TYPE_CHECKING:
     from shikiru.domain.recovery import TurnResult
@@ -87,7 +87,7 @@ class EscalationFiler:
         reason = transition.escalation_reason
         if transition.status is not Status.ESCALATED or reason is None:
             message = f"{task.id} escalation has no escalated status or reason"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         narrative_question, attempted = escalation_narrative(reason, outcome, result)
         evidence = await self._evidence.collect(task, transition.step, role)
         await self._raiser.raise_escalation(

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from shikiru.domain.commands import HandBack
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Task
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 from shikiru.paths import task_root
 from shikiru.private import make_private_dir
 from shikiru.tmux.client import FORMAT_PANE_ID
@@ -136,14 +136,14 @@ class LayoutGuard:
         updated = self._tasks.get(task.id)
         if updated is None:
             message = f"{task.id} vanished while recording its task window"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         return updated
 
     async def _refresh_cache(self, task_id: str) -> Task:
         refreshed = self._tasks.get(task_id)
         if refreshed is None:
             message = f"{task_id} vanished while refreshing its task window"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         return refreshed
 
     async def _missing_agent_roles(self, task: Task) -> set[Role]:
@@ -157,7 +157,7 @@ class LayoutGuard:
     async def _missing_special_panes(self, task: Task) -> set[str]:
         if task.window_id is None:
             message = f"{task.id} has no window while checking special panes"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         special = self._special_panes.setdefault(task.id, {})
         window_panes = set(await self._tmux.list_panes(task.window_id, FORMAT_PANE_ID))
         for name, pane_id in tuple(special.items()):
@@ -179,7 +179,7 @@ class LayoutGuard:
     ) -> None:
         if task.window_id is None:
             message = f"{task.id} has no window while restoring panes"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         root = task_root(self._project_root, task.id)
         role_panes = dict(task.panes)
         special = self._special_panes.setdefault(task.id, {})
@@ -196,7 +196,7 @@ class LayoutGuard:
         pane_ids = await self._tmux.list_panes(window_id, FORMAT_PANE_ID)
         if not pane_ids:
             message = f"{window_id} has no surviving pane for restoration"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         return await self._tmux.split_window(
             pane_ids[0],
             axis=self._settings.dashboard.layout.split,

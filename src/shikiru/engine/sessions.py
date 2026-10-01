@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.runs import Run, RunStatus
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 from shikiru.paths import turns_dir
 from shikiru.workspace.reports import load_turn_report
 
@@ -54,7 +54,7 @@ class SessionManager:
             refreshed = self._runs.get_live(task.id, role)
             if refreshed is None:
                 message = f"{task.id} {role.value} run disappeared during session selection"
-                raise ShikiruError(message)
+                raise InvariantError(message)
             return SessionSelection(rung, refreshed.session_id, False, refreshed)
 
         if current is not None:

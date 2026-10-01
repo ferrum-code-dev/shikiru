@@ -141,6 +141,7 @@ class Engine:
         layout: LayoutGuard,
         session_guard: SessionGuard,
         tick_guard: TickGuard,
+        command_guard: TickGuard,
         reconciler: Reconciler,
         notifications: NotificationDelivery,
         settings: Settings,
@@ -160,6 +161,7 @@ class Engine:
         self._layout = layout
         self._session_guard = session_guard
         self._tick_guard = tick_guard
+        self._command_guard = command_guard
         self._reconciled = False
         self._stop_reason: str | None = None
         self._reconciler = reconciler
@@ -189,7 +191,7 @@ class Engine:
             while not self._task_supervisor.stop_requested:
                 await self._task_supervisor.supervise(self._logger)
                 self._notifications.supervise(self._logger)
-                commands_changed = await self._process_commands()
+                commands_changed = bool(await self._command_guard.attempt(self._process_commands))
                 if self._task_supervisor.stop_requested:
                     break
                 now = self._clock.now()

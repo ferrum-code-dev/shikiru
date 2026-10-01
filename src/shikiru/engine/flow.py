@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from shikiru.domain.recovery import TurnCounters
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Status
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 
 if TYPE_CHECKING:
     from shikiru.engine.escalation_filing import EscalationFiler
@@ -77,7 +77,7 @@ class TaskFlow:
         while task.status is Status.RUNNING:
             if task.step is None:
                 message = f"{task.id} is running with no step set"
-                raise ShikiruError(message)
+                raise InvariantError(message)
             task, counters, stopped = await self._steps.run_step(task, task.step, counters)
             if stopped:
                 return

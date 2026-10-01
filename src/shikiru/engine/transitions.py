@@ -8,7 +8,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.reports import PlanReport, Verdict
 from shikiru.domain.tasks import Status, TaskOrigin
 from shikiru.engine.events import emit_step_started
-from shikiru.errors import ShikiruError
+from shikiru.errors import InvariantError
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
@@ -42,7 +42,7 @@ class TransitionWriter:
         if transition.enqueue_new_tasks:
             if outcome is None:
                 message = f"{task.id}'s transition enqueues new tasks but has no outcome"
-                raise ShikiruError(message)
+                raise InvariantError(message)
             self._apply_new_tasks(task, transition, outcome)
         else:
             self._tasks.apply_transition(task.id, transition)
@@ -62,7 +62,7 @@ class TransitionWriter:
     def _apply_new_tasks(self, task: Task, transition: Transition, outcome: Outcome) -> None:
         if not isinstance(outcome, PlanReport | Verdict):
             message = f"{task.id}'s transition enqueues new tasks from a {type(outcome).__name__}"
-            raise ShikiruError(message)
+            raise InvariantError(message)
         children = self._tasks.apply_scope_change(
             task.id, transition, outcome.new_tasks, origin=TaskOrigin.LEADER
         )
