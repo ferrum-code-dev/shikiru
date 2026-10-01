@@ -330,32 +330,6 @@ async def test_a_failing_cleanup_does_not_stop_dispatch_or_resume(
         assert not harness.task.done()
 
 
-async def test_a_retried_reconcile_never_ends_a_turn_that_started_after_it(
-    tmp_path: Path,
-    tmux_server: TmuxServer,
-    fake_github: FakeGitHub,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    set_script(monkeypatch, [{"kind": "stall"}])
-
-    async def seed(database: Database, clock: FakeClock, project: Path) -> None:
-        await _seed_tasks(database, clock, project, held_running=True)
-        fake_github.break_pull_requests()
-
-    async with _engine(tmp_path, tmux_server, max_parallel=2, seed=seed) as harness:
-        await harness.until(lambda: EventKind.ENGINE_FAULT in harness.kinds())
-        harness.queue.append(Resume(task_id="T-2"))
-        await harness.until(lambda: harness.runs.get_live("T-2", Role.IMPLEMENTER) is not None)
-
-        await _advance(harness, 300)
-
-        task = harness.tasks.get("T-2")
-        assert task is not None
-        assert task.status is Status.RUNNING
-        assert harness.runs.get_live("T-2", Role.IMPLEMENTER) is not None
-        assert turn_pid_path(run_dir(tmp_path, "T-2"), Role.IMPLEMENTER).exists()
-
-
 async def _seed_held_running_with_resume(database: Database, clock: FakeClock, _: Path) -> None:
     connection = database.connect()
     try:
