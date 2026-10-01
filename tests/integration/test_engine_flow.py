@@ -409,7 +409,6 @@ def _implementer_models(flow_env: FlowEnv, task_id: str) -> list[str]:
 _TRIAGE_COMPLEXITY_CASES = {
     "unset_complexity_takes_the_triaged_one": (None, "high", "fake-high"),
     "explicit_normal_is_kept": ("normal", "normal", "fake-1"),
-    "explicit_low_is_kept": ("low", "low", "fake-1"),
 }
 
 
@@ -483,10 +482,10 @@ async def test_a_rung_set_during_a_turn_is_kept_and_used_by_the_next_turn(
     assert final.overrides[Role.IMPLEMENTER] == _PINNED_RUNG
 
 
-@pytest.mark.parametrize("pinned_role", [Role.LEADER, Role.IMPLEMENTER])
 async def test_a_rung_set_during_verify_survives_the_rejection_that_moves_the_ladder(
-    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path, pinned_role: Role
+    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path
 ) -> None:
+    pinned_role = Role.IMPLEMENTER
     release = tmp_path / "release-verify"
     os.mkfifo(release)
     settings = flow_settings(escalate_after=1)

@@ -261,7 +261,7 @@ def test_a_failed_requeue_leaves_the_delivered_messages_where_they_were(tmp_path
     queue_dir = queued.parent
     queue_dir.chmod(_READ_ONLY_DIRECTORY)
     try:
-        with pytest.raises(OSError, match="Permission denied"):
+        with pytest.raises(PermissionError):
             messages.requeue("T-1", Role.IMPLEMENTER, turn_dir)
     finally:
         queue_dir.chmod(_WRITABLE_DIRECTORY)

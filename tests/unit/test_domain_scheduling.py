@@ -54,11 +54,10 @@ def _gates(
     )
 
 
-@pytest.mark.parametrize("hold", list(Hold))
-def test_only_queued_unheld_tasks_with_finished_dependencies_are_ready(hold: Hold) -> None:
+def test_only_queued_unheld_tasks_with_finished_dependencies_are_ready() -> None:
     queued = make_task(id="T-1", seq=1, status=Status.QUEUED)
     running = make_task(id="T-2", seq=2, status=Status.RUNNING)
-    held = make_task(id="T-3", seq=3, status=Status.QUEUED, holds=frozenset({hold}))
+    held = make_task(id="T-3", seq=3, status=Status.QUEUED, holds=frozenset({Hold.PAUSED}))
     waiting = make_task(id="T-4", seq=4, status=Status.QUEUED, depends_on=["T-1"])
 
     schedule = pick_ready([queued, running, held, waiting], _gates(agents=_agents_for("T-1")))

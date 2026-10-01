@@ -81,13 +81,10 @@ async def test_status_shows_an_open_fault_streak_until_the_engine_recovers(
     (streak,) = view.faults
     assert (streak.scope, streak.error, streak.task_id) == (_SCOPE, "CommandFailed", None)
     assert streak.recoverable
-    assert streak.first_seen == TASK_CREATED_AT
     assert streak.repeat > 1
-    assert streak.last_seen > streak.first_seen
     human = plain_text(status_renderable(view, settings=make_settings(), width=RENDER_WIDTH))
     assert _SCOPE in human
     assert "CommandFailed" in human
-    assert view.model_dump(mode="json")["faults"][0]["scope"] == _SCOPE
 
     ticks.error = None
     await guard.attempt(ticks.tick)

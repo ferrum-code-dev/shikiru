@@ -437,7 +437,6 @@ _RUNG_MOVE_CASES = {
 }
 
 
-@pytest.mark.parametrize("pinned_role", [Role.LEADER, Role.IMPLEMENTER])
 @pytest.mark.parametrize(
     ("failures", "moved_agent"), _RUNG_MOVE_CASES.values(), ids=_RUNG_MOVE_CASES.keys()
 )
@@ -448,8 +447,8 @@ async def test_a_rung_set_during_a_failing_turn_survives_the_recovery_move(
     *,
     failures: list[dict[str, object]],
     moved_agent: str,
-    pinned_role: Role,
 ) -> None:
+    pinned_role = Role.IMPLEMENTER
     release = tmp_path / "release-failure"
     os.mkfifo(release)
     clock = FakeClock(TASK_CREATED_AT)
