@@ -15,7 +15,7 @@ from shikiru.engine.turn_processes import TurnProcesses, turn_pid_path
 from shikiru.paths import run_dir
 from shikiru.process import START_TIME_TOLERANCE_SECONDS, SubprocessRunner
 from tests.support.clock import FakeClock
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,11 +36,9 @@ async def _end_orphans(processes: TurnProcesses, clock: FakeClock) -> None:
     running = asyncio.create_task(processes.end_orphans())
 
     def finished() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(_ADVANCE_SECONDS)
         return running.done()
 
-    await wait_until(finished, _WAIT_SECONDS)
+    await wait_until_advancing(clock, finished, _WAIT_SECONDS, step_seconds=_ADVANCE_SECONDS)
     await running
 
 

@@ -30,7 +30,7 @@ from tests.support.engine import build_fault_reporter, pr_poll_seconds, set_role
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -139,12 +139,7 @@ async def _poll_again(github: FakeGitHub, clock: FakeClock, views: int) -> None:
 
 
 async def _land(clock: FakeClock, running: asyncio.Task[None]) -> None:
-    def landed() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(pr_poll_seconds())
-        return running.done()
-
-    await wait_until(landed, _WAIT_SECONDS)
+    await wait_until_advancing(clock, running.done, _WAIT_SECONDS, step_seconds=pr_poll_seconds())
     await running
 
 

@@ -9,27 +9,14 @@ from typing import TYPE_CHECKING, cast
 
 import psutil
 import pytest
-from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Static
 
 from shikiru.agents.contracts import QuotaWindow, Rung, Usage
-from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
-from shikiru.dashboard.activity import RoleViewTail
-from shikiru.dashboard.contract import (
-    DockerView,
-    OpenPalette,
-    RepoStatus,
-    ResourceView,
-    WidgetContext,
-)
-from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.services import DashboardServices, GitRepoStatusService
-from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Role
-from shikiru.operator.queries import OperatorQueries
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
 from shikiru.plugins.widgets.usage import UsagePanel, UsageWidget
@@ -51,6 +38,7 @@ from shikiru.tmux.client import Tmux
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
+from tests.support.dashboard import WidgetHostApp, widget_context
 from tests.support.factories import make_settings
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT
 from tests.support.render import plain_text
@@ -59,8 +47,6 @@ from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from textual.widget import Widget
 
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
@@ -75,69 +61,6 @@ RSS_COMPARISON_TOLERANCE_GB = 0.01
 CPU_WORK_ITERATIONS = 10_000_000
 CPU_PERCENT_MINIMUM_TOLERANCE = 5.0
 CPU_PERCENT_RELATIVE_TOLERANCE = 0.25
-
-
-class _StubServices:
-    async def repo_status(self) -> RepoStatus:
-        return RepoStatus(branch="main", ahead=0, behind=0, dirty=0)
-
-    def engine_up(self) -> bool:
-        return False
-
-    async def resources(self) -> ResourceView:
-        return ResourceView(10.0, 40.0, 4.0, 2.0, 0.2)
-
-    async def containers(self) -> DockerView:
-        return DockerView(available=False, containers=())
-
-
-class _WidgetHostApp(App[None]):
-    def __init__(self, widget: Widget) -> None:
-        super().__init__()
-        self._widget = widget
-
-    def compose(self) -> ComposeResult:
-        yield self._widget
-
-
-def _context(
-    reader: StateReader,
-    project_dir: Path,
-    clock: FakeClock,
-    *,
-    services: _StubServices | None = None,
-    open_palette: OpenPalette | None = None,
-) -> WidgetContext:
-    dashboard_services = services or _StubServices()
-    settings = load_settings(project_dir)
-    return WidgetContext(
-        views=StateDashboardViews(
-            reader,
-            focus_task=None,
-            settings=settings,
-            sources=dashboard_services,
-            queries=OperatorQueries(
-                reader,
-                project=settings.project.name,
-                project_root=project_dir,
-                engine_up=dashboard_services.engine_up,
-                max_parallel=settings.orchestration.max_parallel,
-                clock=clock,
-            ),
-            clock=clock,
-            motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
-        ),
-        focus_task=None,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        on_change=reader.watch,
-        on_motion=lambda _: None,
-        open_palette=open_palette or _open_palette,
-    )
-
-
-async def _open_palette(action: str) -> None:
-    del action
 
 
 async def test_escalations_open_full_packet_and_route_resolution_action(
@@ -185,7 +108,7 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
     async def open_palette(action: str) -> None:
         actions.append(action)
 
-    context = _context(reader, project_dir, clock, open_palette=open_palette)
+    context = widget_context(reader, project_dir, clock, open_palette=open_palette)
     views = context.views.escalations()
     assert views[0].question == (
         "Which parser should we use?\n\n### Trade-offs\n\n- Strict validation\n- Flexible recovery"
@@ -193,7 +116,7 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
     assert views[1].question == ""
 
     widget = cast("EscalationsPanel", EscalationsWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         widget.focus()
         assert pilot.app.focused is widget
@@ -242,7 +165,7 @@ async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(
         },
     )
     events.append(EventKind.VERDICT, task_id=task.id, message="Leader approves")
-    context = _context(reader, project_dir, clock)
+    context = widget_context(reader, project_dir, clock)
     bubbles = context.views.dialogue()
     assert len(bubbles) == 20
     assert bubbles[0].text == "helper-3"
@@ -253,7 +176,7 @@ async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(
     assert sum(bubble.text == "Leader approves" for bubble in bubbles) == 1
 
     widget = cast("DialoguePanel", DialogueWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         table = cast("DataTable[object]", widget.query_one("#dialogue-table", DataTable))
         table.move_cursor(row=table.row_count - 2)
@@ -287,11 +210,11 @@ async def test_usage_panel_labels_api_equivalent_cost_and_hides_incomplete_total
     runs.record_usage(claude_cost.id, Usage(80, 20, 0, 0, 0.10, "api_equivalent", None))
     runs.record_usage(unknown_cost.id, Usage(40, 10, 0, 0, None, "unknown", None))
 
-    context = _context(reader, project_dir, clock)
+    context = widget_context(reader, project_dir, clock)
     usage = context.views.usage()
     assert next(item for item in usage if item.agent == "claude").cost_usd is None
     widget = cast("UsagePanel", UsageWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         text = plain_text(widget.content)
         assert "codex" in text

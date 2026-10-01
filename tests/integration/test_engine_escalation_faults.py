@@ -32,7 +32,7 @@ from tests.support.engine import (
 )
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -76,11 +76,9 @@ class _World:
 
     async def until(self, condition: Callable[[], object]) -> None:
         async def reached() -> bool:
-            if self.clock.has_pending_sleep():
-                self.clock.advance(1)
             return bool(condition())
 
-        await wait_until(reached, _WAIT_SECONDS)
+        await wait_until_advancing(self.clock, reached, _WAIT_SECONDS)
 
     def fault_events(self, task_id: str) -> int:
         return len(self.events.since(0, kinds=[EventKind.ENGINE_FAULT], task_id=task_id))

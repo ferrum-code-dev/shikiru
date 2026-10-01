@@ -55,7 +55,7 @@ from tests.support.flow import init_project_repo
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import add_bare_remote
 from tests.support.permissions import EXECUTABLE_MODE
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -711,11 +711,11 @@ async def _tick(scheduler: Scheduler, clock: FakeClock, settings: Settings) -> R
     tick = asyncio.create_task(scheduler.run_once())
 
     def finished() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(settings.orchestration.dispatch_budget_seconds)
         return tick.done()
 
-    await wait_until(finished, _REAL_SECONDS)
+    await wait_until_advancing(
+        clock, finished, _REAL_SECONDS, step_seconds=settings.orchestration.dispatch_budget_seconds
+    )
     return tick.result()
 
 

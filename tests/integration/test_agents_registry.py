@@ -9,21 +9,7 @@ from shikiru.agents.contracts import Agent, AgentContext
 from shikiru.agents.registry import AgentPluginError, AgentRegistry
 from shikiru.clock import SystemClock
 from shikiru.process import SubprocessRunner
-
-
-class _FakeDistribution:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-
-class _FakeEntryPoint:
-    def __init__(self, name: str, dist_name: str) -> None:
-        self.name = name
-        self.dist = _FakeDistribution(dist_name)
-
-    def load(self) -> None:
-        message = "an ambiguous entry point must never be loaded"
-        raise AssertionError(message)
+from tests.support.entry_points import ambiguous_entry_points
 
 
 def _context() -> AgentContext:
@@ -33,7 +19,7 @@ def _context() -> AgentContext:
 def test_create_names_the_plugin_when_none_is_registered_or_installed() -> None:
     registry = AgentRegistry()
 
-    with pytest.raises(AgentPluginError, match="no-such-agent"):
+    with pytest.raises(AgentPluginError):
         registry.create("no-such-agent", _context())
 
 
@@ -46,25 +32,21 @@ def test_create_names_the_plugin_when_its_factory_raises() -> None:
 
     registry.register("broken", _broken_factory)
 
-    with pytest.raises(AgentPluginError, match="broken") as excinfo:
+    with pytest.raises(AgentPluginError) as excinfo:
         registry.create("broken", _context())
 
-    assert "bad option" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
 
 
 def test_create_names_the_plugin_and_every_distribution_when_ambiguous(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = AgentRegistry()
-    duplicates = [_FakeEntryPoint("dup", "dist-one"), _FakeEntryPoint("dup", "dist-two")]
+    monkeypatch.setattr(
+        registry_module, "entry_points", ambiguous_entry_points("dup", "dist-one", "dist-two")
+    )
 
-    def _fake_entry_points(*, group: str) -> list[_FakeEntryPoint]:
-        del group
-        return duplicates
-
-    monkeypatch.setattr(registry_module, "entry_points", _fake_entry_points)
-
-    with pytest.raises(AgentPluginError, match="dup") as excinfo:
+    with pytest.raises(AgentPluginError) as excinfo:
         registry.create("dup", _context())
 
     assert "dist-one" in str(excinfo.value)

@@ -45,7 +45,7 @@ from tests.support.engine import (
 )
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
@@ -124,12 +124,10 @@ class _Harness:
 
     async def until(self, condition: Callable[[], object]) -> None:
         async def reached() -> bool:
-            if self.clock.has_pending_sleep():
-                self.clock.advance(1)
             result = condition()
             return bool(await result) if asyncio.iscoroutine(result) else bool(result)
 
-        await wait_until(reached, _WAIT_SECONDS)
+        await wait_until_advancing(self.clock, reached, _WAIT_SECONDS)
 
     def kinds(self) -> list[EventKind]:
         return [event.kind for event in self.events.since(0)]
@@ -297,11 +295,9 @@ async def _advance(harness: _Harness, seconds: int) -> None:
     deadline = harness.clock.now() + timedelta(seconds=seconds)
 
     async def reached() -> bool:
-        if harness.clock.has_pending_sleep():
-            harness.clock.advance(10)
         return harness.clock.now() >= deadline
 
-    await wait_until(reached, _WAIT_SECONDS)
+    await wait_until_advancing(harness.clock, reached, _WAIT_SECONDS, step_seconds=10)
 
 
 async def test_a_failing_cleanup_does_not_stop_dispatch_or_resume(

@@ -21,7 +21,7 @@ from shikiru.tmux.client import Tmux
 from shikiru.tmux.session import SessionView
 from tests.support.clock import FakeClock
 from tests.support.factories import TASK_CREATED_AT
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -82,11 +82,9 @@ async def _no_validation(_settings: Settings) -> None:
 
 async def _advance_until_done(clock: FakeClock, work: asyncio.Task[object]) -> None:
     async def finished() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(ADVANCE_SECONDS)
         return work.done()
 
-    await wait_until(finished, timeout=10)
+    await wait_until_advancing(clock, finished, 10, step_seconds=ADVANCE_SECONDS)
 
 
 async def test_stop_waits_for_the_engine_to_release_its_lock(tmp_path: Path) -> None:

@@ -25,7 +25,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, build_tmux, engine_settings, wait_for_command
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -56,11 +56,11 @@ class _Harness:
 
     async def until(self, condition: Callable[[], bool]) -> None:
         def reached() -> bool:
-            if self.clock.has_pending_sleep():
-                self.clock.advance(COMMAND_POLL_SECONDS)
             return condition()
 
-        await wait_until(reached, _WAIT_SECONDS)
+        await wait_until_advancing(
+            self.clock, reached, _WAIT_SECONDS, step_seconds=COMMAND_POLL_SECONDS
+        )
 
     def escalate(self, message: str) -> None:
         self.events.append(EventKind.ESCALATION, message=message)

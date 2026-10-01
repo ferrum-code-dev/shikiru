@@ -50,7 +50,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_sett
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -351,8 +351,6 @@ async def _run_until_finished(
     project: _Project, task_id: str, status: Status, engine: Engine, clock: FakeClock
 ) -> None:
     def finished() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(_POLL_ADVANCE_SECONDS)
         task = project.tasks.get(task_id)
         return (
             task is not None
@@ -362,7 +360,9 @@ async def _run_until_finished(
 
     running = asyncio.create_task(engine.run())
     try:
-        await wait_until(finished, timeout=_WAIT_SECONDS)
+        await wait_until_advancing(
+            clock, finished, _WAIT_SECONDS, step_seconds=_POLL_ADVANCE_SECONDS
+        )
     finally:
         running.cancel()
         with suppress(asyncio.CancelledError):
@@ -422,14 +422,12 @@ async def _restart_once(project: _Project, engines: _Engines, leftover_id: str) 
     probe = project.queue.append(Pause(task_id=leftover_id))
 
     def probed() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(_POLL_ADVANCE_SECONDS)
         outcome = project.queue.status(probe.id)
         return outcome is not None and outcome.status is not CommandStatus.PENDING
 
     running = asyncio.create_task(engines.build(clock).run())
     try:
-        await wait_until(probed, timeout=_WAIT_SECONDS)
+        await wait_until_advancing(clock, probed, _WAIT_SECONDS, step_seconds=_POLL_ADVANCE_SECONDS)
     finally:
         running.cancel()
         with suppress(asyncio.CancelledError):
@@ -604,7 +602,12 @@ async def test_a_restarted_engine_leaves_a_paused_integrating_task_alone_until_i
             assert await _head(tmp_path) == initial
 
             await _process(project, clock, Resume(task_id=task_id))
-            await wait_until(lambda: _finished(project, task_id, clock), timeout=_WAIT_SECONDS)
+            await wait_until_advancing(
+                clock,
+                lambda: _finished(project, task_id),
+                _WAIT_SECONDS,
+                step_seconds=_POLL_ADVANCE_SECONDS,
+            )
         finally:
             running.cancel()
             with suppress(asyncio.CancelledError):
@@ -621,17 +624,13 @@ async def _process(
     queued = project.queue.append(command)
 
     def processed() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(_POLL_ADVANCE_SECONDS)
         outcome = project.queue.status(queued.id)
         return outcome is not None and outcome.status is not CommandStatus.PENDING
 
-    await wait_until(processed, timeout=_WAIT_SECONDS)
+    await wait_until_advancing(clock, processed, _WAIT_SECONDS, step_seconds=_POLL_ADVANCE_SECONDS)
 
 
-def _finished(project: _Project, task_id: str, clock: FakeClock) -> bool:
-    if clock.has_pending_sleep():
-        clock.advance(_POLL_ADVANCE_SECONDS)
+def _finished(project: _Project, task_id: str) -> bool:
     task = project.tasks.get(task_id)
     return (
         task is not None

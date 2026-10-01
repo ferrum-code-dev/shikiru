@@ -10,12 +10,8 @@ from textual.widgets import TextArea
 import shikiru.agents.registry as registry_module
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
-from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
-from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView
-from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.palette import PaletteScreen
-from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.steps import first_step
 from shikiru.domain.tasks import Mode
 from shikiru.operator.commands import OperatorCommands
@@ -26,6 +22,8 @@ from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
+from tests.support.dashboard import StubServices, ignore_palette_action, state_views
+from tests.support.entry_points import ambiguous_entry_points
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -36,26 +34,9 @@ if TYPE_CHECKING:
 
     from rich.text import Text
 
+    from shikiru.dashboard.contract import OpenPalette
     from shikiru.store.database import Database
     from tests.support.store import Connection
-
-
-class _StubServices:
-    async def repo_status(self) -> RepoStatus:
-        return RepoStatus(branch="main", ahead=0, behind=0, dirty=0)
-
-    def engine_up(self) -> bool:
-        return False
-
-    async def resources(self) -> ResourceView:
-        return ResourceView(10.0, 40.0, 4.0, 2.0, 0.2)
-
-    async def containers(self) -> DockerView:
-        return DockerView(available=False, containers=())
-
-
-async def _open_palette(action: str) -> None:
-    del action
 
 
 async def _unexpected_pane_selection(pane_id: str) -> None:
@@ -63,23 +44,24 @@ async def _unexpected_pane_selection(pane_id: str) -> None:
     raise AssertionError
 
 
-def _views(reader: StateReader, project_dir: Path, sources: _StubServices) -> StateDashboardViews:
+def _app(
+    reader: StateReader,
+    project_dir: Path,
+    *,
+    widget_names: list[str],
+    open_palette: OpenPalette = ignore_palette_action,
+) -> DashboardApp:
     settings = load_settings(project_dir)
-    return StateDashboardViews(
-        reader,
+    return DashboardApp(
         focus_task=None,
-        settings=settings,
-        sources=sources,
-        queries=OperatorQueries(
-            reader,
-            project=settings.project.name,
-            project_root=project_dir,
-            engine_up=sources.engine_up,
-            max_parallel=settings.orchestration.max_parallel,
-            clock=SystemClock(),
-        ),
+        views=state_views(reader, project_dir, SystemClock(), StubServices()),
+        on_change=reader.watch,
         clock=SystemClock(),
-        motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
+        motion_interval_seconds=_motion_interval(project_dir),
+        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        open_palette=open_palette,
+        widget_names=widget_names,
     )
 
 
@@ -95,19 +77,7 @@ async def test_dashboard_app_rejects_an_unregistered_widget_name(
     project_dir = write_minimal_project(tmp_path)
     reader = StateReader(database, SystemClock())
     try:
-        app = DashboardApp(
-            focus_task=None,
-            views=_views(reader, project_dir, _StubServices()),
-            on_change=reader.watch,
-            clock=SystemClock(),
-            motion_interval_seconds=_motion_interval(project_dir),
-            resources_refresh_seconds=load_settings(
-                project_dir
-            ).orchestration.resources.sample_seconds,
-            docker_refresh_seconds=load_settings(project_dir).dashboard.docker_refresh_seconds,
-            open_palette=_open_palette,
-            widget_names=["no-such-widget"],
-        )
+        app = _app(reader, project_dir, widget_names=["no-such-widget"])
         with pytest.raises(WidgetPluginError):
             async with app.run_test():
                 pass
@@ -126,17 +96,7 @@ async def test_dashboard_mounts_the_default_widgets(
     reader = StateReader(database, SystemClock())
     settings = load_settings(project_dir)
     try:
-        app = DashboardApp(
-            focus_task=None,
-            views=_views(reader, project_dir, _StubServices()),
-            on_change=reader.watch,
-            clock=SystemClock(),
-            motion_interval_seconds=_motion_interval(project_dir),
-            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-            open_palette=_open_palette,
-            widget_names=settings.dashboard.widgets,
-        )
+        app = _app(reader, project_dir, widget_names=settings.dashboard.widgets)
         async with app.run_test(size=(72, 64)) as pilot:
             await pilot.pause()
             dashboard = app.query_one("#dashboard-panels", VerticalScroll)
@@ -163,17 +123,7 @@ async def test_default_dashboard_widgets_fit_a_narrow_system_pane(
     reader = StateReader(database, SystemClock())
     settings = load_settings(project_dir)
     try:
-        app = DashboardApp(
-            focus_task=None,
-            views=_views(reader, project_dir, _StubServices()),
-            on_change=reader.watch,
-            clock=SystemClock(),
-            motion_interval_seconds=_motion_interval(project_dir),
-            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-            open_palette=_open_palette,
-            widget_names=settings.dashboard.widgets,
-        )
+        app = _app(reader, project_dir, widget_names=settings.dashboard.widgets)
         async with app.run_test(size=(30, 24)) as pilot:
             await pilot.pause()
             dashboard = app.query_one("#dashboard-panels", VerticalScroll)
@@ -221,19 +171,7 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
         await app_instance.push_screen(PaletteScreen(commands, queries, _unexpected_pane_selection))
 
     try:
-        app_instance = DashboardApp(
-            focus_task=None,
-            views=_views(reader, project_dir, _StubServices()),
-            on_change=reader.watch,
-            clock=SystemClock(),
-            motion_interval_seconds=_motion_interval(project_dir),
-            resources_refresh_seconds=load_settings(
-                project_dir
-            ).orchestration.resources.sample_seconds,
-            docker_refresh_seconds=load_settings(project_dir).dashboard.docker_refresh_seconds,
-            open_palette=open_palette,
-            widget_names=[],
-        )
+        app_instance = _app(reader, project_dir, widget_names=[], open_palette=open_palette)
         async with app_instance.run_test(size=(72, 32)) as pilot:
             await pilot.press("ctrl+p")
             await pilot.pause()
@@ -260,21 +198,6 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
         reader.close()
 
 
-class _FakeDistribution:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-
-class _FakeEntryPoint:
-    def __init__(self, name: str, dist_name: str) -> None:
-        self.name = name
-        self.dist = _FakeDistribution(dist_name)
-
-    def load(self) -> None:
-        message = "an ambiguous widget entry point must never be loaded"
-        raise AssertionError(message)
-
-
 async def test_dashboard_app_rejects_an_ambiguous_widget_name(
     database: Database,
     connection: Connection,
@@ -282,30 +205,14 @@ async def test_dashboard_app_rejects_an_ambiguous_widget_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del connection
-    duplicates = [_FakeEntryPoint("dup", "dist-one"), _FakeEntryPoint("dup", "dist-two")]
-
-    def _fake_entry_points(*, group: str) -> list[_FakeEntryPoint]:
-        del group
-        return duplicates
-
-    monkeypatch.setattr(registry_module, "entry_points", _fake_entry_points)
+    monkeypatch.setattr(
+        registry_module, "entry_points", ambiguous_entry_points("dup", "dist-one", "dist-two")
+    )
     project_dir = write_minimal_project(tmp_path)
     reader = StateReader(database, SystemClock())
     try:
-        app = DashboardApp(
-            focus_task=None,
-            views=_views(reader, project_dir, _StubServices()),
-            on_change=reader.watch,
-            clock=SystemClock(),
-            motion_interval_seconds=_motion_interval(project_dir),
-            resources_refresh_seconds=load_settings(
-                project_dir
-            ).orchestration.resources.sample_seconds,
-            docker_refresh_seconds=load_settings(project_dir).dashboard.docker_refresh_seconds,
-            open_palette=_open_palette,
-            widget_names=["dup"],
-        )
-        with pytest.raises(WidgetPluginError, match="dist-one") as excinfo:
+        app = _app(reader, project_dir, widget_names=["dup"])
+        with pytest.raises(WidgetPluginError) as excinfo:
             async with app.run_test():
                 pass
         assert "dist-two" in str(excinfo.value)

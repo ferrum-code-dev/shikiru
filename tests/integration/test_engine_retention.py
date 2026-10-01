@@ -35,7 +35,7 @@ from tests.support.engine import build_registry, build_tmux, engine_settings
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -263,12 +263,10 @@ async def test_a_long_lived_engine_keeps_its_run_directories_bounded(
         queued = queue.append(Submit(title=title, request=title))
 
         def acknowledged() -> bool:
-            if clock.has_pending_sleep():
-                clock.advance(_POLL_SECONDS)
             outcome = queue.status(queued.id)
             return outcome is not None and outcome.result is not None
 
-        await wait_until(acknowledged, _WAIT_SECONDS)
+        await wait_until_advancing(clock, acknowledged, _WAIT_SECONDS, step_seconds=_POLL_SECONDS)
         outcome = queue.status(queued.id)
         assert outcome is not None
         assert outcome.result is not None
@@ -280,24 +278,29 @@ async def test_a_long_lived_engine_keeps_its_run_directories_bounded(
         return task.status
 
     def settled(task_id: str, status: Status) -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(_POLL_SECONDS)
         return status_of(task_id) is status and not task_root(tmp_path, task_id).exists()
 
     def started(task_id: str) -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(_POLL_SECONDS)
         return run_dir(tmp_path, task_id).is_dir()
 
     try:
         paused = await submit("stays alive")
-        await wait_until(lambda: started(paused), _WAIT_SECONDS)
+        await wait_until_advancing(
+            clock, lambda: started(paused), _WAIT_SECONDS, step_seconds=_POLL_SECONDS
+        )
         queue.append(Pause(task_id=paused))
         for number in range(_TASKS):
             finished = await submit(f"short {number}")
-            await wait_until(lambda task_id=finished: settled(task_id, Status.DONE), _WAIT_SECONDS)
+            await wait_until_advancing(
+                clock,
+                lambda task_id=finished: settled(task_id, Status.DONE),
+                _WAIT_SECONDS,
+                step_seconds=_POLL_SECONDS,
+            )
             clock.advance(timedelta(days=_TASK_DAYS * 2).total_seconds())
-        await wait_until(lambda: len(_run_dirs(tmp_path)) <= 2, _WAIT_SECONDS)
+        await wait_until_advancing(
+            clock, lambda: len(_run_dirs(tmp_path)) <= 2, _WAIT_SECONDS, step_seconds=_POLL_SECONDS
+        )
     finally:
         running.cancel()
         with suppress(asyncio.CancelledError):

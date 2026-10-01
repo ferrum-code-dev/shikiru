@@ -17,15 +17,11 @@ from shikiru.config.loader import load_settings
 from shikiru.config.settings import TimeoutsConfig
 from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp
-from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView
-from shikiru.dashboard.motion import DashboardMotion
-from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
-from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.strips import StripsPanel
@@ -51,6 +47,7 @@ from shikiru.view_log import (
 )
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
+from tests.support.dashboard import StubServices, state_views
 from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
@@ -62,6 +59,7 @@ if TYPE_CHECKING:
     from rich.text import Text
 
     from shikiru.config.settings import Settings
+    from shikiru.dashboard.views import StateDashboardViews
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
     from shikiru.store.database import Database
@@ -70,20 +68,6 @@ if TYPE_CHECKING:
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _TURN_NAME = "001-implement-i1"
 _STALE_TURN_NAME = "000-implement-i0"
-
-
-class _DashboardSources:
-    async def repo_status(self) -> RepoStatus:
-        return RepoStatus(branch="main", ahead=0, behind=0, dirty=0)
-
-    def engine_up(self) -> bool:
-        return False
-
-    async def resources(self) -> ResourceView:
-        return ResourceView(0, 0, 0, None, None)
-
-    async def containers(self) -> DockerView:
-        return DockerView(available=False, containers=())
 
 
 def _row(at: datetime, turn: str, signal: str) -> str:
@@ -154,22 +138,8 @@ def _seed_dashboard_state(connection: Connection, clock: FakeClock) -> tuple[Tas
 def _build_views(
     reader: StateReader, project_dir: Path, settings: Settings, clock: FakeClock, task: Task
 ) -> StateDashboardViews:
-    sources = _DashboardSources()
-    return StateDashboardViews(
-        reader,
-        focus_task=task.id,
-        settings=settings,
-        sources=sources,
-        queries=OperatorQueries(
-            reader,
-            project=settings.project.name,
-            project_root=project_dir,
-            engine_up=sources.engine_up,
-            max_parallel=settings.orchestration.max_parallel,
-            clock=clock,
-        ),
-        clock=clock,
-        motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
+    return state_views(
+        reader, project_dir, clock, StubServices(), focus_task=task.id, settings=settings
     )
 
 

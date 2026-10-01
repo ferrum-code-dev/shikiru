@@ -31,7 +31,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -67,11 +67,9 @@ class _Project:
         self, condition: Callable[[], bool], *, advance: float = _POLL_ADVANCE_SECONDS
     ) -> None:
         async def reached() -> bool:
-            if self.clock.has_pending_sleep():
-                self.clock.advance(advance)
             return condition()
 
-        await wait_until(reached, timeout=_TIMEOUT_SECONDS)
+        await wait_until_advancing(self.clock, reached, _TIMEOUT_SECONDS, step_seconds=advance)
 
     def task(self, task_id: str) -> Task:
         task = self.tasks.get(task_id)

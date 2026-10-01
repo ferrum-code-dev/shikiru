@@ -5,18 +5,11 @@ from typing import TYPE_CHECKING, cast
 
 from rich.cells import cell_len
 from rich.text import Text
-from textual.app import App, ComposeResult
 
-from shikiru.config.loader import load_settings
-from shikiru.dashboard.activity import RoleViewTail
-from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView, WidgetContext
-from shikiru.dashboard.motion import DashboardMotion
-from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.events import EventKind
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Status
-from shikiru.operator.queries import OperatorQueries
 from shikiru.plugins.widgets.header import HeaderPanel, HeaderWidget
 from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.plugins.widgets.strips import StripsPanel, StripsWidget
@@ -25,13 +18,12 @@ from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
+from tests.support.dashboard import StubServices, WidgetHostApp, widget_context
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from textual.widget import Widget
 
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
@@ -44,32 +36,6 @@ def _plain(content: object) -> str:
     return content.plain if isinstance(content, Text) else str(content)
 
 
-class _StubServices:
-    def __init__(self, *, engine_running: bool = False) -> None:
-        self._engine_running = engine_running
-
-    async def repo_status(self) -> RepoStatus:
-        return RepoStatus(branch="main", ahead=1, behind=0, dirty=2)
-
-    def engine_up(self) -> bool:
-        return self._engine_running
-
-    async def resources(self) -> ResourceView:
-        return ResourceView(10.0, 40.0, 4.0, 2.0, 0.2)
-
-    async def containers(self) -> DockerView:
-        return DockerView(available=False, containers=())
-
-
-class _WidgetHostApp(App[None]):
-    def __init__(self, widget: Widget) -> None:
-        super().__init__()
-        self._widget = widget
-
-    def compose(self) -> ComposeResult:
-        yield self._widget
-
-
 def _submit_task(
     connection: Connection, clock: FakeClock, *, mode: Mode | None = Mode.IMPLEMENT
 ) -> str:
@@ -80,41 +46,6 @@ def _submit_task(
     return task.id
 
 
-def _context(
-    reader: StateReader, project_dir: Path, *, services: _StubServices | None = None
-) -> WidgetContext:
-    dashboard_services = services or _StubServices()
-    settings = load_settings(project_dir)
-    return WidgetContext(
-        views=StateDashboardViews(
-            reader,
-            focus_task=None,
-            settings=settings,
-            sources=dashboard_services,
-            queries=OperatorQueries(
-                reader,
-                project="demo",
-                project_root=project_dir,
-                engine_up=dashboard_services.engine_up,
-                max_parallel=2,
-                clock=FakeClock(START),
-            ),
-            clock=FakeClock(START),
-            motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
-        ),
-        focus_task=None,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        on_change=reader.watch,
-        on_motion=lambda _: None,
-        open_palette=_open_palette,
-    )
-
-
-async def _open_palette(action: str) -> None:
-    del action
-
-
 async def test_header_shows_project_name_engine_state_and_slots(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
@@ -122,9 +53,11 @@ async def test_header_shows_project_name_engine_state_and_slots(
     clock = FakeClock(START)
     _submit_task(connection, clock)
 
-    context = _context(reader, project_dir, services=_StubServices(engine_running=True))
+    context = widget_context(
+        reader, project_dir, FakeClock(START), services=StubServices(engine_running=True)
+    )
     widget = cast("HeaderPanel", HeaderWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         text = cast("str", widget.content)
         assert "demo" in text
@@ -144,9 +77,9 @@ async def test_header_does_not_count_an_escalated_slot_as_occupied(
     store.set_slot(task.id, 0)
     store.apply_transition(task.id, Transition.stay(task, step=task.step, status=Status.ESCALATED))
 
-    context = _context(reader, project_dir)
+    context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("HeaderPanel", HeaderWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
 
         assert "slots 0/2" in cast("str", widget.content)
@@ -170,9 +103,9 @@ async def test_header_shows_an_open_fault_streak_and_the_age_of_the_oldest_escal
     fault = {"scope": "engine tick", "error": "CommandFailed", "recoverable": True, "repeat": 3}
     events.append(EventKind.ENGINE_FAULT, message="failed", data=fault)
 
-    context = _context(reader, project_dir)
+    context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("HeaderPanel", HeaderWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         text = cast("str", widget.content)
         assert "engine tick: CommandFailed x3" in text
@@ -189,9 +122,9 @@ async def test_header_refreshes_when_the_writer_commits(
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
 
-    context = _context(reader, project_dir)
+    context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("HeaderPanel", HeaderWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         assert "slots 0/2" in cast("str", widget.content)
 
@@ -207,9 +140,9 @@ async def test_strips_shows_the_active_task_at_its_current_step(
     clock = FakeClock(START)
     task_id = _submit_task(connection, clock)
 
-    context = _context(reader, project_dir)
+    context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("StripsPanel", StripsWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         text = _plain(widget.content)
         assert task_id in text
@@ -223,9 +156,9 @@ async def test_strips_shows_only_a_triage_panel_before_the_mode_is_decided(
     clock = FakeClock(START)
     task_id = _submit_task(connection, clock, mode=None)
 
-    context = _context(reader, project_dir)
+    context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("StripsPanel", StripsWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         text = _plain(widget.content)
         assert task_id in text
@@ -241,9 +174,9 @@ async def test_strips_carries_style_information_into_the_rendered_content(
     clock = FakeClock(START)
     _submit_task(connection, clock)
 
-    context = _context(reader, project_dir)
+    context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("StripsPanel", StripsWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         content = widget.content
         assert isinstance(content, Text)
@@ -257,9 +190,9 @@ async def test_strips_renders_the_narrow_form_in_a_narrow_pane(
     clock = FakeClock(START)
     _submit_task(connection, clock)
 
-    context = _context(reader, project_dir)
+    context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("StripsPanel", StripsWidget().create(context))
-    async with _WidgetHostApp(widget).run_test(size=(30, 24)) as pilot:
+    async with WidgetHostApp(widget).run_test(size=(30, 24)) as pilot:
         await pilot.pause()
         text = _plain(widget.content)
         assert "|" not in text
@@ -275,9 +208,9 @@ async def test_strips_shows_a_paused_stamp_for_a_held_task(
     task_id = _submit_task(connection, clock)
     TaskStore(connection, clock).set_holds(task_id, frozenset({Hold.PAUSED}))
 
-    context = _context(reader, project_dir)
+    context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("StripsPanel", StripsWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         assert "PAUSED" in _plain(widget.content)
 
@@ -291,9 +224,9 @@ async def test_queue_lists_a_queued_task_with_its_priority_and_wait_reason(
     assert task.status is Status.QUEUED
     TaskStore(connection, clock).set_wait_reason(task.id, WaitReason.SLOT)
 
-    context = _context(reader, project_dir)
+    context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("QueuePanel", QueueWidget().create(context))
-    async with _WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         text = cast("str", widget.content)
         assert task.id in text

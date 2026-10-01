@@ -27,7 +27,7 @@ from tests.support.flow import (
     flow_settings,
     init_project_repo,
 )
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
@@ -39,11 +39,9 @@ _FLOW_TIMEOUT_SECONDS = 60
 
 async def _drive(flow_task: asyncio.Task[None], clock: FakeClock) -> None:
     def done() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(1)
         return flow_task.done()
 
-    await wait_until(done, timeout=_FLOW_TIMEOUT_SECONDS)
+    await wait_until_advancing(clock, done, _FLOW_TIMEOUT_SECONDS)
     await flow_task
 
 
@@ -472,12 +470,10 @@ async def test_a_rung_set_during_a_failing_turn_survives_the_recovery_move(
     flow_env = build_flow(engine_env, settings, clock=clock)
 
     def gated_turn_running() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(1)
         started = flow_env.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task_id)
         return len(started) == len(failures)
 
-    await wait_until(gated_turn_running, timeout=20)
+    await wait_until_advancing(clock, gated_turn_running, 20)
     await apply_set_rung(
         engine_env,
         flow_env,

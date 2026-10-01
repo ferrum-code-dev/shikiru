@@ -27,7 +27,7 @@ from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
 from tests.support.engine import build_fault_reporter, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until_advancing
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -112,11 +112,9 @@ async def _reconciler(
 
 async def _until_done(reconciling: asyncio.Task[None], clock: FakeClock) -> None:
     def finished() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(_ADVANCE_SECONDS)
         return reconciling.done()
 
-    await wait_until(finished, _WAIT_SECONDS)
+    await wait_until_advancing(clock, finished, _WAIT_SECONDS, step_seconds=_ADVANCE_SECONDS)
     await reconciling
 
 
