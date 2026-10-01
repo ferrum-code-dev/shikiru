@@ -105,7 +105,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 74e: PR mode network work leaves the command loop and tolerates blips
 - [x] Task 74f: Operator-held tasks and task ids survive tmux loss and reuse
 - [x] Task 74g: Lint, docs, smoke and evidence hygiene
-- [ ] Task 74i: Test-value audit against AGENTS.md
+- [x] Task 74i: Test-value audit against AGENTS.md
 - [ ] Task 74h: Phase 7c verification and release evidence
 
 ## Phase 8 — Operator Workspace
