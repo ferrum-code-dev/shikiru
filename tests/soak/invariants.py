@@ -22,13 +22,13 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from shikiru.domain.events import Event
-    from tests.soak.arena import Arena
+    from tests.soak.arena import Arena, TurnProcess
 
 RUNNER = SubprocessRunner()
 GIT_TIMEOUT_SECONDS = 30.0
 SETTLE_SECONDS = 4.0
 COMMAND_SETTLE_SECONDS = 20.0
-NOTIFY_SETTLE_SECONDS = 30.0
+NOTIFY_SETTLE_SECONDS = 75.0
 SCAN_INTERVAL = timedelta(seconds=2)
 HELD_SAMPLES = 2
 BASE_BRANCH = "main"
@@ -83,27 +83,33 @@ class InvariantChecker:
         reader = self._arena.reader
         assert reader is not None
         tasks = reader.list_tasks()
-        found = self._held_turns(tasks)
-        structure = self._two_owners(tasks, now) | self._escalations(tasks)
+        turns = self._arena.turn_processes()
+        held_after = {task.id for task in reader.list_tasks() if task.holds}
+        found = self._held_turns(tasks, turns, held_after)
+        found += self._beside_takeover(tasks, turns)
+        structure = self._two_owners(tasks, turns, now) | self._escalations(tasks)
         found += self._structure.confirmed(structure, now, stable=stable)
         found += self._commands.confirmed(self._pending_commands(), now, stable=stable)
         found += self._notices.confirmed(self.undelivered(), now, stable=stable)
         return found
 
-    def _held_turns(self, tasks: list[Task]) -> list[Violation]:
+    def _held_turns(
+        self, tasks: list[Task], turns: list[TurnProcess], held_after: set[str]
+    ) -> list[Violation]:
         held_before = dict(self._held_samples)
         self._held_samples = {
             task.id: held_before.get(task.id, 0) + 1 if task.holds else 0 for task in tasks
         }
-        found = self._beside_takeover(tasks)
-        for turn in self._arena.turn_processes():
+        found: list[Violation] = []
+        for turn in turns:
             key = (turn.identity.pid, turn.identity.started_at)
             if key in self._seen_turns:
                 continue
             self._seen_turns.add(key)
             if (
                 held_before.get(turn.task_id, 0) >= HELD_SAMPLES
-                and self._held_samples[turn.task_id]
+                and self._held_samples.get(turn.task_id)
+                and turn.task_id in held_after
             ):
                 found.append(
                     Violation(
@@ -114,8 +120,8 @@ class InvariantChecker:
                 )
         return found
 
-    def _beside_takeover(self, tasks: list[Task]) -> list[Violation]:
-        running = {turn.task_id for turn in self._arena.turn_processes()}
+    def _beside_takeover(self, tasks: list[Task], turns: list[TurnProcess]) -> list[Violation]:
+        running = {turn.task_id for turn in turns}
         before = self._beside
         self._beside = {
             task.id: before.get(task.id, 0) + 1
@@ -128,9 +134,10 @@ class InvariantChecker:
             if samples >= HELD_SAMPLES
         ]
 
-    def _two_owners(self, tasks: list[Task], now: datetime) -> dict[Hashable, Violation]:
+    def _two_owners(
+        self, tasks: list[Task], live: list[TurnProcess], now: datetime
+    ) -> dict[Hashable, Violation]:
         observed: dict[Hashable, Violation] = {}
-        live = self._arena.turn_processes()
         if self._last_scan is None or now - self._last_scan >= SCAN_INTERVAL:
             self._last_scan = now
             self._scanned = {

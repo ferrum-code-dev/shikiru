@@ -11,6 +11,7 @@ import sys
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from fake_agent.scripted import TASK_SCRIPT_DIR_ENV_VAR, task_script_path
@@ -25,6 +26,7 @@ from shikiru.store.database import Database, OperationalDatabaseError
 from shikiru.store.reader import StateReader
 from tests.soak import hook, processes
 from tests.soak.model import IntegrationMode, Scripts
+from tests.soak.scenarios import RESETS_AT_PLACEHOLDER, TASK_PLACEHOLDER
 from tests.support.cli_project import prepare_project, private_tmux_environment, run_cli
 from tests.support.factories import CPU_UNCAPPED_PCT
 from tests.support.git_repo import run_git
@@ -49,6 +51,8 @@ STARTS_ATTEMPTS = 5
 START_RETRY_SECONDS = 1.0
 APPEND_RETRY_SECONDS = 0.5
 APPEND_ATTEMPTS = 40
+QUOTA_RESET_SECONDS = 3.0
+STALL_SECONDS = 20
 LADDER = '[{agent="fake",model="fake-1"},{agent="fake",model="fake-2"}]'
 HELPER_LADDER = '[{agent="fake",model="fake-1"}]'
 GIT_HOOK_NAME = "reference-transaction"
@@ -181,7 +185,12 @@ class Arena:
         raise RuntimeError(message)
 
     def write_script(self, task_id: str, scripts: Scripts) -> None:
-        text = json.dumps(scripts).replace("{task}", task_id)
+        resets_at = (CLOCK.now() + timedelta(seconds=QUOTA_RESET_SECONDS)).isoformat()
+        text = (
+            json.dumps(scripts)
+            .replace(TASK_PLACEHOLDER, task_id)
+            .replace(RESETS_AT_PLACEHOLDER, resets_at)
+        )
         task_script_path(str(self.scripts_dir), task_id).write_text(text)
 
     def commands(self) -> CommandQueue:
@@ -261,6 +270,7 @@ def _settings(integration: IntegrationMode, notify_command: str) -> tuple[str, .
         f"roles.helper.ladder={HELPER_LADDER}",
         "orchestration.max_iterations=3",
         "orchestration.max_parallel=2",
+        f"orchestration.timeouts.stall={STALL_SECONDS}",
         f'orchestration.integration="{integration.value}"',
         "orchestration.network.pr_poll_seconds=1",
         "orchestration.faults.backoff_initial_seconds=1",

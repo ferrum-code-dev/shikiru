@@ -15,6 +15,7 @@ from tests.soak.hosting import Hosting
 from tests.soak.invariants import TERMINAL, InvariantChecker, Ledger
 from tests.soak.model import Tally, Violation
 from tests.soak.operators import OperatorDesk
+from tests.soak.probe import StatusProbe
 from tests.soak.reporter import ArenaSummary
 from tests.soak.supervisor import EngineSupervisor
 
@@ -29,9 +30,10 @@ if TYPE_CHECKING:
 
 CLOCK = SystemClock()
 SAMPLE_SECONDS = 0.3
+PROBE_SECONDS = 4.0
 SERVICE_SECONDS = 0.5
 DRAIN_POLL_SECONDS = 1.0
-DELIVERY_WAIT_SECONDS = 45.0
+DELIVERY_WAIT_SECONDS = 80.0
 
 
 class ArenaRun:
@@ -56,6 +58,7 @@ class ArenaRun:
         self._desk = OperatorDesk(arena, self._ledger, self._tally, rng)
         self._checker = InvariantChecker(arena, self._ledger)
         self._hosting = Hosting(arena, rng) if arena.github is not None else None
+        self._probe = StatusProbe(arena, rng)
         self._stop = asyncio.Event()
         self._intake_over = asyncio.Event()
 
@@ -68,10 +71,13 @@ class ArenaRun:
                 group.create_task(self._supervisor.watch(self._stop))
                 group.create_task(self._services())
                 group.create_task(self._sampling())
+                group.create_task(self._probing())
                 intake = [
                     group.create_task(self._at(self._schedule.submissions, started, self._submit)),
                     group.create_task(self._at(self._schedule.operations, started, self._operate)),
-                    group.create_task(self._at(self._schedule.faults, started, self._chaos.inject)),
+                    group.create_task(
+                        self._at(self._schedule.faults, started, self._chaos.inject, overlap=True)
+                    ),
                 ]
                 await asyncio.gather(*intake)
                 self._intake_over.set()
@@ -84,12 +90,22 @@ class ArenaRun:
         return self._summary()
 
     async def _at[T: Timed](
-        self, items: Sequence[T], started: datetime, act: Callable[[T], Awaitable[object]]
+        self,
+        items: Sequence[T],
+        started: datetime,
+        act: Callable[[T], Awaitable[object]],
+        *,
+        overlap: bool = False,
     ) -> None:
+        running: list[asyncio.Task[object]] = []
         for item in items:
             due = started + timedelta(seconds=item.offset_seconds)
             await CLOCK.sleep(max(0.0, (due - CLOCK.now()).total_seconds()))
-            await act(item)
+            if overlap:
+                running.append(asyncio.ensure_future(act(item)))
+            else:
+                await act(item)
+        await asyncio.gather(*running)
 
     async def _submit(self, submission: Submission) -> None:
         task_id = await self._desk.submit(submission)
@@ -111,6 +127,12 @@ class ArenaRun:
             if self._hosting is not None:
                 await self._hosting.serve()
             await CLOCK.sleep(SERVICE_SECONDS)
+
+    async def _probing(self) -> None:
+        while not self._stop.is_set():
+            for violation in await self._probe.check():
+                self._reporter.violation(self._arena.name, violation)
+            await CLOCK.sleep(PROBE_SECONDS)
 
     async def _sampling(self) -> None:
         while not self._stop.is_set():

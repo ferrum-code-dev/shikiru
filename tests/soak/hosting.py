@@ -38,6 +38,8 @@ class Hosting:
     async def serve(self) -> None:
         github = self._arena.github
         assert github is not None
+        if not self._arena.remote.exists():
+            return
         for number, record in enumerate(github.pull_requests(), start=1):
             if number in self._done or record["state"] != OPEN:
                 continue

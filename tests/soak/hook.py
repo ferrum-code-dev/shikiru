@@ -9,6 +9,8 @@ from pathlib import Path
 
 LOG_NAME = "notified.log"
 STUCK_NAME = "stuck"
+FAILING_NAME = "failing"
+FAILURE_EXIT = 3
 POLL_SECONDS = 0.1
 
 
@@ -18,6 +20,8 @@ def main(directory: Path) -> None:
         log.write(f"{event['id']} {event['kind']}\n")
     while (directory / STUCK_NAME).exists():
         threading.Event().wait(POLL_SECONDS)
+    if (directory / FAILING_NAME).exists():
+        sys.exit(FAILURE_EXIT)
 
 
 if __name__ == "__main__":

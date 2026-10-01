@@ -20,13 +20,16 @@ from tests.soak.model import (
 )
 
 TASK_PLACEHOLDER = "{task}"
+RESETS_AT_PLACEHOLDER = "{resets_at}"
+PROTOCOL_ROUNDS = 3
 WARMUP_SECONDS = 8.0
 SUBMISSION_GAP_SECONDS = (2.0, 6.0)
 OPERATION_GAP_SECONDS = (1.5, 4.0)
 FAULT_GAP_SECONDS = (8.0, 18.0)
 FREEZE_SECONDS = (2.0, 6.0)
 DB_LOCK_SECONDS = (2.0, 8.0)
-HOOK_STUCK_SECONDS = (4.0, 12.0)
+HOOK_STUCK_SECONDS = (5.0, 40.0)
+REMOTE_DOWN_SECONDS = (3.0, 10.0)
 INSTANT_SECONDS = 0.0
 MAX_ROUNDS = 5
 DECISION_ROUNDS = 4
@@ -39,6 +42,15 @@ REJECTIONS = (1, 2)
 
 _ACCEPT: FakeStep = {"kind": "accept"}
 _CHANGES_REQUESTED: FakeStep = {"kind": "changes_requested"}
+_IMPLEMENTER_STEPS: dict[TaskKind, list[FakeStep]] = {
+    TaskKind.AUTH_FAILURE: [{"kind": "fail", "failure_kind": "auth"}],
+    TaskKind.OTHER_FAILURE: [{"kind": "fail", "failure_kind": "other"}],
+    TaskKind.DECISION: [{"kind": "needs_decision"}] * DECISION_ROUNDS,
+    TaskKind.UNAVAILABLE: [{"kind": "fail", "failure_kind": "unavailable"}],
+    TaskKind.QUOTA: [{"kind": "fail", "failure_kind": "quota", "resets_at": RESETS_AT_PLACEHOLDER}],
+    TaskKind.PROTOCOL: [{"kind": "no_report"}] * PROTOCOL_ROUNDS,
+    TaskKind.STALL: [{"kind": "stall"}],
+}
 _TASK_WEIGHTS = {
     TaskKind.SIMPLE: 40,
     TaskKind.REJECTED: 14,
@@ -49,6 +61,10 @@ _TASK_WEIGHTS = {
     TaskKind.PLAN: 8,
     TaskKind.SUPERSEDED: 5,
     TaskKind.UNCOMMITTED: 6,
+    TaskKind.UNAVAILABLE: 3,
+    TaskKind.QUOTA: 2,
+    TaskKind.PROTOCOL: 3,
+    TaskKind.STALL: 2,
 }
 _OPERATION_WEIGHTS = {
     OperatorKind.SAY: 24,
@@ -63,6 +79,7 @@ _OPERATION_WEIGHTS = {
 }
 _FAULT_WEIGHTS = {
     FaultKind.ENGINE_KILL: 3,
+    FaultKind.ENGINE_KILL_LOCKED: 2,
     FaultKind.ENGINE_KILL_INTEGRATING: 4,
     FaultKind.ENGINE_KILL_ESCALATING: 3,
     FaultKind.ENGINE_TERM: 2,
@@ -70,16 +87,23 @@ _FAULT_WEIGHTS = {
     FaultKind.ENGINE_STOP_START: 1,
     FaultKind.ENGINE_FREEZE: 2,
     FaultKind.TMUX_LOSS: 2,
+    FaultKind.TMUX_LOSS_TAKEOVER: 2,
+    FaultKind.REMOTE_DOWN: 3,
     FaultKind.TURN_KILL: 5,
     FaultKind.DB_LOCK: 3,
     FaultKind.GH_FAIL: 3,
     FaultKind.GIT_HOOK_FAIL: 3,
     FaultKind.HOOK_STUCK: 1,
+    FaultKind.HOOK_FAIL: 1,
 }
+PR_ONLY_FAULTS = (FaultKind.GH_FAIL, FaultKind.REMOTE_DOWN)
 _FAULT_DURATIONS = {
+    FaultKind.REMOTE_DOWN: REMOTE_DOWN_SECONDS,
     FaultKind.ENGINE_FREEZE: FREEZE_SECONDS,
     FaultKind.DB_LOCK: DB_LOCK_SECONDS,
+    FaultKind.ENGINE_KILL_LOCKED: DB_LOCK_SECONDS,
     FaultKind.HOOK_STUCK: HOOK_STUCK_SECONDS,
+    FaultKind.HOOK_FAIL: HOOK_STUCK_SECONDS,
 }
 
 
@@ -110,20 +134,14 @@ def _spawned(rng: random.Random, tag: str) -> list[dict[str, Any]]:
 
 def _scripts(kind: TaskKind, rng: random.Random, tag: str, *, triaged: bool) -> Scripts:
     triage = [_ACCEPT] if triaged else []
+    if kind in _IMPLEMENTER_STEPS:
+        return {"implementer": _IMPLEMENTER_STEPS[kind]}
     match kind:
-        case TaskKind.SIMPLE:
-            return {"leader": [*triage, _ACCEPT]}
         case TaskKind.REJECTED:
             rejections = [_CHANGES_REQUESTED] * rng.randint(*REJECTIONS)
             return {"leader": [*triage, *rejections, _ACCEPT]}
         case TaskKind.ROUNDS_EXHAUSTED:
             return {"leader": [*triage, *[_CHANGES_REQUESTED] * MAX_ROUNDS]}
-        case TaskKind.AUTH_FAILURE:
-            return {"implementer": [{"kind": "fail", "failure_kind": "auth"}]}
-        case TaskKind.OTHER_FAILURE:
-            return {"implementer": [{"kind": "fail", "failure_kind": "other"}]}
-        case TaskKind.DECISION:
-            return {"implementer": [{"kind": "needs_decision"}] * DECISION_ROUNDS}
         case TaskKind.PLAN:
             return {"leader": [{"kind": "accept", "new_tasks": _spawned(rng, tag)}]}
         case TaskKind.SUPERSEDED:
@@ -134,6 +152,8 @@ def _scripts(kind: TaskKind, rng: random.Random, tag: str, *, triaged: bool) -> 
                 "leader": [*triage, _ACCEPT, _ACCEPT],
                 "implementer": [{"kind": "accept", "uncommitted": scratch}],
             }
+        case _:
+            return {"leader": [*triage, _ACCEPT]}
 
 
 def _plan(rng: random.Random, index: int) -> TaskPlan:
@@ -164,7 +184,7 @@ def _fault(rng: random.Random, offset: float, mode: IntegrationMode) -> Schedule
     weights = {
         kind: weight
         for kind, weight in _FAULT_WEIGHTS.items()
-        if mode is IntegrationMode.PR or kind is not FaultKind.GH_FAIL
+        if mode is IntegrationMode.PR or kind not in PR_ONLY_FAULTS
     }
     kind = _weighted(rng, weights)
     low_high = _FAULT_DURATIONS.get(kind)

@@ -21,6 +21,7 @@ class Timed(Protocol):
 
 class FaultKind(StrEnum):
     ENGINE_KILL = auto()
+    ENGINE_KILL_LOCKED = auto()
     ENGINE_KILL_INTEGRATING = auto()
     ENGINE_KILL_ESCALATING = auto()
     ENGINE_TERM = auto()
@@ -28,11 +29,14 @@ class FaultKind(StrEnum):
     ENGINE_STOP_START = auto()
     ENGINE_FREEZE = auto()
     TMUX_LOSS = auto()
+    TMUX_LOSS_TAKEOVER = auto()
+    REMOTE_DOWN = auto()
     TURN_KILL = auto()
     DB_LOCK = auto()
     GH_FAIL = auto()
     GIT_HOOK_FAIL = auto()
     HOOK_STUCK = auto()
+    HOOK_FAIL = auto()
 
 
 class IntegrationMode(StrEnum):
@@ -50,6 +54,10 @@ class TaskKind(StrEnum):
     PLAN = auto()
     SUPERSEDED = auto()
     UNCOMMITTED = auto()
+    UNAVAILABLE = auto()
+    QUOTA = auto()
+    PROTOCOL = auto()
+    STALL = auto()
 
 
 @dataclass(frozen=True, slots=True)

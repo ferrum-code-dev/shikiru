@@ -11,7 +11,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from shikiru.clock import SystemClock
-from shikiru.domain.tasks import Status
+from shikiru.domain.tasks import Hold, Status
 from shikiru.process import SubprocessRunner
 from shikiru.store.database import transaction
 from tests.soak import hook
@@ -34,6 +34,7 @@ TURN_POLL_SECONDS = 0.2
 GH_SUBCOMMANDS = ("create", "view", "list", "close")
 GH_FAILURES = (1, 2, 3)
 MILLIS = 1000
+AWAY_SUFFIX = ".away"
 DEFAULT_GRACE_SECONDS = 6.0
 GRACE_SECONDS = {
     FaultKind.TMUX_LOSS: 5.0,
@@ -67,6 +68,7 @@ class ChaosInjector:
         seconds = fault.duration_seconds
         actions: dict[FaultKind, Callable[[], Awaitable[str | None]]] = {
             FaultKind.ENGINE_KILL: lambda: self._signal_engine(signal.SIGKILL),
+            FaultKind.ENGINE_KILL_LOCKED: lambda: self._kill_and_lock(seconds),
             FaultKind.ENGINE_KILL_INTEGRATING: self._kill_when_integrating,
             FaultKind.ENGINE_KILL_ESCALATING: self._kill_when_escalating,
             FaultKind.ENGINE_TERM: lambda: self._signal_engine(signal.SIGTERM),
@@ -74,11 +76,14 @@ class ChaosInjector:
             FaultKind.ENGINE_STOP_START: self._stop_and_start,
             FaultKind.ENGINE_FREEZE: lambda: self._freeze(seconds),
             FaultKind.TMUX_LOSS: self._lose_tmux,
+            FaultKind.TMUX_LOSS_TAKEOVER: self._lose_tmux_in_takeover,
+            FaultKind.REMOTE_DOWN: lambda: self._take_remote_down(seconds),
             FaultKind.TURN_KILL: self._kill_turn,
             FaultKind.DB_LOCK: lambda: self._lock_database(seconds),
             FaultKind.GH_FAIL: lambda: self._fail_gh(fault),
             FaultKind.GIT_HOOK_FAIL: self._fail_git,
-            FaultKind.HOOK_STUCK: lambda: self._stick_hook(seconds),
+            FaultKind.HOOK_STUCK: lambda: self._flag_hook(hook.STUCK_NAME, seconds),
+            FaultKind.HOOK_FAIL: lambda: self._flag_hook(hook.FAILING_NAME, seconds),
         }
         return await actions[fault.kind]()
 
@@ -104,6 +109,27 @@ class ChaosInjector:
                 return await self._signal_engine(signal.SIGKILL)
             await CLOCK.sleep(PHASE_POLL_SECONDS)
         return None
+
+    async def _lose_tmux_in_takeover(self) -> str | None:
+        reader = self._arena.reader
+        assert reader is not None
+        deadline = CLOCK.now() + timedelta(seconds=PHASE_WAIT_SECONDS)
+        while CLOCK.now() < deadline:
+            if any(Hold.INTERVENTION in task.holds for task in reader.list_tasks()):
+                return await self._lose_tmux()
+            await CLOCK.sleep(PHASE_POLL_SECONDS)
+        return None
+
+    async def _take_remote_down(self, seconds: float) -> str | None:
+        away = self._arena.remote.with_name(f"{self._arena.remote.name}{AWAY_SUFFIX}")
+        if not self._arena.remote.exists():
+            return None
+        self._arena.remote.rename(away)
+        try:
+            await CLOCK.sleep(seconds)
+        finally:
+            away.rename(self._arena.remote)
+        return f"the remote unreachable for {seconds:.1f}s"
 
     async def _lose_tmux(self) -> str:
         return f"kill-server returned {await self._arena.tmux('kill-server')}"
@@ -150,6 +176,12 @@ class ChaosInjector:
             await CLOCK.sleep(TURN_POLL_SECONDS)
         return None
 
+    async def _kill_and_lock(self, seconds: float) -> str | None:
+        killed = await self._signal_engine(signal.SIGKILL)
+        if killed is None:
+            return None
+        return f"{killed}, then {await self._lock_database(seconds)}"
+
     async def _lock_database(self, seconds: float) -> str:
         def hold() -> None:
             connection = self._arena.database.connect()
@@ -172,11 +204,11 @@ class ChaosInjector:
         github.fail_next(subcommand, calls)
         return f"gh pr {subcommand} fails {calls} time(s)"
 
-    async def _stick_hook(self, seconds: float) -> str:
-        stuck = self._arena.hook_dir / hook.STUCK_NAME
-        stuck.touch()
+    async def _flag_hook(self, name: str, seconds: float) -> str:
+        flag = self._arena.hook_dir / name
+        flag.touch()
         try:
             await CLOCK.sleep(seconds)
         finally:
-            stuck.unlink(missing_ok=True)
-        return f"notification hook stuck {seconds:.1f}s"
+            flag.unlink(missing_ok=True)
+        return f"notification hook {name} for {seconds:.1f}s"

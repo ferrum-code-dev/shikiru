@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 AGENT_MODULE = "fake_agent.turn_cli"
+INSPECTION_ERRORS = (psutil.Error, OSError, SystemError)
 
 
 def _under(path: Path, cwd: str) -> bool:
@@ -25,7 +26,7 @@ def owned_by(directory: Path) -> list[psutil.Process]:
     for process in psutil.process_iter():
         if process.pid == os.getpid():
             continue
-        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+        with suppress(*INSPECTION_ERRORS):
             if str(directory) in " ".join(process.cmdline()) or _under(directory, process.cwd()):
                 found.append(process)
     return found
@@ -35,7 +36,7 @@ def agents_in(worktree: Path) -> list[psutil.Process]:
     """The fake agent processes whose working directory is inside `worktree`."""
     found: list[psutil.Process] = []
     for process in psutil.process_iter():
-        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+        with suppress(*INSPECTION_ERRORS):
             if AGENT_MODULE in " ".join(process.cmdline()) and _under(worktree, process.cwd()):
                 found.append(process)
     return found
