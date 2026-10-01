@@ -81,7 +81,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 - **Guard**: every `poll_seconds`, the engine first recreates the session and its home window if the tmux server or session is gone (02 §1), then the guard compares each task window with the DB.
   - A missing pane (killed) is recreated in the layout.
   - A dead `system`, `shell` or view pane is respawned.
-  - A dead taken-over pane (the Operator exited the TUI) becomes a `HandBack` (03 §9).
+  - A dead taken-over pane (the Operator exited the TUI) becomes a `HandBack` (03 §9). A taken-over role whose pane is gone (tmux server loss, host reboot, a killed pane) is rebuilt, never as a read-only view of a held role: `LayoutGuard` appends `takeover_lost` and queues the `HandBack` (03 §9).
   - Each restoration emits `pane_restored`.
 
   There are no global key-binding overrides, so closing a pane has no lasting effect.
@@ -154,11 +154,11 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 ### 5.7 Notifications
 
-`Notifier`, on `escalation`, `task_done`, `integration_waiting` (a local merge waits for a dirty checkout, 03 §6), `engine_fault` (the first fault of a failing tick streak, 02 §1) and an `engine_stopped` that carries a `reason` (the engine stopped on a fault rather than on request):
+`Notifier`, on `escalation`, `task_done`, `integration_waiting` (a local merge waits for a dirty checkout, 03 §6), `takeover_lost` (a taken-over role was handed back because its pane was lost, 03 §9), `engine_fault` (the first fault of a failing tick streak, 02 §1) and an `engine_stopped` that carries a `reason` (the engine stopped on a fault rather than on request):
 - runs `tmux display-message` in the session;
 - runs `notify.command`, when set, with the event JSON on stdin (for Slack, ntfy or a remote AI Operator). A non-zero exit, a timeout (`notify.timeout_seconds`, 30 s by default) or a missing command is logged with the event id and recorded as an `engine_fault` of scope `notification hook`, once per streak (02 §1).
 
-Delivery never runs on the command loop. The `Engine` queues each notifiable event on `NotificationDelivery`, whose single task delivers them one at a time, so a hung hook cannot delay `stop`, `pause` or scheduling. Events have two priorities: *urgent* (`escalation`, `engine_fault`, an `engine_stopped` with a reason) and *informational* (`task_done`, `integration_waiting`):
+Delivery never runs on the command loop. The `Engine` queues each notifiable event on `NotificationDelivery`, whose single task delivers them one at a time, so a hung hook cannot delay `stop`, `pause` or scheduling. Events have two priorities: *urgent* (`escalation`, `engine_fault`, an `engine_stopped` with a reason) and *informational* (`task_done`, `integration_waiting`, `takeover_lost`):
 - urgent events are delivered before informational ones, in order, and are never dropped, so a stuck hook (killed after `notify.timeout_seconds`) delays but cannot silence an escalation or a fault;
 - the informational backlog holds 64 events; when full, the oldest informational event is dropped with a logged warning;
 - a delivery failure is logged and the next event is delivered;

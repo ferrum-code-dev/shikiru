@@ -58,6 +58,7 @@ from shikiru.domain.tasks import (
     Task,
 )
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
+from shikiru.engine.notifier import Notifier
 from shikiru.engine.takeover import HAND_BACK_MESSAGE
 from shikiru.errors import ConfigError
 from shikiru.process import SubprocessRunner
@@ -1284,6 +1285,27 @@ async def _operator_session(
         with suppress(asyncio.CancelledError, Exception):
             await engine_task
         connection.close()
+
+
+async def test_a_takeover_lost_with_the_tmux_server_is_handed_back_with_a_notified_event(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, run):
+        await operator.send(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+        await tmux_server.run("kill-server", check=False)
+
+        await operator.advance_until(
+            lambda: bool(operator.events.since(0, kinds=[EventKind.HANDED_BACK], task_id=task_id))
+        )
+
+        lost = operator.events.since(0, kinds=[EventKind.TAKEOVER_LOST], task_id=task_id)
+        assert [event.data["role"] for event in lost] == [Role.IMPLEMENTER.value]
+        assert Notifier.wants(lost[0])
+        assert Hold.INTERVENTION not in operator.task(task_id).holds
+        assert operator.runs.get_taken_over(task_id, Role.IMPLEMENTER) is None
+        resumed = operator.runs.get_live(task_id, Role.IMPLEMENTER)
+        assert resumed is not None
+        assert resumed.id == run.id
 
 
 @pytest.mark.parametrize("paused", [False, True], ids=["running", "paused"])

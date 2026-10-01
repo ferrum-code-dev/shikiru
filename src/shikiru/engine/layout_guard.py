@@ -85,6 +85,7 @@ class LayoutGuard:
             await self._restore_missing_panes(task, missing_agents, missing_special)
         await self._restore_special_panes(task)
         restored = await self._refresh_cache(task.id)
+        self._release_lost_takeovers(task.id, missing_agents)
         await self._restore_view_panes(restored)
         if missing_agents:
             self._record_restored(task.id, "agent")
@@ -133,6 +134,7 @@ class LayoutGuard:
             await self.start_view(task.id, role, pane_id)
         self._tasks.set_window(task.id, window_id)
         self._tasks.set_panes(task.id, role_panes)
+        self._release_lost_takeovers(task.id, set(role_panes))
         updated = self._tasks.get(task.id)
         if updated is None:
             message = f"{task.id} vanished while recording its task window"
@@ -223,13 +225,27 @@ class LayoutGuard:
             await self.start_view(task.id, role, pane_id)
             self._record_restored(task.id, role.value)
 
-    def _queue_hand_back(self, command: HandBack) -> None:
-        if not any(
+    def _release_lost_takeovers(self, task_id: str, lost_roles: set[Role]) -> None:
+        for role in sorted(lost_roles):
+            if self._runs.get_taken_over(task_id, role) is not None and self._queue_hand_back(
+                HandBack(task_id=task_id, role=role)
+            ):
+                self._events.append(
+                    EventKind.TAKEOVER_LOST,
+                    task_id=task_id,
+                    message=f"{task_id} {role.value} takeover lost its pane; handing back",
+                    data={"role": role.value},
+                )
+
+    def _queue_hand_back(self, command: HandBack) -> bool:
+        if any(
             isinstance(queued.command, HandBack)
             and (queued.command.task_id, queued.command.role) == (command.task_id, command.role)
             for queued in self._commands.pending()
         ):
-            self._commands.append(command)
+            return False
+        self._commands.append(command)
+        return True
 
     async def start_view(self, task_id: str, role: Role, pane_id: str) -> None:
         """Run `role`'s streaming view of `task_id` in `pane_id`."""

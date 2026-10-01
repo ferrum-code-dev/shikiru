@@ -212,7 +212,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `nudge`, `helper_action`, `rung_changed`, `compacted`
 - `quota_blocked`, `quota_cleared`
 - `verdict`, `scope_change`
-- `hold_set`, `hold_cleared`, `taken_over`, `handed_back`, `operator_message`
+- `hold_set`, `hold_cleared`, `taken_over`, `handed_back`, `takeover_lost` (`role`; the taken-over pane was lost with the tmux server or killed, so the role is handed back; notified), `operator_message`
 - `escalation`, `escalation_resolved`
 - `integration_started`, `integration_waiting` (`paths`: the dirty checkout paths a local merge waits on; notified), `pr_opened` (url, branch, commits), `pr_withdrawn` (url, state: the PR of a cancelled task was closed or found not open)
 - `task_retried`, `task_done`, `task_cancelled`

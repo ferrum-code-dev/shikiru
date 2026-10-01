@@ -21,6 +21,7 @@ _NOTIFIABLE = frozenset(
         EventKind.TASK_DONE,
         EventKind.ENGINE_FAULT,
         EventKind.INTEGRATION_WAITING,
+        EventKind.TAKEOVER_LOST,
     }
 )
 HOOK_FAULT_SCOPE = "notification hook"

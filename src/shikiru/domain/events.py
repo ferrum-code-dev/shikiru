@@ -35,6 +35,7 @@ class EventKind(StrEnum):
     HOLD_CLEARED = auto()
     TAKEN_OVER = auto()
     HANDED_BACK = auto()
+    TAKEOVER_LOST = auto()
     OPERATOR_MESSAGE = auto()
     ESCALATION = auto()
     ESCALATION_RESOLVED = auto()
