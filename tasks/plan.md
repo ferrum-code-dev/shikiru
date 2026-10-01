@@ -488,7 +488,7 @@ Refs: 01 §glossary, 02 §2, 07 §1–2.
 ### Task 59: Re-verify and regenerate release evidence
 Refs: 07 §5.
 - [x] `uv run poe check` passes in a normal and a `TERM=dumb` environment.
-- [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included. Met: E1–E6 passed in one bounded run on 2026-09-30/10-01 at `6116446` (31 m 11 s, one automatic E3 rerun; Task 74), with resume (E5) and takeover (E6) as native scenarios. Not met: 07 §5 defines no native model-change scenario, so model change is covered only by plugin and integration tests and, since Task 73, by the live contract checks (Codex passed on 2026-09-30; Claude skipped, no alternate model configured), not by `poe e2e`.
+- [ ] `poe e2e` E1–E6 pass in one run on the resulting revision (stating date, scenarios and cost); resume, model-change and takeover scenarios included. Met: E1–E6 passed in one bounded run on 2026-09-30/10-01 at `6116446` (31 m 11 s, one automatic E3 rerun; Task 74), with resume (E5) and takeover (E6) as native scenarios. Not met: 07 §5 defines no native model-change scenario, so model change is covered only by plugin and integration tests and, since Task 73, by the live contract checks (Codex passed on 2026-09-30; Claude skipped, no alternate model configured), not by `poe e2e`. Restated 2026-10-01 against `docs/release-readiness-2026-10-01-phase7c.md`: E1–E6 also passed at `e78c057` (21 m 03 s, first attempts, $1.2244) and both live model-change checks passed (Claude with `sonnet`); the criterion stays open for the missing native scenario.
 - [ ] The portable clean-install smoke passes; tested CLI versions and the source commit are recorded next to the results. Met on macOS (2026-10-01, `6116446`), with the CLI versions and source commit recorded. Not met: the script is macOS-only and Linux is unverified, so "portable" is not demonstrated; Task 74 states Linux as verified or unverified.
 - [x] `docs/release-readiness-*.md` states which findings were fixed, and its claim that every design section agrees with the code is restated after Tasks 41–58.
 
@@ -659,10 +659,10 @@ Refs: AGENTS.md (Tests, Test value), 07 §3. Owner question 2026-10-01: the suit
 
 ### Task 74h: Phase 7c verification and release evidence
 Refs: 07 §5.
-- [ ] `uv run poe check` passes in a normal and a `TERM=dumb` environment, plus repeated suite runs.
-- [ ] `poe e2e` E1–E6 pass in one invocation on the resulting revision with projects outside `$TMPDIR`; measured per-scenario durations and every attempt are recorded and replace the estimates in 07 §5's table and `docs/e2e-results.md`; live model-change checks and the macOS smoke pass at the final commit.
-- [ ] A new `docs/release-readiness-*.md` restates each reviewer finding, the design-agreement claim and the release claim honestly; Task 59 is restated against it.
-- [ ] A final independent read-only review (three reviewers as in Phase 7b) reports no blocking finding for the claimed use.
+- [x] `uv run poe check` passes in a normal and a `TERM=dumb` environment, plus repeated suite runs. Met at `e78c057`: 928 passed, 15 skipped, 89.93% in both environments, and 5 further plain runs without a failure.
+- [x] `poe e2e` E1–E6 pass in one invocation on the resulting revision with projects outside `$TMPDIR`; measured per-scenario durations and every attempt are recorded and replace the estimates in 07 §5's table and `docs/e2e-results.md`; live model-change checks and the macOS smoke pass at the final commit. Met at `e78c057` on 2026-10-01: 7 passed in 21 m 03 s, every scenario at its first attempt, $1.2244 agent-estimated; Codex and Claude live model-change checks and the Codex worktree-commit check passed; the macOS smoke passed (the evidence commit changes only documentation). Linux stays unverified.
+- [x] A new `docs/release-readiness-*.md` restates each reviewer finding, the design-agreement claim and the release claim honestly; Task 59 is restated against it. `docs/release-readiness-2026-10-01-phase7c.md`.
+- [ ] A final independent read-only review (three reviewers as in Phase 7b) reports no blocking finding for the claimed use. Not done by Task 74h; the orchestrator runs it.
 
 
 ## Phase 8 — Operator Workspace

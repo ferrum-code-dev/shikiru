@@ -1,6 +1,6 @@
 # Phase 7 release-readiness evidence
 
-Later evidence and the current release claim: [release-readiness-2026-10-01-phase7b.md](release-readiness-2026-10-01-phase7b.md).
+Later evidence and the current release claim: [release-readiness-2026-10-01-phase7c.md](release-readiness-2026-10-01-phase7c.md) (after [Phase 7b](release-readiness-2026-10-01-phase7b.md)).
 
 Date: 2026-09-30. Source commit: `96bb4b7` (Task 59's `test(e2e)` fix on top of `99c2006`, the Task 58 head). This document restates the 2026-09-29 audit ([release-readiness-2026-09-29.md](release-readiness-2026-09-29.md)) after Tasks 41-58 fixed the findings of the 2026-09-29 implementation review (F01-F23).
 

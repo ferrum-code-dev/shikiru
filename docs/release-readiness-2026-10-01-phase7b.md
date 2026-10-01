@@ -1,5 +1,7 @@
 # Phase 7b release-readiness evidence
 
+Later evidence and the current release claim: [release-readiness-2026-10-01-phase7c.md](release-readiness-2026-10-01-phase7c.md).
+
 Date: 2026-10-01 (the E2E invocation started 2026-09-30 22:33 UTC and the artifact is dated 2026-09-30). Source commit: `6116446` (Task 74a, bounded E2E). This document records the three independent reviews of `66aeb3a`, the fixes of Tasks 60-74a and the evidence for them. It amends [release-readiness-2026-09-30.md](release-readiness-2026-09-30.md); where the two differ, this one is current.
 
 ## Release claim
