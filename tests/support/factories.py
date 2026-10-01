@@ -113,6 +113,7 @@ def make_settings(
                 backoff_max_seconds=60,
                 unexpected_fault_limit=10,
                 stop_notify_seconds=30,
+                repeat_notify_seconds=300,
             ),
         ),
         roles=RolesConfig(

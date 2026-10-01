@@ -70,6 +70,7 @@ class FaultsConfig(ConfigModel):
     backoff_max_seconds: float = Field(gt=0)
     unexpected_fault_limit: int = Field(gt=0)
     stop_notify_seconds: float = Field(gt=0)
+    repeat_notify_seconds: float = Field(gt=0)
 
 
 class OrchestrationConfig(ConfigModel):

@@ -9,6 +9,7 @@ import pytest
 
 from shikiru.config.settings import FaultsConfig
 from shikiru.domain.events import EventKind
+from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.tick_guard import EngineFaultLimitError, TickGuard
 from shikiru.errors import CommandFailed
 from shikiru.store.events import EventLog
@@ -23,6 +24,7 @@ _FAULTS = FaultsConfig(
     backoff_max_seconds=4,
     unexpected_fault_limit=3,
     stop_notify_seconds=1,
+    repeat_notify_seconds=30,
 )
 _RECOVERABLE = CommandFailed(("tmux",), 1, "no server running")
 
@@ -48,9 +50,9 @@ class _Ticks:
 def _ticks(connection: Connection, error: Exception) -> tuple[_Ticks, EventLog]:
     clock = FakeClock(TASK_CREATED_AT)
     events = EventLog(connection, clock)
-    guard = TickGuard(
-        events=events, clock=clock, settings=_FAULTS, logger=logging.getLogger("tick-guard-test")
-    )
+    logger = logging.getLogger("tick-guard-test")
+    reporter = FaultReporter(events=events, clock=clock, settings=_FAULTS, logger=logger)
+    guard = TickGuard(reporter=reporter, clock=clock, settings=_FAULTS, logger=logger)
     return _Ticks(guard, clock, error), events
 
 
@@ -63,7 +65,7 @@ async def test_recoverable_faults_are_retried_with_bounded_backoff_and_never_sto
 
     assert ticks.attempts == [0, 1, 3, 7, 11, 15, 19]
     (fault,) = events.since(0, kinds=[EventKind.ENGINE_FAULT])
-    assert fault.data == {"error": "CommandFailed", "recoverable": True}
+    assert fault.data == {"error": "CommandFailed", "recoverable": True, "repeat": 1}
 
 
 async def test_unexpected_faults_are_surfaced_and_end_the_engine_at_the_limit(
@@ -76,7 +78,7 @@ async def test_unexpected_faults_are_surfaced_and_end_the_engine_at_the_limit(
 
     assert ticks.attempts == [0, 1, 3]
     (fault,) = events.since(0, kinds=[EventKind.ENGINE_FAULT])
-    assert fault.data == {"error": "ValueError", "recoverable": False}
+    assert fault.data == {"error": "ValueError", "recoverable": False, "repeat": 1}
     assert any(record.exc_info for record in caplog.records)
 
 
@@ -91,3 +93,35 @@ async def test_a_successful_tick_resets_the_unexpected_fault_count(connection: C
         await ticks.run(20)
 
     assert ticks.attempts == [0, 1, 3, 4, 5, 7]
+
+
+async def test_thousands_of_consecutive_recoverable_faults_never_stop_the_engine(
+    connection: Connection,
+) -> None:
+    ticks, events = _ticks(connection, _RECOVERABLE)
+
+    await ticks.run(5000)
+
+    assert len(ticks.attempts) > 1100
+    assert len(events.since(0, kinds=[EventKind.ENGINE_FAULT])) <= 5000 // 30 + 1
+
+
+async def test_a_flapping_fault_is_recorded_at_most_once_per_interval_and_a_new_class_at_once(
+    connection: Connection,
+) -> None:
+    ticks, events = _ticks(connection, _RECOVERABLE)
+
+    for second in range(100):
+        ticks.error = _RECOVERABLE if second % 2 == 0 else None
+        if second == 5:
+            ticks.error = OSError("disk")
+        await ticks.run(1)
+
+    faults = events.since(0, kinds=[EventKind.ENGINE_FAULT])
+    assert [fault.data["error"] for fault in faults] == [
+        "CommandFailed",
+        "OSError",
+        "CommandFailed",
+        "CommandFailed",
+        "CommandFailed",
+    ]

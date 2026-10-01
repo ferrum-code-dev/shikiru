@@ -23,6 +23,7 @@ from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.evidence import EvidenceCollector
+from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.handlers import (
     CancelHandler,
@@ -120,7 +121,6 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from shikiru.config.settings import LoggingConfig, Settings
-    from shikiru.domain.tasks import Task
     from shikiru.engine.integration import IntegrationCoordinator
 
 
@@ -478,9 +478,6 @@ def build_engine(
     decorator = CosmeticDecorator(resolved_tmux)
     titles = TaskTitles(decorator, runs, resolved_settings)
 
-    async def refresh_titles(task: Task) -> None:
-        await titles.refresh(task)
-
     sessions = SessionManager(runs=runs, project_root=project_root, settings=resolved_settings)
     turn_processes = TurnProcesses(
         runner=resolved_runner, clock=resolved_clock, project_root=project_root
@@ -493,7 +490,7 @@ def build_engine(
         clock=resolved_clock,
         settings=resolved_settings,
         decorator=decorator,
-        refresh_titles=refresh_titles,
+        refresh_titles=titles.refresh,
         processes=turn_processes,
     )
 
@@ -634,7 +631,7 @@ def build_engine(
         project_name=resolved_settings.project.name,
         cancel_task=task_supervisor.cancel_task,
         start_task=task_supervisor.start_task,
-        refresh_titles=refresh_titles,
+        refresh_titles=titles.refresh,
         atomically=lambda: transaction(connection),
     )
     handlers = HandlerRegistry(
@@ -675,6 +672,12 @@ def build_engine(
         titles=titles,
     )
     lock_path = engine_lock_path(project_root)
+    fault_reporter = FaultReporter(
+        events=events,
+        clock=resolved_clock,
+        settings=resolved_settings.orchestration.faults,
+        logger=logger,
+    )
     return Engine(
         lock_path=lock_path,
         command_queue=command_queue,
@@ -686,7 +689,7 @@ def build_engine(
         layout=layout,
         session_guard=session_guard,
         tick_guard=TickGuard(
-            events=events,
+            reporter=fault_reporter,
             clock=resolved_clock,
             settings=resolved_settings.orchestration.faults,
             logger=logger,
