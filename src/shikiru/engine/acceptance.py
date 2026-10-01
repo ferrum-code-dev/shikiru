@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.domain.reports import Issue, Verdict
+from shikiru.domain.reports import (
+    DECISION_ACCEPT,
+    DECISION_CHANGES_REQUESTED,
+    DECISION_SUPERSEDE,
+    SEVERITY_BLOCKER,
+    Issue,
+    Verdict,
+)
 from shikiru.engine.events import emit_turn_completed, emit_verdict
 from shikiru.engine.history import ENGINE_VERDICT_FILENAME
 from shikiru.private import write_private_text
@@ -16,7 +23,7 @@ if TYPE_CHECKING:
     from shikiru.engine.turn_execution import TurnExecution
     from shikiru.store.events import EventLog
 
-_WORK_ENDING_DECISIONS = frozenset({"accept", "supersede"})
+_WORK_ENDING_DECISIONS = frozenset({DECISION_ACCEPT, DECISION_SUPERSEDE})
 UNCOMMITTED_SUMMARY = "The workspace has uncommitted changes, so it cannot be integrated."
 UNCOMMITTED_ISSUE = (
     "Uncommitted changes in the workspace: {paths}. "
@@ -47,13 +54,13 @@ class AcceptanceGuard:
         if not facts.status:
             return report
         issue = Issue(
-            severity="blocker",
+            severity=SEVERITY_BLOCKER,
             description=UNCOMMITTED_ISSUE.format(
                 paths=", ".join(line.strip() for line in facts.status)
             ),
         )
         rejection = Verdict(
-            decision="changes_requested", summary=UNCOMMITTED_SUMMARY, issues=[issue]
+            decision=DECISION_CHANGES_REQUESTED, summary=UNCOMMITTED_SUMMARY, issues=[issue]
         )
         write_private_text(
             execution.turn_dir / ENGINE_VERDICT_FILENAME, rejection.model_dump_json(indent=2)

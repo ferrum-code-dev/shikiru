@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.tasks import TaskStore
 
+QUOTA_BLOCK_REASON = "quota"
 _QUOTA_WAIT_EXHAUSTED_MESSAGE = "quota wait exceeded"
 _CONTINUE = NextTurn(continue_turn=True)
 
@@ -206,12 +207,12 @@ class TurnRecovery:
     def _block_quota(self, task: Task, role: Role, resets_at: datetime | None) -> None:
         agent = pick_rung(task, role, self._settings).agent
         until = quota_block_until(resets_at, self._clock.now())
-        self._quota.block(agent, until, "quota")
+        self._quota.block(agent, until, QUOTA_BLOCK_REASON)
         self._events.append(
             EventKind.QUOTA_BLOCKED,
             task_id=task.id,
             message=f"{agent} quota blocked until {until.isoformat()}",
-            data={"agent": agent, "until": until.isoformat(), "reason": "quota"},
+            data={"agent": agent, "until": until.isoformat(), "reason": QUOTA_BLOCK_REASON},
         )
 
     async def _wait_for_quota(self, task: Task, role: Role, until: datetime) -> Failed | None:

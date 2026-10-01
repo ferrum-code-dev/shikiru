@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from shikiru.domain.reports import ReportKind
@@ -34,6 +35,20 @@ class NextTurn:
 ORDINARY_TURN = NextTurn()
 
 
+class ContextKey(StrEnum):
+    """The variables the prompt templates read from a turn's context."""
+
+    REQUEST = "request"
+    WORKSPACE = "workspace"
+    TRACKERS = "trackers"
+    REPORTS = "reports"
+    QUESTION = "question"
+    FACTS = "facts"
+    BASE = "base"
+    FINAL_ROUND = "final_round"
+    CONFLICT = "conflict"
+
+
 def template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKind]:
     """Return the prompt template and report kind of `step`'s ordinary turn."""
     if step is Step.TRIAGE:
@@ -49,7 +64,7 @@ def template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKin
         return PromptName.VERIFY, ReportKind.VERDICT
     if step is Step.INTEGRATE:
         return PromptName.CONFLICTS, ReportKind.IMPLEMENTATION
-    message = f"TaskFlow has no turn template for step {step!r}"
+    message = f"No turn template exists for step {step!r}"
     raise InvariantError(message)
 
 
@@ -94,10 +109,10 @@ class TurnContextPreparer:
         if kind_override is not None:
             kind = kind_override
         context: dict[str, object] = {
-            "request": task.request,
-            "workspace": str(task_root(self._project_root, task.id)),
-            "trackers": list(self._settings.project.trackers),
-            "reports": self._history.context(history),
+            ContextKey.REQUEST: task.request,
+            ContextKey.WORKSPACE: str(task_root(self._project_root, task.id)),
+            ContextKey.TRACKERS: list(self._settings.project.trackers),
+            ContextKey.REPORTS: self._history.context(history),
         }
         if template is PromptName.CONSULT:
             answer = (
@@ -105,7 +120,7 @@ class TurnContextPreparer:
                 if task.counters.consults == 0
                 else None
             )
-            context["question"] = (
+            context[ContextKey.QUESTION] = (
                 answer if answer is not None else self._history.latest_question(history)
             )
         fresh = session_handoff and not continue_turn
@@ -115,12 +130,14 @@ class TurnContextPreparer:
         if handoff:
             template = PromptName.HANDOFF
         if needs_facts:
-            context["facts"] = facts_text
+            context[ContextKey.FACTS] = facts_text
         if template is PromptName.VERIFY:
-            context["base"] = require_repo(task).base_ref
-            context["final_round"] = task.iteration >= self._settings.orchestration.max_iterations
+            context[ContextKey.BASE] = require_repo(task).base_ref
+            context[ContextKey.FINAL_ROUND] = (
+                task.iteration >= self._settings.orchestration.max_iterations
+            )
         if template is PromptName.CONFLICTS:
-            context["conflict"] = conflict_context or ""
+            context[ContextKey.CONFLICT] = conflict_context or ""
         return TurnRequest(
             step=step,
             iteration=task.iteration,

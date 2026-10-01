@@ -5,7 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.domain.recovery import TurnCounters
-from shikiru.domain.reports import ConsultAnswer, ImplementationReport, ReportKind, Verdict
+from shikiru.domain.reports import (
+    DECISION_ACCEPT,
+    STATUS_COMPLETED,
+    ConsultAnswer,
+    ImplementationReport,
+    ReportKind,
+    Verdict,
+)
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Step, Task
 from shikiru.engine.integration import (
@@ -88,7 +95,7 @@ class IntegrationTurns:
         return (
             task.step is Step.INTEGRATE
             and isinstance(latest, ImplementationReport)
-            and latest.status == "completed"
+            and latest.status == STATUS_COMPLETED
         )
 
     async def _resolve_conflicts(
@@ -106,7 +113,7 @@ class IntegrationTurns:
                 continue
             await continue_rebase()
             current, verdict = await self._verify_conflicts(current)
-            if verdict.decision == "accept":
+            if verdict.decision == DECISION_ACCEPT:
                 return current
             context = "; ".join(issue.description for issue in verdict.issues)
             resolved = False
@@ -127,7 +134,7 @@ class IntegrationTurns:
         if not isinstance(latest, ImplementationReport):
             message = f"{current.id} conflicts turn produced no implementation report"
             raise InvariantError(message)
-        if latest.status == "completed":
+        if latest.status == STATUS_COMPLETED:
             return current, context, True
         if current.step is not Step.CONSULT:
             message = f"{current.id} conflict report did not route to consult"

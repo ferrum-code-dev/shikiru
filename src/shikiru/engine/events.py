@@ -8,6 +8,8 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.recovery import Failed, ProtocolError, Stalled
 from shikiru.domain.reports import (
+    DECISION_ANSWER,
+    STATUS_COMPLETED,
     ConsultAnswer,
     ImplementationReport,
     PlanReport,
@@ -134,7 +136,7 @@ def _turn_summary(outcome: Outcome) -> str:
     if isinstance(outcome, TriageReport):
         return outcome.title
     if isinstance(outcome, ConsultAnswer):
-        return outcome.answer if outcome.decision == "answer" else "escalate"
+        return outcome.answer if outcome.decision == DECISION_ANSWER else "escalate"
     return outcome.summary
 
 
@@ -146,7 +148,7 @@ def _turn_outcome(outcome: Outcome) -> str:
     if isinstance(outcome, TriageReport):
         return outcome.mode.value
     if isinstance(outcome, PlanReport):
-        return "completed"
+        return STATUS_COMPLETED
     if isinstance(outcome, ConsultAnswer):
         return outcome.decision
     if isinstance(outcome, ImplementationReport):

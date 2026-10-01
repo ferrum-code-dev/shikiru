@@ -5,7 +5,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from shikiru.domain.reports import ImplementationReport, PlanReport, Report, Verdict
+from shikiru.domain.reports import (
+    DECISION_ACCEPT,
+    ImplementationReport,
+    PlanReport,
+    Report,
+    Verdict,
+)
 from shikiru.engine.integration import IntegrationMetadata
 from shikiru.engine.turns import read_turn_report
 from shikiru.paths import turns_dir
@@ -74,7 +80,7 @@ class ReportHistory:
         """Choose the accepted summary, falling back to the latest plan or task title."""
         history = self.load(task.id)
         for _, report in reversed(history):
-            if isinstance(report, Verdict) and report.decision == "accept":
+            if isinstance(report, Verdict) and report.decision == DECISION_ACCEPT:
                 return IntegrationMetadata(
                     summary=report.summary,
                     residual_risks=tuple(report.residual_risks),

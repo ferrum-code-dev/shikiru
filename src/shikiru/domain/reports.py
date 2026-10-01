@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Self
 
 from pydantic import Field, StringConstraints, model_validator
 
@@ -14,6 +14,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 TRIAGE_TITLE_MAX_LENGTH = 60
+
+DECISION_ACCEPT: Final = "accept"
+DECISION_SUPERSEDE: Final = "supersede"
+DECISION_CHANGES_REQUESTED: Final = "changes_requested"
+DECISION_ANSWER: Final = "answer"
+SEVERITY_BLOCKER: Final = "blocker"
+STATUS_COMPLETED: Final = "completed"
 
 CURRENT_TURN_LINK_NAME = "current_turn"
 PROMPT_FILENAME = "prompt.md"
