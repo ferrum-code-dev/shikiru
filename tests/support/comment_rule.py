@@ -17,9 +17,16 @@ _SHEBANG_LINE = 1
 _ENCODING_LINES = 2
 _SHEBANG = re.compile(r"^#!")
 _ENCODING = re.compile(r"^#.*coding[:=]")
-_ALLOWED_SEGMENT = re.compile(
-    rf"^\s*(?:noqa\b|type:\s*ignore\b|pyright:|pragma:|fmt:|ruff:|pylint:|{EXCLUSION_MARKER}\s*\S)"
+_CODE = r"[A-Z]+\d+"
+_DIRECTIVES = (
+    rf"noqa:\s*{_CODE}(?:\s*,\s*{_CODE})*(?:\s+--\s+\S.*)?",
+    r"type:\s*ignore(?:\[[\w, -]+\])?",
+    r"pyright:\s*(?:ignore|basic|standard|strict)(?:\[[\w, ]+\])?",
+    r"pragma:\s*no (?:cover|branch)",
+    r"fmt:\s*(?:off|on|skip)",
+    rf"{EXCLUSION_MARKER}\s*\S.*",
 )
+_ALLOWED_SEGMENT = re.compile(rf"^\s*(?:{'|'.join(_DIRECTIVES)})\s*$")
 
 
 @dataclass(frozen=True)

@@ -134,6 +134,8 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 
 **Review conventions** (no tool checks them): nothing outside `plugins/agents/*` names an agent CLI, stream or session-log format, or quota source, since import-linter cannot see semantic coupling; and event-loop time (`loop.time()`) is not used outside `clock`.
 
+**Documented exceptions to "time only via `Clock`"** (`asyncio.wait_for` and `asyncio.timeout` are not on the `banned-api` list, because tests use them everywhere to bound real waits and a per-line exemption of that many sites would hide real violations). In `src` they bound one real I/O wait with a real deadline and are never a schedulable timer: `process.py` (graceful-stop grace and call timeouts), `engine/notification_delivery.py` (`deliver_final`: the one `notify.command` run at shutdown, when the loop is over), `operator/probe.py` and `agents/testing/contract_suite.py` (a live agent turn bound in the doctor probe and the contract suite). A new use in `src` outside this list is a review finding.
+
 ## 3. Project structure
 
 ```

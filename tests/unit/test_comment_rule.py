@@ -38,6 +38,12 @@ def test_directives_markers_and_hashes_inside_strings_are_allowed(source: str) -
         ("x = 1  # sets x\n", ["# sets x"]),
         ("x = 1  # keep:\n", ["# keep:"]),
         ("x = 1  # noqa: S606  # and then prose\n", ["# noqa: S606  # and then prose"]),
+        ("x = 1  # noqa: S606 because prose\n", ["# noqa: S606 because prose"]),
+        ("x = 1  # noqa\n", ["# noqa"]),
+        ("x = 1  # noqa: S606 --\n", ["# noqa: S606 --"]),
+        ("x = 1  # pyright: ignore[reportX] explained\n", ["# pyright: ignore[reportX] explained"]),
+        ("x = 1  # pragma: no cover because\n", ["# pragma: no cover because"]),
+        ("x = 1  # pyright: whatever\n", ["# pyright: whatever"]),
         ("x = 1\n#!/not/a/shebang\n\n\n", ["#!/not/a/shebang"]),
     ],
 )
