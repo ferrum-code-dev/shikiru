@@ -76,9 +76,7 @@ class CodexAgent:
         sequence = self.process_sequence(spec, git_dirs=git_dirs)
         return await StreamingTurn.start(spec, self._runner, sequence)
 
-    def process_sequence(
-        self, spec: TurnSpec, *, git_dirs: Sequence[Path] | None = None
-    ) -> CodexTurnSequence:
+    def process_sequence(self, spec: TurnSpec, *, git_dirs: Sequence[Path]) -> CodexTurnSequence:
         """Build Codex's prompt and context-failure retry sequence for `spec`."""
         home = Path(spec.env.get(CODEX_HOME_ENV_VAR, str(self._codex_home)))
         return CodexTurnSequence(

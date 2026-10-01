@@ -477,7 +477,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         ]
 
     def process_sequence(self, agent: Agent, spec: TurnSpec) -> CodexTurnSequence:
-        return cast("CodexAgent", agent).process_sequence(spec)
+        return cast("CodexAgent", agent).process_sequence(spec, git_dirs=_fake_git_dirs(spec))
 
     def live_compaction_options(self) -> Mapping[str, object]:
         return {"compact_at_pct": _LIVE_COMPACT_AT_PCT}
@@ -924,12 +924,16 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
     def _emitted_limit(self, spec: TurnSpec) -> int:
         agent = cast("CodexAgent", self._build_agent())
-        argv = agent.process_sequence(spec).start(spec).argv
+        argv = agent.process_sequence(spec, git_dirs=_fake_git_dirs(spec)).start(spec).argv
         assert MODEL_FLAG in argv
         assert argv[argv.index(MODEL_FLAG) + 1] == spec.rung.model
         setting = f"{AUTO_COMPACT_LIMIT_CONFIG}="
         (limit,) = [value.removeprefix(setting) for value in argv if value.startswith(setting)]
         return int(limit)
+
+
+def _fake_git_dirs(spec: TurnSpec) -> tuple[Path, ...]:
+    return ((spec.cwd / ".git").resolve(),)
 
 
 def _sandbox_args(spec: TurnSpec) -> tuple[str, ...]:
