@@ -56,6 +56,7 @@ from tests.e2e.diagnostics import (
     write_diagnostics,
 )
 from tests.e2e.watchdog import guarded
+from tests.support.e2e_attempts import ATTEMPT_FAILED, ATTEMPT_PASSED, AttemptRecord
 from tests.support.factories import CPU_UNCAPPED_PCT
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.waiting import wait_until
@@ -481,10 +482,43 @@ type ScenarioBody = Callable[
 
 
 class AttemptFailed(Exception):
-    def __init__(self, error: Exception, rerun_reason: str | None) -> None:
+    def __init__(
+        self, error: Exception, rerun_reason: str | None, diagnostics: Path | None
+    ) -> None:
         super().__init__(str(error))
         self.error = error
         self.rerun_reason = rerun_reason
+        self.diagnostics = diagnostics
+
+
+class AttemptLog:
+    def __init__(self, attempt: int, record: Callable[[AttemptRecord], None]) -> None:
+        self._attempt = attempt
+        self._record = record
+        self._started = CLOCK.now()
+        self._cost: float | None = None
+
+    def observe_cost(self, cost: float | None) -> None:
+        if cost is not None:
+            self._cost = (self._cost or 0.0) + cost
+
+    def finish(
+        self,
+        error: BaseException | None = None,
+        rerun_reason: str | None = None,
+        diagnostics: Path | None = None,
+    ) -> None:
+        self._record(
+            AttemptRecord(
+                attempt=self._attempt,
+                status=ATTEMPT_PASSED if error is None else ATTEMPT_FAILED,
+                failure_class=None if error is None else type(error).__name__,
+                rerun_reason=rerun_reason,
+                cost=self._cost,
+                duration_seconds=(CLOCK.now() - self._started).total_seconds(),
+                diagnostics=None if diagnostics is None else str(diagnostics),
+            )
+        )
 
 
 async def _run_attempt(
@@ -521,7 +555,7 @@ async def _run_attempt(
             error.add_note(f"diagnostics: {path}")
             if snapshot.sandbox_denial is not None:
                 error.add_note(SANDBOX_DENIAL_NOTE.format(marker=snapshot.sandbox_denial))
-            raise AttemptFailed(error, rerun_reason(error, snapshot)) from error
+            raise AttemptFailed(error, rerun_reason(error, snapshot), path) from error
     finally:
         await _record_observed_cost(project, environment, state, record_cost)
         await _cleanup_attempt(project, environment, state)
@@ -548,25 +582,31 @@ async def _run_with_reruns(
     scenario: str,
     tmp_path: Path,
     tmux_server: TmuxServer,
-    record_cost: Callable[[float | None], None],
+    record_attempt: Callable[[AttemptRecord], None],
     body: ScenarioBody,
 ) -> None:
     if os.environ.get(REAL_E2E_ENV_VAR) != REAL_E2E_ENABLED:
         pytest.skip(f"set {REAL_E2E_ENV_VAR}=1 to run real-agent E2E")
     for attempt in range(AUTOMATIC_RERUNS + 1):
+        log = AttemptLog(attempt, record_attempt)
         try:
             await _run_attempt(
                 scenario,
                 tmp_path / f"attempt-{attempt}",
                 tmux_server,
-                record_cost,
+                log.observe_cost,
                 body,
                 attempt=attempt,
             )
         except AttemptFailed as failed:
+            log.finish(failed.error, failed.rerun_reason, failed.diagnostics)
             if attempt == AUTOMATIC_RERUNS or failed.rerun_reason is None:
                 raise failed.error from None
+        except BaseException as error:
+            log.finish(error)
+            raise
         else:
+            log.finish()
             return
 
 
@@ -699,27 +739,27 @@ async def _assert_no_duplicate_commits(project: PreparedProject) -> None:
 async def test_real_agents_e5_restart_resumes_the_interrupted_turn(
     e2e_project_dir: Path,
     tmux_server: TmuxServer,
-    record_e2e_cost: Callable[[float | None], None],
+    record_e2e_attempt: Callable[[AttemptRecord], None],
 ) -> None:
-    await _run_with_reruns("e5", e2e_project_dir, tmux_server, record_e2e_cost, _e5_body)
+    await _run_with_reruns("e5", e2e_project_dir, tmux_server, record_e2e_attempt, _e5_body)
 
 
 @pytest.mark.timeout(outer_timeout_seconds("e1"))
 async def test_real_agents_e1_completes_and_integrates(
     e2e_project_dir: Path,
     tmux_server: TmuxServer,
-    record_e2e_cost: Callable[[float | None], None],
+    record_e2e_attempt: Callable[[AttemptRecord], None],
 ) -> None:
-    await _run_with_reruns("e1", e2e_project_dir, tmux_server, record_e2e_cost, _e1_body)
+    await _run_with_reruns("e1", e2e_project_dir, tmux_server, record_e2e_attempt, _e1_body)
 
 
 @pytest.mark.timeout(outer_timeout_seconds("e2"))
 async def test_real_agents_e2_delivers_operator_message_to_verify(
     e2e_project_dir: Path,
     tmux_server: TmuxServer,
-    record_e2e_cost: Callable[[float | None], None],
+    record_e2e_attempt: Callable[[AttemptRecord], None],
 ) -> None:
-    await _run_with_reruns("e2", e2e_project_dir, tmux_server, record_e2e_cost, _e2_body)
+    await _run_with_reruns("e2", e2e_project_dir, tmux_server, record_e2e_attempt, _e2_body)
 
 
 async def _record_observed_cost(
@@ -819,32 +859,32 @@ async def _cleanup_attempt(
 async def test_real_agents_e3_plans_and_runs_dependent_tasks_in_parallel(
     e2e_project_dir: Path,
     tmux_server: TmuxServer,
-    record_e2e_cost: Callable[[float | None], None],
+    record_e2e_attempt: Callable[[AttemptRecord], None],
 ) -> None:
-    await _run_with_reruns("e3", e2e_project_dir, tmux_server, record_e2e_cost, _e3_body)
+    await _run_with_reruns("e3", e2e_project_dir, tmux_server, record_e2e_attempt, _e3_body)
 
 
 @pytest.mark.timeout(outer_timeout_seconds("e4"))
 async def test_real_agents_e4_mcp_operator_resolves_a_product_decision(
     e2e_project_dir: Path,
     tmux_server: TmuxServer,
-    record_e2e_cost: Callable[[float | None], None],
+    record_e2e_attempt: Callable[[AttemptRecord], None],
 ) -> None:
     """A scripted MCP client stands in for the AI Operator.
 
     It proves the MCP escalation flow (`wait_for_events` → `resolve_escalation`) with a fixed
     answer, not a model's judgement.
     """
-    await _run_with_reruns("e4", e2e_project_dir, tmux_server, record_e2e_cost, _e4_body)
+    await _run_with_reruns("e4", e2e_project_dir, tmux_server, record_e2e_attempt, _e4_body)
 
 
 @pytest.mark.timeout(outer_timeout_seconds("e6"))
 async def test_real_agents_e6_take_over_holds_only_that_task(
     e2e_project_dir: Path,
     tmux_server: TmuxServer,
-    record_e2e_cost: Callable[[float | None], None],
+    record_e2e_attempt: Callable[[AttemptRecord], None],
 ) -> None:
-    await _run_with_reruns("e6", e2e_project_dir, tmux_server, record_e2e_cost, _e6_body)
+    await _run_with_reruns("e6", e2e_project_dir, tmux_server, record_e2e_attempt, _e6_body)
 
 
 async def _e3_body(

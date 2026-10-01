@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
+from tests.support.e2e_attempts import AttemptRecord
 from tests.support.e2e_provenance import source_state
 from tests.support.git_repo import commit_all, init_repo
 
@@ -54,7 +55,7 @@ def test_session_without_real_e2e_run_preserves_existing_results(tmp_path: Path)
     plugin_state = cast("Any", plugin)
     plugin_state.RESULTS_DIRECTORY = tmp_path
     plugin_state.CLOCK = FakeClock(_START)
-    result_path = tmp_path / f"2030-01-02{plugin.RESULTS_FILENAME_SUFFIX}"
+    result_path = tmp_path / f"{plugin.RESULTS_LATEST_NAME}{plugin.RESULTS_FILENAME_SUFFIX}"
     original = '{"scenarios":[{"scenario":"live run"}]}\n'
     result_path.write_text(original)
 
@@ -75,14 +76,16 @@ def test_results_record_the_source_the_tools_and_the_invocation_window(
     plugin_state.CLOCK = clock
     plugin.pytest_collection_modifyitems(SimpleNamespace(), [_RealE2EItem()])
     report = SimpleNamespace(
-        nodeid=_SCENARIO, when="call", passed=True, failed=False, skipped=False
+        nodeid=_SCENARIO, when="call", passed=True, failed=False, skipped=False, duration=1.0
     )
     plugin.pytest_runtest_logreport(report)
     clock.advance(_RUN_DURATION.total_seconds())
 
     plugin.pytest_sessionfinish(cast("Any", SimpleNamespace(config=SimpleNamespace())), 0)
 
-    written = json.loads((tmp_path / f"2030-01-02{plugin.RESULTS_FILENAME_SUFFIX}").read_text())
+    written = json.loads(
+        (tmp_path / f"20300102T030405Z{plugin.RESULTS_FILENAME_SUFFIX}").read_text()
+    )
     assert written["started_at"] == _START.isoformat()
     assert written["finished_at"] == (_START + _RUN_DURATION).isoformat()
     assert written["source_commit"] == _git_head(Path(__file__).parents[2])
@@ -91,6 +94,71 @@ def test_results_record_the_source_the_tools_and_the_invocation_window(
     assert versions["python"] == platform.python_version()
     assert versions["git"].startswith("git version")
     assert set(versions) == {"python", "claude", "codex", "tmux", "git"}
+
+
+def _run_invocation(plugin: ModuleType, clock: FakeClock, attempts: list[AttemptRecord]) -> None:
+    plugin.pytest_collection_modifyitems(SimpleNamespace(), [_RealE2EItem()])
+    for attempt in attempts:
+        plugin.record_attempt(_SCENARIO, attempt)
+    status = attempts[-1].status == "passed"
+    report = SimpleNamespace(
+        nodeid=_SCENARIO,
+        when="call",
+        passed=status,
+        failed=not status,
+        skipped=False,
+        duration=sum(attempt.duration_seconds for attempt in attempts),
+    )
+    plugin.pytest_runtest_logreport(report)
+    clock.advance(_RUN_DURATION.total_seconds())
+    plugin.pytest_sessionfinish(cast("Any", SimpleNamespace(config=SimpleNamespace())), 0)
+
+
+def test_a_later_invocation_the_same_day_does_not_overwrite_an_earlier_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SHIKIRU_E2E", "1")
+    plugin = _e2e_plugin()
+    clock = FakeClock(_START)
+    plugin_state = cast("Any", plugin)
+    plugin_state.RESULTS_DIRECTORY = tmp_path
+    plugin_state.CLOCK = clock
+    full = AttemptRecord(0, "passed", None, None, 0.5, 120.0, None)
+    partial = AttemptRecord(0, "failed", "AssertionError", None, None, 30.0, "diag.txt")
+
+    _run_invocation(plugin, clock, [full])
+    clock.advance(3600)
+    _run_invocation(plugin, clock, [partial])
+
+    files = sorted(path.name for path in tmp_path.glob("*.json"))
+    assert files == ["20300102T030405Z.json", "20300102T042905Z.json", "latest.json"]
+    first = json.loads((tmp_path / "20300102T030405Z.json").read_text())
+    assert first["scenarios"][0]["status"] == "passed"
+    assert json.loads((tmp_path / "latest.json").read_text())["scenarios"][0]["status"] == "failed"
+
+
+def test_every_attempt_is_recorded_with_its_cost_failure_and_duration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SHIKIRU_E2E", "1")
+    plugin = _e2e_plugin()
+    clock = FakeClock(_START)
+    plugin_state = cast("Any", plugin)
+    plugin_state.RESULTS_DIRECTORY = tmp_path
+    plugin_state.CLOCK = clock
+    failed = AttemptRecord(
+        0, "failed", "AssertionError", "agent-wrote-checkout", 0.25, 90.0, "d.txt"
+    )
+    passed = AttemptRecord(1, "passed", None, None, 0.5, 60.0, None)
+
+    _run_invocation(plugin, clock, [failed, passed])
+
+    (scenario,) = json.loads((tmp_path / "latest.json").read_text())["scenarios"]
+    assert [attempt["status"] for attempt in scenario["attempts"]] == ["failed", "passed"]
+    assert scenario["attempts"][0]["failure_class"] == "AssertionError"
+    assert scenario["attempts"][0]["diagnostics"] == "d.txt"
+    assert scenario["cost"] == 0.75
+    assert scenario["duration_seconds"] == 150.0
 
 
 def test_source_state_reports_uncommitted_changes(tmp_path: Path) -> None:

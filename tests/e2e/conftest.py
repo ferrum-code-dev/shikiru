@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import tomllib
@@ -12,6 +13,7 @@ import pytest
 from shikiru.clock import SystemClock
 from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import WORKSPACE_WRITE_SANDBOX
+from tests.support.e2e_attempts import AttemptRecord, total_cost
 from tests.support.e2e_provenance import source_state, tool_versions
 from tests.support.project_dir import E2E_PROJECTS_PARENT
 
@@ -28,9 +30,11 @@ SOURCE_ROOT = Path(__file__).parents[2]
 RESULTS_DIRECTORY = SOURCE_ROOT / "build" / "e2e"
 CLOCK = SystemClock()
 RESULTS_DATE_FORMAT = "%Y-%m-%d"
+RESULTS_STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+RESULTS_LATEST_NAME = "latest"
 RESULTS_FILENAME_SUFFIX = ".json"
 RESULTS_TEMP_SUFFIX = ".tmp"
-RESULTS_SCHEMA_VERSION = 3
+RESULTS_SCHEMA_VERSION = 4
 RESULTS_STATUS_PASSED = "passed"
 RESULTS_STATUS_FAILED = "failed"
 RESULTS_STATUS_SKIPPED = "skipped"
@@ -43,20 +47,25 @@ CODEX_ACCESS_SETTINGS = (
     "default_permissions",
     "sandbox_mode",
 )
-_COSTS: dict[str, float | None] = {}
+_ATTEMPTS: dict[str, list[AttemptRecord]] = {}
 _REPORTS: dict[str, TestReport] = {}
 _REAL_E2E_NODEIDS: set[str] = set()
 _STARTED: list[datetime] = []
 
 
-@pytest.fixture
-def record_e2e_cost(request: pytest.FixtureRequest) -> object:
-    """Return a callback that records one scenario's agent-reported USD cost; None stays unknown."""
+def record_attempt(nodeid: str, record: AttemptRecord) -> None:
+    """Add one finished attempt of a scenario, with its agent-reported USD cost if any."""
+    _ATTEMPTS.setdefault(nodeid, []).append(record)
 
-    def record(cost_usd: float | None) -> None:
-        node = cast("object", request.node)
-        nodeid = cast("str", node.__getattribute__("nodeid"))
-        _COSTS[nodeid] = _add_cost(_COSTS.get(nodeid), cost_usd)
+
+@pytest.fixture
+def record_e2e_attempt(request: pytest.FixtureRequest) -> object:
+    """Return a callback that records each finished attempt of the requesting scenario."""
+    node = cast("object", request.node)
+    nodeid = cast("str", node.__getattribute__("nodeid"))
+
+    def record(attempt: AttemptRecord) -> None:
+        record_attempt(nodeid, attempt)
 
     return record
 
@@ -72,7 +81,7 @@ def pytest_runtest_logreport(report: TestReport) -> None:
 def pytest_collection_modifyitems(config: Config, items: list[Item]) -> None:
     """Skip real-agent scenarios unless the explicit E2E opt-in is present."""
     del config
-    _COSTS.clear()
+    _ATTEMPTS.clear()
     _REPORTS.clear()
     _REAL_E2E_NODEIDS.clear()
     _STARTED[:] = [CLOCK.now()]
@@ -88,7 +97,7 @@ def pytest_collection_modifyitems(config: Config, items: list[Item]) -> None:
 
 
 def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
-    """Write one redaction-safe dated results file after the E2E session."""
+    """Write one redaction-safe results file, keyed by the invocation start, after the session."""
     if _is_xdist_worker(session.config) or not _REPORTS:
         return
     scenarios = [_scenario_result(nodeid, report) for nodeid, report in sorted(_REPORTS.items())]
@@ -105,11 +114,16 @@ def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
         "scenarios": scenarios,
     }
     RESULTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    filename = f"{payload['date']}{RESULTS_FILENAME_SUFFIX}"
-    result_path = RESULTS_DIRECTORY / filename
-    temporary_path = result_path.with_suffix(RESULTS_TEMP_SUFFIX)
-    temporary_path.write_text(json.dumps(payload, indent=2) + "\n")
-    temporary_path.replace(result_path)
+    stamp = _STARTED[0].strftime(RESULTS_STAMP_FORMAT)
+    text = json.dumps(payload, indent=2) + "\n"
+    for name in (stamp, RESULTS_LATEST_NAME):
+        _write_atomically(RESULTS_DIRECTORY / f"{name}{RESULTS_FILENAME_SUFFIX}", text)
+
+
+def _write_atomically(path: Path, text: str) -> None:
+    temporary_path = path.with_suffix(RESULTS_TEMP_SUFFIX)
+    temporary_path.write_text(text)
+    temporary_path.replace(path)
 
 
 def _sandbox_settings() -> dict[str, object]:
@@ -123,20 +137,15 @@ def _sandbox_settings() -> dict[str, object]:
     }
 
 
-def _add_cost(total: float | None, cost_usd: float | None) -> float | None:
-    if total is None:
-        return cost_usd
-    if cost_usd is None:
-        return total
-    return total + cost_usd
-
-
 def _scenario_result(nodeid: str, report: TestReport) -> dict[str, object]:
     status = _status_for(report)
+    attempts = _ATTEMPTS.get(nodeid, [])
     return {
         "scenario": nodeid,
         "status": status,
-        "cost": _COSTS.get(nodeid),
+        "cost": total_cost(attempts),
+        "duration_seconds": report.duration,
+        "attempts": [dataclasses.asdict(attempt) for attempt in attempts],
     }
 
 
