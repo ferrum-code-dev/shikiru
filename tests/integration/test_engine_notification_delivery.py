@@ -20,6 +20,7 @@ from shikiru.paths import engine_log_path
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
+from shikiru.store.notification_cursor import NotificationCursor
 from shikiru.tmux.session import SessionView
 from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, build_tmux, engine_settings, wait_for_command
@@ -217,6 +218,8 @@ async def test_an_escalation_queued_behind_a_stuck_hook_is_notified_once_after_a
     async with _engine(tmp_path, tmux_server, _recording_hook(received), restart=True) as env:
         await env.until(lambda: len(_delivered_messages(received)) == _REPLAYED_ESCALATIONS)
         assert _delivered_messages(received) == ["stuck", "queued"]
+        last_escalation = env.events.since(0, kinds=[EventKind.ESCALATION])[-1].id
+        await env.until(lambda: (NotificationCursor(env.connection).read() or 0) >= last_escalation)
         await _stop(env)
 
     async with _engine(tmp_path, tmux_server, _recording_hook(received), restart=True) as env:
