@@ -5,10 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from shikiru.agents.sdk.turn import STREAM_FILENAME_SUFFIX
 from shikiru.domain.events import Event, EventKind
 from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
 from shikiru.errors import ShikiruError
-from shikiru.paths import RUNS_DIR_NAME, engine_log_path, project_state_dir, state_db_path
+from shikiru.paths import (
+    RUNS_DIR_NAME,
+    TURNS_DIR_NAME,
+    engine_log_path,
+    project_state_dir,
+    state_db_path,
+)
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
@@ -25,6 +32,12 @@ EVENTS_SHOWN = 20
 ENGINE_LOG_TAIL_LINES = 40
 RERUN_OUTSIDE_WORKSPACE = "an agent wrote in the operator checkout"
 RERUN_SKIPPED_RULE = "an agent skipped a rule"
+SANDBOX_DENIAL_MARKERS = ("Operation not permitted", "was denied permission", "Permission denied")
+SANDBOX_DENIAL_NOTE = (
+    "sandbox denial ({marker!r}) in an agent transcript: not agent flakiness and never rerun; "
+    "check the Codex sandbox writable roots (04 §5: run directory, worktree git directory, "
+    "git common directory) and `shikiru doctor`"
+)
 
 
 class ShikiruFailure(AssertionError):
@@ -40,6 +53,7 @@ class Snapshot:
     checkout_status: str
     engine_log_tail: str
     turn_alive: bool
+    sandbox_denial: str | None = None
 
     @property
     def last_event_id(self) -> int:
@@ -101,7 +115,18 @@ async def take_snapshot(project_root: Path, runner: SubprocessRunner, clock: Clo
         checkout_status=status.stdout or status.stderr,
         engine_log_tail=_tail(project_root),
         turn_alive=_turn_alive(project_root, runner),
+        sandbox_denial=_sandbox_denial(project_root),
     )
+
+
+def _sandbox_denial(project_root: Path) -> str | None:
+    runs_root = project_state_dir(project_root) / RUNS_DIR_NAME
+    for stream in sorted(runs_root.glob(f"*/{TURNS_DIR_NAME}/*/*{STREAM_FILENAME_SUFFIX}")):
+        text = stream.read_text(errors="replace")
+        for marker in SANDBOX_DENIAL_MARKERS:
+            if marker in text:
+                return marker
+    return None
 
 
 def _tail(project_root: Path) -> str:
@@ -138,12 +163,17 @@ def write_diagnostics(path: Path, error: Exception, snapshot: Snapshot) -> None:
 def rerun_reason(error: Exception, snapshot: Snapshot) -> str | None:
     """Return why a failed attempt is agent flakiness that a rerun may fix, else `None`.
 
-    Only two classes qualify, and only when the engine recorded no `engine_fault`: an agent
+    Only two classes qualify, and only when the engine recorded no `engine_fault` and no agent
+    transcript shows a sandbox denial, which is a configuration fault, never flakiness: an agent
     wrote into the operator checkout (a `integration_waiting` event, or a dirty checkout), or
     it skipped a rule so the delivered work is wrong (a plain assertion on the outcome). Any
     Shikiru, lifecycle, CLI or environment failure never reruns.
     """
-    if snapshot.has_event(EventKind.ENGINE_FAULT) or _is_environment_failure(error):
+    if (
+        snapshot.has_event(EventKind.ENGINE_FAULT)
+        or snapshot.sandbox_denial is not None
+        or _is_environment_failure(error)
+    ):
         return None
     if snapshot.has_event(EventKind.INTEGRATION_WAITING) or snapshot.checkout_status.strip():
         return RERUN_OUTSIDE_WORKSPACE

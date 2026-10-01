@@ -48,6 +48,7 @@ from tests.e2e.budgets import (
     outer_timeout_seconds,
 )
 from tests.e2e.diagnostics import (
+    SANDBOX_DENIAL_NOTE,
     ShikiruFailure,
     Snapshot,
     rerun_reason,
@@ -518,6 +519,8 @@ async def _run_attempt(
             path = DIAGNOSTICS_DIRECTORY / f"{stamp}-{scenario}-attempt-{attempt}.txt"
             write_diagnostics(path, error, snapshot)
             error.add_note(f"diagnostics: {path}")
+            if snapshot.sandbox_denial is not None:
+                error.add_note(SANDBOX_DENIAL_NOTE.format(marker=snapshot.sandbox_denial))
             raise AttemptFailed(error, rerun_reason(error, snapshot)) from error
     finally:
         await _record_observed_cost(project, environment, state, record_cost)
@@ -694,29 +697,29 @@ async def _assert_no_duplicate_commits(project: PreparedProject) -> None:
 
 @pytest.mark.timeout(outer_timeout_seconds("e5"))
 async def test_real_agents_e5_restart_resumes_the_interrupted_turn(
-    tmp_path: Path,
+    e2e_project_dir: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns("e5", tmp_path, tmux_server, record_e2e_cost, _e5_body)
+    await _run_with_reruns("e5", e2e_project_dir, tmux_server, record_e2e_cost, _e5_body)
 
 
 @pytest.mark.timeout(outer_timeout_seconds("e1"))
 async def test_real_agents_e1_completes_and_integrates(
-    tmp_path: Path,
+    e2e_project_dir: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns("e1", tmp_path, tmux_server, record_e2e_cost, _e1_body)
+    await _run_with_reruns("e1", e2e_project_dir, tmux_server, record_e2e_cost, _e1_body)
 
 
 @pytest.mark.timeout(outer_timeout_seconds("e2"))
 async def test_real_agents_e2_delivers_operator_message_to_verify(
-    tmp_path: Path,
+    e2e_project_dir: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns("e2", tmp_path, tmux_server, record_e2e_cost, _e2_body)
+    await _run_with_reruns("e2", e2e_project_dir, tmux_server, record_e2e_cost, _e2_body)
 
 
 async def _record_observed_cost(
@@ -814,16 +817,16 @@ async def _cleanup_attempt(
 
 @pytest.mark.timeout(outer_timeout_seconds("e3"))
 async def test_real_agents_e3_plans_and_runs_dependent_tasks_in_parallel(
-    tmp_path: Path,
+    e2e_project_dir: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns("e3", tmp_path, tmux_server, record_e2e_cost, _e3_body)
+    await _run_with_reruns("e3", e2e_project_dir, tmux_server, record_e2e_cost, _e3_body)
 
 
 @pytest.mark.timeout(outer_timeout_seconds("e4"))
 async def test_real_agents_e4_mcp_operator_resolves_a_product_decision(
-    tmp_path: Path,
+    e2e_project_dir: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
@@ -832,16 +835,16 @@ async def test_real_agents_e4_mcp_operator_resolves_a_product_decision(
     It proves the MCP escalation flow (`wait_for_events` → `resolve_escalation`) with a fixed
     answer, not a model's judgement.
     """
-    await _run_with_reruns("e4", tmp_path, tmux_server, record_e2e_cost, _e4_body)
+    await _run_with_reruns("e4", e2e_project_dir, tmux_server, record_e2e_cost, _e4_body)
 
 
 @pytest.mark.timeout(outer_timeout_seconds("e6"))
 async def test_real_agents_e6_take_over_holds_only_that_task(
-    tmp_path: Path,
+    e2e_project_dir: Path,
     tmux_server: TmuxServer,
     record_e2e_cost: Callable[[float | None], None],
 ) -> None:
-    await _run_with_reruns("e6", tmp_path, tmux_server, record_e2e_cost, _e6_body)
+    await _run_with_reruns("e6", e2e_project_dir, tmux_server, record_e2e_cost, _e6_body)
 
 
 async def _e3_body(

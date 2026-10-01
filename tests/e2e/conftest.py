@@ -3,15 +3,21 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
+import tempfile
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from shikiru.clock import SystemClock
+from shikiru.plugins.agents.codex.home import codex_home
+from shikiru.plugins.agents.codex.options import WORKSPACE_WRITE_SANDBOX
 from tests.support.e2e_provenance import source_state, tool_versions
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from datetime import datetime
 
     from _pytest.config import Config
@@ -26,12 +32,21 @@ CLOCK = SystemClock()
 RESULTS_DATE_FORMAT = "%Y-%m-%d"
 RESULTS_FILENAME_SUFFIX = ".json"
 RESULTS_TEMP_SUFFIX = ".tmp"
-RESULTS_SCHEMA_VERSION = 2
+RESULTS_SCHEMA_VERSION = 3
 RESULTS_STATUS_PASSED = "passed"
 RESULTS_STATUS_FAILED = "failed"
 RESULTS_STATUS_SKIPPED = "skipped"
 REPORT_PHASE_CALL = "call"
 REPORT_PHASE_SETUP = "setup"
+E2E_PROJECTS_PARENT = (".cache", "shikiru-e2e")
+E2E_PROJECTS_PREFIX = "p"
+CODEX_CONFIG_FILENAME = "config.toml"
+CODEX_ACCESS_SETTINGS = (
+    "approvals_reviewer",
+    "approval_policy",
+    "default_permissions",
+    "sandbox_mode",
+)
 _COSTS: dict[str, float | None] = {}
 _REPORTS: dict[str, TestReport] = {}
 _REAL_E2E_NODEIDS: set[str] = set()
@@ -48,6 +63,18 @@ def record_e2e_cost(request: pytest.FixtureRequest) -> object:
         _COSTS[nodeid] = _add_cost(_COSTS.get(nodeid), cost_usd)
 
     return record
+
+
+@pytest.fixture
+def e2e_project_dir() -> Iterator[Path]:
+    """Yield a private project directory outside `$TMPDIR` (Codex writes there freely)."""
+    parent = Path.home().joinpath(*E2E_PROJECTS_PARENT)
+    parent.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix=E2E_PROJECTS_PREFIX, dir=parent))
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def pytest_runtest_logreport(report: TestReport) -> None:
@@ -89,6 +116,7 @@ def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
         "finished_at": finished.isoformat(),
         **asyncio.run(source_state(SOURCE_ROOT)),
         "tool_versions": asyncio.run(tool_versions()),
+        "sandbox": _sandbox_settings(),
         "exit_status": exitstatus,
         "scenarios": scenarios,
     }
@@ -98,6 +126,17 @@ def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
     temporary_path = result_path.with_suffix(RESULTS_TEMP_SUFFIX)
     temporary_path.write_text(json.dumps(payload, indent=2) + "\n")
     temporary_path.replace(result_path)
+
+
+def _sandbox_settings() -> dict[str, object]:
+    path = codex_home() / CODEX_CONFIG_FILENAME
+    config = tomllib.loads(path.read_text()) if path.is_file() else {}
+    return {
+        "codex_sandbox_mode": WORKSPACE_WRITE_SANDBOX,
+        "project_parent": str(Path.home().joinpath(*E2E_PROJECTS_PARENT)),
+        "tmpdir": os.environ.get("TMPDIR"),
+        "codex_config": {key: config[key] for key in CODEX_ACCESS_SETTINGS if key in config},
+    }
 
 
 def _add_cost(total: float | None, cost_usd: float | None) -> float | None:

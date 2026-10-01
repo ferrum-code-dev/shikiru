@@ -11,7 +11,7 @@ import pytest
 from shikiru.clock import SystemClock
 from shikiru.domain.events import Event, EventKind
 from shikiru.errors import ShikiruError
-from shikiru.paths import engine_log_path, state_db_path
+from shikiru.paths import TURNS_DIR_NAME, engine_log_path, run_dir, state_db_path
 from shikiru.process import SubprocessRunner
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
@@ -119,6 +119,21 @@ async def test_a_stalled_attempt_fails_fast_naming_the_last_event_the_tasks_and_
     assert clock.now() - TASK_CREATED_AT < ATTEMPT_BUDGETS["e3"]
 
 
+async def test_a_sandbox_denial_in_an_agent_transcript_is_found_in_the_snapshot(
+    tmp_path: Path,
+) -> None:
+    root = await _project(tmp_path / "project")
+    clean = await take_snapshot(root, _RUNNER, FakeClock(TASK_CREATED_AT))
+    stream = run_dir(root, "T-1") / TURNS_DIR_NAME / "01-implement" / "implementer.stream.jsonl"
+    stream.parent.mkdir(parents=True)
+    stream.write_text('{"output": "Unable to create index.lock: Operation not permitted"}\n')
+
+    denied = await take_snapshot(root, _RUNNER, FakeClock(TASK_CREATED_AT))
+
+    assert clean.sandbox_denial is None
+    assert denied.sandbox_denial == "Operation not permitted"
+
+
 async def test_an_attempt_that_outlives_its_budget_fails_with_diagnostics(tmp_path: Path) -> None:
     root = await _project(tmp_path / "project")
     _seed(root, "only nudge")
@@ -186,7 +201,9 @@ async def _drive(clock: FakeClock, guard: asyncio.Future[None], polls: list[int]
     await guard
 
 
-def _snapshot(*kinds: EventKind, checkout_status: str = "") -> Snapshot:
+def _snapshot(
+    *kinds: EventKind, checkout_status: str = "", sandbox_denial: str | None = None
+) -> Snapshot:
     return Snapshot(
         events=tuple(
             Event(id=index, ts=TASK_CREATED_AT, kind=kind, message=kind.value)
@@ -196,6 +213,7 @@ def _snapshot(*kinds: EventKind, checkout_status: str = "") -> Snapshot:
         checkout_status=checkout_status,
         engine_log_tail="",
         turn_alive=False,
+        sandbox_denial=sandbox_denial,
     )
 
 
@@ -213,6 +231,16 @@ def _snapshot(*kinds: EventKind, checkout_status: str = "") -> Snapshot:
         (StallError("no progress"), _snapshot(), None),
         (TimeoutError("budget"), _snapshot(), None),
         (AssertionError("x"), _snapshot(EventKind.ENGINE_FAULT), None),
+        (
+            AssertionError("A1 was not ticked"),
+            _snapshot(sandbox_denial="Operation not permitted"),
+            None,
+        ),
+        (
+            AssertionError("x"),
+            _snapshot(EventKind.INTEGRATION_WAITING, sandbox_denial="was denied permission"),
+            None,
+        ),
         (
             AssertionError("x"),
             _snapshot(EventKind.ENGINE_FAULT, EventKind.INTEGRATION_WAITING),
