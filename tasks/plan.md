@@ -634,10 +634,10 @@ Refs: 03 §6, §10; invariant 4.
 
 ### Task 74f: Operator-held tasks and task ids survive tmux loss and reuse
 Refs: 03 §9, §5; reviewer findings.
-- [ ] After a tmux server loss or host reboot, a taken-over role is restored as an interactive session or handed back with a visible, notified event; it is never left held with a silent read-only pane.
-- [ ] A task id or branch that already exists from an earlier state (state reset, kept branch of a cancelled task) is never adopted silently: the root build verifies the branch against `base_sha` and fails with a clear error naming it; `cleanup` never `rmtree`s a root with a dirty worktree whose metadata is missing.
-- [ ] Turn directory numbers sort correctly past 99 turns; `command_applied` lookups are indexed or bounded; an unwritable packet directory does not re-run git evidence collection on every tick.
-- [ ] `config.toml` created by `init` is owner-only from creation; `make_private_dir` is race-free.
+- [x] After a tmux server loss or host reboot, a taken-over role is restored as an interactive session or handed back with a visible, notified event; it is never left held with a silent read-only pane.
+- [x] A task id or branch that already exists from an earlier state (state reset, kept branch of a cancelled task) is never adopted silently: the root build verifies the branch against `base_sha` and fails with a clear error naming it; `cleanup` never `rmtree`s a root with a dirty worktree whose metadata is missing.
+- [x] Turn directory numbers sort correctly past 99 turns; `command_applied` lookups are indexed or bounded; an unwritable packet directory does not re-run git evidence collection on every tick.
+- [x] `config.toml` created by `init` is owner-only from creation; `make_private_dir` is race-free.
 - Tests: integration on `tmux_server` (kill-server during takeover), real git branch collision, 120 turn dirs ordering, init file modes.
 
 ### Task 74g: Lint, docs, smoke and evidence hygiene
