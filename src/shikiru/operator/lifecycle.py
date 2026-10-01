@@ -39,6 +39,14 @@ PALETTE_COMMAND = (sys.executable, "-m", PACKAGE_NAME, CLI_PALETTE_COMMAND)
 TMUX_ATTACH_ARGV = ("tmux", "attach-session", "-t")
 ENGINE_START_WAIT_SECONDS = 5.0
 ENGINE_START_POLL_SECONDS = 0.05
+ENGINE_EXITED_MESSAGE = (
+    "the engine process exited before it acquired its lock; "
+    f"run `{PACKAGE_NAME} {CLI_ENGINE_COMMAND}` in the foreground to see why"
+)
+
+
+class EngineExitedError(ShikiruError):
+    """The engine process started by `start` ended without ever holding its lock."""
 
 
 class ProjectLifecycle:
@@ -83,7 +91,7 @@ class ProjectLifecycle:
         await bind_palette_key(self._tmux, PALETTE_COMMAND)
         started = False
         if not self._engine_up(root):
-            self._runner.spawn_detached(
+            pid = self._runner.spawn_detached(
                 command_with_overrides(
                     (
                         sys.executable,
@@ -102,6 +110,7 @@ class ProjectLifecycle:
                 up=True,
                 seconds=ENGINE_START_WAIT_SECONDS,
                 failure="engine did not acquire its lock after start",
+                spawned=pid,
             )
         if attach:
             self._runner.replace((*TMUX_ATTACH_ARGV, target))
@@ -142,9 +151,13 @@ class ProjectLifecycle:
             await self._tmux.kill_session(target)
         return ack
 
-    async def _wait_for_engine(self, root: Path, *, up: bool, seconds: float, failure: str) -> None:
+    async def _wait_for_engine(
+        self, root: Path, *, up: bool, seconds: float, failure: str, spawned: int | None = None
+    ) -> None:
         deadline = self._clock.now().timestamp() + seconds
         while self._engine_up(root) != up:
+            if spawned is not None and self._runner.identify(spawned) is None:
+                raise EngineExitedError(ENGINE_EXITED_MESSAGE)
             if self._clock.now().timestamp() >= deadline:
                 raise ShikiruError(failure)
             await self._clock.sleep(ENGINE_START_POLL_SECONDS)

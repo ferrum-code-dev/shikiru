@@ -20,7 +20,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 | Command | Purpose |
 |---|---|
 | `init [--yes]` | Wizard (§3); `--yes` writes the detected defaults |
-| `start [--attach]` | Validate config and plugins, start the engine, ensure the session. On a running engine it only ensures the session. A name collision with another project fails with a hint to set `project.name` |
+| `start [--attach]` | Validate config and plugins, start the engine, ensure the session. On a running engine it only ensures the session. A name collision with another project fails with a hint to set `project.name`. `start` waits up to 5 s for the new engine to hold its lock and fails at once, naming the foreground `shikiru engine` run that shows the error, when the engine process has already exited (its output is not kept) |
 | `stop [--kill-session]` | Stop the engine; running turns are stopped (their sessions persist) and re-run by resume on the next start. The ack is returned once the engine has released its lock, so `stop && start` is safe; if the lock is still held after `orchestration.shutdown_seconds` plus `TURN_STOP_GRACE`, the command fails |
 | `ls [--host H]` | Every Shikiru project on this host, or on `H` (§5.6): name, directory, engine state, running and queued counts, open escalations |
 | `attach [NAME] [--host H]` | Attach to a session; with no `NAME` and more than one match, the picker (§5.6) |
