@@ -41,28 +41,23 @@ def _install_fake_codex(directory: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("PATH", f"{directory}{os.pathsep}{os.environ['PATH']}")
 
 
-async def test_probe_passes_when_the_sandbox_grants_the_roots(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("pattern", "denied"),
+    [(None, None), ("*/worktrees/*", "worktrees"), ("*/run", "/run")],
+    ids=["granted", "worktree kept read-only", "run kept read-only"],
+)
+async def test_probe_passes_only_when_the_sandbox_grants_every_root_and_names_the_denied_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pattern: str | None, denied: str | None
 ) -> None:
     _install_fake_codex(tmp_path / "bin", monkeypatch)
+    if pattern is not None:
+        monkeypatch.setenv(DENY_ENV, pattern)
 
     check = await CodexSandboxProbe(SubprocessRunner()).check()
 
     assert check.name == SANDBOX_CHECK
-    assert check.ok, check.detail
-
-
-@pytest.mark.parametrize(("pattern", "denied"), [("*/worktrees/*", "worktrees"), ("*/run", "/run")])
-async def test_probe_fails_naming_the_root_the_sandbox_keeps_read_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pattern: str, denied: str
-) -> None:
-    _install_fake_codex(tmp_path / "bin", monkeypatch)
-    monkeypatch.setenv(DENY_ENV, pattern)
-
-    check = await CodexSandboxProbe(SubprocessRunner()).check()
-
-    assert not check.ok
-    assert denied in check.detail
+    assert check.ok is (denied is None)
+    assert denied is None or denied in check.detail
 
 
 @pytest.mark.skipif(shutil.which("codex") is None, reason="needs the codex CLI")
