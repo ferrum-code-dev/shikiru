@@ -13,6 +13,13 @@ CALLS_LOG = "calls.jsonl"
 HOLD_PREFIX = "hold-"
 FAIL_PREFIX = "fail-"
 _OPEN = "OPEN"
+_PARTIAL_SUFFIX = ".partial"
+
+
+def write_record(path: Path, record: dict[str, Any]) -> None:
+    partial = path.with_name(path.name + _PARTIAL_SUFFIX)
+    partial.write_text(json.dumps(record))
+    partial.replace(path)
 
 
 def _hold(state: Path, subcommand: str) -> None:
@@ -53,7 +60,7 @@ def _create(state: Path, options: list[str]) -> str:
         "title": values["--title"],
         "body": values["--body"],
     }
-    (pulls / f"{number}.json").write_text(json.dumps(record))
+    write_record(pulls / f"{number}.json", record)
     _hold(state, "create")
     return f"{URL_PREFIX}{number}"
 
@@ -79,7 +86,7 @@ def _view(state: Path, url: str, options: list[str]) -> str:
 def _close(state: Path, url: str) -> str:
     _hold(state, "close")
     path = state / PULLS_DIR / f"{url.removeprefix(URL_PREFIX)}.json"
-    path.write_text(json.dumps({**json.loads(path.read_text()), "state": "CLOSED"}))
+    write_record(path, {**json.loads(path.read_text()), "state": "CLOSED"})
     return ""
 
 
