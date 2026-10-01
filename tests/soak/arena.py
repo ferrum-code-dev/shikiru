@@ -89,6 +89,7 @@ class Arena:
         self.environment: dict[str, str] = {}
         self.settings: tuple[str, ...] = ()
         self._queue: CommandQueue | None = None
+        self._appending = asyncio.Lock()
         self._writer: Connection | None = None
         self._reading: Connection | None = None
         self._reads: CommandQueue | None = None
@@ -168,13 +169,14 @@ class Arena:
     async def append(self, command: Command) -> tuple[int, Command]:
         queue = self._queue
         assert queue is not None
-        for _ in range(APPEND_ATTEMPTS):
-            try:
-                queued = await asyncio.to_thread(queue.append, command)
-            except OperationalDatabaseError:
-                await CLOCK.sleep(APPEND_RETRY_SECONDS)
-            else:
-                return queued.id, queued.command
+        async with self._appending:
+            for _ in range(APPEND_ATTEMPTS):
+                try:
+                    queued = await asyncio.to_thread(queue.append, command)
+                except OperationalDatabaseError:
+                    await CLOCK.sleep(APPEND_RETRY_SECONDS)
+                else:
+                    return queued.id, queued.command
         message = f"{self.name}: a command could not be queued, the database stayed locked"
         raise RuntimeError(message)
 
