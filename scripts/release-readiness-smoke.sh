@@ -301,7 +301,6 @@ for step in 'Step 4 of 7 · Caches and CoW' 'Step 5 of 7 · Parallelism' \
     'Step 6 of 7 · Integration mode' 'Step 7 of 7 · Finish'; do
     wait_for_advance release-smoke:wizard "$step"
 done
-tmux_run send-keys -t release-smoke:wizard Tab
 tmux_run send-keys -t release-smoke:wizard Enter
 wait_for_text release-smoke:wizard 'Doctor passed.'
 tmux_run send-keys -t release-smoke:wizard Escape

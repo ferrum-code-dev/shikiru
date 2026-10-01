@@ -46,7 +46,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 4. **Caches**: existing git-ignored paths with common cache directory names, preserving repository-relative paths, plus a CoW support check.
 5. **Parallelism**: set the maximum number of active tasks.
 6. **Integration mode**: choose local merge or pull request integration.
-7. **Finish**: write `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor`. `init --yes` writes the editable `default` model placeholder, so review the role ladders and run `doctor` before `start`.
+7. **Finish**: write `.shikiru/config.toml`, add `.shikiru/` to `.git/info/exclude`, run `doctor`. `init --yes` writes the editable `default` model placeholder, so review the role ladders and run `doctor` before `start`. When Next disappears on the last step, keyboard focus moves to Run Doctor, so Enter runs it (left to Textual, the focus fell back to Back after an asynchronous reset and a key sent at that moment stepped back).
 
 ## 4. MCP (`shikiru mcp`)
 

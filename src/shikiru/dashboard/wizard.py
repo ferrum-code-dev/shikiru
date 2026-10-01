@@ -261,6 +261,8 @@ class InitWizardApp(App[InitWizardResult | None]):
         finish_button = self.query_one("#wizard-finish", Button)
         finish_button.display = self._step == len(WIZARD_STEPS) - 1 or self._config_path is not None
         finish_button.label = "Exit" if self._config_path is not None else "Run Doctor"
+        if self.focused is next_button and not next_button.display:
+            finish_button.focus()
         cow_result = self.query_one("#cow-result", Static)
         if self._cow_supported is not None:
             cow_result.update(

@@ -251,6 +251,22 @@ async def test_init_wizard_walkthrough_saves_choices_and_shows_doctor(
     assert probe_directories == []
 
 
+async def test_init_wizard_keyboard_focus_lands_on_run_doctor_when_next_leaves(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    await _git_project(tmp_path)
+    _private_doctor_runtime(monkeypatch, tmp_path)
+    app = await _app(tmp_path)
+
+    async with app.run_test(size=(64, 20)) as pilot:
+        await _set_agents_and_trackers(pilot, tmp_path)
+        await _set_caches_parallelism_and_integration(pilot)
+        assert app.query_one("#wizard-page-6").display
+        await pilot.pause()
+
+        assert app.focused is app.query_one("#wizard-finish")
+
+
 async def test_init_wizard_keeps_config_and_exposes_failed_doctor_report(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
