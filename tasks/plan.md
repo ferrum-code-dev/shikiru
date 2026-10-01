@@ -627,9 +627,9 @@ Refs: 06 §5.7, 03 §8.
 
 ### Task 74e: PR mode network work leaves the command loop and tolerates blips
 Refs: 03 §6, §10; invariant 4.
-- [ ] `git fetch`, `gh pr view` and `gh pr close` never run inside the serialised command loop or the scheduling tick for longer than a small bounded time: cancel acknowledges immediately and the PR close is performed off-loop with retry; root builds fetch with a short timeout and a failure is a recoverable dispatch retry that does not count toward `MAX_DISPATCH_FAILURES` for a transient network error.
-- [ ] A single failed `gh pr view` poll is retried with backoff; a check that is still pending or later goes green does not escalate; only a settled failing state, a conflict, a closed PR or the budget escalates.
-- [ ] The integration rebase refreshes the base before rebasing, and `retry` after a conflict escalation rebases again instead of only polling.
+- [x] `git fetch`, `gh pr view` and `gh pr close` never run inside the serialised command loop or the scheduling tick for longer than a small bounded time: cancel acknowledges immediately and the PR close is performed off-loop with retry; root builds fetch with a short timeout and a failure is a recoverable dispatch retry that does not count toward `MAX_DISPATCH_FAILURES` for a transient network error.
+- [x] A single failed `gh pr view` poll is retried with backoff; a check that is still pending or later goes green does not escalate; only a settled failing state, a conflict, a closed PR or the budget escalates.
+- [x] The integration rebase refreshes the base before rebasing, and `retry` after a conflict escalation rebases again instead of only polling.
 - Tests: integration with real git, a bare remote and a slow/failing fake `gh`: a slow `gh` does not delay another command, a blip does not escalate, a stale base is refreshed at rebase, retry after conflict rebases.
 
 ### Task 74f: Operator-held tasks and task ids survive tmux loss and reuse
