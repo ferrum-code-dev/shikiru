@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.recovery import Completed
 from shikiru.domain.steps import ACTING_ROLE, Transition
-from shikiru.engine.events import emit_nudge, emit_turn_started
+from shikiru.engine.events import emit_nudge, emit_turn_started, emit_turn_stopped
 from shikiru.engine.turn_context import ORDINARY_TURN, NextTurn
 from shikiru.engine.turn_execution import TurnExecution
 from shikiru.engine.turns import TurnHeld
@@ -179,8 +179,11 @@ class TurnLoop:
             result, turn_dir, selection = await self._turns.run(
                 task, role, selection, turn_request, on_nudge=on_nudge
             )
-        except TurnHeld:
-            return None
+        except BaseException as stop:
+            emit_turn_stopped(self._events, task, step, role)
+            if isinstance(stop, TurnHeld):
+                return None
+            raise
         live_run = self._runs.get_live(task.id, role)
         if live_run is None:
             message = f"{task.id} {role.value} run disappeared after its turn"

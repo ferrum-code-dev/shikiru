@@ -211,7 +211,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 
 **`EventKind`** (in `domain.events`; `events.data` carries typed fields):
 - `task_queued`, `task_started`, `dispatch_failed` (attempt, error), `step_started`
-- `turn_started`, `turn_completed` (agent, model, outcome, summary, question, usage delta), `turn_failed`
+- `turn_started`, `turn_completed` (agent, model, outcome, summary, question, usage delta), `turn_failed`, `turn_stopped` (step, role, iteration: a started turn that ended without a result because a hold, a take over, a cancellation or an engine stop interrupted it, so the latest turn event of a task never claims a turn that no longer runs)
 - `nudge`, `helper_action`, `rung_changed`, `compacted`
 - `quota_blocked`, `quota_cleared`
 - `verdict`, `scope_change`

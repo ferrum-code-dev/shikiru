@@ -64,6 +64,16 @@ def emit_turn_started(events: EventLog, task: Task, step: Step, role: Role, rung
     )
 
 
+def emit_turn_stopped(events: EventLog, task: Task, step: Step, role: Role) -> None:
+    """Record that `role`'s `step` turn ended without a result because the task was stopped."""
+    events.append(
+        EventKind.TURN_STOPPED,
+        task_id=task.id,
+        message=f"{task.id} {role.value} turn stopped",
+        data={"step": step.value, "role": role.value, "iteration": task.iteration},
+    )
+
+
 def emit_nudge(events: EventLog, task: Task, step: Step, role: Role) -> None:
     """Record that the engine nudged `role`'s stalled `step` turn."""
     events.append(

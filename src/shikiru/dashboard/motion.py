@@ -36,6 +36,7 @@ _TASK_EVENT_KINDS = (
     EventKind.TURN_STARTED,
     EventKind.TURN_COMPLETED,
     EventKind.TURN_FAILED,
+    EventKind.TURN_STOPPED,
     EventKind.VERDICT,
 )
 
@@ -183,7 +184,9 @@ class DashboardMotion:
             if event.kind is EventKind.TURN_STARTED and matching_turn:
                 turn_started_at = event.ts
                 turn_active = True
-            elif (event.kind is EventKind.TURN_COMPLETED and matching_turn) or (
+            elif (
+                event.kind in (EventKind.TURN_COMPLETED, EventKind.TURN_STOPPED) and matching_turn
+            ) or (
                 event.kind is EventKind.TURN_FAILED and event.data.get("step") == task.step.value
             ):
                 turn_started_at = None

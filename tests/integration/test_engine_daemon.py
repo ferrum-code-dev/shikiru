@@ -1267,6 +1267,23 @@ async def test_a_take_over_whose_pane_cannot_be_started_changes_nothing_and_can_
         assert owned.id == run.id
 
 
+async def test_a_turn_stopped_by_a_pause_is_recorded_as_stopped_not_left_running(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
+        paused = await operator.send(Pause(task_id=task_id, now=True))
+
+        turn_events = operator.events.since(
+            0, kinds=[EventKind.TURN_STARTED, EventKind.TURN_STOPPED], task_id=task_id
+        )
+
+        assert paused.status is CommandStatus.DONE
+        assert [event.kind for event in turn_events] == [
+            EventKind.TURN_STARTED,
+            EventKind.TURN_STOPPED,
+        ]
+
+
 async def test_replaying_a_take_over_never_respawns_its_live_interactive_pane(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:

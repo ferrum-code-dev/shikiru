@@ -23,6 +23,7 @@ class EventKind(StrEnum):
     TURN_STARTED = auto()
     TURN_COMPLETED = auto()
     TURN_FAILED = auto()
+    TURN_STOPPED = auto()
     NUDGE = auto()
     HELPER_ACTION = auto()
     RUNG_CHANGED = auto()

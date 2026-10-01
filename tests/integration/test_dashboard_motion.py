@@ -431,10 +431,12 @@ async def test_dashboard_strips_render_step_less_lifecycle_states(
         reader.close()
 
 
-def test_database_turn_failure_overrides_a_nonterminal_current_turn_log(
+@pytest.mark.parametrize("ending", [EventKind.TURN_FAILED, EventKind.TURN_STOPPED])
+def test_a_turn_ended_in_the_database_overrides_a_nonterminal_current_turn_log(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    ending: EventKind,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_START)
@@ -461,10 +463,15 @@ def test_database_turn_failure_overrides_a_nonterminal_current_turn_log(
         )
         clock.advance(3)
         EventLog(connection, clock).append(
-            EventKind.TURN_FAILED,
+            ending,
             task_id=task.id,
-            message="protocol failure",
-            data={"step": step.value, "result": "ProtocolError"},
+            message="turn ended",
+            data={
+                "step": step.value,
+                "role": Role.IMPLEMENTER.value,
+                "iteration": task.iteration,
+                "result": "ProtocolError",
+            },
         )
 
         strip = next(item for item in views.strips() if item.task_id == task.id)
