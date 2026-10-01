@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.domain.events import Event
     from shikiru.engine.handlers import HandlerRegistry
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.notification_delivery import NotificationDelivery
@@ -146,6 +147,7 @@ class Engine:
         session_guard: SessionGuard,
         tick_guard: TickGuard,
         command_guard: TickGuard,
+        loop_guard: TickGuard,
         reconciler: Reconciler,
         notifications: NotificationDelivery,
         notification_feed: NotificationFeed,
@@ -170,6 +172,7 @@ class Engine:
         self._session_guard = session_guard
         self._tick_guard = tick_guard
         self._command_guard = command_guard
+        self._loop_guard = loop_guard
         self._reconciled = False
         self._stop_reason: str | None = None
         self._reconciler = reconciler
@@ -209,7 +212,7 @@ class Engine:
                 if self._task_supervisor.stop_requested:
                     break
                 now = self._clock.now()
-                events_changed = self._events.since(self._last_scheduled_event)
+                events_changed = await self._loop_guard.attempt(self._new_events) or []
                 if events_changed:
                     self._last_scheduled_event = max(event.id for event in events_changed)
                 if commands_changed or events_changed or now >= next_tick:
@@ -217,7 +220,7 @@ class Engine:
                     next_tick = now + timedelta(seconds=self._settings.orchestration.poll_seconds)
                 if self._reconciled:
                     await self._retention_guard.attempt(self._retention.run_if_due)
-                self._notification_feed.scan()
+                await self._loop_guard.attempt(self._scan_notifications)
                 await self._clock.sleep(COMMAND_POLL_SECONDS)
             await self._task_supervisor.supervise(self._logger)
         except Exception as error:
@@ -230,6 +233,12 @@ class Engine:
     def request_stop(self) -> None:
         """Ask the command loop to stop after acknowledging the current command."""
         self._task_supervisor.request_stop()
+
+    async def _new_events(self) -> list[Event]:
+        return self._events.since(self._last_scheduled_event)
+
+    async def _scan_notifications(self) -> None:
+        self._notification_feed.scan()
 
     async def _prepare(self) -> None:
         await self._session_guard.ensure()

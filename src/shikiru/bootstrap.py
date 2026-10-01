@@ -743,6 +743,13 @@ def build_engine(
             logger=logger,
             scope="command loop",
         ),
+        loop_guard=TickGuard(
+            reporter=fault_reporter,
+            clock=resolved_clock,
+            settings=resolved_settings.orchestration.faults,
+            logger=logger,
+            scope="engine loop",
+        ),
         reconciler=Reconciler(
             tasks=tasks,
             layout=layout,

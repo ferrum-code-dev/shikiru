@@ -19,8 +19,9 @@ from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
 from shikiru.engine.cosmetic_decorator import COSMETIC_LOGGER_NAME
+from shikiru.engine.daemon import EngineLock
 from shikiru.engine.tick_guard import EngineFaultLimitError
-from shikiru.engine.turn_processes import turn_pid_path
+from shikiru.engine.turn_processes import read_turn_pid, turn_pid_path
 from shikiru.errors import CommandFailed, CommandTimeoutError
 from shikiru.paths import run_dir, task_root
 from shikiru.private import make_private_dir
@@ -498,6 +499,24 @@ async def test_a_database_error_in_the_command_path_does_not_stop_the_engine(
 
         assert outcome.status is CommandStatus.DONE
         assert fault.data["recoverable"] is True
+        assert not harness.task.done()
+
+
+async def test_a_database_error_persisting_the_notification_cursor_does_not_stop_the_engine(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _engine(tmp_path, tmux_server) as harness:
+        await harness.until(lambda: EventKind.ENGINE_STARTED in harness.kinds())
+        harness.connection.execute("ALTER TABLE notification_cursor RENAME TO cursor_away")
+        harness.queue.append(Submit(title="after", request="after", mode=Mode.IMPLEMENT))
+
+        await harness.until(
+            lambda: harness.task.done() or EventKind.ENGINE_FAULT in harness.kinds()
+        )
+
+        assert not harness.task.done()
+        harness.connection.execute("ALTER TABLE cursor_away RENAME TO notification_cursor")
+        await harness.until(lambda: EventKind.ENGINE_RECOVERED in harness.kinds())
         assert not harness.task.done()
 
 
