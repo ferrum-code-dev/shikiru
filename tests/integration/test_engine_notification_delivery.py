@@ -100,6 +100,10 @@ def _hook(script: str) -> str:
     return f"/bin/sh -c {shlex.quote(script)}"
 
 
+def _read(path: Path) -> str:
+    return path.read_text() if path.exists() else ""
+
+
 def _kill(pid_file: Path) -> None:
     if pid_file.exists() and (text := pid_file.read_text()):
         with suppress(ProcessLookupError):
@@ -246,3 +250,27 @@ async def test_an_escalation_committed_while_down_is_notified_but_informational_
         await env.until(lambda: "marker" in _delivered_messages(received))
         assert _delivered_messages(received) == ["raised while down", "marker"]
         await _stop(env)
+
+
+async def test_a_stuck_informational_hook_does_not_delay_an_escalation(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    fifo = tmp_path / "hook.fifo"
+    pid_file = tmp_path / "hook.pid"
+    received = tmp_path / "received.txt"
+    os.mkfifo(fifo)
+    hook = _hook(
+        f'payload=$(cat); case "$payload" in *escalation*) echo "$payload" >> {received};; '
+        f"*) echo $$ > {pid_file}; read line < {fifo};; esac"
+    )
+    try:
+        async with _engine(tmp_path, tmux_server, hook) as env:
+            env.events.append(EventKind.TASK_DONE, message="finished")
+            await env.until(lambda: pid_file.exists() and bool(pid_file.read_text()))
+
+            env.escalate("needs a decision")
+
+            await env.until(lambda: "needs a decision" in _read(received))
+            assert psutil.pid_exists(int(pid_file.read_text()))
+    finally:
+        _kill(pid_file)

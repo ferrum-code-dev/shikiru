@@ -194,7 +194,7 @@ async def test_a_hook_timeout_is_recorded_once_per_streak_and_does_not_block_the
     assert fault.data["error"] == "CommandTimeoutError"
 
 
-async def test_a_blocked_hook_delays_an_escalation_but_never_drops_it_for_informational_events(
+async def test_a_blocked_hook_never_drops_an_urgent_event_but_bounds_the_informational_backlog(
     connection: Connection, tmux_server: TmuxServer, tmp_path: Path
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
@@ -232,5 +232,8 @@ async def test_a_blocked_hook_delays_an_escalation_but_never_drops_it_for_inform
         await delivery.shutdown()
 
     messages = [item["message"] for item in delivered()]
-    assert messages[:3] == ["done 0", "help", "fault"]
-    assert messages[3:] == [f"done {number}" for number in range(6, INFORMATIONAL_QUEUE_SIZE + 6)]
+    assert [message for message in messages if not message.startswith("done")] == ["help", "fault"]
+    assert [message for message in messages if message.startswith("done")] == [
+        "done 0",
+        *(f"done {number}" for number in range(6, INFORMATIONAL_QUEUE_SIZE + 6)),
+    ]
