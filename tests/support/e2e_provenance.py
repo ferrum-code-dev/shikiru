@@ -6,6 +6,7 @@ import platform
 from typing import TYPE_CHECKING
 
 from shikiru.process import SubprocessRunner
+from tests.support.git_repo import run_git
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,13 +24,9 @@ PYTHON_TOOL = "python"
 async def source_state(root: Path) -> dict[str, object]:
     """Return the checked-out commit of `root` and whether its tree has uncommitted changes."""
     runner = SubprocessRunner()
-    commit = await runner.run(
-        ["git", "rev-parse", "HEAD"], timeout=PROBE_TIMEOUT_SECONDS, cwd=root, check=True
-    )
-    status = await runner.run(
-        ["git", "status", "--porcelain"], timeout=PROBE_TIMEOUT_SECONDS, cwd=root, check=True
-    )
-    return {"source_commit": commit.stdout.strip(), "source_dirty": bool(status.stdout.strip())}
+    commit = await run_git(runner, root, "rev-parse", "HEAD")
+    status = await run_git(runner, root, "status", "--porcelain")
+    return {"source_commit": commit, "source_dirty": bool(status)}
 
 
 async def tool_versions() -> dict[str, str | None]:

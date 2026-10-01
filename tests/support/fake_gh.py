@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 URL_PREFIX = "https://github.invalid/shikiru/fake/pull/"
+PR_COMMAND = "pr"
 PULLS_DIR = "pulls"
 CALLS_LOG = "calls.jsonl"
 HOLD_PREFIX = "hold-"
@@ -46,8 +47,13 @@ def _records(state: Path) -> list[tuple[str, dict[str, Any]]]:
     ]
 
 
+def _flag_values(options: list[str]) -> dict[str, str]:
+    pairs = iter(options)
+    return dict(zip(pairs, pairs, strict=True))
+
+
 def _create(state: Path, options: list[str]) -> str:
-    values = dict(zip(options[::2], options[1::2], strict=True))
+    values = _flag_values(options)
     pulls = state / PULLS_DIR
     number = len(list(pulls.glob("*.json"))) + 1
     record: dict[str, Any] = {
@@ -66,7 +72,7 @@ def _create(state: Path, options: list[str]) -> str:
 
 
 def _list(state: Path, options: list[str]) -> str:
-    values = dict(zip(options[::2], options[1::2], strict=True))
+    values = _flag_values(options)
     matching = [
         {"url": url}
         for url, record in _records(state)
@@ -101,7 +107,7 @@ def main(argv: list[str]) -> int:
     args = argv[1:]
     with (state / CALLS_LOG).open("a") as log:
         log.write(json.dumps(args) + "\n")
-    if args[:1] == ["pr"] and _failing(state, args[1]):
+    if args[:1] == [PR_COMMAND] and _failing(state, args[1]):
         sys.stderr.write("fake gh: network unreachable\n")
         return 1
     match args:

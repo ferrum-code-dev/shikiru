@@ -15,6 +15,8 @@ import pytest
 
 from shikiru.process import SubprocessRunner
 from tests.support import fake_gh
+from tests.support.git_repo import COMMIT_IDENTITY_ARGS, run_git
+from tests.support.permissions import EXECUTABLE_MODE
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -22,8 +24,6 @@ if TYPE_CHECKING:
 
     from shikiru.workspace.github import PullRequestState
 
-_GIT_TIMEOUT_SECONDS = 10.0
-_IDENTITY_ARGS = ("-c", "user.name=Shikiru Test", "-c", "user.email=test@shikiru.example")
 _GH_ENV_TO_DROP = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GH_HOST", "GH_REPO")
 
 
@@ -83,7 +83,8 @@ class FakeGitHub:
         """Count the `gh pr <subcommand>` calls received, failed and blocked ones included."""
         log = self.state / fake_gh.CALLS_LOG
         lines = log.read_text().splitlines() if log.exists() else []
-        return sum(json.loads(line)[:2] == ["pr", subcommand] for line in lines)
+        prefix = [fake_gh.PR_COMMAND, subcommand]
+        return sum(json.loads(line)[: len(prefix)] == prefix for line in lines)
 
     def views(self) -> int:
         return self.calls("view")
@@ -101,7 +102,7 @@ def fake_github(
     (state / fake_gh.PULLS_DIR).mkdir(parents=True)
     gh = bin_dir / "gh"
     gh.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake_gh.__file__}" "{state}" "$@"\n')
-    gh.chmod(0o755)
+    gh.chmod(EXECUTABLE_MODE)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     for name in _GH_ENV_TO_DROP:
         monkeypatch.delenv(name, raising=False)
@@ -121,21 +122,9 @@ async def add_bare_remote(
 ) -> None:
     """Create a bare repository at `remote_dir` with `base`, added to `project_root` as `name`."""
     runner = SubprocessRunner()
-    await runner.run(
-        ["git", "init", "--bare", str(remote_dir)], timeout=_GIT_TIMEOUT_SECONDS, check=True
-    )
-    await runner.run(
-        ["git", "remote", "add", name, str(remote_dir)],
-        timeout=_GIT_TIMEOUT_SECONDS,
-        cwd=project_root,
-        check=True,
-    )
-    await runner.run(
-        ["git", "push", name, base],
-        timeout=_GIT_TIMEOUT_SECONDS,
-        cwd=project_root,
-        check=True,
-    )
+    await run_git(runner, None, "init", "--bare", str(remote_dir))
+    await run_git(runner, project_root, "remote", "add", name, str(remote_dir))
+    await run_git(runner, project_root, "push", name, base)
 
 
 class MergeStyle(StrEnum):
@@ -151,13 +140,7 @@ async def merge_on_remote(remote_dir: Path, base: str, head: str, style: MergeSt
     runner = SubprocessRunner()
 
     async def git(*args: str) -> str:
-        result = await runner.run(
-            ["git", *_IDENTITY_ARGS, *args],
-            timeout=_GIT_TIMEOUT_SECONDS,
-            cwd=remote_dir,
-            check=True,
-        )
-        return result.stdout.strip()
+        return await run_git(runner, remote_dir, *COMMIT_IDENTITY_ARGS, *args)
 
     base_sha = await git("rev-parse", base)
     head_sha = await git("rev-parse", head)

@@ -38,4 +38,5 @@ async def _main(db_path: str, ready_path: str) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(_main(sys.argv[1], sys.argv[2]))
+    _, db_path, ready_path = sys.argv
+    asyncio.run(_main(db_path, ready_path))

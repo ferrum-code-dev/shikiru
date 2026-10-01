@@ -6,31 +6,25 @@ from datetime import UTC, datetime
 from typing import Any
 
 from shikiru.agents.contracts import Rung
+from shikiru.config.loader import validate_project_config_text
 from shikiru.config.settings import (
     AgentConfig,
     ComplexityLadder,
     ComplexityName,
-    DashboardConfig,
-    DashboardMotionConfig,
-    DoctorConfig,
-    FaultsConfig,
     ImplementerConfig,
     LayoutSplit,
-    LoggingConfig,
-    NetworkConfig,
-    NotifyConfig,
-    OrchestrationConfig,
     PaneLeaf,
-    ProjectConfig,
-    ResourcesConfig,
     RoleConfig,
     RolesConfig,
-    SessionSettings,
     Settings,
-    TimeoutsConfig,
     TitlesConfig,
 )
 from shikiru.domain.reports import (
+    DECISION_ANSWER,
+    DECISION_CHANGES_REQUESTED,
+    DECISION_ESCALATE,
+    DECISION_SUPERSEDE,
+    STATUS_COMPLETED,
     ConsultAnswer,
     EscalationRequest,
     ImplementationReport,
@@ -52,6 +46,21 @@ IMPLEMENTER_RUNGS = [
 ]
 HELPER_RUNG = Rung(agent="claude", model="haiku", effort="low")
 
+_PROJECT_CONFIG_TEXT = """
+[project]
+name = "demo"
+
+[agents.claude]
+
+[roles.leader]
+ladder = [{ agent = "claude", model = "opus", effort = "high" }]
+
+[roles.implementer]
+ladder = [{ agent = "claude", model = "opus", effort = "high" }]
+
+[roles.helper]
+ladder = [{ agent = "claude", model = "opus", effort = "high" }]
+"""
 DEFAULT_AGENTS = {"claude": AgentConfig(), "codex": AgentConfig()}
 
 MAX_ITERATIONS = 5
@@ -87,68 +96,39 @@ def make_settings(
     helper_ladder: list[Rung] | None = None,
     agents: dict[str, AgentConfig] | None = None,
 ) -> Settings:
-    return Settings(
-        project=ProjectConfig(name="demo", trackers=[]),
-        sessions=SessionSettings(ssh_timeout_seconds=30),
-        agents={**DEFAULT_AGENTS, **(agents or {})},
-        orchestration=OrchestrationConfig(
-            max_parallel=2,
-            max_iterations=max_iterations,
-            integration="merge",
-            poll_seconds=2,
-            shutdown_seconds=SHUTDOWN_SECONDS,
-            resources=ResourcesConfig(
-                max_cpu_pct=85,
-                min_free_ram_gb=4,
-                sample_seconds=2,
-                cpu_window_seconds=30,
+    base = validate_project_config_text(_PROJECT_CONFIG_TEXT)
+    orchestration = base.orchestration
+    return Settings.model_validate(
+        {
+            **dict(base),
+            "agents": {**DEFAULT_AGENTS, **(agents or {})},
+            "orchestration": orchestration.model_copy(
+                update={
+                    "max_iterations": max_iterations,
+                    "timeouts": orchestration.timeouts.model_copy(
+                        update={"pr_wait": PR_WAIT_SECONDS}
+                    ),
+                }
             ),
-            timeouts=TimeoutsConfig(
-                stall=1200,
-                tool=7200,
-                max_quota_wait=28800,
-                integration_wait=1800,
-                pr_wait=PR_WAIT_SECONDS,
-                helper=300,
+            "roles": RolesConfig(
+                leader=RoleConfig(ladder=leader_ladder or [LEADER_RUNG, LEADER_RUNG_2]),
+                implementer=ImplementerConfig(
+                    ladder=implementer_ladder or list(IMPLEMENTER_RUNGS),
+                    escalate_after=escalate_after,
+                    complexity=implementer_complexity or {},
+                ),
+                helper=RoleConfig(ladder=helper_ladder or [HELPER_RUNG]),
             ),
-            faults=FaultsConfig(
-                backoff_initial_seconds=2,
-                backoff_max_seconds=60,
-                unexpected_fault_limit=10,
-                stop_notify_seconds=30,
-                repeat_notify_seconds=300,
+            "dashboard": base.dashboard.model_copy(
+                update={
+                    "widgets": ["header"],
+                    "layout": LayoutSplit(split="h", panes=[PaneLeaf(pane="system")]),
+                    "titles": TitlesConfig(
+                        window="", leader="", implementer="", system="", shell=""
+                    ),
+                }
             ),
-            network=NetworkConfig(fetch_timeout_seconds=30, poll_attempts=8, pr_close_attempts=5),
-        ),
-        roles=RolesConfig(
-            leader=RoleConfig(ladder=leader_ladder or [LEADER_RUNG, LEADER_RUNG_2]),
-            implementer=ImplementerConfig(
-                ladder=implementer_ladder or list(IMPLEMENTER_RUNGS),
-                escalate_after=escalate_after,
-                complexity=implementer_complexity or {},
-            ),
-            helper=RoleConfig(ladder=helper_ladder or [HELPER_RUNG]),
-        ),
-        dashboard=DashboardConfig(
-            widgets=["header"],
-            layout=LayoutSplit(split="h", panes=[PaneLeaf(pane="system")]),
-            titles=TitlesConfig(window="", leader="", implementer="", system="", shell=""),
-            animations=True,
-            docker_refresh_seconds=5,
-            docker_timeout_seconds=5,
-            repo_status_cache_seconds=10,
-            motion=DashboardMotionConfig(
-                refresh_hz=4,
-                stream_active_seconds=10,
-                stamp_flash_milliseconds=400,
-                escalation_pulse_hz=1,
-                task_event_limit=50,
-                merge_event_limit=20,
-            ),
-        ),
-        notify=NotifyConfig(command="", timeout_seconds=30),
-        doctor=DoctorConfig(probe_timeout=180, probe_stream_tail_lines=20),
-        logging=LoggingConfig(engine_log_max_bytes=10485760, engine_log_backups=3),
+        }
     )
 
 
@@ -186,7 +166,7 @@ def make_implementation_report(status: str = "completed", **overrides: Any) -> I
         "commits": [],
         "tests": [],
         "trackers_updated": True,
-        "question": "" if status == "completed" else "What should I do?",
+        "question": "" if status == STATUS_COMPLETED else "What should I do?",
     }
     fields.update(overrides)
     return ImplementationReport(**fields)
@@ -194,9 +174,9 @@ def make_implementation_report(status: str = "completed", **overrides: Any) -> I
 
 def make_consult_answer(decision: str = "answer", **overrides: Any) -> ConsultAnswer:
     fields: dict[str, Any] = {"decision": decision}
-    if decision == "answer":
+    if decision == DECISION_ANSWER:
         fields["answer"] = "Use approach A"
-    if decision == "escalate":
+    if decision == DECISION_ESCALATE:
         fields["escalation"] = make_escalation_request()
     fields.update(overrides)
     return ConsultAnswer(**fields)
@@ -204,11 +184,11 @@ def make_consult_answer(decision: str = "answer", **overrides: Any) -> ConsultAn
 
 def make_verdict(decision: str = "accept", **overrides: Any) -> Verdict:
     fields: dict[str, Any] = {"decision": decision, "summary": "Reviewed"}
-    if decision == "changes_requested":
+    if decision == DECISION_CHANGES_REQUESTED:
         fields["issues"] = [Issue(severity="major", description="Missing tests")]
-    if decision == "supersede":
+    if decision == DECISION_SUPERSEDE:
         fields["new_tasks"] = [NewTask(title="Redo it", request="Redo it")]
-    if decision == "escalate":
+    if decision == DECISION_ESCALATE:
         fields["escalation"] = make_escalation_request()
     fields.update(overrides)
     return Verdict(**fields)

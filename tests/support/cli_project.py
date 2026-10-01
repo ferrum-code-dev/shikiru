@@ -5,15 +5,16 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fake_agent.scripted import TICK_A1_ENABLED_VALUE, TICK_A1_ENV_VAR
 
+from shikiru.agents.contracts import SHIKIRU_MODULE, module_argv
 from shikiru.process import SubprocessRunner
-from tests.support.git_repo import commit_all, init_repo
+from tests.support.git_repo import commit_all, init_repo, run_git
+from tests.support.permissions import EXECUTABLE_MODE
 
 if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
@@ -36,10 +37,7 @@ async def prepare_project(tmp_path: Path) -> PreparedProject:
     runner = SubprocessRunner()
     await init_repo(runner, root, initial_branch=BASE_BRANCH)
     await commit_all(runner, root, "fixture")
-    result = await runner.run(
-        ["git", "rev-parse", "HEAD"], timeout=CLI_TIMEOUT_SECONDS, cwd=root, check=True
-    )
-    return PreparedProject(root, result.stdout.strip())
+    return PreparedProject(root, await run_git(runner, root, "rev-parse", "HEAD"))
 
 
 def tmux_environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
@@ -52,7 +50,7 @@ def tmux_environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, s
         f"#!/bin/sh\nexec {shlex.quote(tmux_binary)} -L "
         f'{shlex.quote(tmux_server.socket_name)} "$@"\n'
     )
-    shim.chmod(0o755)
+    shim.chmod(EXECUTABLE_MODE)
     environment = dict(os.environ)
     environment.pop("TMUX", None)
     environment.pop("TMUX_PANE", None)
@@ -66,7 +64,7 @@ async def run_cli(
     project_root: Path, environment: dict[str, str], *arguments: str
 ) -> tuple[int, str, str]:
     result = await SubprocessRunner().run(
-        [sys.executable, "-m", "shikiru", "--project", str(project_root), *arguments],
+        module_argv(SHIKIRU_MODULE, "--project", str(project_root), *arguments),
         timeout=CLI_TIMEOUT_SECONDS,
         cwd=project_root,
         env=environment,

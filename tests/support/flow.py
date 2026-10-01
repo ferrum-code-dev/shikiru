@@ -41,7 +41,7 @@ from shikiru.workspace.base_refs import LocalBaseRefs
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
 from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, EngineEnv
-from tests.support.factories import make_settings
+from tests.support.factories import ESCALATE_AFTER, MAX_ITERATIONS, make_settings
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.workspace import task_root_builder
 
@@ -67,7 +67,9 @@ class _NoOpIntegrationCoordinator:
         del task
 
 
-def flow_settings(*, max_iterations: int = 5, escalate_after: int = 2) -> Settings:
+def flow_settings(
+    *, max_iterations: int = MAX_ITERATIONS, escalate_after: int = ESCALATE_AFTER
+) -> Settings:
     """Settings whose leader, implementer and helper all use the fake CLI."""
     return make_settings(
         max_iterations=max_iterations,

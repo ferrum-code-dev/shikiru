@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 
 _SESSION_NAME = "test"
 _SESSION_WIDTH = "200"
+TMUX_COMMAND = "tmux"
+SOCKET_FLAG = "-L"
+CONFIG_FLAG = "-f"
 _SESSION_HEIGHT = "50"
 _DEFAULT_SHELL = "/bin/sh"
 _TMUX_INHERITED_ENV_VARS = ("TMUX", "TMUX_PANE")
@@ -35,7 +38,7 @@ class TmuxServer:
     async def run(self, *args: str, check: bool = True) -> ProcessResult:
         """Run a tmux command scoped to this server's socket."""
         return await self.runner.run(
-            ["tmux", "-L", self.socket_name, *args],
+            [TMUX_COMMAND, SOCKET_FLAG, self.socket_name, *args],
             timeout=_TMUX_COMMAND_TIMEOUT_SECONDS,
             env=self.env,
             check=check,

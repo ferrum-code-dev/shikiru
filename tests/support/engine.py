@@ -16,7 +16,7 @@ from fake_agent.scripted import SCRIPT_ENV_VAR, role_script_env_var
 from shikiru.agents.contracts import Rung
 from shikiru.agents.registry import AgentRegistry
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
-from shikiru.domain.commands import Submit
+from shikiru.domain.commands import COMMAND_POLL_SECONDS, Submit
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.engine.agents import AgentPool
@@ -65,6 +65,8 @@ FAKE_AGENT_NAME = "fake"
 FAKE_AGENT_ALIAS = "fake2"
 FAKE_RUNG = Rung(agent=FAKE_AGENT_NAME, model="fake-1", effort=None)
 _SESSION_NAME = "test"
+_PANE_SUFFIX_LENGTH = 8
+_COMMAND_WAIT_SECONDS = 10
 ENGINE_LAYOUT = LayoutSplit(
     split="h",
     panes=[
@@ -155,7 +157,7 @@ def build_decorator(tmux: Tmux) -> PaneDecorator:
 
 async def new_agent_pane(tmux: Tmux, cwd: Path) -> str:
     """Create a pane in a task window on the fixture's private tmux server."""
-    name = f"engine-test-{uuid.uuid4().hex[:8]}"
+    name = f"engine-test-{uuid.uuid4().hex[:_PANE_SUFFIX_LENGTH]}"
     return await SessionView(tmux).create_task_window(_SESSION_NAME, window_name=name, cwd=cwd)
 
 
@@ -360,11 +362,11 @@ async def wait_for_command(
 ) -> CommandOutcome:
     async def completed() -> bool:
         if clock.has_pending_sleep():
-            clock.advance(0.25)
+            clock.advance(COMMAND_POLL_SECONDS)
         outcome = queue.status(queued.id)
         return outcome is not None and outcome.status is not CommandStatus.PENDING
 
-    await wait_until(completed, timeout=10)
+    await wait_until(completed, timeout=_COMMAND_WAIT_SECONDS)
     outcome = queue.status(queued.id)
     assert outcome is not None
     return outcome

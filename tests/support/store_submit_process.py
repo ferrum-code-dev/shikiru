@@ -25,4 +25,5 @@ def main(db_path: str, count: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    _, db_path, count = sys.argv
+    main(db_path, count)
