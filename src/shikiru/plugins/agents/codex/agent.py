@@ -20,7 +20,8 @@ from shikiru.plugins.agents.codex.options import (
     CODEX_COMMAND,
     CODEX_HOME_ENV_VAR,
     DOCTOR_TIMEOUT_SECONDS,
-    GIT_COMMON_DIR_TIMEOUT_SECONDS,
+    GIT_DIRS_ARGV,
+    GIT_DIRS_TIMEOUT_SECONDS,
     LOGIN_STATUS_ARGV,
     NO_DAEMON_FLAG,
     RESUME_SUBCOMMAND,
@@ -36,7 +37,6 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
-_GIT_COMMON_DIR_ARGV = ("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
 _AUTH_NOT_LOGGED_IN_TEXT = "not logged in"
 _AUTH_LOGGED_IN_TEXTS = ("logged in", "authenticated")
 _CODEX_CONFIG_FILENAME = "config.toml"
@@ -69,12 +69,12 @@ class CodexAgent:
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Codex process-per-turn exchange."""
-        common_dir = await self._git_common_dir_for_turn(spec)
-        sequence = self.process_sequence(spec, git_common_dir=common_dir)
+        git_dirs = await self._git_dirs_for_turn(spec)
+        sequence = self.process_sequence(spec, git_dirs=git_dirs)
         return await StreamingTurn.start(spec, self._runner, sequence)
 
     def process_sequence(
-        self, spec: TurnSpec, *, git_common_dir: Path | None = None
+        self, spec: TurnSpec, *, git_dirs: Sequence[Path] | None = None
     ) -> CodexTurnSequence:
         """Build Codex's prompt and context-failure retry sequence for `spec`."""
         home = Path(spec.env.get(CODEX_HOME_ENV_VAR, str(self._codex_home)))
@@ -85,7 +85,7 @@ class CodexAgent:
             clock=self._clock,
             reset_time=self._reset_time,
             home=home,
-            git_common_dir=git_common_dir,
+            git_dirs=git_dirs,
             compact_at_pct=self._options.compact_at_pct,
         )
 
@@ -139,21 +139,20 @@ class CodexAgent:
         environment.update(spec.env)
         return environment
 
-    async def _git_common_dir_for_turn(self, spec: TurnSpec) -> Path:
+    async def _git_dirs_for_turn(self, spec: TurnSpec) -> tuple[Path, ...]:
         result = await self._runner.run(
-            _GIT_COMMON_DIR_ARGV,
-            timeout=GIT_COMMON_DIR_TIMEOUT_SECONDS,
+            GIT_DIRS_ARGV,
+            timeout=GIT_DIRS_TIMEOUT_SECONDS,
             cwd=spec.cwd,
             check=False,
         )
-        value = result.stdout.strip()
-        if result.returncode != 0 or not value:
+        values = result.stdout.split()
+        if result.returncode != 0 or not values:
             message = (
-                "could not resolve the Codex workspace git common directory: "
-                f"{result.stderr.strip()}"
+                f"could not resolve the Codex workspace git directories: {result.stderr.strip()}"
             )
             raise ConfigError(message)
-        return Path(value)
+        return tuple(Path(value) for value in values)
 
     async def _check_binary(self) -> CheckResult:
         try:

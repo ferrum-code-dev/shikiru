@@ -56,7 +56,7 @@ shikiru attach --host devbox     # pick one and drop into its session
 Shikiru runs AI agents unattended with your user's privileges. Use it only on repositories and hosts you trust.
 
 - **Claude Code** runs with `--permission-mode bypassPermissions` by default (the `args` option), so it can run any command and edit any file your user can.
-- **Codex** runs with the `workspace-write` sandbox. Shikiru adds the run directory and the repository's shared `.git` directory as writable roots, so a task can change refs, hooks and config that every worktree shares.
+- **Codex** runs with the `workspace-write` sandbox. Shikiru adds the run directory, the worktree's own git directory and the repository's shared `.git` directory as writable roots on every turn (verified on Codex 0.159.2; `shikiru doctor` probes it with a free sandbox command and warns on other versions), so a task can change refs, hooks and config that every worktree shares.
 - Both agents inherit your environment, including any secrets in it. Their access otherwise follows your native Claude and Codex settings.
 - **Worktree isolation is not enforced.** Each task works in its own git worktree, and the prompts tell the agent to stay there, but nothing stops an agent from touching other paths, the main checkout or other tasks' worktrees.
 - Shikiru keeps `.shikiru/` (state, prompts, reports, logs, transcripts) owner-only, but it is not a sandbox. It does not limit what agents, configured notification commands or the commands in the project's own instructions can do.

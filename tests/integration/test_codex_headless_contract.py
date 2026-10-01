@@ -61,7 +61,6 @@ from shikiru.domain.tasks import EscalationReason
 from shikiru.plugins.agents.codex.agent import CodexAgent, create
 from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import (
-    ADD_DIR_FLAG,
     CODEX_HOME_ENV_VAR,
     CONFIG_FLAG,
     MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG,
@@ -69,8 +68,9 @@ from shikiru.plugins.agents.codex.options import (
     MODELS_CACHE_FILENAME,
     REASONING_EFFORT_CONFIG,
     RESUME_SUBCOMMAND,
-    SANDBOX_FLAG,
+    SANDBOX_MODE_CONFIG,
     WORKSPACE_WRITE_SANDBOX,
+    WRITABLE_ROOTS_CONFIG,
 )
 from shikiru.plugins.agents.codex.turn import CodexTurnParser, CodexTurnSequence, context_window
 from shikiru.process import SubprocessRunner
@@ -259,7 +259,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         model: str | None = None,
     ) -> TurnSpec:
         repo = tmp_path / "repo"
-        repo.mkdir(parents=True, exist_ok=True)
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
         run_dir = tmp_path / "run"
         run_dir.mkdir(parents=True, exist_ok=True)
         env = {RUN_DIR_ENV_VAR: str(run_dir), ROLE_ENV_VAR: _ROLE}
@@ -354,6 +354,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                             f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
                             CONFIG_FLAG,
                             f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}={limit}",
+                            *_sandbox_args(spec),
                             spec.prompt,
                         )
                     ],
@@ -367,8 +368,6 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
     def invocation_cases(self, tmp_path: Path) -> Sequence[InvocationCase]:
         new_spec = self.build_spec(tmp_path / "new", resume_session_id=None)
-        (new_spec.cwd / ".git").mkdir()
-        new_common = str(new_spec.cwd / ".git")
         new_argv = (
             "codex",
             "exec",
@@ -379,12 +378,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
             f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
             CONFIG_FLAG,
             f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000",
-            SANDBOX_FLAG,
-            WORKSPACE_WRITE_SANDBOX,
-            ADD_DIR_FLAG,
-            str(new_spec.run_dir),
-            ADD_DIR_FLAG,
-            new_common,
+            *_sandbox_args(new_spec),
             new_spec.prompt,
         )
         resumed = self.build_spec(
@@ -408,13 +402,13 @@ class TestCodexHeadlessContract(AgentContractSuite):
             f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
             CONFIG_FLAG,
             f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=200000",
+            *_sandbox_args(resumed),
             resumed.prompt,
         )
         provider_spec = self.build_spec(
             tmp_path / "provider",
             resume_session_id=None,
         )
-        (provider_spec.cwd / ".git").mkdir()
         provider_spec = TurnSpec(
             rung=provider_spec.rung,
             role=provider_spec.role,
@@ -435,14 +429,14 @@ class TestCodexHeadlessContract(AgentContractSuite):
         return [
             *self._model_change_cases(tmp_path),
             InvocationCase(
-                name="new turns use workspace-write and grant the run and git common directories",
+                name="new turns use workspace-write and grant the run and git directories",
                 options={"compact_at_pct": _COMPACT_AT_PCT},
                 spec=new_spec,
                 expected_argv=[new_argv],
                 expected_env=[{CODEX_HOME_ENV_VAR: new_spec.env[CODEX_HOME_ENV_VAR]}],
             ),
             InvocationCase(
-                name="a resumed session uses the rollout window of the same model",
+                name="a resumed session grants the same roots and the same-model rollout window",
                 options={"compact_at_pct": _COMPACT_AT_PCT},
                 spec=resumed,
                 expected_argv=[resumed_argv],
@@ -465,12 +459,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                         f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
                         CONFIG_FLAG,
                         f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000",
-                        SANDBOX_FLAG,
-                        WORKSPACE_WRITE_SANDBOX,
-                        ADD_DIR_FLAG,
-                        str(provider_spec.run_dir),
-                        ADD_DIR_FLAG,
-                        str(provider_spec.cwd / ".git"),
+                        *_sandbox_args(provider_spec),
                         provider_spec.prompt,
                     )
                 ],
@@ -586,7 +575,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         spec = self.build_spec(tmp_path, resume_session_id=None)
         agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
 
-        command = agent.process_sequence(spec, git_common_dir=tmp_path / ".git").start(spec)
+        command = agent.process_sequence(spec, git_dirs=(tmp_path / ".git",)).start(spec)
 
         assert command.env[CODEX_HOME_ENV_VAR] == spec.env[CODEX_HOME_ENV_VAR]
         assert command.env[CODEX_HOME_ENV_VAR] != str(operator_codex_home)
@@ -928,6 +917,16 @@ class TestCodexHeadlessContract(AgentContractSuite):
         return int(limit)
 
 
+def _sandbox_args(spec: TurnSpec) -> tuple[str, ...]:
+    roots = json.dumps([str(spec.run_dir), str((spec.cwd / ".git").resolve())])
+    return (
+        CONFIG_FLAG,
+        f'{SANDBOX_MODE_CONFIG}="{WORKSPACE_WRITE_SANDBOX}"',
+        CONFIG_FLAG,
+        f"{WRITABLE_ROOTS_CONFIG}={roots}",
+    )
+
+
 def _with_model(spec: TurnSpec, model: str) -> TurnSpec:
     return replace(spec, rung=replace(spec.rung, model=model))
 
@@ -1142,5 +1141,6 @@ def _resume_argv(spec: TurnSpec) -> tuple[str, ...]:
         f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
         CONFIG_FLAG,
         f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000",
+        *_sandbox_args(spec),
         spec.prompt,
     )

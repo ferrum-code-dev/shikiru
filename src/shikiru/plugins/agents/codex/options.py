@@ -11,12 +11,13 @@ NO_DAEMON_FLAG = "--no-daemon"
 MODEL_FLAG = "-m"
 CONFIG_FLAG = "-c"
 REASONING_EFFORT_CONFIG = "model_reasoning_effort"
-ADD_DIR_FLAG = "--add-dir"
 EXEC_SUBCOMMAND = "exec"
 EPHEMERAL_FLAG = "--ephemeral"
 JSON_FLAG = "--json"
 OUTPUT_SCHEMA_FLAG = "--output-schema"
 SANDBOX_FLAG = "-s"
+SANDBOX_MODE_CONFIG = "sandbox_mode"
+WRITABLE_ROOTS_CONFIG = "sandbox_workspace_write.writable_roots"
 READ_ONLY_SANDBOX = "read-only"
 WORKSPACE_WRITE_SANDBOX = "workspace-write"
 SKIP_GIT_REPO_CHECK_FLAG = "--skip-git-repo-check"
@@ -26,7 +27,7 @@ VERSION_ARGV = (CODEX_COMMAND, "--version")
 LOGIN_STATUS_ARGV = (CODEX_COMMAND, "login", "status")
 DEFAULT_COMPACT_AT_PCT = 80.0
 DOCTOR_TIMEOUT_SECONDS = 60.0
-GIT_COMMON_DIR_TIMEOUT_SECONDS = 10.0
+GIT_DIRS_TIMEOUT_SECONDS = 10.0
 
 
 class CodexOptions(BaseModel):
@@ -36,3 +37,12 @@ class CodexOptions(BaseModel):
 
     args: list[str] = Field(default_factory=list)
     compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=100)
+
+
+GIT_DIRS_ARGV = (
+    "git",
+    "rev-parse",
+    "--path-format=absolute",
+    "--absolute-git-dir",
+    "--git-common-dir",
+)

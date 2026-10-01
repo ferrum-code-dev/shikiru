@@ -84,7 +84,7 @@ English names come first everywhere. Kanji marks are decoration only.
 
 Shikiru orchestrates; it does not sandbox. Agents run as the Operator's user, in the Operator's environment, on the Operator's host:
 - Claude Code defaults to `--permission-mode bypassPermissions` (04 §4), so it can run any command and change any file the user can.
-- Codex runs in `workspace-write` with the run directory and the repository's shared `.git` directory as extra writable roots (04 §5). A task can therefore alter refs, hooks and config that every worktree shares.
+- Codex runs in `workspace-write` with the run directory, the worktree's own git directory and the repository's shared `.git` directory as extra writable roots on every turn, resumed ones included (04 §5). A task can therefore alter refs, hooks and config that every worktree shares.
 - Worktree isolation is a prompt convention and a scheduling rule (D6), not an enforced boundary. An agent can reach the main checkout and other tasks' worktrees. An agent that edits the main checkout is detected only when it blocks a merge: the local merge then records the notified `integration_waiting` event naming the dirty paths (03 §6). Shikiru does not compare the checkout before and after a turn: the operator edits it concurrently, so a change cannot be attributed to an agent without false positives.
 - The same holds for notification commands the Operator configures and the commands in the project's own instructions.
 

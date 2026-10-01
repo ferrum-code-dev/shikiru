@@ -182,7 +182,7 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 - `interactive_command`: `claude --resume <id> --add-dir <run_dir> <args>` (verified: its turns land in the same session, and the next headless `--resume` sees them).
 - `headless().ask`: `claude -p --output-format json --json-schema <s> --model <m> --effort <e> --safe-mode --tools "" --no-session-persistence` → `structured_output`.
 
-## 5. Codex plugin (`plugins/agents/codex`) — verified with 0.156.1
+## 5. Codex plugin (`plugins/agents/codex`) — verified with 0.159.2
 
 **Options** (`CodexOptions`):
 
@@ -196,14 +196,17 @@ Codex reads access from the Operator's native Codex settings and environment. Th
 **Turn** (cwd = task root, stdin closed — `codex exec` waits on an open stdin):
 
 ```
-codex exec --json -m <m> -c model_reasoning_effort="<e>" --sandbox workspace-write
-           --add-dir <run_dir> --add-dir <git common dir> <args> "<prompt>"                  # new session
-codex exec resume <thread_id> --json -m <m> -c model_reasoning_effort="<e>" <args> "<prompt>"  # later turns
+codex exec --json -m <m> -c model_reasoning_effort="<e>" -c sandbox_mode="workspace-write"
+           -c sandbox_workspace_write.writable_roots=[<run_dir>, <worktree git dir>, <git common dir>]
+           <args> "<prompt>"                                                                  # new session
+codex exec resume <thread_id> --json -m <m> -c model_reasoning_effort="<e>" <the same two -c>
+           <args> "<prompt>"                                                                  # later turns
 ```
 
-- `exec resume` has no `--sandbox` flag and keeps the session's sandbox.
+- `exec resume` has neither `--sandbox` nor `--add-dir`, and a resumed session does not carry the first turn's extra roots (14 of 14 rollouts of multi-turn sessions on 0.156 to 0.159 show `writable_roots: []` on later turns). Both turn kinds therefore pass the sandbox mode and the roots as the same two `-c` overrides, computed per turn from the turn's cwd (`git rev-parse --absolute-git-dir --git-common-dir`) and `TurnSpec.run_dir`.
+- Since Codex 0.158 the sandbox denies writes under a linked worktree's own git directory (`<common>/worktrees/<id>/`, which holds `index`, `HEAD` and locks) even when the common directory is a writable root. The worktree git directory must be listed itself; commits then work. Verified on 0.159.2 with the free `codex sandbox -c sandbox_mode="workspace-write" -c sandbox_workspace_write.writable_roots=[...]` outside `$TMPDIR`: only the common directory fails with `index.lock: Operation not permitted`, with the worktree directory added `git commit` passes. That the `-c` roots also hold in `codex exec` and `codex exec resume` is verified by the live check recorded in `docs/release-readiness-2026-10-01-phase7b.md` (Phase 7c); the sandbox command itself cannot take `--add-dir`. A host `default_permissions` profile or a guardian (`approvals_reviewer = auto_review`) can mask or override this; hosts without them are unverified.
 - Trust: `workspace-write` confines writes to the task root and the writable roots, but the shared git common dir is one of them. A task can change refs, hooks and config of the main repository and so of every worktree. Network and other access follow the Operator's native Codex settings (01 §6).
-- A worktree's git metadata lives in the main repository's `.git`, so the git common dir must be a writable root or commits fail. *Verify in implementation* that `--add-dir` grants it and persists across `exec resume`; otherwise pass it as `sandbox_workspace_write.writable_roots`.
+- A worktree's git metadata lives in the main repository's `.git`, so the git common dir must be a writable root or commits fail. `--add-dir` does not reach `exec resume`, so `sandbox_workspace_write.writable_roots` carries it.
 - A model change is the next `exec resume` with the new `-m`; the context is kept (verified).
 
 **Signals**, from `--json` events:

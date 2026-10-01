@@ -32,7 +32,6 @@ from shikiru.agents.sdk.turn import (
 )
 from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import (
-    ADD_DIR_FLAG,
     CODEX_COMMAND,
     CONFIG_FLAG,
     EXEC_SUBCOMMAND,
@@ -42,10 +41,9 @@ from shikiru.plugins.agents.codex.options import (
     MODELS_CACHE_FILENAME,
     REASONING_EFFORT_CONFIG,
     RESUME_SUBCOMMAND,
-    SANDBOX_FLAG,
-    WORKSPACE_WRITE_SANDBOX,
 )
 from shikiru.plugins.agents.codex.quota import CodexQuotaProbe
+from shikiru.plugins.agents.codex.sandbox import sandbox_config_args
 from shikiru.plugins.agents.codex.usage import latest_token_count, rollout_usage
 
 if TYPE_CHECKING:
@@ -317,7 +315,7 @@ class CodexTurnSequence(TurnProcessSequence):
         clock: Clock,
         reset_time: ResetTimeParser,
         home: Path | None = None,
-        git_common_dir: Path | None = None,
+        git_dirs: Sequence[Path] | None = None,
         compact_at_pct: float,
     ) -> None:
         self._spec = spec
@@ -326,7 +324,7 @@ class CodexTurnSequence(TurnProcessSequence):
         self._clock = clock
         self._reset_time = reset_time
         self._home = home or codex_home()
-        self._git_common_dir = git_common_dir or _git_common_dir_from_worktree(spec.cwd)
+        self._git_dirs = tuple(git_dirs) if git_dirs is not None else _worktree_git_dirs(spec.cwd)
         self._compact_at_pct = compact_at_pct
         self._session_id = spec.session_id
         self._phase = "start"
@@ -362,10 +360,8 @@ class CodexTurnSequence(TurnProcessSequence):
         token_limit = self._token_limit()
         if token_limit is not None:
             argv.extend([CONFIG_FLAG, f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}={token_limit}"])
-        if self._session_id is None:
-            argv.extend([SANDBOX_FLAG, WORKSPACE_WRITE_SANDBOX])
-            for directory in _unique_paths((spec.run_dir, self._git_common_dir, *spec.add_dirs)):
-                argv.extend([ADD_DIR_FLAG, str(directory)])
+        roots = _unique_paths((spec.run_dir, *self._git_dirs, *spec.add_dirs))
+        argv.extend(sandbox_config_args(roots))
         argv.extend(self._args)
         argv.append(spec.prompt)
         parser = CodexTurnParser(
@@ -650,19 +646,20 @@ def _unique_paths(paths: Sequence[Path | None]) -> tuple[Path, ...]:
     return tuple(unique)
 
 
-def _git_common_dir_from_worktree(cwd: Path) -> Path | None:
+def _worktree_git_dirs(cwd: Path) -> tuple[Path, ...]:
     git_path = cwd / _GIT_METADATA_NAME
     if git_path.is_dir():
-        return git_path.resolve()
+        return (git_path.resolve(),)
     if not git_path.is_file():
-        return None
+        return ()
     line = git_path.read_text(encoding="utf-8").strip()
     if not line.startswith(_GIT_DIR_FILE_PREFIX):
-        return None
+        return ()
     git_dir = Path(line.removeprefix(_GIT_DIR_FILE_PREFIX))
     if not git_dir.is_absolute():
         git_dir = git_path.parent / git_dir
-    return git_dir.resolve().parents[1]
+    resolved = git_dir.resolve()
+    return (resolved, resolved.parents[1])
 
 
 def _terminal(signals: Sequence[AgentSignal]) -> TurnEnded | TurnFailed | None:
