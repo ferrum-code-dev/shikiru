@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shikiru.errors import ShikiruError
 
@@ -26,6 +26,9 @@ _CHECK_STATE_FIELD = "state"
 _FAILING_CHECK_RESULTS = frozenset(
     ("FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE", "ACTION_REQUIRED")
 )
+_CHECK_STATUS_FIELD = "status"
+_CHECK_COMPLETED = "COMPLETED"
+_PENDING_CHECK_STATES = frozenset(("PENDING", "EXPECTED"))
 _OID_FIELD = "oid"
 _URL_FIELD = "url"
 _OPEN_STATE_FILTER = "open"
@@ -41,12 +44,23 @@ class PullRequestState(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PullRequestStatus:
-    """A pull request's state, whether it can land, and the commit it landed as once merged."""
+    """A pull request's state, whether it can land, and the commit it landed as once merged.
+
+    `checks_failing` is true when any check failed; `checks_pending` when any check has not
+    completed yet, so a failure is final only while nothing is pending.
+    """
 
     state: PullRequestState
     merge_commit: str | None
     conflicting: bool
     checks_failing: bool
+    checks_pending: bool
+
+
+def _check_pending(check: dict[str, Any]) -> bool:
+    if _CHECK_STATUS_FIELD in check:
+        return check[_CHECK_STATUS_FIELD] != _CHECK_COMPLETED
+    return check.get(_CHECK_STATE_FIELD) in _PENDING_CHECK_STATES
 
 
 class GitHub:
@@ -112,6 +126,7 @@ class GitHub:
                 & _FAILING_CHECK_RESULTS
                 for check in view[_CHECKS_FIELD]
             ),
+            checks_pending=any(_check_pending(check) for check in view[_CHECKS_FIELD]),
         )
 
     async def close_pull_request(self, repo_dir: Path, url: str) -> None:

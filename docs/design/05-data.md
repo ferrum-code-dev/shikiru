@@ -46,6 +46,7 @@ helper = 300                                    # maximum duration for helper tu
 
 [orchestration.network]                         # remote calls of integration = "pr"
 fetch_timeout_seconds = 30                      # a base fetch (task root build, merged-base check)
+poll_attempts = 8                               # `gh pr view` tries per poll before it escalates
 pr_close_attempts = 5                           # `gh pr close` tries per engine start for a cancelled task
 
 [agents.claude]                                 # table name = plugin entry point

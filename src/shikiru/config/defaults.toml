@@ -33,6 +33,7 @@ repeat_notify_seconds = 300
 
 [orchestration.network]
 fetch_timeout_seconds = 30
+poll_attempts = 8
 pr_close_attempts = 5
 
 [roles.implementer]

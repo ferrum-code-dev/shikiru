@@ -576,6 +576,7 @@ def build_engine(
         fetched_bases=fetched_bases,
         tasks=tasks,
         events=events,
+        faults=fault_reporter,
         task_finisher=task_finisher,
     )
     contexts = TurnContextPreparer(
@@ -747,6 +748,7 @@ def _build_integrator(
     fetched_bases: FetchedBaseRefs,
     tasks: TaskStore,
     events: EventLog,
+    faults: FaultReporter,
     task_finisher: TaskFinisher,
 ) -> Integrator:
     strategy: IntegrationStrategy
@@ -769,7 +771,8 @@ def _build_integrator(
                 project_root=project_root,
                 remote=settings.repo.remote,
                 base_refs=fetched_bases,
-                pr_wait=settings.orchestration.timeouts.pr_wait,
+                faults=faults,
+                settings=settings.orchestration,
             )
     return Integrator(
         git=git,

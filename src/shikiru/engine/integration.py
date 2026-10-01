@@ -7,10 +7,11 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from shikiru.domain.events import EventKind
+from shikiru.domain.faults import next_backoff
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
-from shikiru.errors import CommandFailed, InvariantError, ShikiruError
+from shikiru.errors import CommandFailed, CommandTimeoutError, InvariantError, ShikiruError
 from shikiru.paths import task_root
 from shikiru.workspace.base_refs import BaseFetchFailed, MergedBaseUnavailable
 from shikiru.workspace.github import PullRequestState
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.clock import Clock
+    from shikiru.config.settings import OrchestrationConfig
+    from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
     from shikiru.workspace.base_refs import FetchedBaseRefs
@@ -32,6 +35,8 @@ INTEGRATION_RETRY = timedelta(minutes=2)
 
 PR_POLL = timedelta(minutes=5)
 """Delay between polls of an open pull request (05-data.md §1)."""
+
+POLL_FAULT_SCOPE = "pull request poll"
 
 
 class IntegrationBlocked(ShikiruError):
@@ -310,12 +315,15 @@ class PullRequest:
         project_root: Path,
         remote: str,
         base_refs: FetchedBaseRefs,
-        pr_wait: int,
+        faults: FaultReporter,
+        settings: OrchestrationConfig,
     ) -> None:
         """Push to `remote` from `project_root`; record the PR in `events`, waits in `tasks`.
 
         A merged PR's base is fetched and verified through `base_refs` before the task is done.
-        An open PR that stays unmerged for `pr_wait` seconds escalates.
+        An open PR that stays unmerged for `timeouts.pr_wait` seconds escalates. A failed poll is
+        recorded through `faults` and retried `network.poll_attempts` times on the
+        `faults` backoff before it escalates.
         """
         self._git = git
         self._github = github
@@ -325,7 +333,8 @@ class PullRequest:
         self._project_root = project_root
         self._remote = remote
         self._base_refs = base_refs
-        self._pr_wait = pr_wait
+        self._faults = faults
+        self._settings = settings
 
     def started(self, task_id: str) -> tuple[str, ...] | None:
         """Return the commits of `task_id`'s open pull request, if it has one."""
@@ -377,11 +386,11 @@ class PullRequest:
             return
         self._tasks.set_slot(task_id, None)
         self._tasks.set_wait_reason(task_id, WaitReason.PR_OPEN)
-        deadline = self._clock.now() + timedelta(seconds=self._pr_wait)
+        deadline = self._clock.now() + timedelta(seconds=self._settings.timeouts.pr_wait)
         while True:
             if held():
                 raise IntegrationHeld
-            status = await self._status(opened.url)
+            status = await self._status(task_id, opened.url, held)
             if status.state is not PullRequestState.OPEN:
                 break
             stalled = _stalled(status, expired=self._clock.now() >= deadline)
@@ -397,8 +406,30 @@ class PullRequest:
         except (BaseFetchFailed, MergedBaseUnavailable) as error:
             raise IntegrationBlocked(str(error)) from error
 
-    async def _status(self, url: str) -> PullRequestStatus:
-        return await self._github.pull_request_status(self._project_root, url)
+    async def _status(self, task_id: str, url: str, held: Callable[[], bool]) -> PullRequestStatus:
+        attempts = self._settings.network.poll_attempts
+        backoff = self._settings.faults
+        delay = 0.0
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                status = await self._github.pull_request_status(self._project_root, url)
+            except (CommandFailed, CommandTimeoutError) as error:
+                self._faults.report(error, scope=POLL_FAULT_SCOPE, task_id=task_id)
+                if attempt >= attempts:
+                    raise
+                delay = next_backoff(
+                    delay,
+                    initial=backoff.backoff_initial_seconds,
+                    maximum=backoff.backoff_max_seconds,
+                )
+                await self._clock.sleep(delay)
+                if held():
+                    raise IntegrationHeld from None
+            else:
+                self._faults.resolve(POLL_FAULT_SCOPE, task_id=task_id)
+                return status
 
     def _open_pull_request(self, task_id: str) -> _OpenPullRequest | None:
         return _open_pull_request(self._events, task_id)
@@ -407,7 +438,7 @@ class PullRequest:
 def _stalled(status: PullRequestStatus, *, expired: bool) -> str | None:
     if status.conflicting:
         return "conflicting with its base"
-    if status.checks_failing:
+    if status.checks_failing and not status.checks_pending:
         return "failing checks"
     return "unmerged beyond the wait budget" if expired else None
 
