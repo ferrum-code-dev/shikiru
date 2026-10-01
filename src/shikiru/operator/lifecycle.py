@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from shikiru.config.loader import load_settings
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import Ack, AckStatus
+from shikiru.process import TURN_STOP_GRACE
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import bind_palette_key, session_name
 
@@ -95,7 +96,12 @@ class ProjectLifecycle:
                 )
             )
             started = True
-            await self._wait_for_engine(root)
+            await self._wait_for_engine(
+                root,
+                up=True,
+                seconds=ENGINE_START_WAIT_SECONDS,
+                failure="engine did not acquire its lock after start",
+            )
         if attach:
             self._runner.replace(("tmux", "attach-session", "-t", target))
         return StartResult(started=started, engine="up", session=target)
@@ -124,16 +130,22 @@ class ProjectLifecycle:
             ack = await services.commands.stop_engine()
         finally:
             services.close()
+        if ack.status is AckStatus.DONE:
+            await self._wait_for_engine(
+                root,
+                up=False,
+                seconds=settings.orchestration.shutdown_seconds + TURN_STOP_GRACE,
+                failure="engine did not release its lock after stop",
+            )
         if kill_session and ack.status is AckStatus.DONE and await self._tmux.target_exists(target):
             await self._tmux.kill_session(target)
         return ack
 
-    async def _wait_for_engine(self, root: Path) -> None:
-        deadline = self._clock.now().timestamp() + ENGINE_START_WAIT_SECONDS
-        while not self._engine_up(root):
+    async def _wait_for_engine(self, root: Path, *, up: bool, seconds: float, failure: str) -> None:
+        deadline = self._clock.now().timestamp() + seconds
+        while self._engine_up(root) != up:
             if self._clock.now().timestamp() >= deadline:
-                message = "engine did not acquire its lock after start"
-                raise ShikiruError(message)
+                raise ShikiruError(failure)
             await self._clock.sleep(ENGINE_START_POLL_SECONDS)
 
 

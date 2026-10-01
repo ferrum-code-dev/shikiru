@@ -61,6 +61,7 @@ from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.session_guard import SessionGuard
 from shikiru.engine.sessions import SessionManager
+from shikiru.engine.signalled import SignalledEngine
 from shikiru.engine.step_runner import StepRunner
 from shikiru.engine.supervisor import TaskSupervisor
 from shikiru.engine.takeover import Takeover
@@ -735,6 +736,18 @@ def build_engine(
         close_state=connection.close,
         logger=logger,
         log_handler=log_handler,
+    )
+
+
+def build_engine_process(project_root: Path, settings: Settings) -> SignalledEngine:
+    """Build the engine as the `shikiru engine` process runs it: stopped by SIGTERM and SIGINT."""
+    clock = build_clock()
+    runner = SubprocessRunner()
+    return SignalledEngine(
+        engine=build_engine(project_root, settings, clock=clock, runner=runner),
+        turn_processes=TurnProcesses(runner=runner, clock=clock, project_root=project_root),
+        clock=clock,
+        shutdown_seconds=settings.orchestration.shutdown_seconds,
     )
 
 

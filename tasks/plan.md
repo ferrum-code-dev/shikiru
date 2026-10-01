@@ -677,8 +677,8 @@ Refs: 03 §6, invariant 3. Reviewer reproducer: an agent runs `git switch -c fea
 
 ### Task 74k: Graceful shutdown on SIGTERM and SIGINT
 Refs: 03 §7, 06 §5.8. Reviewer finding: `grep add_signal_handler src` finds nothing, so a plain `kill`, `systemctl stop` or `launchctl bootout` skips `Engine._shutdown`; turn processes run in their own sessions and keep editing worktrees and spending money until the next start.
-- [ ] The engine process handles SIGTERM and SIGINT by running the same graceful shutdown as `shikiru stop` (stop turns, flush state, release the lock), within a bounded time from `defaults.toml`; a second signal or the bound ends the process after killing the turn process groups.
-- [ ] 06 §5.8's systemd and launchd recipes are accurate for this behaviour; `shikiru stop` acknowledges only after the engine has released its lock (or documents and bounds the wait), so `stop && start` is safe.
+- [x] The engine process handles SIGTERM and SIGINT by running the same graceful shutdown as `shikiru stop` (stop turns, flush state, release the lock), within a bounded time from `defaults.toml`; a second signal or the bound ends the process after killing the turn process groups.
+- [x] 06 §5.8's systemd and launchd recipes are accurate for this behaviour; `shikiru stop` acknowledges only after the engine has released its lock (or documents and bounds the wait), so `stop && start` is safe.
 - Tests: integration with a real engine process and the fake agent: SIGTERM while a turn runs leaves no live turn process, no engine lock and consistent state; restart resumes; `stop && start` leaves an engine running.
 
 ### Task 74l: Notifications survive a restart; command handler errors are retried

@@ -21,7 +21,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 |---|---|
 | `init [--yes]` | Wizard (§3); `--yes` writes the detected defaults |
 | `start [--attach]` | Validate config and plugins, start the engine, ensure the session. On a running engine it only ensures the session. A name collision with another project fails with a hint to set `project.name` |
-| `stop [--kill-session]` | Stop the engine; running turns are stopped (their sessions persist) and re-run by resume on the next start |
+| `stop [--kill-session]` | Stop the engine; running turns are stopped (their sessions persist) and re-run by resume on the next start. The ack is returned once the engine has released its lock, so `stop && start` is safe; if the lock is still held after `orchestration.shutdown_seconds` plus `TURN_STOP_GRACE`, the command fails |
 | `ls [--host H]` | Every Shikiru project on this host, or on `H` (§5.6): name, directory, engine state, running and queued counts, open escalations |
 | `attach [NAME] [--host H]` | Attach to a session; with no `NAME` and more than one match, the picker (§5.6) |
 | `submit "<request>" [flags]` | Prints the `T-n` id (05 §1 flags) |
@@ -170,6 +170,8 @@ Delivery never runs on the command loop. The `Engine` queues each notifiable eve
 
 `shikiru start` spawns the engine detached; nothing restarts it if the process dies (a fault stop, an OOM kill, a reboot). To keep it running, run the hidden entrypoint under a service manager and restart it on failure. A restarted engine reconciles persisted state (03 §7) and recreates the tmux session (02 §1). Give the service the `PATH` your agent CLIs, `git`, `gh` and `tmux` need. `shikiru start` reuses a running engine, so it remains the way to ensure the session and attach.
 
+The engine stops gracefully on SIGTERM and SIGINT (03 §7), which is how `systemctl stop` and `launchctl bootout` end it, and exits 0; a stop that outlives `orchestration.shutdown_seconds` (15 s) or a second signal ends the engine and its turn processes by force and exits non-zero. Keep the manager's stop timeout above the bound plus the 10 s turn kill grace: systemd's default `TimeoutStopSec` (90 s) already is, launchd's default `ExitTimeOut` (20 s) is not, hence the explicit values below.
+
 The unit files below show the shape; they are documented recipes that CI does not run.
 
 systemd user unit, `~/.config/systemd/user/shikiru-myproject.service`:
@@ -183,6 +185,7 @@ ExecStart=/path/to/python -m shikiru --project /path/to/myproject engine
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 RestartSec=10
+TimeoutStopSec=30
 
 [Install]
 WantedBy=default.target
@@ -202,10 +205,11 @@ launchd agent, `~/Library/LaunchAgents/dev.shikiru.myproject.plist`:
   <key>EnvironmentVariables</key><dict><key>PATH</key><string>/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>10</integer>
+  <key>ExitTimeOut</key><integer>30</integer>
 </dict></plist>
 ```
 
-`Restart=on-failure` and `SuccessfulExit=false` restart the engine after a fault stop (non-zero exit) but not after `shikiru stop` (exit 0).
+`Restart=on-failure` and `SuccessfulExit=false` restart the engine after a fault stop (non-zero exit) but not after `shikiru stop`, `systemctl stop` or `launchctl bootout` (exit 0).
 
 ## 6. Visual design: comic strips with a semantic visual language
 

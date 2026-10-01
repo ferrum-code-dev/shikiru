@@ -58,6 +58,7 @@ MAX_ITERATIONS = 5
 CPU_UNCAPPED_PCT = 101
 ESCALATE_AFTER = 2
 PR_WAIT_SECONDS = 3600
+SHUTDOWN_SECONDS = 15
 
 TASK_CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -95,6 +96,7 @@ def make_settings(
             max_iterations=max_iterations,
             integration="merge",
             poll_seconds=2,
+            shutdown_seconds=SHUTDOWN_SECONDS,
             resources=ResourcesConfig(
                 max_cpu_pct=85,
                 min_free_ram_gb=4,

@@ -16,7 +16,7 @@ from rich.console import Console
 from shikiru.agents.contracts import parse_rung
 from shikiru.bootstrap import (
     build_doctor,
-    build_engine,
+    build_engine_process,
     build_lifecycle,
     build_mcp_server,
     build_operator,
@@ -299,8 +299,8 @@ def engine(context: typer.Context) -> None:
     try:
         state = state_from(context)
         root = project_root(state)
-        daemon = build_engine(root, load_settings(root, state.overrides))
-        _run(daemon.run())
+        process = build_engine_process(root, load_settings(root, state.overrides))
+        _run(process.run())
     except ShikiruError as error:
         _fail(error)
 

@@ -88,6 +88,7 @@ class OrchestrationConfig(ConfigModel):
     max_iterations: int
     integration: IntegrationStrategy
     poll_seconds: int
+    shutdown_seconds: float = Field(gt=0)
     resources: ResourcesConfig
     timeouts: TimeoutsConfig
     faults: FaultsConfig

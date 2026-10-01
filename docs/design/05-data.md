@@ -143,6 +143,7 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 | Header git data cache | 10 s |
 | Docker sample cadence / command timeout | 5 s / 5 s |
 | Notification hook timeout (`notify.timeout_seconds`) / informational queue | 30 s / 64 events (urgent events are never dropped, 06 §5.7) |
+| Engine shutdown bound (`orchestration.shutdown_seconds`) | 15 s: the time SIGTERM, SIGINT or `shikiru stop` get to end turns and release the engine lock before the engine is ended by force (03 §7) |
 | Failed-tick retry backoff (`orchestration.faults`) | 2 s doubling to 60 s; 10 consecutive unexpected faults stop the engine; final notification 30 s; one `engine_fault` event per fault per 300 s (`repeat_notify_seconds`) |
 
 ## 2. State DB (`.shikiru/state.db`)
