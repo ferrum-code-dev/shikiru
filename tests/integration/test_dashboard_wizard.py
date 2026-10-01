@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import stat
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -341,6 +342,19 @@ async def test_init_refuses_nested_repository_config_without_changing_it(
         await _initialize(entrypoint, nested, detectors)
 
     assert config_path.read_text() == "operator-owned config\n"
+
+
+async def test_init_creates_the_config_owner_only_from_the_start(tmp_path: Path) -> None:
+    await _git_project(tmp_path)
+    previous = os.umask(0o022)
+    try:
+        await build_project_detectors(tmp_path).initialize()
+    finally:
+        os.umask(previous)
+
+    config_path = tmp_path / ".shikiru" / "config.toml"
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(config_path.parent.stat().st_mode) == 0o700
 
 
 async def _initialize(entrypoint: str, root: Path, detectors: ProjectDetectors) -> None:

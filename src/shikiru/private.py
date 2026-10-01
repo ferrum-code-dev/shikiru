@@ -21,15 +21,22 @@ _CREATE_WRITE = os.O_WRONLY | os.O_CREAT
 
 
 def make_private_dir(path: Path) -> None:
-    """Create `path` and its missing parents as owner-only directories."""
+    """Create `path` and its missing parents as owner-only directories, racing creators included."""
     for directory in reversed([path, *path.parents]):
         if not directory.exists():
-            directory.mkdir(mode=PRIVATE_DIR_MODE)
+            directory.mkdir(mode=PRIVATE_DIR_MODE, exist_ok=True)
 
 
 def create_private_file(path: Path) -> None:
     """Create the empty file `path` as owner-only unless it exists; its directory must exist."""
     os.close(os.open(path, _CREATE_WRITE, PRIVATE_FILE_MODE))
+
+
+def create_private_text(path: Path, text: str) -> None:
+    """Write `text` to the new file `path` as owner-only; raise `FileExistsError` if it exists."""
+    descriptor = os.open(path, _CREATE_WRITE | os.O_EXCL, PRIVATE_FILE_MODE)
+    with os.fdopen(descriptor, "w", encoding=_ENCODING) as handle:
+        handle.write(text)
 
 
 def write_private_text(path: Path, text: str) -> None:
