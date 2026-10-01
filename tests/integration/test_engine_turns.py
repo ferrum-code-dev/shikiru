@@ -22,6 +22,7 @@ from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_NAME, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
+from tests.support.permissions import requires_enforced_permissions
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -250,6 +251,7 @@ async def test_messages_delivered_to_a_killed_turn_lead_the_replacement_prompt(
     assert prompt.index(str(delivered[0])) < prompt.index(str(delivered[1]))
 
 
+@requires_enforced_permissions
 def test_a_failed_requeue_leaves_the_delivered_messages_where_they_were(tmp_path: Path) -> None:
     messages = OperatorMessages(tmp_path)
     messages.queue("T-1", Role.IMPLEMENTER, "first guidance", "c1")

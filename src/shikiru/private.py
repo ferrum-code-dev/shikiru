@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 PRIVATE_DIR_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 _OTHERS_MASK = 0o077
-_ENCODING = "utf-8"
+TEXT_ENCODING = "utf-8"
 _CREATE_WRITE = os.O_WRONLY | os.O_CREAT
 
 
@@ -35,21 +35,21 @@ def create_private_file(path: Path) -> None:
 def create_private_text(path: Path, text: str) -> None:
     """Write `text` to the new file `path` as owner-only; raise `FileExistsError` if it exists."""
     descriptor = os.open(path, _CREATE_WRITE | os.O_EXCL, PRIVATE_FILE_MODE)
-    with os.fdopen(descriptor, "w", encoding=_ENCODING) as handle:
+    with os.fdopen(descriptor, "w", encoding=TEXT_ENCODING) as handle:
         handle.write(text)
 
 
 def write_private_text(path: Path, text: str) -> None:
     """Write `text` to `path`, creating it owner-only."""
     descriptor = os.open(path, _CREATE_WRITE | os.O_TRUNC, PRIVATE_FILE_MODE)
-    with os.fdopen(descriptor, "w", encoding=_ENCODING) as handle:
+    with os.fdopen(descriptor, "w", encoding=TEXT_ENCODING) as handle:
         handle.write(text)
 
 
 def append_private_text(path: Path, text: str) -> None:
     """Append `text` to `path`, creating it owner-only."""
     descriptor = os.open(path, _CREATE_WRITE | os.O_APPEND, PRIVATE_FILE_MODE)
-    with os.fdopen(descriptor, "a", encoding=_ENCODING) as handle:
+    with os.fdopen(descriptor, "a", encoding=TEXT_ENCODING) as handle:
         handle.write(text)
 
 

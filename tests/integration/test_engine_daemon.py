@@ -9,7 +9,7 @@ import stat
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from fake_agent.agent import FakeAgent, FakeOptions
@@ -18,10 +18,7 @@ from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import (
     AgentConfig,
-    LayoutSplit,
     LoggingConfig,
-    PaneLeaf,
-    ProjectConfig,
     RepoConfig,
 )
 from shikiru.domain.commands import (
@@ -75,14 +72,18 @@ from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
 from tests.support.engine import (
+    FAKE_RUNG,
     build_raiser,
     build_registry,
     build_tmux,
+    engine_settings,
     set_role_script,
     set_script,
+    wait_for_command,
 )
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
+from tests.support.permissions import requires_enforced_permissions
 from tests.support.store import reopen_command
 from tests.support.waiting import wait_until
 from tests.support.workspace import task_root_builder
@@ -91,7 +92,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from shikiru.agents.registry import AgentRegistry
-    from shikiru.config.settings import Settings
     from shikiru.domain.commands import Command
     from shikiru.domain.runs import Run
     from shikiru.store.commands import CommandOutcome, QueuedCommand
@@ -102,17 +102,7 @@ if TYPE_CHECKING:
 
 _READ_ONLY_DIRECTORY = 0o500
 _WRITABLE_DIRECTORY = 0o700
-_FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
 _SECOND_RUNG = Rung(agent="fake", model="fake-2", effort=None)
-_LAYOUT = LayoutSplit(
-    split="h",
-    panes=[
-        PaneLeaf(pane="leader"),
-        PaneLeaf(pane="implementer"),
-        PaneLeaf(pane="system"),
-        PaneLeaf(pane="shell"),
-    ],
-)
 
 
 @dataclass(frozen=True)
@@ -134,44 +124,6 @@ class _NoHeadlessFakeAgent(FakeAgent):
 
 def _create_no_headless_agent(context: AgentContext) -> FakeAgent:
     return _NoHeadlessFakeAgent(context.runner, FakeOptions())
-
-
-def engine_settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
-    settings = make_settings(
-        leader_ladder=[_FAKE_RUNG],
-        implementer_ladder=[_FAKE_RUNG],
-        helper_ladder=[_FAKE_RUNG],
-        agents={"fake": AgentConfig()},
-    )
-    orchestration = settings.orchestration.model_copy(
-        update={
-            "max_parallel": max_parallel,
-            "resources": settings.orchestration.resources.model_copy(
-                update={"max_cpu_pct": max_cpu_pct, "min_free_ram_gb": 0}
-            ),
-        }
-    )
-    update: dict[str, Any] = {
-        "project": ProjectConfig(name="test", trackers=[]),
-        "orchestration": orchestration,
-        "dashboard": settings.dashboard.model_copy(update={"layout": _LAYOUT}),
-    }
-    return settings.model_copy(update=update)
-
-
-async def wait_for_command(
-    queued: QueuedCommand, queue: CommandQueue, clock: FakeClock
-) -> CommandOutcome:
-    async def completed() -> bool:
-        if clock.has_pending_sleep():
-            clock.advance(0.25)
-        outcome = queue.status(queued.id)
-        return outcome is not None and outcome.status is not CommandStatus.PENDING
-
-    await wait_until(completed, timeout=10)
-    outcome = queue.status(queued.id)
-    assert outcome is not None
-    return outcome
 
 
 async def _append_and_wait(
@@ -306,8 +258,8 @@ def test_engine_rejects_helper_without_headless_support(
 ) -> None:
     helper_rung = Rung(agent="no-headless", model="fake-helper", effort=None)
     settings = make_settings(
-        leader_ladder=[_FAKE_RUNG],
-        implementer_ladder=[_FAKE_RUNG],
+        leader_ladder=[FAKE_RUNG],
+        implementer_ladder=[FAKE_RUNG],
         helper_ladder=[helper_rung],
         agents={"fake": AgentConfig(), "no-headless": AgentConfig()},
     )
@@ -1337,7 +1289,7 @@ async def test_a_partial_hand_back_keeps_the_intervention_hold_until_the_last_ro
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     async with _operator_session(tmp_path, tmux_server) as (operator, task_id, run):
-        leader = operator.runs.start(task_id, Role.LEADER, _FAKE_RUNG)
+        leader = operator.runs.start(task_id, Role.LEADER, FAKE_RUNG)
         operator.runs.set_session(leader.id, "leader-session", None)
         step = operator.task(task_id).step
         for role in (Role.IMPLEMENTER, Role.LEADER):
@@ -1548,6 +1500,7 @@ async def test_replaying_an_acknowledged_resolve_reports_it_without_a_second_eve
         assert escalated.resolved_events() == 1
 
 
+@requires_enforced_permissions
 @pytest.mark.parametrize(
     "command",
     [Cancel(task_id="T-1"), Resolve(escalation_id="E-1", resolution=CancelResolution())],

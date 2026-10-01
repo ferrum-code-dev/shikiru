@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from fake_agent.agent import create as create_fake_agent
@@ -15,7 +15,7 @@ from fake_agent.scripted import SCRIPT_ENV_VAR, role_script_env_var
 
 from shikiru.agents.contracts import Rung
 from shikiru.agents.registry import AgentRegistry
-from shikiru.config.settings import AgentConfig
+from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import Submit
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
@@ -34,7 +34,7 @@ from shikiru.engine.turns import TurnRunner
 from shikiru.helper.helper import Helper
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
-from shikiru.store.commands import CommandQueue
+from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
@@ -50,12 +50,14 @@ from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import task_root
 from tests.support.clock import FakeClock
 from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.store.commands import CommandOutcome, QueuedCommand
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -63,6 +65,15 @@ FAKE_AGENT_NAME = "fake"
 FAKE_AGENT_ALIAS = "fake2"
 FAKE_RUNG = Rung(agent=FAKE_AGENT_NAME, model="fake-1", effort=None)
 _SESSION_NAME = "test"
+ENGINE_LAYOUT = LayoutSplit(
+    split="h",
+    panes=[
+        PaneLeaf(pane="leader"),
+        PaneLeaf(pane="implementer"),
+        PaneLeaf(pane="system"),
+        PaneLeaf(pane="shell"),
+    ],
+)
 
 
 @dataclasses.dataclass
@@ -319,3 +330,41 @@ def build_fault_reporter(events: EventLog, clock: Clock, settings: Settings) -> 
         settings=settings.orchestration.faults,
         logger=logging.getLogger("fault-reporter-test"),
     )
+
+
+def engine_settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
+    settings = make_settings(
+        leader_ladder=[FAKE_RUNG],
+        implementer_ladder=[FAKE_RUNG],
+        helper_ladder=[FAKE_RUNG],
+        agents={"fake": AgentConfig()},
+    )
+    orchestration = settings.orchestration.model_copy(
+        update={
+            "max_parallel": max_parallel,
+            "resources": settings.orchestration.resources.model_copy(
+                update={"max_cpu_pct": max_cpu_pct, "min_free_ram_gb": 0}
+            ),
+        }
+    )
+    update: dict[str, Any] = {
+        "project": ProjectConfig(name="test", trackers=[]),
+        "orchestration": orchestration,
+        "dashboard": settings.dashboard.model_copy(update={"layout": ENGINE_LAYOUT}),
+    }
+    return settings.model_copy(update=update)
+
+
+async def wait_for_command(
+    queued: QueuedCommand, queue: CommandQueue, clock: FakeClock
+) -> CommandOutcome:
+    async def completed() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(0.25)
+        outcome = queue.status(queued.id)
+        return outcome is not None and outcome.status is not CommandStatus.PENDING
+
+    await wait_until(completed, timeout=10)
+    outcome = queue.status(queued.id)
+    assert outcome is not None
+    return outcome

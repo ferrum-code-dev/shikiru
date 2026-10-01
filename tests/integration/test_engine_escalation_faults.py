@@ -13,6 +13,7 @@ from shikiru.domain.commands import Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Role, Status, Step
+from shikiru.engine.evidence import HISTORY_UNAVAILABLE
 from shikiru.paths import project_state_dir, run_dir, task_root
 from shikiru.process import ProcessResult, SubprocessRunner
 from shikiru.store.commands import CommandQueue
@@ -21,9 +22,14 @@ from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.session import SessionView
-from tests.integration.test_engine_daemon import engine_settings
 from tests.support.clock import FakeClock
-from tests.support.engine import build_raiser, build_registry, build_tmux, build_writer
+from tests.support.engine import (
+    build_raiser,
+    build_registry,
+    build_tmux,
+    build_writer,
+    engine_settings,
+)
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until
@@ -171,6 +177,8 @@ async def test_a_flow_whose_packet_cannot_be_written_escalates_and_the_packet_fo
 
             blocked.unlink()
             await _assert_repaired(world, task.id)
+            packet = next((blocked.parent / "escalations").iterdir())
+            assert HISTORY_UNAVAILABLE.split("{")[0] in packet.read_text()
 
 
 async def test_a_dependency_escalation_with_an_unwritable_packet_does_not_block_other_tasks(

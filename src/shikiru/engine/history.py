@@ -15,6 +15,7 @@ from shikiru.domain.reports import (
 from shikiru.engine.integration import IntegrationMetadata
 from shikiru.engine.turns import read_turn_report
 from shikiru.paths import turns_dir
+from shikiru.private import TEXT_ENCODING
 from shikiru.view_log import ordered_turn_dirs
 from shikiru.workspace.reports import InvalidTurnReportError
 
@@ -54,7 +55,12 @@ class ReportHistory:
             engine_verdict = turn_dir / ENGINE_VERDICT_FILENAME
             if engine_verdict.is_file():
                 history.append(
-                    (turn_dir.name, Verdict.model_validate_json(engine_verdict.read_text()))
+                    (
+                        turn_dir.name,
+                        Verdict.model_validate_json(
+                            engine_verdict.read_text(encoding=TEXT_ENCODING)
+                        ),
+                    )
                 )
         return history
 

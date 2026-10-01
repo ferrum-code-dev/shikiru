@@ -21,9 +21,8 @@ from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
 from shikiru.tmux.session import SessionView
-from tests.integration.test_engine_daemon import engine_settings, wait_for_command
 from tests.support.clock import FakeClock
-from tests.support.engine import build_registry, build_tmux
+from tests.support.engine import build_registry, build_tmux, engine_settings, wait_for_command
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until

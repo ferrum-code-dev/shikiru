@@ -21,9 +21,8 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.session import SessionView
 from shikiru.workspace.roots import task_root
-from tests.integration.test_engine_daemon import engine_settings, wait_for_command
 from tests.support.clock import FakeClock
-from tests.support.engine import build_registry, set_role_script
+from tests.support.engine import build_registry, engine_settings, set_role_script, wait_for_command
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until

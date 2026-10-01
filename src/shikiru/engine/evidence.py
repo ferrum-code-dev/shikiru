@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from shikiru.domain.steps import ACTING_ROLE
 from shikiru.errors import ShikiruError
 from shikiru.paths import run_dir
+from shikiru.private import TEXT_ENCODING
 from shikiru.view_log import view_log_path
 
 if TYPE_CHECKING:
@@ -24,6 +25,7 @@ ESCALATION_PANE_TAIL_LINES = 60
 """Lines of pane scrollback captured as escalation evidence (03 §8)."""
 
 FACTS_UNAVAILABLE = "(facts unavailable: {error})"
+HISTORY_UNAVAILABLE = "(report history unavailable, so no reports are shown: {error})"
 
 
 @dataclass(frozen=True)
@@ -46,14 +48,17 @@ class EvidenceCollector:
 
     async def collect(self, task: Task, step: Step | None, role: Role | None = None) -> Evidence:
         """Gather `task`'s evidence; the turn tail is that of `role` or of `step`'s acting role."""
+        history_note = ""
         try:
             history = self._history.load(task.id)
-        except Exception:
+        except (OSError, ValueError) as error:
             _LOGGER.exception("could not load report history for escalation of %s", task.id)
             history = []
+            history_note = HISTORY_UNAVAILABLE.format(error=error)
+        facts = await self._workspace_facts(task)
         return Evidence(
             reports=self._history.context(history),
-            facts=await self._workspace_facts(task),
+            facts="\n\n".join(part for part in (history_note, facts) if part),
             view_tail=self._view_tail(task, step, role),
         )
 
@@ -74,4 +79,6 @@ class EvidenceCollector:
         path = view_log_path(run_dir(self._project_root, task.id), role.value)
         if not path.is_file():
             return ""
-        return "\n".join(path.read_text().splitlines()[-ESCALATION_PANE_TAIL_LINES:])
+        return "\n".join(
+            path.read_text(encoding=TEXT_ENCODING).splitlines()[-ESCALATION_PANE_TAIL_LINES:]
+        )
