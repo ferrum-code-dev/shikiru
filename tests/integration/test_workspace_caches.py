@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 from pathlib import Path
 
 import pytest
 
+from shikiru.errors import CommandFailed, CommandTimeoutError
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.caches import CACHE_COW_UNSUPPORTED_WARNING, CacheCloner, default_cow_args
 from shikiru.workspace.git import Git
-from tests.support.git_repo import init_repo
+from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, init_repo
 
 
 async def _cow_is_supported(worktree_dir: Path) -> bool:
     cow_args = default_cow_args()
     if cow_args is None:
         return False
-    probe_cloner = CacheCloner(SubprocessRunner(), cow_args=cow_args)
+    probe_cloner = CacheCloner(
+        SubprocessRunner(), cow_args=cow_args, copy_timeout=CACHE_COPY_TIMEOUT
+    )
     result = await probe_cloner.clone(worktree_dir, worktree_dir, [], [])
     return result.warning is None
 
@@ -40,8 +45,8 @@ async def test_clone_copies_only_ignored_matching_paths(tmp_path: Path) -> None:
     if not await _cow_is_supported(worktree_dir):
         pytest.skip("this filesystem does not support copy-on-write copies")
     runner = SubprocessRunner()
-    ignored = await Git(runner).ignored_paths(repo_dir)
-    cloner = CacheCloner(runner, cow_args=default_cow_args())
+    ignored = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).ignored_paths(repo_dir)
+    cloner = CacheCloner(runner, cow_args=default_cow_args(), copy_timeout=CACHE_COPY_TIMEOUT)
 
     result = await cloner.clone(repo_dir, worktree_dir, ["node_modules", "not_a_cache"], ignored)
 
@@ -59,8 +64,8 @@ async def test_clone_copy_is_independent_of_the_source(tmp_path: Path) -> None:
     if not await _cow_is_supported(worktree_dir):
         pytest.skip("this filesystem does not support copy-on-write copies")
     runner = SubprocessRunner()
-    ignored = await Git(runner).ignored_paths(repo_dir)
-    cloner = CacheCloner(runner, cow_args=default_cow_args())
+    ignored = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).ignored_paths(repo_dir)
+    cloner = CacheCloner(runner, cow_args=default_cow_args(), copy_timeout=CACHE_COPY_TIMEOUT)
     await cloner.clone(repo_dir, worktree_dir, ["node_modules"], ignored)
 
     copy = worktree_dir / "node_modules" / "pkg" / "file.txt"
@@ -80,8 +85,8 @@ async def test_clone_skips_a_glob_match_that_is_not_git_ignored(tmp_path: Path) 
     if not await _cow_is_supported(worktree_dir):
         pytest.skip("this filesystem does not support copy-on-write copies")
     runner = SubprocessRunner()
-    ignored = await Git(runner).ignored_paths(repo_dir)
-    cloner = CacheCloner(runner, cow_args=default_cow_args())
+    ignored = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).ignored_paths(repo_dir)
+    cloner = CacheCloner(runner, cow_args=default_cow_args(), copy_timeout=CACHE_COPY_TIMEOUT)
 
     result = await cloner.clone(repo_dir, worktree_dir, ["tracked_cache"], ignored)
 
@@ -95,11 +100,76 @@ async def test_clone_reports_unsupported_cow_without_copying_anything(tmp_path: 
     worktree_dir = tmp_path / "worktree"
     worktree_dir.mkdir()
     runner = SubprocessRunner()
-    ignored = await Git(runner).ignored_paths(repo_dir)
-    cloner = CacheCloner(runner, cow_args=None)
+    ignored = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).ignored_paths(repo_dir)
+    cloner = CacheCloner(runner, cow_args=None, copy_timeout=CACHE_COPY_TIMEOUT)
 
     result = await cloner.clone(repo_dir, worktree_dir, ["node_modules"], ignored)
 
     assert result.copied == ()
     assert result.warning == CACHE_COW_UNSUPPORTED_WARNING
     assert not (worktree_dir / "node_modules").exists()
+
+
+async def test_a_failed_copy_leaves_no_partial_cache_and_a_retry_completes_it(
+    tmp_path: Path,
+) -> None:
+    repo_dir = await _repo_with_ignored_cache(tmp_path)
+    unreadable = repo_dir / "node_modules" / "zz.js"
+    unreadable.write_text("unreadable\n")
+    unreadable.chmod(0)
+    worktree_dir = tmp_path / "worktree"
+    worktree_dir.mkdir()
+    if not await _cow_is_supported(worktree_dir):
+        pytest.skip("this filesystem does not support copy-on-write copies")
+    runner = SubprocessRunner()
+    ignored = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).ignored_paths(repo_dir)
+    cloner = CacheCloner(runner, cow_args=default_cow_args(), copy_timeout=CACHE_COPY_TIMEOUT)
+
+    with pytest.raises(CommandFailed):
+        await cloner.clone(repo_dir, worktree_dir, ["node_modules"], ignored)
+
+    assert not (worktree_dir / "node_modules").exists()
+    assert sorted(await asyncio.to_thread(os.listdir, tmp_path)) == ["repo", "worktree"]
+    unreadable.chmod(0o644)
+    result = await cloner.clone(repo_dir, worktree_dir, ["node_modules"], ignored)
+    assert result.copied == (Path("node_modules"),)
+    assert (worktree_dir / "node_modules" / "zz.js").read_text() == "unreadable\n"
+    assert (worktree_dir / "node_modules" / "pkg" / "file.txt").exists()
+
+
+_SLOW_COPY = """
+case "$1" in
+*.shikiru-cow-probe-*) exec cp "$1" "$2";;
+esac
+mkdir -p "$2"
+touch "$2/half-copied"
+sleep 300
+"""
+_SHORT_COPY_TIMEOUT = 1.0
+
+
+async def test_a_timed_out_copy_leaves_no_partial_cache_and_a_retry_completes_it(
+    tmp_path: Path,
+) -> None:
+    repo_dir = await _repo_with_ignored_cache(tmp_path)
+    worktree_dir = tmp_path / "worktree"
+    worktree_dir.mkdir()
+    runner = SubprocessRunner()
+    ignored = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).ignored_paths(repo_dir)
+    slow = CacheCloner(
+        runner,
+        cow_args=("sh", "-c", _SLOW_COPY, "slow-cp"),
+        copy_timeout=_SHORT_COPY_TIMEOUT,
+    )
+
+    with pytest.raises(CommandTimeoutError):
+        await slow.clone(repo_dir, worktree_dir, ["node_modules"], ignored)
+
+    assert not (worktree_dir / "node_modules").exists()
+    assert sorted(await asyncio.to_thread(os.listdir, tmp_path)) == ["repo", "worktree"]
+    if not await _cow_is_supported(worktree_dir):
+        pytest.skip("this filesystem does not support copy-on-write copies")
+    real = CacheCloner(runner, cow_args=default_cow_args(), copy_timeout=CACHE_COPY_TIMEOUT)
+    result = await real.clone(repo_dir, worktree_dir, ["node_modules"], ignored)
+    assert result.copied == (Path("node_modules"),)
+    assert (worktree_dir / "node_modules" / "pkg" / "file.txt").exists()

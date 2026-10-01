@@ -8,7 +8,7 @@ from shikiru.dashboard.services import GitRepoStatusService
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
-from tests.support.git_repo import commit_all, init_repo
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,7 +18,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 async def test_repo_status_reports_branch_ahead_behind_and_dirty_count(tmp_path: Path) -> None:
     runner = SubprocessRunner()
-    git = Git(runner)
+    git = Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)
     repo_dir = tmp_path / "repo"
     await init_repo(runner, repo_dir, initial_branch="main")
     (repo_dir / "a.txt").write_text("1")
@@ -41,7 +41,7 @@ async def test_repo_status_reports_branch_ahead_behind_and_dirty_count(tmp_path:
 
 async def test_repo_status_is_cached_within_the_ttl(tmp_path: Path) -> None:
     runner = SubprocessRunner()
-    git = Git(runner)
+    git = Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)
     repo_dir = tmp_path / "repo"
     await init_repo(runner, repo_dir, initial_branch="main")
     (repo_dir / "a.txt").write_text("1")

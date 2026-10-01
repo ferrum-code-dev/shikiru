@@ -669,6 +669,10 @@ class Integrator:
     async def _try_rebase(self, task_dir: Path, base: str) -> bool:
         try:
             await self._git.rebase(task_dir, base)
+        except CommandTimeoutError:
+            if await self._git.is_rebase_in_progress(task_dir):
+                await self._git.rebase_abort(task_dir)
+            raise
         except CommandFailed:
             if not await self._git.is_rebase_in_progress(task_dir):
                 raise

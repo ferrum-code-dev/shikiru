@@ -42,7 +42,7 @@ from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
 from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, EngineEnv
 from tests.support.factories import ESCALATE_AFTER, MAX_ITERATIONS, make_settings
-from tests.support.git_repo import commit_all, init_repo
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -156,7 +156,7 @@ def build_flow(
     escalations_store = EscalationStore(env.connection, flow_clock)
     history = ReportHistory(env.project_root)
     facts = TaskFacts(
-        git_facts=GitFacts(Git(SubprocessRunner())),
+        git_facts=GitFacts(Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT)),
         project_root=env.project_root,
         settings=settings,
     )
@@ -181,7 +181,7 @@ def build_flow(
                 raise AssertionError
             await SessionView(env.tmux).close_task_window(task.window_id)
 
-        git = Git(SubprocessRunner())
+        git = Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT)
         coordinator = Integrator(
             git=git,
             strategy=strategy

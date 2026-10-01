@@ -24,6 +24,8 @@ max_quota_wait = 28800
 integration_wait = 1800
 pr_wait = 604800
 helper = 300
+cache_copy = 600
+git_command = 120
 
 [orchestration.faults]
 backoff_initial_seconds = 2

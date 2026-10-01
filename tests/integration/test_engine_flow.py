@@ -31,6 +31,7 @@ from tests.support.flow import (
     flow_settings,
     init_project_repo,
 )
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -387,7 +388,7 @@ async def test_a_supersede_verdict_on_a_dirty_worktree_is_sent_back_and_keeps_th
     assert final is not None
     assert final.status_reason is StatusReason.SUPERSEDED
     assert final.repo is not None
-    committed = await Git(SubprocessRunner()).diff_name_only(
+    committed = await Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT).diff_name_only(
         engine_env.project_root, f"{final.repo.base}...{final.repo.branch}"
     )
     assert "TODO.md" in committed

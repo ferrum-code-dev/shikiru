@@ -138,11 +138,14 @@ def build_project_detectors(project_root: Path) -> ProjectDetectors:
     """Build the detector with one injected process, clock and git boundary."""
     runner = SubprocessRunner()
     plugins = PluginChecks(AgentRegistry(), runner, build_clock())
+    timeouts = load_default_orchestration().timeouts
     return ProjectDetectors(
         project_root,
-        git=Git(runner),
+        git=Git(runner, command_timeout=timeouts.git_command),
         plugin_checks=plugins,
-        cache_cloner=CacheCloner(runner, cow_args=default_cow_args()),
+        cache_cloner=CacheCloner(
+            runner, cow_args=default_cow_args(), copy_timeout=timeouts.cache_copy
+        ),
     )
 
 
@@ -172,10 +175,13 @@ def build_doctor(project_root: Path) -> Doctor:
     runner = SubprocessRunner()
     clock = build_clock()
     registry = AgentRegistry()
+    timeouts = load_default_orchestration().timeouts
     return Doctor(
         project_root,
-        cache_cloner=CacheCloner(runner, cow_args=default_cow_args()),
-        git=Git(runner),
+        cache_cloner=CacheCloner(
+            runner, cow_args=default_cow_args(), copy_timeout=timeouts.cache_copy
+        ),
+        git=Git(runner, command_timeout=timeouts.git_command),
         runner=runner,
         clock=clock,
         plugin_checks=PluginChecks(registry, runner, clock),
@@ -265,8 +271,8 @@ async def run_dashboard(
     dashboard_activity_module = import_module("shikiru.dashboard.activity")
     clock = build_clock()
     runner = SubprocessRunner()
-    git = Git(runner)
     settings = load_settings(project_root, overrides)
+    git = Git(runner, command_timeout=settings.orchestration.timeouts.git_command)
     services = build_operator(project_root, settings, clock=clock)
     try:
         lock_path = engine_lock_path(project_root)
@@ -532,7 +538,10 @@ def build_engine(
         home_command=home_command(project_root),
         logger=logger,
     )
-    git = Git(resolved_runner)
+    git = Git(
+        resolved_runner,
+        command_timeout=resolved_settings.orchestration.timeouts.git_command,
+    )
     fetched_bases = FetchedBaseRefs(
         git,
         project_root,
@@ -543,7 +552,11 @@ def build_engine(
         git,
         project_root,
         resolved_settings.repo,
-        CacheCloner(resolved_runner, cow_args=default_cow_args()),
+        CacheCloner(
+            resolved_runner,
+            cow_args=default_cow_args(),
+            copy_timeout=resolved_settings.orchestration.timeouts.cache_copy,
+        ),
         fetched_bases
         if resolved_settings.orchestration.integration == PULL_REQUEST_INTEGRATION
         else LocalBaseRefs(),

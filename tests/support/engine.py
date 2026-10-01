@@ -50,6 +50,7 @@ from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import task_root
 from tests.support.clock import FakeClock
 from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -110,7 +111,7 @@ def build_evidence(project_root: Path) -> EvidenceCollector:
     return EvidenceCollector(
         history=ReportHistory(project_root),
         facts=TaskFacts(
-            git_facts=GitFacts(Git(SubprocessRunner())),
+            git_facts=GitFacts(Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT)),
             project_root=project_root,
             settings=fake_engine_settings(),
         ),

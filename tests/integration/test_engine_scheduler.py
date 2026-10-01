@@ -48,7 +48,7 @@ from tests.support.engine import (
 )
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
-from tests.support.git_repo import commit_all
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import add_bare_remote
 from tests.support.workspace import task_root_builder
 
@@ -466,7 +466,7 @@ async def test_a_fetch_outage_delays_the_dispatch_without_escalating_and_ends_wi
         tmp_path,
         settings.repo,
         FetchedBaseRefs(
-            Git(runner),
+            Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
             tmp_path,
             settings.repo.remote,
             fetch_timeout=settings.orchestration.network.fetch_timeout_seconds,
@@ -542,7 +542,9 @@ async def test_plan_children_start_only_after_the_parent_landed_its_tracker_chan
     landed = scheduler_env.tasks.get(parent.id)
     assert landed is not None
     assert landed.repo is not None
-    await Git(SubprocessRunner()).merge_ff_only(tmp_path, landed.repo.branch)
+    await Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT).merge_ff_only(
+        tmp_path, landed.repo.branch
+    )
     scheduler_env.tasks.apply_transition(
         parent.id, Transition.stay(landed, step=Step.INTEGRATE, status=Status.DONE)
     )
@@ -579,7 +581,10 @@ async def test_superseded_replacements_receive_only_the_tracker_changes_of_the_r
     root = task_root(tmp_path, child.id)
     assert (root / _TRACKER).read_text() == "- [ ] child\n"
     assert not (root / _IMPLEMENTATION).exists()
-    assert await Git(SubprocessRunner()).status_porcelain(root) == []
+    assert (
+        await Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT).status_porcelain(root)
+        == []
+    )
     assert not (tmp_path / _IMPLEMENTATION).exists()
     assert not (tmp_path / _TRACKER).exists()
 

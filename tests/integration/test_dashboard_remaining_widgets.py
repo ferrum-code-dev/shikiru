@@ -52,6 +52,7 @@ from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.factories import make_settings
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT
 from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
@@ -334,7 +335,7 @@ async def test_resources_service_samples_every_pane_in_the_project_session(
     sampler = ResourceSampler(clock, settings.orchestration.resources)
     service = DashboardServices(
         GitRepoStatusService(
-            Git(SubprocessRunner()),
+            Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT),
             RepoConfig(base=None),
             tmp_path,
             clock,

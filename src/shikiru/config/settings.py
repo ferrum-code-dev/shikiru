@@ -63,6 +63,8 @@ class TimeoutsConfig(ConfigModel):
     integration_wait: int
     pr_wait: int
     helper: int
+    cache_copy: int = Field(gt=0)
+    git_command: int = Field(gt=0)
 
 
 class FaultsConfig(ConfigModel):

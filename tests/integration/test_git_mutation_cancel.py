@@ -14,7 +14,7 @@ import pytest
 from shikiru.errors import CommandTimeoutError
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.git import Git
-from tests.support.git_repo import commit_all, init_repo
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -60,7 +60,9 @@ async def test_cancelled_merge_leaves_no_lock_and_no_hook(tmp_path: Path) -> Non
         _HOOK.format(ready=ready, release=release, pid=pid_file, expiry=_HOOK_SELF_EXPIRY_POLLS)
     )
     hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
-    merge = asyncio.create_task(Git(runner).merge_ff_only(repo, "feature"))
+    merge = asyncio.create_task(
+        Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).merge_ff_only(repo, "feature")
+    )
     hook_pid: int | None = None
     try:
         await wait_until(ready.exists, _WAIT_SECONDS)
@@ -107,7 +109,7 @@ async def test_a_timed_out_read_only_git_call_leaves_no_descendant(tmp_path: Pat
     await runner.run(["git", "config", "core.fsmonitor", str(monitor)], cwd=repo, timeout=1)
 
     with pytest.raises(CommandTimeoutError):
-        await Git(runner).status_porcelain(repo)
+        await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).status_porcelain(repo)
 
     descendant_pid = int(pid_file.read_text())
     try:

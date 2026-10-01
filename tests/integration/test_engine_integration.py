@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import stat
 from typing import TYPE_CHECKING
 
 import pytest
@@ -25,7 +26,7 @@ from shikiru.engine.integration import (
     UncommittedWork,
 )
 from shikiru.engine.notifier import Notifier
-from shikiru.errors import CommandFailed
+from shikiru.errors import CommandFailed, CommandTimeoutError
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
@@ -36,7 +37,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import set_role_script
 from tests.support.factories import TASK_CREATED_AT
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
-from tests.support.git_repo import commit_all, init_repo
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 from tests.support.workspace import task_root_builder
@@ -65,7 +66,7 @@ def _local_merge(
     project_root: Path, clock: Clock, integration_wait: int, events: EventLog
 ) -> LocalMerge:
     return LocalMerge(
-        Git(_RUNNER),
+        Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
         clock,
         events=events,
         project_root=project_root,
@@ -119,7 +120,10 @@ async def test_local_merge_fast_forwards_base_and_reports_commits(
 
     assert (project_root / "README.md").read_text() == "task\n"
     assert result
-    assert await Git(_RUNNER).current_branch(project_root) == "main"
+    assert (
+        await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).current_branch(project_root)
+        == "main"
+    )
 
 
 async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
@@ -137,9 +141,9 @@ async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
     ).merge(_request(task, state, task_root))
 
     assert result
-    assert await Git(_RUNNER).rev_parse(project_root, "release") == await Git(_RUNNER).rev_parse(
-        task_root, state.branch
-    )
+    assert await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
+        project_root, "release"
+    ) == await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(task_root, state.branch)
     assert (project_root / "README.md").read_text() == "base\n"
 
 
@@ -229,14 +233,17 @@ async def test_local_merge_escalates_when_dirty_overlap_never_clears(
     with pytest.raises(IntegrationBlocked):
         await merge_task
     assert (project_root / "README.md").read_text() == "operator\n"
-    assert await Git(_RUNNER).current_branch(project_root) == "main"
+    assert (
+        await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).current_branch(project_root)
+        == "main"
+    )
 
 
 async def test_update_ref_rejects_a_stale_expected_sha_without_moving_the_branch(
     tmp_path: Path,
 ) -> None:
     project_root = await _repo(tmp_path / "project")
-    git = Git(_RUNNER)
+    git = Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT)
     await _RUNNER.run(["git", "branch", "release"], cwd=project_root, timeout=10, check=True)
     old_sha = await git.rev_parse(project_root, "release")
     (project_root / "README.md").write_text("new\n")
@@ -288,14 +295,19 @@ async def test_local_merge_blocks_when_base_moved_past_the_rebased_branch(
     await commit_all(_RUNNER, task_root, "task change")
     (project_root / "README.md").write_text("base advanced\n")
     await commit_all(_RUNNER, project_root, "advance base")
-    base_sha = await Git(_RUNNER).rev_parse(project_root, "main")
+    base_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
+        project_root, "main"
+    )
 
     with pytest.raises(IntegrationBlocked):
         await _local_merge(
             project_root, SystemClock(), 0, EventLog(connection, SystemClock())
         ).merge(_request(task, state, task_root))
 
-    assert await Git(_RUNNER).rev_parse(project_root, "main") == base_sha
+    assert (
+        await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(project_root, "main")
+        == base_sha
+    )
 
 
 async def test_integrator_rebases_conflict_then_finishes_terminal_state(
@@ -337,7 +349,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
         return task_value, IntegrationMetadata("accepted summary", ("residual risk",))
 
     result = await Integrator(
-        git=Git(_RUNNER),
+        git=Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
         strategy=_local_merge(project_root, SystemClock(), 1, events),
         base_refs=LocalBaseRefs(),
         lock=asyncio.Lock(),
@@ -355,7 +367,9 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     assert result.residual_risks == ("residual risk",)
     assert order == ["sessions_exited", "worktrees_cleaned", "window_closed"]
     assert not task_root.exists()
-    assert not await Git(_RUNNER).branch_exists(project_root, state.branch)
+    assert not await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).branch_exists(
+        project_root, state.branch
+    )
     assert (project_root / "README.md").read_text() == "resolved\n"
     done_events = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
     assert done_events
@@ -371,7 +385,7 @@ def _integrator(connection: Connection, project_root: Path) -> Integrator:
         del task
 
     return Integrator(
-        git=Git(_RUNNER),
+        git=Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
         strategy=_local_merge(project_root, SystemClock(), 0, EventLog(connection, SystemClock())),
         base_refs=LocalBaseRefs(),
         lock=asyncio.Lock(),
@@ -411,7 +425,9 @@ async def test_integrator_refuses_uncommitted_work_and_keeps_the_worktree(
     task, task_root, output = await _dirty_task_worktree(
         connection, project_root, tracked=tracked, ahead=ahead
     )
-    main_sha = await Git(_RUNNER).rev_parse(project_root, "main")
+    main_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
+        project_root, "main"
+    )
 
     with pytest.raises(UncommittedWork) as refused:
         await _integrator(connection, project_root).run(
@@ -425,7 +441,10 @@ async def test_integrator_refuses_uncommitted_work_and_keeps_the_worktree(
     assert final.status is Status.INTEGRATING
     assert output.read_text() == "uncommitted\n"
     assert task_root.is_dir()
-    assert await Git(_RUNNER).rev_parse(project_root, "main") == main_sha
+    assert (
+        await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(project_root, "main")
+        == main_sha
+    )
 
 
 _OFF_BRANCH = "feature/agent-chose-this"
@@ -445,8 +464,10 @@ async def test_integrator_refuses_a_worktree_that_left_its_task_branch_and_keeps
     await _RUNNER.run(["git", *leave], cwd=task_root, timeout=10, check=True)
     (task_root / "work.txt").write_text("real work\n")
     await commit_all(_RUNNER, task_root, "real work")
-    work_sha = await Git(_RUNNER).rev_parse(task_root, "HEAD")
-    main_sha = await Git(_RUNNER).rev_parse(project_root, "main")
+    work_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(task_root, "HEAD")
+    main_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
+        project_root, "main"
+    )
 
     with pytest.raises(OffTaskBranch) as refused:
         await _integrator(connection, project_root).run(
@@ -459,8 +480,14 @@ async def test_integrator_refuses_a_worktree_that_left_its_task_branch_and_keeps
     final = TaskStore(connection, SystemClock()).get(task.id)
     assert final is not None
     assert final.status is Status.INTEGRATING
-    assert await Git(_RUNNER).rev_parse(task_root, "HEAD") == work_sha
-    assert await Git(_RUNNER).rev_parse(project_root, "main") == main_sha
+    assert (
+        await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(task_root, "HEAD")
+        == work_sha
+    )
+    assert (
+        await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(project_root, "main")
+        == main_sha
+    )
 
 
 _OFF_BRANCH_FLOWS = {
@@ -480,7 +507,9 @@ async def test_a_task_whose_agent_left_its_branch_never_reaches_done_and_keeps_i
         Role.IMPLEMENTER,
         [{"kind": "accept", "leave_branch": leave}, {"kind": "accept"}, {"kind": "accept"}],
     )
-    main_sha = await Git(_RUNNER).rev_parse(engine_env.project_root, "main")
+    main_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
+        engine_env.project_root, "main"
+    )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
     await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
@@ -494,9 +523,18 @@ async def test_a_task_whose_agent_left_its_branch_never_reaches_done_and_keeps_i
     assert final.repo is not None
     assert final.repo.branch in verdicts[1].data["issues"][0]["description"]
     worktree = engine_env.project_root / ".shikiru" / "worktrees" / task.id
-    assert await Git(_RUNNER).log_oneline(worktree, "main..HEAD")
-    assert await Git(_RUNNER).branch_exists(engine_env.project_root, final.repo.branch)
-    assert await Git(_RUNNER).rev_parse(engine_env.project_root, "main") == main_sha
+    assert await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).log_oneline(
+        worktree, "main..HEAD"
+    )
+    assert await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).branch_exists(
+        engine_env.project_root, final.repo.branch
+    )
+    assert (
+        await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
+            engine_env.project_root, "main"
+        )
+        == main_sha
+    )
 
 
 async def test_integrator_finishes_a_clean_no_op_task_as_done(
@@ -554,7 +592,9 @@ async def test_post_rebase_acceptance_with_uncommitted_changes_gets_rework_not_a
     await set_role_script(
         tmux_server, Role.LEADER, [{"kind": "accept"}, dirty_accept, dirty_accept]
     )
-    main_sha = await Git(_RUNNER).rev_parse(engine_env.project_root, "main")
+    main_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
+        engine_env.project_root, "main"
+    )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
     await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
@@ -568,7 +608,12 @@ async def test_post_rebase_acceptance_with_uncommitted_changes_gets_rework_not_a
     assert "leader_edit.py" in verdicts[-1].data["issues"][0]["description"]
     worktree = engine_env.project_root / ".shikiru" / "worktrees" / task.id
     assert (worktree / "leader_edit.py").is_file()
-    assert await Git(_RUNNER).rev_parse(engine_env.project_root, "main") == main_sha
+    assert (
+        await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
+            engine_env.project_root, "main"
+        )
+        == main_sha
+    )
 
 
 async def test_taskflow_fake_agent_resolves_conflict_and_repeats_changes_requested_verify(
@@ -601,7 +646,9 @@ async def test_taskflow_fake_agent_resolves_conflict_and_repeats_changes_request
     assert final.summary is not None
     assert not (engine_env.project_root / ".shikiru" / "worktrees" / task.id).exists()
     assert task.repo is not None
-    assert not await Git(_RUNNER).branch_exists(engine_env.project_root, task.repo.branch)
+    assert not await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).branch_exists(
+        engine_env.project_root, task.repo.branch
+    )
     assert not await engine_env.tmux.target_exists(window_id)
     assert all(run.status is RunStatus.CLOSED for run in engine_env.runs.for_task(task.id))
     done_events = flow_env.events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
@@ -664,3 +711,66 @@ async def test_taskflow_conflict_round_limit_escalates_after_two_changes_request
     assert final.counters.conflict_rounds == 2
     open_escalations = fetch_open_escalations(flow_env.env.connection)
     assert open_escalations[-1].reason is EscalationReason.INTEGRATION_CONFLICT
+
+
+_STUCK_ONCE_HOOK = """#!/bin/sh
+[ "$1" = prepared ] || exit 0
+[ ! -e '{seen}' ] || exit 0
+touch '{seen}'
+sleep 300
+"""
+_SHORT_GIT_TIMEOUT_SECONDS = 1.0
+
+
+async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict(
+    connection: Connection, tmp_path: Path
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, state = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    (task_root / "task.txt").write_text("task\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (project_root / "other.txt").write_text("other\n")
+    await commit_all(_RUNNER, project_root, "base moves on")
+    task_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(task_root, "HEAD")
+    hook = project_root / ".git" / "hooks" / "reference-transaction"
+    hook.write_text(_STUCK_ONCE_HOOK.format(seen=tmp_path / "seen"))
+    hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
+    git = Git(_RUNNER, command_timeout=_SHORT_GIT_TIMEOUT_SECONDS)
+    events = EventLog(connection, SystemClock())
+    conflicts_resolved: list[str] = []
+
+    async def resolve(
+        task_value: Task, continue_rebase: Callable[[], Awaitable[None]]
+    ) -> tuple[Task, IntegrationMetadata]:
+        del continue_rebase
+        conflicts_resolved.append(task_value.id)
+        return task_value, IntegrationMetadata("resolved")
+
+    async def keep_worktree(task_value: Task) -> None:
+        del task_value
+
+    def integrator() -> Integrator:
+        return Integrator(
+            git=git,
+            strategy=_local_merge(project_root, SystemClock(), 0, events),
+            base_refs=LocalBaseRefs(),
+            lock=asyncio.Lock(),
+            project_root=project_root,
+            tasks=TaskStore(connection, SystemClock()),
+            events=events,
+            finish_task=keep_worktree,
+        )
+
+    with pytest.raises(CommandTimeoutError):
+        await integrator().run(task, resolve, IntegrationMetadata("summary"))
+
+    assert not await git.is_rebase_in_progress(task_root)
+    assert await git.head_branch(task_root) == state.branch
+    assert await git.rev_parse(task_root, "HEAD") == task_sha
+
+    result = await integrator().run(task, resolve, IntegrationMetadata("summary"))
+
+    assert result.commits
+    assert conflicts_resolved == []
+    assert (project_root / "task.txt").read_text() == "task\n"

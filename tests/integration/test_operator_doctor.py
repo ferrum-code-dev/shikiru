@@ -18,6 +18,7 @@ from shikiru.operator.probe import AgentProbe
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
+from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
 
 pytestmark = pytest.mark.asyncio
 
@@ -159,8 +160,8 @@ async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(
     clock = SystemClock()
     doctor = Doctor(
         root,
-        cache_cloner=CacheCloner(runner, cow_args=None),
-        git=Git(runner),
+        cache_cloner=CacheCloner(runner, cow_args=None, copy_timeout=CACHE_COPY_TIMEOUT),
+        git=Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
         runner=runner,
         clock=clock,
         plugin_checks=PluginChecks(AgentRegistry(), runner, clock),

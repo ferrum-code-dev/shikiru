@@ -28,7 +28,7 @@ from tests.support.flow import (
     flow_settings,
     init_project_repo,
 )
-from tests.support.git_repo import commit_all
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
 
 _RUNNER = SubprocessRunner()
-_GIT = Git(_RUNNER)
+_GIT = Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT)
 _FLOW_TIMEOUT_SECONDS = 60
 _WAIT_SECONDS = 30
 _RETRY_ADVANCE_SECONDS = 120

@@ -132,6 +132,8 @@ class TaskRootBuilder:
             raise
 
     async def _holds_unintegrated_work(self, root: Path, repo: RepoState) -> bool:
+        if await self._git.worktree_removal_pending(self._project_root, root):
+            return False
         if await self._git.head_branch(root) != repo.branch:
             return True
         return bool(await self._git.status_porcelain(root))
@@ -149,7 +151,9 @@ class TaskRootBuilder:
         the task branch, one with tracked or untracked changes (git-ignored files excepted) and
         its branch stay, and so does a root that holds anything but the git link once its
         worktree metadata is gone (git cannot tell what is uncommitted there); the kept task
-        root is returned.
+        root is returned. A removal that began (it passed those checks) and was interrupted by a
+        failure or timeout leaves a half-deleted worktree that the next cleanup removes without
+        taking the deletions for uncommitted work.
         """
         project = self._project_root
         root = task_root(project, task_id)

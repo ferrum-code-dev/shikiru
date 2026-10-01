@@ -28,7 +28,7 @@ from tests.support import fake_gh
 from tests.support.clock import FakeClock
 from tests.support.engine import build_fault_reporter, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
-from tests.support.git_repo import commit_all
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
 from tests.support.waiting import wait_until
 from tests.support.workspace import task_root_builder
@@ -48,7 +48,7 @@ _RUNNER = SubprocessRunner()
 
 def _fetched(settings: Settings, project_root: Path) -> FetchedBaseRefs:
     return FetchedBaseRefs(
-        Git(_RUNNER),
+        Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
         project_root,
         settings.repo.remote,
         fetch_timeout=settings.orchestration.network.fetch_timeout_seconds,
@@ -99,7 +99,7 @@ class _Run:
         env = self._env
         events = EventLog(env.connection, env.clock)
         strategy = PullRequest(
-            git=Git(_RUNNER),
+            git=Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
             github=GitHub(_RUNNER),
             clock=env.clock,
             tasks=env.tasks,

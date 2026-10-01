@@ -93,7 +93,14 @@ def _row(at: datetime, turn: str, signal: str) -> str:
 def _motion_settings(project_dir: Path) -> Settings:
     settings = load_settings(project_dir)
     timeouts = TimeoutsConfig(
-        stall=2, tool=5, max_quota_wait=60, integration_wait=30, pr_wait=60, helper=10
+        stall=2,
+        tool=5,
+        max_quota_wait=60,
+        integration_wait=30,
+        pr_wait=60,
+        helper=10,
+        cache_copy=600,
+        git_command=120,
     )
     return settings.model_copy(
         update={

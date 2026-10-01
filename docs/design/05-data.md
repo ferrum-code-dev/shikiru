@@ -43,6 +43,8 @@ max_quota_wait = 28800
 integration_wait = 1800
 pr_wait = 604800                                # an open PR unmerged this long escalates
 helper = 300                                    # maximum duration for helper turns
+cache_copy = 600                                # one `repo.caches` copy-on-write copy
+git_command = 120                               # one git call (status, worktree add/remove, rebase, merge)
 
 [orchestration.network]                         # remote calls of integration = "pr"
 fetch_timeout_seconds = 30                      # a base fetch (task root build, merged-base check)

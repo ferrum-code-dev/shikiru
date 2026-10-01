@@ -8,7 +8,7 @@ from shikiru.domain.tasks import RepoState
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
-from tests.support.git_repo import commit_all, init_repo
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -24,7 +24,7 @@ async def _repo_at_base(tmp_path: Path) -> tuple[Path, str]:
     (repo_dir / "tasks" / "plan.md").write_text("- [ ] task\n")
     (repo_dir / "tasks" / "todo.md").write_text("nothing yet\n")
     await commit_all(runner, repo_dir, "initial commit")
-    base_sha = await Git(runner).rev_parse(repo_dir, "HEAD")
+    base_sha = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(repo_dir, "HEAD")
     return repo_dir, base_sha
 
 
@@ -37,7 +37,9 @@ async def test_collect_reports_commits_diff_status_and_changed_trackers(tmp_path
     (repo_dir / "untracked.txt").write_text("scratch\n")
     repo = RepoState(base=base_sha, base_ref=base_sha, base_sha=base_sha, branch="main")
 
-    facts = await GitFacts(Git(runner)).collect(repo_dir, repo, _TRACKERS)
+    facts = await GitFacts(Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)).collect(
+        repo_dir, repo, _TRACKERS
+    )
 
     assert len(facts.commits) == 1
     assert "src.py" in facts.diff_stat
@@ -50,7 +52,9 @@ async def test_collect_reports_nothing_when_not_ahead_of_base(tmp_path: Path) ->
     runner = SubprocessRunner()
     repo = RepoState(base=base_sha, base_ref=base_sha, base_sha=base_sha, branch="main")
 
-    facts = await GitFacts(Git(runner)).collect(repo_dir, repo, _TRACKERS)
+    facts = await GitFacts(Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)).collect(
+        repo_dir, repo, _TRACKERS
+    )
 
     assert facts.commits == ()
     assert facts.changed_trackers == ()
@@ -67,14 +71,18 @@ async def test_collect_detects_a_tracker_at_a_path_diff_stat_would_elide(
     tracker_path.parent.mkdir(parents=True)
     tracker_path.write_text("- [ ] task\n")
     await commit_all(runner, repo_dir, "initial commit")
-    base_sha = await Git(runner).rev_parse(repo_dir, "HEAD")
+    base_sha = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(repo_dir, "HEAD")
     tracker_path.write_text("- [x] task\n")
     await commit_all(runner, repo_dir, "update plan")
     repo = RepoState(base=base_sha, base_ref=base_sha, base_sha=base_sha, branch="main")
 
-    diff_stat = await Git(runner).diff_stat(repo_dir, f"{base_sha}...HEAD")
+    diff_stat = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).diff_stat(
+        repo_dir, f"{base_sha}...HEAD"
+    )
     assert tracker not in diff_stat, "test setup no longer reproduces --stat's elision"
 
-    facts = await GitFacts(Git(runner)).collect(repo_dir, repo, [tracker])
+    facts = await GitFacts(Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)).collect(
+        repo_dir, repo, [tracker]
+    )
 
     assert facts.changed_trackers == (tracker,)

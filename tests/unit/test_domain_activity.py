@@ -9,7 +9,14 @@ from shikiru.domain.activity import is_stalled
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _TIMEOUTS = TimeoutsConfig(
-    stall=1200, tool=7200, max_quota_wait=28800, integration_wait=1800, pr_wait=3600, helper=300
+    stall=1200,
+    tool=7200,
+    max_quota_wait=28800,
+    integration_wait=1800,
+    pr_wait=3600,
+    helper=300,
+    cache_copy=600,
+    git_command=120,
 )
 
 

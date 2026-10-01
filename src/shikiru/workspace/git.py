@@ -13,10 +13,11 @@ if TYPE_CHECKING:
     from shikiru.process import ProcessResult, SubprocessRunner
 
 _GIT_BIN = "git"
-_COMMAND_TIMEOUT_SECONDS = 30.0
 _PUSH_TIMEOUT_SECONDS = 300.0
 GIT_STOP_GRACE = 10.0
 _WORKTREE_LIST_PREFIX = "worktree "
+_WORKTREE_LOCKED_PREFIX = "locked"
+_REMOVAL_LOCK_REASON = "shikiru: removal in progress"
 _STATUS_IGNORED_PREFIX = "!! "
 _STATUS_CODE_LENGTH = 2
 _STATUS_PATH_OFFSET = _STATUS_CODE_LENGTH + 1
@@ -33,9 +34,10 @@ _MERGE_BASE_IS_NOT_ANCESTOR = 1
 class Git:
     """A small, intention-revealing wrapper over the git CLI, always through `SubprocessRunner`."""
 
-    def __init__(self, runner: SubprocessRunner) -> None:
-        """Run every git command through `runner`, never a shell."""
+    def __init__(self, runner: SubprocessRunner, *, command_timeout: float) -> None:
+        """Run every git command through `runner`, never a shell, each within `command_timeout`."""
         self._runner = runner
+        self._command_timeout = command_timeout
 
     async def worktree_add(
         self, repo_dir: Path, worktree_path: Path, *, new_branch: str, base: str
@@ -59,10 +61,36 @@ class Git:
         await self._run(repo_dir, "worktree", "add", str(worktree_path), branch, mutating=True)
 
     async def worktree_remove(self, repo_dir: Path, worktree_path: Path) -> None:
-        """Remove the worktree at `worktree_path`, discarding any local changes in it."""
+        """Remove the worktree at `worktree_path`, discarding any local changes in it.
+
+        The worktree is first locked as being removed, so a removal that fails or times out
+        midway leaves a state `worktree_removal_pending` recognises, and a later call finishes
+        it.
+        """
+        if not await self.worktree_removal_pending(repo_dir, worktree_path):
+            await self._run(
+                repo_dir,
+                "worktree",
+                "lock",
+                "--reason",
+                _REMOVAL_LOCK_REASON,
+                str(worktree_path),
+                mutating=True,
+            )
         await self._run(
-            repo_dir, "worktree", "remove", "--force", str(worktree_path), mutating=True
+            repo_dir,
+            "worktree",
+            "remove",
+            "--force",
+            "--force",
+            str(worktree_path),
+            mutating=True,
         )
+
+    async def worktree_removal_pending(self, repo_dir: Path, worktree_path: Path) -> bool:
+        """Return whether a removal of `worktree_path` began and did not finish."""
+        reasons = await self._worktree_lock_reasons(repo_dir)
+        return reasons.get(worktree_path.resolve()) == _REMOVAL_LOCK_REASON
 
     async def worktree_exists(self, repo_dir: Path, worktree_path: Path) -> bool:
         """Return whether `worktree_path` is a registered worktree of the repo at `repo_dir`."""
@@ -181,6 +209,10 @@ class Git:
         """Rebase the current branch onto `base`, raising when git reports a conflict."""
         await self._run(repo_dir, "rebase", base, mutating=True)
 
+    async def rebase_abort(self, repo_dir: Path) -> None:
+        """Abort the rebase in progress, restoring the branch to where it was before it began."""
+        await self._run(repo_dir, "rebase", "--abort", mutating=True)
+
     async def rebase_continue(self, repo_dir: Path) -> None:
         """Continue a rebase after its conflicts have been resolved and staged."""
         await self._run(repo_dir, "-c", "core.editor=true", "rebase", "--continue", mutating=True)
@@ -292,25 +324,32 @@ class Git:
         return path if path.is_absolute() else repo_dir / path
 
     async def _worktree_paths(self, repo_dir: Path) -> set[Path]:
+        return set(await self._worktree_lock_reasons(repo_dir))
+
+    async def _worktree_lock_reasons(self, repo_dir: Path) -> dict[Path, str | None]:
         result = await self._run(repo_dir, "worktree", "list", "--porcelain")
-        paths: set[Path] = set()
+        reasons: dict[Path, str | None] = {}
+        current: Path | None = None
         for line in result.stdout.splitlines():
             if line.startswith(_WORKTREE_LIST_PREFIX):
-                paths.add(Path(line[len(_WORKTREE_LIST_PREFIX) :]).resolve())
-        return paths
+                current = Path(line[len(_WORKTREE_LIST_PREFIX) :]).resolve()
+                reasons[current] = None
+            elif line.startswith(_WORKTREE_LOCKED_PREFIX) and current is not None:
+                reasons[current] = line[len(_WORKTREE_LOCKED_PREFIX) :].strip()
+        return reasons
 
     async def _run(
         self,
         repo_dir: Path,
         *args: str,
         check: bool = True,
-        timeout: float = _COMMAND_TIMEOUT_SECONDS,
+        timeout: float | None = None,
         input_text: str | None = None,
         mutating: bool = False,
     ) -> ProcessResult:
         return await self._runner.run(
             [_GIT_BIN, *args],
-            timeout=timeout,
+            timeout=self._command_timeout if timeout is None else timeout,
             cwd=repo_dir,
             check=check,
             input_text=input_text,

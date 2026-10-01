@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from shikiru.process import SubprocessRunner
 
 GIT_COMMAND = "git"
+GIT_COMMAND_TIMEOUT = 30.0
+CACHE_COPY_TIMEOUT = 60.0
 _GIT_COMMAND_TIMEOUT_SECONDS = 10.0
 COMMIT_IDENTITY_ARGS = ("-c", "user.name=Shikiru Test", "-c", "user.email=test@shikiru.example")
 

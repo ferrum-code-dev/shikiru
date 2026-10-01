@@ -19,6 +19,7 @@ from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
+from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -80,9 +81,11 @@ async def _app_with_cow_probe_error(root: Path) -> InitWizardApp:
     registry = AgentRegistry()
     detectors = ProjectDetectors(
         root,
-        git=Git(runner),
+        git=Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
         plugin_checks=PluginChecks(registry, runner, clock),
-        cache_cloner=CacheCloner(runner, cow_args=("shikiru-missing-cp",)),
+        cache_cloner=CacheCloner(
+            runner, cow_args=("shikiru-missing-cp",), copy_timeout=CACHE_COPY_TIMEOUT
+        ),
     )
     project = await detectors.detect()
     return InitWizardApp(

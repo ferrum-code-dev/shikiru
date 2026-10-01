@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import platform
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,7 +16,7 @@ if TYPE_CHECKING:
 
     from shikiru.process import SubprocessRunner
 
-_COPY_TIMEOUT_SECONDS = 60.0
+_STAGING_SUFFIX = ".cache-staging"
 _PROBE_PREFIX = ".shikiru-cow-probe-"
 _PROBE_DIRECTORY_PREFIX = ".shikiru-cow-check-"
 _PROBE_CONTENT = b"shikiru cow probe"
@@ -41,17 +43,27 @@ class CacheCloneResult:
     warning: str | None = None
 
 
+async def _remove_tree(path: Path) -> None:
+    if path.exists():
+        await asyncio.to_thread(shutil.rmtree, path)
+
+
 class CacheCloner:
     """Clone `repo.caches` globs that are git-ignored, copy-on-write, into a worktree."""
 
-    def __init__(self, runner: SubprocessRunner, *, cow_args: Sequence[str] | None) -> None:
+    def __init__(
+        self, runner: SubprocessRunner, *, cow_args: Sequence[str] | None, copy_timeout: float
+    ) -> None:
         """Copy with `cow_args` (the platform's copy-on-write `cp` invocation), via `runner`.
+
+        One copy that takes longer than `copy_timeout` seconds fails.
 
         `cow_args` is `None` when this platform has no known copy-on-write `cp` invocation
         (see `default_cow_args`); cloning then reports the filesystem as unsupported outright.
         """
         self._runner = runner
         self._cow_args = tuple(cow_args) if cow_args is not None else None
+        self._copy_timeout = copy_timeout
 
     async def clone(
         self,
@@ -63,24 +75,34 @@ class CacheCloner:
         """Copy every ignored path in `repo_dir` matching `cache_globs` into `worktree_dir`.
 
         Only paths that exist and are in `ignored` are copied. If this filesystem does not
-        support copy-on-write, nothing is copied and exactly one warning is returned.
+        support copy-on-write, nothing is copied and exactly one warning is returned. Each copy
+        is made beside the worktree and moved into place only once complete, so a destination
+        that exists is always whole; a failed, timed-out or cancelled copy leaves nothing behind.
         """
         cow_args = self._cow_args
         if cow_args is None or not await self._cow_supported(cow_args, worktree_dir):
             return CacheCloneResult(warning=CACHE_COW_UNSUPPORTED_WARNING)
         ignored_set = set(ignored)
         copied: list[Path] = []
-        for pattern in cache_globs:
-            for match in sorted(repo_dir.glob(pattern)):
-                if match not in ignored_set or not match.exists():
-                    continue
-                relative = match.relative_to(repo_dir)
-                destination = worktree_dir / relative
-                if destination.exists():
-                    continue
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                await self._copy(cow_args, match, destination)
-                copied.append(relative)
+        staging = worktree_dir.with_name(f"{worktree_dir.name}{_STAGING_SUFFIX}")
+        await _remove_tree(staging)
+        try:
+            for pattern in cache_globs:
+                for match in sorted(repo_dir.glob(pattern)):
+                    if match not in ignored_set or not match.exists():
+                        continue
+                    relative = match.relative_to(repo_dir)
+                    destination = worktree_dir / relative
+                    if destination.exists():
+                        continue
+                    staged = staging / relative
+                    staged.parent.mkdir(parents=True, exist_ok=True)
+                    await self._copy(cow_args, match, staged)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    staged.replace(destination)
+                    copied.append(relative)
+        finally:
+            await _remove_tree(staging)
         return CacheCloneResult(copied=tuple(copied))
 
     async def check_support(self, filesystem_root: Path) -> bool:
@@ -99,7 +121,7 @@ class CacheCloner:
         try:
             result = await self._runner.run(
                 [*cow_args, str(probe_source), str(probe_destination)],
-                timeout=_COPY_TIMEOUT_SECONDS,
+                timeout=self._copy_timeout,
             )
         finally:
             probe_source.unlink(missing_ok=True)
@@ -109,6 +131,6 @@ class CacheCloner:
     async def _copy(self, cow_args: tuple[str, ...], source: Path, destination: Path) -> None:
         await self._runner.run(
             [*cow_args, str(source), str(destination)],
-            timeout=_COPY_TIMEOUT_SECONDS,
+            timeout=self._copy_timeout,
             check=True,
         )

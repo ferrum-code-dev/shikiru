@@ -6,6 +6,7 @@ from shikiru.workspace.base_refs import LocalBaseRefs
 from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.git import Git
 from shikiru.workspace.roots import TaskRootBuilder
+from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -24,10 +25,10 @@ def task_root_builder(
     trackers: Sequence[str] = (),
 ) -> TaskRootBuilder:
     return TaskRootBuilder(
-        Git(runner),
+        Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
         project_root,
         repo,
-        CacheCloner(runner, cow_args=default_cow_args()),
+        CacheCloner(runner, cow_args=default_cow_args(), copy_timeout=CACHE_COPY_TIMEOUT),
         base_refs if base_refs is not None else LocalBaseRefs(),
         trackers=trackers,
     )

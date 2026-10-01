@@ -15,7 +15,7 @@ from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.factories import TASK_CREATED_AT
-from tests.support.git_repo import commit_all, init_repo
+from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, commit_all, init_repo
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -57,9 +57,9 @@ async def test_init_reports_named_plugin_failures_when_no_agent_passes_doctor(
     checks = PluginChecks(_registry_for(_BrokenAgent()), runner, FakeClock(TASK_CREATED_AT))
     detectors = ProjectDetectors(
         tmp_path,
-        git=Git(runner),
+        git=Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
         plugin_checks=checks,
-        cache_cloner=CacheCloner(runner, cow_args=None),
+        cache_cloner=CacheCloner(runner, cow_args=None, copy_timeout=CACHE_COPY_TIMEOUT),
     )
 
     with pytest.raises(ConfigError, match="broken: binary: binary is missing"):
