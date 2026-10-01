@@ -19,6 +19,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
 from shikiru.engine.tick_guard import EngineFaultLimitError
 from shikiru.engine.turn_processes import turn_pid_path
+from shikiru.errors import CommandFailed
 from shikiru.paths import run_dir, task_root
 from shikiru.private import make_private_dir
 from shikiru.process import SubprocessRunner
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
     from pathlib import Path
 
+    from shikiru.domain.events import Event
     from shikiru.domain.tasks import Task
     from shikiru.engine.daemon import Engine
     from tests.support.github import FakeGitHub
@@ -60,6 +62,17 @@ class _FlakyTmux(Tmux):
         if target == _TARGET and self.failures:
             self.failures -= 1
             raise self._error
+        return await super().target_exists(target)
+
+
+class _BadWindowTmux(Tmux):
+    def __init__(self, server: TmuxServer) -> None:
+        super().__init__(server.runner, socket=server.socket_name, env=server.env)
+        self.bad_window: str | None = None
+
+    async def target_exists(self, target: str) -> bool:
+        if target == self.bad_window:
+            raise CommandFailed(("tmux",), 1, "can't find window")
         return await super().target_exists(target)
 
 
@@ -94,6 +107,7 @@ async def _engine(
     *,
     hook: str = "",
     flaky: tuple[int, Exception] | None = None,
+    tmux_override: Tmux | None = None,
     fault_limit: int | None = None,
     max_parallel: int = 1,
     seed: Callable[[Database, FakeClock, Path], Awaitable[None]] | None = None,
@@ -112,6 +126,8 @@ async def _engine(
     await SessionView(tmux).ensure("test", project, home_command=("/bin/sh",))
     if flaky is not None:
         tmux = _FlakyTmux(tmux_server, *flaky)
+    if tmux_override is not None:
+        tmux = tmux_override
     engine = build_engine(project, settings, clock=clock, tmux=tmux, registry=build_registry())
     if seed is not None:
         await seed(Database(project / ".shikiru" / "state.db"), clock, project)
@@ -300,3 +316,32 @@ async def test_a_retried_reconcile_never_ends_a_turn_that_started_after_it(
         assert task.status is Status.RUNNING
         assert harness.runs.get_live("T-2", Role.IMPLEMENTER) is not None
         assert turn_pid_path(run_dir(tmp_path, "T-2"), Role.IMPLEMENTER).exists()
+
+
+async def test_one_bad_task_window_does_not_starve_other_tasks_and_is_renotified_while_it_lasts(
+    tmp_path: Path, tmux_server: TmuxServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_script(monkeypatch, [{"kind": "stall"}])
+    tmux = _BadWindowTmux(tmux_server)
+    async with _engine(tmp_path, tmux_server, tmux_override=tmux, max_parallel=2) as harness:
+        broken = await _submit_running(harness)
+        await harness.until(lambda: (task := harness.tasks.get(broken)) and task.window_id)
+        task = harness.tasks.get(broken)
+        assert task is not None
+        tmux.bad_window = task.window_id
+        harness.queue.append(Submit(title="other", request="other", mode=Mode.IMPLEMENT))
+
+        def faults() -> list[Event]:
+            return list(harness.events.since(0, kinds=[EventKind.ENGINE_FAULT]))
+
+        await harness.until(
+            lambda: any(
+                e.task_id != broken for e in harness.events.since(0, kinds=[EventKind.TASK_STARTED])
+            )
+        )
+        await harness.until(lambda: len(faults()) == 1)
+        await _advance(harness, 310)
+
+        assert [fault.task_id for fault in faults()] == [broken, broken]
+        assert faults()[1].data["repeat"] > 1
+        assert not harness.task.done()

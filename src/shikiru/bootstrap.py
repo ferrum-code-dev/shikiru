@@ -497,6 +497,12 @@ def build_engine(
     target = exact_target(session_name(resolved_settings.project.name))
     logger, log_handler = _configure_engine_logging(project_root, resolved_settings.logging)
     _tighten_state_dir(project_root, logger)
+    fault_reporter = FaultReporter(
+        events=events,
+        clock=resolved_clock,
+        settings=resolved_settings.orchestration.faults,
+        logger=logger,
+    )
     layout = LayoutGuard(
         tmux=resolved_tmux,
         view=SessionView(resolved_tmux),
@@ -509,6 +515,7 @@ def build_engine(
         events=events,
         runs=runs,
         commands=command_queue,
+        faults=fault_reporter,
     )
     session_guard = SessionGuard(
         tmux=resolved_tmux,
@@ -672,12 +679,6 @@ def build_engine(
         titles=titles,
     )
     lock_path = engine_lock_path(project_root)
-    fault_reporter = FaultReporter(
-        events=events,
-        clock=resolved_clock,
-        settings=resolved_settings.orchestration.faults,
-        logger=logger,
-    )
     return Engine(
         lock_path=lock_path,
         command_queue=command_queue,

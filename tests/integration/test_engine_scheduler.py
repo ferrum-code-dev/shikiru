@@ -38,7 +38,13 @@ from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
-from tests.support.engine import build_decorator, build_evidence, build_tmux, build_writer
+from tests.support.engine import (
+    build_decorator,
+    build_evidence,
+    build_fault_reporter,
+    build_tmux,
+    build_writer,
+)
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
@@ -176,6 +182,7 @@ async def scheduler_env(
         events=events,
         runs=RunStore(connection, clock),
         commands=CommandQueue(connection, clock),
+        faults=build_fault_reporter(events, clock, settings),
     )
     roots = task_root_builder(
         SubprocessRunner(), tmp_path, settings.repo, trackers=settings.project.trackers

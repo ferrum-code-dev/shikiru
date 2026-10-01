@@ -20,7 +20,7 @@ from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
-from tests.support.engine import build_tmux
+from tests.support.engine import build_fault_reporter, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.waiting import wait_until
 
@@ -82,6 +82,7 @@ async def _task_window(
         events=events,
         runs=RunStore(connection, clock),
         commands=CommandQueue(connection, clock),
+        faults=build_fault_reporter(events, clock, settings),
     )
     queued = CommandQueue(connection, clock).append(
         Submit(title="restore panes", request="restore panes")

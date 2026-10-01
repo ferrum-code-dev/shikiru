@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.config.settings import Settings
+    from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.store.commands import CommandQueue
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
@@ -51,10 +52,12 @@ class LayoutGuard:
         events: EventLog,
         runs: RunStore,
         commands: CommandQueue,
+        faults: FaultReporter,
     ) -> None:
         """Create windows through `tmux`, storing pane ids through `tasks`.
 
-        A taken-over role's pane exiting is queued as a `HandBack` on `commands` (03 §9).
+        A taken-over role's pane exiting is queued as a `HandBack` on `commands` (03 §9). A task
+        whose restoration fails is recorded through `faults` without stopping the others.
         """
         self._tmux = tmux
         self._session_target = session_target
@@ -67,6 +70,7 @@ class LayoutGuard:
         self._decorator = decorator
         self._runs = runs
         self._commands = commands
+        self._faults = faults
         self._special_panes: dict[str, dict[str, str]] = {}
         self._windows = asyncio.Lock()
 
@@ -89,9 +93,12 @@ class LayoutGuard:
         return restored
 
     async def restore(self, tasks: list[Task]) -> None:
-        """Restore the windows and dead panes of `tasks` that are still active when reached."""
+        """Restore the windows and dead panes of `tasks` that are still active when reached.
+
+        A task that cannot be restored is recorded as an `engine_fault` and skipped (02 §1).
+        """
         for task in tasks:
-            async with self._windows:
+            async with self._faults.isolate("layout restore", task_id=task.id), self._windows:
                 current = self._tasks.get(task.id)
                 if current is not None and current.status in ACTIVE_STATUSES:
                     await self.ensure(current)

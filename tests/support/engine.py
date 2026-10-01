@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
 import uuid
 from typing import TYPE_CHECKING
@@ -21,6 +22,7 @@ from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.evidence import EvidenceCollector
+from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.history import ReportHistory
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.sessions import SessionManager
@@ -306,4 +308,14 @@ async def engine_env(tmux_server: TmuxServer, connection: Connection, tmp_path: 
         project_root=tmp_path,
         clock=clock,
         turn_system=turn_system,
+    )
+
+
+def build_fault_reporter(events: EventLog, clock: Clock, settings: Settings) -> FaultReporter:
+    """A `FaultReporter` over `events` with the retry settings of `settings`."""
+    return FaultReporter(
+        events=events,
+        clock=clock,
+        settings=settings.orchestration.faults,
+        logger=logging.getLogger("fault-reporter-test"),
     )
