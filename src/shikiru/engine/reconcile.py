@@ -33,6 +33,7 @@ class Reconciler:
         resume_task: Callable[[str], Awaitable[None]],
         finish_task: Callable[[Task], Awaitable[Path | None]],
         restore_escalation: Callable[[Task], Awaitable[None]],
+        restore_pull_request_closes: Callable[[], None],
         faults: FaultReporter,
         project_root: Path,
     ) -> None:
@@ -46,6 +47,7 @@ class Reconciler:
         self._resume_task = resume_task
         self._finish_task = finish_task
         self._restore_escalation = restore_escalation
+        self._restore_pull_request_closes = restore_pull_request_closes
         self._faults = faults
         self._project_root = project_root
         self._orphans_ended = False
@@ -72,6 +74,8 @@ class Reconciler:
         for task in terminal:
             async with self._faults.isolate("reconcile cleanup", task_id=task.id):
                 await self._finish_task(task)
+        async with self._faults.isolate("reconcile pull request closes"):
+            self._restore_pull_request_closes()
         await self.restore_escalations()
         for task in active:
             if task.status in _IN_FLIGHT and not task.held:

@@ -87,7 +87,7 @@ from tests.support.waiting import wait_until
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from shikiru.agents.registry import AgentRegistry
     from shikiru.config.settings import Settings
@@ -624,6 +624,7 @@ class _Escalated:
     tmux: Tmux
     session: str
     tasks: TaskStore
+    restart_engine: Callable[[], Awaitable[None]]
 
     async def strand_window(self, tmp_path: Path) -> None:
         pane = await SessionView(self.tmux).create_task_window(
@@ -648,9 +649,13 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
     clock = FakeClock(TASK_CREATED_AT)
     tmux = build_tmux(tmux_server)
     session = await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(
-        tmp_path, engine_settings(), clock=clock, tmux=tmux, registry=build_registry()
-    )
+
+    def start_engine() -> asyncio.Task[None]:
+        engine = build_engine(
+            tmp_path, engine_settings(), clock=clock, tmux=tmux, registry=build_registry()
+        )
+        return asyncio.create_task(engine.run())
+
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
@@ -678,9 +683,19 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
     operator = _Operator(
         tasks, runs, EventLog(connection, clock), queue, clock, tmux_server, connection, tmp_path
     )
-    engine_task = asyncio.create_task(engine.run())
+    engine_task = start_engine()
+
+    async def restart_engine() -> None:
+        nonlocal engine_task
+        engine_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await engine_task
+        engine_task = start_engine()
+
     try:
-        yield _Escalated(operator, escalations, task, escalation.id, tmux, session, tasks)
+        yield _Escalated(
+            operator, escalations, task, escalation.id, tmux, session, tasks, restart_engine
+        )
     finally:
         if not engine_task.done():
             engine_task.cancel()
@@ -713,24 +728,82 @@ async def test_cancelling_a_task_closes_its_open_pull_request(
         await _open_pull_request_of(escalated, tmp_path)
 
         outcome = await escalated.operator.send(command)
+        await _until_closed(escalated, fake_github)
 
         assert outcome.status is CommandStatus.DONE
-        assert fake_github.pull_requests()[0]["state"] == PullRequestState.CLOSED
+        assert _withdrawn(escalated) == 1
 
 
-async def test_a_pull_request_that_cannot_be_closed_is_a_recorded_fault_not_a_rejection(
+async def _until_closed(escalated: _Escalated, fake_github: FakeGitHub) -> None:
+    await escalated.operator.advance_until(
+        lambda: (
+            fake_github.pull_requests()[0]["state"] == PullRequestState.CLOSED
+            and _withdrawn(escalated) == 1
+        )
+    )
+
+
+def _withdrawn(escalated: _Escalated) -> int:
+    return len(escalated.operator.events.since(0, kinds=[EventKind.PR_WITHDRAWN]))
+
+
+async def test_a_slow_pull_request_close_does_not_delay_the_commands_behind_it(
+    tmp_path: Path, tmux_server: TmuxServer, fake_github: FakeGitHub
+) -> None:
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        operator = escalated.operator
+        await _open_pull_request_of(escalated, tmp_path)
+        fake_github.hold("close")
+
+        cancelled = await operator.send(Cancel(task_id=escalated.task.id))
+        await operator.advance_until(lambda: fake_github.calls("close") == 1)
+        other = await operator.send(Submit(title="behind the close", request="behind the close"))
+
+        assert cancelled.status is CommandStatus.DONE
+        assert other.status is CommandStatus.DONE
+        assert fake_github.pull_requests()[0]["state"] == PullRequestState.OPEN
+
+        fake_github.release("close")
+        await _until_closed(escalated, fake_github)
+
+
+async def test_a_pull_request_close_that_failed_is_retried_and_repeated_after_a_restart(
+    tmp_path: Path, tmux_server: TmuxServer, fake_github: FakeGitHub
+) -> None:
+    attempts = engine_settings().orchestration.network.pr_close_attempts
+    async with _escalated_task(tmp_path, tmux_server) as escalated:
+        operator = escalated.operator
+        await _open_pull_request_of(escalated, tmp_path)
+        fake_github.fail_next("close", attempts)
+
+        outcome = await operator.send(Cancel(task_id=escalated.task.id))
+        await operator.advance_until(lambda: fake_github.calls("close") == attempts)
+        await operator.advance_until(
+            lambda: bool(operator.events.since(0, kinds=[EventKind.ENGINE_FAULT]))
+        )
+
+        assert outcome.status is CommandStatus.DONE
+        assert fake_github.pull_requests()[0]["state"] == PullRequestState.OPEN
+        assert _withdrawn(escalated) == 0
+
+        await escalated.restart_engine()
+        await _until_closed(escalated, fake_github)
+
+        assert _withdrawn(escalated) == 1
+
+
+async def test_a_pull_request_close_that_failed_once_succeeds_on_a_retry(
     tmp_path: Path, tmux_server: TmuxServer, fake_github: FakeGitHub
 ) -> None:
     async with _escalated_task(tmp_path, tmux_server) as escalated:
         await _open_pull_request_of(escalated, tmp_path)
-        fake_github.break_pull_requests()
+        fake_github.fail_next("close", 1)
 
-        outcome = await escalated.operator.send(Cancel(task_id=escalated.task.id))
+        await escalated.operator.send(Cancel(task_id=escalated.task.id))
+        await _until_closed(escalated, fake_github)
 
-        assert outcome.status is CommandStatus.DONE
-        assert escalated.operator.task(escalated.task.id).status is Status.CANCELLED
-        faults = escalated.operator.events.since(0, kinds=[EventKind.ENGINE_FAULT])
-        assert [fault.task_id for fault in faults] == [escalated.task.id]
+        assert fake_github.calls("close") == 2
+        assert _withdrawn(escalated) == 1
 
 
 @pytest.mark.parametrize(

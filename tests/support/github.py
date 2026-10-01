@@ -38,13 +38,13 @@ class FakeGitHub:
         count = len(list(pulls.glob("*.json")))
         return [json.loads((pulls / f"{n}.json").read_text()) for n in range(1, count + 1)]
 
-    def hold_create(self) -> None:
-        """Make `pr create` block after recording its pull request, until `release_create`."""
-        os.mkfifo(self.state / fake_gh.HOLD_CREATE)
+    def hold(self, subcommand: str) -> None:
+        """Make `gh pr <subcommand>` block (`create` after recording, `close` before acting)."""
+        os.mkfifo(self.state / f"{fake_gh.HOLD_PREFIX}{subcommand}")
 
-    def release_create(self) -> None:
-        """Remove the create hold and unblock any `pr create` still waiting on it."""
-        hold = self.state / fake_gh.HOLD_CREATE
+    def release(self, subcommand: str) -> None:
+        """Remove the hold of `subcommand` and unblock any call still waiting on it."""
+        hold = self.state / f"{fake_gh.HOLD_PREFIX}{subcommand}"
         if not hold.exists():
             return
         try:
@@ -55,6 +55,10 @@ class FakeGitHub:
         else:
             os.close(descriptor)
         hold.unlink()
+
+    def fail_next(self, subcommand: str, calls: int) -> None:
+        """Make the next `calls` calls of `gh pr <subcommand>` fail like a network blip."""
+        (self.state / f"{fake_gh.FAIL_PREFIX}{subcommand}").write_text(str(calls))
 
     def merge(self, number: int, commit: str) -> None:
         """Record pull request `number` as merged by `commit`, as gh reports a merged PR."""
@@ -75,10 +79,14 @@ class FakeGitHub:
         for path in (self.state / fake_gh.PULLS_DIR).glob("*.json"):
             path.write_text("{")
 
-    def views(self) -> int:
+    def calls(self, subcommand: str) -> int:
+        """Count the `gh pr <subcommand>` calls received, failed and blocked ones included."""
         log = self.state / fake_gh.CALLS_LOG
         lines = log.read_text().splitlines() if log.exists() else []
-        return sum(json.loads(line)[:2] == ["pr", "view"] for line in lines)
+        return sum(json.loads(line)[:2] == ["pr", subcommand] for line in lines)
+
+    def views(self) -> int:
+        return self.calls("view")
 
 
 @pytest.fixture
@@ -104,7 +112,8 @@ def fake_github(
     assert shutil.which("gh") == str(gh)
     github = FakeGitHub(state)
     yield github
-    github.release_create()
+    github.release("create")
+    github.release("close")
 
 
 async def add_bare_remote(

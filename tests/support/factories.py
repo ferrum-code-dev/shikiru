@@ -116,7 +116,7 @@ def make_settings(
                 stop_notify_seconds=30,
                 repeat_notify_seconds=300,
             ),
-            network=NetworkConfig(fetch_timeout_seconds=30),
+            network=NetworkConfig(fetch_timeout_seconds=30, pr_close_attempts=5),
         ),
         roles=RolesConfig(
             leader=RoleConfig(ladder=leader_ladder or [LEADER_RUNG, LEADER_RUNG_2]),

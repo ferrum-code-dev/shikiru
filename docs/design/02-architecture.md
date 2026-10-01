@@ -123,6 +123,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `SessionGuard` | Recreates the project's tmux session when the tmux server or session is lost (06 §5.1) |
 | `Takeover` | Take over and hand back one task role (03 §9) |
 | `Notifier` | tmux message plus `notify.command` on escalation and task completion |
+| `PullRequestClosing` | One supervised task closing the open pull requests of cancelled tasks off the command loop, with retry (03 §6) |
 | `NotificationDelivery` | Bounded queue and one supervised task delivering notifications off the command loop (06 §5.7) |
 
 **Enforced rules** (by tool, not convention):
@@ -156,7 +157,7 @@ src/shikiru/
                 monitor.py turns.py turn_processes.py
                 escalation_filing.py evidence.py escalations.py transitions.py task_facts.py history.py events.py
                 takeover.py integration.py integration_turns.py reconcile.py layout_guard.py titles.py cosmetic_decorator.py
-                notifier.py notification_delivery.py
+                notifier.py notification_delivery.py pull_request_closing.py
     handlers/   base.py tasks.py operator.py escalations.py engine.py
   operator/     queries.py commands.py services.py events.py strip_views.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py
   cli/          app.py context.py report.py view.py render.py

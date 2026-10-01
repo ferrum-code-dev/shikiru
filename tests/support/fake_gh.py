@@ -10,8 +10,24 @@ from typing import Any
 URL_PREFIX = "https://github.invalid/shikiru/fake/pull/"
 PULLS_DIR = "pulls"
 CALLS_LOG = "calls.jsonl"
-HOLD_CREATE = "hold-create"
+HOLD_PREFIX = "hold-"
+FAIL_PREFIX = "fail-"
 _OPEN = "OPEN"
+
+
+def _hold(state: Path, subcommand: str) -> None:
+    hold = state / f"{HOLD_PREFIX}{subcommand}"
+    if hold.exists():
+        with hold.open() as fifo:
+            fifo.read()
+
+
+def _failing(state: Path, subcommand: str) -> bool:
+    budget = state / f"{FAIL_PREFIX}{subcommand}"
+    remaining = int(budget.read_text()) if budget.exists() else 0
+    if remaining > 0:
+        budget.write_text(str(remaining - 1))
+    return remaining > 0
 
 
 def _records(state: Path) -> list[tuple[str, dict[str, Any]]]:
@@ -38,10 +54,7 @@ def _create(state: Path, options: list[str]) -> str:
         "body": values["--body"],
     }
     (pulls / f"{number}.json").write_text(json.dumps(record))
-    hold = state / HOLD_CREATE
-    if hold.exists():
-        with hold.open() as fifo:
-            fifo.read()
+    _hold(state, "create")
     return f"{URL_PREFIX}{number}"
 
 
@@ -64,6 +77,7 @@ def _view(state: Path, url: str, options: list[str]) -> str:
 
 
 def _close(state: Path, url: str) -> str:
+    _hold(state, "close")
     path = state / PULLS_DIR / f"{url.removeprefix(URL_PREFIX)}.json"
     path.write_text(json.dumps({**json.loads(path.read_text()), "state": "CLOSED"}))
     return ""
@@ -72,12 +86,17 @@ def _close(state: Path, url: str) -> str:
 def main(argv: list[str]) -> int:
     """Serve `gh pr create`, `list`, `close URL` and `view URL --json FIELDS`; reject the rest.
 
-    While the `HOLD_CREATE` FIFO exists, `pr create` records its pull request and then blocks
-    before printing it, as if the engine died between opening and recording it."""
+    While the `hold-create` FIFO exists, `pr create` records its pull request and then blocks
+    before printing it, as if the engine died between opening and recording it; `hold-close`
+    blocks `pr close` before it acts. A `fail-<subcommand>` file holding a count makes that many
+    calls of the subcommand fail, as a network blip does."""
     state = Path(argv[0])
     args = argv[1:]
     with (state / CALLS_LOG).open("a") as log:
         log.write(json.dumps(args) + "\n")
+    if args[:1] == ["pr"] and _failing(state, args[1]):
+        sys.stderr.write("fake gh: network unreachable\n")
+        return 1
     match args:
         case ["pr", "create", *options]:
             output = _create(state, options)

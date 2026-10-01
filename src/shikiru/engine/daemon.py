@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from shikiru.engine.handlers import HandlerRegistry
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.notification_delivery import NotificationDelivery
+    from shikiru.engine.pull_request_closing import PullRequestClosing
     from shikiru.engine.reconcile import Reconciler
     from shikiru.engine.scheduler import Scheduler
     from shikiru.engine.session_guard import SessionGuard
@@ -144,6 +145,7 @@ class Engine:
         command_guard: TickGuard,
         reconciler: Reconciler,
         notifications: NotificationDelivery,
+        pull_request_closing: PullRequestClosing,
         settings: Settings,
         clock: Clock,
         close_state: Callable[[], None],
@@ -166,6 +168,7 @@ class Engine:
         self._stop_reason: str | None = None
         self._reconciler = reconciler
         self._notifications = notifications
+        self._pull_request_closing = pull_request_closing
         self._settings = settings
         self._clock = clock
         self._close_state = close_state
@@ -185,12 +188,14 @@ class Engine:
         try:
             self._last_notified_event = self._events.latest_id()
             self._notifications.start()
+            self._pull_request_closing.start()
             self._events.append(EventKind.ENGINE_STARTED, message="engine started")
             await self._tick_guard.attempt(self._prepare)
             next_tick = self._clock.now()
             while not self._task_supervisor.stop_requested:
                 await self._task_supervisor.supervise(self._logger)
                 self._notifications.supervise(self._logger)
+                self._pull_request_closing.supervise(self._logger)
                 commands_changed = bool(await self._command_guard.attempt(self._process_commands))
                 if self._task_supervisor.stop_requested:
                     break
@@ -263,6 +268,7 @@ class Engine:
                 data={} if reason is None else {STOP_REASON_KEY: reason},
             )
             await self._notifications.shutdown()
+            await self._pull_request_closing.shutdown()
             if reason is not None:
                 await self._notifications.deliver_final(
                     stopped, self._settings.orchestration.faults.stop_notify_seconds

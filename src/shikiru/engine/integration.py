@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.clock import Clock
-    from shikiru.domain.events import Event
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
     from shikiru.workspace.base_refs import FetchedBaseRefs
@@ -402,10 +401,7 @@ class PullRequest:
         return await self._github.pull_request_status(self._project_root, url)
 
     def _open_pull_request(self, task_id: str) -> _OpenPullRequest | None:
-        events = self._events.since(
-            0, kinds=[EventKind.PR_OPENED, EventKind.ESCALATION], task_id=task_id
-        )
-        return _open_pull_request(events)
+        return _open_pull_request(self._events, task_id)
 
 
 def _stalled(status: PullRequestStatus, *, expired: bool) -> str | None:
@@ -416,12 +412,16 @@ def _stalled(status: PullRequestStatus, *, expired: bool) -> str | None:
     return "unmerged beyond the wait budget" if expired else None
 
 
-def _open_pull_request(events: Sequence[Event]) -> _OpenPullRequest | None:
+def _open_pull_request(events: EventLog, task_id: str) -> _OpenPullRequest | None:
     opened: _OpenPullRequest | None = None
-    for event in events:
+    kinds = [EventKind.PR_OPENED, EventKind.PR_WITHDRAWN, EventKind.ESCALATION]
+    for event in events.since(0, kinds=kinds, task_id=task_id):
         if event.kind is EventKind.PR_OPENED:
             opened = _OpenPullRequest(event.data["url"], tuple(event.data["commits"]))
-        elif event.data["reason"] == EscalationReason.PR_CLOSED:
+        elif (
+            event.kind is EventKind.PR_WITHDRAWN
+            or event.data["reason"] == EscalationReason.PR_CLOSED
+        ):
             opened = None
     return opened
 
@@ -435,17 +435,29 @@ class PullRequestCloser:
         self._events = events
         self._project_root = project_root
 
+    def has_open(self, task_id: str) -> bool:
+        """Return whether `task_id` has a pull request that was neither closed nor withdrawn."""
+        return _open_pull_request(self._events, task_id) is not None
+
     async def close_open(self, task_id: str) -> None:
-        """Close `task_id`'s open pull request, if it has one that is still open."""
-        events = self._events.since(
-            0, kinds=[EventKind.PR_OPENED, EventKind.ESCALATION], task_id=task_id
-        )
-        opened = _open_pull_request(events)
+        """Close `task_id`'s open pull request, if it has one that is still open.
+
+        Records `pr_withdrawn` once the pull request is closed or was found not open, so the
+        close is never repeated.
+        """
+        opened = _open_pull_request(self._events, task_id)
         if opened is None:
             return
-        status = await self._github.pull_request_status(self._project_root, opened.url)
-        if status.state is PullRequestState.OPEN:
+        state = (await self._github.pull_request_status(self._project_root, opened.url)).state
+        if state is PullRequestState.OPEN:
             await self._github.close_pull_request(self._project_root, opened.url)
+            state = PullRequestState.CLOSED
+        self._events.append(
+            EventKind.PR_WITHDRAWN,
+            task_id=task_id,
+            message=f"{task_id} withdrew {opened.url}",
+            data={"url": opened.url, "state": state.value},
+        )
 
 
 class Integrator:

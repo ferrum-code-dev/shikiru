@@ -116,7 +116,7 @@ class _Run:
 async def _die_between_opening_and_recording(github: FakeGitHub, run: _Run) -> None:
     await wait_until(lambda: len(github.pull_requests()) == 1, _WAIT_SECONDS)
     await run.restart()
-    github.release_create()
+    github.release("create")
 
 
 async def _await_poll(github: FakeGitHub, clock: FakeClock, views: int) -> None:
@@ -230,7 +230,7 @@ async def test_pull_request_lands_through_the_done_path(
     await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     if case.crash_after_create:
-        fake_github.hold_create()
+        fake_github.hold("create")
     run = _Run(engine_env, settings, task.id)
     if case.crash_after_create:
         await _die_between_opening_and_recording(fake_github, run)

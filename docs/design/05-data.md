@@ -46,6 +46,7 @@ helper = 300                                    # maximum duration for helper tu
 
 [orchestration.network]                         # remote calls of integration = "pr"
 fetch_timeout_seconds = 30                      # a base fetch (task root build, merged-base check)
+pr_close_attempts = 5                           # `gh pr close` tries per engine start for a cancelled task
 
 [agents.claude]                                 # table name = plugin entry point
 [agents.codex]
@@ -212,7 +213,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `verdict`, `scope_change`
 - `hold_set`, `hold_cleared`, `taken_over`, `handed_back`, `operator_message`
 - `escalation`, `escalation_resolved`
-- `integration_started`, `integration_waiting` (`paths`: the dirty checkout paths a local merge waits on; notified), `pr_opened` (url, branch, commits)
+- `integration_started`, `integration_waiting` (`paths`: the dirty checkout paths a local merge waits on; notified), `pr_opened` (url, branch, commits), `pr_withdrawn` (url, state: the PR of a cancelled task was closed or found not open)
 - `task_retried`, `task_done`, `task_cancelled`
 - `pane_restored`, `engine_started`, `engine_fault` (`scope`, error, recoverable, repeat), `engine_recovered` (`scope`; the fault streak of that scope and task ended), `engine_stopped` (`reason` when the engine stopped on a fault)
 

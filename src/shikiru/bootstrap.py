@@ -55,6 +55,7 @@ from shikiru.engine.lifecycle import TaskFinisher
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notification_delivery import NotificationDelivery
 from shikiru.engine.notifier import Notifier
+from shikiru.engine.pull_request_closing import PullRequestClosing
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.scheduler import Scheduler
@@ -542,12 +543,16 @@ def build_engine(
         fetched_bases if resolved_settings.orchestration.integration == "pr" else LocalBaseRefs(),
         trackers=resolved_settings.project.trackers,
     )
-    task_finisher = TaskFinisher(
-        sessions,
-        layout,
-        roots,
-        PullRequestCloser(github=GitHub(resolved_runner), events=events, project_root=project_root),
+    pull_request_closing = PullRequestClosing(
+        closer=PullRequestCloser(
+            github=GitHub(resolved_runner), events=events, project_root=project_root
+        ),
+        tasks=tasks,
+        faults=fault_reporter,
+        clock=resolved_clock,
+        settings=resolved_settings.orchestration,
     )
+    task_finisher = TaskFinisher(sessions, layout, roots, pull_request_closing)
     history = ReportHistory(project_root)
     task_facts = TaskFacts(
         git_facts=GitFacts(git), project_root=project_root, settings=resolved_settings
@@ -718,10 +723,12 @@ def build_engine(
             resume_task=task_supervisor.resume_task,
             finish_task=task_finisher.finish_task,
             restore_escalation=escalation_raiser.ensure_actionable,
+            restore_pull_request_closes=pull_request_closing.restore,
             faults=fault_reporter,
             project_root=project_root,
         ),
         notifications=NotificationDelivery(notifier),
+        pull_request_closing=pull_request_closing,
         settings=resolved_settings,
         clock=resolved_clock,
         close_state=connection.close,

@@ -77,6 +77,7 @@ class NetworkConfig(ConfigModel):
     """`[orchestration.network]`: bounds of the remote calls pull request mode makes."""
 
     fetch_timeout_seconds: float = Field(gt=0)
+    pr_close_attempts: int = Field(gt=0)
 
 
 class OrchestrationConfig(ConfigModel):
