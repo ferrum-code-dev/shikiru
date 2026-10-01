@@ -12,7 +12,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
 from shikiru.errors import CommandFailed, InvariantError, ShikiruError
 from shikiru.paths import task_root
-from shikiru.workspace.base_refs import MergedBaseUnavailable
+from shikiru.workspace.base_refs import BaseFetchFailed, MergedBaseUnavailable
 from shikiru.workspace.github import PullRequestState
 
 if TYPE_CHECKING:
@@ -395,7 +395,7 @@ class PullRequest:
             raise PullRequestClosed(opened.url)
         try:
             await self._base_refs.sync(repo.base, status.merge_commit)
-        except (CommandFailed, MergedBaseUnavailable) as error:
+        except (BaseFetchFailed, MergedBaseUnavailable) as error:
             raise IntegrationBlocked(str(error)) from error
 
     async def _status(self, url: str) -> PullRequestStatus:

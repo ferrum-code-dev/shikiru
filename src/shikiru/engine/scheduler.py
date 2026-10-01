@@ -5,9 +5,11 @@ from __future__ import annotations
 import dataclasses
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
+from shikiru.domain.faults import next_backoff
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.scheduling import (
     Dispatch,
@@ -21,10 +23,14 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, StatusReason, Step, Task
 from shikiru.engine.events import emit_step_started
 from shikiru.errors import InvariantError
+from shikiru.workspace.base_refs import BaseFetchFailed
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
@@ -36,6 +42,7 @@ if TYPE_CHECKING:
 DependencyCallback = Callable[[Task], Awaitable[None]]
 DispatchFailureCallback = Callable[[Task, Exception], Awaitable[None]]
 MAX_DISPATCH_FAILURES = 3
+FETCH_FAULT_SCOPE = "dispatch fetch"
 
 
 class Scheduler:
@@ -55,8 +62,13 @@ class Scheduler:
         on_dependency_cancelled: DependencyCallback,
         on_dispatch_failure: DispatchFailureCallback,
         titles: TaskTitles,
+        faults: FaultReporter,
     ) -> None:
-        """Inject state stores, gates, and the task-window dispatch boundary."""
+        """Inject state stores, gates, and the task-window dispatch boundary.
+
+        A dispatch whose base fetch fails is retried on a growing backoff, recorded through
+        `faults`, and never counts toward `MAX_DISPATCH_FAILURES`.
+        """
         self._tasks = tasks
         self._settings = settings
         self._quotas = quotas
@@ -68,7 +80,10 @@ class Scheduler:
         self._on_dependency_cancelled = on_dependency_cancelled
         self._on_dispatch_failure = on_dispatch_failure
         self._titles = titles
+        self._faults = faults
         self._dispatch_failures: dict[str, int] = {}
+        self._fetch_backoffs: dict[str, float] = {}
+        self._fetch_retry_at: dict[str, datetime] = {}
         self._logger = logging.getLogger(__name__)
 
     async def run_once(self) -> ReadySchedule:
@@ -89,6 +104,8 @@ class Scheduler:
             if task is None:
                 message = f"{dispatch.task_id} vanished before dispatch"
                 raise InvariantError(message)
+            if self._awaits_fetch_retry(task.id):
+                continue
             if await self._dispatch(task, dispatch.slot):
                 successful_dispatches.append(dispatch)
         return dataclasses.replace(schedule, dispatches=tuple(successful_dispatches))
@@ -141,6 +158,11 @@ class Scheduler:
             await self._layout.ensure(current)
             current = self._require_task(task.id, "layout creation")
             await self._titles.refresh(current)
+        except BaseFetchFailed as error:
+            self._logger.warning("dispatch of %s waits for the remote: %s", task.id, error)
+            await self._rollback_dispatch(task)
+            self._back_off_fetch(task.id, error)
+            return False
         except Exception as error:
             self._logger.exception("dispatch setup failed for %s", task.id)
             await self._rollback_dispatch(task)
@@ -158,6 +180,9 @@ class Scheduler:
                 self._dispatch_failures.pop(task.id, None)
             return False
         self._dispatch_failures.pop(task.id, None)
+        self._fetch_backoffs.pop(task.id, None)
+        self._fetch_retry_at.pop(task.id, None)
+        self._faults.resolve(FETCH_FAULT_SCOPE, task_id=task.id)
         self._events.append(
             EventKind.TASK_STARTED,
             task_id=current.id,
@@ -166,6 +191,21 @@ class Scheduler:
         )
         emit_step_started(self._events, current, self._settings)
         return True
+
+    def _awaits_fetch_retry(self, task_id: str) -> bool:
+        retry_at = self._fetch_retry_at.get(task_id)
+        return retry_at is not None and self._clock.now() < retry_at
+
+    def _back_off_fetch(self, task_id: str, error: BaseFetchFailed) -> None:
+        faults = self._settings.orchestration.faults
+        delay = next_backoff(
+            self._fetch_backoffs.get(task_id, 0.0),
+            initial=faults.backoff_initial_seconds,
+            maximum=faults.backoff_max_seconds,
+        )
+        self._fetch_backoffs[task_id] = delay
+        self._fetch_retry_at[task_id] = self._clock.now() + timedelta(seconds=delay)
+        self._faults.report(error, scope=FETCH_FAULT_SCOPE, task_id=task_id)
 
     def _seed_branch(self, task: Task) -> str | None:
         parent = self._tasks.get(task.parent_id) if task.parent_id is not None else None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from shikiru.errors import ShikiruError
+from shikiru.errors import CommandFailed, CommandTimeoutError, ShikiruError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -21,6 +21,14 @@ class MergedBaseUnavailable(ShikiruError):
     def __init__(self, base: str, commit: str | None) -> None:
         """Name the base and the merge commit that could not be verified on it."""
         super().__init__(f"merge commit {commit} is not on the fetched remote base {base}")
+
+
+class BaseFetchFailed(ShikiruError):
+    """The remote base could not be fetched: the remote is unreachable or the fetch timed out."""
+
+    def __init__(self, base: str, remote: str, cause: ShikiruError) -> None:
+        """Name the `base` and `remote` and say why the fetch failed."""
+        super().__init__(f"cannot fetch {base} from {remote}: {cause}")
 
 
 class BaseRefs(Protocol):
@@ -46,16 +54,20 @@ class FetchedBaseRefs:
     pushed are not in it.
     """
 
-    def __init__(self, git: Git, project_root: Path, remote: str) -> None:
-        """Fetch from `remote` into Shikiru's own refs of the repository at `project_root`."""
+    def __init__(self, git: Git, project_root: Path, remote: str, *, fetch_timeout: float) -> None:
+        """Fetch from `remote` into Shikiru's own refs of the repository at `project_root`.
+
+        A fetch that takes longer than `fetch_timeout` seconds fails.
+        """
         self._git = git
         self._project_root = project_root
         self._remote = remote
+        self._fetch_timeout = fetch_timeout
 
     async def resolve(self, base: str) -> str:
         """Fetch the remote `base` and return the ref it was fetched into.
 
-        Raises `CommandFailed` when the fetch fails: a root is never built from a stale ref.
+        Raises `BaseFetchFailed` when the fetch fails: a root is never built from a stale ref.
         """
         return await self._fetch(base)
 
@@ -63,7 +75,8 @@ class FetchedBaseRefs:
         """Fetch the remote `base` and verify it contains the pull request's `merge_commit`.
 
         Never touches the local branch, the index or the working tree of the project checkout.
-        Raises `MergedBaseUnavailable` when the merge commit is missing or not on the base.
+        Raises `BaseFetchFailed` when the fetch fails and `MergedBaseUnavailable` when the merge
+        commit is missing or not on the base.
         """
         ref = await self._fetch(base)
         if merge_commit is None or not await self._git.merge_base_is_ancestor(
@@ -73,5 +86,13 @@ class FetchedBaseRefs:
 
     async def _fetch(self, base: str) -> str:
         ref = f"{BASE_REF_PREFIX}{base}"
-        await self._git.fetch(self._project_root, self._remote, f"+{_HEADS_PREFIX}{base}:{ref}")
+        try:
+            await self._git.fetch(
+                self._project_root,
+                self._remote,
+                f"+{_HEADS_PREFIX}{base}:{ref}",
+                timeout=self._fetch_timeout,
+            )
+        except (CommandFailed, CommandTimeoutError) as error:
+            raise BaseFetchFailed(base, self._remote, error) from error
         return ref

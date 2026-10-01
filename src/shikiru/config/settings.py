@@ -73,6 +73,12 @@ class FaultsConfig(ConfigModel):
     repeat_notify_seconds: float = Field(gt=0)
 
 
+class NetworkConfig(ConfigModel):
+    """`[orchestration.network]`: bounds of the remote calls pull request mode makes."""
+
+    fetch_timeout_seconds: float = Field(gt=0)
+
+
 class OrchestrationConfig(ConfigModel):
     """`[orchestration]`."""
 
@@ -83,6 +89,7 @@ class OrchestrationConfig(ConfigModel):
     resources: ResourcesConfig
     timeouts: TimeoutsConfig
     faults: FaultsConfig
+    network: NetworkConfig
 
 
 class AgentConfig(ConfigModel):

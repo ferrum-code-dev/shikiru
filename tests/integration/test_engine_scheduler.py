@@ -19,7 +19,7 @@ from shikiru.domain.tasks import EscalationReason, Hold, Status, StatusReason, S
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
-from shikiru.engine.scheduler import Scheduler
+from shikiru.engine.scheduler import FETCH_FAULT_SCOPE, MAX_DISPATCH_FAILURES, Scheduler
 from shikiru.engine.titles import TaskTitles
 from shikiru.paths import task_root
 from shikiru.process import SubprocessRunner
@@ -36,6 +36,7 @@ from shikiru.tmux.client import exact_target
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
+from shikiru.workspace.base_refs import FetchedBaseRefs
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.engine import (
@@ -48,6 +49,7 @@ from tests.support.engine import (
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
+from tests.support.github import add_bare_remote
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -148,6 +150,7 @@ def _scheduler(environment: SchedulerFixture, settings: Settings) -> Scheduler:
         on_dependency_cancelled=environment.dependency_callback,
         on_dispatch_failure=environment.dispatch_failure_callback,
         titles=environment.titles,
+        faults=build_fault_reporter(environment.events, environment.clock, settings),
     )
 
 
@@ -214,6 +217,7 @@ async def scheduler_env(
         on_dependency_cancelled=dependency_callback,
         on_dispatch_failure=dispatch_failure_callback,
         titles=titles,
+        faults=build_fault_reporter(events, clock, settings),
     )
     return SchedulerFixture(
         scheduler,
@@ -443,6 +447,56 @@ async def test_dispatch_failures_are_reported_and_eventually_escalated(
     assert escalated is not None
     assert escalated.status is Status.ESCALATED
     assert fetch_open_escalations(connection)[0].reason is (EscalationReason.ENGINE_ERROR)
+
+
+async def test_a_fetch_outage_delays_the_dispatch_without_escalating_and_ends_with_it(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = scheduler_env.settings
+    runner = SubprocessRunner()
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(tmp_path, remote_dir, settings.repo.remote)
+    gone = ["git", "remote", "set-url", settings.repo.remote]
+    await runner.run([*gone, str(remote_dir / "gone")], timeout=10, cwd=tmp_path, check=True)
+    roots = task_root_builder(
+        runner,
+        tmp_path,
+        settings.repo,
+        FetchedBaseRefs(
+            Git(runner),
+            tmp_path,
+            settings.repo.remote,
+            fetch_timeout=settings.orchestration.network.fetch_timeout_seconds,
+        ),
+    )
+    scheduler = _scheduler(dataclasses.replace(scheduler_env, roots=roots), settings)
+    task = _submit(connection, scheduler_env.clock, title="offline dispatch")
+    backoff_max = settings.orchestration.faults.backoff_max_seconds
+    clock = scheduler_env.clock
+    assert isinstance(clock, FakeClock)
+
+    for _ in range(MAX_DISPATCH_FAILURES + 2):
+        clock.advance(backoff_max)
+        assert (await scheduler.run_once()).dispatches == ()
+
+    waiting = scheduler_env.tasks.get(task.id)
+    assert waiting is not None
+    assert waiting.status is Status.QUEUED
+    assert fetch_open_escalations(connection) == []
+    assert not scheduler_env.events.since(0, kinds=[EventKind.DISPATCH_FAILED])
+    [fault] = scheduler_env.events.since(0, kinds=[EventKind.ENGINE_FAULT], task_id=task.id)
+    assert fault.data["scope"] == FETCH_FAULT_SCOPE
+
+    await runner.run([*gone, str(remote_dir)], timeout=10, cwd=tmp_path, check=True)
+    assert (await scheduler.run_once()).dispatches == ()
+    clock.advance(backoff_max)
+    schedule = await scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
+    assert scheduler_env.events.since(0, kinds=[EventKind.ENGINE_RECOVERED], task_id=task.id)
 
 
 async def _parent_with_committed_work(

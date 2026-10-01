@@ -205,15 +205,15 @@ class Git:
         )
         return result.stdout.strip() if result.returncode == 0 else None
 
-    async def fetch(self, repo_dir: Path, remote: str, refspec: str) -> None:
-        """Fetch `refspec` from `remote`, updating only the refs the refspec names."""
+    async def fetch(self, repo_dir: Path, remote: str, refspec: str, *, timeout: float) -> None:
+        """Fetch `refspec` from `remote` within `timeout` seconds; only the refs it names change."""
         await self._run(
             repo_dir,
             "fetch",
             "--no-tags",
             remote,
             refspec,
-            timeout=_PUSH_TIMEOUT_SECONDS,
+            timeout=timeout,
             mutating=True,
         )
 

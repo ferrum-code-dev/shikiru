@@ -15,6 +15,7 @@ SCOPE_KEY = "scope"
 ERROR_KEY = "error"
 RECOVERABLE_KEY = "recoverable"
 REPEAT_KEY = "repeat"
+_BACKOFF_FACTOR = 2
 
 
 class FaultStreak(DomainModel):
@@ -54,3 +55,8 @@ def open_fault_streaks(events: Iterable[Event]) -> list[FaultStreak]:
                 repeat=(previous.repeat if previous else 0) + event.data[REPEAT_KEY],
             )
     return list(open_streaks.values())
+
+
+def next_backoff(previous: float, *, initial: float, maximum: float) -> float:
+    """Return the retry delay after `previous` (0 before the first failure): doubled, capped."""
+    return initial if previous <= 0 else min(previous * _BACKOFF_FACTOR, maximum)

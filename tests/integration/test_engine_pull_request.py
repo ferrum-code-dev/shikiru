@@ -17,11 +17,10 @@ from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Status, Step
 from shikiru.engine.integration import PR_POLL, PullRequest
-from shikiru.errors import CommandFailed
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
-from shikiru.workspace.base_refs import FetchedBaseRefs
+from shikiru.workspace.base_refs import BaseFetchFailed, FetchedBaseRefs
 from shikiru.workspace.git import Git
 from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.roots import task_root
@@ -43,6 +42,15 @@ _WAIT_SECONDS = 60
 _RETRY_SLOT = 1
 _BASE_CHANGE_FILENAME = "base_moved.txt"
 _RUNNER = SubprocessRunner()
+
+
+def _fetched(settings: Settings, project_root: Path) -> FetchedBaseRefs:
+    return FetchedBaseRefs(
+        Git(_RUNNER),
+        project_root,
+        settings.repo.remote,
+        fetch_timeout=settings.orchestration.network.fetch_timeout_seconds,
+    )
 
 
 @dataclass(frozen=True)
@@ -98,7 +106,7 @@ class _Run:
             events=EventLog(env.connection, env.clock),
             project_root=env.project_root,
             remote=self._settings.repo.remote,
-            base_refs=FetchedBaseRefs(Git(_RUNNER), env.project_root, self._settings.repo.remote),
+            base_refs=_fetched(self._settings, env.project_root),
             pr_wait=self._settings.orchestration.timeouts.pr_wait,
         )
         flow = build_flow(env, self._settings, strategy=strategy).flow
@@ -274,7 +282,7 @@ async def test_dependents_start_from_the_merged_remote_base(
         _RUNNER,
         project_root,
         settings.repo,
-        FetchedBaseRefs(Git(_RUNNER), project_root, settings.repo.remote),
+        _fetched(settings, project_root),
     ).build("T-2", "Use the retries")
 
     assert delivered
@@ -459,7 +467,7 @@ async def test_a_task_root_starts_from_the_remote_base_as_it_is_now(
         _RUNNER,
         project_root,
         settings.repo,
-        FetchedBaseRefs(Git(_RUNNER), project_root, settings.repo.remote),
+        _fetched(settings, project_root),
     )
     await builder.build("T-1", "Before the push")
 
@@ -486,10 +494,10 @@ async def test_a_task_root_is_not_built_from_a_stale_base_when_the_remote_cannot
         _RUNNER,
         project_root,
         settings.repo,
-        FetchedBaseRefs(Git(_RUNNER), project_root, settings.repo.remote),
+        _fetched(settings, project_root),
     )
 
-    with pytest.raises(CommandFailed):
+    with pytest.raises(BaseFetchFailed):
         await builder.build("T-1", "Offline")
 
     assert not task_root(project_root, "T-1").exists()

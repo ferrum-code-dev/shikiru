@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from shikiru.domain.events import Event, EventKind
-from shikiru.domain.faults import open_fault_streaks
+from shikiru.domain.faults import next_backoff, open_fault_streaks
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -68,3 +68,18 @@ def test_a_streak_keeps_its_first_sighting_and_adds_up_its_repeats() -> None:
     assert streak.first_seen == START + timedelta(minutes=1)
     assert streak.last_seen == START + timedelta(minutes=5)
     assert streak.repeat == 4
+
+
+@pytest.mark.parametrize(
+    ("previous", "expected"),
+    [(0.0, 2.0), (2.0, 4.0), (32.0, 60.0), (60.0, 60.0), (1e308, 60.0)],
+    ids=[
+        "first failure",
+        "doubles",
+        "capped when doubling passes it",
+        "stays capped",
+        "no overflow",
+    ],
+)
+def test_the_retry_delay_doubles_up_to_its_cap(previous: float, expected: float) -> None:
+    assert next_backoff(previous, initial=2.0, maximum=60.0) == expected

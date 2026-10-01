@@ -44,6 +44,9 @@ integration_wait = 1800
 pr_wait = 604800                                # an open PR unmerged this long escalates
 helper = 300                                    # maximum duration for helper turns
 
+[orchestration.network]                         # remote calls of integration = "pr"
+fetch_timeout_seconds = 30                      # a base fetch (task root build, merged-base check)
+
 [agents.claude]                                 # table name = plugin entry point
 [agents.codex]
 

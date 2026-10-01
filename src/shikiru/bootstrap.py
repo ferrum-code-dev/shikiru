@@ -528,7 +528,12 @@ def build_engine(
         logger=logger,
     )
     git = Git(resolved_runner)
-    fetched_bases = FetchedBaseRefs(git, project_root, resolved_settings.repo.remote)
+    fetched_bases = FetchedBaseRefs(
+        git,
+        project_root,
+        resolved_settings.repo.remote,
+        fetch_timeout=resolved_settings.orchestration.network.fetch_timeout_seconds,
+    )
     roots = TaskRootBuilder(
         git,
         project_root,
@@ -679,6 +684,7 @@ def build_engine(
         on_dependency_cancelled=DependencyEscalator(writer, escalation_raiser),
         on_dispatch_failure=DispatchFailureEscalator(writer, escalation_raiser),
         titles=titles,
+        faults=fault_reporter,
     )
     lock_path = engine_lock_path(project_root)
     return Engine(
