@@ -65,6 +65,7 @@ imports = "lint-imports"
 types = "basedpyright"
 dead-code = "vulture"
 comments = "python -m tests.support.comment_rule"
+literals = "python -m tests.support.literal_rule"
 test = "pytest -m 'not e2e'"
 e2e = "pytest -m e2e --no-cov -n 0"
 
@@ -75,7 +76,7 @@ sequence = [
 ]
 
 [tool.poe.tasks.check]
-sequence = ["format-check", "lint", "comments", "imports", "types", "dead-code", "test"]
+sequence = ["format-check", "lint", "comments", "literals", "imports", "types", "dead-code", "test"]
 
 [tool.ruff]
 line-length = 100
