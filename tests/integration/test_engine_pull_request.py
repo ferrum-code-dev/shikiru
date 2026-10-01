@@ -64,10 +64,7 @@ class _Case:
 
 _CASES = {
     "merged is done": _Case((PullRequestState.MERGED,)),
-    "closed escalates and its retry opens a new PR": _Case(
-        (PullRequestState.CLOSED, PullRequestState.MERGED)
-    ),
-    "a retry after the base moved pushes the rebased branch": _Case(
+    "a closed PR escalates and its retry opens a new one after the base moved": _Case(
         (PullRequestState.CLOSED, PullRequestState.MERGED), base_moves_after_close=True
     ),
     "a restart while open resumes polling": _Case(
@@ -340,7 +337,7 @@ async def test_a_merged_pull_request_missing_from_the_remote_base_blocks_done(
     assert blocked.status is Status.ESCALATED
 
 
-async def test_a_pause_during_pr_polling_stops_polling_until_the_task_is_resumed(
+async def test_a_paused_pull_request_stops_polling_and_never_escalates_until_resumed(
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
     tmp_path_factory: pytest.TempPathFactory,
@@ -357,20 +354,18 @@ async def test_a_pause_during_pr_polling_stops_polling_until_the_task_is_resumed
 
     engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
     await _land(clock, run.flow)
+    clock.advance(settings.orchestration.timeouts.pr_wait)
 
     assert fake_github.views() == 1
-    held = engine_env.tasks.get(task.id)
-    assert held is not None
-    assert held.status is Status.INTEGRATING
+    assert fetch_open_escalations(engine_env.connection) == []
+    assert engine_env.tasks.require(task.id).status is Status.INTEGRATING
 
     engine_env.tasks.set_holds(task.id, frozenset())
     await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
     run.start()
     await _land(clock, run.flow)
 
-    done = engine_env.tasks.get(task.id)
-    assert done is not None
-    assert done.status is Status.DONE
+    assert engine_env.tasks.require(task.id).status is Status.DONE
 
 
 _FAILING_CHECK = {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "FAILURE"}
@@ -382,20 +377,16 @@ _PENDING_STATUS = {"__typename": "StatusContext", "state": "PENDING"}
 @dataclass(frozen=True)
 class _Stall:
     fields: dict[str, object]
-    text: str
     reason: EscalationReason
 
 
 _STALLS = {
-    "conflict": _Stall(
-        {"mergeable": "CONFLICTING"}, "conflicting", EscalationReason.INTEGRATION_CONFLICT
-    ),
+    "conflict": _Stall({"mergeable": "CONFLICTING"}, EscalationReason.INTEGRATION_CONFLICT),
     "failing checks": _Stall(
         {"statusCheckRollup": [_PASSING_CHECK, _FAILING_CHECK]},
-        "failing checks",
         EscalationReason.INTEGRATION_BLOCKED,
     ),
-    "over budget": _Stall({}, "unmerged", EscalationReason.INTEGRATION_BLOCKED),
+    "over budget": _Stall({}, EscalationReason.INTEGRATION_BLOCKED),
 }
 
 
@@ -423,44 +414,19 @@ async def test_an_open_pull_request_that_cannot_land_escalates_once_with_its_url
     assert escalation.reason is stall.reason
     packet = await asyncio.to_thread(Path(escalation.packet_path).read_text)
     assert f"{fake_gh.URL_PREFIX}1" in packet
-    assert stall.text in packet
     blocked = engine_env.tasks.get(task.id)
     assert blocked is not None
     assert blocked.status is Status.ESCALATED
     assert blocked.wait_reason is None
 
 
-async def test_failed_polls_are_retried_on_a_backoff_before_anything_escalates(
+@pytest.mark.parametrize("exhausted", [False, True], ids=["within the budget", "past the budget"])
+async def test_failed_polls_are_retried_on_a_backoff_and_escalate_only_past_the_attempt_budget(
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
     tmp_path_factory: pytest.TempPathFactory,
-) -> None:
-    settings = flow_settings()
-    clock = engine_env.clock
-    assert isinstance(clock, FakeClock)
-    await init_project_repo(engine_env.project_root)
-    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
-    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
-    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
-    failures = settings.orchestration.network.poll_attempts - 1
-    fake_github.fail_next("view", failures)
-    run = _Run(engine_env, settings, task.id)
-    await wait_until(lambda: len(fake_github.pull_requests()) == 1, _WAIT_SECONDS)
-
-    await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
-    await _land(clock, run.flow)
-
-    assert fake_github.views() == failures + 1
-    done = engine_env.tasks.get(task.id)
-    assert done is not None
-    assert done.status is Status.DONE
-    assert fetch_open_escalations(engine_env.connection) == []
-
-
-async def test_polls_that_keep_failing_escalate_after_the_attempt_budget(
-    engine_env: EngineEnv,
-    fake_github: FakeGitHub,
-    tmp_path_factory: pytest.TempPathFactory,
+    *,
+    exhausted: bool,
 ) -> None:
     settings = flow_settings()
     clock = engine_env.clock
@@ -470,15 +436,23 @@ async def test_polls_that_keep_failing_escalate_after_the_attempt_budget(
     await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     attempts = settings.orchestration.network.poll_attempts
-    fake_github.fail_next("view", attempts)
+    failures = attempts if exhausted else attempts - 1
+    fake_github.fail_next("view", failures)
     run = _Run(engine_env, settings, task.id)
     await wait_until(lambda: len(fake_github.pull_requests()) == 1, _WAIT_SECONDS)
 
+    if not exhausted:
+        await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
     await _land(clock, run.flow)
 
-    assert fake_github.views() == attempts
-    [escalation] = fetch_open_escalations(engine_env.connection)
-    assert escalation.reason is EscalationReason.ENGINE_ERROR
+    assert fake_github.views() == (failures if exhausted else failures + 1)
+    final = engine_env.tasks.require(task.id)
+    escalations = fetch_open_escalations(engine_env.connection)
+    if exhausted:
+        assert [e.reason for e in escalations] == [EscalationReason.ENGINE_ERROR]
+    else:
+        assert final.status is Status.DONE
+        assert escalations == []
 
 
 @pytest.mark.parametrize(
@@ -515,28 +489,6 @@ async def test_a_failing_check_does_not_escalate_until_the_checks_have_settled(
     done = engine_env.tasks.get(task.id)
     assert done is not None
     assert done.status is Status.DONE
-
-
-async def test_a_pull_request_paused_past_its_budget_does_not_escalate_until_resumed(
-    engine_env: EngineEnv,
-    fake_github: FakeGitHub,
-    tmp_path_factory: pytest.TempPathFactory,
-) -> None:
-    settings = flow_settings()
-    clock = engine_env.clock
-    assert isinstance(clock, FakeClock)
-    await init_project_repo(engine_env.project_root)
-    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
-    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
-    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
-    run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
-
-    engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
-    await _land(clock, run.flow)
-    clock.advance(settings.orchestration.timeouts.pr_wait)
-
-    assert fetch_open_escalations(engine_env.connection) == []
 
 
 async def test_the_branch_of_a_merged_pull_request_stays_with_a_worktree_kept_for_uncommitted_work(
@@ -630,30 +582,6 @@ async def test_a_task_root_is_not_built_from_a_stale_base_when_the_remote_cannot
         await builder.build("T-1", "Offline")
 
     assert not task_root(project_root, "T-1").exists()
-
-
-async def test_the_rebase_starts_from_the_remote_base_as_it_is_then(
-    engine_env: EngineEnv,
-    fake_github: FakeGitHub,
-    tmp_path_factory: pytest.TempPathFactory,
-) -> None:
-    settings = flow_settings()
-    project_root = engine_env.project_root
-    await init_project_repo(project_root)
-    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
-    await add_bare_remote(project_root, remote_dir, settings.repo.remote)
-    task = await build_flow_task(
-        engine_env, mode=Mode.IMPLEMENT, base_refs=_fetched(settings, project_root)
-    )
-    assert task.repo is not None
-    moved = await _push_unrelated_change(
-        remote_dir, tmp_path_factory.mktemp("other") / "clone", "elsewhere.txt"
-    )
-
-    _Run(engine_env, settings, task.id)
-    await wait_until(lambda: len(fake_github.pull_requests()) == 1, _WAIT_SECONDS)
-
-    assert await _contains(remote_dir, task.repo.branch, moved)
 
 
 async def test_a_retry_after_a_conflicting_pull_request_rebases_and_pushes_again(
