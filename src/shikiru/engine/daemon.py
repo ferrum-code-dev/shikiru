@@ -175,6 +175,7 @@ class Engine:
         self._loop_guard = loop_guard
         self._reconciled = False
         self._stop_reason: str | None = None
+        self._stopped_event: Event | None = None
         self._reconciler = reconciler
         self._notifications = notifications
         self._notification_feed = notification_feed
@@ -278,28 +279,48 @@ class Engine:
         return changed
 
     async def _shutdown(self) -> None:
+        self._stopped_event = None
+        failures: list[Exception] = []
         try:
-            reason = self._stop_reason
-            stopped = self._events.append(
-                EventKind.ENGINE_STOPPED,
-                message="engine stopped" if reason is None else f"engine stopped: {reason}",
-                data={} if reason is None else {STOP_REASON_KEY: reason},
-            )
-            await self._notifications.shutdown()
-            self._notification_feed.persist()
-            await self._pull_request_closing.shutdown()
-            if reason is not None:
-                await self._notifications.deliver_final(
-                    stopped, self._settings.orchestration.faults.stop_notify_seconds
-                )
-            await self._scheduler.shutdown()
-            await self._task_supervisor.shutdown()
+            for step in (
+                self._record_stop,
+                self._notifications.shutdown,
+                self._persist_notification_cursor,
+                self._pull_request_closing.shutdown,
+                self._deliver_stop,
+                self._scheduler.shutdown,
+                self._task_supervisor.shutdown,
+            ):
+                try:
+                    await step()
+                except Exception as error:
+                    self._logger.exception("engine shutdown step failed")
+                    failures.append(error)
         finally:
             try:
                 self._lock.release()
             finally:
                 self._close_logging()
                 self._close_state()
+        if failures:
+            raise failures[0]
+
+    async def _record_stop(self) -> None:
+        reason = self._stop_reason
+        self._stopped_event = self._events.append(
+            EventKind.ENGINE_STOPPED,
+            message="engine stopped" if reason is None else f"engine stopped: {reason}",
+            data={} if reason is None else {STOP_REASON_KEY: reason},
+        )
+
+    async def _persist_notification_cursor(self) -> None:
+        self._notification_feed.persist()
+
+    async def _deliver_stop(self) -> None:
+        if self._stop_reason is not None and self._stopped_event is not None:
+            await self._notifications.deliver_final(
+                self._stopped_event, self._settings.orchestration.faults.stop_notify_seconds
+            )
 
     def _close_logging(self) -> None:
         handler = self._log_handler

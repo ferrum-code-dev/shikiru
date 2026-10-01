@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import logging
 import shlex
+import signal
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -23,11 +24,11 @@ from shikiru.engine.daemon import EngineLock
 from shikiru.engine.tick_guard import EngineFaultLimitError
 from shikiru.engine.turn_processes import read_turn_pid, turn_pid_path
 from shikiru.errors import CommandFailed, CommandTimeoutError
-from shikiru.paths import run_dir, task_root
+from shikiru.paths import engine_lock_path, run_dir, task_root
 from shikiru.private import make_private_dir
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue, CommandStatus
-from shikiru.store.database import Database
+from shikiru.store.database import Database, OperationalDatabaseError
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
@@ -518,6 +519,28 @@ async def test_a_database_error_persisting_the_notification_cursor_does_not_stop
         harness.connection.execute("ALTER TABLE cursor_away RENAME TO notification_cursor")
         await harness.until(lambda: EventKind.ENGINE_RECOVERED in harness.kinds())
         assert not harness.task.done()
+
+
+async def test_a_database_error_at_shutdown_still_ends_the_running_turn_and_releases_the_lock(
+    tmp_path: Path, tmux_server: TmuxServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_script(monkeypatch, [{"kind": "stall"}])
+    async with _engine(tmp_path, tmux_server) as harness:
+        task_id = await _submit_running(harness)
+        pid_path = turn_pid_path(run_dir(tmp_path, task_id), Role.IMPLEMENTER)
+        await wait_until(pid_path.exists, _WAIT_SECONDS)
+        identity = read_turn_pid(pid_path)
+        harness.connection.execute("ALTER TABLE events RENAME TO events_away")
+        harness.engine.request_stop()
+        try:
+            await harness.until(harness.task.done)
+
+            with pytest.raises(OperationalDatabaseError):
+                harness.task.result()
+            assert not SubprocessRunner().group_is_running(identity.pid)
+            assert EngineLock.pid_if_running(engine_lock_path(tmp_path)) is None
+        finally:
+            SubprocessRunner().signal_group(identity, signal.SIGKILL)
 
 
 @pytest.mark.usefixtures("fake_github")
