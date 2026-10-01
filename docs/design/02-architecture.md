@@ -68,7 +68,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | Package | Responsibility | Key types |
 |---|---|---|
 | `errors` | Error hierarchy with exit codes | `ShikiruError`, `ConfigError`, … |
-| `process` | The only subprocess gateway: argv lists, timeouts, typed errors from `errors`, async; `spawn` for long-running processes with stdin closed, line-streamed stdout and terminate; `run` can own a process group (hooks) or stop gracefully on cancel (mutating git) | `SubprocessRunner`, `CommandFailed` |
+| `process` | The only subprocess gateway: argv lists, timeouts, typed errors from `errors`, async; `spawn` for long-running processes with stdin closed, line-streamed stdout and terminate; `run` can own a process group or stop gracefully on cancel; mutating git calls do both, so a cancelled call leaves neither a lock nor a running hook | `SubprocessRunner`, `CommandFailed` |
 | `clock` | Injectable time for every timer | `Clock`, `SystemClock` |
 | `config` | Merge defaults < project file < `--set`, validate core settings. Plugin `options` stay untyped here | `Settings`, `load_settings()` |
 | `agents.contracts` | Agent plugin contract (04 §1) | `Agent`, `Turn`, `TurnSpec`, `HeadlessAgent`, signals, `Usage`, `QuotaWindow`, `Rung` |
