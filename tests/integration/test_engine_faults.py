@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 import shlex
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -17,6 +18,7 @@ from shikiru.domain.commands import Prioritize, Resume, Submit
 from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
+from shikiru.engine.cosmetic_decorator import COSMETIC_LOGGER_NAME
 from shikiru.engine.tick_guard import EngineFaultLimitError
 from shikiru.engine.turn_processes import turn_pid_path
 from shikiru.errors import CommandFailed, CommandTimeoutError
@@ -44,17 +46,23 @@ from tests.support.flow import init_project_repo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
     from pathlib import Path
+    from typing import Any
 
     from shikiru.domain.events import Event
     from shikiru.domain.tasks import Task
     from shikiru.engine.daemon import Engine
+    from shikiru.process import ProcessResult
     from tests.support.github import FakeGitHub
     from tests.support.tmux import TmuxServer
 
 _TARGET = exact_target(session_name("test"))
 _WAIT_SECONDS = 15
+_USER_OPTION_PREFIX = "@shk_"
+_RENAME_WINDOW = "rename-window"
+_PANE_TITLE_FLAG = "-T"
+_TMUX_TIMEOUT_SECONDS = 5.0
 
 
 class _FlakyTmux(Tmux):
@@ -79,6 +87,26 @@ class _BadWindowTmux(Tmux):
         if target == self.bad_window:
             raise CommandFailed(("tmux",), 1, "can't find window")
         return await super().target_exists(target)
+
+
+class _RecordedLogs(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+class _DecorationTimeoutRunner(SubprocessRunner):
+    async def run(self, argv: Sequence[str], **kwargs: Any) -> ProcessResult:
+        if _RENAME_WINDOW in argv or _PANE_TITLE_FLAG in argv or _is_user_option(argv):
+            raise CommandTimeoutError(argv, _TMUX_TIMEOUT_SECONDS)
+        return await super().run(argv, **kwargs)
+
+
+def _is_user_option(argv: Sequence[str]) -> bool:
+    return any(arg.startswith(_USER_OPTION_PREFIX) for arg in argv)
 
 
 class _Harness:
@@ -396,6 +424,34 @@ async def test_no_flow_starts_beside_an_orphan_the_start_could_not_end(
         unreadable_record.rmdir()
 
         await harness.until(lambda: harness.runs.get_live("T-1", Role.IMPLEMENTER) is not None)
+
+
+async def test_a_tmux_decoration_that_times_out_never_kills_or_escalates_a_turn(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_script(monkeypatch, [{"kind": "stall"}])
+    logs = _RecordedLogs()
+    tmux = Tmux(_DecorationTimeoutRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
+    cosmetic_logger = logging.getLogger(COSMETIC_LOGGER_NAME)
+    cosmetic_logger.addHandler(logs)
+    try:
+        async with _engine(tmp_path, tmux_server, tmux_override=tmux) as harness:
+            task_id = await _submit_running(harness)
+            await _advance(harness, 120)
+
+            task = harness.tasks.get(task_id)
+            assert task is not None
+            assert task.status is Status.RUNNING
+            assert harness.runs.get_live(task_id, Role.IMPLEMENTER) is not None
+            assert EventKind.ESCALATION not in harness.kinds()
+            assert EventKind.ENGINE_FAULT not in harness.kinds()
+            failed = [record.args for record in logs.records]
+            assert failed
+            assert len(failed) == len(set(failed))
+    finally:
+        cosmetic_logger.removeHandler(logs)
 
 
 async def test_one_bad_task_window_does_not_starve_other_tasks_and_is_renotified_while_it_lasts(
