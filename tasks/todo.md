@@ -106,7 +106,16 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 74f: Operator-held tasks and task ids survive tmux loss and reuse
 - [x] Task 74g: Lint, docs, smoke and evidence hygiene
 - [x] Task 74i: Test-value audit against AGENTS.md
-- [ ] Task 74h: Phase 7c verification and release evidence
+- [ ] Task 74h: Phase 7c verification and release evidence (last AC closes with Task 74p)
+
+## Phase 7d — Release-blocker remediation (2026-10-01)
+- [ ] Task 74j: Integration requires the task branch
+- [ ] Task 74k: Graceful shutdown on SIGTERM and SIGINT
+- [ ] Task 74l: Notifications survive a restart; command handler errors are retried
+- [ ] Task 74m: Regression power of the Codex sandbox and reconcile fixes
+- [ ] Task 74n: Documentation and evidence corrections
+- [ ] Task 74o: Test-value audit of the older suite
+- [ ] Task 74p: Phase 7d verification, re-review and release evidence
 
 ## Phase 8 — Operator Workspace
 

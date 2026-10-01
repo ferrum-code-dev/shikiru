@@ -662,7 +662,56 @@ Refs: 07 §5.
 - [x] `uv run poe check` passes in a normal and a `TERM=dumb` environment, plus repeated suite runs. Met at `e78c057`: 928 passed, 15 skipped, 89.93% in both environments, and 5 further plain runs without a failure.
 - [x] `poe e2e` E1–E6 pass in one invocation on the resulting revision with projects outside `$TMPDIR`; measured per-scenario durations and every attempt are recorded and replace the estimates in 07 §5's table and `docs/e2e-results.md`; live model-change checks and the macOS smoke pass at the final commit. Met at `e78c057` on 2026-10-01: 7 passed in 21 m 03 s, every scenario at its first attempt, $1.2244 agent-estimated; Codex and Claude live model-change checks and the Codex worktree-commit check passed; the macOS smoke passed (the evidence commit changes only documentation). Linux stays unverified.
 - [x] A new `docs/release-readiness-*.md` restates each reviewer finding, the design-agreement claim and the release claim honestly; Task 59 is restated against it. `docs/release-readiness-2026-10-01-phase7c.md`.
-- [ ] A final independent read-only review (three reviewers as in Phase 7b) reports no blocking finding for the claimed use. Not done by Task 74h; the orchestrator runs it.
+- [ ] A final independent read-only review (three reviewers as in Phase 7b) reports no blocking finding for the claimed use. Run on `a371b41` on 2026-10-01: it confirmed F01–F23 fixed or decided and found a blocker (a task reaches `done` without integrating when the agent leaves its branch) plus the items of Phase 7d. Task 74h is ticked when Task 74p's re-review reports no blocker.
+
+
+## Phase 7d — Release-blocker remediation (2026-10-01)
+
+Source: the three independent reviews of `a371b41` (finding traceability with fix-reversion mutations, a fresh defect hunt against the five invariants, conventions/tests/evidence). Owner decision: fix the blockers and the test-power gaps, restate the documentation, record the remaining minor defects as known limitations in the evidence document instead of fixing them. Each task writes its failing test first against the real boundary. Phase 8 starts after Task 74p.
+
+### Task 74j: Integration requires the task branch
+Refs: 03 §6, invariant 3. Reviewer reproducer: an agent runs `git switch -c feature/x`, commits; facts and acceptance read `HEAD`, the merge uses `shikiru/T-n`, so `LocalMerge.merge` returns no commits and the task is `done` with the work reachable from no integrated branch (detached `HEAD` is worse: cleanup removes the worktree).
+- [ ] Before facts collection, acceptance, rebase and integration (local merge and PR mode), the engine verifies that the worktree `HEAD` is `refs/heads/<repo.branch>`. A different or detached `HEAD` never reaches `done`: the task escalates (or the agent is nudged first, whichever 03 prescribes for a recoverable agent action) naming the actual branch and the commits at risk, and cleanup never deletes the task branch or the worktree while commits exist outside it.
+- [ ] 03 §6 states the rule; the agent prompt tells the agent to stay on the task branch.
+- Tests: integration with real git and the fake agent: switch to another branch and commit, detach `HEAD`: the task does not reach `done`, nothing is deleted, the commits remain reachable and an escalation is raised; a task that stays on its branch is unaffected; the same in PR mode with the fake `gh`.
+
+### Task 74k: Graceful shutdown on SIGTERM and SIGINT
+Refs: 03 §7, 06 §5.8. Reviewer finding: `grep add_signal_handler src` finds nothing, so a plain `kill`, `systemctl stop` or `launchctl bootout` skips `Engine._shutdown`; turn processes run in their own sessions and keep editing worktrees and spending money until the next start.
+- [ ] The engine process handles SIGTERM and SIGINT by running the same graceful shutdown as `shikiru stop` (stop turns, flush state, release the lock), within a bounded time from `defaults.toml`; a second signal or the bound ends the process after killing the turn process groups.
+- [ ] 06 §5.8's systemd and launchd recipes are accurate for this behaviour; `shikiru stop` acknowledges only after the engine has released its lock (or documents and bounds the wait), so `stop && start` is safe.
+- Tests: integration with a real engine process and the fake agent: SIGTERM while a turn runs leaves no live turn process, no engine lock and consistent state; restart resumes; `stop && start` leaves an engine running.
+
+### Task 74l: Notifications survive a restart; command handler errors are retried
+Refs: 06 §5.7, 03 §8, 74c. Reviewer findings: the last-notified event id and the queue are in memory, so an escalation raised just before a crash or kill is never announced; the command loop rejects every non-`ShikiruError` exception permanently, including a transient `sqlite3.OperationalError`.
+- [ ] The notification cursor is durable (a stored event id or an equivalent derivation); after a restart every escalation or fault event not yet delivered is notified exactly once more, informational events are not replayed, and the existing priority and 30 s hook bounds hold.
+- [ ] A command handler failing with an environmental database error is retried by the fault barrier and not marked rejected; only domain errors reject.
+- Tests: integration: kill the engine between the escalation commit and delivery, restart, the hook receives it once; a locked database during a handler leaves the command pending and it applies afterwards.
+
+### Task 74m: Regression power of the Codex sandbox and reconcile fixes
+Refs: 74b, 74c; reviewer mutations. Mutating `_git_dirs_for_turn` to return nothing leaves all 17 offline Codex tests green; removing the `_orphans_ended` guard leaves all integration tests green and the test meant to protect it is vacuous.
+- [ ] An offline test builds a real linked `git worktree` and asserts the Codex argv for a first and a resumed turn carries its gitdir, the common directory and the run directory as writable roots; the test-only `_worktree_git_dirs` fallback in production code is removed or justified.
+- [ ] A test that fails when `end_orphans` runs a second time (a reconcile retried after a fault must not end a turn that started after the first attempt); the vacuous test is replaced.
+- [ ] A turn whose leader exits while a descendant still holds the stdout pipe ends within the bounded drain time, not the stall timeout, or the limitation is written into 03 §7 with the measured bound (decide by cost: the simplest fix wins).
+- Tests: mutation check recorded in the report for each (revert the code, see the new test fail).
+
+### Task 74n: Documentation and evidence corrections
+Refs: reviewer findings of the conventions review.
+- [ ] 07 §1 states what the code does (SQLite is called synchronously from the loop with a 5 s busy timeout) or the code moves blocking work to `to_thread`; the simplest consistent choice, with the reasoning. 05 §1's constants table lists the real notify timeout (`notify.timeout_seconds`); 02 §51 names `run_dashboard`; 03 §4.2's Linux claim says "designed for, verified on macOS only".
+- [ ] tmux ≥ 3.4 and git ≥ 2.45: `doctor` compares the installed versions with the documented floors and fails below them, or the README and 07 §1 restate the floors as "verified on tmux 3.7c, git 2.55.0" (prefer the doctor check if it is a few lines).
+- [ ] `docs/release-readiness-2026-10-01-phase7c.md` and `docs/test-audit-2026-10-01.md` no longer cite the dangling `05c11fb` and no longer call the test inflation "fixed" (974 to 943 against 779 before; the older files were not audited); F10 counters, F21, F22 and the reviewer-found defects not fixed in Phase 7d are listed as limitations.
+- [ ] Duplicated or config-worthy constants the reviewer named (`DOCTOR_TIMEOUT_SECONDS` x3, command poll 0.25 x2, title length 60 x2, the 30 s git and 60 s cache-copy timeouts) move to `defaults.toml` or one shared constant; the partial cache copy is removed on a failed copy so a retry never accepts it.
+- Tests: as applicable; `poe check` and `poe comments` green.
+
+### Task 74o: Test-value audit of the older suite
+Refs: AGENTS.md (Test value), 07 §3. Reviewer sample: `test_prompts_renderer.py` has 47 tests (9 templates x 3 payloads re-test `domain.fencing.fence`, 9 test Jinja `StrictUndefined`, 9 enumerate `PromptName`), `test_ui_glyphs.py` 42 (35 one per glyph), about 41 tests of test tooling, three duplicated `_StubServices` stubs, two duplicated fake-distribution classes, a hand-rolled "advance FakeClock while polling" closure about 16 times, wording asserts through `match=`, an index-name assertion, a monkeypatched own function.
+- [ ] The audit of Task 74i is extended to the files it did not cover: every file above is reduced to one table per rule, framework and enumeration tests are removed, the duplicated stubs and the FakeClock polling closure become shared helpers under `tests/support`, wording and index-name assertions assert behaviour instead, and `monkeypatch.setattr` of an own function is replaced by the real boundary or removed.
+- [ ] A test is removed only when another test still fails for the same reverted fix (mutation or named covering test); coverage stays at least 80% and `poe check` is green. The result (collected tests and coverage before and after) extends `docs/test-audit-2026-10-01.md`.
+
+### Task 74p: Phase 7d verification, re-review and release evidence
+Refs: 07 §5.
+- [ ] `uv run poe check` passes in a normal and a `TERM=dumb` environment and in repeated runs; the real-agent E2E E1–E6 pass in one invocation on the resulting revision (projects outside `$TMPDIR`), including a scenario or live check for Task 74j when it can be exercised with the cheapest rungs; the macOS smoke passes at the final commit; measured durations are recorded in `docs/e2e-results.md` and 07 §5.
+- [ ] A new `docs/release-readiness-*-phase7d.md` states the release claim, the closed findings and the known limitations (the reviewer-found minor defects: the unbounded-growth items, `shikiru stop`/`_prepare` ordering window, cosmetic tmux timeouts escalating, fixed git and cache timeouts if not moved, non-`to_thread` blocking, single-host Codex, no LICENSE/CI/packaging metadata, Linux). Task 59 is restated against it.
+- [ ] A final independent read-only review (three reviewers, as in Phase 7b and 7c) reports no blocking finding for the claimed use; then Task 74h's last AC is ticked.
 
 
 ## Phase 8 — Operator Workspace
