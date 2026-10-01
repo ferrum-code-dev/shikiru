@@ -341,6 +341,7 @@ async def test_one_bad_task_window_does_not_starve_other_tasks_and_is_renotified
         )
         await harness.until(lambda: len(faults()) == 1)
         await _advance(harness, 310)
+        await harness.until(lambda: len(faults()) >= 2)
 
         assert [fault.task_id for fault in faults()] == [broken, broken]
         assert faults()[1].data["repeat"] > 1

@@ -48,13 +48,15 @@ class _Ticks:
             self.clock.advance(1)
 
 
-def _ticks(connection: Connection, error: Exception) -> tuple[_Ticks, EventLog]:
+def _ticks(
+    connection: Connection, error: Exception, faults: FaultsConfig = _FAULTS
+) -> tuple[_Ticks, EventLog]:
     clock = FakeClock(TASK_CREATED_AT)
     events = EventLog(connection, clock)
     logger = logging.getLogger("tick-guard-test")
-    reporter = FaultReporter(events=events, clock=clock, settings=_FAULTS, logger=logger)
+    reporter = FaultReporter(events=events, clock=clock, settings=faults, logger=logger)
     guard = TickGuard(
-        reporter=reporter, clock=clock, settings=_FAULTS, logger=logger, scope="engine tick"
+        reporter=reporter, clock=clock, settings=faults, logger=logger, scope="engine tick"
     )
     return _Ticks(guard, clock, error), events
 
@@ -99,14 +101,16 @@ async def test_a_successful_tick_resets_the_unexpected_fault_count(connection: C
 
 
 async def test_thousands_of_consecutive_recoverable_faults_never_stop_the_engine(
-    connection: Connection,
+    connection: Connection, caplog: pytest.LogCaptureFixture
 ) -> None:
-    ticks, events = _ticks(connection, _RECOVERABLE)
+    faults = _FAULTS.model_copy(update={"backoff_max_seconds": 1})
+    ticks, events = _ticks(connection, _RECOVERABLE, faults)
 
-    await ticks.run(5000)
+    with caplog.at_level(logging.CRITICAL):
+        await ticks.run(1100)
 
-    assert len(ticks.attempts) > 1100
-    assert len(events.since(0, kinds=[EventKind.ENGINE_FAULT])) <= 5000 // 30 + 1
+    assert len(ticks.attempts) == 1100
+    assert len(events.since(0, kinds=[EventKind.ENGINE_FAULT])) <= 1100 // 30 + 1
 
 
 async def test_a_flapping_fault_is_recorded_at_most_once_per_interval_and_a_new_class_at_once(
