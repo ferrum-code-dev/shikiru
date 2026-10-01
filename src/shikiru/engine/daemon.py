@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Self
 
 import psutil
 
-from shikiru.domain.commands import COMMAND_POLL_SECONDS
+from shikiru.domain.commands import COMMAND_POLL_SECONDS, Stop
 from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.errors import ShikiruError
 from shikiru.private import create_private_file, make_private_dir
@@ -193,12 +193,13 @@ class Engine:
             self._notifications.start()
             self._pull_request_closing.start()
             self._events.append(EventKind.ENGINE_STARTED, message="engine started")
-            await self._tick_guard.attempt(self._prepare)
             next_tick = self._clock.now()
             while not self._task_supervisor.stop_requested:
                 await self._task_supervisor.supervise(self._logger)
                 self._notifications.supervise(self._logger)
                 self._pull_request_closing.supervise(self._logger)
+                if not self._reconciled:
+                    await self._tick_guard.attempt(self._prepare)
                 commands_changed = bool(await self._command_guard.attempt(self._process_commands))
                 if self._task_supervisor.stop_requested:
                     break
@@ -244,6 +245,8 @@ class Engine:
     async def _process_commands(self) -> bool:
         changed = False
         for queued in self._commands.pending():
+            if not self._reconciled and not isinstance(queued.command, Stop):
+                continue
             try:
                 result = await self._handlers.handle(queued.command)
             except ShikiruError as error:

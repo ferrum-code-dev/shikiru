@@ -55,9 +55,11 @@ class Reconciler:
     async def reconcile(self) -> None:
         """Bring a restarted engine back in line with the persisted state (03 §7).
 
-        Pending commands need nothing here: the engine loop processes them as usual. A fault in
-        one step or one task is recorded and never stops the others; orphaned turn processes are
-        ended once per engine start, never after the engine could have started a turn of its own.
+        Pending commands need nothing here: the engine loop processes them once this has
+        completed. A fault in one step or one task is recorded and never stops the others.
+        Ending the orphaned turn processes is the exception: a fault there aborts the reconcile,
+        which is retried before anything starts, so no flow runs beside a live orphan and none
+        ends a turn the engine started itself.
         """
         active = self._tasks.list_active()
         terminal = [
@@ -68,9 +70,8 @@ class Reconciler:
         async with self._faults.isolate("reconcile layout"):
             await self._layout.restore(active)
         if not self._orphans_ended:
+            await self._processes.end_orphans()
             self._orphans_ended = True
-            async with self._faults.isolate("reconcile orphaned turns"):
-                await self._processes.end_orphans()
         for task in terminal:
             async with self._faults.isolate("reconcile cleanup", task_id=task.id):
                 await self._finish_task(task)

@@ -19,7 +19,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
 from shikiru.engine.tick_guard import EngineFaultLimitError
 from shikiru.engine.turn_processes import turn_pid_path
-from shikiru.errors import CommandFailed
+from shikiru.errors import CommandFailed, CommandTimeoutError
 from shikiru.paths import run_dir, task_root
 from shikiru.private import make_private_dir
 from shikiru.process import SubprocessRunner
@@ -324,6 +324,78 @@ async def test_a_retried_reconcile_never_ends_a_turn_that_started_after_it(
         assert task.status is Status.RUNNING
         assert harness.runs.get_live("T-2", Role.IMPLEMENTER) is not None
         assert turn_pid_path(run_dir(tmp_path, "T-2"), Role.IMPLEMENTER).exists()
+
+
+async def _seed_held_running_with_resume(database: Database, clock: FakeClock, _: Path) -> None:
+    connection = database.connect()
+    try:
+        tasks = TaskStore(connection, clock)
+        queue = CommandQueue(connection, clock)
+        queued = queue.append(Submit(title="held", request="held"))
+        assert isinstance(queued.command, Submit)
+        task = tasks.insert_from_submit(queued.command)
+        tasks.apply_transition(
+            task.id,
+            dataclasses.replace(
+                Transition.stay(task, step=Step.IMPLEMENT, status=Status.RUNNING), iteration=1
+            ),
+        )
+        tasks.set_slot(task.id, 1)
+        tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
+        queue.append(Resume(task_id=task.id))
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [CommandFailed(("tmux",), 1, "no server"), CommandTimeoutError(("tmux",), 1.0)],
+    ids=["tmux-failed", "tmux-timeout"],
+)
+async def test_a_pending_resume_waits_for_a_start_that_failed_and_its_turn_survives_the_retry(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    set_script(monkeypatch, [{"kind": "stall"}])
+    async with _engine(
+        tmp_path, tmux_server, flaky=(1, error), seed=_seed_held_running_with_resume
+    ) as harness:
+        await harness.until(lambda: harness.runs.get_live("T-1", Role.IMPLEMENTER) is not None)
+        await _advance(harness, 300)
+
+        task = harness.tasks.get("T-1")
+        assert task is not None
+        assert (task.status, task.status_reason) == (Status.RUNNING, None)
+        assert harness.runs.get_live("T-1", Role.IMPLEMENTER) is not None
+        assert turn_pid_path(run_dir(tmp_path, "T-1"), Role.IMPLEMENTER).exists()
+        assert EventKind.ENGINE_FAULT in harness.kinds()
+
+
+async def test_no_flow_starts_beside_an_orphan_the_start_could_not_end(
+    tmp_path: Path, tmux_server: TmuxServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_script(monkeypatch, [{"kind": "stall"}])
+    unreadable_record = turn_pid_path(run_dir(tmp_path, "T-1"), Role.IMPLEMENTER)
+
+    async def seed(database: Database, clock: FakeClock, project: Path) -> None:
+        await _seed_held_running_with_resume(database, clock, project)
+        connection = database.connect()
+        try:
+            TaskStore(connection, clock).set_holds("T-1", frozenset())
+        finally:
+            connection.close()
+        unreadable_record.mkdir(parents=True)
+
+    async with _engine(tmp_path, tmux_server, seed=seed) as harness:
+        await harness.until(lambda: EventKind.ENGINE_FAULT in harness.kinds())
+        await _advance(harness, 60)
+        assert harness.runs.get_live("T-1", Role.IMPLEMENTER) is None
+
+        unreadable_record.rmdir()
+
+        await harness.until(lambda: harness.runs.get_live("T-1", Role.IMPLEMENTER) is not None)
 
 
 async def test_one_bad_task_window_does_not_starve_other_tasks_and_is_renotified_while_it_lasts(
