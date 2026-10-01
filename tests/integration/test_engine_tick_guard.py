@@ -151,3 +151,31 @@ async def test_only_environmental_faults_are_recoverable(
 
     (fault,) = events.since(0, kinds=[EventKind.ENGINE_FAULT])
     assert fault.data["recoverable"] is recoverable
+
+
+async def test_a_fault_the_database_cannot_record_is_survived_and_recorded_once_it_can(
+    connection: Connection,
+) -> None:
+    ticks, events = _ticks(connection, _RECOVERABLE)
+    connection.execute("ALTER TABLE events RENAME TO events_away")
+
+    await ticks.run(1)
+
+    connection.execute("ALTER TABLE events_away RENAME TO events")
+    await ticks.run(3)
+    assert len(events.since(0, kinds=[EventKind.ENGINE_FAULT])) == 1
+
+
+async def test_a_recovery_the_database_cannot_record_is_recorded_on_the_next_success(
+    connection: Connection,
+) -> None:
+    ticks, events = _ticks(connection, _RECOVERABLE)
+    await ticks.run(1)
+    ticks.error = None
+    connection.execute("ALTER TABLE events RENAME TO events_away")
+
+    await ticks.run(3)
+
+    connection.execute("ALTER TABLE events_away RENAME TO events")
+    await ticks.run(1)
+    assert len(events.since(0, kinds=[EventKind.ENGINE_RECOVERED])) == 1

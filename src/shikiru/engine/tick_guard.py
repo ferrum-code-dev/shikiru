@@ -87,8 +87,8 @@ class TickGuard:
             raise EngineFaultLimitError(message) from error
 
     def _recover(self) -> None:
+        self._reporter.resolve(self._scope)
         if self._streak:
-            self._reporter.resolve(self._scope)
             self._logger.info("%s recovered after %d failed attempts", self._scope, self._streak)
         self._streak = 0
         self._unexpected = 0

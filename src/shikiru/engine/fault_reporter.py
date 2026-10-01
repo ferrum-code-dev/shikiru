@@ -70,17 +70,21 @@ class FaultReporter:
         streak.occurrences += 1
         interval = timedelta(seconds=self._settings.repeat_notify_seconds)
         if streak.recorded_at is None or now - streak.recorded_at >= interval:
-            self._events.append(
-                EventKind.ENGINE_FAULT,
-                task_id=task_id,
-                message=f"{scope} failed: {kind}: {error}",
-                data={
-                    SCOPE_KEY: scope,
-                    ERROR_KEY: kind,
-                    RECOVERABLE_KEY: recoverable,
-                    REPEAT_KEY: streak.occurrences,
-                },
-            )
+            try:
+                self._events.append(
+                    EventKind.ENGINE_FAULT,
+                    task_id=task_id,
+                    message=f"{scope} failed: {kind}: {error}",
+                    data={
+                        SCOPE_KEY: scope,
+                        ERROR_KEY: kind,
+                        RECOVERABLE_KEY: recoverable,
+                        REPEAT_KEY: streak.occurrences,
+                    },
+                )
+            except OperationalDatabaseError:
+                self._logger.exception("could not record the fault of %s", scope)
+                return recoverable
             streak.recorded_at = now
             streak.occurrences = 0
             self._open.add((scope, task_id))
@@ -90,13 +94,17 @@ class FaultReporter:
         """Record an `engine_recovered` event when `scope` failed, was recorded, and now works."""
         if (scope, task_id) not in self._open:
             return
+        try:
+            self._events.append(
+                EventKind.ENGINE_RECOVERED,
+                task_id=task_id,
+                message=f"{scope} recovered",
+                data={SCOPE_KEY: scope},
+            )
+        except OperationalDatabaseError:
+            self._logger.exception("could not record the recovery of %s", scope)
+            return
         self._open.remove((scope, task_id))
-        self._events.append(
-            EventKind.ENGINE_RECOVERED,
-            task_id=task_id,
-            message=f"{scope} recovered",
-            data={SCOPE_KEY: scope},
-        )
 
     @asynccontextmanager
     async def isolate(self, scope: str, *, task_id: str | None = None) -> AsyncGenerator[None]:
