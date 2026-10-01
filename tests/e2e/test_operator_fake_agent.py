@@ -2,12 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import shlex
-import shutil
-import sys
-from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -17,18 +11,25 @@ from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import session_name
 from tests.e2e.budgets import ATTEMPT_BUDGETS
+from tests.support.cli_project import (
+    BASE_BRANCH,
+    CLI_TIMEOUT_SECONDS,
+    PreparedProject,
+    prepare_project,
+    run_cli,
+    tmux_environment,
+)
 from tests.support.factories import CPU_UNCAPPED_PCT
-from tests.support.git_repo import commit_all, init_repo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from tests.support.tmux import TmuxServer
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
 
-CLI_TIMEOUT_SECONDS = 30.0
 TASK_TIMEOUT_SECONDS = ATTEMPT_BUDGETS["fake"].total_seconds()
-BASE_BRANCH = "main"
 TASK_ID = "T-1"
 ACTING_ROLES = ("leader", "implementer")
 TMUX_COMMAND_TIMEOUT_SECONDS = 5.0
@@ -42,62 +43,8 @@ FAKE_OVERRIDES = (
 )
 
 
-FIXTURE_NAME = "sample-project"
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedProject:
-    root: Path
-    initial_sha: str
-
-
-async def _prepare_project(tmp_path: Path) -> PreparedProject:
-    source = Path(__file__).parents[1] / "fixtures" / FIXTURE_NAME
-    root = tmp_path / "project"
-    shutil.copytree(source, root)
-    runner = SubprocessRunner()
-    await init_repo(runner, root, initial_branch=BASE_BRANCH)
-    await commit_all(runner, root, "fixture")
-    result = await runner.run(
-        ["git", "rev-parse", "HEAD"], timeout=CLI_TIMEOUT_SECONDS, cwd=root, check=True
-    )
-    return PreparedProject(root, result.stdout.strip())
-
-
-def _tmux_environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
-    tmux_binary = shutil.which("tmux")
-    assert tmux_binary is not None
-    shim_dir = project_root.parent / "tmux-bin"
-    shim_dir.mkdir()
-    shim = shim_dir / "tmux"
-    shim.write_text(
-        f"#!/bin/sh\nexec {shlex.quote(tmux_binary)} -L "
-        f'{shlex.quote(tmux_server.socket_name)} "$@"\n'
-    )
-    shim.chmod(0o755)
-    environment = dict(os.environ)
-    environment.pop("TMUX", None)
-    environment.pop("TMUX_PANE", None)
-    environment["NO_COLOR"] = "1"
-    environment[TICK_A1_ENV_VAR] = TICK_A1_ENABLED_VALUE
-    environment["PATH"] = f"{shim_dir}{os.pathsep}{environment['PATH']}"
-    return environment
-
-
-async def _cli(
-    project_root: Path, environment: dict[str, str], *arguments: str
-) -> tuple[int, str, str]:
-    result = await SubprocessRunner().run(
-        [sys.executable, "-m", "shikiru", "--project", str(project_root), *arguments],
-        timeout=CLI_TIMEOUT_SECONDS,
-        cwd=project_root,
-        env=environment,
-    )
-    return result.returncode, result.stdout, result.stderr
-
-
 async def _status(project_root: Path, environment: dict[str, str]) -> dict[str, object] | None:
-    code, stdout, _ = await _cli(project_root, environment, "--json", "status", TASK_ID)
+    code, stdout, _ = await run_cli(project_root, environment, "--json", "status", TASK_ID)
     if code != 0:
         return None
     value = json.loads(stdout)
@@ -118,7 +65,7 @@ def _task_detail(status: dict[str, object]) -> dict[str, object] | None:
 
 
 async def _engine_is_down(project_root: Path, environment: dict[str, str]) -> bool:
-    code, stdout, _ = await _cli(project_root, environment, "--json", "status")
+    code, stdout, _ = await run_cli(project_root, environment, "--json", "status")
     if code != 0:
         return False
     value = json.loads(stdout)
@@ -131,7 +78,7 @@ async def _engine_is_down(project_root: Path, environment: dict[str, str]) -> bo
 async def _cleanup_project(
     project: PreparedProject, environment: dict[str, str], target: str
 ) -> None:
-    code, _, stderr = await _cli(project.root, environment, "stop", "--kill-session")
+    code, _, stderr = await run_cli(project.root, environment, "stop", "--kill-session")
     assert code == 0, stderr
     await wait_until(
         lambda: _engine_is_down(project.root, environment), timeout=CLI_TIMEOUT_SECONDS
@@ -220,8 +167,8 @@ async def _assert_task_window_closed(project: PreparedProject, tmux_server: Tmux
 async def test_fake_agent_operator_flow_completes_and_integrates(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
-    project = await _prepare_project(tmp_path)
-    environment = _tmux_environment(project.root, tmux_server)
+    project = await prepare_project(tmp_path)
+    environment = tmux_environment(project.root, tmux_server)
     await tmux_server.run("set-environment", "-g", TICK_A1_ENV_VAR, TICK_A1_ENABLED_VALUE)
     target = exact_target(session_name(project.root.name))
     overrides = (
@@ -237,16 +184,16 @@ async def test_fake_agent_operator_flow_completes_and_integrates(
     lifecycle_started = False
     session_stopped = False
     try:
-        code, _, stderr = await _cli(project.root, environment, "init", "--yes")
+        code, _, stderr = await run_cli(project.root, environment, "init", "--yes")
         assert code == 0, stderr
 
         lifecycle_started = True
-        code, _, stderr = await _cli(
+        code, _, stderr = await run_cli(
             project.root, environment, *overrides, *FAKE_OVERRIDES, "start"
         )
         assert code == 0, stderr
 
-        code, stdout, stderr = await _cli(
+        code, stdout, stderr = await run_cli(
             project.root,
             environment,
             *overrides,
