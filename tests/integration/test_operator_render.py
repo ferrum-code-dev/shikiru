@@ -9,6 +9,7 @@ from shikiru.domain.steps import Step
 from shikiru.domain.tasks import Mode, Status
 from shikiru.operator.queries import (
     ReportRow,
+    RunDirectoryUsage,
     SlotView,
     StatusView,
     TaskDetail,
@@ -81,6 +82,7 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
         ],
         faults=[],
         oldest_escalation_age_seconds=None,
+        run_directories=RunDirectoryUsage(directories=3, size_bytes=5 * 1024 * 1024),
         quotas={
             "codex": [
                 QuotaWindow(
@@ -106,3 +108,4 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
     assert "API-equivalent" in output
     assert "accept" in output
     assert "Reviewed" in output
+    assert "5.0 MiB" in output

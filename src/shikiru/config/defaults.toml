@@ -83,3 +83,9 @@ engine_log_backups = 3
 [doctor]
 probe_timeout = 180
 probe_stream_tail_lines = 20
+
+[retention]
+interval_seconds = 3600
+finished_task_days = 30
+event_days = 90
+command_days = 30

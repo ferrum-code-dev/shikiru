@@ -17,8 +17,9 @@ from shikiru.domain.runs import Run
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
-from shikiru.paths import run_dir, turns_dir
+from shikiru.paths import run_dir, runs_root, turns_dir
 from shikiru.store.escalations import Escalation
+from shikiru.telemetry.disk import directory_usage
 from shikiru.view_log import ordered_turn_dirs, view_log_path
 from shikiru.workspace.reports import load_turn_report
 
@@ -125,6 +126,13 @@ class UsageView(OperatorView):
     cost_basis: CostBasis | Literal["mixed"]
 
 
+class RunDirectoryUsage(OperatorView):
+    """How many task run directories are kept and the bytes they take."""
+
+    directories: int
+    size_bytes: int
+
+
 class StatusView(OperatorView):
     """The status screen's engine, queue, task, escalation and usage views."""
 
@@ -138,6 +146,7 @@ class StatusView(OperatorView):
     quotas: dict[str, list[QuotaWindow]]
     faults: list[FaultStreak]
     oldest_escalation_age_seconds: float | None
+    run_directories: RunDirectoryUsage
     task: TaskDetail | None = None
 
 
@@ -195,8 +204,14 @@ class OperatorQueries:
             quotas=quotas,
             faults=self.open_faults(),
             oldest_escalation_age_seconds=self.oldest_escalation_age_seconds(),
+            run_directories=self.run_directory_usage(),
             task=task_detail,
         )
+
+    def run_directory_usage(self) -> RunDirectoryUsage:
+        """Return the number and total size of the task run directories under the project."""
+        usage = directory_usage(runs_root(self._project_root))
+        return RunDirectoryUsage(directories=usage.directories, size_bytes=usage.size_bytes)
 
     def open_faults(self) -> list[FaultStreak]:
         """Return the engine fault streaks recorded and not yet recovered."""

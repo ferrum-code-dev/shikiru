@@ -57,10 +57,14 @@ class PullRequestClosing:
         self._queue[task_id] = None
         self._pending.set()
 
+    def has_open(self, task_id: str) -> bool:
+        """Return whether `task_id` has a pull request that was neither closed nor withdrawn."""
+        return self._closer.has_open(task_id)
+
     def restore(self) -> None:
         """Queue every cancelled task whose pull request is still open."""
         for task in self._tasks.list_all():
-            if task.status is Status.CANCELLED and self._closer.has_open(task.id):
+            if task.status is Status.CANCELLED and self.has_open(task.id):
                 self.request(task.id)
 
     def supervise(self, logger: Logger) -> None:

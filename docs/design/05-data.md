@@ -104,6 +104,12 @@ timeout_seconds = 30                            # the hook is killed (with its p
 engine_log_max_bytes = 10485760                 # rotate `logs/engine.log` at this size
 engine_log_backups = 3                          # rotated files kept (`engine.log.1` ...)
 
+[retention]                                     # finished history kept; see §3 Growth
+interval_seconds = 3600                         # one pruning pass per this long
+finished_task_days = 30                         # run directory and events of a done or cancelled task
+event_days = 90                                 # engine-level events (not fault records)
+command_days = 30                               # answered commands
+
 [doctor]
 probe_timeout = 180                             # seconds per `doctor --probe` live turn
 probe_stream_tail_lines = 20                    # stream lines shown when a probe fails
@@ -233,7 +239,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 
 See 02 §5. `report.kind` names the report model of the turn. `helper.json` exists only for rebuilt reports. `view.jsonl` holds one line per signal (`ts`, `turn`, `signal` type, its fields); only the engine appends and only `shikiru view` and peek read it.
 
-**Growth**: the engine log is the only bounded file: it rotates by size (`[logging]`) and keeps a fixed number of rotated files. Run directories (prompts, reports, raw streams, `view.jsonl`, transcripts of every turn) are never pruned, not even for terminal tasks, and grow with the work done. Shikiru has no pruning command by design (YAGNI): the Operator deletes `.shikiru/runs/T-n/` of finished tasks when space matters, after the task is `done` or `cancelled` and its escalation packets are no longer needed.
+**Growth** is bounded by retention (`[retention]`, `engine/retention.py`), run by the engine at most once per `interval_seconds` and never before it has reconciled and answered its pending commands. A task that is `done` or `cancelled` for more than `finished_task_days` loses its run directory (prompts, reports, raw streams, `view.jsonl`, transcripts) and its events, unless something unresolved still needs them: an open escalation (its packet and evidence), a worktree kept for unintegrated work (the task root still exists), a hold, or, for a cancelled task, a pull request still open. Engine-level events older than `event_days` and answered commands older than `command_days` go too; a pending command, the fault records (`engine_fault`, `engine_recovered`: `status` derives the open streaks from them), every event the notification cursor (06 §5.7) has not covered and the newest event and command row always stay, so ids are never reused. Run directories go before their events, so an interrupted pass is repeated. Task rows, escalations and run rows (usage totals) are kept, and the SQLite file does not shrink (freed pages are reused). `shikiru status` reports the number and total size of the run directories. The engine log is bounded separately: it rotates by size (`[logging]`) and keeps a fixed number of rotated files.
 
 ## 4. Report models (`domain.reports`, pydantic → JSON Schema)
 

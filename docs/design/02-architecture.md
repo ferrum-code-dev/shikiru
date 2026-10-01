@@ -145,7 +145,7 @@ src/shikiru/
   bootstrap.py  process.py  clock.py  errors.py  paths.py  private.py  view_log.py  __main__.py
   config/       settings.py loader.py defaults.toml
   domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py runs.py fencing.py faults.py motion.py
-  store/        database.py migrations/ tasks.py runs.py escalations.py quotas.py events.py commands.py reader.py
+  store/        database.py migrations/ tasks.py runs.py escalations.py quotas.py events.py commands.py reader.py retention.py notification_cursor.py
   agents/       contracts.py registry.py
     sdk/        turn.py reset_time.py
     testing/    contract_suite.py resume.py
@@ -153,14 +153,14 @@ src/shikiru/
   tmux/         client.py session.py layout.py decorator.py
   prompts/      renderer.py templates/
   helper/       helper.py models.py
-  ui/           tokens.py age.py glyphs.py status.py strip.py bubbles.py splash.py gauge.py stream.py
-  telemetry/    resources.py docker.py
+  ui/           tokens.py age.py size.py glyphs.py status.py strip.py bubbles.py splash.py gauge.py stream.py
+  telemetry/    resources.py docker.py disk.py
   engine/       daemon.py tick_guard.py fault_reporter.py session_guard.py supervisor.py lifecycle.py scheduler.py dependency.py agents.py sessions.py
                 flow.py step_runner.py turn_loop.py acceptance.py turn_context.py turn_execution.py recovery.py
                 monitor.py turns.py turn_processes.py
                 escalation_filing.py evidence.py escalations.py transitions.py task_facts.py history.py events.py
                 takeover.py integration.py integration_turns.py reconcile.py layout_guard.py titles.py cosmetic_decorator.py
-                notifier.py notification_delivery.py pull_request_closing.py
+                notifier.py notification_delivery.py notification_feed.py pull_request_closing.py root_preparation.py retention.py
     handlers/   base.py tasks.py operator.py escalations.py engine.py
   operator/     queries.py commands.py services.py events.py strip_views.py sessions.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py
   cli/          app.py context.py report.py view.py render.py

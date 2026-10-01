@@ -282,3 +282,17 @@ async def test_event_feed_filters_and_zero_timeout_are_bounded(
 
     assert [event.kind for event in events] == [EventKind.TASK_DONE]
     assert waited == []
+
+
+async def test_status_reports_how_many_run_directories_exist_and_their_size(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    del connection
+    for task_id, content in (("T-1", b"abc"), ("T-2", b"defgh")):
+        evidence = run_dir(tmp_path, task_id) / "turns" / "1" / "evidence.log"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_bytes(content)
+
+    usage = _queries(tmp_path, reader).status().run_directories
+
+    assert (usage.directories, usage.size_bytes) == (2, len(b"abc") + len(b"defgh"))

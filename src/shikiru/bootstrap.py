@@ -60,6 +60,7 @@ from shikiru.engine.notifier import Notifier
 from shikiru.engine.pull_request_closing import PullRequestClosing
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.recovery import TurnRecovery
+from shikiru.engine.retention import Retention
 from shikiru.engine.root_preparation import RootPreparation
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.session_guard import SessionGuard
@@ -105,6 +106,7 @@ from shikiru.store.events import EventLog
 from shikiru.store.notification_cursor import NotificationCursor
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
+from shikiru.store.retention import StateRetention
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.docker import DockerSampler
@@ -754,6 +756,22 @@ def build_engine(
         ),
         notifications=notifications,
         notification_feed=NotificationFeed(events, NotificationCursor(connection), notifications),
+        retention=Retention(
+            store=StateRetention(connection),
+            tasks=tasks,
+            cursor=NotificationCursor(connection),
+            project_root=project_root,
+            has_open_pull_request=pull_request_closing.has_open,
+            clock=resolved_clock,
+            settings=resolved_settings.retention,
+        ),
+        retention_guard=TickGuard(
+            reporter=fault_reporter,
+            clock=resolved_clock,
+            settings=resolved_settings.orchestration.faults,
+            logger=logger,
+            scope="retention",
+        ),
         pull_request_closing=pull_request_closing,
         settings=resolved_settings,
         clock=resolved_clock,

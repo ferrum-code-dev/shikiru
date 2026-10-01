@@ -19,6 +19,7 @@ from shikiru.domain.reports import (
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
 from shikiru.ui.glyphs import GLYPH_ENGINE
+from shikiru.ui.size import format_size
 from shikiru.ui.status import status_visual
 from shikiru.ui.strip import TaskStrip
 from shikiru.ui.tokens import ALERT_COLOR, ENGINE_COLOR, STYLE_BOLD
@@ -67,6 +68,10 @@ def status_renderable(view: StatusView, *, settings: Settings, width: int) -> Re
     if view.oldest_escalation_age_seconds is not None:
         summary.append("  oldest ", STYLE_BOLD)
         summary.append(format_age(view.oldest_escalation_age_seconds))
+    summary.append("  runs ", STYLE_BOLD)
+    summary.append(
+        f"{view.run_directories.directories} dirs, {format_size(view.run_directories.size_bytes)}"
+    )
     blocks: list[RenderableType] = [Panel(summary, title=STATUS_PANEL_TITLE)]
     blocks.append(_tasks_table(view.active_tasks, ACTIVE_TABLE_TITLE, include_priority=False))
     blocks.append(_tasks_table(view.queued_tasks, QUEUE_TABLE_TITLE, include_priority=True))

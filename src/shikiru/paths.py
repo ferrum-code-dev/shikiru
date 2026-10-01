@@ -49,9 +49,14 @@ def engine_log_path(project_root: Path) -> Path:
     return project_state_dir(project_root) / ENGINE_LOG_DIR / ENGINE_LOG_FILENAME
 
 
+def runs_root(project_root: Path) -> Path:
+    """Return the `.shikiru/runs/` directory holding every task's run directory."""
+    return project_state_dir(project_root) / RUNS_DIR_NAME
+
+
 def run_dir(project_root: Path, task_id: str) -> Path:
     """Return `task_id`'s `.shikiru/runs/` directory."""
-    return project_state_dir(project_root) / RUNS_DIR_NAME / task_id
+    return runs_root(project_root) / task_id
 
 
 def turns_dir(project_root: Path, task_id: str) -> Path:

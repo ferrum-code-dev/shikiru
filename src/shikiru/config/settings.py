@@ -210,6 +210,15 @@ class LoggingConfig(ConfigModel):
     engine_log_backups: int = Field(ge=0)
 
 
+class RetentionConfig(ConfigModel):
+    """`[retention]`: how long finished history is kept (05 §2)."""
+
+    interval_seconds: float = Field(gt=0)
+    finished_task_days: float = Field(gt=0)
+    event_days: float = Field(gt=0)
+    command_days: float = Field(gt=0)
+
+
 class Settings(ConfigModel):
     """The full merged and validated Shikiru configuration."""
 
@@ -223,6 +232,7 @@ class Settings(ConfigModel):
     notify: NotifyConfig
     doctor: DoctorConfig
     logging: LoggingConfig
+    retention: RetentionConfig
 
     def ladder_rungs(self) -> list[Rung]:
         """Return every configured rung: leader, implementer, complexity overrides, helper."""

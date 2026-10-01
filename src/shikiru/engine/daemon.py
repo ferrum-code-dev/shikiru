@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from shikiru.engine.notification_feed import NotificationFeed
     from shikiru.engine.pull_request_closing import PullRequestClosing
     from shikiru.engine.reconcile import Reconciler
+    from shikiru.engine.retention import Retention
     from shikiru.engine.scheduler import Scheduler
     from shikiru.engine.session_guard import SessionGuard
     from shikiru.engine.supervisor import TaskSupervisor
@@ -148,6 +149,8 @@ class Engine:
         reconciler: Reconciler,
         notifications: NotificationDelivery,
         notification_feed: NotificationFeed,
+        retention: Retention,
+        retention_guard: TickGuard,
         pull_request_closing: PullRequestClosing,
         settings: Settings,
         clock: Clock,
@@ -172,6 +175,8 @@ class Engine:
         self._reconciler = reconciler
         self._notifications = notifications
         self._notification_feed = notification_feed
+        self._retention = retention
+        self._retention_guard = retention_guard
         self._pull_request_closing = pull_request_closing
         self._settings = settings
         self._clock = clock
@@ -210,6 +215,8 @@ class Engine:
                 if commands_changed or events_changed or now >= next_tick:
                     await self._tick_guard.attempt(self._tick)
                     next_tick = now + timedelta(seconds=self._settings.orchestration.poll_seconds)
+                if self._reconciled:
+                    await self._retention_guard.attempt(self._retention.run_if_due)
                 self._notification_feed.scan()
                 await self._clock.sleep(COMMAND_POLL_SECONDS)
             await self._task_supervisor.supervise(self._logger)
