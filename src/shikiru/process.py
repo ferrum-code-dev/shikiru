@@ -20,7 +20,7 @@ from shikiru.errors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping, Sequence
+    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
     from pathlib import Path
 
 TURN_STOP_GRACE = 10.0
@@ -32,6 +32,16 @@ _STDOUT_READ_SIZE = 65536
 _STDERR_TAIL_CHARS = 4000
 START_TIME_TOLERANCE_SECONDS = 10.0
 _NO_SIGNAL = cast("signal.Signals", 0)
+_SHELL = "/bin/sh"
+_PATH_VARIABLE = "PATH"
+_GATE_SCRIPT = 'IFS= read -r _ || exit 1; exec "$@" </dev/null'
+_GATE_ARG0 = "shikiru-gate"
+_GATE_RELEASE = b"\n"
+_ABORT_GRACE = 0.0
+
+
+def ignore_started(_pid: int) -> None:
+    """Accept the id of a just-spawned process and do nothing with it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,31 +67,20 @@ def _killpg(pgid: int, signum: signal.Signals) -> bool:
     return True
 
 
-async def _end_process(
-    process: asyncio.subprocess.Process, *, grace: float | None, group: bool
-) -> None:
-    """End `process` (its whole group when `group`): SIGTERM and `grace` seconds, then SIGKILL.
+async def _end_process(process: asyncio.subprocess.Process, *, grace: float | None) -> None:
+    """End the process group `process` leads: SIGTERM and `grace` seconds, then SIGKILL.
 
-    Without a `grace` the process is SIGKILLed at once. A group is always SIGKILLed once its
-    leader has exited, so no descendant outlives it.
+    Without a `grace` the group is SIGKILLed at once. It is always SIGKILLed once its leader
+    has exited, so no descendant outlives it.
     """
-
-    def send(signum: signal.Signals) -> None:
-        if group:
-            _killpg(process.pid, signum)
-        else:
-            with suppress(ProcessLookupError):
-                process.send_signal(signum)
-
     if process.returncode is None and grace is not None:
-        send(signal.SIGTERM)
+        _killpg(process.pid, signal.SIGTERM)
         with suppress(TimeoutError):
             await asyncio.wait_for(process.wait(), timeout=grace)
     if process.returncode is None:
-        send(signal.SIGKILL)
+        _killpg(process.pid, signal.SIGKILL)
     await process.wait()
-    if group:
-        send(signal.SIGKILL)
+    _killpg(process.pid, signal.SIGKILL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,7 +195,7 @@ class SpawnedProcess:
     async def stop(self, *, grace: float = TURN_STOP_GRACE) -> None:
         """Signal the process group with SIGTERM, then SIGKILL after `grace`, and reap it."""
         async with self._stop_lock:
-            await _end_process(self._process, grace=grace, group=True)
+            await _end_process(self._process, grace=grace)
             await self.wait()
 
     async def _read_stderr(self) -> None:
@@ -219,14 +218,13 @@ class SubprocessRunner:
         env: Mapping[str, str] | None = None,
         input_text: str | None = None,
         check: bool = False,
-        own_group: bool = False,
         stop_grace: float | None = None,
     ) -> ProcessResult:
         """Run `argv` and return its result, honouring `timeout`.
 
         On expiry or cancellation the process is SIGKILLed, or with a `stop_grace` given SIGTERMed
-        and killed only when it outlasts that many seconds. With `own_group` it leads its own
-        process group, which is ended with it so no descendant outlives the call.
+        and killed only when it outlasts that many seconds. The process leads its own process
+        group, which is ended with it so no descendant (a hook, an MCP server) outlives the call.
         """
         argv_tuple = tuple(argv)
         process = await asyncio.create_subprocess_exec(
@@ -236,7 +234,7 @@ class SubprocessRunner:
             stdin=asyncio.subprocess.PIPE if input_text is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            start_new_session=own_group,
+            start_new_session=True,
         )
         input_bytes = input_text.encode() if input_text is not None else None
         try:
@@ -245,10 +243,10 @@ class SubprocessRunner:
                     process.communicate(input_bytes), timeout=timeout
                 )
             except TimeoutError:
-                await self._end_and_wait(process, grace=stop_grace, group=own_group)
+                await self._end_and_wait(process, grace=stop_grace)
                 raise CommandTimeoutError(argv_tuple, timeout) from None
             except asyncio.CancelledError:
-                await self._end_and_wait(process, grace=stop_grace, group=own_group)
+                await self._end_and_wait(process, grace=stop_grace)
                 raise
         finally:
             self._close_transport(process)
@@ -269,18 +267,45 @@ class SubprocessRunner:
         *,
         cwd: Path | None = None,
         env: Mapping[str, str] | None = None,
+        on_started: Callable[[int], None] = ignore_started,
     ) -> SpawnedProcess:
-        """Start `argv` with stdin closed and stdout and stderr captured as streams."""
-        process = await asyncio.create_subprocess_exec(
-            *tuple(argv),
-            cwd=cwd,
-            env=env,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-        )
-        return SpawnedProcess(process)
+        """Start `argv` with stdin closed and stdout and stderr captured as streams.
+
+        The process leads its own session and does not run `argv` until `on_started` has
+        returned, so the caller can durably record its id first. When the caller dies or
+        `on_started` raises before that, `argv` never runs and the process exits or is killed.
+        """
+        argv_tuple = tuple(argv)
+        search_path = (env if env is not None else os.environ).get(_PATH_VARIABLE)
+        if shutil.which(argv_tuple[0], path=search_path) is None:
+            raise FileNotFoundError(argv_tuple[0])
+        gate_read, gate_write = os.pipe()
+        try:
+            process = await asyncio.create_subprocess_exec(
+                _SHELL,
+                "-c",
+                _GATE_SCRIPT,
+                _GATE_ARG0,
+                *argv_tuple,
+                cwd=cwd,
+                env=env,
+                stdin=gate_read,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+        finally:
+            os.close(gate_read)
+        spawned = SpawnedProcess(process)
+        try:
+            on_started(process.pid)
+            os.write(gate_write, _GATE_RELEASE)
+        except BaseException:
+            await spawned.stop(grace=_ABORT_GRACE)
+            raise
+        finally:
+            os.close(gate_write)
+        return spawned
 
     def spawn_detached(
         self,
@@ -349,10 +374,8 @@ class SubprocessRunner:
             raise ProcessReplacementError(argv_tuple, error) from error
 
     @staticmethod
-    async def _end_and_wait(
-        process: asyncio.subprocess.Process, *, grace: float | None, group: bool
-    ) -> None:
-        cleanup = asyncio.create_task(_end_process(process, grace=grace, group=group))
+    async def _end_and_wait(process: asyncio.subprocess.Process, *, grace: float | None) -> None:
+        cleanup = asyncio.create_task(_end_process(process, grace=grace))
         try:
             await asyncio.shield(cleanup)
         except asyncio.CancelledError:

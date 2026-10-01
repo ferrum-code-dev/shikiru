@@ -7,6 +7,7 @@ import json
 from dataclasses import asdict
 from datetime import datetime
 from enum import Enum
+from functools import partial
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import (
@@ -80,6 +81,10 @@ class TurnMonitor:
         self._refresh_titles = refresh_titles
         self._processes = processes
 
+    def process_recorder(self, run_dir: Path, role: Role) -> Callable[[int], None]:
+        """Return the callback recording each process of `role`'s turn as it is spawned."""
+        return partial(self._processes.record, run_dir, role)
+
     async def run(
         self,
         turn: Turn,
@@ -97,9 +102,7 @@ class TurnMonitor:
         last_signal_at = self._clock.now()
         tool_running = False
         pending_signal = asyncio.create_task(_next_signal(iterator))
-        recorded_pid = turn.pid
         try:
-            self._processes.record(run_dir, role, recorded_pid)
             await self._decorator.set_pane_state(
                 task.panes[role], color=ROLE_COLORS[role], glyph=ROLE_GLYPHS[role]
             )
@@ -117,9 +120,6 @@ class TurnMonitor:
                     seconds_until_stall(last_signal_at, tool_running, now, timeouts),
                 )
                 signal_ready = await self._wait_for_signal(pending_signal, poll_timeout)
-                if turn.pid != recorded_pid:
-                    recorded_pid = turn.pid
-                    self._processes.record(run_dir, role, recorded_pid)
                 if not signal_ready:
                     continue
                 signal = pending_signal.result()

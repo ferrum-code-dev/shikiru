@@ -4,6 +4,8 @@ import asyncio
 import os
 import signal
 import sys
+from contextlib import suppress
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,8 +15,6 @@ from shikiru.process import SubprocessRunner
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from tests.support.process_tree import ProcessTree
 
 pytestmark = pytest.mark.asyncio
@@ -173,3 +173,70 @@ async def test_stop_returns_within_a_bound_and_ends_a_descendant_holding_the_pip
 
     assert [line async for line in process.stdout_lines()] == []
     await wait_until(lambda: not runner.is_running(descendant), _STOP_BOUND_SECONDS)
+
+
+_MARKER_PROGRAM = "import pathlib, sys, time; pathlib.Path(sys.argv[1]).touch(); time.sleep(300)"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+class _RecordingError(Exception):
+    pass
+
+
+async def test_spawned_process_runs_only_after_its_start_was_recorded(tmp_path: Path) -> None:
+    runner = SubprocessRunner()
+    marker = tmp_path / "ran"
+    ran_when_recorded: list[bool] = []
+
+    process = await runner.spawn(
+        [sys.executable, "-c", _MARKER_PROGRAM, str(marker)],
+        on_started=lambda _pid: ran_when_recorded.append(marker.exists()),
+    )
+    try:
+        await wait_until(marker.exists, _PID_FILE_WAIT_TIMEOUT)
+    finally:
+        await process.stop(grace=0.5)
+
+    assert ran_when_recorded == [False]
+
+
+async def test_a_spawned_process_whose_start_could_not_be_recorded_never_runs(
+    tmp_path: Path,
+) -> None:
+    runner = SubprocessRunner()
+    marker = tmp_path / "ran"
+    spawned: list[int] = []
+
+    def fail_to_record(pid: int) -> None:
+        spawned.append(pid)
+        raise _RecordingError
+
+    with pytest.raises(_RecordingError):
+        await runner.spawn(
+            [sys.executable, "-c", _MARKER_PROGRAM, str(marker)], on_started=fail_to_record
+        )
+
+    await wait_until(lambda: runner.identify(spawned[0]) is None, _PID_FILE_WAIT_TIMEOUT)
+    assert not marker.exists()
+
+
+async def test_a_process_spawned_by_an_engine_killed_before_recording_it_never_runs(
+    tmp_path: Path,
+) -> None:
+    runner = SubprocessRunner()
+    marker = tmp_path / "ran"
+
+    engine = await runner.run(
+        [sys.executable, "-m", "tests.support.spawn_then_die", str(marker)],
+        timeout=_PID_FILE_WAIT_TIMEOUT,
+        cwd=_PROJECT_ROOT,
+    )
+
+    orphan = int(engine.stdout)
+    try:
+        assert engine.returncode == -signal.SIGKILL
+        await wait_until(lambda: runner.identify(orphan) is None, _PID_FILE_WAIT_TIMEOUT)
+        assert not marker.exists()
+    finally:
+        with suppress(ProcessLookupError):
+            os.kill(orphan, signal.SIGKILL)

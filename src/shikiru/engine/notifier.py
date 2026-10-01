@@ -83,7 +83,6 @@ class Notifier:
                     timeout=self._timeout_seconds,
                     input_text=payload,
                     check=True,
-                    own_group=True,
                 )
             except Exception as error:
                 self._logger.exception("external notification failed for event %s", event.id)

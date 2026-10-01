@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -184,3 +184,43 @@ async def test_process_exit_without_a_result_yields_unknown_with_exit_and_stderr
     assert signals[-1].kind is FailureKind.UNKNOWN
     assert "status 7" in signals[-1].message
     assert diagnostic in signals[-1].message
+
+
+@dataclass
+class _RetrySequence(TurnProcessSequence):
+    first: TurnProcess
+    retry: TurnProcess
+    advanced: bool = False
+
+    def start(self, spec: TurnSpec) -> TurnProcess:
+        del spec
+        return self.first
+
+    def advance(self, spec: TurnSpec, previous: TurnProcessResult) -> TurnProcess | None:
+        del spec, previous
+        if self.advanced:
+            return None
+        self.advanced = True
+        return self.retry
+
+
+@pytest.mark.asyncio
+async def test_every_process_of_a_turn_is_reported_when_it_is_spawned_including_a_retry(
+    tmp_path: Path,
+) -> None:
+    session = b'{"event":"session","session_id":"session-a"}\n'
+    first_program = f"import sys; sys.stdout.buffer.write({session!r})"
+    retry_program = f"import sys; sys.stdout.buffer.write({session + b'{"event":"ended"}\n'!r})"
+    reported: list[int] = []
+    spec = replace(_spec(tmp_path, session_id=None), on_process=reported.append)
+    turn = await StreamingTurn.start(
+        spec,
+        SubprocessRunner(),
+        _RetrySequence(_process(tmp_path, first_program), _process(tmp_path, retry_program)),
+    )
+
+    signals = [signal async for signal in turn.signals()]
+
+    assert signals[-1] == TurnEnded("finished")
+    assert len(reported) == 2
+    assert len(set(reported)) == 2

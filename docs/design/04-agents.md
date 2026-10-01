@@ -45,6 +45,7 @@ class TurnSpec:        rung: Rung; role: str; prompt: str; cwd: Path; run_dir: P
                        add_dirs: tuple[Path, ...]; env: Mapping[str, str]
                        session_id: str | None          # None → new session; else resume it
                        usage: Usage | None             # the session's totals so far
+                       on_process: Callable[[int], None]  # called with each spawned pid before it runs (03 §4.2)
 
 class Turn(Protocol):
     """One agent turn: one process, or a short sequence when the plugin compacts (obligation 8).

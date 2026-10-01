@@ -315,5 +315,4 @@ class Git:
             check=check,
             input_text=input_text,
             stop_grace=GIT_STOP_GRACE if mutating else None,
-            own_group=mutating,
         )

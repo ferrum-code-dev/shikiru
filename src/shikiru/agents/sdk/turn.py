@@ -117,6 +117,7 @@ class StreamingTurn:
             first_process.argv,
             cwd=first_process.cwd,
             env=first_process.env,
+            on_started=spec.on_process,
         )
         return cls(spec, runner, sequence, first_process, process)
 
@@ -170,6 +171,7 @@ class StreamingTurn:
                     next_process.argv,
                     cwd=next_process.cwd,
                     env=next_process.env,
+                    on_started=self._spec.on_process,
                 )
                 self._current_process_spec = next_process
                 self._process = process

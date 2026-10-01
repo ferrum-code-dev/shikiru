@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol
 from pydantic import ConfigDict
 
 from shikiru.errors import ConfigError
+from shikiru.process import ignore_started
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping, Sequence
@@ -199,7 +200,11 @@ type AgentSignal = (
 
 @dataclass(frozen=True)
 class TurnSpec:
-    """Everything an agent needs to run one headless turn (04 §1)."""
+    """Everything an agent needs to run one headless turn (04 §1).
+
+    `on_process` receives the id of every process the turn spawns, a context retry included,
+    before that process starts running (`SubprocessRunner.spawn(on_started=...)`).
+    """
 
     rung: Rung
     role: str
@@ -211,6 +216,7 @@ class TurnSpec:
     env: Mapping[str, str]
     session_id: str | None
     usage: Usage | None
+    on_process: Callable[[int], None] = ignore_started
 
 
 class Turn(Protocol):
