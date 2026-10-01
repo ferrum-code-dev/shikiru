@@ -68,7 +68,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | Package | Responsibility | Key types |
 |---|---|---|
 | `errors` | Error hierarchy with exit codes | `ShikiruError`, `ConfigError`, … |
-| `process` | The only subprocess gateway: argv lists, timeouts, typed errors from `errors`, async; `spawn` for long-running processes with stdin closed, line-streamed stdout and terminate; every `run` leads its own process group, which is SIGKILLed on a timeout or cancellation so no descendant (hook, MCP server) leaks; `run` can also stop gracefully on cancel, which mutating git calls do, so a cancelled call leaves neither a lock nor a running hook | `SubprocessRunner`, `CommandFailed` |
+| `process` | The only subprocess gateway: argv lists, timeouts, typed errors from `errors`, async; `spawn` for long-running processes with stdin closed, line-streamed stdout and terminate; every `run` leads its own process group, which is SIGKILLed on a timeout or cancellation, one arriving while the process is still being started included, so no descendant (hook, MCP server) leaks; `run` can also stop gracefully on cancel, which mutating git calls do, so a cancelled call leaves neither a lock nor a running hook | `SubprocessRunner`, `CommandFailed` |
 | `clock` | Injectable time for every timer | `Clock`, `SystemClock` |
 | `config` | Merge defaults < project file < `--set`, validate core settings. Plugin `options` stay untyped here | `Settings`, `load_settings()` |
 | `agents.contracts` | Agent plugin contract (04 §1) | `Agent`, `Turn`, `TurnSpec`, `HeadlessAgent`, signals, `Usage`, `QuotaWindow`, `Rung` |

@@ -15,6 +15,7 @@ from shikiru.process import STDERR_KEPT_BYTES, STDOUT_DRAIN_TIMEOUT, SubprocessR
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from shikiru.process import ProcessIdentity
     from tests.support.process_tree import ProcessTree
 
 pytestmark = pytest.mark.asyncio
@@ -99,6 +100,32 @@ async def test_cancellation_kills_and_reaps_the_process(tmp_path: Path) -> None:
     pid = int(pid_file.read_text().strip())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+async def test_cancelled_while_the_process_is_still_starting_leaves_no_descendant(
+    tmp_path: Path,
+) -> None:
+    runner = SubprocessRunner()
+    loop = asyncio.get_running_loop()
+    pid_fifo = tmp_path / "descendant.fifo"
+    os.mkfifo(pid_fifo)
+    task = asyncio.create_task(
+        runner.run(["sh", "-c", f"sleep 1000 & echo $! > {pid_fifo}; wait"], timeout=30)
+    )
+    started: list[ProcessIdentity | None] = []
+
+    def cancel_once_the_descendant_ran() -> None:
+        started.append(runner.identify(int(pid_fifo.read_text())))
+        task.cancel()
+
+    loop.call_soon(loop.call_soon, cancel_once_the_descendant_ran)
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    (descendant,) = started
+    assert descendant is not None
+    await wait_until(lambda: not runner.is_running(descendant), _KILL_TIMEOUT_SECONDS)
 
 
 async def test_spawn_closes_stdin_streams_long_stdout_lines_and_captures_stderr() -> None:

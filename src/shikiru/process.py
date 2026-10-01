@@ -246,14 +246,11 @@ class SubprocessRunner:
         group, which is ended with it so no descendant (a hook, an MCP server) outlives the call.
         """
         argv_tuple = tuple(argv)
-        process = await asyncio.create_subprocess_exec(
-            *argv_tuple,
+        process = await self._start(
+            argv_tuple,
             cwd=cwd,
             env=env,
             stdin=asyncio.subprocess.PIPE if input_text is not None else None,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
         )
         input_bytes = input_text.encode() if input_text is not None else None
         try:
@@ -300,28 +297,22 @@ class SubprocessRunner:
             raise FileNotFoundError(argv_tuple[0])
         gate_read, gate_write = os.pipe()
         try:
-            process = await asyncio.create_subprocess_exec(
-                _SHELL,
-                "-c",
-                _GATE_SCRIPT,
-                _GATE_ARG0,
-                *argv_tuple,
-                cwd=cwd,
-                env=env,
-                stdin=gate_read,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,
-            )
-        finally:
-            os.close(gate_read)
-        spawned = SpawnedProcess(process)
-        try:
-            on_started(process.pid)
-            os.write(gate_write, _GATE_RELEASE)
-        except BaseException:
-            await spawned.stop(grace=_ABORT_GRACE)
-            raise
+            try:
+                process = await self._start(
+                    (_SHELL, "-c", _GATE_SCRIPT, _GATE_ARG0, *argv_tuple),
+                    cwd=cwd,
+                    env=env,
+                    stdin=gate_read,
+                )
+            finally:
+                os.close(gate_read)
+            spawned = SpawnedProcess(process)
+            try:
+                on_started(process.pid)
+                os.write(gate_write, _GATE_RELEASE)
+            except BaseException:
+                await spawned.stop(grace=_ABORT_GRACE)
+                raise
         finally:
             os.close(gate_write)
         return spawned
@@ -391,6 +382,34 @@ class SubprocessRunner:
             )
         except OSError as error:
             raise ProcessReplacementError(argv_tuple, error) from error
+
+    @classmethod
+    async def _start(
+        cls,
+        argv: tuple[str, ...],
+        *,
+        cwd: Path | None,
+        env: Mapping[str, str] | None,
+        stdin: int | None,
+    ) -> asyncio.subprocess.Process:
+        starting = asyncio.ensure_future(
+            asyncio.create_subprocess_exec(
+                *argv,
+                cwd=cwd,
+                env=env,
+                stdin=stdin,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+        )
+        try:
+            return await asyncio.shield(starting)
+        except asyncio.CancelledError:
+            process = await starting
+            await cls._end_and_wait(process, grace=None)
+            cls._close_transport(process)
+            raise
 
     @staticmethod
     async def _end_and_wait(process: asyncio.subprocess.Process, *, grace: float | None) -> None:
