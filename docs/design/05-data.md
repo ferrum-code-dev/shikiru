@@ -149,7 +149,7 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 ## 2. State DB (`.shikiru/state.db`)
 
 - SQLite WAL mode, `busy_timeout = 5000`.
-- Migrations tracked by `PRAGMA user_version`. A migration rewrites stored JSON when a model gains a required field (e.g. `repo.base_ref` defaults to the stored `base`, the ref tasks of that era started from), so models stay strict. `idx_events_kind` (migration 006) bounds the `command_applied` replay lookup (03 §7) to the events of one kind.
+- Migrations tracked by `PRAGMA user_version`. A migration rewrites stored JSON when a model gains a required field (e.g. `repo.base_ref` defaults to the stored `base`, the ref tasks of that era started from), so models stay strict. `idx_events_kind` (migration 006) bounds the `command_applied` replay lookup (03 §7) to the events of one kind; `notification_cursor` (migration 007) holds the single row of the delivered-up-to event id (06 §5.7).
 - Readers use short read transactions and `PRAGMA data_version` to detect changes.
 - Timestamps are UTC ISO-8601.
 
@@ -201,6 +201,8 @@ CREATE TABLE escalations (
 
 CREATE TABLE events (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, task_id TEXT, kind TEXT NOT NULL,
   message TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}');
+
+CREATE TABLE notification_cursor (id INTEGER PRIMARY KEY CHECK (id = 1), event_id INTEGER NOT NULL);
 
 CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',        -- pending | done | rejected

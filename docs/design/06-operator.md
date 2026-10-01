@@ -164,7 +164,8 @@ Delivery never runs on the command loop. The `Engine` queues each notifiable eve
 - a delivery failure is logged and the next event is delivered;
 - the engine loop supervises the task like the task flows: an unexpected failure is logged and the task restarted;
 - a hook runs in its own process group, which is SIGKILLed on its timeout and on cancellation, so no descendant it started outlives the hook (03 §4.2);
-- on engine stop the task is cancelled, which terminates a running hook, and pending events are dropped, so `stop` never waits for a hook. The one exception is the `engine_stopped` event of a fault stop: it is delivered directly, bounded by `orchestration.faults.stop_notify_seconds`.
+- the delivery cursor is durable (`notification_cursor`, 05 §2): it holds the id up to which every urgent event has been delivered, trailing the oldest urgent event still queued or in flight, and the engine writes it on each poll and at stop. A restarted engine replays the urgent events after the cursor, in order and ahead of any new one, so an escalation or fault committed shortly before a crash or kill, or still queued behind a stuck hook, is notified after the restart. Informational events are never replayed, and the first start of a project begins at its latest event. Delivery is at least once: an event delivered after the last cursor write (at most one poll, 0.25 s) before a kill is delivered again, as is a fault stop notified directly at stop, and a hook that failed or timed out counts as delivered (it is recorded as a `notification hook` fault, not retried);
+- on engine stop the task is cancelled, which terminates a running hook, and pending events are not delivered by this engine (urgent ones are replayed by the next), so `stop` never waits for a hook. The one exception is the `engine_stopped` event of a fault stop: it is delivered directly, bounded by `orchestration.faults.stop_notify_seconds`.
 
 ### 5.8 Keeping the engine running
 

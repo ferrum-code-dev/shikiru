@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 _WAIT_SECONDS = 10.0
 _FAILING_HOOK_EXIT_CODE = 3
 _FAILING_HOOK_DELIVERIES = 3
+_REPLAYED_ESCALATIONS = 2
 
 
 class _Harness:
@@ -69,14 +70,17 @@ class _Harness:
 
 
 @asynccontextmanager
-async def _engine(tmp_path: Path, tmux_server: TmuxServer, hook: str) -> AsyncGenerator[_Harness]:
+async def _engine(
+    tmp_path: Path, tmux_server: TmuxServer, hook: str, *, restart: bool = False
+) -> AsyncGenerator[_Harness]:
     clock = FakeClock(TASK_CREATED_AT)
     settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     settings = settings.model_copy(
         update={"notify": NotifyConfig(command=hook, timeout_seconds=30)}
     )
     tmux = build_tmux(tmux_server)
-    await init_project_repo(tmp_path)
+    if not restart:
+        await init_project_repo(tmp_path)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
     harness = _Harness(tmp_path, engine, clock)
@@ -165,3 +169,78 @@ async def test_a_missing_hook_command_is_logged_per_event(
             )
         )
         assert await env.acknowledged(Stop()) is CommandStatus.DONE
+
+
+def _recording_hook(received: Path) -> str:
+    return _hook(f"cat >> {received}; echo >> {received}")
+
+
+def _delivered_messages(received: Path) -> list[str]:
+    if not received.exists():
+        return []
+    return [json.loads(line)["message"] for line in received.read_text().splitlines() if line]
+
+
+async def _stop(env: _Harness) -> None:
+    assert await env.acknowledged(Stop()) is CommandStatus.DONE
+    await asyncio.wait_for(env.engine_task, _WAIT_SECONDS)
+
+
+def _append_while_down(tmp_path: Path, *events: tuple[EventKind, str]) -> None:
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    try:
+        log = EventLog(connection, FakeClock(TASK_CREATED_AT))
+        for kind, message in events:
+            log.append(kind, message=message)
+    finally:
+        connection.close()
+
+
+async def test_an_escalation_queued_behind_a_stuck_hook_is_notified_once_after_a_restart(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    fifo = tmp_path / "hook.fifo"
+    pid_file = tmp_path / "hook.pid"
+    received = tmp_path / "received.jsonl"
+    os.mkfifo(fifo)
+    try:
+        async with _engine(
+            tmp_path, tmux_server, _hook(f"echo $$ > {pid_file}; read l < {fifo}")
+        ) as env:
+            env.escalate("stuck")
+            await env.until(lambda: pid_file.exists() and bool(pid_file.read_text()))
+            env.escalate("queued")
+            await _stop(env)
+    finally:
+        _kill(pid_file)
+
+    async with _engine(tmp_path, tmux_server, _recording_hook(received), restart=True) as env:
+        await env.until(lambda: len(_delivered_messages(received)) == _REPLAYED_ESCALATIONS)
+        assert _delivered_messages(received) == ["stuck", "queued"]
+        await _stop(env)
+
+    async with _engine(tmp_path, tmux_server, _recording_hook(received), restart=True) as env:
+        env.escalate("after")
+        await env.until(lambda: "after" in _delivered_messages(received))
+        assert _delivered_messages(received) == ["stuck", "queued", "after"]
+        await _stop(env)
+
+
+async def test_an_escalation_committed_while_down_is_notified_but_informational_is_not(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    received = tmp_path / "received.jsonl"
+    async with _engine(tmp_path, tmux_server, _recording_hook(received)) as env:
+        await _stop(env)
+    _append_while_down(
+        tmp_path,
+        (EventKind.TASK_DONE, "finished while down"),
+        (EventKind.ESCALATION, "raised while down"),
+    )
+
+    async with _engine(tmp_path, tmux_server, _recording_hook(received), restart=True) as env:
+        await env.until(lambda: bool(_delivered_messages(received)))
+        env.escalate("marker")
+        await env.until(lambda: "marker" in _delivered_messages(received))
+        assert _delivered_messages(received) == ["raised while down", "marker"]
+        await _stop(env)

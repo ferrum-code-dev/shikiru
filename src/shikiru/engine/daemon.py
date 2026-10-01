@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from shikiru.engine.handlers import HandlerRegistry
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.notification_delivery import NotificationDelivery
+    from shikiru.engine.notification_feed import NotificationFeed
     from shikiru.engine.pull_request_closing import PullRequestClosing
     from shikiru.engine.reconcile import Reconciler
     from shikiru.engine.scheduler import Scheduler
@@ -146,6 +147,7 @@ class Engine:
         command_guard: TickGuard,
         reconciler: Reconciler,
         notifications: NotificationDelivery,
+        notification_feed: NotificationFeed,
         pull_request_closing: PullRequestClosing,
         settings: Settings,
         clock: Clock,
@@ -169,11 +171,11 @@ class Engine:
         self._stop_reason: str | None = None
         self._reconciler = reconciler
         self._notifications = notifications
+        self._notification_feed = notification_feed
         self._pull_request_closing = pull_request_closing
         self._settings = settings
         self._clock = clock
         self._close_state = close_state
-        self._last_notified_event = 0
         self._last_scheduled_event = 0
         self._logger = logger
         self._log_handler = log_handler
@@ -187,7 +189,7 @@ class Engine:
             self._close_state()
             raise
         try:
-            self._last_notified_event = self._events.latest_id()
+            self._notification_feed.restore()
             self._notifications.start()
             self._pull_request_closing.start()
             self._events.append(EventKind.ENGINE_STARTED, message="engine started")
@@ -207,7 +209,7 @@ class Engine:
                 if commands_changed or events_changed or now >= next_tick:
                     await self._tick_guard.attempt(self._tick)
                     next_tick = now + timedelta(seconds=self._settings.orchestration.poll_seconds)
-                self._queue_notifications()
+                self._notification_feed.scan()
                 await self._clock.sleep(COMMAND_POLL_SECONDS)
             await self._task_supervisor.supervise(self._logger)
         except Exception as error:
@@ -256,11 +258,6 @@ class Engine:
             changed = True
         return changed
 
-    def _queue_notifications(self) -> None:
-        for event in self._events.since(self._last_notified_event):
-            self._last_notified_event = event.id
-            self._notifications.enqueue(event)
-
     async def _shutdown(self) -> None:
         try:
             reason = self._stop_reason
@@ -270,6 +267,7 @@ class Engine:
                 data={} if reason is None else {STOP_REASON_KEY: reason},
             )
             await self._notifications.shutdown()
+            self._notification_feed.persist()
             await self._pull_request_closing.shutdown()
             if reason is not None:
                 await self._notifications.deliver_final(

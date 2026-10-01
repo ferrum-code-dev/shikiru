@@ -683,8 +683,8 @@ Refs: 03 §7, 06 §5.8. Reviewer finding: `grep add_signal_handler src` finds no
 
 ### Task 74l: Notifications survive a restart; command handler errors are retried
 Refs: 06 §5.7, 03 §8, 74c. Reviewer findings: the last-notified event id and the queue are in memory, so an escalation raised just before a crash or kill is never announced; the command loop rejects every non-`ShikiruError` exception permanently, including a transient `sqlite3.OperationalError`.
-- [ ] The notification cursor is durable (a stored event id or an equivalent derivation); after a restart every escalation or fault event not yet delivered is notified exactly once more, informational events are not replayed, and the existing priority and 30 s hook bounds hold.
-- [ ] A command handler failing with an environmental database error is retried by the fault barrier and not marked rejected; only domain errors reject.
+- [x] The notification cursor is durable (a stored event id or an equivalent derivation); after a restart every escalation or fault event not yet delivered is notified exactly once more, informational events are not replayed, and the existing priority and 30 s hook bounds hold.
+- [x] A command handler failing with an environmental database error is retried by the fault barrier and not marked rejected; only domain errors reject.
 - Tests: integration: kill the engine between the escalation commit and delivery, restart, the hook receives it once; a locked database during a handler leaves the command pending and it applies afterwards.
 
 ### Task 74m: Regression power of the Codex sandbox and reconcile fixes

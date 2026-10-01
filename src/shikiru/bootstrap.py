@@ -54,6 +54,7 @@ from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.lifecycle import TaskFinisher
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notification_delivery import NotificationDelivery
+from shikiru.engine.notification_feed import NotificationFeed
 from shikiru.engine.notifier import Notifier
 from shikiru.engine.pull_request_closing import PullRequestClosing
 from shikiru.engine.reconcile import Reconciler
@@ -99,6 +100,7 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database, transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
+from shikiru.store.notification_cursor import NotificationCursor
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
@@ -693,9 +695,9 @@ def build_engine(
         titles=titles,
         faults=fault_reporter,
     )
-    lock_path = engine_lock_path(project_root)
+    notifications = NotificationDelivery(notifier)
     return Engine(
-        lock_path=lock_path,
+        lock_path=engine_lock_path(project_root),
         command_queue=command_queue,
         tasks=tasks,
         events=events,
@@ -729,7 +731,8 @@ def build_engine(
             faults=fault_reporter,
             project_root=project_root,
         ),
-        notifications=NotificationDelivery(notifier),
+        notifications=notifications,
+        notification_feed=NotificationFeed(events, NotificationCursor(connection), notifications),
         pull_request_closing=pull_request_closing,
         settings=resolved_settings,
         clock=resolved_clock,

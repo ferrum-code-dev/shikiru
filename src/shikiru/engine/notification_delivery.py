@@ -21,7 +21,8 @@ class NotificationDelivery:
     """Delivers events one at a time on its own task so a slow hook never blocks the engine loop.
 
     Urgent events (escalations, engine faults, fault stops) are delivered before informational
-    ones and are never dropped; only the informational backlog is bounded.
+    ones and are never dropped; only the informational backlog is bounded. An urgent event leaves
+    the queue only after its delivery, so `oldest_undelivered_urgent_id` covers the one in flight.
     """
 
     def __init__(self, notifier: Notifier) -> None:
@@ -51,6 +52,16 @@ class NotificationDelivery:
                 )
             self._informational.append(event)
         self._pending.set()
+
+    def replay(self, event: Event) -> None:
+        """Queue `event` after a restart when it is urgent; informational ones are not replayed."""
+        if self._notifier.is_urgent(event):
+            self.enqueue(event)
+
+    @property
+    def oldest_undelivered_urgent_id(self) -> int | None:
+        """Return the id of the oldest urgent event not yet delivered, if any."""
+        return self._urgent[0].id if self._urgent else None
 
     def supervise(self, logger: Logger) -> None:
         """Log a delivery task failure and start a replacement task."""
@@ -82,9 +93,11 @@ class NotificationDelivery:
 
     async def _deliver(self) -> None:
         while True:
-            queue = self._urgent or self._informational
-            if not queue:
+            if self._urgent:
+                await self._notifier.notify(self._urgent[0])
+                self._urgent.popleft()
+            elif self._informational:
+                await self._notifier.notify(self._informational.popleft())
+            else:
                 self._pending.clear()
                 await self._pending.wait()
-                continue
-            await self._notifier.notify(queue.popleft())
