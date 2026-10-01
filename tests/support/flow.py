@@ -37,6 +37,7 @@ from shikiru.store.database import transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.quotas import QuotaStore
 from shikiru.tmux.session import SessionView
+from shikiru.workspace.base_refs import LocalBaseRefs
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
 from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, EngineEnv
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Mode, Task
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
+    from shikiru.workspace.base_refs import BaseRefs
 
 
 class _NoOpIntegrationCoordinator:
@@ -91,6 +93,7 @@ async def build_flow_task(
     title: str = "Add retries",
     mode: Mode | None = None,
     complexity: ComplexityName | None = None,
+    base_refs: BaseRefs | None = None,
 ) -> Task:
     """Insert a queued task with real leader/implementer panes and a git worktree."""
     tasks = env.tasks
@@ -103,7 +106,7 @@ async def build_flow_task(
     tasks.set_slot(submitted.id, 1)
     tasks.set_panes(submitted.id, {Role.LEADER: leader_pane, Role.IMPLEMENTER: implementer_pane})
     tasks.set_window(submitted.id, leader_pane)
-    builder = task_root_builder(SubprocessRunner(), env.project_root, RepoConfig())
+    builder = task_root_builder(SubprocessRunner(), env.project_root, RepoConfig(), base_refs)
     repo = await builder.build(submitted.id, submitted.title)
     tasks.set_repo(submitted.id, repo)
     task = tasks.get(submitted.id)
@@ -138,6 +141,7 @@ def build_flow(
     turn_clock: Clock | None = None,
     local_integration: bool = False,
     strategy: IntegrationStrategy | None = None,
+    base_refs: BaseRefs | None = None,
     lock: asyncio.Lock | None = None,
 ) -> FlowEnv:
     """Build one flow and its production turn collaborators with fake CLI processes.
@@ -186,6 +190,7 @@ def build_flow(
                 project_root=env.project_root,
                 integration_wait=settings.orchestration.timeouts.integration_wait,
             ),
+            base_refs=base_refs if base_refs is not None else LocalBaseRefs(),
             lock=lock if lock is not None else asyncio.Lock(),
             project_root=env.project_root,
             tasks=env.tasks,

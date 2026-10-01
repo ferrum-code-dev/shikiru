@@ -29,6 +29,7 @@ from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
+from shikiru.workspace.base_refs import LocalBaseRefs
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.engine import set_role_script
@@ -337,6 +338,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     result = await Integrator(
         git=Git(_RUNNER),
         strategy=_local_merge(project_root, SystemClock(), 1, events),
+        base_refs=LocalBaseRefs(),
         lock=asyncio.Lock(),
         project_root=project_root,
         tasks=tasks,
@@ -370,6 +372,7 @@ def _integrator(connection: Connection, project_root: Path) -> Integrator:
     return Integrator(
         git=Git(_RUNNER),
         strategy=_local_merge(project_root, SystemClock(), 0, EventLog(connection, SystemClock())),
+        base_refs=LocalBaseRefs(),
         lock=asyncio.Lock(),
         project_root=project_root,
         tasks=TaskStore(connection, SystemClock()),

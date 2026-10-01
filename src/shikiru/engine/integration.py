@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
-    from shikiru.workspace.base_refs import FetchedBaseRefs
+    from shikiru.workspace.base_refs import BaseRefs, FetchedBaseRefs
     from shikiru.workspace.git import Git
     from shikiru.workspace.github import GitHub, PullRequestStatus
 
@@ -37,6 +37,9 @@ PR_POLL = timedelta(minutes=5)
 """Delay between polls of an open pull request (05-data.md §1)."""
 
 POLL_FAULT_SCOPE = "pull request poll"
+
+_PR_ENDED_BY = frozenset((EscalationReason.PR_CLOSED,))
+_INTEGRATION_RESTARTED_BY = _PR_ENDED_BY | {EscalationReason.INTEGRATION_CONFLICT}
 
 
 class IntegrationBlocked(ShikiruError):
@@ -66,9 +69,17 @@ class IntegrationConflict(ShikiruError):
 
     reason = EscalationReason.INTEGRATION_CONFLICT
 
-    def __init__(self) -> None:
-        """Build the integration-conflict error."""
-        super().__init__("integration conflicts could not be resolved")
+    def __init__(self, message: str = "integration conflicts could not be resolved") -> None:
+        """Build the integration-conflict error, saying what conflicted."""
+        super().__init__(message)
+
+
+class PullRequestConflicting(IntegrationConflict):
+    """An open pull request conflicts with its base: only a new rebase can resolve it."""
+
+    def __init__(self, url: str) -> None:
+        """Build the error for the PR at `url`."""
+        super().__init__(f"pull request {url} is conflicting with its base")
 
 
 class UncommittedWork(ShikiruError):
@@ -375,11 +386,11 @@ class PullRequest:
     async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
         """Poll the open pull request until it is merged or closed, then verify the merged base.
 
-        Raises `PullRequestClosed` for a closed one, `IntegrationBlocked` when the merged
-        commit cannot be fetched from and verified on the remote base, when the open PR
-        conflicts or has failing checks, or when it stays unmerged for `pr_wait` seconds
-        (counted from the start of each wait), and `IntegrationHeld` before any poll once
-        `held()` is true.
+        Raises `PullRequestClosed` for a closed one, `PullRequestConflicting` when the open PR
+        conflicts with its base, `IntegrationBlocked` when the merged commit cannot be fetched
+        from and verified on the remote base, when the open PR has failing, settled checks, or
+        when it stays unmerged for `pr_wait` seconds (counted from the start of each wait), and
+        `IntegrationHeld` before any poll once `held()` is true.
         """
         opened = self._open_pull_request(task_id)
         if opened is None:
@@ -393,6 +404,9 @@ class PullRequest:
             status = await self._status(task_id, opened.url, held)
             if status.state is not PullRequestState.OPEN:
                 break
+            if status.conflicting:
+                self._tasks.set_wait_reason(task_id, None)
+                raise PullRequestConflicting(opened.url)
             stalled = _stalled(status, expired=self._clock.now() >= deadline)
             if stalled is not None:
                 self._tasks.set_wait_reason(task_id, None)
@@ -432,27 +446,24 @@ class PullRequest:
                 return status
 
     def _open_pull_request(self, task_id: str) -> _OpenPullRequest | None:
-        return _open_pull_request(self._events, task_id)
+        return _open_pull_request(self._events, task_id, _INTEGRATION_RESTARTED_BY)
 
 
 def _stalled(status: PullRequestStatus, *, expired: bool) -> str | None:
-    if status.conflicting:
-        return "conflicting with its base"
     if status.checks_failing and not status.checks_pending:
         return "failing checks"
     return "unmerged beyond the wait budget" if expired else None
 
 
-def _open_pull_request(events: EventLog, task_id: str) -> _OpenPullRequest | None:
+def _open_pull_request(
+    events: EventLog, task_id: str, ended_by: frozenset[EscalationReason]
+) -> _OpenPullRequest | None:
     opened: _OpenPullRequest | None = None
     kinds = [EventKind.PR_OPENED, EventKind.PR_WITHDRAWN, EventKind.ESCALATION]
     for event in events.since(0, kinds=kinds, task_id=task_id):
         if event.kind is EventKind.PR_OPENED:
             opened = _OpenPullRequest(event.data["url"], tuple(event.data["commits"]))
-        elif (
-            event.kind is EventKind.PR_WITHDRAWN
-            or event.data["reason"] == EscalationReason.PR_CLOSED
-        ):
+        elif event.kind is EventKind.PR_WITHDRAWN or event.data["reason"] in ended_by:
             opened = None
     return opened
 
@@ -468,7 +479,7 @@ class PullRequestCloser:
 
     def has_open(self, task_id: str) -> bool:
         """Return whether `task_id` has a pull request that was neither closed nor withdrawn."""
-        return _open_pull_request(self._events, task_id) is not None
+        return _open_pull_request(self._events, task_id, _PR_ENDED_BY) is not None
 
     async def close_open(self, task_id: str) -> None:
         """Close `task_id`'s open pull request, if it has one that is still open.
@@ -476,7 +487,7 @@ class PullRequestCloser:
         Records `pr_withdrawn` once the pull request is closed or was found not open, so the
         close is never repeated.
         """
-        opened = _open_pull_request(self._events, task_id)
+        opened = _open_pull_request(self._events, task_id, _PR_ENDED_BY)
         if opened is None:
             return
         state = (await self._github.pull_request_status(self._project_root, opened.url)).state
@@ -499,15 +510,20 @@ class Integrator:
         *,
         git: Git,
         strategy: IntegrationStrategy,
+        base_refs: BaseRefs,
         lock: asyncio.Lock,
         project_root: Path,
         tasks: TaskStore,
         events: EventLog,
         finish_task: TaskFinisher,
     ) -> None:
-        """Inject every state, cleanup and repository boundary required by integration."""
+        """Inject every state, cleanup and repository boundary required by integration.
+
+        The rebase starts from the ref `base_refs` resolves, so a remote base is fetched afresh.
+        """
         self._git = git
         self._strategy = strategy
+        self._base_refs = base_refs
         self._lock = lock
         self._project_root = project_root
         self._tasks = tasks
@@ -583,9 +599,10 @@ class Integrator:
             current_metadata = metadata
             task_dir = task_root(self._project_root, current.id)
             await self._require_committed(current, task_dir)
-            base_sha = await self._git.rev_parse(task_dir, repo.base_ref)
+            base_ref = await self._resolve_base(repo)
+            base_sha = await self._git.rev_parse(task_dir, base_ref)
             branch_sha = await self._git.rev_parse(task_dir, repo.branch)
-            if base_sha != branch_sha and await self._try_rebase(task_dir, repo.base_ref):
+            if base_sha != branch_sha and await self._try_rebase(task_dir, base_ref):
                 current, current_metadata = await resolve_conflicts(
                     current, lambda: self._continue_rebase(current.id, task_dir)
                 )
@@ -603,6 +620,12 @@ class Integrator:
                 )
             )
             return current, current_metadata, commits
+
+    async def _resolve_base(self, repo: RepoState) -> str:
+        try:
+            return await self._base_refs.resolve(repo.base)
+        except BaseFetchFailed as error:
+            raise IntegrationBlocked(str(error)) from error
 
     def _is_held(self, task_id: str) -> bool:
         current = self._tasks.get(task_id)

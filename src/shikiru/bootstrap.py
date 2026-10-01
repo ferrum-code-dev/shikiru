@@ -107,7 +107,7 @@ from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
-from shikiru.workspace.base_refs import FetchedBaseRefs, LocalBaseRefs
+from shikiru.workspace.base_refs import BaseRefs, FetchedBaseRefs, LocalBaseRefs
 from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
@@ -752,8 +752,10 @@ def _build_integrator(
     task_finisher: TaskFinisher,
 ) -> Integrator:
     strategy: IntegrationStrategy
+    base_refs: BaseRefs
     match settings.orchestration.integration:
         case "merge":
+            base_refs = LocalBaseRefs()
             strategy = LocalMerge(
                 git,
                 clock,
@@ -762,6 +764,7 @@ def _build_integrator(
                 integration_wait=settings.orchestration.timeouts.integration_wait,
             )
         case "pr":
+            base_refs = fetched_bases
             strategy = PullRequest(
                 git=git,
                 github=GitHub(runner),
@@ -777,6 +780,7 @@ def _build_integrator(
     return Integrator(
         git=git,
         strategy=strategy,
+        base_refs=base_refs,
         lock=asyncio.Lock(),
         project_root=project_root,
         tasks=tasks,

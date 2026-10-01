@@ -112,7 +112,12 @@ class _Run:
             faults=build_fault_reporter(events, env.clock, self._settings),
             settings=self._settings.orchestration,
         )
-        flow = build_flow(env, self._settings, strategy=strategy).flow
+        flow = build_flow(
+            env,
+            self._settings,
+            strategy=strategy,
+            base_refs=_fetched(self._settings, env.project_root),
+        ).flow
         return asyncio.create_task(flow.run(self._task_id, resumed=resumed))
 
 
@@ -126,6 +131,15 @@ async def _await_poll(github: FakeGitHub, clock: FakeClock, views: int) -> None:
     await wait_until(lambda: github.views() >= views and clock.has_pending_sleep(), _WAIT_SECONDS)
 
 
+async def _poll_again(github: FakeGitHub, clock: FakeClock, views: int) -> None:
+    def polled() -> bool:
+        if github.views() < views and clock.has_pending_sleep():
+            clock.advance(PR_POLL.total_seconds())
+        return github.views() >= views and clock.has_pending_sleep()
+
+    await wait_until(polled, _WAIT_SECONDS)
+
+
 async def _land(clock: FakeClock, running: asyncio.Task[None]) -> None:
     def landed() -> bool:
         if clock.has_pending_sleep():
@@ -137,15 +151,19 @@ async def _land(clock: FakeClock, running: asyncio.Task[None]) -> None:
 
 
 async def _retry_closed(env: EngineEnv, run: _Run, task_id: str, case: _Case) -> None:
-    [escalation] = fetch_open_escalations(env.connection)
-    assert escalation.reason is EscalationReason.PR_CLOSED
     if case.base_moves_after_close:
         (env.project_root / _BASE_CHANGE_FILENAME).write_text("base moved\n")
         await commit_all(_RUNNER, env.project_root, "move the base")
+    _retry(env, run, task_id, EscalationReason.PR_CLOSED)
+
+
+def _retry(env: EngineEnv, run: _Run, task_id: str, reason: EscalationReason) -> None:
+    [escalation] = fetch_open_escalations(env.connection)
+    assert escalation.reason is reason
     escalated = env.tasks.get(task_id)
     assert escalated is not None
     resolved = transition_for_resolution(
-        escalated, EscalationReason.PR_CLOSED, step=Step.INTEGRATE, resolution=ResolutionKind.RETRY
+        escalated, reason, step=Step.INTEGRATE, resolution=ResolutionKind.RETRY
     )
     env.tasks.apply_transition(task_id, resolved)
     queued = env.tasks.get(task_id)
@@ -361,18 +379,29 @@ _RUNNING_CHECK = {"__typename": "CheckRun", "status": "IN_PROGRESS", "conclusion
 _PENDING_STATUS = {"__typename": "StatusContext", "state": "PENDING"}
 
 
-@pytest.mark.parametrize(
-    ("fields", "stalled"),
-    [
-        ({"mergeable": "CONFLICTING"}, "conflicting"),
-        ({"statusCheckRollup": [_PASSING_CHECK, _FAILING_CHECK]}, "failing checks"),
-        ({}, "unmerged"),
-    ],
-    ids=["conflict", "failing checks", "over budget"],
-)
+@dataclass(frozen=True)
+class _Stall:
+    fields: dict[str, object]
+    text: str
+    reason: EscalationReason
+
+
+_STALLS = {
+    "conflict": _Stall(
+        {"mergeable": "CONFLICTING"}, "conflicting", EscalationReason.INTEGRATION_CONFLICT
+    ),
+    "failing checks": _Stall(
+        {"statusCheckRollup": [_PASSING_CHECK, _FAILING_CHECK]},
+        "failing checks",
+        EscalationReason.INTEGRATION_BLOCKED,
+    ),
+    "over budget": _Stall({}, "unmerged", EscalationReason.INTEGRATION_BLOCKED),
+}
+
+
+@pytest.mark.parametrize("stall", _STALLS.values(), ids=_STALLS.keys())
 async def test_an_open_pull_request_that_cannot_land_escalates_once_with_its_url_and_state(
-    fields: dict[str, object],
-    stalled: str,
+    stall: _Stall,
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
     tmp_path_factory: pytest.TempPathFactory,
@@ -387,14 +416,14 @@ async def test_an_open_pull_request_that_cannot_land_escalates_once_with_its_url
     run = _Run(engine_env, settings, task.id)
     await _await_poll(fake_github, clock, 1)
 
-    fake_github.set_fields(1, **fields)
+    fake_github.set_fields(1, **stall.fields)
     await _land(clock, run.flow)
 
     [escalation] = fetch_open_escalations(engine_env.connection)
-    assert escalation.reason is EscalationReason.INTEGRATION_BLOCKED
+    assert escalation.reason is stall.reason
     packet = await asyncio.to_thread(Path(escalation.packet_path).read_text)
     assert f"{fake_gh.URL_PREFIX}1" in packet
-    assert stalled in packet
+    assert stall.text in packet
     blocked = engine_env.tasks.get(task.id)
     assert blocked is not None
     assert blocked.status is Status.ESCALATED
@@ -474,8 +503,7 @@ async def test_a_failing_check_does_not_escalate_until_the_checks_have_settled(
     await _await_poll(fake_github, clock, 1)
 
     fake_github.set_fields(1, statusCheckRollup=unsettled)
-    clock.advance(PR_POLL.total_seconds())
-    await _await_poll(fake_github, clock, 2)
+    await _poll_again(fake_github, clock, 2)
 
     assert fetch_open_escalations(engine_env.connection) == []
     assert not run.flow.done()
@@ -538,11 +566,19 @@ async def test_the_branch_of_a_merged_pull_request_stays_with_a_worktree_kept_fo
     assert await _local_branch_exists(engine_env.project_root, task.repo.branch)
 
 
-async def _push_unrelated_change(remote_dir: Path, clone_dir: Path, filename: str) -> None:
+async def _push_unrelated_change(remote_dir: Path, clone_dir: Path, filename: str) -> str:
     await _git(clone_dir.parent, "clone", "--branch", "main", str(remote_dir), str(clone_dir))
     (clone_dir / filename).write_text("unrelated\n")
     await commit_all(_RUNNER, clone_dir, "unrelated change")
     await _git(clone_dir, "push", "origin", "main")
+    return await _git(clone_dir, "rev-parse", "HEAD")
+
+
+async def _contains(remote_dir: Path, branch: str, commit: str) -> bool:
+    result = await _RUNNER.run(
+        ["git", "merge-base", "--is-ancestor", commit, branch], timeout=10, cwd=remote_dir
+    )
+    return result.returncode == 0
 
 
 async def test_a_task_root_starts_from_the_remote_base_as_it_is_now(
@@ -594,3 +630,66 @@ async def test_a_task_root_is_not_built_from_a_stale_base_when_the_remote_cannot
         await builder.build("T-1", "Offline")
 
     assert not task_root(project_root, "T-1").exists()
+
+
+async def test_the_rebase_starts_from_the_remote_base_as_it_is_then(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    project_root = engine_env.project_root
+    await init_project_repo(project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(
+        engine_env, mode=Mode.IMPLEMENT, base_refs=_fetched(settings, project_root)
+    )
+    assert task.repo is not None
+    moved = await _push_unrelated_change(
+        remote_dir, tmp_path_factory.mktemp("other") / "clone", "elsewhere.txt"
+    )
+
+    _Run(engine_env, settings, task.id)
+    await wait_until(lambda: len(fake_github.pull_requests()) == 1, _WAIT_SECONDS)
+
+    assert await _contains(remote_dir, task.repo.branch, moved)
+
+
+async def test_a_retry_after_a_conflicting_pull_request_rebases_and_pushes_again(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    clock = engine_env.clock
+    assert isinstance(clock, FakeClock)
+    project_root = engine_env.project_root
+    await init_project_repo(project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(
+        engine_env, mode=Mode.IMPLEMENT, base_refs=_fetched(settings, project_root)
+    )
+    assert task.repo is not None
+    run = _Run(engine_env, settings, task.id)
+    await _await_poll(fake_github, clock, 1)
+    fake_github.set_fields(1, mergeable="CONFLICTING")
+    await _land(clock, run.flow)
+    moved = await _push_unrelated_change(
+        remote_dir, tmp_path_factory.mktemp("other") / "clone", "elsewhere.txt"
+    )
+    assert not await _contains(remote_dir, task.repo.branch, moved)
+
+    views = fake_github.views() + 1
+    fake_github.set_fields(1, mergeable="MERGEABLE")
+    _retry(engine_env, run, task.id, EscalationReason.INTEGRATION_CONFLICT)
+    await _await_poll(fake_github, clock, views)
+
+    assert await _contains(remote_dir, task.repo.branch, moved)
+    assert len(fake_github.pull_requests()) == 1
+    await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
+    await _land(clock, run.flow)
+    done = engine_env.tasks.get(task.id)
+    assert done is not None
+    assert done.status is Status.DONE
