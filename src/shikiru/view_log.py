@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import (
@@ -13,6 +14,7 @@ from shikiru.agents.contracts import (
     role_dir,
     shikiru_argv,
 )
+from shikiru.private import TEXT_ENCODING
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -31,6 +33,8 @@ TURN_DIR_SEPARATOR = "-"
 TURN_DIR_ITERATION_MARKER = "-i"
 CLI_VIEW_COMMAND = "view"
 CLI_PROJECT_FLAG = "--project"
+_TAIL_BLOCK_BYTES = 65536
+_LINE_BREAK = b"\n"
 
 
 def ordered_turn_dirs(turns_root: Path) -> list[Path]:
@@ -49,3 +53,20 @@ def view_argv(project_root: Path, task_id: str, role: str) -> tuple[str, ...]:
 def view_log_path(run_dir: Path, role: str) -> Path:
     """Return `role`'s live view log, one JSON row per agent signal (05 §5)."""
     return role_dir(run_dir, role) / VIEW_LOG_NAME
+
+
+def read_tail_lines(path: Path, count: int) -> list[str]:
+    """Return the last `count` lines of `path`, reading no more of the file than they need."""
+    blocks: list[bytes] = []
+    line_breaks = 0
+    with path.open("rb") as handle:
+        position = handle.seek(0, os.SEEK_END)
+        while position > 0 and line_breaks <= count:
+            size = min(_TAIL_BLOCK_BYTES, position)
+            position -= size
+            handle.seek(position)
+            block = handle.read(size)
+            blocks.append(block)
+            line_breaks += block.count(_LINE_BREAK)
+    text = b"".join(reversed(blocks)).decode(TEXT_ENCODING, errors="replace")
+    return text.splitlines()[-count:]

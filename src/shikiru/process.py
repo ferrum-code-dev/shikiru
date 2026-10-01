@@ -30,6 +30,7 @@ STDERR_FILENO = 2
 _STDERR_READ_SIZE = 65536
 _STDOUT_READ_SIZE = 65536
 _STDERR_TAIL_CHARS = 4000
+STDERR_KEPT_BYTES = 1024 * 1024
 START_TIME_TOLERANCE_SECONDS = 10.0
 _NO_SIGNAL = cast("signal.Signals", 0)
 _SHELL = "/bin/sh"
@@ -127,7 +128,7 @@ class SpawnedProcess:
 
     def __init__(self, process: asyncio.subprocess.Process) -> None:
         self._process = process
-        self._stderr_chunks: list[bytes] = []
+        self._stderr_tail = bytearray()
         self._stderr_task = asyncio.create_task(self._read_stderr())
         self._stdout_read = False
         self._group_swept = False
@@ -147,12 +148,12 @@ class SpawnedProcess:
 
     @property
     def stderr(self) -> str:
-        """Return all stderr captured after `wait()` completes."""
+        """Return the last `STDERR_KEPT_BYTES` of stderr captured after `wait()` completes."""
         return self._stderr
 
     @property
     def stderr_bytes(self) -> bytes:
-        """Return the exact stderr bytes captured after `wait()` completes."""
+        """Return the exact last `STDERR_KEPT_BYTES` of stderr after `wait()` completes."""
         return self._stderr_bytes
 
     @property
@@ -188,7 +189,7 @@ class SpawnedProcess:
         _, pending = await asyncio.wait({self._stderr_task}, timeout=STDERR_DRAIN_TIMEOUT)
         for task in pending:
             task.cancel()
-        self._stderr_bytes = b"".join(self._stderr_chunks)
+        self._stderr_bytes = bytes(self._stderr_tail)
         self._stderr = self._stderr_bytes.decode(errors="replace")
         return returncode
 
@@ -203,7 +204,8 @@ class SpawnedProcess:
             message = "spawned process has no stderr pipe"
             raise RuntimeError(message)
         while chunk := await self._process.stderr.read(_STDERR_READ_SIZE):
-            self._stderr_chunks.append(chunk)
+            self._stderr_tail.extend(chunk)
+            del self._stderr_tail[:-STDERR_KEPT_BYTES]
 
 
 class SubprocessRunner:

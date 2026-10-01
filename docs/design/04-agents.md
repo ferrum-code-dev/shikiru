@@ -102,7 +102,7 @@ Small, tested building blocks for plugins:
 | Block | Purpose |
 |---|---|
 | `TurnParser` | Protocol a plugin implements: `feed(line) → list[AgentSignal]` for one stdout line, `finish(exit_code, stderr) → list[AgentSignal]` at exit. Pure, so recorded streams replay offline |
-| `StreamingTurn` | `Turn` implementation: spawns the argv through `SubprocessRunner.spawn` with stdin closed, copies stdout to `turn_dir/<role>.stream.jsonl` and stderr to `turn_dir/<role>.stderr.log`, feeds lines to the parser, enforces obligations 1 and 3, and implements `stop()`. Runs the plugin's process sequence for one turn (for example prompt, compact, continue), appending every process's output to the same files |
+| `StreamingTurn` | `Turn` implementation: spawns the argv through `SubprocessRunner.spawn` with stdin closed, copies stdout to `turn_dir/<role>.stream.jsonl` and stderr to `turn_dir/<role>.stderr.log` (the engine keeps only the last 1 MiB of a process's stderr in memory, so the parser and the log see that tail of a flood), feeds lines to the parser, enforces obligations 1 and 3, and implements `stop()`. Runs the plugin's process sequence for one turn (for example prompt, compact, continue), appending every process's output to the same files |
 | `ResetTimeParser` | "resets 3:10am (Europe/Warsaw)", ISO, epoch, relative durations → `datetime` |
 
 ## 3. Contract test kit (`shikiru.agents.testing`)

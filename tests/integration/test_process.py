@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.errors import CommandFailed, CommandTimeoutError
-from shikiru.process import SubprocessRunner
+from shikiru.process import STDERR_KEPT_BYTES, SubprocessRunner
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -240,3 +240,23 @@ async def test_a_process_spawned_by_an_engine_killed_before_recording_it_never_r
     finally:
         with suppress(ProcessLookupError):
             os.kill(orphan, signal.SIGKILL)
+
+
+_STDERR_FLOOD_LINES = 3000
+
+
+async def test_spawn_keeps_only_a_bounded_tail_of_a_flood_of_stderr() -> None:
+    runner = SubprocessRunner()
+    program = (
+        "import sys; "
+        f"[sys.stderr.write('x' * 1023 + '\\n') for _ in range({_STDERR_FLOOD_LINES})]; "
+        "sys.stderr.write('last line\\n')"
+    )
+
+    process = await runner.spawn([sys.executable, "-c", program])
+    [_ async for _ in process.stdout_lines()]
+    await process.wait()
+
+    assert len(process.stderr_bytes) <= STDERR_KEPT_BYTES
+    assert process.stderr_bytes.endswith(b"x\nlast line\n")
+    assert process.stderr.endswith("last line\n")

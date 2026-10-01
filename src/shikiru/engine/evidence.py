@@ -9,8 +9,7 @@ from typing import TYPE_CHECKING
 from shikiru.domain.steps import ACTING_ROLE
 from shikiru.errors import ShikiruError
 from shikiru.paths import run_dir
-from shikiru.private import TEXT_ENCODING
-from shikiru.view_log import view_log_path
+from shikiru.view_log import read_tail_lines, view_log_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -79,6 +78,4 @@ class EvidenceCollector:
         path = view_log_path(run_dir(self._project_root, task.id), role.value)
         if not path.is_file():
             return ""
-        return "\n".join(
-            path.read_text(encoding=TEXT_ENCODING).splitlines()[-ESCALATION_PANE_TAIL_LINES:]
-        )
+        return "\n".join(read_tail_lines(path, ESCALATION_PANE_TAIL_LINES))

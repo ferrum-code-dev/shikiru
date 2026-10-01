@@ -309,7 +309,7 @@ Commands that only set a value (`prioritize`) are naturally repeatable.
 - headline (task, step, reason, one sentence)
 - timeline of recent events
 - what was tried
-- evidence: latest reports and verdict, facts, the last 60 view lines per role, session ids and resume commands; a report history that cannot be read is logged and the packet's facts section says so, instead of silently showing no reports
+- evidence: latest reports and verdict, facts, the last 60 view lines per role (read from the end of the log, never the whole file), session ids and resume commands; a report history that cannot be read is logged and the packet's facts section says so, instead of silently showing no reports
 - the Leader's question
 - applicable options with consequences and exactly one ★
 

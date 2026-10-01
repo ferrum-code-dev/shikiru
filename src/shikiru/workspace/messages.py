@@ -9,6 +9,7 @@ from shikiru.paths import MESSAGES_DIR_NAME, queued_messages_dir, run_dir, turns
 from shikiru.private import make_private_dir, write_private_text
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from shikiru.domain.tasks import Role
@@ -70,18 +71,16 @@ class OperatorMessages:
             path.rename(directory / path.name)
         delivered_dir.rmdir()
 
+    def _filed(self, task_id: str, pattern: str = f"*{MESSAGE_SUFFIX}") -> Iterator[Path]:
+        queued = run_dir(self._project_root, task_id).glob(f"{MESSAGES_DIR_NAME}/*/{pattern}")
+        delivered = turns_dir(self._project_root, task_id).glob(f"*/{MESSAGES_DIR_NAME}/{pattern}")
+        return chain(queued, delivered)
+
     def _last_number(self, task_id: str) -> int:
-        queued = run_dir(self._project_root, task_id).glob(
-            f"{MESSAGES_DIR_NAME}/*/*{MESSAGE_SUFFIX}"
-        )
-        delivered = turns_dir(self._project_root, task_id).glob(
-            f"*/{MESSAGES_DIR_NAME}/*{MESSAGE_SUFFIX}"
-        )
-        return max((_number(path) for path in chain(queued, delivered)), default=0)
+        return max((_number(path) for path in self._filed(task_id)), default=0)
 
     def _find(self, task_id: str, key: str) -> Path | None:
-        pattern = f"*{MESSAGE_KEY_SEPARATOR}{key}{MESSAGE_SUFFIX}"
-        return next(run_dir(self._project_root, task_id).rglob(pattern), None)
+        return next(self._filed(task_id, f"*{MESSAGE_KEY_SEPARATOR}{key}{MESSAGE_SUFFIX}"), None)
 
 
 def command_message_key(command_id: int) -> str:
