@@ -80,6 +80,10 @@ class CommandTimeoutError(ShikiruError):
         self.timeout = timeout
 
 
+PROCESS_FAILURES = (CommandFailed, CommandTimeoutError)
+"""A subprocess call that exited non-zero or timed out."""
+
+
 class DetachedProcessError(ShikiruError):
     """A detached process could not be launched."""
 

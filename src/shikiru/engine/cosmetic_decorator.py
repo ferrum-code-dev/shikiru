@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from shikiru.errors import CommandFailed, CommandTimeoutError
+from shikiru.errors import PROCESS_FAILURES
 from shikiru.tmux.decorator import PaneDecorator
 
 if TYPE_CHECKING:
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
 COSMETIC_LOGGER_NAME = __name__
 _LOGGER = logging.getLogger(COSMETIC_LOGGER_NAME)
-_TMUX_FAILURES = (CommandFailed, CommandTimeoutError)
 
 
 class CosmeticDecorator(PaneDecorator):
@@ -38,7 +37,7 @@ class CosmeticDecorator(PaneDecorator):
     async def _cosmetic(self, name: str, operation: Awaitable[None]) -> None:
         try:
             await operation
-        except _TMUX_FAILURES:
+        except PROCESS_FAILURES:
             if name not in self._failing:
                 _LOGGER.exception("tmux %s failed", name)
             self._failing.add(name)

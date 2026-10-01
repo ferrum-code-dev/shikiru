@@ -9,7 +9,7 @@ import stat
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from fake_agent.agent import FakeAgent, FakeOptions
@@ -57,7 +57,7 @@ from shikiru.domain.tasks import (
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
 from shikiru.engine.notifier import Notifier
 from shikiru.engine.takeover import HAND_BACK_MESSAGE
-from shikiru.errors import ConfigError
+from shikiru.errors import CommandTimeoutError, ConfigError
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
@@ -65,9 +65,11 @@ from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.tmux.client import Tmux
 from shikiru.tmux.decorator import PANE_COLOR_OPTION
 from shikiru.tmux.session import SessionView
 from shikiru.ui.tokens import HOLD_COLOR, OPERATOR_COLOR
+from shikiru.view_log import CLI_VIEW_COMMAND
 from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
@@ -89,17 +91,18 @@ from tests.support.waiting import wait_until
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 
     from shikiru.agents.registry import AgentRegistry
     from shikiru.domain.commands import Command
     from shikiru.domain.runs import Run
+    from shikiru.process import ProcessResult
     from shikiru.store.commands import CommandOutcome, QueuedCommand
-    from shikiru.tmux.client import Tmux
     from tests.support.github import FakeGitHub
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
+_RESPAWN_PANE = "respawn-pane"
 _READ_ONLY_DIRECTORY = 0o500
 _WRITABLE_DIRECTORY = 0o700
 _SECOND_RUNG = Rung(agent="fake", model="fake-2", effort=None)
@@ -1183,12 +1186,12 @@ class _Operator:
 
 @asynccontextmanager
 async def _operator_session(
-    tmp_path: Path, tmux_server: TmuxServer
+    tmp_path: Path, tmux_server: TmuxServer, *, tmux_override: Tmux | None = None
 ) -> AsyncGenerator[tuple[_Operator, str, Run]]:
     await init_project_repo(tmp_path)
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}, {"kind": "accept"}])
     clock = FakeClock(TASK_CREATED_AT)
-    tmux = build_tmux(tmux_server)
+    tmux = tmux_override if tmux_override is not None else build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(
         tmp_path,
@@ -1223,6 +1226,59 @@ async def _operator_session(
         with suppress(asyncio.CancelledError, Exception):
             await engine_task
         connection.close()
+
+
+class _InteractivePaneRunner(SubprocessRunner):
+    def __init__(self) -> None:
+        self.failure: Exception | None = None
+
+    async def run(self, argv: Sequence[str], **kwargs: Any) -> ProcessResult:
+        if self.failure is not None and _RESPAWN_PANE in argv and CLI_VIEW_COMMAND not in argv:
+            raise self.failure
+        return await super().run(argv, **kwargs)
+
+
+async def test_a_take_over_whose_pane_cannot_be_started_changes_nothing_and_can_be_retried(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    runner = _InteractivePaneRunner()
+    tmux = Tmux(runner, socket=tmux_server.socket_name, env=tmux_server.env)
+    async with _operator_session(tmp_path, tmux_server, tmux_override=tmux) as (
+        operator,
+        task_id,
+        run,
+    ):
+        runner.failure = CommandTimeoutError(("tmux",), 5.0)
+
+        failed = await operator.send(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+
+        assert failed.status is CommandStatus.REJECTED
+        assert Hold.INTERVENTION not in operator.task(task_id).holds
+        assert operator.runs.get_taken_over(task_id, Role.IMPLEMENTER) is None
+        assert operator.runs.get_live(task_id, Role.IMPLEMENTER) is not None
+        runner.failure = None
+
+        retried = await operator.send(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+
+        assert retried.status is CommandStatus.DONE
+        assert Hold.INTERVENTION in operator.task(task_id).holds
+        owned = operator.runs.get_taken_over(task_id, Role.IMPLEMENTER)
+        assert owned is not None
+        assert owned.id == run.id
+
+
+async def test_replaying_a_take_over_never_respawns_its_live_interactive_pane(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, _run):
+        sent = operator.queue.append(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+        await wait_for_command(sent, operator.queue, operator.clock)
+        live_pid = await operator.pane_pid(task_id, Role.IMPLEMENTER)
+
+        replayed = await operator.replay(sent)
+
+        assert replayed.status is CommandStatus.DONE
+        assert await operator.pane_pid(task_id, Role.IMPLEMENTER) == live_pid
 
 
 async def test_a_takeover_lost_with_the_tmux_server_is_handed_back_with_a_notified_event(

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from shikiru.domain.commands import COMMAND_ID_KEY
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Hold, Role, Status, Task
 from shikiru.engine.turns import turn_environment
-from shikiru.errors import CommandRejectedError
+from shikiru.errors import PROCESS_FAILURES, CommandRejectedError
 from shikiru.paths import run_dir, task_root
+from shikiru.tmux.client import FORMAT_PANE_PID
 from shikiru.workspace.messages import command_message_key
 
 if TYPE_CHECKING:
@@ -29,6 +30,8 @@ HAND_BACK_MESSAGE = (
     "The Operator worked in this session since your last turn; take their changes into account."
 )
 _ACTIVE_STATUSES = (Status.RUNNING, Status.INTEGRATING)
+TAKEOVER_PANE_OPTION = "@shk_takeover"
+_FORMAT_TAKEOVER = f"#{{{TAKEOVER_PANE_OPTION}}}"
 
 
 class Takeover:
@@ -98,20 +101,59 @@ class Takeover:
                     },
                 )
         owned = self._runs.get_taken_over(task.id, role)
-        if owned is not None and owned.session_id is not None:
-            await self._respawn_interactive(
-                self._current(task.id), role, owned.agent, owned.session_id
+        if owned is None or owned.session_id is None:
+            message = f"{task.id} {role.value} take over did not hold"
+            raise CommandRejectedError(message)
+        try:
+            await self._ensure_interactive(
+                self._current(task.id), role, owned.agent, owned.session_id, command_id
             )
+        except PROCESS_FAILURES as error:
+            await self._release_unstarted(task, role, owned.id, error)
         await self._refresh_titles(self._current(task.id))
 
-    async def _respawn_interactive(
-        self, task: Task, role: Role, agent: str, session_id: str
+    async def _ensure_interactive(
+        self, task: Task, role: Role, agent: str, session_id: str, command_id: int
     ) -> None:
+        pane = _role_pane(task, role)
+        if await self._interactive_is_live(pane, command_id):
+            return
         root = task_root(self._project_root, task.id)
         task_run_dir = run_dir(self._project_root, task.id)
         argv = self._agents.get(agent).interactive_command(session_id, task_run_dir)
         env = turn_environment(task, role, task_run_dir, self._project_name)
-        await self._tmux.respawn_pane(_role_pane(task, role), argv, env=env, cwd=root)
+        await self._tmux.respawn_pane(pane, argv, env=env, cwd=root)
+        pid = await self._tmux.display(pane, FORMAT_PANE_PID)
+        await self._tmux.set_pane_option(pane, TAKEOVER_PANE_OPTION, _live_marker(command_id, pid))
+
+    async def _interactive_is_live(self, pane: str, command_id: int) -> bool:
+        marker = await self._tmux.display(pane, _FORMAT_TAKEOVER)
+        pid = await self._tmux.display(pane, FORMAT_PANE_PID)
+        return marker == _live_marker(command_id, pid) and not await self._tmux.is_pane_dead(pane)
+
+    async def _release_unstarted(
+        self, task: Task, role: Role, run_id: int, error: Exception
+    ) -> NoReturn:
+        with self._atomically():
+            self._runs.mark_live(run_id)
+            if not self._runs.has_taken_over(task.id):
+                holds = self._current(task.id).holds - {Hold.INTERVENTION}
+                self._tasks.set_holds(task.id, holds)
+            self._events.append(
+                EventKind.TAKEOVER_LOST,
+                task_id=task.id,
+                message=f"{task.id} {role.value} take over released: its pane could not be started",
+                data={"role": role.value},
+            )
+        current = self._current(task.id)
+        if current.status in _ACTIVE_STATUSES and not current.held:
+            await self._start_task(task.id)
+        await self._refresh_titles(current)
+        message = (
+            f"{task.id} {role.value} was not taken over: its pane could not be started ({error}); "
+            "nothing is held and the task continues, take over again to retry"
+        )
+        raise CommandRejectedError(message) from error
 
     async def hand_back(self, task: Task, role: Role, command_id: int) -> None:
         """Return `role`'s taken-over session to the engine and re-run the current step.
@@ -150,6 +192,10 @@ class Takeover:
             message = f"task {task_id} disappeared during take over"
             raise CommandRejectedError(message)
         return task
+
+
+def _live_marker(command_id: int, pid: str) -> str:
+    return f"{command_id}:{pid}"
 
 
 def _role_pane(task: Task, role: Role) -> str:
