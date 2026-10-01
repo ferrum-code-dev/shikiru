@@ -689,9 +689,9 @@ Refs: 06 §5.7, 03 §8, 74c. Reviewer findings: the last-notified event id and t
 
 ### Task 74m: Regression power of the Codex sandbox and reconcile fixes
 Refs: 74b, 74c; reviewer mutations. Mutating `_git_dirs_for_turn` to return nothing leaves all 17 offline Codex tests green; removing the `_orphans_ended` guard leaves all integration tests green and the test meant to protect it is vacuous.
-- [ ] An offline test builds a real linked `git worktree` and asserts the Codex argv for a first and a resumed turn carries its gitdir, the common directory and the run directory as writable roots; the test-only `_worktree_git_dirs` fallback in production code is removed or justified.
-- [ ] A test that fails when `end_orphans` runs a second time (a reconcile retried after a fault must not end a turn that started after the first attempt); the vacuous test is replaced.
-- [ ] A turn whose leader exits while a descendant still holds the stdout pipe ends within the bounded drain time, not the stall timeout, or the limitation is written into 03 §7 with the measured bound (decide by cost: the simplest fix wins).
+- [x] An offline test builds a real linked `git worktree` and asserts the Codex argv for a first and a resumed turn carries its gitdir, the common directory and the run directory as writable roots; the test-only `_worktree_git_dirs` fallback in production code is removed or justified.
+- [x] A test that fails when `end_orphans` runs a second time (a reconcile retried after a fault must not end a turn that started after the first attempt); the vacuous test is replaced.
+- [x] A turn whose leader exits while a descendant still holds the stdout pipe ends within the bounded drain time, not the stall timeout, or the limitation is written into 03 §7 with the measured bound (decide by cost: the simplest fix wins).
 - Tests: mutation check recorded in the report for each (revert the code, see the new test fail).
 
 ### Task 74n: Documentation and evidence corrections

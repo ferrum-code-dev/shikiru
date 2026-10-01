@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.errors import CommandFailed, CommandTimeoutError
-from shikiru.process import STDERR_KEPT_BYTES, SubprocessRunner
+from shikiru.process import STDERR_KEPT_BYTES, STDOUT_DRAIN_TIMEOUT, SubprocessRunner
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -173,6 +173,25 @@ async def test_stop_returns_within_a_bound_and_ends_a_descendant_holding_the_pip
 
     assert [line async for line in process.stdout_lines()] == []
     await wait_until(lambda: not runner.is_running(descendant), _STOP_BOUND_SECONDS)
+
+
+_LEADER_EXITS_PROGRAM = 'sleep 300 & echo "$!" > "$1"; echo done; exit 0'
+
+
+async def test_an_exited_leader_ends_the_output_stream_and_its_descendant_within_the_drain_bound(
+    tmp_path: Path,
+) -> None:
+    runner = SubprocessRunner()
+    pid_file = tmp_path / "descendant.pid"
+    process = await runner.spawn(["/bin/sh", "-c", _LEADER_EXITS_PROGRAM, "sh", str(pid_file)])
+
+    async with asyncio.timeout(STDOUT_DRAIN_TIMEOUT + _STOP_BOUND_SECONDS):
+        lines = [line async for line in process.stdout_lines()]
+        returncode = await process.wait()
+
+    assert (lines, returncode) == ([b"done\n"], 0)
+    descendant = runner.identify(int(pid_file.read_text()))
+    assert descendant is None or not runner.is_running(descendant)
 
 
 _MARKER_PROGRAM = "import pathlib, sys, time; pathlib.Path(sys.argv[1]).touch(); time.sleep(300)"

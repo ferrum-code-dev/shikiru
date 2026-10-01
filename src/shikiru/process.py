@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 TURN_STOP_GRACE = 10.0
 STDERR_DRAIN_TIMEOUT = 2.0
+STDOUT_DRAIN_TIMEOUT = 2.0
 STDOUT_FILENO = 1
 STDERR_FILENO = 2
 _STDERR_READ_SIZE = 65536
@@ -162,7 +163,11 @@ class SpawnedProcess:
         return self._stderr[-_STDERR_TAIL_CHARS:]
 
     async def stdout_lines(self) -> AsyncIterator[bytes]:
-        """Yield stdout lines as original bytes, including line endings, exactly once."""
+        """Yield stdout lines as original bytes, including line endings, exactly once.
+
+        Once the leader has exited, `STDOUT_DRAIN_TIMEOUT` seconds later its process group is
+        SIGKILLed, so a descendant holding the pipe cannot keep the stream open.
+        """
         if self._stdout_read:
             message = "stdout_lines() can only be consumed once"
             raise RuntimeError(message)
@@ -171,27 +176,39 @@ class SpawnedProcess:
             message = "spawned process has no stdout pipe"
             raise RuntimeError(message)
         pending = bytearray()
-        while chunk := await self._process.stdout.read(_STDOUT_READ_SIZE):
-            pending.extend(chunk)
-            while (newline_index := pending.find(b"\n")) >= 0:
-                line_end = newline_index + 1
-                yield bytes(pending[:line_end])
-                del pending[:line_end]
+        sweeper = asyncio.create_task(self._sweep_group_after_exit())
+        try:
+            while chunk := await self._process.stdout.read(_STDOUT_READ_SIZE):
+                pending.extend(chunk)
+                while (newline_index := pending.find(b"\n")) >= 0:
+                    line_end = newline_index + 1
+                    yield bytes(pending[:line_end])
+                    del pending[:line_end]
+        finally:
+            sweeper.cancel()
         if pending:
             yield bytes(pending)
 
     async def wait(self) -> int:
         """Wait for process exit, end its process group, and capture stderr within a bound."""
         returncode = await self._process.wait()
-        if not self._group_swept:
-            self._group_swept = True
-            _killpg(self._process.pid, signal.SIGKILL)
+        self._sweep_group()
         _, pending = await asyncio.wait({self._stderr_task}, timeout=STDERR_DRAIN_TIMEOUT)
         for task in pending:
             task.cancel()
         self._stderr_bytes = bytes(self._stderr_tail)
         self._stderr = self._stderr_bytes.decode(errors="replace")
         return returncode
+
+    def _sweep_group(self) -> None:
+        if not self._group_swept:
+            self._group_swept = True
+            _killpg(self._process.pid, signal.SIGKILL)
+
+    async def _sweep_group_after_exit(self) -> None:
+        await self._process.wait()
+        await asyncio.sleep(STDOUT_DRAIN_TIMEOUT)
+        self._sweep_group()
 
     async def stop(self, *, grace: float = TURN_STOP_GRACE) -> None:
         """Signal the process group with SIGTERM, then SIGKILL after `grace`, and reap it."""
