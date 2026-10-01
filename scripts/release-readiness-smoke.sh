@@ -3,17 +3,31 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-UV_BIN="$(command -v uv)"
-TMUX_BIN="$(command -v tmux)"
-GIT_BIN="$(command -v git)"
-PYTHON_BIN="$(command -v python3)"
-SCRIPT_BIN="$(command -v script)"
+
+require_tool() {
+    local path
+    if ! path="$(command -v "$1")"; then
+        printf 'missing tool: %s\n' "$1" >&2
+        exit 1
+    fi
+    printf '%s\n' "$path"
+}
+
+UV_BIN="$(require_tool uv)"
+TMUX_BIN="$(require_tool tmux)"
+GIT_BIN="$(require_tool git)"
+PYTHON_BIN="$(require_tool python3)"
+SCRIPT_BIN="$(require_tool script)"
 SMOKE_TMPDIR="${SHIKIRU_SMOKE_TMPDIR:-/tmp}"
 SOCKET_PATH_LIMIT=100
 DATE="$(date +%F)"
+RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ARTIFACT_DIR="$ROOT/build/release-readiness"
-ARTIFACT="$ARTIFACT_DIR/clean-install-$DATE.json"
-LOG="$ARTIFACT_DIR/clean-install-$DATE.log"
+ARTIFACT_NAME="clean-install-$RUN_STAMP"
+ARTIFACT="$ARTIFACT_DIR/$ARTIFACT_NAME.json"
+LOG="$ARTIFACT_DIR/$ARTIFACT_NAME.log"
+LATEST_NAME="clean-install-latest"
 RUN_ROOT="$(mktemp -d "$SMOKE_TMPDIR/shikiru-release-smoke.XXXXXX")"
 HOME_DIR="$RUN_ROOT/home"
 CACHE_DIR="$RUN_ROOT/cache"
@@ -23,7 +37,7 @@ TMUX_TMPDIR="$RUN_ROOT/tmux"
 TMUX_SHIM_DIR="$RUN_ROOT/shims"
 SOCKET_NAME="shikiru-release-$RANDOM-$$"
 ATTACH_PID=""
-SMOKE_STAGE="source-checkout installation"
+SMOKE_STAGE="preflight"
 HOME_DASHBOARD_CHECK="not run"
 PICKER_CHECK="not run"
 SMALL_CLIENT_SIZE="not run"
@@ -41,17 +55,83 @@ mkdir -p "$ARTIFACT_DIR" "$HOME_DIR" "$CACHE_DIR/xdg" "$CACHE_DIR/config" \
     "$TMUX_TMPDIR" "$TMUX_SHIM_DIR" "$RUN_ROOT/tmp"
 : > "$LOG"
 
+finish() {
+    local exit_status=$?
+    trap - EXIT
+    printf '\nRelease smoke stage: %s\n' "$SMOKE_STAGE" >> "$LOG"
+    if [[ -f "${STATUS_PATH:-}" ]]; then
+        printf '\nLast observed task status:\n' >> "$LOG"
+        cat "$STATUS_PATH" >> "$LOG"
+    fi
+    if [[ -x "${TOOL_BIN:-}" ]]; then
+        for project in "${WORK_PROJECT:-}" "${SECONDARY_PROJECT:-}"; do
+            if [[ -n "$project" && -f "$project/.shikiru/config.toml" ]]; then
+                app "$project" stop --kill-session >> "$LOG" 2>&1 || true
+            fi
+        done
+    fi
+    env -i "${RUNTIME_ENV[@]}" "$TMUX_BIN" -L "$SOCKET_NAME" -f /dev/null \
+        kill-server >> "$LOG" 2>&1 || true
+    if [[ -n "$ATTACH_PID" ]]; then
+        kill "$ATTACH_PID" 2>/dev/null || true
+        wait "$ATTACH_PID" 2>/dev/null || true
+    fi
+    SOURCE_COMMIT="$("$GIT_BIN" -C "$ROOT" rev-parse HEAD)"
+    SOURCE_FINGERPRINT="$(
+        {
+            "$GIT_BIN" -C "$ROOT" diff HEAD --binary
+            sha256 "$ROOT/scripts/release-readiness-smoke.sh"
+            sha256 "$ROOT/tests/support/release_wait.py"
+            for doc in "$ROOT"/docs/release-readiness-*.md "$ROOT/docs/e2e-results.md"; do
+                if [[ -f "$doc" ]]; then
+                    sha256 "$doc"
+                fi
+            done
+        } | sha256 | awk '{print $1}'
+    )"
+    SMOKE_EXIT_STATUS="$exit_status" "$PYTHON_BIN" - "$ARTIFACT" "$DATE" "$STARTED_AT" "$ARTIFACT_NAME" "$SOURCE_COMMIT" "$SOURCE_FINGERPRINT" "$SMOKE_STAGE" "$HOME_DASHBOARD_CHECK" "$PICKER_CHECK" "$SMALL_CLIENT_SIZE" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+artifact = Path(sys.argv[1])
+data = {
+    "date": sys.argv[2],
+    "started_at": sys.argv[3],
+    "source_commit": sys.argv[5],
+    "source_diff_fingerprint": sys.argv[6],
+    "failed_stage": sys.argv[7] if os.environ["SMOKE_EXIT_STATUS"] != "0" else None,
+    "status": "passed" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "failed",
+    "installation": "uv tool install . --with tests/fake_agent --with pytest",
+    "fresh_disposable_home": True,
+    "runtime_isolation": ["HOME", "XDG directories", "uv cache/tools/bin", "private tmux socket"],
+    "installed_package_data_and_entrypoints": "verified" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
+    "installed_cli_flows": ["interactive init wizard and Doctor", "init --yes", "doctor", "start", "submit", "status", "ls", "picker attach", "named attach", "stop and cleanup"],
+    "wizard_terminals": ["120x38", "68x16"],
+    "picker_terminal": sys.argv[9],
+    "small_picker_client_size": sys.argv[10],
+    "home_dashboard_pane_after_merge": sys.argv[8],
+    "task_result": "T-1 merged on main and A1 ticked from interactive quickstart" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
+    "agent_cost": "unknown; test-only fake agent reports no billed cost",
+    "limitation": "The existing test-only fake-agent plugin and pytest (needed by its test-kit import) were injected only into this disposable tool environment for repeatable unauthenticated packaging and CLI smoke coverage; native E1-E6 evidence is separate.",
+    "log": f"build/release-readiness/{sys.argv[4]}.log",
+}
+artifact.write_text(json.dumps(data, indent=2) + "\n")
+PY
+    if (( exit_status == 0 )); then
+        cp "$ARTIFACT" "$ARTIFACT_DIR/$LATEST_NAME.json"
+        cp "$LOG" "$ARTIFACT_DIR/$LATEST_NAME.log"
+    fi
+    rm -rf "$RUN_ROOT"
+    exit "$exit_status"
+}
+
 TOOL_PATH=""
 for tool in "$UV_BIN" "$TMUX_BIN" "$GIT_BIN" "$PYTHON_BIN"; do
     TOOL_PATH="$TOOL_PATH:$(dirname "$tool")"
 done
 PATH="$TOOL_BIN_DIR:$TMUX_SHIM_DIR$TOOL_PATH:$(getconf PATH)"
-SOCKET_PATH="$TMUX_TMPDIR/tmux-$(id -u)/$SOCKET_NAME"
-if (( ${#SOCKET_PATH} > SOCKET_PATH_LIMIT )); then
-    printf 'tmux socket path is %d characters, over %d; set SHIKIRU_SMOKE_TMPDIR to a shorter directory\n' \
-        "${#SOCKET_PATH}" "$SOCKET_PATH_LIMIT" >&2
-    exit 1
-fi
 RUNTIME_ENV=(
     "HOME=$HOME_DIR"
     "XDG_CACHE_HOME=$CACHE_DIR/xdg"
@@ -71,6 +151,15 @@ RUNTIME_ENV=(
     "GIT_CONFIG_GLOBAL=/dev/null"
     "SHIKIRU_FAKE_TICK_A1=1"
 )
+
+trap finish EXIT
+
+SOCKET_PATH="$TMUX_TMPDIR/tmux-$(id -u)/$SOCKET_NAME"
+if (( ${#SOCKET_PATH} > SOCKET_PATH_LIMIT )); then
+    printf 'tmux socket path is %d characters, over %d; set SHIKIRU_SMOKE_TMPDIR to a shorter directory\n' \
+        "${#SOCKET_PATH}" "$SOCKET_PATH_LIMIT" >&2
+    exit 1
+fi
 
 record() {
     printf '\n$' >> "$LOG"
@@ -119,72 +208,6 @@ prepare_project() {
     "$GIT_BIN" -C "$project" commit --quiet -m fixture
 }
 
-finish() {
-    local exit_status=$?
-    trap - EXIT
-    printf '\nRelease smoke stage: %s\n' "$SMOKE_STAGE" >> "$LOG"
-    if [[ -f "${STATUS_PATH:-}" ]]; then
-        printf '\nLast observed task status:\n' >> "$LOG"
-        cat "$STATUS_PATH" >> "$LOG"
-    fi
-    if [[ -x "${TOOL_BIN:-}" ]]; then
-        for project in "${WORK_PROJECT:-}" "${SECONDARY_PROJECT:-}"; do
-            if [[ -n "$project" && -f "$project/.shikiru/config.toml" ]]; then
-                app "$project" stop --kill-session >> "$LOG" 2>&1 || true
-            fi
-        done
-    fi
-    env -i "${RUNTIME_ENV[@]}" "$TMUX_BIN" -L "$SOCKET_NAME" -f /dev/null \
-        kill-server >> "$LOG" 2>&1 || true
-    if [[ -n "$ATTACH_PID" ]]; then
-        kill "$ATTACH_PID" 2>/dev/null || true
-        wait "$ATTACH_PID" 2>/dev/null || true
-    fi
-    SOURCE_COMMIT="$("$GIT_BIN" -C "$ROOT" rev-parse HEAD)"
-    SOURCE_FINGERPRINT="$(
-        {
-            "$GIT_BIN" -C "$ROOT" diff HEAD --binary
-            sha256 "$ROOT/scripts/release-readiness-smoke.sh"
-            sha256 "$ROOT/tests/support/release_wait.py"
-            if [[ -f "$ROOT/docs/release-readiness-2026-09-29.md" ]]; then
-                sha256 "$ROOT/docs/release-readiness-2026-09-29.md"
-            fi
-        } | sha256 | awk '{print $1}'
-    )"
-    SMOKE_EXIT_STATUS="$exit_status" "$PYTHON_BIN" - "$ARTIFACT" "$DATE" "$SOURCE_COMMIT" "$SOURCE_FINGERPRINT" "$SMOKE_STAGE" "$HOME_DASHBOARD_CHECK" "$PICKER_CHECK" "$SMALL_CLIENT_SIZE" <<'PY'
-import json
-import os
-import sys
-from pathlib import Path
-
-artifact = Path(sys.argv[1])
-data = {
-    "date": sys.argv[2],
-    "source_commit": sys.argv[3],
-    "source_diff_fingerprint": sys.argv[4],
-    "failed_stage": sys.argv[5] if os.environ["SMOKE_EXIT_STATUS"] != "0" else None,
-    "status": "passed" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "failed",
-    "installation": "uv tool install . --with tests/fake_agent --with pytest",
-    "fresh_disposable_home": True,
-    "runtime_isolation": ["HOME", "XDG directories", "uv cache/tools/bin", "private tmux socket"],
-    "installed_package_data_and_entrypoints": "verified" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
-    "installed_cli_flows": ["interactive init wizard and Doctor", "init --yes", "doctor", "start", "submit", "status", "ls", "picker attach", "named attach", "stop and cleanup"],
-    "wizard_terminals": ["120x38", "68x16"],
-    "picker_terminal": sys.argv[7],
-    "small_picker_client_size": sys.argv[8],
-    "home_dashboard_pane_after_merge": sys.argv[6],
-    "task_result": "T-1 merged on main and A1 ticked from interactive quickstart" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
-    "agent_cost": "unknown; test-only fake agent reports no billed cost",
-    "limitation": "The existing test-only fake-agent plugin and pytest (needed by its test-kit import) were injected only into this disposable tool environment for repeatable unauthenticated packaging and CLI smoke coverage; native E1-E6 evidence is separate.",
-    "log": f"build/release-readiness/clean-install-{sys.argv[2]}.log",
-}
-artifact.write_text(json.dumps(data, indent=2) + "\n")
-PY
-    rm -rf "$RUN_ROOT"
-    exit "$exit_status"
-}
-
-trap finish EXIT
 
 if [[ -n "$(find "$HOME_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
     printf 'disposable HOME was not empty before installation\n' >&2
@@ -197,6 +220,7 @@ exec "$TMUX_BIN" -L "$SOCKET_NAME" -f /dev/null "\$@"
 EOF
 chmod 755 "$TMUX_SHIM_DIR/tmux"
 
+SMOKE_STAGE="source-checkout installation"
 cd "$ROOT"
 record env -i \
     "HOME=$HOME_DIR" \
