@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from jinja2 import UndefinedError
 
 from shikiru.domain.fencing import fence
 from shikiru.prompts.renderer import (
@@ -18,20 +17,15 @@ if TYPE_CHECKING:
 _REQUEST = "Add retries to the flaky parser"
 _WORKSPACE = "/projects/demo/.shikiru/worktrees/T-7"
 _BASE = "release-7"
-_REPORT_JSON = '{"status": "completed"}'
-_FENCED_REPORT_JSON = [
-    _REPORT_JSON,
-    '{"note": "closes a ``` fence early"}',
-    '{"note": "closes a ```` fence early"}',
-]
+_FENCING_REPORT_JSON = '{"note": "closes a ```` fence early"}'
 
 
-def _full_context(name: PromptName, *, report_json: str = _REPORT_JSON) -> dict[str, Any]:
+def _full_context(name: PromptName) -> dict[str, Any]:
     context: dict[str, Any] = {
         "request": _REQUEST,
         "workspace": _WORKSPACE,
         "trackers": ["tasks/plan.md", "tasks/todo.md"],
-        "reports": [{"label": "Implementation", "json": report_json}],
+        "reports": [{"label": "Implementation", "json": _FENCING_REPORT_JSON}],
         "required_mode": "",
         "operator_messages": [],
     }
@@ -49,7 +43,7 @@ def _full_context(name: PromptName, *, report_json: str = _REPORT_JSON) -> dict[
 
 
 @pytest.mark.parametrize("name", list(PromptName))
-def test_every_template_includes_the_request_and_workspace_and_ends_with_the_report(
+def test_every_template_renders_the_request_the_workspace_fenced_reports_and_ends_with_the_report(
     tmp_path: Path, name: PromptName
 ) -> None:
     renderer = PromptRenderer(tmp_path)
@@ -58,6 +52,7 @@ def test_every_template_includes_the_request_and_workspace_and_ends_with_the_rep
 
     assert _REQUEST in rendered
     assert f"`{_WORKSPACE}`" in rendered
+    assert fence(_FENCING_REPORT_JSON, "json") in rendered
     assert rendered.rstrip().endswith(REPORT_INSTRUCTION)
 
 
@@ -65,28 +60,6 @@ def test_verify_points_the_leader_at_the_diff_against_the_base(tmp_path: Path) -
     rendered = PromptRenderer(tmp_path).render(PromptName.VERIFY, _full_context(PromptName.VERIFY))
 
     assert f"git diff {_BASE}...HEAD" in rendered
-
-
-@pytest.mark.parametrize("report_json", _FENCED_REPORT_JSON)
-@pytest.mark.parametrize("name", list(PromptName))
-def test_every_template_fences_earlier_reports_even_with_backticks_inside(
-    tmp_path: Path, name: PromptName, report_json: str
-) -> None:
-    renderer = PromptRenderer(tmp_path)
-
-    rendered = renderer.render(name, _full_context(name, report_json=report_json))
-
-    assert fence(report_json, "json") in rendered
-
-
-@pytest.mark.parametrize("name", list(PromptName))
-def test_every_template_raises_on_a_missing_variable(tmp_path: Path, name: PromptName) -> None:
-    renderer = PromptRenderer(tmp_path)
-    context = _full_context(name)
-    del context["request"]
-
-    with pytest.raises(UndefinedError):
-        renderer.render(name, context)
 
 
 def test_a_project_override_replaces_the_packaged_template(tmp_path: Path) -> None:

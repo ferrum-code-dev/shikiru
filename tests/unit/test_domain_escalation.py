@@ -21,12 +21,13 @@ class _ResolutionCase:
     expected_counters: Counters
 
 
-@pytest.mark.parametrize("reason", list(EscalationReason))
-def test_every_reason_has_exactly_one_recommended_option(reason: EscalationReason) -> None:
-    options = options_for(reason)
+def test_every_reason_has_exactly_one_recommended_option() -> None:
+    recommended = {
+        reason: sum(option.recommended for option in options_for(reason))
+        for reason in EscalationReason
+    }
 
-    recommended = [option for option in options if option.recommended]
-    assert len(recommended) == 1
+    assert set(recommended.values()) == {1}
 
 
 @pytest.mark.parametrize(

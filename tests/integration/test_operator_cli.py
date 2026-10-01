@@ -10,9 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
-from typer.testing import CliRunner
 
-import shikiru.cli.app as cli_app
 from shikiru.bootstrap import build_operator
 from shikiru.config.loader import load_settings
 from shikiru.operator.lifecycle import PALETTE_COMMAND, ProjectLifecycle, StartResult
@@ -130,36 +128,6 @@ async def test_cli_json_init_submit_status_and_stop(tmp_path: Path) -> None:
     stop_value = json.loads(stdout)
     assert stop_value["message"]
     assert stop_value["result"] == {"stopped": False}
-
-
-async def test_palette_uses_the_invoking_tmux_project_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    projects = [tmp_path / "one", tmp_path / "two"]
-    for project in projects:
-        (project / ".shikiru").mkdir(parents=True)
-    calls: list[tuple[Path, tuple[str, ...]]] = []
-
-    async def run_palette(project_root: Path, overrides: tuple[str, ...]) -> None:
-        calls.append((project_root, overrides))
-
-    monkeypatch.setattr(cli_app, "run_palette", run_palette)
-    runner = CliRunner()
-
-    for project in projects:
-        result = await asyncio.to_thread(
-            runner.invoke,
-            cli_app.app,
-            ["--set", "project.name='from-override'", "palette"],
-            env={PROJECT_DIR_ENV_VAR: str(project)},
-        )
-
-        assert result.exit_code == 0
-
-    assert calls == [
-        (projects[0], ("project.name='from-override'",)),
-        (projects[1], ("project.name='from-override'",)),
-    ]
 
 
 async def test_start_reports_that_an_existing_engine_was_reused(

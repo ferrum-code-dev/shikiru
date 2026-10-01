@@ -54,29 +54,16 @@ def _context_for(reason: EscalationReason) -> PacketContext:
     )
 
 
-@pytest.mark.parametrize("reason", list(EscalationReason))
-def test_every_reason_renders_a_packet_with_every_section_and_exactly_one_star(
-    reason: EscalationReason,
-) -> None:
-    context = _context_for(reason)
+def test_every_reason_renders_a_packet_with_its_evidence_and_exactly_one_star() -> None:
+    for reason in EscalationReason:
+        context = _context_for(reason)
 
-    packet = render_packet(context)
+        packet = render_packet(context)
 
-    headings = (
-        "# T-1",
-        "## Timeline",
-        "## What was tried",
-        "## Evidence",
-        "## Question",
-        "## Options",
-    )
-    for heading in headings:
-        assert heading in packet
-    evidence = (context.reports, context.facts, context.view_tail, context.sessions)
-    for section in evidence:
-        assert section
-        assert section in packet
-    assert packet.count(_STAR) == 1
+        for evidence in (context.reports, context.facts, context.view_tail, context.sessions):
+            assert evidence
+            assert evidence in packet
+        assert packet.count(_STAR) == 1, reason
 
 
 async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(

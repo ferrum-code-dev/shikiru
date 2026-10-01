@@ -5,9 +5,8 @@ import pytest
 from shikiru.ui.glyphs import ALL_GLYPHS, is_single_cell
 
 
-@pytest.mark.parametrize("glyph", ALL_GLYPHS)
-def test_every_registered_glyph_is_a_single_terminal_cell(glyph: str) -> None:
-    assert is_single_cell(glyph)
+def test_every_registered_glyph_is_a_single_terminal_cell() -> None:
+    assert [glyph for glyph in ALL_GLYPHS if not is_single_cell(glyph)] == []
 
 
 @pytest.mark.parametrize(

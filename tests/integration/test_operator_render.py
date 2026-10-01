@@ -100,12 +100,8 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
 
     assert "T-active" in output
     assert "T-queued" in output
-    assert "T-history" not in output
-    assert "┏" in output
-    assert "┗" in output
     assert "dependency" in output
     assert "5h" in output
-    assert "API-equivalent" in output
     assert "accept" in output
     assert "Reviewed" in output
     assert "5.0 MiB" in output

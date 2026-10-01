@@ -59,11 +59,12 @@ def test_data_round_trips_through_the_json_column(connection: Connection) -> Non
     assert reloaded.data == payload
 
 
-def test_command_applied_lookup_is_bounded_by_the_kind_index(connection: Connection) -> None:
+def test_command_applied_lookup_never_scans_the_whole_event_log(connection: Connection) -> None:
     plan = connection.execute(
         f"EXPLAIN QUERY PLAN {COMMAND_APPLIED_SQL}",
         (EventKind.TAKEN_OVER.value, f"$.{COMMAND_ID_KEY}", 1),
     ).fetchall()
 
     details = " ".join(row["detail"] for row in plan)
-    assert "idx_events_kind" in details
+    assert "SEARCH" in details
+    assert "SCAN" not in details
