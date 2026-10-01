@@ -101,7 +101,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 ## Phase 7c — Final-review remediation (2026-10-01)
 - [x] Task 74b: Codex sandbox covers the worktree git directory on every turn
 - [x] Task 74c: Reconcile and the tick fail per item, not per engine
-- [ ] Task 74d: Notifications cannot silence an escalation
+- [x] Task 74d: Notifications cannot silence an escalation
 - [ ] Task 74e: PR mode network work leaves the command loop and tolerates blips
 - [ ] Task 74f: Operator-held tasks and task ids survive tmux loss and reuse
 - [ ] Task 74g: Lint, docs, smoke and evidence hygiene

@@ -621,8 +621,8 @@ Refs: 02 §1, 03 §7; reviewer findings.
 
 ### Task 74d: Notifications cannot silence an escalation
 Refs: 06 §5.7, 03 §8.
-- [ ] A hung or slow `notify.command` hook does not delay or drop later escalations: escalation and engine-fault notifications have priority over informational ones, the queue never drops an escalation, hook timeouts are short and configured (not 2 h), and a failing hook is recorded once per streak.
-- [ ] `status` and the dashboard show the engine's current fault streak and the oldest unacknowledged escalation age, so an alive-but-starved engine does not look healthy.
+- [x] A hung or slow `notify.command` hook does not delay or drop later escalations: escalation and engine-fault notifications have priority over informational ones, the queue never drops an escalation, hook timeouts are short and configured (not 2 h), and a failing hook is recorded once per streak.
+- [x] `status` and the dashboard show the engine's current fault streak and the oldest unacknowledged escalation age, so an alive-but-starved engine does not look healthy.
 - Tests: integration: blocked hook plus ten informational events plus an escalation: the escalation is delivered after the hook is released and never dropped; fault streak shown in `status`.
 
 ### Task 74e: PR mode network work leaves the command loop and tolerates blips

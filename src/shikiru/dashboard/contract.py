@@ -39,6 +39,7 @@ class HeaderView:
     occupied_slots: int
     maximum_slots: int
     repo: RepoStatus
+    alerts: tuple[str, ...]
 
 
 @dataclass(frozen=True)

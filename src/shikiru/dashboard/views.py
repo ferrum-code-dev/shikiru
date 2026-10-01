@@ -21,7 +21,8 @@ from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status
 from shikiru.operator.strip_views import task_strip_data
-from shikiru.ui.glyphs import SPINNER_FRAMES
+from shikiru.ui.age import format_age
+from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 
 if TYPE_CHECKING:
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from shikiru.store.reader import StateReader
 
 DIALOGUE_LINE_LIMIT = 20
+ALERT_TIME_FORMAT = "%H:%M:%S"
 SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
 HOURS_PER_DAY = 24
@@ -110,7 +112,19 @@ class StateDashboardViews:
             occupied_slots=len(occupied_slot_ids(tasks)),
             maximum_slots=self._settings.orchestration.max_parallel,
             repo=await self._sources.repo_status(),
+            alerts=self._alerts(),
         )
+
+    def _alerts(self) -> tuple[str, ...]:
+        lines = [
+            f"{GLYPH_STALLED} {fault.scope}{f' {fault.task_id}' if fault.task_id else ''}: "
+            f"{fault.error} x{fault.repeat} since {fault.first_seen.strftime(ALERT_TIME_FORMAT)}"
+            for fault in self._queries.open_faults()
+        ]
+        age = self._queries.oldest_escalation_age_seconds()
+        if age is not None:
+            lines.append(f"oldest escalation {format_age(age)}")
+        return tuple(lines)
 
     def strips(self) -> list[TaskStripData]:
         """Build the active task strips, placing the focused task first."""

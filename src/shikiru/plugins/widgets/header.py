@@ -19,7 +19,7 @@ def _header_text(view: HeaderView) -> str:
     )
     repo = view.repo
     repo_line = f"{repo.branch} · +{repo.ahead}/-{repo.behind} · {repo.dirty} dirty"
-    return f"{summary}\n{repo_line}"
+    return "\n".join((summary, repo_line, *view.alerts))
 
 
 class HeaderPanel(Static):

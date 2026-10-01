@@ -12,13 +12,16 @@ from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView, WidgetContext
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
+from shikiru.domain.events import EventKind
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import Hold, Mode, Status
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Status
 from shikiru.operator.queries import OperatorQueries
 from shikiru.plugins.widgets.header import HeaderPanel, HeaderWidget
 from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.plugins.widgets.strips import StripsPanel, StripsWidget
+from shikiru.store.escalations import EscalationStore
+from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -147,6 +150,37 @@ async def test_header_does_not_count_an_escalated_slot_as_occupied(
         await pilot.pause()
 
         assert "slots 0/2" in cast("str", widget.content)
+
+
+async def test_header_shows_an_open_fault_streak_and_the_age_of_the_oldest_escalation(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="stuck")
+    EscalationStore(connection, clock).open(
+        task.id,
+        step=None,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="question",
+        packet_path="packet.md",
+        options=(),
+    )
+    events = EventLog(connection, clock)
+    fault = {"scope": "engine tick", "error": "CommandFailed", "recoverable": True, "repeat": 3}
+    events.append(EventKind.ENGINE_FAULT, message="failed", data=fault)
+
+    context = _context(reader, project_dir)
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with _WidgetHostApp(widget).run_test() as pilot:
+        await pilot.pause()
+        text = cast("str", widget.content)
+        assert "engine tick: CommandFailed x3" in text
+        assert "oldest escalation 0:00:00" in text
+
+        events.append(EventKind.ENGINE_RECOVERED, message="ok", data={"scope": "engine tick"})
+
+        await wait_until(lambda: "engine tick" not in cast("str", widget.content), timeout=5.0)
 
 
 async def test_header_refreshes_when_the_writer_commits(

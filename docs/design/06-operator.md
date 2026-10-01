@@ -129,7 +129,7 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 | Widget | Content |
 |---|---|
-| `header` | Project, engine up/down, slots `2/2`, and the checkout's branch, ahead/behind `base` and dirty count (git data cached 10 s) |
+| `header` | Project, engine up/down, slots `2/2`, the checkout's branch, ahead/behind `base` and dirty count (git data cached 10 s), then one alert line per open engine fault streak and the age of the oldest unresolved escalation |
 | `escalations` | Splash panel per open escalation (§6.4); `r` resolves through the palette form, `o` opens the packet |
 | `strips` | Active tasks as strips (§6.2); the focused task expanded; children grouped under `parent_id` |
 | `queue` | Queued tasks in dispatch order: priority, dependencies, `wait_reason` |

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import TYPE_CHECKING, Literal
 
 from rich.console import Group
@@ -18,6 +17,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.operator.strip_views import task_strip_data
+from shikiru.ui.age import format_age
 from shikiru.ui.glyphs import GLYPH_ENGINE
 from shikiru.ui.status import status_visual
 from shikiru.ui.strip import TaskStrip
@@ -66,7 +66,7 @@ def status_renderable(view: StatusView, *, settings: Settings, width: int) -> Re
     )
     if view.oldest_escalation_age_seconds is not None:
         summary.append("  oldest ", STYLE_BOLD)
-        summary.append(str(timedelta(seconds=int(view.oldest_escalation_age_seconds))))
+        summary.append(format_age(view.oldest_escalation_age_seconds))
     blocks: list[RenderableType] = [Panel(summary, title=STATUS_PANEL_TITLE)]
     blocks.append(_tasks_table(view.active_tasks, ACTIVE_TABLE_TITLE, include_priority=False))
     blocks.append(_tasks_table(view.queued_tasks, QUEUE_TABLE_TITLE, include_priority=True))
