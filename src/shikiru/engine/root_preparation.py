@@ -33,14 +33,22 @@ class RootPreparation:
         self._expires: datetime = clock.now()
         self._builds: dict[str, asyncio.Task[RepoState]] = {}
 
-    def begin_tick(self, wanted: Collection[str]) -> None:
-        """Start a tick's budget and drop finished builds of tasks that are no longer `wanted`."""
+    def begin_tick(self, queued: Collection[str]) -> None:
+        """Start a tick's budget and let go of the builds of tasks that are no longer `queued`.
+
+        A build in flight for such a task (cancelled meanwhile) is cancelled, and counts as
+        running until it has ended; a finished one is dropped.
+        """
         self._expires = self._clock.now() + self._budget
         for task_id, build in tuple(self._builds.items()):
-            if task_id not in wanted and build.done():
-                del self._builds[task_id]
-                if not build.cancelled():
-                    build.exception()
+            if task_id in queued:
+                continue
+            if not build.done():
+                build.cancel()
+                continue
+            del self._builds[task_id]
+            if not build.cancelled():
+                build.exception()
 
     async def prepare(self, task_id: str, title: str, seed_branch: str | None) -> RepoState | None:
         """Return `task_id`'s built root, or `None` while it is not ready within this tick.

@@ -91,7 +91,7 @@ class Scheduler:
         all_tasks = self._tasks.list_all()
         gates = self._gates(all_tasks)
         schedule = pick_ready(all_tasks, gates)
-        self._roots.begin_tick({dispatch.task_id for dispatch in schedule.dispatches})
+        self._roots.begin_tick({task.id for task in all_tasks if task.status is Status.QUEUED})
         self._persist_wait_reasons(all_tasks, schedule)
         for task_id in schedule.dependency_cancelled:
             task = self._tasks.get(task_id)

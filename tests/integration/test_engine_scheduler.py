@@ -64,6 +64,7 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.domain.scheduling import ReadySchedule
     from shikiru.domain.tasks import Task
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -661,12 +662,20 @@ async def _land_every_dispatch(scheduler: Scheduler, expected: int) -> list[str]
     return landed
 
 
-async def test_a_hung_remote_cannot_hold_the_tick_for_every_ready_task(
-    scheduler_env: SchedulerFixture,
-    connection: Connection,
-    tmp_path: Path,
-    tmp_path_factory: pytest.TempPathFactory,
-) -> None:
+@dataclass
+class _HungRemote:
+    settings: Settings
+    roots: TaskRootBuilder
+    calls: Path
+    release: Path
+
+    def fetches(self) -> int:
+        return self.calls.read_text().count("started") if self.calls.exists() else 0
+
+
+async def _hung_remote(
+    scheduler_env: SchedulerFixture, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> _HungRemote:
     base = scheduler_env.settings
     settings = base.model_copy(
         update={
@@ -678,11 +687,8 @@ async def test_a_hung_remote_cannot_hold_the_tick_for_every_ready_task(
     runner = SubprocessRunner()
     remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
     await add_bare_remote(tmp_path, remote_dir, settings.repo.remote)
-    calls, release = (
-        tmp_path_factory.mktemp("hang") / "calls",
-        tmp_path_factory.mktemp("rel") / "go",
-    )
-    hang = remote_dir.parent / "upload-pack"
+    hang_dir = tmp_path_factory.mktemp("hang")
+    calls, release, hang = hang_dir / "calls", hang_dir / "go", hang_dir / "upload-pack"
     hang.write_text(_HUNG_UPLOAD_PACK.format(calls=calls, release=release))
     hang.chmod(EXECUTABLE_MODE)
     uploadpack = ["git", "config", f"remote.{settings.repo.remote}.uploadpack", str(hang)]
@@ -695,31 +701,79 @@ async def test_a_hung_remote_cannot_hold_the_tick_for_every_ready_task(
             Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
             tmp_path,
             settings.repo.remote,
-            fetch_timeout=_REAL_SECONDS,
+            fetch_timeout=_REAL_SECONDS * 3,
         ),
     )
-    scheduler = _scheduler(dataclasses.replace(scheduler_env, roots=roots), settings)
+    return _HungRemote(settings, roots, calls, release)
+
+
+async def _tick(scheduler: Scheduler, clock: FakeClock, settings: Settings) -> ReadySchedule:
+    tick = asyncio.create_task(scheduler.run_once())
+
+    def finished() -> bool:
+        if clock.has_pending_sleep():
+            clock.advance(settings.orchestration.dispatch_budget_seconds)
+        return tick.done()
+
+    await wait_until(finished, _REAL_SECONDS)
+    return tick.result()
+
+
+async def test_a_hung_remote_cannot_hold_the_tick_for_every_ready_task(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    remote = await _hung_remote(scheduler_env, tmp_path, tmp_path_factory)
+    scheduler = _scheduler(dataclasses.replace(scheduler_env, roots=remote.roots), remote.settings)
     clock = scheduler_env.clock
     assert isinstance(clock, FakeClock)
     tasks = [
         _submit(connection, clock, title=f"ready {number}") for number in range(_HANDS_OFF_TASKS)
     ]
     try:
-        first = asyncio.create_task(scheduler.run_once())
-        await wait_until(clock.has_pending_sleep, _REAL_SECONDS)
-        clock.advance(settings.orchestration.dispatch_budget_seconds)
-        assert (await asyncio.wait_for(first, _REAL_SECONDS)).dispatches == ()
+        assert (await _tick(scheduler, clock, remote.settings)).dispatches == ()
         assert (await asyncio.wait_for(scheduler.run_once(), _REAL_SECONDS)).dispatches == ()
-        await wait_until(calls.exists, _REAL_SECONDS)
-        assert calls.read_text().count("started") == 1
+        await wait_until(remote.calls.exists, _REAL_SECONDS)
+        assert remote.fetches() == 1
         assert [_status(scheduler_env, task) for task in tasks] == [Status.QUEUED] * len(tasks)
 
-        release.touch()
+        remote.release.touch()
 
         landed = await _land_every_dispatch(scheduler, _HANDS_OFF_TASKS)
         assert sorted(landed) == sorted(task.id for task in tasks)
     finally:
-        release.touch()
+        remote.release.touch()
+        await scheduler.shutdown()
+
+
+async def test_the_build_of_a_task_cancelled_meanwhile_does_not_hold_up_the_next_one(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    remote = await _hung_remote(scheduler_env, tmp_path, tmp_path_factory)
+    scheduler = _scheduler(dataclasses.replace(scheduler_env, roots=remote.roots), remote.settings)
+    clock = scheduler_env.clock
+    assert isinstance(clock, FakeClock)
+    first, _second = (_submit(connection, clock, title=f"ready {n}") for n in range(2))
+    try:
+        await _tick(scheduler, clock, remote.settings)
+        await wait_until(lambda: remote.fetches() == 1, _REAL_SECONDS)
+        cancelled = scheduler_env.tasks.require(first.id)
+        scheduler_env.tasks.apply_transition(
+            first.id, Transition.stay(cancelled, step=None, status=Status.CANCELLED)
+        )
+
+        async def next_build_started() -> bool:
+            await _tick(scheduler, clock, remote.settings)
+            return remote.fetches() == 2
+
+        await wait_until(next_build_started, _REAL_SECONDS)
+    finally:
+        remote.release.touch()
         await scheduler.shutdown()
 
 
