@@ -117,7 +117,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [ ] Task 74o: Test-value audit of the older suite
 - [x] Task 74q: A turn completion never overwrites operator-owned task state (F10)
 - [x] Task 74r: The no-literals rule is enforced like the no-comments rule (F22)
-- [ ] Task 74s: Engine start, tmux and process hygiene (stability)
+- [x] Task 74s: Engine start, tmux and process hygiene (stability)
 - [ ] Task 74t: Bounded resources and configurable timeouts (stability)
 - [ ] Task 74u: Soak and chaos run (stability evidence)
 - [ ] Task 74p: Phase 7d verification, re-review and release evidence
