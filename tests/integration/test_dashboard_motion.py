@@ -159,6 +159,7 @@ def _build_views(
             project_root=project_dir,
             engine_up=sources.engine_up,
             max_parallel=settings.orchestration.max_parallel,
+            clock=clock,
         ),
         clock=clock,
         motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),

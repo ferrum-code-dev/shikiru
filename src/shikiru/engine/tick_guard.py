@@ -88,6 +88,7 @@ class TickGuard:
 
     def _recover(self) -> None:
         if self._streak:
+            self._reporter.resolve(self._scope)
             self._logger.info("%s recovered after %d failed attempts", self._scope, self._streak)
         self._streak = 0
         self._unexpected = 0

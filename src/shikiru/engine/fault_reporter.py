@@ -1,4 +1,4 @@
-"""Records engine faults as rate-limited `engine_fault` events (02 §1, 06 §5.7)."""
+"""Records engine faults and their recovery as `engine_fault` and `engine_recovered` events."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
+from shikiru.domain.faults import ERROR_KEY, RECOVERABLE_KEY, REPEAT_KEY, SCOPE_KEY
 from shikiru.errors import InvariantError, ShikiruError
 from shikiru.store.database import OperationalDatabaseError
 
@@ -52,6 +53,7 @@ class FaultReporter:
         self._settings = settings
         self._logger = logger
         self._streaks: dict[tuple[str, str | None, str], _Streak] = {}
+        self._open: set[tuple[str, str | None]] = set()
 
     def report(self, error: Exception, *, scope: str, task_id: str | None = None) -> bool:
         """Record `error` raised in `scope` unless just recorded, and classify it.
@@ -73,15 +75,28 @@ class FaultReporter:
                 task_id=task_id,
                 message=f"{scope} failed: {kind}: {error}",
                 data={
-                    "scope": scope,
-                    "error": kind,
-                    "recoverable": recoverable,
-                    "repeat": streak.occurrences,
+                    SCOPE_KEY: scope,
+                    ERROR_KEY: kind,
+                    RECOVERABLE_KEY: recoverable,
+                    REPEAT_KEY: streak.occurrences,
                 },
             )
             streak.recorded_at = now
             streak.occurrences = 0
+            self._open.add((scope, task_id))
         return recoverable
+
+    def resolve(self, scope: str, *, task_id: str | None = None) -> None:
+        """Record an `engine_recovered` event when `scope` failed, was recorded, and now works."""
+        if (scope, task_id) not in self._open:
+            return
+        self._open.remove((scope, task_id))
+        self._events.append(
+            EventKind.ENGINE_RECOVERED,
+            task_id=task_id,
+            message=f"{scope} recovered",
+            data={SCOPE_KEY: scope},
+        )
 
     @asynccontextmanager
     async def isolate(self, scope: str, *, task_id: str | None = None) -> AsyncGenerator[None]:
@@ -91,3 +106,5 @@ class FaultReporter:
         except Exception as error:
             self._logger.exception("%s failed", scope)
             self.report(error, scope=scope, task_id=task_id)
+        else:
+            self.resolve(scope, task_id=task_id)

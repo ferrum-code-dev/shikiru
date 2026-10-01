@@ -121,6 +121,7 @@ def _context(
                 project_root=project_dir,
                 engine_up=dashboard_services.engine_up,
                 max_parallel=settings.orchestration.max_parallel,
+                clock=clock,
             ),
             clock=clock,
             motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),

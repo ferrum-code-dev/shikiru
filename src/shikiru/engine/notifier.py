@@ -87,3 +87,5 @@ class Notifier:
             except Exception as error:
                 self._logger.exception("external notification failed for event %s", event.id)
                 self._reporter.report(error, scope=HOOK_FAULT_SCOPE)
+            else:
+                self._reporter.resolve(HOOK_FAULT_SCOPE)

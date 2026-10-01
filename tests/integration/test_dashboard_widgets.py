@@ -94,6 +94,7 @@ def _context(
                 project_root=project_dir,
                 engine_up=dashboard_services.engine_up,
                 max_parallel=2,
+                clock=FakeClock(START),
             ),
             clock=FakeClock(START),
             motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),

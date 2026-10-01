@@ -211,7 +211,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `escalation`, `escalation_resolved`
 - `integration_started`, `integration_waiting` (`paths`: the dirty checkout paths a local merge waits on; notified), `pr_opened` (url, branch, commits)
 - `task_retried`, `task_done`, `task_cancelled`
-- `pane_restored`, `engine_started`, `engine_fault` (`scope`, error, recoverable, repeat), `engine_stopped` (`reason` when the engine stopped on a fault)
+- `pane_restored`, `engine_started`, `engine_fault` (`scope`, error, recoverable, repeat), `engine_recovered` (`scope`; the fault streak of that scope and task ended), `engine_stopped` (`reason` when the engine stopped on a fault)
 
 **Commands** are pydantic models in `domain.commands`, stored as `kind` plus a JSON `payload`:
 - `Submit` (the command queue allocates its task id from `sequences` when appending)

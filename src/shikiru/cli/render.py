@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Literal
 
 from rich.console import Group
@@ -36,6 +37,8 @@ STATUS_PANEL_TITLE = "Shikiru status"
 ACTIVE_TABLE_TITLE = "Active tasks"
 QUEUE_TABLE_TITLE = "Queue"
 ESCALATIONS_TABLE_TITLE = "Open escalations"
+FAULTS_TABLE_TITLE = "Engine faults"
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 USAGE_TABLE_TITLE = "Usage"
 QUOTA_TABLE_TITLE = "Quota windows"
 REPORTS_TABLE_TITLE = "Reports and verdicts"
@@ -61,9 +64,14 @@ def status_renderable(view: StatusView, *, settings: Settings, width: int) -> Re
         ("  escalations ", STYLE_BOLD),
         str(len(view.escalations)),
     )
+    if view.oldest_escalation_age_seconds is not None:
+        summary.append("  oldest ", STYLE_BOLD)
+        summary.append(str(timedelta(seconds=int(view.oldest_escalation_age_seconds))))
     blocks: list[RenderableType] = [Panel(summary, title=STATUS_PANEL_TITLE)]
     blocks.append(_tasks_table(view.active_tasks, ACTIVE_TABLE_TITLE, include_priority=False))
     blocks.append(_tasks_table(view.queued_tasks, QUEUE_TABLE_TITLE, include_priority=True))
+    if view.faults:
+        blocks.append(_faults_table(view))
     if view.escalations:
         blocks.append(_escalations_table(view))
     if view.usage:
@@ -184,6 +192,23 @@ def _escalations_table(view: StatusView) -> Table:
             item.escalation.task_id,
             item.escalation.reason.value,
             item.escalation.headline,
+        )
+    return table
+
+
+def _faults_table(view: StatusView) -> Table:
+    table = Table(title=FAULTS_TABLE_TITLE)
+    for column in ("Scope", "Task", "Error", "First seen", "Last seen", "Repeats", "Recoverable"):
+        table.add_column(column)
+    for fault in view.faults:
+        table.add_row(
+            fault.scope,
+            fault.task_id or NO_VALUE,
+            fault.error,
+            fault.first_seen.strftime(TIMESTAMP_FORMAT),
+            fault.last_seen.strftime(TIMESTAMP_FORMAT),
+            str(fault.repeat),
+            "yes" if fault.recoverable else "no",
         )
     return table
 

@@ -62,6 +62,7 @@ def _services(
         project_root=project_dir,
         engine_up=lambda: engine_up,
         max_parallel=2,
+        clock=clock,
     )
     return commands, queries, queue
 

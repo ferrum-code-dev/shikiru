@@ -96,8 +96,7 @@ async def test_commands_return_done_ack_after_engine_marks_command(
 
 
 def _queries(
-    project_root: Path,
-    reader: StateReader,
+    project_root: Path, reader: StateReader, clock: FakeClock | None = None
 ) -> OperatorQueries:
     return OperatorQueries(
         reader,
@@ -105,6 +104,7 @@ def _queries(
         project_root=project_root,
         engine_up=lambda: False,
         max_parallel=2,
+        clock=clock or FakeClock(START),
     )
 
 

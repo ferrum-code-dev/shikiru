@@ -79,6 +79,8 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
                 cost_basis="api_equivalent",
             )
         ],
+        faults=[],
+        oldest_escalation_age_seconds=None,
         quotas={
             "codex": [
                 QuotaWindow(

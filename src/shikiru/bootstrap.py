@@ -376,6 +376,7 @@ def build_operator(
         project_root=project_root,
         engine_up=engine_state,
         max_parallel=resolved_settings.orchestration.max_parallel,
+        clock=resolved_clock,
     )
     commands = OperatorCommands(command_queue, resolved_clock, engine_up=engine_state)
     events = EventFeed(reader, resolved_clock)

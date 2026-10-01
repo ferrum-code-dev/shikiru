@@ -25,7 +25,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 | `ls [--host H]` | Every Shikiru project on this host, or on `H` (§5.6): name, directory, engine state, running and queued counts, open escalations |
 | `attach [NAME] [--host H]` | Attach to a session; with no `NAME` and more than one match, the picker (§5.6) |
 | `submit "<request>" [flags]` | Prints the `T-n` id (05 §1 flags) |
-| `status [T-n] [--watch]` | Without an id: engine, slots, active tasks with `wait_reason`, queue, open escalations, usage and quota per agent. With one: that task's strip, timeline, reports and verdicts, branches and sessions. `--watch` redraws on `StateReader.on_change` |
+| `status [T-n] [--watch]` | Without an id: engine, slots, active tasks with `wait_reason`, queue, open escalations with the age of the oldest unresolved one, the open engine fault streaks (scope, task, error, first and last seen, repeats, recoverable; derived from `engine_fault` and `engine_recovered` events, 02 §1), usage and quota per agent. With one: that task's strip, timeline, reports and verdicts, branches and sessions. `--watch` redraws on `StateReader.on_change` |
 | `doctor [--probe]` | Environment, repository-root (D20), config and plugin checks; `--probe` validates the configured ladders (04 §3): live contract check 1 on each agent's first rung and a smoke turn on every other distinct rung, showing the stream tail and stderr when a probe fails |
 | `mcp` | Stdio MCP server |
 | hidden: `engine`, `dash`, `palette`, `view`, `report` | Process entrypoints. `view T-n ROLE` is the live view a role pane runs (§5.1) |

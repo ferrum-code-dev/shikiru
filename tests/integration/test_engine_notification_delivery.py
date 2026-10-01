@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 
 _WAIT_SECONDS = 10.0
 _FAILING_HOOK_EXIT_CODE = 3
+_FAILING_HOOK_DELIVERIES = 3
 
 
 class _Harness:
@@ -129,7 +130,7 @@ async def test_a_hook_blocked_on_a_fifo_does_not_hold_up_commands_or_scheduling(
         _kill(pid_file)
 
 
-async def test_a_failing_hook_is_logged_and_delivery_continues_with_the_next_event(
+async def test_a_failing_hook_is_logged_recorded_once_and_delivery_continues(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     received = tmp_path / "received.jsonl"
@@ -141,9 +142,15 @@ async def test_a_failing_hook_is_logged_and_delivery_continues_with_the_next_eve
         def delivered() -> list[str]:
             return received.read_text().splitlines() if received.exists() else []
 
-        await env.until(lambda: len(delivered()) == 2)
-        assert [json.loads(line)["message"] for line in delivered()] == ["first", "second"]
-        await env.until(lambda: env.engine_log().count("external notification failed") == 2)
+        await env.until(lambda: len(delivered()) == _FAILING_HOOK_DELIVERIES)
+        messages = [json.loads(line) for line in delivered()]
+        assert [message["message"] for message in messages[:2]] == ["first", "second"]
+        assert messages[2]["kind"] == EventKind.ENGINE_FAULT.value
+        await env.until(
+            lambda: (
+                env.engine_log().count("external notification failed") == _FAILING_HOOK_DELIVERIES
+            )
+        )
         assert await env.acknowledged(Stop()) is CommandStatus.DONE
 
 
@@ -153,5 +160,9 @@ async def test_a_missing_hook_command_is_logged_per_event(
     async with _engine(tmp_path, tmux_server, str(tmp_path / "missing-hook")) as env:
         env.escalate("first")
         env.escalate("second")
-        await env.until(lambda: env.engine_log().count("external notification failed") == 2)
+        await env.until(
+            lambda: (
+                env.engine_log().count("external notification failed") == _FAILING_HOOK_DELIVERIES
+            )
+        )
         assert await env.acknowledged(Stop()) is CommandStatus.DONE

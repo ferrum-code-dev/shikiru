@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from shikiru.agents.contracts import CostBasis, QuotaWindow, Usage
-from shikiru.domain.events import Event
+from shikiru.domain.events import Event, EventKind
+from shikiru.domain.faults import FaultStreak, open_fault_streaks
 from shikiru.domain.reports import Report, ReportKind
 from shikiru.domain.runs import Run
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
@@ -22,6 +23,7 @@ from shikiru.view_log import view_log_path
 from shikiru.workspace.reports import load_turn_report
 
 if TYPE_CHECKING:
+    from shikiru.clock import Clock
     from shikiru.store.reader import StateReader
 
 PEEK_TAIL_LINES = 60
@@ -134,6 +136,8 @@ class StatusView(OperatorView):
     escalations: list[EscalationView]
     usage: list[UsageView]
     quotas: dict[str, list[QuotaWindow]]
+    faults: list[FaultStreak]
+    oldest_escalation_age_seconds: float | None
     task: TaskDetail | None = None
 
 
@@ -158,6 +162,7 @@ class OperatorQueries:
         project_root: Path,
         engine_up: EngineState,
         max_parallel: int,
+        clock: Clock,
     ) -> None:
         """Use `reader` and `engine_up` for the operator's read boundaries."""
         self._reader = reader
@@ -165,6 +170,7 @@ class OperatorQueries:
         self._project_root = project_root
         self._engine_up = engine_up
         self._max_parallel = max_parallel
+        self._clock = clock
 
     def status(self, task_id: str | None = None) -> StatusView:
         """Return the global status view, optionally including one task's detail."""
@@ -187,8 +193,21 @@ class OperatorQueries:
             escalations=open_escalations,
             usage=usage,
             quotas=quotas,
+            faults=self.open_faults(),
+            oldest_escalation_age_seconds=self.oldest_escalation_age_seconds(),
             task=task_detail,
         )
+
+    def open_faults(self) -> list[FaultStreak]:
+        """Return the engine fault streaks recorded and not yet recovered."""
+        return open_fault_streaks(
+            self._reader.events_since(0, kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED])
+        )
+
+    def oldest_escalation_age_seconds(self) -> float | None:
+        """Return the age of the oldest unresolved escalation, or `None` when none is open."""
+        created = [item.created_at for item in self._reader.list_open_escalations()]
+        return (self._clock.now() - min(created)).total_seconds() if created else None
 
     def usage_and_quotas(self) -> tuple[list[UsageView], dict[str, list[QuotaWindow]]]:
         """Return shared usage totals and provider-reported quota windows."""

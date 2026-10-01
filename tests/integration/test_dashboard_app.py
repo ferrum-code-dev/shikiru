@@ -76,6 +76,7 @@ def _views(reader: StateReader, project_dir: Path, sources: _StubServices) -> St
             project_root=project_dir,
             engine_up=sources.engine_up,
             max_parallel=settings.orchestration.max_parallel,
+            clock=SystemClock(),
         ),
         clock=SystemClock(),
         motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
@@ -207,6 +208,7 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
         project_root=project_dir,
         engine_up=lambda: False,
         max_parallel=settings.orchestration.max_parallel,
+        clock=clock,
     )
     opened: list[str] = []
     app_instance: DashboardApp | None = None
