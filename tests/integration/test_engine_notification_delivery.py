@@ -13,9 +13,8 @@ import psutil
 
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import NotifyConfig
-from shikiru.domain.commands import Pause, Stop, Submit
+from shikiru.domain.commands import COMMAND_POLL_SECONDS, Pause, Stop, Submit
 from shikiru.domain.events import EventKind
-from shikiru.engine.daemon import COMMAND_POLL_SECONDS
 from shikiru.paths import engine_log_path
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database

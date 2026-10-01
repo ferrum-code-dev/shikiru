@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Self
 
 import psutil
 
+from shikiru.domain.commands import COMMAND_POLL_SECONDS
 from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.errors import ShikiruError
 from shikiru.private import create_private_file, make_private_dir
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
 
-COMMAND_POLL_SECONDS = 0.25
 ENGINE_LOGGER_NAME = "shikiru"
 _ENGINE_LOCK_METADATA_PARTS = 2
 

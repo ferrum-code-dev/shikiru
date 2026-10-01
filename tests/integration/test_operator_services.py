@@ -6,14 +6,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.domain.commands import Prioritize
+from shikiru.domain.commands import COMMAND_POLL_SECONDS, Prioritize
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ConsultAnswer
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, RepoState, Role, Status
 from shikiru.operator.commands import (
     COMMAND_ACK_WAIT_SECONDS,
-    COMMAND_POLL_SECONDS,
     AckStatus,
     OperatorCommands,
 )

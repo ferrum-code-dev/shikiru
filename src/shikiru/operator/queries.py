@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shikiru.agents.contracts import CostBasis, QuotaWindow, Usage
+from shikiru.agents.contracts import COST_BASIS_UNKNOWN, CostBasis, QuotaWindow, Usage
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
 from shikiru.domain.reports import Report, ReportKind
@@ -321,7 +321,7 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
         }
         cost_basis: CostBasis | Literal["mixed"]
         if any(
-            cost is None or run.usage.cost_basis == "unknown"
+            cost is None or run.usage.cost_basis == COST_BASIS_UNKNOWN
             for cost, run in zip(known_costs, agent_runs, strict=True)
         ):
             cost_usd = None

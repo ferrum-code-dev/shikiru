@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
 TURN_STOP_GRACE = 10.0
 STDERR_DRAIN_TIMEOUT = 2.0
+STDOUT_FILENO = 1
+STDERR_FILENO = 2
 _STDERR_READ_SIZE = 65536
 _STDOUT_READ_SIZE = 65536
 _STDERR_TAIL_CHARS = 4000
@@ -291,8 +293,8 @@ class SubprocessRunner:
         null_fd = os.open(os.devnull, os.O_WRONLY)
         try:
             file_actions = (
-                (os.POSIX_SPAWN_DUP2, null_fd, 1),
-                (os.POSIX_SPAWN_DUP2, null_fd, 2),
+                (os.POSIX_SPAWN_DUP2, null_fd, STDOUT_FILENO),
+                (os.POSIX_SPAWN_DUP2, null_fd, STDERR_FILENO),
             )
             try:
                 return os.posix_spawnp(

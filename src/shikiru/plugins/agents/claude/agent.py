@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import CheckResult
+from shikiru.agents.contracts import DOCTOR_TIMEOUT_SECONDS, CheckResult
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
@@ -32,7 +32,6 @@ if TYPE_CHECKING:
 
 CLAUDE_VERSION_ARGV = (CLAUDE_COMMAND, "--version")
 AUTH_STATUS_ARGV = (CLAUDE_COMMAND, "auth", "status", "--json")
-DOCTOR_TIMEOUT_SECONDS = 60.0
 _AUTH_STATUS_LOGGED_IN_FIELD = "loggedIn"
 _INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
 

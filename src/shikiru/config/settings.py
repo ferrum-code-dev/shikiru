@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from shikiru.agents.contracts import Rung
 
 ComplexityName = Literal["low", "normal", "high"]
+MERGE_INTEGRATION = "merge"
+PULL_REQUEST_INTEGRATION = "pr"
 IntegrationStrategy = Literal["merge", "pr"]
 LayoutSplitAxis = Literal["h", "v"]
 PaneName = Literal["system", "leader", "implementer", "shell"]

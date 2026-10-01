@@ -62,9 +62,9 @@ from shikiru.domain.tasks import EscalationReason
 from shikiru.plugins.agents.codex.agent import CodexAgent, create
 from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import (
+    AUTO_COMPACT_LIMIT_CONFIG,
     CODEX_HOME_ENV_VAR,
     CONFIG_FLAG,
-    MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG,
     MODEL_FLAG,
     MODELS_CACHE_FILENAME,
     REASONING_EFFORT_CONFIG,
@@ -355,7 +355,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                             CONFIG_FLAG,
                             f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
                             CONFIG_FLAG,
-                            f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}={limit}",
+                            f"{AUTO_COMPACT_LIMIT_CONFIG}={limit}",
                             *_sandbox_args(spec),
                             spec.prompt,
                         )
@@ -379,7 +379,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
             CONFIG_FLAG,
             f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
             CONFIG_FLAG,
-            f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000",
+            f"{AUTO_COMPACT_LIMIT_CONFIG}=80000",
             *_sandbox_args(new_spec),
             new_spec.prompt,
         )
@@ -403,7 +403,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
             CONFIG_FLAG,
             f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
             CONFIG_FLAG,
-            f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=200000",
+            f"{AUTO_COMPACT_LIMIT_CONFIG}=200000",
             *_sandbox_args(resumed),
             resumed.prompt,
         )
@@ -460,7 +460,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                         CONFIG_FLAG,
                         f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
                         CONFIG_FLAG,
-                        f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000",
+                        f"{AUTO_COMPACT_LIMIT_CONFIG}=80000",
                         *_sandbox_args(provider_spec),
                         provider_spec.prompt,
                     )
@@ -584,7 +584,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert command.env["OPENAI_API_KEY"] == _SYNTHETIC_OPENAI_KEY
         assert command.env["CODEX_API_KEY"] == _SYNTHETIC_CODEX_KEY
         assert command.env["OPENROUTER_API_KEY"] == _SYNTHETIC_PROVIDER_KEY
-        assert f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000" in command.argv
+        assert f"{AUTO_COMPACT_LIMIT_CONFIG}=80000" in command.argv
 
     def test_offline_maps_errors_and_preserves_unknown_failures(self) -> None:
         cases = (
@@ -927,7 +927,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         argv = agent.process_sequence(spec).start(spec).argv
         assert MODEL_FLAG in argv
         assert argv[argv.index(MODEL_FLAG) + 1] == spec.rung.model
-        setting = f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}="
+        setting = f"{AUTO_COMPACT_LIMIT_CONFIG}="
         (limit,) = [value.removeprefix(setting) for value in argv if value.startswith(setting)]
         return int(limit)
 
@@ -1161,7 +1161,7 @@ def _resume_argv(spec: TurnSpec) -> tuple[str, ...]:
         CONFIG_FLAG,
         f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
         CONFIG_FLAG,
-        f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}=80000",
+        f"{AUTO_COMPACT_LIMIT_CONFIG}=80000",
         *_sandbox_args(spec),
         spec.prompt,
     )

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from shikiru.agents.contracts import QuotaWindow
+from shikiru.plugins.agents.codex.options import USAGE_EVENT_TYPE
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -16,7 +17,6 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
 
 _EVENT_MESSAGE_TYPE = "event_msg"
-_TOKEN_COUNT_TYPE = "token" + "_count"
 _RATE_LIMITS_FIELD = "rate_limits"
 _PRIMARY_WINDOW = "primary"
 _SECONDARY_WINDOW = "secondary"
@@ -53,7 +53,7 @@ class CodexQuotaProbe:
             if not isinstance(raw, Mapping):
                 continue
             payload = _payload(cast("Mapping[str, Any]", raw))
-            if payload.get("type") != _TOKEN_COUNT_TYPE:
+            if payload.get("type") != USAGE_EVENT_TYPE:
                 continue
             limits = payload.get(_RATE_LIMITS_FIELD)
             latest = cast("Mapping[str, Any]", limits) if isinstance(limits, Mapping) else None

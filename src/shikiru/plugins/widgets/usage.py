@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from rich.console import Group
 from rich.text import Text
@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 
 UNKNOWN_VALUE = "\N{EN DASH}"
 API_EQUIVALENT_LABEL = "API-equivalent"
+_BASIS_UNKNOWN: Final = "unknown"
+_BASIS_API_EQUIVALENT: Final = "api_equivalent"
+_BASIS_BILLED: Final = "billed"
 
 
 def _agent_block(usage: AgentUsageView) -> Group:
@@ -42,13 +45,13 @@ def _agent_block(usage: AgentUsageView) -> Group:
 
 def _cost_text(usage: AgentUsageView) -> str:
     if usage.cost_usd is None:
-        if usage.cost_basis == "unknown":
+        if usage.cost_basis == _BASIS_UNKNOWN:
             return UNKNOWN_VALUE
         return f"{UNKNOWN_VALUE} ({usage.cost_basis})"
     amount = f"${usage.cost_usd:.2f}"
-    if usage.cost_basis == "api_equivalent":
+    if usage.cost_basis == _BASIS_API_EQUIVALENT:
         return f"{amount} {API_EQUIVALENT_LABEL}"
-    if usage.cost_basis == "billed":
+    if usage.cost_basis == _BASIS_BILLED:
         return f"{amount} billed"
     message = f"a priced cost cannot be displayed with basis {usage.cost_basis!r}"
     raise ValueError(message)

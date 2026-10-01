@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from shikiru.process import SubprocessRunner
 
 GIT_INIT_TIMEOUT_SECONDS = 10.0
+GIT_INIT_ARGV = ("git", "init")
 PROBE_ROLE = "implementer"
 REPORT_INPUT_FILENAME = "contract-report-input.json"
 REPORT_PROMPT_FILENAME = "contract-prompt.md"
@@ -193,7 +194,7 @@ def _failed_outcome(spec: TurnSpec, passed: str, problem: str, tail_lines: int) 
 async def init_scratch_repo(runner: SubprocessRunner, path: Path) -> None:
     """Create `path` as a git repository, reusing one that already exists."""
     await asyncio.to_thread(path.mkdir, parents=True, exist_ok=True)
-    await runner.run(["git", "init"], timeout=GIT_INIT_TIMEOUT_SECONDS, cwd=path, check=True)
+    await runner.run(GIT_INIT_ARGV, timeout=GIT_INIT_TIMEOUT_SECONDS, cwd=path, check=True)
 
 
 async def prepare_live_report(runner: SubprocessRunner, spec: TurnSpec) -> Path:

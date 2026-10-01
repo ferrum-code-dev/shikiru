@@ -20,6 +20,7 @@ _RELATIVE_DURATION_PATTERN = re.compile(
     rf"in\s+(?P<components>(?:{_RELATIVE_DURATION_COMPONENT}\s*)+)", re.IGNORECASE
 )
 _RELATIVE_DURATION_COMPONENT_PATTERN = re.compile(_RELATIVE_DURATION_COMPONENT, re.IGNORECASE)
+_PM = "pm"
 _SECONDS_PER_UNIT = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
 _HOURS_PER_MERIDIEM = 12
 
@@ -74,7 +75,7 @@ class ResetTimeParser:
         except ZoneInfoNotFoundError, ValueError:
             return None
         hour = int(match.group("hour")) % _HOURS_PER_MERIDIEM
-        if match.group("meridiem").lower() == "pm":
+        if match.group("meridiem").lower() == _PM:
             hour += _HOURS_PER_MERIDIEM
         minute = int(match.group("minute") or 0)
         now_in_zone = self._clock.now().astimezone(zone)

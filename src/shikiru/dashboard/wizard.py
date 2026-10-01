@@ -7,6 +7,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, Select, Static
 
 from shikiru.agents.contracts import Rung, parse_rung
+from shikiru.config.settings import MERGE_INTEGRATION, PULL_REQUEST_INTEGRATION
 from shikiru.domain.tasks import Role
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import (
@@ -23,19 +24,24 @@ if TYPE_CHECKING:
     from shikiru.config.settings import OrchestrationConfig
     from shikiru.operator.doctor import Doctor, DoctorReport
 
+STEP_REPOSITORY = "Repository"
+STEP_AGENTS = "Agents and ladders"
+STEP_TRACKERS = "Trackers"
+STEP_CACHES = "Caches and CoW"
+STEP_PARALLELISM = "Parallelism"
+STEP_INTEGRATION = "Integration mode"
+STEP_FINISH = "Finish"
 WIZARD_STEPS = (
-    "Repository",
-    "Agents and ladders",
-    "Trackers",
-    "Caches and CoW",
-    "Parallelism",
-    "Integration mode",
-    "Finish",
+    STEP_REPOSITORY,
+    STEP_AGENTS,
+    STEP_TRACKERS,
+    STEP_CACHES,
+    STEP_PARALLELISM,
+    STEP_INTEGRATION,
+    STEP_FINISH,
 )
 WIZARD_ROLES = (Role.LEADER.value, Role.IMPLEMENTER.value, Role.HELPER.value)
-COW_STEP_INDEX = WIZARD_STEPS.index("Caches and CoW")
-MERGE_INTEGRATION = "merge"
-PULL_REQUEST_INTEGRATION = "pr"
+COW_STEP_INDEX = WIZARD_STEPS.index(STEP_CACHES)
 INTEGRATION_OPTIONS = (
     ("Local merge", MERGE_INTEGRATION),
     ("Pull request", PULL_REQUEST_INTEGRATION),
@@ -43,6 +49,10 @@ INTEGRATION_OPTIONS = (
 WIZARD_TITLE = "Initialize Shikiru"
 DOCTOR_SUCCESS = "Doctor passed."
 DOCTOR_FAILURE = "Doctor found issues; review the checks below."
+
+
+def _step_label(step: str) -> str:
+    return f"Step {WIZARD_STEPS.index(step) + 1} of {len(WIZARD_STEPS)} · {step}"
 
 
 class InitWizardApp(App[InitWizardResult | None]):
@@ -282,14 +292,14 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     def _repository_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-0", classes="wizard-page"):
-            yield Label(f"Step 1 of 7 · {WIZARD_STEPS[0]}")
+            yield Label(_step_label(STEP_REPOSITORY))
             yield Static(f"Project root: {self._root}", markup=False)
             yield Static(f"Git base branch: {self._project.base}", markup=False)
             yield Static("The project root is the top level of this repository.", markup=False)
 
     def _agents_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-1", classes="wizard-page"):
-            yield Label(f"Step 2 of 7 · {WIZARD_STEPS[1]}")
+            yield Label(_step_label(STEP_AGENTS))
             yield Static(
                 f"Detected plugins that passed doctor(): {', '.join(self._project.agents)}",
                 markup=False,
@@ -305,7 +315,7 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     def _trackers_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-2", classes="wizard-page"):
-            yield Label(f"Step 3 of 7 · {WIZARD_STEPS[2]}")
+            yield Label(_step_label(STEP_TRACKERS))
             yield Static(
                 "Detected Markdown trackers; edit the comma-separated paths.", markup=False
             )
@@ -313,7 +323,7 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     def _caches_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-3", classes="wizard-page"):
-            yield Label(f"Step 4 of 7 · {WIZARD_STEPS[3]}")
+            yield Label(_step_label(STEP_CACHES))
             yield Static(
                 "Detected ignored cache directories; edit the glob patterns.", markup=False
             )
@@ -322,13 +332,13 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     def _parallelism_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-4", classes="wizard-page"):
-            yield Label(f"Step 5 of 7 · {WIZARD_STEPS[4]}")
+            yield Label(_step_label(STEP_PARALLELISM))
             yield Label("Maximum parallel tasks")
             yield Input(value=str(self._orchestration_defaults.max_parallel), id="max-parallel")
 
     def _integration_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-5", classes="wizard-page"):
-            yield Label(f"Step 6 of 7 · {WIZARD_STEPS[5]}")
+            yield Label(_step_label(STEP_INTEGRATION))
             yield Label("Task integration strategy")
             yield Select(
                 INTEGRATION_OPTIONS,
@@ -338,7 +348,7 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     def _finish_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-6", classes="wizard-page"):
-            yield Label(f"Step 7 of 7 · {WIZARD_STEPS[6]}")
+            yield Label(_step_label(STEP_FINISH))
             yield Static(
                 "Finish writes .shikiru/config.toml, excludes .shikiru/ in Git, and runs Doctor.",
                 id="wizard-finish-hint",

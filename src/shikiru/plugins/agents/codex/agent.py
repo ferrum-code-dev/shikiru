@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import CheckResult
+from shikiru.agents.contracts import DOCTOR_TIMEOUT_SECONDS, CheckResult
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
@@ -19,7 +19,6 @@ from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import (
     CODEX_COMMAND,
     CODEX_HOME_ENV_VAR,
-    DOCTOR_TIMEOUT_SECONDS,
     GIT_DIRS_ARGV,
     GIT_DIRS_TIMEOUT_SECONDS,
     LOGIN_STATUS_ARGV,

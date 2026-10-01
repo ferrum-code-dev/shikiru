@@ -8,6 +8,7 @@ from shikiru.domain.reports import (
     DECISION_ACCEPT,
     DECISION_CHANGES_REQUESTED,
     DECISION_SUPERSEDE,
+    REPORT_JSON_INDENT,
     SEVERITY_BLOCKER,
     Issue,
     Verdict,
@@ -73,7 +74,8 @@ class AcceptanceGuard:
             issues=[Issue(severity=SEVERITY_BLOCKER, description=description)],
         )
         write_private_text(
-            execution.turn_dir / ENGINE_VERDICT_FILENAME, rejection.model_dump_json(indent=2)
+            execution.turn_dir / ENGINE_VERDICT_FILENAME,
+            rejection.model_dump_json(indent=REPORT_JSON_INDENT),
         )
         emit_verdict(self._events, task, rejection, rejection.summary)
         return rejection

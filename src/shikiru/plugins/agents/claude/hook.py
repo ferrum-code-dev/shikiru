@@ -26,7 +26,12 @@ _STATE_TOKENS_FIELD = "tokens"
 
 def main() -> None:
     """Record this tool result and stop the turn once the next request reaches the limit."""
-    state_path, marker_path, limit = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
+    _, state_argument, marker_argument, limit_argument = sys.argv
+    state_path, marker_path, limit = (
+        Path(state_argument),
+        Path(marker_argument),
+        int(limit_argument),
+    )
     event = json.load(sys.stdin)
     message_id, context = last_assistant_context(
         read_transcript(Path(event[TRANSCRIPT_PATH_FIELD]))

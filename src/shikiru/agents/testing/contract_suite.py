@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import pytest
 
 from shikiru.agents.contracts import (
+    COST_BASIS_UNKNOWN,
     AgentContext,
     AgentSignal,
     Compacted,
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
 
 E2E_ENV_VAR = "SHIKIRU_E2E"
 _TURN_TIMEOUT_SECONDS = 60.0
+_COMMAND_FLAG = "-c"
 _LIVE_COMPACTION_TIMEOUT_SECONDS = 900.0
 _PYTEST_TIMEOUT_MARGIN_SECONDS = 60.0
 _GROWTH_FILES = 6
@@ -542,9 +544,13 @@ def _validate_usage_sequences(signals: Sequence[AgentSignal]) -> None:
                         "context use did not drop after compaction",
                     )
             if signal.usage.cost_usd is None:
-                _expect(signal.usage.cost_basis == "unknown", "unpriced usage must say unknown")
+                _expect(
+                    signal.usage.cost_basis == COST_BASIS_UNKNOWN, "unpriced usage must say unknown"
+                )
             else:
-                _expect(signal.usage.cost_basis != "unknown", "priced usage needs a cost basis")
+                _expect(
+                    signal.usage.cost_basis != COST_BASIS_UNKNOWN, "priced usage needs a cost basis"
+                )
             last_usage = signal.usage
             compacted_since_usage = False
 
@@ -625,7 +631,7 @@ class _ReplaySequence:
             "exit_code": recorded.stream.exit_code,
         }
         return TurnProcess(
-            argv=(sys.executable, "-c", _REPLAY_SCRIPT, json.dumps(plan)),
+            argv=(sys.executable, _COMMAND_FLAG, _REPLAY_SCRIPT, json.dumps(plan)),
             cwd=process.cwd,
             env=process.env,
             parser=process.parser,

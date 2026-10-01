@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_default_orchestration, load_session_settings, load_settings
+from shikiru.config.settings import PULL_REQUEST_INTEGRATION
 from shikiru.engine.acceptance import AcceptanceGuard
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.cosmetic_decorator import CosmeticDecorator
@@ -543,7 +544,9 @@ def build_engine(
         project_root,
         resolved_settings.repo,
         CacheCloner(resolved_runner, cow_args=default_cow_args()),
-        fetched_bases if resolved_settings.orchestration.integration == "pr" else LocalBaseRefs(),
+        fetched_bases
+        if resolved_settings.orchestration.integration == PULL_REQUEST_INTEGRATION
+        else LocalBaseRefs(),
         trackers=resolved_settings.project.trackers,
     )
     pull_request_closing = PullRequestClosing(

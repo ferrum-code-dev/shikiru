@@ -8,20 +8,20 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Self
 from pydantic import Field, StringConstraints, model_validator
 
 from shikiru.config.settings import ComplexityName
-from shikiru.domain.tasks import DomainModel, Mode
+from shikiru.domain.tasks import TASK_TITLE_MAX_LENGTH, DomainModel, Mode
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-TRIAGE_TITLE_MAX_LENGTH = 60
 
 DECISION_ACCEPT: Final = "accept"
 DECISION_SUPERSEDE: Final = "supersede"
 DECISION_CHANGES_REQUESTED: Final = "changes_requested"
 DECISION_ANSWER: Final = "answer"
+DECISION_ESCALATE: Final = "escalate"
 SEVERITY_BLOCKER: Final = "blocker"
 STATUS_COMPLETED: Final = "completed"
 
+REPORT_JSON_INDENT = 2
 CURRENT_TURN_LINK_NAME = "current_turn"
 PROMPT_FILENAME = "prompt.md"
 FACTS_FILENAME = "facts.md"
@@ -129,7 +129,7 @@ class EscalationRequest(DomainModel):
 class TriageReport(DomainModel):
     """The Leader's `triage` report (03 §2)."""
 
-    title: str = Field(max_length=TRIAGE_TITLE_MAX_LENGTH)
+    title: str = Field(max_length=TASK_TITLE_MAX_LENGTH)
     mode: Mode
     complexity: ComplexityName
     acceptance_criteria: list[str]
@@ -151,7 +151,7 @@ class ImplementationReport(DomainModel):
 
     @model_validator(mode="after")
     def _question_required_unless_completed(self) -> Self:
-        if self.status != "completed" and not self.question:
+        if self.status != STATUS_COMPLETED and not self.question:
             message = "question: required unless status is 'completed'"
             raise ValueError(message)
         return self
@@ -185,7 +185,7 @@ class ConsultAnswer(DomainModel):
     @model_validator(mode="after")
     def _answer_required_iff_decision_is_answer(self) -> Self:
         _require_iff(
-            condition=self.decision == "answer",
+            condition=self.decision == DECISION_ANSWER,
             present=bool(self.answer),
             field="answer",
             rule="decision is 'answer'",
@@ -195,7 +195,7 @@ class ConsultAnswer(DomainModel):
     @model_validator(mode="after")
     def _escalation_required_iff_decision_is_escalate(self) -> Self:
         _require_iff(
-            condition=self.decision == "escalate",
+            condition=self.decision == DECISION_ESCALATE,
             present=self.escalation is not None,
             field="escalation",
             rule="decision is 'escalate'",
@@ -225,7 +225,7 @@ class Verdict(DomainModel):
     @model_validator(mode="after")
     def _issues_non_empty_iff_changes_requested(self) -> Self:
         _require_iff(
-            condition=self.decision == "changes_requested",
+            condition=self.decision == DECISION_CHANGES_REQUESTED,
             present=bool(self.issues),
             field="issues",
             rule="decision is 'changes_requested'",
@@ -235,7 +235,7 @@ class Verdict(DomainModel):
     @model_validator(mode="after")
     def _new_tasks_non_empty_iff_supersede(self) -> Self:
         _require_iff(
-            condition=self.decision == "supersede",
+            condition=self.decision == DECISION_SUPERSEDE,
             present=bool(self.new_tasks),
             field="new_tasks",
             rule="decision is 'supersede'",
@@ -246,7 +246,7 @@ class Verdict(DomainModel):
     @model_validator(mode="after")
     def _escalation_required_iff_decision_is_escalate(self) -> Self:
         _require_iff(
-            condition=self.decision == "escalate",
+            condition=self.decision == DECISION_ESCALATE,
             present=self.escalation is not None,
             field="escalation",
             rule="decision is 'escalate'",

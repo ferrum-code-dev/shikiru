@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, cast, get_args
 
 from textual.app import App
 from textual.containers import Vertical, VerticalScroll
@@ -11,6 +11,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
 from shikiru.agents.contracts import parse_rung
+from shikiru.config.settings import ComplexityName
 from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
 
     from shikiru.agents.contracts import Rung
-    from shikiru.config.settings import ComplexityName
     from shikiru.operator.commands import Ack, OperatorCommands
     from shikiru.operator.queries import EscalationView, OperatorQueries
 
@@ -90,6 +90,10 @@ _COMPLEXITY_OPTIONS = (
 )
 _RESOLUTION_OPTIONS = tuple((kind.value.title(), kind.value) for kind in ResolutionKind)
 _EMPTY = ""
+_FIELD_ACTION = "action"
+_FIELD_ESCALATION = "escalation"
+_FIELD_RESOLUTION = "resolution"
+_SUBMIT_ID = "palette-submit"
 _SELECT_REQUIRED = "Select an item"
 _TAKEOVER_SELECTION_FAILURE = "take-over succeeded, but the role pane could not be selected"
 
@@ -140,7 +144,7 @@ class PaletteScreen(ModalScreen[None]):
         with Vertical(id="palette-frame"):
             yield Label("Shikiru operator palette")
             with VerticalScroll(id="palette-form"):
-                yield from self._select_field("Action", "action", PALETTE_ACTIONS)
+                yield from self._select_field("Action", _FIELD_ACTION, PALETTE_ACTIONS)
                 yield from self._input_field("Task id", "task-id", "T-1")
                 yield from self._text_area_field("Request", "request", "Describe the work")
                 yield from self._input_field("Title (optional)", "title", "Task title")
@@ -157,8 +161,8 @@ class PaletteScreen(ModalScreen[None]):
                 yield from self._select_field("Role", "role", _ROLE_OPTIONS)
                 yield from self._input_field("Rung", "rung", "agent:model:effort")
                 yield from self._text_area_field("Message", "message", "Message for the next turn")
-                yield from self._select_field("Escalation", "escalation", ())
-                yield from self._select_field("Resolution", "resolution", _RESOLUTION_OPTIONS)
+                yield from self._select_field("Escalation", _FIELD_ESCALATION, ())
+                yield from self._select_field("Resolution", _FIELD_RESOLUTION, _RESOLUTION_OPTIONS)
                 yield from self._text_area_field(
                     "Answer", "resolution-text", "Guidance for the Leader"
                 )
@@ -169,7 +173,7 @@ class PaletteScreen(ModalScreen[None]):
                     yield Static("", id="palette-packet", markup=False)
                 with VerticalScroll(id="palette-result-scroll"):
                     yield Static("", id="palette-result", markup=False)
-            yield Button("Run action", id="palette-submit", variant="primary")
+            yield Button("Run action", id=_SUBMIT_ID, variant="primary")
 
     async def on_mount(self) -> None:
         """Load open escalation packets and activate an action routed from a widget."""
@@ -186,7 +190,7 @@ class PaletteScreen(ModalScreen[None]):
             action_select.value = self._initial_action
         elif self._initial_action.startswith("resolve "):
             action_select.value = _ACTION_RESOLVE
-            escalation_id = self._initial_action.partition(" ")[2]
+            _, _, escalation_id = self._initial_action.partition(" ")
             if escalation_id in self._escalations:
                 escalation_select.value = escalation_id
             else:
@@ -209,15 +213,15 @@ class PaletteScreen(ModalScreen[None]):
         cast("Select[str]", self.query_one("#complexity", Select)).value = _EMPTY
         cast("Select[str]", self.query_one("#role", Select)).value = Role.LEADER.value
         self.query_one("#priority", Input).value = "0"
-        self._route_action = self._selected_value("action")
+        self._route_action = self._selected_value(_FIELD_ACTION)
         self._update_fields(action_select.value)
         if self._route_error is not None:
             self._show_result(self._route_error)
-            self.query_one("#palette-submit", Button).disabled = True
+            self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
 
     async def on_select_changed(self, event: Select.Changed) -> None:
         """Refresh visible fields and escalation packet details when a selection changes."""
-        if event.select.id == "action":
+        if event.select.id == _FIELD_ACTION:
             if (
                 self._route_error is not None
                 and isinstance(event.value, str)
@@ -225,21 +229,21 @@ class PaletteScreen(ModalScreen[None]):
             ):
                 self._route_error = None
                 self._route_action = None
-                self.query_one("#palette-submit", Button).disabled = False
+                self.query_one(f"#{_SUBMIT_ID}", Button).disabled = False
                 self._show_result(_EMPTY)
             self._update_fields(event.value)
-        elif event.select.id == "escalation":
+        elif event.select.id == _FIELD_ESCALATION:
             if self._route_error is not None and event.value in self._escalations:
                 self._route_error = None
-                self.query_one("#palette-submit", Button).disabled = False
+                self.query_one(f"#{_SUBMIT_ID}", Button).disabled = False
                 self._show_result(_EMPTY)
             self._show_escalation(event.value)
-        elif event.select.id == "resolution":
-            self._update_fields(self._selected_value("action"))
+        elif event.select.id == _FIELD_RESOLUTION:
+            self._update_fields(self._selected_value(_FIELD_ACTION))
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Run the selected action in a worker so the palette stays responsive."""
-        if event.button.id == "palette-submit":
+        if event.button.id == _SUBMIT_ID:
             event.button.disabled = True
             self.run_worker(self._run_action(), exclusive=True)
 
@@ -253,7 +257,7 @@ class PaletteScreen(ModalScreen[None]):
 
     async def _run_action(self) -> None:
         try:
-            action = self._value("action")
+            action = self._value(_FIELD_ACTION)
             task_id = self._input("task-id").strip()
             role = self._role() if action == _ACTION_TAKE_OVER else None
             ack = await self._dispatch()
@@ -272,10 +276,10 @@ class PaletteScreen(ModalScreen[None]):
                     await self._select_role_pane(ack, task_id, role)
         finally:
             if self._is_current_screen():
-                self.query_one("#palette-submit", Button).disabled = False
+                self.query_one(f"#{_SUBMIT_ID}", Button).disabled = False
 
     async def _dispatch(self) -> Ack | None:
-        action = self._value("action")
+        action = self._value(_FIELD_ACTION)
         task_id = self._input("task-id").strip()
         if action == _ACTION_SUBMIT:
             return await self._commands.submit_task(
@@ -341,12 +345,12 @@ class PaletteScreen(ModalScreen[None]):
                 self._show_ack(ack, f"{_TAKEOVER_SELECTION_FAILURE}: {error}")
 
     async def _resolve(self) -> Ack:
-        escalation_id = self._value("escalation")
+        escalation_id = self._value(_FIELD_ESCALATION)
         item = self._escalations.get(escalation_id)
         if item is None:
             message = f"escalation {escalation_id} is not open"
             raise ValueError(message)
-        kind = ResolutionKind(self._value("resolution"))
+        kind = ResolutionKind(self._value(_FIELD_RESOLUTION))
         if kind is ResolutionKind.ANSWER:
             resolution = AnswerResolution(text=self._text("resolution-text"))
         elif kind is ResolutionKind.RETRY:
@@ -437,17 +441,17 @@ class PaletteScreen(ModalScreen[None]):
             in {_ACTION_TAKE_OVER, _ACTION_HAND_BACK, _ACTION_RUNG, _ACTION_MESSAGE, _ACTION_PEEK},
             "rung": action == _ACTION_RUNG,
             "message": action == _ACTION_MESSAGE,
-            "escalation": action == _ACTION_RESOLVE,
-            "resolution": action == _ACTION_RESOLVE,
+            _FIELD_ESCALATION: action == _ACTION_RESOLVE,
+            _FIELD_RESOLUTION: action == _ACTION_RESOLVE,
             "resolution-text": action == _ACTION_RESOLVE
-            and self._selected_value("resolution") == "answer",
+            and self._selected_value(_FIELD_RESOLUTION) == ResolutionKind.ANSWER,
             "resolution-rung": action == _ACTION_RESOLVE
-            and self._selected_value("resolution") == "retry",
+            and self._selected_value(_FIELD_RESOLUTION) == ResolutionKind.RETRY,
         }
         for field, visible in groups.items():
             self.query_one(f"#field-{field}").display = visible
         self.query_one("#palette-packet-scroll").display = action == _ACTION_RESOLVE
-        self._show_escalation(self._selected_value("escalation"))
+        self._show_escalation(self._selected_value(_FIELD_ESCALATION))
 
     def _show_ack(self, ack: Ack, additional_detail: str | None = None) -> None:
         result = ack.result or {}
@@ -506,7 +510,7 @@ class PaletteScreen(ModalScreen[None]):
         value = self._selected_value("complexity")
         if not value:
             return None
-        if value in {"low", "normal", "high"}:
+        if value in get_args(ComplexityName):
             return cast("ComplexityName", value)
         message = f"unsupported complexity: {value}"
         raise ValueError(message)

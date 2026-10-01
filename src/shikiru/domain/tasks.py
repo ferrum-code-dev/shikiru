@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import ComplexityName
 
+TASK_TITLE_MAX_LENGTH = 60
+
 
 class TaskOrigin(StrEnum):
     """Where a task came from (03 §1.1)."""

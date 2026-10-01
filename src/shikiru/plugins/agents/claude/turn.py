@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from shikiru.agents.contracts import (
+    PERCENT,
     AgentSignal,
     Compacted,
     FailureKind,
@@ -403,7 +404,7 @@ class ClaudeTurnParser:
         )
         context_tokens = _context_tokens(self._latest_assistant_usage)
         context_pct = (
-            context_tokens / context_window * 100
+            context_tokens / context_window * PERCENT
             if priced and isinstance(context_window, int | float) and context_window > 0
             else None
         )

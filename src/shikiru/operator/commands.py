@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 
 from shikiru.domain.commands import (
+    COMMAND_POLL_SECONDS,
     Cancel,
     HandBack,
     Pause,
@@ -24,6 +25,7 @@ from shikiru.domain.commands import (
     Submit,
     TakeOver,
 )
+from shikiru.domain.tasks import TASK_TITLE_MAX_LENGTH
 from shikiru.store.commands import CommandQueue, CommandStatus
 
 if TYPE_CHECKING:
@@ -34,12 +36,10 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Mode, Role
 
 COMMAND_ACK_WAIT_SECONDS = 10.0
-COMMAND_POLL_SECONDS = 0.25
 QUEUED_MESSAGE = "applies when the engine starts"
 ACK_TIMEOUT_MESSAGE = (
     f"engine did not acknowledge the command within {COMMAND_ACK_WAIT_SECONDS:g} seconds"
 )
-TASK_TITLE_MAX_LENGTH = 60
 
 EngineState = Callable[[], bool]
 

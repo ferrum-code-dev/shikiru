@@ -6,9 +6,9 @@ from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
 from shikiru.agents.contracts import Usage
+from shikiru.plugins.agents.codex.options import USAGE_EVENT_TYPE
 
 _EVENT_MESSAGE_TYPE = "event_msg"
-_TOKEN_COUNT_TYPE = "token" + "_count"
 _INFO_FIELD = "info"
 _TOTAL_USAGE_FIELD = "total_token_usage"
 _LAST_USAGE_FIELD = "last_token_usage"
@@ -67,7 +67,7 @@ def _latest_token_count(
     latest: tuple[Mapping[str, Any], Mapping[str, Any], int | None] | None = None
     for entry in entries:
         payload = _payload(entry)
-        if payload.get("type") != _TOKEN_COUNT_TYPE:
+        if payload.get("type") != USAGE_EVENT_TYPE:
             continue
         info = payload.get(_INFO_FIELD)
         if not isinstance(info, Mapping):

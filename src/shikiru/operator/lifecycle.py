@@ -36,6 +36,7 @@ CLI_ENGINE_COMMAND = "engine"
 CLI_DASH_COMMAND = "dash"
 CLI_PALETTE_COMMAND = "palette"
 PALETTE_COMMAND = (sys.executable, "-m", PACKAGE_NAME, CLI_PALETTE_COMMAND)
+TMUX_ATTACH_ARGV = ("tmux", "attach-session", "-t")
 ENGINE_START_WAIT_SECONDS = 5.0
 ENGINE_START_POLL_SECONDS = 0.05
 
@@ -103,7 +104,7 @@ class ProjectLifecycle:
                 failure="engine did not acquire its lock after start",
             )
         if attach:
-            self._runner.replace(("tmux", "attach-session", "-t", target))
+            self._runner.replace((*TMUX_ATTACH_ARGV, target))
         return StartResult(started=started, engine="up", session=target)
 
     async def stop(

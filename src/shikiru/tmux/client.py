@@ -20,6 +20,9 @@ _CONFIG_FLAG = "-f"
 _COMMAND_TIMEOUT_SECONDS = 5.0
 _END_OF_OPTIONS = "--"
 _ENV_COMMAND = "env"
+_SESSION_SEPARATOR = ":"
+_HORIZONTAL_AXIS = "h"
+_FLAG_TRUE = "1"
 _PRIVATE_SOCKET_SUFFIX_LENGTH = 8
 
 FORMAT_PANE_ID = "#{pane_id}"
@@ -46,7 +49,7 @@ def exact_target(name: str) -> str:
 
 
 def _session_scoped(target: str) -> str:
-    return target if ":" in target else f"{target}:"
+    return target if _SESSION_SEPARATOR in target else f"{target}{_SESSION_SEPARATOR}"
 
 
 class Tmux:
@@ -206,7 +209,7 @@ class Tmux:
         cwd: Path | None = None,
     ) -> str:
         """Split pane `target`, returning the new pane's id sized `size_pct`% of `target`."""
-        axis_flag = "-h" if axis == "h" else "-v"
+        axis_flag = "-h" if axis == _HORIZONTAL_AXIS else "-v"
         args = [
             "split-window",
             axis_flag,
@@ -248,7 +251,7 @@ class Tmux:
         if not await self.pane_exists(target):
             return True
         result = await self.display(target, FORMAT_PANE_DEAD)
-        return result == "1"
+        return result == _FLAG_TRUE
 
     async def list_panes(self, target: str, fmt: str) -> list[str]:
         """List every pane of `target`, one formatted line per pane."""

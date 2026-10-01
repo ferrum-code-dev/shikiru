@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import EscalationPanelView, WidgetContext
 
 _SELECTED_MARKER = "▶ "
+_MOVE_STEPS = {"up": -1, "down": 1}
+_OPEN_KEY = "o"
+_RESOLVE_KEY = "r"
 MAX_ESCALATION_PANEL_HEIGHT = 12
 
 
@@ -72,17 +75,17 @@ class EscalationsPanel(Static):
         """Move between open packets, show a packet, or request its resolution form."""
         if not self._escalations:
             return
-        if event.key in ("up", "down"):
-            step = -1 if event.key == "up" else 1
+        if event.key in _MOVE_STEPS:
+            step = _MOVE_STEPS[event.key]
             self._selected = (self._selected + step) % len(self._escalations)
             await self._render_panels()
             event.stop()
-        elif event.key == "o":
+        elif event.key == _OPEN_KEY:
             cast("App[None]", self.app).push_screen(
                 PacketScreen(self._escalations[self._selected].packet)
             )
             event.stop()
-        elif event.key == "r":
+        elif event.key == _RESOLVE_KEY:
             item = self._escalations[self._selected]
             await self._widget_context.open_palette(f"resolve {item.escalation_id}")
             event.stop()

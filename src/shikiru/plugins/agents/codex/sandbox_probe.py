@@ -12,6 +12,8 @@ from shikiru.agents.contracts import CheckResult
 from shikiru.errors import ShikiruError
 from shikiru.plugins.agents.codex.options import (
     CODEX_COMMAND,
+    END_OF_OPTIONS_FLAG,
+    GIT_COMMAND,
     GIT_DIRS_ARGV,
     SANDBOX_PROBE_PARENT,
     SANDBOX_PROBE_PREFIX,
@@ -71,7 +73,7 @@ class CodexSandboxProbe:
                 CODEX_COMMAND,
                 _SANDBOX_SUBCOMMAND,
                 *sandbox_config_args((run_dir, *map(Path, git_dirs))),
-                "--",
+                END_OF_OPTIONS_FLAG,
                 *_SHELL_ARGV,
                 *targets,
             ),
@@ -90,6 +92,6 @@ class CodexSandboxProbe:
 
     async def _git(self, cwd: Path, *args: str) -> str:
         result = await self._runner.run(
-            ("git", *args), timeout=SANDBOX_PROBE_TIMEOUT_SECONDS, cwd=cwd, check=True
+            (GIT_COMMAND, *args), timeout=SANDBOX_PROBE_TIMEOUT_SECONDS, cwd=cwd, check=True
         )
         return result.stdout

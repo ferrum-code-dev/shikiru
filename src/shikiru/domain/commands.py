@@ -12,6 +12,7 @@ from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import DomainModel, Mode, Role
 
 COMMAND_ID_KEY = "command_id"
+COMMAND_POLL_SECONDS = 0.25
 
 
 class CommandStatus(StrEnum):

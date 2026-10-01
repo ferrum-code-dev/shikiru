@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 MAX_SCAN_DEPTH = 4
 TRACKER_DIRECTORY = "tasks"
 TRACKER_NAMES = ("plan", "todo")
+MARKDOWN_SUFFIX = ".md"
 CACHE_NAMES = (
     ".venv",
     "node_modules",
@@ -160,7 +161,7 @@ class ProjectDetectors:
                 path.parent.name == TRACKER_DIRECTORY
                 or name.startswith(TRACKER_NAMES)
                 or name.endswith(TRACKER_NAMES)
-            ) and path.suffix.lower() == ".md":
+            ) and path.suffix.lower() == MARKDOWN_SUFFIX:
                 candidates.add(relative)
         return sorted(candidates)
 

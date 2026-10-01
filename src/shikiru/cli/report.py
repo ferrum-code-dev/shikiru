@@ -15,6 +15,7 @@ from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     REPORT_FILENAME,
+    REPORT_JSON_INDENT,
     REPORT_KIND_FILENAME,
     ReportKind,
     model_for,
@@ -108,7 +109,7 @@ def write_report(turn_dir: Path, report: BaseModel) -> Path:
     descriptor, temp_name = tempfile.mkstemp(dir=turn_dir, prefix=f".{REPORT_FILENAME}.")
     try:
         with os.fdopen(descriptor, "w") as temp_file:
-            temp_file.write(report.model_dump_json(indent=2))
+            temp_file.write(report.model_dump_json(indent=REPORT_JSON_INDENT))
         Path(temp_name).replace(report_path)
     except BaseException:
         Path(temp_name).unlink(missing_ok=True)

@@ -18,7 +18,9 @@ _PUSH_TIMEOUT_SECONDS = 300.0
 GIT_STOP_GRACE = 10.0
 _WORKTREE_LIST_PREFIX = "worktree "
 _STATUS_IGNORED_PREFIX = "!! "
-_STATUS_PATH_OFFSET = 3
+_STATUS_CODE_LENGTH = 2
+_STATUS_PATH_OFFSET = _STATUS_CODE_LENGTH + 1
+_PORCELAIN_FLAG = "--porcelain"
 _RENAME_COPY_CODES = frozenset(("R", "C"))
 
 _ENGINE_NAME = "Shikiru"
@@ -143,7 +145,7 @@ class Git:
 
     async def status_porcelain(self, repo_dir: Path, *, include_ignored: bool = False) -> list[str]:
         """Return one `git status --porcelain` line per entry, optionally including ignored ones."""
-        args = ["status", "--porcelain"]
+        args = ["status", _PORCELAIN_FLAG]
         if include_ignored:
             args.append("--ignored")
         result = await self._run(repo_dir, *args)
@@ -252,7 +254,7 @@ class Git:
             index += 1
             if not entry:
                 continue
-            status = entry[:2]
+            status = entry[:_STATUS_CODE_LENGTH]
             path = entry[_STATUS_PATH_OFFSET:]
             paths.add(path)
             if any(code in _RENAME_COPY_CODES for code in status) and index < len(entries):

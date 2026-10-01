@@ -29,6 +29,9 @@ PROJECT_ENV_VAR = "SHIKIRU_PROJECT"
 TASK_ENV_VAR = "SHIKIRU_TASK"
 SLOT_ENV_VAR = "SHIKIRU_SLOT"
 SHIKIRU_MODULE = "shikiru"
+DOCTOR_TIMEOUT_SECONDS = 60.0
+PERCENT = 100
+COST_BASIS_UNKNOWN = "unknown"
 _SAFE_PATH_FLAG = "-P"
 _MODULE_FLAG = "-m"
 
@@ -290,5 +293,5 @@ def parse_rung(text: str) -> Rung:
     if len(parts) not in _VALID_RUNG_PART_COUNTS or not all(parts):
         message = f"{text!r} is not a valid rung; expected agent:model or agent:model:effort"
         raise ConfigError(message)
-    effort = parts[2] if len(parts) == _VALID_RUNG_PART_COUNTS[1] else None
-    return Rung(agent=parts[0], model=parts[1], effort=effort)
+    agent, model, *effort = parts
+    return Rung(agent=agent, model=model, effort=effort[0] if effort else None)

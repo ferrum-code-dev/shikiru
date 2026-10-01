@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
+from shikiru.agents.contracts import DOCTOR_TIMEOUT_SECONDS
 from shikiru.config.loader import load_settings
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import not_repository_root
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
     from shikiru.workspace.git import Git
 
 
-DOCTOR_TIMEOUT_SECONDS = 60.0
+SESSION_SUFFIX_LENGTH = 8
 TMUX_VERSION_ARGS = ("tmux", "-V")
 TMUX_SESSION_PREFIX = "shikiru-doctor-"
 TMUX_SESSION_NAME = "probe"
@@ -153,7 +154,7 @@ class Doctor:
             )
             if version.returncode == 0:
                 await tmux.new_session(
-                    f"{TMUX_SESSION_NAME}-{uuid.uuid4().hex[:8]}",
+                    f"{TMUX_SESSION_NAME}-{uuid.uuid4().hex[:SESSION_SUFFIX_LENGTH]}",
                     cwd=self._project_root,
                     env={},
                     window_name=TMUX_SESSION_NAME,

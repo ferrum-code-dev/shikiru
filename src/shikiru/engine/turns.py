@@ -29,6 +29,7 @@ from shikiru.domain.reports import (
     HELPER_REPORT_FILENAME,
     PROMPT_FILENAME,
     REPORT_FILENAME,
+    REPORT_JSON_INDENT,
     REPORT_KIND_FILENAME,
     REPORT_SCHEMA_FILENAME,
     schema_for,
@@ -279,7 +280,8 @@ class TurnRunner:
             turn_dir / PROMPT_FILENAME, self._renderer.render(request.template, context)
         )
         write_private_text(
-            turn_dir / REPORT_SCHEMA_FILENAME, json.dumps(schema_for(request.kind), indent=2)
+            turn_dir / REPORT_SCHEMA_FILENAME,
+            json.dumps(schema_for(request.kind), indent=REPORT_JSON_INDENT),
         )
         write_private_text(turn_dir / REPORT_KIND_FILENAME, request.kind.value)
         if request.facts:
@@ -388,7 +390,9 @@ class TurnRunner:
                 data={"role": selection.run.role.value, "reason": report.unrecoverable},
             )
             return ProtocolError()
-        write_private_text(turn_dir / HELPER_REPORT_FILENAME, report.model_dump_json(indent=2))
+        write_private_text(
+            turn_dir / HELPER_REPORT_FILENAME, report.model_dump_json(indent=REPORT_JSON_INDENT)
+        )
         return Completed(report=report, rebuilt=True)
 
 

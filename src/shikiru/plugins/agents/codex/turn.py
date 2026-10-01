@@ -32,15 +32,16 @@ from shikiru.agents.sdk.turn import (
 )
 from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import (
+    AUTO_COMPACT_LIMIT_CONFIG,
     CODEX_COMMAND,
     CONFIG_FLAG,
     EXEC_SUBCOMMAND,
     JSON_FLAG,
-    MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG,
     MODEL_FLAG,
     MODELS_CACHE_FILENAME,
     REASONING_EFFORT_CONFIG,
     RESUME_SUBCOMMAND,
+    USAGE_EVENT_TYPE,
 )
 from shikiru.plugins.agents.codex.quota import CodexQuotaProbe
 from shikiru.plugins.agents.codex.sandbox import sandbox_config_args
@@ -53,6 +54,9 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
 
 _TYPE_FIELD = "type"
+_PHASE_START = "start"
+_PHASE_PROMPT = "prompt"
+_PHASE_RETRY = "retry"
 _THREAD_STARTED = "thread.started"
 _THREAD_ID_FIELD = "thread_id"
 _ITEM_STARTED = "item.started"
@@ -78,7 +82,6 @@ _CODE_FIELD = "code"
 _MESSAGE_FIELD = "message"
 _RESET_AT_FIELD = "resets_at"
 _EVENT_MESSAGE_TYPE = "event_msg"
-_TOKEN_COUNT_TYPE = "token" + "_count"
 _COMPACTED_TYPE = "compacted"
 _PRE_TOKENS_FIELD = "pre_tokens"
 _POST_TOKENS_FIELD = "post_tokens"
@@ -327,25 +330,25 @@ class CodexTurnSequence(TurnProcessSequence):
         self._git_dirs = tuple(git_dirs) if git_dirs is not None else _worktree_git_dirs(spec.cwd)
         self._compact_at_pct = compact_at_pct
         self._session_id = spec.session_id
-        self._phase = "start"
+        self._phase = _PHASE_START
         self._usage = spec.usage
         self._parser: CodexTurnParser | None = None
         self._context_window = context_window(self._home, spec.rung.model, spec.session_id)
 
     def start(self, spec: TurnSpec) -> TurnProcess:
-        self._phase = "prompt"
+        self._phase = _PHASE_PROMPT
         return self._process(spec)
 
     def advance(self, spec: TurnSpec, previous: TurnProcessResult) -> TurnProcess | None:
         self._remember_state(previous.signals)
         terminal = _terminal(previous.signals)
         if (
-            self._phase == "prompt"
+            self._phase == _PHASE_PROMPT
             and isinstance(terminal, TurnFailed)
             and self._parser is not None
             and self._parser.context_exceeded
         ):
-            self._phase = "retry"
+            self._phase = _PHASE_RETRY
             return self._process(spec)
         return None
 
@@ -359,7 +362,7 @@ class CodexTurnSequence(TurnProcessSequence):
             argv.extend([CONFIG_FLAG, f'{REASONING_EFFORT_CONFIG}="{spec.rung.effort}"'])
         token_limit = self._token_limit()
         if token_limit is not None:
-            argv.extend([CONFIG_FLAG, f"{MODEL_AUTO_COMPACT_TOKEN_LIMIT_CONFIG}={token_limit}"])
+            argv.extend([CONFIG_FLAG, f"{AUTO_COMPACT_LIMIT_CONFIG}={token_limit}"])
         roots = _unique_paths((spec.run_dir, *self._git_dirs, *spec.add_dirs))
         argv.extend(sandbox_config_args(roots))
         argv.extend(self._args)
@@ -406,7 +409,7 @@ def _observed_window(entries: Sequence[Mapping[str, Any]], model: str) -> int | 
             continue
         if entry.get(_TYPE_FIELD) == _TURN_CONTEXT_TYPE:
             current_model = payload.get(_MODEL_FIELD)
-        elif payload.get(_TYPE_FIELD) == _TOKEN_COUNT_TYPE:
+        elif payload.get(_TYPE_FIELD) == USAGE_EVENT_TYPE:
             info = _mapping(payload.get(_INFO_FIELD))
             value = info.get(_CONTEXT_WINDOW_INFO_FIELD) if info is not None else None
             if isinstance(value, int):
@@ -500,7 +503,7 @@ def _nearby_token_count(
         reversed(entries[:compacted_index]) if before else iter(entries[compacted_index + 1 :])
     )
     for entry in candidates:
-        if _rollout_type(entry) != _TOKEN_COUNT_TYPE:
+        if _rollout_type(entry) != USAGE_EVENT_TYPE:
             continue
         payload = _mapping(entry.get(_PAYLOAD_FIELD))
         info = _mapping(payload.get(_INFO_FIELD)) if payload is not None else None

@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import TimeoutsConfig
 
+PULSE_PHASES = 2
+
 
 class MotionStampKind(StrEnum):
     """A task outcome that briefly stamps its comic strip."""
@@ -112,7 +114,8 @@ def frame(state: MotionState, now: datetime) -> MotionFrame:
             state.escalations_open
             and (
                 not state.animations
-                or int(now.timestamp() * state.escalation_pulse_hz * 2) % 2 == 0
+                or int(now.timestamp() * state.escalation_pulse_hz * PULSE_PHASES) % PULSE_PHASES
+                == 0
             )
         ),
     )

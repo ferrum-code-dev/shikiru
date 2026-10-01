@@ -13,6 +13,8 @@ from shikiru.domain.ladder import (
     reset_for_new_iteration,
 )
 from shikiru.domain.reports import (
+    DECISION_ESCALATE,
+    STATUS_COMPLETED,
     ConsultAnswer,
     ImplementationReport,
     PlanReport,
@@ -175,7 +177,7 @@ def _from_plan(task: Task) -> Transition:
 
 
 def _from_implement(task: Task, outcome: ImplementationReport) -> Transition:
-    if outcome.status == "completed":
+    if outcome.status == STATUS_COMPLETED:
         return Transition.stay(task, step=Step.VERIFY)
     return _consult_or_escalate(task, Status.RUNNING)
 
@@ -189,7 +191,7 @@ def _consult_or_escalate(task: Task, status: Status) -> Transition:
 
 
 def _from_consult(task: Task, outcome: ConsultAnswer) -> Transition:
-    if outcome.decision == "escalate":
+    if outcome.decision == DECISION_ESCALATE:
         return Transition.escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT)
     if task.status is Status.INTEGRATING:
         return Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
@@ -268,7 +270,7 @@ def _from_integrate(task: Task, outcome: Verdict) -> Transition:
 
 
 def _from_integrate_conflicts(task: Task, outcome: ImplementationReport) -> Transition:
-    if outcome.status == "completed":
+    if outcome.status == STATUS_COMPLETED:
         return Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
     return _consult_or_escalate(task, Status.INTEGRATING)
 
