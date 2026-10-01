@@ -602,25 +602,6 @@ def _assert_escalated_despite_packet_failure(
     assert [fault.task_id for fault in faults] == [task_id]
 
 
-async def test_a_dependency_escalation_whose_packet_cannot_be_written_still_escalates_the_task(
-    scheduler_env: SchedulerFixture, connection: Connection, tmp_path: Path
-) -> None:
-    dependency = _submit(connection, scheduler_env.clock, title="cancelled")
-    dependent = _submit(
-        connection, scheduler_env.clock, title="dependent", depends_on=[dependency.id]
-    )
-    current = scheduler_env.tasks.get(dependency.id)
-    assert current is not None
-    scheduler_env.tasks.apply_transition(
-        current.id, Transition.stay(current, step=Step.IMPLEMENT, status=Status.CANCELLED)
-    )
-    _block_packet_directory(tmp_path, dependent.id)
-
-    await scheduler_env.scheduler.run_once()
-
-    _assert_escalated_despite_packet_failure(scheduler_env, connection, dependent.id)
-
-
 async def test_a_dispatch_escalation_whose_packet_cannot_be_written_still_escalates_the_task(
     scheduler_env: SchedulerFixture,
     connection: Connection,

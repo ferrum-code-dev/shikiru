@@ -208,49 +208,17 @@ async def test_a_dependency_escalation_with_an_unwritable_packet_does_not_block_
             await _assert_repaired(world, dependent.id, evidence=False)
 
 
-async def test_a_restart_with_an_unwritable_packet_directory_keeps_running_and_repairs_later(
+async def test_a_restart_with_an_unwritable_packet_directory_keeps_running_and_stops_collecting(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     async with _world(tmp_path, tmux_server) as world:
         task = world.submit("escalated before restart")
-        blocked = world.block_packets(task.id)
-        world.leave_turn_evidence(task.id, Role.IMPLEMENTER)
-        escalated = Transition.escalate_current(task, EscalationReason.AGENT_ERROR)
-        raiser = build_raiser(world.connection, world.clock, tmp_path)
-        writer = build_writer(world.connection, world.clock)
-        await raiser.raise_escalation(
-            task,
-            step=Step.IMPLEMENT,
-            reason=EscalationReason.AGENT_ERROR,
-            question="The agent kept failing.",
-            attempted="Retried.",
-            reports=(),
-            facts="",
-            view_tail="",
-            apply_state=lambda: writer.persist(task, escalated, None),
-        )
-        assert world.fault_events(task.id) == 1
-        async with _running(world, tmux_server) as served:
-            await _settle(world)
-
-            assert not served.done()
-            assert world.status(task.id) is Status.ESCALATED
-            assert world.fault_events(task.id) == 2
-
-            blocked.unlink()
-            await _assert_repaired(world, task.id)
-
-
-async def test_an_unwritable_packet_directory_does_not_rerun_git_evidence_every_tick(
-    tmp_path: Path, tmux_server: TmuxServer
-) -> None:
-    async with _world(tmp_path, tmux_server) as world:
-        task = world.submit("escalated with a worktree")
         repo = await task_root_builder(SubprocessRunner(), tmp_path, RepoConfig()).build(
             task.id, task.title
         )
         world.tasks.set_repo(task.id, repo)
         blocked = world.block_packets(task.id)
+        world.leave_turn_evidence(task.id, Role.IMPLEMENTER)
         escalated = Transition.escalate_current(task, EscalationReason.AGENT_ERROR)
         writer = build_writer(world.connection, world.clock)
         await build_raiser(world.connection, world.clock, tmp_path).raise_escalation(
@@ -264,6 +232,7 @@ async def test_an_unwritable_packet_directory_does_not_rerun_git_evidence_every_
             view_tail="",
             apply_state=lambda: writer.persist(task, escalated, None),
         )
+        assert world.fault_events(task.id) == 1
         runner = _WorktreeGitCalls(task_root(tmp_path, task.id))
         async with _running(world, tmux_server, runner) as served:
             await _settle(world)
@@ -271,6 +240,9 @@ async def test_an_unwritable_packet_directory_does_not_rerun_git_evidence_every_
             await _settle(world)
 
             assert not served.done()
+            assert world.status(task.id) is Status.ESCALATED
+            assert world.fault_events(task.id) == 2
             assert runner.calls == collected
+
             blocked.unlink()
-            await _assert_repaired(world, task.id, evidence=False)
+            await _assert_repaired(world, task.id)
