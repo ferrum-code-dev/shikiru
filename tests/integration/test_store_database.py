@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from importlib import resources
 from typing import TYPE_CHECKING
@@ -17,6 +19,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
+_MIGRATION_RACE_ROUNDS = 20
+_MIGRATION_RACERS = 4
 
 
 def test_connect_migrates_a_fresh_db_and_is_idempotent(database: Database) -> None:
@@ -204,3 +208,46 @@ def test_database_opens_exactly_the_requested_file(tmp_path: Path, directory: st
         "state.db-wal",
         "state.db-shm",
     }
+
+
+def _database_one_migration_behind(path: Path) -> int:
+    migrations = sorted(
+        (entry.name, entry.read_text(encoding="utf-8"))
+        for entry in resources.files("shikiru.store.migrations").iterdir()
+        if entry.name.endswith(".sql")
+    )
+    legacy = sqlite3.connect(path)
+    try:
+        legacy.execute("PRAGMA journal_mode = WAL")
+        for _name, sql in migrations[:-1]:
+            legacy.executescript(sql)
+        legacy.execute(f"PRAGMA user_version = {len(migrations) - 1}")
+        legacy.commit()
+    finally:
+        legacy.close()
+    return len(migrations)
+
+
+def test_concurrent_opens_of_an_outdated_database_migrate_it_exactly_once(
+    tmp_path: Path,
+) -> None:
+    for round_number in range(_MIGRATION_RACE_ROUNDS):
+        path = tmp_path / f"state-{round_number}.db"
+        latest = _database_one_migration_behind(path)
+        start = threading.Barrier(_MIGRATION_RACERS)
+
+        def open_after_barrier(path: Path = path, start: threading.Barrier = start) -> int:
+            start.wait()
+            connection = Database(path).connect()
+            try:
+                return connection.execute("PRAGMA user_version").fetchone()[0]
+            finally:
+                connection.close()
+
+        with ThreadPoolExecutor(_MIGRATION_RACERS) as pool:
+            versions = [
+                future.result()
+                for future in [pool.submit(open_after_barrier) for _ in range(_MIGRATION_RACERS)]
+            ]
+
+        assert versions == [latest] * _MIGRATION_RACERS

@@ -149,7 +149,7 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 ## 2. State DB (`.shikiru/state.db`)
 
 - SQLite WAL mode, `busy_timeout = 5000`.
-- Migrations tracked by `PRAGMA user_version`. A migration rewrites stored JSON when a model gains a required field (e.g. `repo.base_ref` defaults to the stored `base`, the ref tasks of that era started from), so models stay strict. `idx_events_kind` (migration 006) bounds the `command_applied` replay lookup (03 §7) to the events of one kind; `notification_cursor` (migration 007) holds the single row of the delivered-up-to event id (06 §5.7).
+- Migrations tracked by `PRAGMA user_version`. An open of an outdated database reads the version and applies each pending migration inside one immediate transaction, so two processes opening it at once (engine and CLI after an upgrade) apply every migration exactly once; an up-to-date database is opened without taking the write lock. A migration rewrites stored JSON when a model gains a required field (e.g. `repo.base_ref` defaults to the stored `base`, the ref tasks of that era started from), so models stay strict. `idx_events_kind` (migration 006) bounds the `command_applied` replay lookup (03 §7) to the events of one kind; `notification_cursor` (migration 007) holds the single row of the delivered-up-to event id (06 §5.7).
 - Readers use short read transactions and `PRAGMA data_version` to detect changes.
 - Timestamps are UTC ISO-8601.
 

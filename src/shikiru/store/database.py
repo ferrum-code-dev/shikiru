@@ -23,6 +23,9 @@ OperationalDatabaseError = sqlite3.OperationalError
 _MIGRATIONS_PACKAGE = "shikiru.store.migrations"
 _MIGRATION_SUFFIX = ".sql"
 _MIGRATION_NUMBER_SEPARATOR = "_"
+_BEGIN = "BEGIN"
+_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
+_READ_VERSION = "PRAGMA user_version"
 
 
 class Database:
@@ -60,7 +63,7 @@ class Database:
 
     def schema_version(self, connection: sqlite3.Connection) -> int:
         """Return the migrated schema version for an open database connection."""
-        return connection.execute("PRAGMA user_version").fetchone()[0]
+        return _schema_version(connection)
 
     def health(self) -> int:
         """Open and migrate the database, returning its schema version."""
@@ -91,8 +94,13 @@ class Database:
 
 
 @contextmanager
-def transaction(connection: sqlite3.Connection) -> Generator[sqlite3.Connection]:
+def transaction(
+    connection: sqlite3.Connection, *, immediate: bool = False
+) -> Generator[sqlite3.Connection]:
     """Run a block as one transaction: commits on success, rolls back on any exception.
+
+    With `immediate` the write lock is taken at once, so what the block reads first cannot
+    change before it writes.
 
     Composes with an already-open transaction by joining it, so multiple store operations can
     participate in one atomic unit without attempting a nested `BEGIN`.
@@ -100,7 +108,7 @@ def transaction(connection: sqlite3.Connection) -> Generator[sqlite3.Connection]
     if connection.in_transaction:
         yield connection
         return
-    connection.execute("BEGIN")
+    connection.execute(_BEGIN_IMMEDIATE if immediate else _BEGIN)
     try:
         yield connection
     except BaseException:
@@ -176,12 +184,18 @@ def _statements(sql: str) -> list[str]:
     return [statement.strip() for statement in sql.split(";") if statement.strip()]
 
 
+def _schema_version(connection: sqlite3.Connection) -> int:
+    return connection.execute(_READ_VERSION).fetchone()[0]
+
+
 def _migrate(connection: sqlite3.Connection) -> None:
-    current_version = connection.execute("PRAGMA user_version").fetchone()[0]
-    for number, sql in _migration_files():
-        if number <= current_version:
-            continue
-        with transaction(connection):
+    migrations = _migration_files()
+    if _schema_version(connection) >= migrations[-1][0]:
+        return
+    for number, sql in migrations:
+        with transaction(connection, immediate=True):
+            if number <= _schema_version(connection):
+                continue
             for statement in _statements(sql):
                 connection.execute(statement)
             connection.execute(f"PRAGMA user_version = {number}")
