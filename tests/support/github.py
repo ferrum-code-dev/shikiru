@@ -90,28 +90,49 @@ class FakeGitHub:
         return self.calls("view")
 
 
+def install_fake_gh(root: Path) -> tuple[FakeGitHub, Path]:
+    """Write a fake `gh` and its pull request state under `root`.
+
+    Returns the view of that state and the directory that must come first on `PATH`.
+    """
+    bin_dir = root / "bin"
+    state = root / "state"
+    bin_dir.mkdir(parents=True)
+    (state / fake_gh.PULLS_DIR).mkdir(parents=True)
+    gh = bin_dir / "gh"
+    gh.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake_gh.__file__}" "{state}" "$@"\n')
+    gh.chmod(EXECUTABLE_MODE)
+    return FakeGitHub(state), bin_dir
+
+
+def neutral_gh_environment(root: Path) -> dict[str, str]:
+    """Return the variables that keep `gh` and git away from the operator's own configuration."""
+    return {
+        "GH_CONFIG_DIR": str(root / "gh-config"),
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
+def without_gh_credentials(environment: dict[str, str]) -> dict[str, str]:
+    """Return `environment` without any GitHub credential or target."""
+    return {key: value for key, value in environment.items() if key not in _GH_ENV_TO_DROP}
+
+
 @pytest.fixture
 def fake_github(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[FakeGitHub]:
     """Shadow any real `gh` on PATH, drop GitHub credentials and neutralise git config."""
     root = tmp_path_factory.mktemp("github")
-    bin_dir = root / "bin"
-    state = root / "state"
-    bin_dir.mkdir()
-    (state / fake_gh.PULLS_DIR).mkdir(parents=True)
-    gh = bin_dir / "gh"
-    gh.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake_gh.__file__}" "{state}" "$@"\n')
-    gh.chmod(EXECUTABLE_MODE)
+    github, bin_dir = install_fake_gh(root)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     for name in _GH_ENV_TO_DROP:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("GH_CONFIG_DIR", str(root / "gh-config"))
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
-    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
-    assert shutil.which("gh") == str(gh)
-    github = FakeGitHub(state)
+    for name, value in neutral_gh_environment(root).items():
+        monkeypatch.setenv(name, value)
+    assert shutil.which("gh") == str(bin_dir / "gh")
     yield github
     github.release("create")
     github.release("close")

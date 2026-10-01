@@ -64,6 +64,7 @@ lint = "ruff check ."
 imports = "lint-imports"
 types = "basedpyright"
 dead-code = "vulture"
+soak = "python -m tests.soak"
 comments = "python -m tests.support.comment_rule"
 literals = "python -m tests.support.literal_rule"
 test = "pytest -m 'not e2e'"
@@ -159,6 +160,7 @@ runtime-evaluated-decorators = [
 "tests/integration/test_store_database.py" = ["TID251"]
 "tests/support/store_reader_process.py" = ["T201"]
 "tests/support/store_submit_process.py" = ["T201"]
+"tests/soak/**" = ["S311", "PLR0911", "PLR0917"] # a seeded generator is the point of the soak; one return per match arm
 "tests/**" = ["S101", "D", "ANN", "PLR2004"]
 
 [tool.basedpyright]

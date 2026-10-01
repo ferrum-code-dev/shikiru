@@ -39,10 +39,13 @@ from shikiru.domain.tasks import Mode
 from shikiru.process import SubprocessRunner
 
 SCRIPT_ENV_VAR = "SHIKIRU_FAKE_SCRIPT"
+TASK_SCRIPT_DIR_ENV_VAR = "SHIKIRU_FAKE_TASK_DIR"
+TASK_ENV_VAR = "SHIKIRU_TASK"
 TICK_A1_ENV_VAR = "SHIKIRU_FAKE_TICK_A1"
 TICK_A1_ENABLED_VALUE = "1"
 _STATE_DIRNAME = "fake_state"
 FAKE_CHANGE_FILENAME = "fake-agent-changes.txt"
+_TASK_CHANGE_PREFIX = "fake-agent-"
 _REPORT_FILENAME_PREFIX = "fake-agent-report-"
 _TODO_FILENAME = "todo.md"
 _A1_UNCHECKED = "- [ ] A1"
@@ -141,9 +144,34 @@ def save_script_index(script_path: Path, index: int) -> None:
     script_path.write_text(json.dumps({"index": index}))
 
 
+def task_script_path(directory: str, task_id: str) -> Path:
+    """Return the file scripting one task's turns: a JSON object of step lists by role."""
+    return Path(directory) / f"{task_id}.json"
+
+
+def task_change_filename(task_id: str) -> str:
+    """Return the file a task commits to when it has its own (`TASK_SCRIPT_DIR_ENV_VAR` set)."""
+    return f"{_TASK_CHANGE_PREFIX}{task_id}.txt"
+
+
+def _task_script_for(role: str) -> str | None:
+    directory = os.environ.get(TASK_SCRIPT_DIR_ENV_VAR)
+    if not directory:
+        return None
+    path = task_script_path(directory, os.environ[TASK_ENV_VAR])
+    if not path.is_file():
+        return None
+    steps = json.loads(path.read_text()).get(role)
+    return None if steps is None else json.dumps(steps)
+
+
 def script_raw_for(role: str) -> str | None:
-    """Return the script for `role`, falling back to the shared fake script."""
-    return os.environ.get(role_script_env_var(role)) or os.environ.get(SCRIPT_ENV_VAR)
+    """Return the task's script for `role`, else the role's, else the shared fake script."""
+    return (
+        _task_script_for(role)
+        or os.environ.get(role_script_env_var(role))
+        or os.environ.get(SCRIPT_ENV_VAR)
+    )
 
 
 def _tick_a1(cwd: Path) -> None:
@@ -169,11 +197,17 @@ def _repository_directories(cwd: Path) -> tuple[Path, ...]:
     return repositories
 
 
+def _change_filename() -> str:
+    if os.environ.get(TASK_SCRIPT_DIR_ENV_VAR):
+        return task_change_filename(os.environ[TASK_ENV_VAR])
+    return FAKE_CHANGE_FILENAME
+
+
 async def _commit_changes(runner: SubprocessRunner, cwd: Path, prompt_text: str) -> list[Commit]:
     subject = f"fake: {prompt_text}"[:_MAX_COMMIT_SUBJECT_LENGTH]
     commits: list[Commit] = []
     for repository in await asyncio.to_thread(_repository_directories, cwd):
-        marker = repository / FAKE_CHANGE_FILENAME
+        marker = repository / _change_filename()
         previous = marker.read_text() if marker.is_file() else ""
         marker.write_text(previous + prompt_text + "\n")
         await runner.run(["git", "add", "-A"], timeout=_GIT_TIMEOUT_SECONDS, cwd=repository)

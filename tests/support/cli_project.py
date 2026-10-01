@@ -40,15 +40,15 @@ async def prepare_project(tmp_path: Path) -> PreparedProject:
     return PreparedProject(root, await run_git(runner, root, "rev-parse", "HEAD"))
 
 
-def tmux_environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
+def private_tmux_environment(shim_dir: Path, socket_name: str) -> dict[str, str]:
+    """Return an environment whose `tmux` is a shim bound to the private socket `socket_name`."""
     tmux_binary = shutil.which("tmux")
     assert tmux_binary is not None
-    shim_dir = project_root.parent / "tmux-bin"
     shim_dir.mkdir()
     shim = shim_dir / "tmux"
     shim.write_text(
         f"#!/bin/sh\nexec {shlex.quote(tmux_binary)} -L "
-        f'{shlex.quote(tmux_server.socket_name)} "$@"\n'
+        f'{shlex.quote(socket_name)} -f /dev/null "$@"\n'
     )
     shim.chmod(EXECUTABLE_MODE)
     environment = dict(os.environ)
@@ -58,6 +58,10 @@ def tmux_environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, s
     environment[TICK_A1_ENV_VAR] = TICK_A1_ENABLED_VALUE
     environment["PATH"] = f"{shim_dir}{os.pathsep}{environment['PATH']}"
     return environment
+
+
+def tmux_environment(project_root: Path, tmux_server: TmuxServer) -> dict[str, str]:
+    return private_tmux_environment(project_root.parent / "tmux-bin", tmux_server.socket_name)
 
 
 async def run_cli(
