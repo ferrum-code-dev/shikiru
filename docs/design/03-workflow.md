@@ -184,14 +184,14 @@ The command is spelled as `shikiru_command` (04 §1) renders it, so the agent's 
 ## 5. Workspaces
 
 - **Task root** `.shikiru/worktrees/T-12/` *is* the task's worktree of the project repository (D20). Agents run in it and never in the project checkout.
-- **Worktree**: `git worktree add -b shikiru/T-12-<slug> <task root> <base>`. `base` is `repo.base` or the branch checked out in the project; `<base>` is its *base ref* (§6): the local branch, or, in PR mode once a PR has merged, the verified fetched remote base. The task keeps both (`repo.base`, `repo.base_ref`) and rebases, diffs and reviews against the ref. Creation is idempotent.
+- **Worktree**: `git worktree add -b shikiru/T-12-<slug> <task root> <base>`. `base` is `repo.base` or the branch checked out in the project; `<base>` is its *base ref* (§6): the local branch, or, in PR mode once a PR has merged, the verified fetched remote base. The task keeps both (`repo.base`, `repo.base_ref`) and rebases, diffs and reviews against the ref. Creation is idempotent, but a task id is never adopted silently: when `shikiru/T-12-<slug>` already exists with no worktree (a state reset, or the kept branch of a cancelled task), the build adopts it only when its tip is exactly the base's current sha, and otherwise fails with `StaleTaskBranchError` naming the branch and the remedy (inspect, then delete or rename it and submit again), so the dispatch fails visibly (§7) instead of starting on an earlier task's commits.
 - **Caches** are copied copy-on-write (`repo.caches` globs that match ignored paths): macOS `cp -c -R`, Linux `cp -a --reflink=always`. If CoW isn't supported, nothing is copied and one warning is logged.
   - **Copy-on-write**: the filesystem (APFS; btrfs/XFS) creates only metadata that points at the same data blocks.
   - A 5 GB `node_modules` or `target` "copies" in about a second and uses no extra disk; only files that one side later modifies get their own blocks.
   - Every task gets a warm, fully independent cache.
 - **Shared resources**: `SHIKIRU_SLOT` and `SHIKIRU_TASK` let project scripts separate ports and Docker Compose project names (slots are `0..max_parallel-1`, so `PORT=$((3000 + SHIKIRU_SLOT))` gives 3000 and 3001 for two slots).
 - **Git hygiene**: `.shikiru/` is added to the repository's `.git/info/exclude`.
-- **Cleanup** on a terminal status: `git worktree remove --force`, and the branch is deleted once merged. The task root goes last, with or without a repo; symlinks in it are removed, never followed.
+- **Cleanup** on a terminal status: `git worktree remove --force`, and the branch is deleted once merged. The task root goes last, with or without a repo; symlinks in it are removed, never followed. A repo task's root whose worktree metadata is gone cannot be checked with git, so it is deleted only when it holds nothing but the `.git` link; otherwise it is kept and reported like a dirty worktree (invariant 3).
 
 ## 6. Integration
 

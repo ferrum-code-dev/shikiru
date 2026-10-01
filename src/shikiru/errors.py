@@ -41,6 +41,10 @@ class CommandRejectedError(ShikiruError):
     exit_code = EXIT_COMMAND_REJECTED
 
 
+class StaleTaskBranchError(ShikiruError):
+    """A task branch left by an earlier state already exists and is not at the task's base."""
+
+
 class ConfigError(ShikiruError):
     """Project or default configuration is missing or invalid."""
 

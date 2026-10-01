@@ -8,6 +8,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 from shikiru.domain.tasks import RepoState
+from shikiru.errors import StaleTaskBranchError
 from shikiru.paths import EXCLUDE_LINE, run_dir, task_root
 from shikiru.private import make_private_dir
 
@@ -25,7 +26,9 @@ SEED_COMMIT_MESSAGE = "Carry over the tracker changes of the superseded task"
 __all__ = ["EXCLUDE_LINE", "TaskRootBuilder", "branch_name", "run_dir", "slugify", "task_root"]
 
 _SLUG_MAX_LENGTH = 40
+_SHORT_SHA = 10
 _NON_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
+GIT_LINK_NAME = ".git"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -82,9 +85,11 @@ class TaskRootBuilder:
         repo = self._repo
         base = repo.base if repo.base is not None else await self._git.current_branch(project)
         base_ref = await self._base_refs.resolve(base)
+        base_sha = await self._git.rev_parse(project, base_ref)
         await self._git.append_to_exclude(project, EXCLUDE_LINE)
         if not await self._git.worktree_exists(project, root):
             if await self._git.branch_exists(project, branch):
+                await self._require_fresh_branch(branch, base_sha)
                 await self._git.worktree_add_existing_branch(project, root, branch)
             else:
                 await self._git.worktree_add(project, root, new_branch=branch, base=base_ref)
@@ -97,8 +102,16 @@ class TaskRootBuilder:
             if clone_result.warning is not None and not self._warned_cow_unsupported:
                 _LOGGER.warning("%s", clone_result.warning)
                 self._warned_cow_unsupported = True
-        base_sha = await self._git.rev_parse(project, base_ref)
         return RepoState(base=base, base_ref=base_ref, base_sha=base_sha, branch=branch)
+
+    async def _require_fresh_branch(self, branch: str, base_sha: str) -> None:
+        if await self._git.rev_parse(self._project_root, branch) != base_sha:
+            message = (
+                f"branch {branch} already exists and is not at the base {base_sha[:_SHORT_SHA]}: "
+                f"it holds an earlier task's work; inspect it, then delete it "
+                f"(git branch -D {branch}) or rename it and submit the task again"
+            )
+            raise StaleTaskBranchError(message)
 
     async def _seed_trackers(
         self, root: Path, branch: str, base_ref: str, seed_branch: str
@@ -128,8 +141,9 @@ class TaskRootBuilder:
         behind, and a squash leaves the branch out of its history). Idempotent and tolerant of
         a worktree already removed. Never deletes an unmerged branch, never follows a symlink
         out of the task root, and never erases uncommitted work: a worktree with tracked or
-        untracked changes (git-ignored files excepted) and its branch stay, and the kept task
-        root is returned.
+        untracked changes (git-ignored files excepted) and its branch stay, and so does a root
+        that holds anything but the git link once its worktree metadata is gone (git cannot
+        tell what is uncommitted there); the kept task root is returned.
         """
         project = self._project_root
         root = task_root(project, task_id)
@@ -144,5 +158,7 @@ class TaskRootBuilder:
             ):
                 await self._git.delete_branch(project, repo.branch)
         if root.exists():
+            if repo is not None and any(entry.name != GIT_LINK_NAME for entry in root.iterdir()):
+                return root
             shutil.rmtree(root)
         return None

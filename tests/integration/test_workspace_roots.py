@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
 from typing import TYPE_CHECKING
 
 import pytest
 
 from shikiru.config.settings import RepoConfig
+from shikiru.errors import StaleTaskBranchError
 from shikiru.paths import EXCLUDE_LINE, task_root
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.caches import CACHE_COW_UNSUPPORTED_WARNING, CacheCloner, default_cow_args
@@ -242,3 +244,37 @@ async def _local_branches(runner: SubprocessRunner, repo_dir: Path) -> list[str]
         ["git", "branch", "--format=%(refname:short)"], timeout=10, cwd=repo_dir, check=True
     )
     return result.stdout.splitlines()
+
+
+async def test_build_refuses_a_leftover_branch_that_is_not_at_the_base(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    await _init_repo_with_commit(project_root)
+    builder = _builder(project_root)
+    state = await builder.build(_TASK_ID, _TASK_TITLE)
+    root = task_root(project_root, _TASK_ID)
+    runner = SubprocessRunner()
+    (root / "old.txt").write_text("unrelated work\n")
+    await commit_all(runner, root, "old task work")
+    await Git(runner).worktree_remove(project_root, root)
+
+    with pytest.raises(StaleTaskBranchError, match=state.branch):
+        await builder.build(_TASK_ID, _TASK_TITLE)
+
+    assert not root.exists()
+
+
+async def test_cleanup_keeps_a_root_with_work_when_its_worktree_metadata_is_missing(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    await _init_repo_with_commit(project_root)
+    builder = _builder(project_root)
+    state = await builder.build(_TASK_ID, _TASK_TITLE)
+    root = task_root(project_root, _TASK_ID)
+    (root / "draft.md").write_text("unsaved\n")
+    shutil.rmtree(project_root / ".git" / "worktrees")
+
+    retained = await builder.cleanup(_TASK_ID, state)
+
+    assert retained == root
+    assert (root / "draft.md").read_text() == "unsaved\n"
