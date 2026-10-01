@@ -13,6 +13,7 @@ from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.errors import ShikiruError
 from shikiru.private import create_private_file, make_private_dir
 from shikiru.process import ProcessIdentity, identify_pid
+from shikiru.store.database import OperationalDatabaseError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -246,10 +247,11 @@ class Engine:
             except ShikiruError as error:
                 self._commands.mark_rejected(queued.id, {"error": str(error)})
                 continue
+            except OperationalDatabaseError:
+                raise
             except Exception as error:
-                self._logger.exception("command %s failed", queued.id)
                 self._commands.mark_rejected(queued.id, {"error": str(error)})
-                continue
+                raise
             self._commands.mark_done(queued.id, result)
             changed = True
         return changed

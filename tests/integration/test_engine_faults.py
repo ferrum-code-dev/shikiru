@@ -13,7 +13,7 @@ import pytest
 
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import NotifyConfig
-from shikiru.domain.commands import Resume, Submit
+from shikiru.domain.commands import Prioritize, Resume, Submit
 from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
@@ -371,3 +371,29 @@ async def test_a_database_error_in_the_command_path_does_not_stop_the_engine(
         assert outcome.status is CommandStatus.DONE
         assert fault.data["recoverable"] is True
         assert not harness.task.done()
+
+
+@pytest.mark.usefixtures("fake_github")
+async def test_a_command_hit_by_a_database_error_stays_pending_and_applies_afterwards(
+    tmp_path: Path, tmux_server: TmuxServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_script(monkeypatch, [{"kind": "stall"}])
+
+    async def seed(database: Database, clock: FakeClock, project: Path) -> None:
+        await _seed_tasks(database, clock, project, held_running=True)
+
+    async with _engine(tmp_path, tmux_server, seed=seed) as harness:
+        harness.connection.execute("ALTER TABLE tasks RENAME TO tasks_away")
+        queued = harness.queue.append(Prioritize(task_id="T-3", priority=7))
+        await harness.until(lambda: EventKind.ENGINE_FAULT in harness.kinds())
+        status = harness.queue.status(queued.id)
+        assert status is not None
+        assert status.status is CommandStatus.PENDING
+        harness.connection.execute("ALTER TABLE tasks_away RENAME TO tasks")
+
+        outcome = await wait_for_command(queued, harness.queue, harness.clock)
+
+        assert outcome.status is CommandStatus.DONE
+        prioritised = harness.tasks.get("T-3")
+        assert prioritised is not None
+        assert prioritised.priority == 7
