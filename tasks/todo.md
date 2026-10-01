@@ -115,6 +115,8 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [ ] Task 74m: Regression power of the Codex sandbox and reconcile fixes
 - [ ] Task 74n: Documentation and evidence corrections
 - [ ] Task 74o: Test-value audit of the older suite
+- [ ] Task 74q: A turn completion never overwrites operator-owned task state (F10)
+- [ ] Task 74r: The no-literals rule is enforced like the no-comments rule (F22)
 - [ ] Task 74p: Phase 7d verification, re-review and release evidence
 
 ## Phase 8 — Operator Workspace
