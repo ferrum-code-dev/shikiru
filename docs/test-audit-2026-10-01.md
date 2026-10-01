@@ -4,7 +4,7 @@ Owner question: the suite grew from 779 to 974 collected tests since `66aeb3a` w
 
 Scan results: no mocks of Shikiru classes, no sleeps, no access to private attributes of production classes (the `self._x` hits are private state of test-local helper classes). Wording asserts were limited to a handful of `match=`/`in text` checks. The problems were test-tooling volume, near-duplicate scenarios and enum-listing tables.
 
-Scope and status as of 2026-10-01: the audit covered only the tests added or changed since `66aeb3a`; the files older than that were not audited (Task 74o). The suite was 779 collected at `66aeb3a`, 974 at `237b559`, 943 after this audit and about 1072 after Phase 7d, so the inflation is reduced in the audited part, not undone; the numbers are updated by Tasks 74o and 74p.
+Scope and status as of 2026-10-01: the audit covered only the tests added or changed since `66aeb3a`; the files older than that were audited by Task 74o (last section). The suite was 779 collected at `66aeb3a`, 974 at `237b559`, 943 after this audit and about 1072 after Phase 7d, so the inflation is reduced in the audited part, not undone; the numbers are updated by Tasks 74o and 74p.
 
 Numbers: before 974 collected (959 passed, 15 skipped), coverage 89.93% at `237b559`; after 943 collected (928 passed, 15 skipped), coverage 89.93%.
 
@@ -84,3 +84,55 @@ Safety rule: a test was removed only when a retained test fails for the same rev
 ## Unchanged-in-substance edits
 
 Constructor-argument updates (`pr_wait`, dropped `overrides={}`), terminal sizes, fixtures and support modules were reviewed and kept; they carry no tests of their own. Other changed tests (dashboard widgets/wizard/motion/palette, headless contracts, e2e conftest/real agents) were reviewed: KEEP.
+
+## Task 74o: the older suite (2026-10-01)
+
+Method: every file with more than about 15 tests or with one of the reviewer's patterns (`match=` wording, own-class stubs, duplicated polling closures, an index name, a monkeypatched own function) was read, its collected tests ranked by smell, and the verdict recorded below. A test was removed or merged only when another test still fails for the same reverted fix (mutations below) or it tested only a framework feature, an enumeration, a wording or trivial wiring.
+
+Numbers (collected / run), `c4b5f3b` before, after the last commit of this task:
+
+| | collected | passed | skipped | coverage |
+|---|---|---|---|---|
+| before | 1079 | 1058 | 21 | 90.90% |
+| after | 961 | 939 | 15 | 90.84% |
+
+Per directory (collected): unit 381 -> 319, integration 691 -> 635, e2e 7 -> 7. The skip count is environment dependent (real-agent contract checks and Docker, 15 in the final run) and was 21 in the baseline run; no skipped test was removed by this task.
+
+### Verdicts
+
+| File (tests) | Verdict | Reason / covering test or mutation |
+|---|---|---|
+| test_prompts_renderer (47 -> 11) | MERGED | 9 templates x 3 payloads re-tested `domain.fencing.fence`: one rendering test per template now uses the hostile backtick payload; 9 `StrictUndefined` tests removed (Jinja feature). Mutation M1 |
+| test_ui_glyphs (42 -> 8) | MERGED | 35 one-per-glyph tests became one invariant over `ALL_GLYPHS`; the width-rule table stays |
+| test_literal_rule (32 -> 25) | MERGED | three tables became one (violation lines + kept count); rows with identical code paths dropped (float, tuple-in-comparison variants); AnnAssign and `spawn` rows kept because they are separate branches |
+| test_comment_rule (12), test_import_contract_completeness (6), test_e2e_results (3), test_soak_smoke (1) | KEPT | one table per tool rule, already reduced by 74i; the e2e_guards stall report assert lost its format-wording split |
+| test_tmux_isolation (1) | REMOVED | asserted the fixture's own socket name (tests the test framework) |
+| test_domain_escalation (24 -> 10) | MERGED | 15 per-reason tests of "exactly one recommended option" are one loop over the enum |
+| test_engine_escalations (18 -> 4) | MERGED | 15 per-reason packet tests are one loop; the heading-presence asserts (template shape) dropped, evidence and the single star stay |
+| test_domain_reports (27 -> 20) | REMOVED / MERGED | report-kind to model mapping test removed (M6: wrong mapping fails four flow tests); `depends_on` accept table 4 -> 2 rows; invalid-fields table (18) kept, it is the rule table |
+| test_operator_render | REWRITTEN | box-drawing, wording and "absent text that was never seeded" asserts removed; the data values stay |
+| test_operator_cli | REWRITTEN / REMOVED | wording asserts removed; the palette test replaced our own `run_palette` by monkeypatch and only verified a three-line env lookup (trivial wiring), removed; the real `palette` command cannot run without a terminal |
+| test_store_events | REWRITTEN | the index-name assert became "the plan searches, never scans" (M4) |
+| test_engine_daemon (50 -> 49) | KEPT / REMOVED | one test per replay or handler; the helper-without-headless build test duplicated the `Helper` constructor test (M5) |
+| test_process (16 -> 13) | MERGED | stdin, cwd and exit status in one scenario (mutations M7, M8: ignoring cwd or stdin fails it) |
+| test_config_loader (16) | MERGED | seven error-attribution tests became one table of (source, prefix); no wording beyond the source |
+| `match=` in 26 places | REWRITTEN | exception type only; kept `match` only on four generic `ValueError` guards (ruff PT011 requires it) and the injected failure identity in `test_engine_escalations` |
+| test_agents_registry, test_dashboard_app | REWRITTEN | the factory-failure test asserts the chained cause, not its message; ambiguity tests keep the distribution names (the operator needs them) |
+| test_engine_integration (27), engine_flow (23), pull_request (22), workspace_roots (19), escalations, scheduler (17), store_tasks (16), store_database (14), operator_doctor (16), operator_sessions (14), engine_restart (15 rows), engine_faults, recovery, retention, domain_steps (39), domain_scheduling (21), domain_motion (18), ui_strip, sdk_reset_time (16), headless contracts (19 each), test_e2e_guards (19) | KEPT | each test is a distinct rule, recovery path or table row at a real boundary (names reviewed one by one); the domain files are rule tables, no enumeration or wording tests |
+| 17 `wait_for`-style closures (engine_daemon x9, restart x4, recovery, retention, faults, flow_liveness, notification_delivery, decomposition, turn_processes, reconcile_orphans, operator_stop_wait, escalation_faults, scheduler, pull_request) | REPLACED | one helper `tests/support/waiting.wait_until_advancing`; the three special cases (deadline-bounded advance in recovery, view-count gate in pull_request, `wait_for_command`) keep their own predicate |
+| `_StubServices` x3 (+ `_DashboardSources` in dashboard_motion), `_WidgetHostApp` x2, `_context`/`_views` x3 | REPLACED | `tests/support/dashboard.py` (`StubServices`, `WidgetHostApp`, `widget_context`, `state_views`) |
+| `_FakeDistribution` / `_FakeEntryPoint` x2 | REPLACED | `tests/support/entry_points.py` |
+
+### Mutations (main tree, restored after each run)
+
+- M1: `report.json | fenced("json")` -> `report.json` in `_macros.md.j2`: the rendering test fails for every template.
+- M4: `WHERE kind = ?` -> `kind || '' = ?` (defeats the index): the lookup test fails.
+- M5: `if headless is None:` -> `if False:` in `Helper.__init__`: `test_helper_requires_headless_support` fails (it also failed the removed engine-build test).
+- M6: `ReportKind.PLAN: PlanReport` -> `TriageReport`: four tests fail (`test_a_plan_report_enqueues_its_new_tasks`, `test_scope_change_on_an_unknown_task_escalates_without_creating_tasks`, `test_helper_rebuilds_after_both_report_nudges`, the removed mapping test).
+- M7: `cwd=cwd` -> `cwd=None` in `SubprocessRunner.run`; M8: stdin forced to `None`: the merged process test fails both.
+- Phase 7/7b/7c/7d regression suites (soak smoke, engine fault/hold/recovery/restart, tick guard, holds) are untouched apart from the shared polling helper; the engine tests pass unchanged against the helper.
+
+### Remaining limits
+
+The suite is smaller by 118 collected tests (11%) with the same coverage; the remaining volume is real-boundary scenarios (tmux, git, SQLite, processes) and domain rule tables, each protecting a named fix. Rendering assertions of the TUI widgets and the agent-facing `report` CLI diagnostics were kept because the rendered text is the observable contract there.
+

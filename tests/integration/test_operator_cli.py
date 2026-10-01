@@ -78,8 +78,6 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     assert code == 0
     assert stderr == ""
     assert str(tmp_path / ".shikiru" / "config.toml") in stdout
-    assert "model placeholders" in stdout
-    assert "shikiru doctor" in stdout
 
     code, stdout, stderr = await _cli(tmp_path, "submit", "human task")
     assert code == 0
@@ -91,12 +89,10 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     assert stderr == ""
     assert "engine down" in stdout
     assert "queued 0" in stdout
-    assert "none" in stdout
 
     code, stdout, stderr = await _cli(tmp_path, "stop")
     assert code == 0
     assert stderr == ""
-    assert "engine already stopped" in stdout
 
 
 async def test_cli_json_init_submit_status_and_stop(tmp_path: Path) -> None:
