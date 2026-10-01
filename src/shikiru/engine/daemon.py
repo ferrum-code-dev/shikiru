@@ -276,6 +276,7 @@ class Engine:
                 await self._notifications.deliver_final(
                     stopped, self._settings.orchestration.faults.stop_notify_seconds
                 )
+            await self._scheduler.shutdown()
             await self._task_supervisor.shutdown()
         finally:
             try:

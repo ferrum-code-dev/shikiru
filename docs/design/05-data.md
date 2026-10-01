@@ -29,6 +29,7 @@ max_parallel = 2
 max_iterations = 5
 integration = "merge"                           # merge | pr
 poll_seconds = 2
+dispatch_budget_seconds = 10                    # total wait of one tick for task roots it starts (fetch, copy)
 
 [orchestration.resources]
 max_cpu_pct = 85

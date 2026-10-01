@@ -93,6 +93,7 @@ class OrchestrationConfig(ConfigModel):
     integration: IntegrationStrategy
     poll_seconds: int
     shutdown_seconds: float = Field(gt=0)
+    dispatch_budget_seconds: float = Field(gt=0)
     resources: ResourcesConfig
     timeouts: TimeoutsConfig
     faults: FaultsConfig

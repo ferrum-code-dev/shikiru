@@ -10,6 +10,7 @@ max_iterations = 5
 integration = "merge"
 poll_seconds = 2
 shutdown_seconds = 15
+dispatch_budget_seconds = 10
 
 [orchestration.resources]
 max_cpu_pct = 85

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from dataclasses import dataclass
 from datetime import timedelta
@@ -19,6 +20,7 @@ from shikiru.domain.tasks import EscalationReason, Hold, Status, StatusReason, S
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
+from shikiru.engine.root_preparation import RootPreparation
 from shikiru.engine.scheduler import FETCH_FAULT_SCOPE, MAX_DISPATCH_FAILURES, Scheduler
 from shikiru.engine.titles import TaskTitles
 from shikiru.paths import task_root
@@ -36,8 +38,10 @@ from shikiru.tmux.client import exact_target
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
-from shikiru.workspace.base_refs import FetchedBaseRefs
+from shikiru.workspace.base_refs import FetchedBaseRefs, LocalBaseRefs
+from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
+from shikiru.workspace.roots import TaskRootBuilder
 from tests.support.clock import FakeClock
 from tests.support.engine import (
     build_decorator,
@@ -48,8 +52,10 @@ from tests.support.engine import (
 )
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
 from tests.support.flow import init_project_repo
-from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
+from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import add_bare_remote
+from tests.support.permissions import EXECUTABLE_MODE
+from tests.support.waiting import wait_until
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -59,7 +65,6 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Task
-    from shikiru.workspace.roots import TaskRootBuilder
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -145,7 +150,11 @@ def _scheduler(environment: SchedulerFixture, settings: Settings) -> Scheduler:
         resources=ResourceSampler(environment.clock, settings.orchestration.resources),
         clock=environment.clock,
         layout=environment.layout,
-        roots=environment.roots,
+        roots=RootPreparation(
+            environment.roots,
+            environment.clock,
+            budget_seconds=settings.orchestration.dispatch_budget_seconds,
+        ),
         events=environment.events,
         on_dependency_cancelled=environment.dependency_callback,
         on_dispatch_failure=environment.dispatch_failure_callback,
@@ -212,7 +221,9 @@ async def scheduler_env(
         resources=ResourceSampler(clock, settings.orchestration.resources),
         clock=clock,
         layout=layout,
-        roots=roots,
+        roots=RootPreparation(
+            roots, clock, budget_seconds=settings.orchestration.dispatch_budget_seconds
+        ),
         events=events,
         on_dependency_cancelled=dependency_callback,
         on_dispatch_failure=dispatch_failure_callback,
@@ -622,3 +633,145 @@ async def test_a_dispatch_escalation_whose_packet_cannot_be_written_still_escala
     await scheduler_env.scheduler.run_once()
 
     _assert_escalated_despite_packet_failure(scheduler_env, connection, task.id)
+
+
+_HUNG_UPLOAD_PACK = """#!/bin/sh
+echo started >> '{calls}'
+while [ ! -e '{release}' ]; do sleep 0.05; done
+exec git upload-pack "$@"
+"""
+_HANDS_OFF_TASKS = 3
+_REAL_SECONDS = 10.0
+
+
+def _status(environment: SchedulerFixture, task: Task) -> Status:
+    current = environment.tasks.get(task.id)
+    assert current is not None
+    return current.status
+
+
+async def _land_every_dispatch(scheduler: Scheduler, expected: int) -> list[str]:
+    landed: list[str] = []
+
+    async def progressed() -> bool:
+        landed.extend(dispatch.task_id for dispatch in (await scheduler.run_once()).dispatches)
+        return len(landed) >= expected
+
+    await wait_until(progressed, _REAL_SECONDS)
+    return landed
+
+
+async def test_a_hung_remote_cannot_hold_the_tick_for_every_ready_task(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    base = scheduler_env.settings
+    settings = base.model_copy(
+        update={
+            "orchestration": base.orchestration.model_copy(
+                update={"max_parallel": _HANDS_OFF_TASKS}
+            )
+        }
+    )
+    runner = SubprocessRunner()
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(tmp_path, remote_dir, settings.repo.remote)
+    calls, release = (
+        tmp_path_factory.mktemp("hang") / "calls",
+        tmp_path_factory.mktemp("rel") / "go",
+    )
+    hang = remote_dir.parent / "upload-pack"
+    hang.write_text(_HUNG_UPLOAD_PACK.format(calls=calls, release=release))
+    hang.chmod(EXECUTABLE_MODE)
+    uploadpack = ["git", "config", f"remote.{settings.repo.remote}.uploadpack", str(hang)]
+    await runner.run(uploadpack, timeout=10, cwd=tmp_path, check=True)
+    roots = task_root_builder(
+        runner,
+        tmp_path,
+        settings.repo,
+        FetchedBaseRefs(
+            Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
+            tmp_path,
+            settings.repo.remote,
+            fetch_timeout=_REAL_SECONDS,
+        ),
+    )
+    scheduler = _scheduler(dataclasses.replace(scheduler_env, roots=roots), settings)
+    clock = scheduler_env.clock
+    assert isinstance(clock, FakeClock)
+    tasks = [
+        _submit(connection, clock, title=f"ready {number}") for number in range(_HANDS_OFF_TASKS)
+    ]
+    try:
+        first = asyncio.create_task(scheduler.run_once())
+        await wait_until(clock.has_pending_sleep, _REAL_SECONDS)
+        clock.advance(settings.orchestration.dispatch_budget_seconds)
+        assert (await asyncio.wait_for(first, _REAL_SECONDS)).dispatches == ()
+        assert (await asyncio.wait_for(scheduler.run_once(), _REAL_SECONDS)).dispatches == ()
+        await wait_until(calls.exists, _REAL_SECONDS)
+        assert calls.read_text().count("started") == 1
+        assert [_status(scheduler_env, task) for task in tasks] == [Status.QUEUED] * len(tasks)
+
+        release.touch()
+
+        landed = await _land_every_dispatch(scheduler, _HANDS_OFF_TASKS)
+        assert sorted(landed) == sorted(task.id for task in tasks)
+    finally:
+        release.touch()
+        await scheduler.shutdown()
+
+
+_SLOW_COPY = """#!/bin/sh
+case "$1" in
+*.shikiru-cow-probe-*) exec cp "$1" "$2";;
+esac
+while [ ! -e '{release}' ]; do sleep 0.05; done
+exec cp -R "$1" "$2"
+"""
+
+
+async def test_a_slow_cache_copy_runs_beside_the_tick_and_completes_the_dispatch(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    runner = SubprocessRunner()
+    (tmp_path / ".gitignore").write_text("node_modules/\n")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "pkg.js").write_text("cached\n")
+    await commit_all(runner, tmp_path, "ignore the cache")
+    release = tmp_path_factory.mktemp("copy") / "go"
+    slow = release.parent / "slow-cp"
+    slow.write_text(_SLOW_COPY.format(release=release))
+    slow.chmod(EXECUTABLE_MODE)
+    settings = scheduler_env.settings
+    repo = settings.repo.model_copy(update={"caches": ["node_modules"]})
+    roots = TaskRootBuilder(
+        Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
+        tmp_path,
+        repo,
+        CacheCloner(runner, cow_args=(str(slow),), copy_timeout=CACHE_COPY_TIMEOUT),
+        LocalBaseRefs(),
+        trackers=(),
+    )
+    scheduler = _scheduler(dataclasses.replace(scheduler_env, roots=roots), settings)
+    clock = scheduler_env.clock
+    assert isinstance(clock, FakeClock)
+    task = _submit(connection, clock, title="warm cache")
+    try:
+        first = asyncio.create_task(scheduler.run_once())
+        await wait_until(clock.has_pending_sleep, _REAL_SECONDS)
+        clock.advance(settings.orchestration.dispatch_budget_seconds)
+        assert (await asyncio.wait_for(first, _REAL_SECONDS)).dispatches == ()
+        assert _status(scheduler_env, task) is Status.QUEUED
+
+        release.touch()
+
+        assert await _land_every_dispatch(scheduler, 1) == [task.id]
+        assert (task_root(tmp_path, task.id) / "node_modules" / "pkg.js").read_text() == "cached\n"
+    finally:
+        release.touch()
+        await scheduler.shutdown()

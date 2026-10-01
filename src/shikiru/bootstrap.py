@@ -60,6 +60,7 @@ from shikiru.engine.notifier import Notifier
 from shikiru.engine.pull_request_closing import PullRequestClosing
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.recovery import TurnRecovery
+from shikiru.engine.root_preparation import RootPreparation
 from shikiru.engine.scheduler import Scheduler
 from shikiru.engine.session_guard import SessionGuard
 from shikiru.engine.sessions import SessionManager
@@ -704,7 +705,11 @@ def build_engine(
         resources=sampler,
         clock=resolved_clock,
         layout=layout,
-        roots=roots,
+        roots=RootPreparation(
+            roots,
+            resolved_clock,
+            budget_seconds=resolved_settings.orchestration.dispatch_budget_seconds,
+        ),
         events=events,
         on_dependency_cancelled=DependencyEscalator(writer, escalation_raiser),
         on_dispatch_failure=DispatchFailureEscalator(writer, escalation_raiser),

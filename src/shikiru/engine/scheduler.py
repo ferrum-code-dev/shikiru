@@ -32,12 +32,12 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.engine.layout_guard import LayoutGuard
+    from shikiru.engine.root_preparation import RootPreparation
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.tasks import TaskStore
     from shikiru.telemetry.resources import ResourceSampler
-    from shikiru.workspace.roots import TaskRootBuilder
 
 DependencyCallback = Callable[[Task], Awaitable[None]]
 DispatchFailureCallback = Callable[[Task, Exception], Awaitable[None]]
@@ -57,7 +57,7 @@ class Scheduler:
         resources: ResourceSampler,
         clock: Clock,
         layout: LayoutGuard,
-        roots: TaskRootBuilder,
+        roots: RootPreparation,
         events: EventLog,
         on_dependency_cancelled: DependencyCallback,
         on_dispatch_failure: DispatchFailureCallback,
@@ -91,6 +91,7 @@ class Scheduler:
         all_tasks = self._tasks.list_all()
         gates = self._gates(all_tasks)
         schedule = pick_ready(all_tasks, gates)
+        self._roots.begin_tick({dispatch.task_id for dispatch in schedule.dispatches})
         self._persist_wait_reasons(all_tasks, schedule)
         for task_id in schedule.dependency_cancelled:
             task = self._tasks.get(task_id)
@@ -109,6 +110,10 @@ class Scheduler:
             if await self._dispatch(task, dispatch.slot):
                 successful_dispatches.append(dispatch)
         return dataclasses.replace(schedule, dispatches=tuple(successful_dispatches))
+
+    async def shutdown(self) -> None:
+        """Stop the task root builds still in flight."""
+        await self._roots.shutdown()
 
     def _gates(self, tasks: list[Task]) -> SchedulingGates:
         slots = frozenset(range(self._settings.orchestration.max_parallel)) - occupied_slot_ids(
@@ -142,6 +147,11 @@ class Scheduler:
     async def _dispatch(self, task: Task, slot: int) -> bool:
         current = task
         try:
+            repo = task.repo
+            if repo is None:
+                repo = await self._roots.prepare(task.id, task.title, self._seed_branch(task))
+                if repo is None:
+                    return False
             self._tasks.set_slot(task.id, slot)
             self._tasks.set_wait_reason(task.id, None)
             status = Status.INTEGRATING if task.step is Step.INTEGRATE else Status.RUNNING
@@ -150,9 +160,6 @@ class Scheduler:
             )
             current = self._require_task(task.id, "slot assignment")
             if current.repo is None:
-                repo = await self._roots.build(
-                    current.id, current.title, seed_branch=self._seed_branch(current)
-                )
                 self._tasks.set_repo(current.id, repo)
                 current = self._require_task(task.id, "task-root creation")
             await self._layout.ensure(current)
