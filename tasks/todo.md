@@ -98,6 +98,15 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 74a: Bounded E2E scenarios
 - [x] Task 74: Final verification and release evidence (Phase 7b)
 
+## Phase 7c — Final-review remediation (2026-10-01)
+- [ ] Task 74b: Codex sandbox covers the worktree git directory on every turn
+- [ ] Task 74c: Reconcile and the tick fail per item, not per engine
+- [ ] Task 74d: Notifications cannot silence an escalation
+- [ ] Task 74e: PR mode network work leaves the command loop and tolerates blips
+- [ ] Task 74f: Operator-held tasks and task ids survive tmux loss and reuse
+- [ ] Task 74g: Lint, docs, smoke and evidence hygiene
+- [ ] Task 74h: Phase 7c verification and release evidence
+
 ## Phase 8 — Operator Workspace
 
 Target: [Operator Workspace](../docs/tui-workspace.md); acceptance criteria: [plan.md](plan.md#phase-8--operator-workspace). Implement after Phase 7b.

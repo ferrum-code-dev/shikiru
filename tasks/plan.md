@@ -600,6 +600,63 @@ Refs: 07 §5. Owner request 2026-10-01: E2E must check real scenarios but be bou
 - Tests: unit/integration tests of the budget table and the stall detector with `FakeClock`; `poe check` green; measured scenario durations recorded in 07 §5.
 
 
+## Phase 7c — Final-review remediation (2026-10-01)
+
+Source: the three independent final reviews of `b1c16d0` (F01–F12 with Tasks 60–69, F13–F23 with Tasks 66 and 70–74a, whole-system release readiness). Verdict: ready for supervised use with Claude on macOS only; not ready for unattended use, for Codex in a real repository, or for public distribution. Tasks 74b–74h close the findings the reviewers reproduced or traced to code, then re-verify. Owner scope decision: all reviewer items; the LICENSE stays an owner decision. Each task writes its failing test first against the real boundary. Phase 8 starts after Task 74h.
+
+### Task 74b: Codex sandbox covers the worktree git directory on every turn
+Refs: 04 §5, 01 §6.
+- [ ] The Codex plugin passes the per-worktree git directory (`git rev-parse --absolute-git-dir` of the turn's cwd), the run directory and the shared git common directory as writable roots on every turn, including `exec resume` turns (resume has no `--add-dir`/`-s`; pass the roots as `-c` configuration for that CLI version), so a commit and `shikiru report` work from a worktree outside `$TMPDIR` without a guardian approval. 04 §5, 01 §6 and the README state what works and what is verified; the note that resume keeps the session's sandbox is corrected.
+- [ ] `shikiru doctor` has a Codex sandbox probe that fails when a worktree gitdir or the run directory is not writable under the configured sandbox (a real, free `codex sandbox`-style check; no model turn), and reports the Codex version.
+- [ ] The E2E projects live outside `$TMPDIR` (a private directory under the user cache or `$HOME`) so the writable-root behaviour is exercised; the harness records the sandbox settings and the rerun policy no longer treats a sandbox denial as agent flakiness.
+- Tests: contract-level argv tests for first and resumed turns; an integration test that commits inside a real worktree under a real Codex sandbox profile outside `$TMPDIR` without model turns, if the CLI exposes a free sandbox command (otherwise a doctor-probe test and a documented live check); live: the existing worktree-commit-survives-resume check on the installed Codex outside `$TMPDIR`.
+
+### Task 74c: Reconcile and the tick fail per item, not per engine
+Refs: 02 §1, 03 §7; reviewer findings.
+- [ ] Reconciliation isolates each step and each task: a failing cleanup (for example `gh pr close` for a cancelled PR task) is logged and recorded as an `engine_fault` and does not stop scheduling, `ensure_flows` or escalation restore; `end_orphans` runs once per engine start, never again on a retry (no kill of a live turn).
+- [ ] `layout.restore` isolates a failing task window so one bad pane does not starve every other task; a persistent per-task fault is re-notified at a bounded interval while it lasts and visible in `status`.
+- [ ] The command loop (`pending`, handlers, `mark_done`) is inside the fault barrier; environmental database errors (`sqlite3.OperationalError`: locked, disk full) are recoverable faults; internal "vanished/no step" invariant errors are reported as `engine_error` faults with the task, not as environmental.
+- [ ] The tick guard's backoff cannot overflow (iterative cap) and `engine_fault` events are deduplicated per error class while a fault flaps (rate-limited), without hiding a new class.
+- Tests: integration with real SQLite/git/tmux and failing `gh`/tmux/SQLite: queued task still dispatches, unheld running task still resumes, pause/resume then retry of reconcile does not kill a live turn, one bad pane does not block another task, 1100 consecutive faults do not stop the engine, a flapping fault records a bounded number of events.
+
+### Task 74d: Notifications cannot silence an escalation
+Refs: 06 §5.7, 03 §8.
+- [ ] A hung or slow `notify.command` hook does not delay or drop later escalations: escalation and engine-fault notifications have priority over informational ones, the queue never drops an escalation, hook timeouts are short and configured (not 2 h), and a failing hook is recorded once per streak.
+- [ ] `status` and the dashboard show the engine's current fault streak and the oldest unacknowledged escalation age, so an alive-but-starved engine does not look healthy.
+- Tests: integration: blocked hook plus ten informational events plus an escalation: the escalation is delivered after the hook is released and never dropped; fault streak shown in `status`.
+
+### Task 74e: PR mode network work leaves the command loop and tolerates blips
+Refs: 03 §6, §10; invariant 4.
+- [ ] `git fetch`, `gh pr view` and `gh pr close` never run inside the serialised command loop or the scheduling tick for longer than a small bounded time: cancel acknowledges immediately and the PR close is performed off-loop with retry; root builds fetch with a short timeout and a failure is a recoverable dispatch retry that does not count toward `MAX_DISPATCH_FAILURES` for a transient network error.
+- [ ] A single failed `gh pr view` poll is retried with backoff; a check that is still pending or later goes green does not escalate; only a settled failing state, a conflict, a closed PR or the budget escalates.
+- [ ] The integration rebase refreshes the base before rebasing, and `retry` after a conflict escalation rebases again instead of only polling.
+- Tests: integration with real git, a bare remote and a slow/failing fake `gh`: a slow `gh` does not delay another command, a blip does not escalate, a stale base is refreshed at rebase, retry after conflict rebases.
+
+### Task 74f: Operator-held tasks and task ids survive tmux loss and reuse
+Refs: 03 §9, §5; reviewer findings.
+- [ ] After a tmux server loss or host reboot, a taken-over role is restored as an interactive session or handed back with a visible, notified event; it is never left held with a silent read-only pane.
+- [ ] A task id or branch that already exists from an earlier state (state reset, kept branch of a cancelled task) is never adopted silently: the root build verifies the branch against `base_sha` and fails with a clear error naming it; `cleanup` never `rmtree`s a root with a dirty worktree whose metadata is missing.
+- [ ] Turn directory numbers sort correctly past 99 turns; `command_applied` lookups are indexed or bounded; an unwritable packet directory does not re-run git evidence collection on every tick.
+- [ ] `config.toml` created by `init` is owner-only from creation; `make_private_dir` is race-free.
+- Tests: integration on `tmux_server` (kill-server during takeover), real git branch collision, 120 turn dirs ordering, init file modes.
+
+### Task 74g: Lint, docs, smoke and evidence hygiene
+Refs: 02 §2–3, 07 §2, §5; F20, F21 residue.
+- [ ] The widget import contract is exact (add the missing forbidden packages and extend the completeness test) or renamed to state it is a partial denylist; 02 §2 and §3 match the code (tree complete).
+- [ ] `asyncio.wait_for`/`asyncio.timeout` use is either routed through `Clock` or listed as an explicit, justified exception in 02 §2; the comment checker rejects free prose after `noqa`/`pyright:`/`pragma:` except the documented reason form; the literals rule is described as a review convention and the worst violations the reviewers named (`turn_context.py`, `acceptance.py`, `recovery.py` `"quota"`) become named constants.
+- [ ] The smoke script cleans its temp dir on the socket-path exit, reports a missing tool, never overwrites a passing same-date artifact, fingerprints the current evidence doc, and has a documented Linux verification recipe; Linux stays "unverified" unless run.
+- [ ] The E2E artifact records every attempt (failed attempts, costs, durations per scenario) and is keyed by invocation start, not by date; a release summary of the E2E and smoke results is committed under `docs/` so the evidence is versioned; 07 §5's duration table holds measured values after Task 74h.
+- [ ] Root-fragile tests (`chmod 0o500`) skip or adapt when running as root; the decomposition test no longer imports helpers from another test module; `evidence.py` logs and reports a failed history load instead of swallowing it.
+- Tests: as applicable; `poe check` green.
+
+### Task 74h: Phase 7c verification and release evidence
+Refs: 07 §5.
+- [ ] `uv run poe check` passes in a normal and a `TERM=dumb` environment, plus repeated suite runs.
+- [ ] `poe e2e` E1–E6 pass in one invocation on the resulting revision with projects outside `$TMPDIR`; measured per-scenario durations and every attempt are recorded; live model-change checks and the macOS smoke pass at the final commit.
+- [ ] A new `docs/release-readiness-*.md` restates each reviewer finding, the design-agreement claim and the release claim honestly; Task 59 is restated against it.
+- [ ] A final independent read-only review (three reviewers as in Phase 7b) reports no blocking finding for the claimed use.
+
+
 ## Phase 8 — Operator Workspace
 
 Specification: [Operator Workspace](../docs/tui-workspace.md), requested 2026-09-30. It defines the target experience; current behaviour changes only as the tasks below ship. Phase 7b comes first. Retain the engine's single-writer model, typed operator commands, agent-independent signals, tmux role views, SSH access, honest usage reporting and semantic comic-strip visual language.
