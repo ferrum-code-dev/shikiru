@@ -82,6 +82,7 @@ class NetworkConfig(ConfigModel):
 
     fetch_timeout_seconds: float = Field(gt=0)
     poll_attempts: int = Field(gt=0)
+    pr_poll_seconds: float = Field(gt=0)
     pr_close_attempts: int = Field(gt=0)
 
 

@@ -50,6 +50,7 @@ git_command = 120                               # one git call (status, worktree
 [orchestration.network]                         # remote calls of integration = "pr"
 fetch_timeout_seconds = 30                      # a base fetch (task root build, merged-base check)
 poll_attempts = 8                               # `gh pr view` tries per poll before it escalates
+pr_poll_seconds = 300                           # between two polls of an open PR
 pr_close_attempts = 5                           # `gh pr close` tries per engine start for a cancelled task
 
 [agents.claude]                                 # table name = plugin entry point
@@ -130,7 +131,6 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 | Unavailable backoff | 30 s / 2 min / 5 min |
 | `QUOTA_PROBE` | 15 min |
 | `INTEGRATION_RETRY` | 2 min |
-| `PR_POLL` | 5 min |
 | Command poll | 250 ms |
 | Dashboard change poll | 500 ms |
 | `TURN_STOP_GRACE` | 10 s |

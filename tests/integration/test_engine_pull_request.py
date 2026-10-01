@@ -16,7 +16,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step
-from shikiru.engine.integration import PR_POLL, PullRequest
+from shikiru.engine.integration import PullRequest
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
@@ -26,7 +26,7 @@ from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.roots import task_root
 from tests.support import fake_gh
 from tests.support.clock import FakeClock
-from tests.support.engine import build_fault_reporter, set_role_script
+from tests.support.engine import build_fault_reporter, pr_poll_seconds, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
@@ -132,7 +132,7 @@ async def _await_poll(github: FakeGitHub, clock: FakeClock, views: int) -> None:
 async def _poll_again(github: FakeGitHub, clock: FakeClock, views: int) -> None:
     def polled() -> bool:
         if github.views() < views and clock.has_pending_sleep():
-            clock.advance(PR_POLL.total_seconds())
+            clock.advance(pr_poll_seconds())
         return github.views() >= views and clock.has_pending_sleep()
 
     await wait_until(polled, _WAIT_SECONDS)
@@ -141,7 +141,7 @@ async def _poll_again(github: FakeGitHub, clock: FakeClock, views: int) -> None:
 async def _land(clock: FakeClock, running: asyncio.Task[None]) -> None:
     def landed() -> bool:
         if clock.has_pending_sleep():
-            clock.advance(PR_POLL.total_seconds())
+            clock.advance(pr_poll_seconds())
         return running.done()
 
     await wait_until(landed, _WAIT_SECONDS)

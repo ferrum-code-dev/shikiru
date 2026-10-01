@@ -34,9 +34,6 @@ if TYPE_CHECKING:
 INTEGRATION_RETRY = timedelta(minutes=2)
 """Delay between blocked integration pre-checks (05-data.md §1)."""
 
-PR_POLL = timedelta(minutes=5)
-"""Delay between polls of an open pull request (05-data.md §1)."""
-
 POLL_FAULT_SCOPE = "pull request poll"
 
 _PR_ENDED_BY = frozenset((EscalationReason.PR_CLOSED,))
@@ -424,7 +421,7 @@ class PullRequest:
             if stalled is not None:
                 self._tasks.set_wait_reason(task_id, None)
                 raise PullRequestStalled(opened.url, stalled)
-            await self._clock.sleep(PR_POLL.total_seconds())
+            await self._clock.sleep(self._settings.network.pr_poll_seconds)
         self._tasks.set_wait_reason(task_id, None)
         if status.state is PullRequestState.CLOSED:
             raise PullRequestClosed(opened.url)

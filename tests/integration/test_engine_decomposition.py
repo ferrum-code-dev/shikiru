@@ -12,7 +12,6 @@ from fake_agent.scripted import FAKE_CHANGE_FILENAME, TICK_A1_ENABLED_VALUE, TIC
 from shikiru.bootstrap import build_engine
 from shikiru.domain.commands import Submit
 from shikiru.domain.tasks import Mode, Role, Status, StatusReason
-from shikiru.engine.integration import PR_POLL
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
@@ -24,6 +23,7 @@ from tests.support.engine import (
     build_registry,
     build_tmux,
     engine_settings,
+    pr_poll_seconds,
     set_role_script,
     wait_for_command,
 )
@@ -177,7 +177,7 @@ async def test_plan_children_in_pr_mode_start_from_the_merged_base_through_the_e
                 (created := project.child_of(parent_id)) is not None
                 and project.has_root(created.id)
             ),
-            advance=PR_POLL.total_seconds(),
+            advance=pr_poll_seconds(),
         )
 
         created = project.child_of(parent_id)

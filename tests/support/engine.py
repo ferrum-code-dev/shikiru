@@ -335,6 +335,10 @@ def build_fault_reporter(events: EventLog, clock: Clock, settings: Settings) -> 
     )
 
 
+def pr_poll_seconds() -> float:
+    return engine_settings().orchestration.network.pr_poll_seconds
+
+
 def engine_settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
     settings = make_settings(
         leader_ladder=[FAKE_RUNG],
