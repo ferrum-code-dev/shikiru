@@ -65,6 +65,7 @@ shell = "Shell · {cwd}"
 
 [notify]
 command = ""
+timeout_seconds = 30
 
 [logging]
 engine_log_max_bytes = 10485760

@@ -72,7 +72,12 @@ class FaultReporter:
                 EventKind.ENGINE_FAULT,
                 task_id=task_id,
                 message=f"{scope} failed: {kind}: {error}",
-                data={"error": kind, "recoverable": recoverable, "repeat": streak.occurrences},
+                data={
+                    "scope": scope,
+                    "error": kind,
+                    "recoverable": recoverable,
+                    "repeat": streak.occurrences,
+                },
             )
             streak.recorded_at = now
             streak.occurrences = 0

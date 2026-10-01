@@ -72,7 +72,9 @@ class _Harness:
 async def _engine(tmp_path: Path, tmux_server: TmuxServer, hook: str) -> AsyncGenerator[_Harness]:
     clock = FakeClock(TASK_CREATED_AT)
     settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
-    settings = settings.model_copy(update={"notify": NotifyConfig(command=hook)})
+    settings = settings.model_copy(
+        update={"notify": NotifyConfig(command=hook, timeout_seconds=30)}
+    )
     tmux = build_tmux(tmux_server)
     await init_project_repo(tmp_path)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))

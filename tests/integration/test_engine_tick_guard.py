@@ -70,7 +70,12 @@ async def test_recoverable_faults_are_retried_with_bounded_backoff_and_never_sto
 
     assert ticks.attempts == [0, 1, 3, 7, 11, 15, 19]
     (fault,) = events.since(0, kinds=[EventKind.ENGINE_FAULT])
-    assert fault.data == {"error": "CommandFailed", "recoverable": True, "repeat": 1}
+    assert fault.data == {
+        "scope": "engine tick",
+        "error": "CommandFailed",
+        "recoverable": True,
+        "repeat": 1,
+    }
 
 
 async def test_unexpected_faults_are_surfaced_and_end_the_engine_at_the_limit(
@@ -83,7 +88,12 @@ async def test_unexpected_faults_are_surfaced_and_end_the_engine_at_the_limit(
 
     assert ticks.attempts == [0, 1, 3]
     (fault,) = events.since(0, kinds=[EventKind.ENGINE_FAULT])
-    assert fault.data == {"error": "ValueError", "recoverable": False, "repeat": 1}
+    assert fault.data == {
+        "scope": "engine tick",
+        "error": "ValueError",
+        "recoverable": False,
+        "repeat": 1,
+    }
     assert any(record.exc_info for record in caplog.records)
 
 

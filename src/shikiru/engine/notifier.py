@@ -10,9 +10,11 @@ from typing import TYPE_CHECKING
 from shikiru.domain.events import STOP_REASON_KEY, Event, EventKind
 
 if TYPE_CHECKING:
+    from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.process import SubprocessRunner
     from shikiru.tmux.client import Tmux
 
+_URGENT = frozenset({EventKind.ESCALATION, EventKind.ENGINE_FAULT})
 _NOTIFIABLE = frozenset(
     {
         EventKind.ESCALATION,
@@ -21,7 +23,7 @@ _NOTIFIABLE = frozenset(
         EventKind.INTEGRATION_WAITING,
     }
 )
-NOTIFY_TIMEOUT_SECONDS = 7200.0
+HOOK_FAULT_SCOPE = "notification hook"
 
 
 class Notifier:
@@ -31,14 +33,19 @@ class Notifier:
         self,
         tmux: Tmux,
         runner: SubprocessRunner,
+        reporter: FaultReporter,
         *,
         session_target: str,
         command: str,
         timeout_seconds: float,
     ) -> None:
-        """Use `tmux`, `runner`, the project session and an optional argv command."""
+        """Use `tmux`, `runner`, the project session and an optional argv command.
+
+        A failing hook is recorded through `reporter`, once per streak.
+        """
         self._tmux = tmux
         self._runner = runner
+        self._reporter = reporter
         self._session_target = session_target
         self._command = command
         self._timeout_seconds = timeout_seconds
@@ -48,6 +55,13 @@ class Notifier:
     def wants(event: Event) -> bool:
         """Return whether `event` is an escalation, completion, fault, merge wait or fault stop."""
         return event.kind in _NOTIFIABLE or (
+            event.kind is EventKind.ENGINE_STOPPED and STOP_REASON_KEY in event.data
+        )
+
+    @staticmethod
+    def is_urgent(event: Event) -> bool:
+        """Return whether `event` is an escalation, an engine fault or a fault stop."""
+        return event.kind in _URGENT or (
             event.kind is EventKind.ENGINE_STOPPED and STOP_REASON_KEY in event.data
         )
 
@@ -70,5 +84,6 @@ class Notifier:
                     check=True,
                     own_group=True,
                 )
-            except Exception:
+            except Exception as error:
                 self._logger.exception("external notification failed for event %s", event.id)
+                self._reporter.report(error, scope=HOOK_FAULT_SCOPE)

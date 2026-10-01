@@ -90,6 +90,7 @@ shell = "Shell · {cwd}"
 
 [notify]
 command = ""                                    # optional; event JSON on stdin for escalation and task_done
+timeout_seconds = 30                            # the hook is killed (with its process group) after this
 
 [logging]
 engine_log_max_bytes = 10485760                 # rotate `logs/engine.log` at this size
@@ -136,6 +137,7 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 | Resource sample cadence / CPU averaging window | 2 s / 30 s |
 | Header git data cache | 10 s |
 | Docker sample cadence / command timeout | 5 s / 5 s |
+| Notification hook timeout (`notify.timeout_seconds`) / informational queue | 30 s / 64 events (urgent events are never dropped, 06 §5.7) |
 | Failed-tick retry backoff (`orchestration.faults`) | 2 s doubling to 60 s; 10 consecutive unexpected faults stop the engine; final notification 30 s; one `engine_fault` event per fault per 300 s (`repeat_notify_seconds`) |
 
 ## 2. State DB (`.shikiru/state.db`)
@@ -209,7 +211,7 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `escalation`, `escalation_resolved`
 - `integration_started`, `integration_waiting` (`paths`: the dirty checkout paths a local merge waits on; notified), `pr_opened` (url, branch, commits)
 - `task_retried`, `task_done`, `task_cancelled`
-- `pane_restored`, `engine_started`, `engine_fault` (error, recoverable), `engine_stopped` (`reason` when the engine stopped on a fault)
+- `pane_restored`, `engine_started`, `engine_fault` (`scope`, error, recoverable, repeat), `engine_stopped` (`reason` when the engine stopped on a fault)
 
 **Commands** are pydantic models in `domain.commands`, stored as `kind` plus a JSON `payload`:
 - `Submit` (the command queue allocates its task id from `sequences` when appending)

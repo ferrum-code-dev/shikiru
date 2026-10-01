@@ -175,9 +175,10 @@ class DashboardConfig(ConfigModel):
 
 
 class NotifyConfig(ConfigModel):
-    """`[notify]`."""
+    """`[notify]`: the hook and the seconds it may run before it is killed."""
 
     command: str
+    timeout_seconds: float = Field(gt=0)
 
 
 class DoctorConfig(ConfigModel):

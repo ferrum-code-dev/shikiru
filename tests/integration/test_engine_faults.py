@@ -119,7 +119,10 @@ async def _engine(
         faults = orchestration.faults.model_copy(update={"unexpected_fault_limit": fault_limit})
         orchestration = orchestration.model_copy(update={"faults": faults})
     settings = settings.model_copy(
-        update={"orchestration": orchestration, "notify": NotifyConfig(command=hook)}
+        update={
+            "orchestration": orchestration,
+            "notify": NotifyConfig(command=hook, timeout_seconds=30),
+        }
     )
     tmux = build_tmux(tmux_server)
     await init_project_repo(project)

@@ -54,7 +54,7 @@ from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.lifecycle import TaskFinisher
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notification_delivery import NotificationDelivery
-from shikiru.engine.notifier import NOTIFY_TIMEOUT_SECONDS, Notifier
+from shikiru.engine.notifier import Notifier
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.scheduler import Scheduler
@@ -661,9 +661,10 @@ def build_engine(
     notifier = Notifier(
         resolved_tmux,
         resolved_runner,
+        fault_reporter,
         session_target=target,
         command=resolved_settings.notify.command,
-        timeout_seconds=NOTIFY_TIMEOUT_SECONDS,
+        timeout_seconds=resolved_settings.notify.timeout_seconds,
     )
     scheduler = Scheduler(
         tasks=tasks,

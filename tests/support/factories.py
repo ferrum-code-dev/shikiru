@@ -142,7 +142,7 @@ def make_settings(
                 merge_event_limit=20,
             ),
         ),
-        notify=NotifyConfig(command=""),
+        notify=NotifyConfig(command="", timeout_seconds=30),
         doctor=DoctorConfig(probe_timeout=180, probe_stream_tail_lines=20),
         logging=LoggingConfig(engine_log_max_bytes=10485760, engine_log_backups=3),
     )

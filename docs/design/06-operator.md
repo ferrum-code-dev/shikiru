@@ -156,10 +156,11 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 
 `Notifier`, on `escalation`, `task_done`, `integration_waiting` (a local merge waits for a dirty checkout, 03 §6), `engine_fault` (the first fault of a failing tick streak, 02 §1) and an `engine_stopped` that carries a `reason` (the engine stopped on a fault rather than on request):
 - runs `tmux display-message` in the session;
-- runs `notify.command`, when set, with the event JSON on stdin (for Slack, ntfy or a remote AI Operator). A non-zero exit, a timeout (2 hours) or a missing command is logged with the event id.
+- runs `notify.command`, when set, with the event JSON on stdin (for Slack, ntfy or a remote AI Operator). A non-zero exit, a timeout (`notify.timeout_seconds`, 30 s by default) or a missing command is logged with the event id and recorded as an `engine_fault` of scope `notification hook`, once per streak (02 §1).
 
-Delivery never runs on the command loop. The `Engine` queues each notifiable event on `NotificationDelivery`, whose single task delivers them in order, so a hung hook cannot delay `stop`, `pause` or scheduling:
-- the queue holds 64 events; when full, the oldest pending event is dropped with a logged warning;
+Delivery never runs on the command loop. The `Engine` queues each notifiable event on `NotificationDelivery`, whose single task delivers them one at a time, so a hung hook cannot delay `stop`, `pause` or scheduling. Events have two priorities: *urgent* (`escalation`, `engine_fault`, an `engine_stopped` with a reason) and *informational* (`task_done`, `integration_waiting`):
+- urgent events are delivered before informational ones, in order, and are never dropped, so a stuck hook (killed after `notify.timeout_seconds`) delays but cannot silence an escalation or a fault;
+- the informational backlog holds 64 events; when full, the oldest informational event is dropped with a logged warning;
 - a delivery failure is logged and the next event is delivered;
 - the engine loop supervises the task like the task flows: an unexpected failure is logged and the task restarted;
 - a hook runs in its own process group, which is SIGKILLed on its timeout and on cancellation, so no descendant it started outlives the hook (03 §4.2);
