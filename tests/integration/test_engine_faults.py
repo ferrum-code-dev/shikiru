@@ -543,6 +543,26 @@ async def test_a_database_error_at_shutdown_still_ends_the_running_turn_and_rele
             SubprocessRunner().signal_group(identity, signal.SIGKILL)
 
 
+async def test_an_engine_that_starts_while_the_database_is_unwritable_keeps_trying(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    async def lock(database: Database, _clock: FakeClock, _project: Path) -> None:
+        connection = database.connect()
+        connection.execute("ALTER TABLE events RENAME TO events_away")
+        connection.close()
+
+    async with _engine(tmp_path, tmux_server, seed=lock) as harness:
+        started = harness.clock.now()
+        await harness.until(
+            lambda: harness.task.done() or harness.clock.now() - started > timedelta(seconds=20)
+        )
+
+        assert not harness.task.done()
+        harness.connection.execute("ALTER TABLE events_away RENAME TO events")
+        await harness.until(lambda: EventKind.ENGINE_STARTED in harness.kinds())
+        assert not harness.task.done()
+
+
 @pytest.mark.usefixtures("fake_github")
 async def test_a_command_hit_by_a_database_error_stays_pending_and_applies_afterwards(
     tmp_path: Path, tmux_server: TmuxServer, monkeypatch: pytest.MonkeyPatch

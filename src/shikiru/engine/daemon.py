@@ -17,7 +17,7 @@ from shikiru.process import ProcessIdentity, identify_pid
 from shikiru.store.database import OperationalDatabaseError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
     from logging import FileHandler, Logger
     from pathlib import Path
     from typing import TextIO
@@ -198,10 +198,10 @@ class Engine:
             self._close_state()
             raise
         try:
-            self._notification_feed.restore()
+            await self._until_done(self._restore_notifications)
             self._notifications.start()
             self._pull_request_closing.start()
-            self._events.append(EventKind.ENGINE_STARTED, message="engine started")
+            await self._until_done(self._record_start)
             next_tick = self._clock.now()
             while not self._task_supervisor.stop_requested:
                 await self._task_supervisor.supervise(self._logger)
@@ -234,6 +234,20 @@ class Engine:
     def request_stop(self) -> None:
         """Ask the command loop to stop after acknowledging the current command."""
         self._task_supervisor.request_stop()
+
+    async def _until_done(self, step: Callable[[], Awaitable[bool]]) -> None:
+        while await self._loop_guard.attempt(step) is None:
+            if self._task_supervisor.stop_requested:
+                return
+            await self._clock.sleep(COMMAND_POLL_SECONDS)
+
+    async def _restore_notifications(self) -> bool:
+        self._notification_feed.restore()
+        return True
+
+    async def _record_start(self) -> bool:
+        self._events.append(EventKind.ENGINE_STARTED, message="engine started")
+        return True
 
     async def _new_events(self) -> list[Event]:
         return self._events.since(self._last_scheduled_event)
