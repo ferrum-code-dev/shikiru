@@ -696,10 +696,10 @@ Refs: 74b, 74c; reviewer mutations. Mutating `_git_dirs_for_turn` to return noth
 
 ### Task 74n: Documentation and evidence corrections
 Refs: reviewer findings of the conventions review.
-- [ ] 07 §1 states what the code does (SQLite is called synchronously from the loop with a 5 s busy timeout) or the code moves blocking work to `to_thread`; the simplest consistent choice, with the reasoning. 05 §1's constants table lists the real notify timeout (`notify.timeout_seconds`); 02 §51 names `run_dashboard`; 03 §4.2's Linux claim says "designed for, verified on macOS only".
-- [ ] tmux ≥ 3.4 and git ≥ 2.45: `doctor` compares the installed versions with the documented floors and fails below them, or the README and 07 §1 restate the floors as "verified on tmux 3.7c, git 2.55.0" (prefer the doctor check if it is a few lines).
-- [ ] `docs/release-readiness-2026-10-01-phase7c.md` and `docs/test-audit-2026-10-01.md` no longer cite the dangling `05c11fb` and no longer call the test inflation "fixed" (974 to 943 against 779 before; the older files were not audited); F21 (Linux) and the reviewer-found defects not fixed in Phase 7d are listed as limitations.
-- [ ] The duplicated or config-worthy constants and the git and cache-copy timeouts are handled by Tasks 74r and 74t.
+- [x] 07 §1 states what the code does (SQLite is called synchronously from the loop with a 5 s busy timeout) or the code moves blocking work to `to_thread`; the simplest consistent choice, with the reasoning. 05 §1's constants table lists the real notify timeout (`notify.timeout_seconds`); 02 §51 names `run_dashboard`; 03 §4.2's Linux claim says "designed for, verified on macOS only".
+- [x] tmux ≥ 3.4 and git ≥ 2.45: `doctor` compares the installed versions with the documented floors and fails below them, or the README and 07 §1 restate the floors as "verified on tmux 3.7c, git 2.55.0" (prefer the doctor check if it is a few lines).
+- [x] `docs/release-readiness-2026-10-01-phase7c.md` and `docs/test-audit-2026-10-01.md` no longer cite the dangling `05c11fb` and no longer call the test inflation "fixed" (974 to 943 against 779 before; the older files were not audited); F21 (Linux) and the reviewer-found defects not fixed in Phase 7d are listed as limitations.
+- [x] The duplicated or config-worthy constants and the git and cache-copy timeouts are handled by Tasks 74r and 74t.
 - Tests: as applicable; `poe check` and `poe comments` green.
 
 ### Task 74o: Test-value audit of the older suite

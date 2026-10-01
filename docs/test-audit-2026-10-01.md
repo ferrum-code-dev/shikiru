@@ -4,6 +4,8 @@ Owner question: the suite grew from 779 to 974 collected tests since `66aeb3a` w
 
 Scan results: no mocks of Shikiru classes, no sleeps, no access to private attributes of production classes (the `self._x` hits are private state of test-local helper classes). Wording asserts were limited to a handful of `match=`/`in text` checks. The problems were test-tooling volume, near-duplicate scenarios and enum-listing tables.
 
+Scope and status as of 2026-10-01: the audit covered only the tests added or changed since `66aeb3a`; the files older than that were not audited (Task 74o). The suite was 779 collected at `66aeb3a`, 974 at `237b559`, 943 after this audit and about 1072 after Phase 7d, so the inflation is reduced in the audited part, not undone; the numbers are updated by Tasks 74o and 74p.
+
 Numbers: before 974 collected (959 passed, 15 skipped), coverage 89.93% at `237b559`; after 943 collected (928 passed, 15 skipped), coverage 89.93%.
 
 Safety rule: a test was removed only when a retained test fails for the same reverted fix. Mutations were run in a scratch `git archive` tree (main tree never edited): packet write failure re-raised (4 retained packet tests fail), packet evidence collected before the directory check (merged restart test fails), PR close loop reduced to one attempt (retry-after-restart test fails), integration rebase not fetching the base (retry-after-conflict test fails), `next_backoff` uncapped (3 unit rows fail), `Database` creating the file world-readable (CLI owner-only test fails, which is why that test was KEPT rather than removed).

@@ -28,10 +28,10 @@ All at `e78c057`, tree clean, macOS (Darwin 25.3.0). Tested tools: Claude Code 2
 | Live Claude model change | `SHIKIRU_E2E=1 SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL=sonnet uv run pytest --no-cov -n 0 tests/integration/test_claude_headless_contract.py -k live_model_change -q`: 1 passed in 9.44 s |
 | Live Codex worktree commit outside `$TMPDIR` | `SHIKIRU_E2E=1 uv run pytest --no-cov -n 0 tests/integration/test_codex_headless_contract.py -k worktree_commits -q`: 1 passed in 15.72 s |
 | `shikiru doctor` on a scratch project (`init --yes` in a copy of the fixture; free, no `--probe`, so no model turn) | Exit 0, every check ok: tmux 3.7c, git 2.55.0, repository, config, db schema 6, copy-on-write, Claude 2.1.284 authenticated, Codex codex-cli 0.159.2 authenticated, **`plugin:codex:sandbox`: worktree git directory and run directory writable**, fake plugin |
-| Clean-install smoke `scripts/release-readiness-smoke.sh` | Passed on macOS in about 18 s. `build/release-readiness/clean-install-20261001T082109Z-1800.json` (and `clean-install-latest.json`) records `source_commit` `e78c057dc1322ad4f2570b8ef7bff0b55b065fc7`, `source_diff_fingerprint` `33bffefe...75a9` and status `passed`. The commit of this document changes only documentation; the artifact is git-ignored. Repeated on the evidence commit `05c11fb`: 1 of 5 further runs **failed** at the stage `normal-size inline interactive wizard` (a 20 s pane wait timed out; artifact `clean-install-20261001T082615Z-36752.json`) and the next 4 passed, with stdout to a pipe or to `/dev/null` alike. The failure was not reproduced and is not explained (limitation 26) |
+| Clean-install smoke `scripts/release-readiness-smoke.sh` | Passed on macOS in about 18 s. `build/release-readiness/clean-install-20261001T082109Z-1800.json` (and `clean-install-latest.json`) records `source_commit` `e78c057dc1322ad4f2570b8ef7bff0b55b065fc7`, `source_diff_fingerprint` `33bffefe...75a9` and status `passed`. The commit of this document changes only documentation; the artifact is git-ignored. Repeated on the evidence commit (`a371b41`; the artifacts record its pre-amend id `05c11fbc1f9c`, which no branch contains any more, and its code is identical to `a371b41`, the two differ only in this document): 1 of 5 further runs **failed** at the stage `normal-size inline interactive wizard` (a 20 s pane wait timed out; artifact `clean-install-20261001T082615Z-36752.json`) and the next 4 passed, with stdout to a pipe or to `/dev/null` alike. The failure was not reproduced and is not explained (limitation 26) |
 | Linux | **Not verified.** Nothing was started or installed there. The smoke script is written for GNU/Linux with a documented recipe (07 section 5) but has never been run there |
 
-The gate counts differ from Phase 7b (894 passed) because Task 74i removed and merged tests (974 collected to 943 collected, 928 passed plus 15 skipped, coverage unchanged at 89.93%; `docs/test-audit-2026-10-01.md`).
+The gate counts differ from Phase 7b (894 passed) because Task 74i removed and merged tests (974 collected to 943 collected, 928 passed plus 15 skipped, coverage unchanged at 89.93%; `docs/test-audit-2026-10-01.md`). The audit covered only the tests added or changed since `66aeb3a` (779 collected then); the older files were not audited, and the suite was about 1072 collected by 2026-10-01 after Phase 7d, so the growth is not undone (Task 74o audits the older files).
 
 ### E2E invocation
 
@@ -73,12 +73,12 @@ Sources: the three final reviews of `b1c16d0` as listed under Phase 7c in `tasks
 | Turn directories mis-sorted past 99; `command_applied` lookup unbounded; unwritable packet directory re-collected evidence every tick | 74f | `a221159` | Fixed |
 | `init` wrote `config.toml` world-readable first; `make_private_dir` raced | 74f | `7f578d1` | Fixed |
 | Widget import contract was a partial denylist; 02 section 2-3 drifted | 74g | `8a57b73` | Fixed: exact whitelist for widgets, the completeness test extended, 02 section 3 matches the tree (checked below) |
-| `asyncio.wait_for` and `timeout` use unlisted; the comment checker accepted prose after directives; literal violations in `turn_context.py`, `acceptance.py`, `recovery.py` | 74g | `22a51e3`, `fb34437` | Fixed: exceptions listed in 02 section 2, documented directive forms only, names for the literals. The no-literals rule remains a review convention (owner decision) |
+| `asyncio.wait_for` and `timeout` use unlisted; the comment checker accepted prose after directives; literal violations in `turn_context.py`, `acceptance.py`, `recovery.py` | 74g | `22a51e3`, `fb34437` | Fixed: exceptions listed in 02 section 2, documented directive forms only, names for the literals. The no-literals rule was a review convention (owner decision); closed by Phase 7d: `poe literals` enforces it mechanically (Task 74r, 07 §2) |
 | The smoke script leaked its temp directory on the socket-path exit, hid a missing tool, overwrote a passing artifact and ignored the current evidence docs | 74g | `20b88a2` | Fixed. Linux recipe documented, not run (limitation 4) |
 | The E2E artifact was keyed by date and kept only the final attempt, so a rerun hid its first failure; no committed summary | 74g | `3a8908d` | Fixed: schema 4 records every attempt and the per-scenario duration; `docs/e2e-results.md` is committed |
 | A `reference-transaction` hook of a cancelled mutating git call outlived it (leaked process after a full-suite run) | 74g | `237b559` | Fixed: each mutating git call leads its own process group, stopped gracefully and swept (03 section 7). A `setsid` descendant is still outside it (limitation 7) |
 | Root-fragile `chmod` tests, a test importing helpers from a test module, `evidence.py` swallowing an unreadable history | 74g | `a30c313` | Fixed |
-| The suite grew 779 to about 974 tests with coverage flat, against the AGENTS.md test-value rules | 74i | `d5ba80b`, `4cfb83a`, `5133c9b`, `7904993`, `c659679`, `85c66b7` | Fixed: audit recorded; 974 to 943 collected, coverage unchanged. The regression power was kept by naming the covering test or by mutation, not re-proven here beyond the passing suite |
+| The suite grew 779 to about 974 tests with coverage flat, against the AGENTS.md test-value rules | 74i | `d5ba80b`, `4cfb83a`, `5133c9b`, `7904993`, `c659679`, `85c66b7` | Audit of the tests added since `66aeb3a` recorded; 974 to 943 collected, coverage unchanged; the older files and the 779 baseline are not audited (Task 74o). The regression power was kept by naming the covering test or by mutation, not re-proven here beyond the passing suite |
 | Phase 7b items (Tasks 60-74a) | 60-74a | see the Phase 7b document | As recorded there; its limitations are reconciled below |
 
 ## Do all design sections agree with the code?
@@ -130,29 +130,29 @@ Phase 7b limitations (numbers as in that document):
 | 1 | Intermittent Codex commit failure in E3 | **Probably resolved, not proven.** The cause traced in Task 74b (Codex 0.158+ protects the worktree git directory; the host's `auto_review` hid it under `$TMPDIR`) is fixed, and E3 passed at its first attempt with projects outside `$TMPDIR`. One passing invocation does not show the failure cannot recur; a second failing E3 in one invocation must still be a finding |
 | 2 | Agent writes into the operator checkout | **Open, mitigated.** E2E escalates within a minute; in normal use the engine waits `integration_wait` (30 minutes) and never undoes such a write |
 | 3 | No sandbox | **Open** (01 section 6) |
-| 4 | Linux unverified | **Open** |
+| 4 | Linux unverified | **Open** (F21; designed for, verified on macOS only) |
 | 5 | No LICENSE | **Open** (owner decision) |
-| 6 | Run directories grow unbounded | **Open** |
+| 6 | Run directories grow unbounded | **Open**; closed by Phase 7d: retention and the run directory size in `status` (Task 74t, 05 §3) |
 | 7 | `setsid` descendants | **Open** |
 | 8 | Command acknowledgement outside the effect's transaction | **Open by design**, safe because replay is idempotent |
-| 9 | `rejections_on_rung` written from the decision snapshot | **Open** (not changed by Tasks 74b-74i) |
-| 10 | `take_over` replay respawns the pane | **Open** |
+| 9 | `rejections_on_rung` written from the decision snapshot | **Open** (not changed by Tasks 74b-74i); closed by Phase 7d: a turn's transition writes only what it changed (Task 74q, 03 §3) |
+| 10 | `take_over` replay respawns the pane | **Open**; closed by Phase 7d (Task 74s) |
 | 11 | Any failing check escalates a PR | **Narrowed.** Only a settled failing state escalates (Task 74e); required and optional checks are still not distinguished |
 | 12 | Unidentified suite flake at `17d1d8f` | **Still unexplained.** 7 further full runs at this commit (2 `poe check`, 5 plain) and the 8 recorded in Phase 7b had no failure |
-| 13 | Stale `TURN_STARTED` on a hold-stopped turn | **Open** |
+| 13 | Stale `TURN_STARTED` on a hold-stopped turn | **Open**; closed by Phase 7d: `turn_stopped` (Task 74s) |
 | 14 | Unpushed local commits are not in a PR-mode root | **Open** |
 | 15 | The engine does not restart itself after a fault stop | **Open** (service recipes not run by CI) |
 | 16 | Cost is agent-estimated | **Open** |
-| 17 | Owner decisions pending | **Open**: the license; the literal and no-comment conventions stay |
+| 17 | Owner decisions pending | **Open**: the license; the literal and no-comment conventions stay (both now mechanical: `poe literals`, `poe comments`) |
 | 18 | Phase 8 not implemented | **Open** |
 
 Open now, in addition (numbers continue):
 
 19. **Codex on other configurations.** Behaviour on a host without `approvals_reviewer = auto_review`, with its own `default_permissions` profile, on Codex versions other than 0.159.2 (the host also runs a 0.159.3 app-server daemon, which this evidence does not cover) and on Linux is unverified; `doctor` warns on a version difference and probes the sandbox.
 20. **PR mode was never exercised against real GitHub.** The integration tests use a bare remote and a fake `gh`.
-21. **No unattended soak.** The longest real run is the 21-minute E2E invocation.
-22. **A hung remote can hold the scheduling tick.** A base fetch in dispatch is bounded by `fetch_timeout_seconds` (30 s) but runs in the tick; with several ready PR-mode tasks and a hung remote the tick can stall up to 30 s per ready task before each backs off. Not measured.
-23. **The single-flight notification hook** (Task 74d): an urgent notification can wait up to 30 s behind a stuck hook run.
+21. **No unattended soak.** The longest real run is the 21-minute E2E invocation. Closed by Phase 7d for the fake agent: `poe soak` (Task 74u, `docs/soak-results.md`); no soak with real agents.
+22. **A hung remote can hold the scheduling tick.** A base fetch in dispatch is bounded by `fetch_timeout_seconds` (30 s) but runs in the tick; with several ready PR-mode tasks and a hung remote the tick can stall up to 30 s per ready task before each backs off. Not measured. Closed by Phase 7d: a per-tick `dispatch_budget_seconds` (Task 74t).
+23. **The single-flight notification hook** (Task 74d): an urgent notification can wait up to 30 s behind a stuck hook run. Closed by Phase 7d: urgent events have their own delivery slot (Task 74t).
 24. **E2E fake-agent scenario duration** is not recorded in the artifact; the real scenarios are single samples.
 25. **The smoke artifact's fingerprint** covers the evidence documents at `e78c057`; this document and the refreshed `e2e-results.md` post-date it.
 26. **Smoke flake.** 1 of 6 smoke runs at the evidence commits failed in the interactive wizard stage (a 20 s wait for pane content), 5 passed; cause unknown. A failing smoke at release time should be rerun once and a second failure treated as a finding.

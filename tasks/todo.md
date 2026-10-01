@@ -113,7 +113,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [x] Task 74k: Graceful shutdown on SIGTERM and SIGINT
 - [x] Task 74l: Notifications survive a restart; command handler errors are retried
 - [x] Task 74m: Regression power of the Codex sandbox and reconcile fixes
-- [ ] Task 74n: Documentation and evidence corrections
+- [x] Task 74n: Documentation and evidence corrections
 - [ ] Task 74o: Test-value audit of the older suite
 - [x] Task 74q: A turn completion never overwrites operator-owned task state (F10)
 - [x] Task 74r: The no-literals rule is enforced like the no-comments rule (F22)
