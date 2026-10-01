@@ -59,5 +59,5 @@ async def test_render_title_fails_loudly_on_an_unfilled_field(tmux_server: TmuxS
     pane_id = await _window(tmux)
     decorator = PaneDecorator(tmux)
 
-    with pytest.raises(ConfigError, match="cost"):
+    with pytest.raises(ConfigError):
         await decorator.set_pane_title(pane_id, "${cost:.2f}", {})

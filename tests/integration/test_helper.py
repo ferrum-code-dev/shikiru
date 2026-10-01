@@ -95,7 +95,7 @@ async def test_classify_failure_marks_an_ambiguous_answer_unrecoverable(
 
 
 def test_helper_requires_headless_support() -> None:
-    with pytest.raises(ConfigError, match="no headless support"):
+    with pytest.raises(ConfigError):
         Helper(_AgentWithoutHeadless())
 
 

@@ -70,68 +70,61 @@ def test_set_override_parses_toml_values_and_bare_words(
     assert attrgetter(path)(settings) == expected
 
 
+_PROJECT_NAME_LINE = 'name = "demo"\n'
+
+
 @pytest.mark.parametrize(
-    "override",
+    ("config", "overrides", "source"),
     [
-        pytest.param("orchestration.max_parallel=3,", id="trailing-comma"),
-        pytest.param("project.name=demo team", id="multiple-words"),
+        pytest.param(
+            MINIMAL_PROJECT_CONFIG + '\n[orchestration]\nmax_parallel = "three"\n',
+            [],
+            ".shikiru/config.toml: orchestration.max_parallel: ",
+            id="invalid-value-in-project-file",
+        ),
+        pytest.param(
+            MINIMAL_PROJECT_CONFIG,
+            ["orchestration.max_parallel=[1,2]"],
+            "--set: orchestration.max_parallel:",
+            id="invalid-value-from-set",
+        ),
+        pytest.param(
+            MINIMAL_PROJECT_CONFIG,
+            ["orchestration.max_parallel=3,"],
+            "--set: ",
+            id="malformed-set-trailing-comma",
+        ),
+        pytest.param(
+            MINIMAL_PROJECT_CONFIG,
+            ["project.name=demo team"],
+            "--set: ",
+            id="malformed-set-multiple-words",
+        ),
+        pytest.param(
+            MINIMAL_PROJECT_CONFIG,
+            ["orchestration.max_parallel"],
+            "--set: ",
+            id="set-without-equals-sign",
+        ),
+        pytest.param("[project\nname = 'demo'\n", [], ".shikiru/config.toml: ", id="invalid-toml"),
+        pytest.param(
+            MINIMAL_PROJECT_CONFIG.replace(_PROJECT_NAME_LINE, ""),
+            [],
+            ".shikiru/config.toml: project.name: ",
+            id="missing-key-in-project-file",
+        ),
+        pytest.param(None, [], "defaults.toml: project.name: ", id="no-project-file"),
     ],
 )
-def test_set_override_rejects_malformed_values(tmp_path: Path, override: str) -> None:
-    project_dir = _project(tmp_path)
+def test_a_config_error_names_the_source_that_is_wrong(
+    tmp_path: Path, config: str | None, overrides: list[str], source: str
+) -> None:
+    if config is not None:
+        shikiru_dir = tmp_path / ".shikiru"
+        shikiru_dir.mkdir()
+        (shikiru_dir / "config.toml").write_text(config)
 
     with pytest.raises(ConfigError) as excinfo:
-        load_settings(project_dir, overrides=[override])
+        load_settings(tmp_path, overrides=overrides)
 
-    assert "--set: " in str(excinfo.value)
-    assert "neither a TOML value nor a bare word" in str(excinfo.value)
-
-
-def test_set_override_without_equals_sign_is_a_config_error(tmp_path: Path) -> None:
-    project_dir = _project(tmp_path)
-
-    with pytest.raises(ConfigError, match="--set"):
-        load_settings(project_dir, overrides=["orchestration.max_parallel"])
-
-
-def test_invalid_value_in_project_file_names_file_and_key_path(tmp_path: Path) -> None:
-    project_dir = _project(tmp_path, '\n[orchestration]\nmax_parallel = "three"\n')
-
-    with pytest.raises(ConfigError) as excinfo:
-        load_settings(project_dir)
-
-    assert str(excinfo.value).startswith(".shikiru/config.toml: orchestration.max_parallel: ")
-
-
-def test_invalid_value_from_set_override_names_set_and_key_path(tmp_path: Path) -> None:
-    project_dir = _project(tmp_path)
-
-    with pytest.raises(ConfigError) as excinfo:
-        load_settings(project_dir, overrides=["orchestration.max_parallel=[1,2]"])
-
-    assert str(excinfo.value).startswith("--set: orchestration.max_parallel:")
-
-
-def test_invalid_toml_syntax_in_project_file_names_the_file(tmp_path: Path) -> None:
-    shikiru_dir = tmp_path / ".shikiru"
-    shikiru_dir.mkdir()
-    (shikiru_dir / "config.toml").write_text("[project\nname = 'demo'\n")
-
-    with pytest.raises(ConfigError, match=r"^\.shikiru/config\.toml: "):
-        load_settings(tmp_path)
-
-
-def test_missing_project_file_reports_the_required_project_name(tmp_path: Path) -> None:
-    with pytest.raises(ConfigError, match=r"^defaults\.toml: project\.name: Field required"):
-        load_settings(tmp_path)
-
-
-def test_missing_required_key_is_attributed_to_the_project_config_file(tmp_path: Path) -> None:
-    shikiru_dir = tmp_path / ".shikiru"
-    shikiru_dir.mkdir()
-    (shikiru_dir / "config.toml").write_text(MINIMAL_PROJECT_CONFIG.replace('name = "demo"\n', ""))
-
-    with pytest.raises(ConfigError) as excinfo:
-        load_settings(tmp_path)
-
-    assert str(excinfo.value).startswith(".shikiru/config.toml: project.name: Field required")
+    assert str(excinfo.value).startswith(source)

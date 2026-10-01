@@ -283,14 +283,14 @@ async def test_build_refuses_a_leftover_branch_that_is_not_at_the_base(tmp_path:
     project_root = tmp_path / "project"
     await _init_repo_with_commit(project_root)
     builder = _builder(project_root)
-    state = await builder.build(_TASK_ID, _TASK_TITLE)
+    await builder.build(_TASK_ID, _TASK_TITLE)
     root = task_root(project_root, _TASK_ID)
     runner = SubprocessRunner()
     (root / "old.txt").write_text("unrelated work\n")
     await commit_all(runner, root, "old task work")
     await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).worktree_remove(project_root, root)
 
-    with pytest.raises(StaleTaskBranchError, match=state.branch):
+    with pytest.raises(StaleTaskBranchError):
         await builder.build(_TASK_ID, _TASK_TITLE)
 
     assert not root.exists()

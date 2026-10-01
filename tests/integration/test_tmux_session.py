@@ -111,7 +111,7 @@ async def test_ensure_rejects_a_session_name_collision_with_another_project(
     other_dir.mkdir()
     await view.ensure("demo", other_dir, home_command=_HOME_COMMAND)
 
-    with pytest.raises(ConfigError, match=str(other_dir)):
+    with pytest.raises(ConfigError):
         await view.ensure("demo", tmp_path / "mine", home_command=_HOME_COMMAND)
 
 

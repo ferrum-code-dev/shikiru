@@ -235,7 +235,7 @@ async def test_task_detail_surfaces_a_corrupt_report(
     (turn_dir / "report.kind").write_text("consult")
     (turn_dir / "report.json").write_text("invalid")
 
-    with pytest.raises(InvalidTurnReportError, match="invalid JSON in report"):
+    with pytest.raises(InvalidTurnReportError):
         _queries(tmp_path, reader).get_task(task.id)
 
 

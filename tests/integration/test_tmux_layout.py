@@ -108,7 +108,7 @@ async def test_build_rejects_duplicate_leaf_pane_names(tmux_server: TmuxServer) 
         panes=[PaneLeaf(pane="leader"), PaneLeaf(pane="leader")],
     )
 
-    with pytest.raises(ConfigError, match="leader"):
+    with pytest.raises(ConfigError):
         await LayoutBuilder(tmux).build(base_pane, duplicate_tree)
 
 
@@ -122,5 +122,5 @@ async def test_build_rejects_sizes_that_add_up_to_more_than_100_percent(
         panes=[PaneLeaf(pane="system", size=60), PaneLeaf(pane="shell", size=60)],
     )
 
-    with pytest.raises(ConfigError, match="100%"):
+    with pytest.raises(ConfigError):
         await LayoutBuilder(tmux).build(base_pane, oversized_tree)

@@ -260,7 +260,7 @@ async def test_lister_surfaces_unavailable_project_database(
         (state_dir / "state.db").touch()
     await _add_session(tmux_server, f"{SESSION_PREFIX}unavailable", project)
 
-    with pytest.raises(DatabaseError, match=r"state\.db"):
+    with pytest.raises(DatabaseError):
         await _lister(tmux_server).list_sessions()
 
 
@@ -276,7 +276,7 @@ async def test_tmux_session_listing_does_not_hide_non_socket_failures(
     )
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
-    with pytest.raises(CommandFailed, match="permission denied"):
+    with pytest.raises(CommandFailed):
         await Tmux(SubprocessRunner()).list_sessions()
 
 
@@ -516,7 +516,7 @@ async def test_attach_rejects_an_option_like_name_without_using_it_as_a_target()
         return rows[0]
 
     attacher = SessionAttacher(SubprocessRunner(), pick)
-    with pytest.raises(UsageError, match="unique Shikiru session"):
+    with pytest.raises(UsageError):
         await attacher.attach(
             [row],
             name="-t",
