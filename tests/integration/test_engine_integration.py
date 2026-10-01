@@ -21,6 +21,7 @@ from shikiru.engine.integration import (
     Integrator,
     LocalMerge,
     MergeRequest,
+    OffTaskBranch,
     UncommittedWork,
 )
 from shikiru.engine.notifier import Notifier
@@ -425,6 +426,77 @@ async def test_integrator_refuses_uncommitted_work_and_keeps_the_worktree(
     assert output.read_text() == "uncommitted\n"
     assert task_root.is_dir()
     assert await Git(_RUNNER).rev_parse(project_root, "main") == main_sha
+
+
+_OFF_BRANCH = "feature/agent-chose-this"
+_LEAVE_BRANCH = {
+    "switched_branch": ["switch", "-c", _OFF_BRANCH],
+    "detached_head": ["switch", "--detach"],
+}
+
+
+@pytest.mark.parametrize("leave", _LEAVE_BRANCH.values(), ids=_LEAVE_BRANCH.keys())
+async def test_integrator_refuses_a_worktree_that_left_its_task_branch_and_keeps_its_commits(
+    connection: Connection, tmp_path: Path, leave: list[str]
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, state = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    await _RUNNER.run(["git", *leave], cwd=task_root, timeout=10, check=True)
+    (task_root / "work.txt").write_text("real work\n")
+    await commit_all(_RUNNER, task_root, "real work")
+    work_sha = await Git(_RUNNER).rev_parse(task_root, "HEAD")
+    main_sha = await Git(_RUNNER).rev_parse(project_root, "main")
+
+    with pytest.raises(OffTaskBranch) as refused:
+        await _integrator(connection, project_root).run(
+            task, _resolve_nothing, IntegrationMetadata("summary")
+        )
+
+    assert refused.value.reason is EscalationReason.OFF_TASK_BRANCH
+    assert state.branch in str(refused.value)
+    assert work_sha[:7] in str(refused.value)
+    final = TaskStore(connection, SystemClock()).get(task.id)
+    assert final is not None
+    assert final.status is Status.INTEGRATING
+    assert await Git(_RUNNER).rev_parse(task_root, "HEAD") == work_sha
+    assert await Git(_RUNNER).rev_parse(project_root, "main") == main_sha
+
+
+_OFF_BRANCH_FLOWS = {
+    "switched_branch": "branch",
+    "detached_head": "detach",
+}
+
+
+@pytest.mark.parametrize("leave", _OFF_BRANCH_FLOWS.values(), ids=_OFF_BRANCH_FLOWS.keys())
+async def test_a_task_whose_agent_left_its_branch_never_reaches_done_and_keeps_its_work(
+    engine_env: EngineEnv, tmux_server: TmuxServer, leave: str
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "accept", "leave_branch": leave}, {"kind": "accept"}, {"kind": "accept"}],
+    )
+    main_sha = await Git(_RUNNER).rev_parse(engine_env.project_root, "main")
+
+    flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.ESCALATED
+    assert not flow_env.events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
+    verdicts = flow_env.events.since(0, kinds=[EventKind.VERDICT], task_id=task.id)
+    assert [event.data["decision"] for event in verdicts][:2] == ["accept", "changes_requested"]
+    assert final.repo is not None
+    assert final.repo.branch in verdicts[1].data["issues"][0]["description"]
+    worktree = engine_env.project_root / ".shikiru" / "worktrees" / task.id
+    assert await Git(_RUNNER).log_oneline(worktree, "main..HEAD")
+    assert await Git(_RUNNER).branch_exists(engine_env.project_root, final.repo.branch)
+    assert await Git(_RUNNER).rev_parse(engine_env.project_root, "main") == main_sha
 
 
 async def test_integrator_finishes_a_clean_no_op_task_as_done(

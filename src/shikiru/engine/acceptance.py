@@ -14,7 +14,9 @@ from shikiru.domain.reports import (
 )
 from shikiru.engine.events import emit_turn_completed, emit_verdict
 from shikiru.engine.history import ENGINE_VERDICT_FILENAME
+from shikiru.engine.task_facts import require_repo
 from shikiru.private import write_private_text
+from shikiru.workspace.facts import describe_off_branch
 
 if TYPE_CHECKING:
     from shikiru.domain.steps import Outcome
@@ -22,13 +24,24 @@ if TYPE_CHECKING:
     from shikiru.engine.task_facts import TaskFacts
     from shikiru.engine.turn_execution import TurnExecution
     from shikiru.store.events import EventLog
+    from shikiru.workspace.facts import WorkspaceFacts
 
 _WORK_ENDING_DECISIONS = frozenset({DECISION_ACCEPT, DECISION_SUPERSEDE})
-UNCOMMITTED_SUMMARY = "The workspace has uncommitted changes, so it cannot be integrated."
+REJECTION_SUMMARY = "The workspace cannot be integrated as it is."
 UNCOMMITTED_ISSUE = (
     "Uncommitted changes in the workspace: {paths}. "
     "Commit what belongs to this task and discard the rest."
 )
+
+
+def _blocker(task: Task, facts: WorkspaceFacts) -> str | None:
+    branch = require_repo(task).branch
+    if facts.head_branch != branch:
+        return describe_off_branch(branch, facts.head_branch, facts.commits)
+    if facts.status:
+        paths = ", ".join(line.strip() for line in facts.status)
+        return UNCOMMITTED_ISSUE.format(paths=paths)
+    return None
 
 
 class AcceptanceGuard:
@@ -51,16 +64,13 @@ class AcceptanceGuard:
         if not isinstance(report, Verdict) or report.decision not in _WORK_ENDING_DECISIONS:
             return report
         facts = await self._facts.collect(task)
-        if not facts.status:
+        description = _blocker(task, facts)
+        if description is None:
             return report
-        issue = Issue(
-            severity=SEVERITY_BLOCKER,
-            description=UNCOMMITTED_ISSUE.format(
-                paths=", ".join(line.strip() for line in facts.status)
-            ),
-        )
         rejection = Verdict(
-            decision=DECISION_CHANGES_REQUESTED, summary=UNCOMMITTED_SUMMARY, issues=[issue]
+            decision=DECISION_CHANGES_REQUESTED,
+            summary=REJECTION_SUMMARY,
+            issues=[Issue(severity=SEVERITY_BLOCKER, description=description)],
         )
         write_private_text(
             execution.turn_dir / ENGINE_VERDICT_FILENAME, rejection.model_dump_json(indent=2)

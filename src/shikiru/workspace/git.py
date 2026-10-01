@@ -82,6 +82,13 @@ class Git:
         result = await self._run(repo_dir, "rev-parse", "--abbrev-ref", "HEAD")
         return result.stdout.strip()
 
+    async def head_branch(self, repo_dir: Path) -> str | None:
+        """Return the branch `HEAD` is on in `repo_dir`, or `None` when it is detached."""
+        result = await self._run(
+            repo_dir, "symbolic-ref", "--quiet", "--short", "HEAD", check=False
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+
     async def is_repository_root(self, path: Path) -> bool:
         """Return whether `path` is the top-level directory of a git working tree."""
         result = await self._run(path, "rev-parse", "--show-toplevel", check=False)

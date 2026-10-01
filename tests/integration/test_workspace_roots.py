@@ -166,6 +166,34 @@ async def test_cleanup_keeps_a_worktree_with_uncommitted_work_but_not_one_with_o
     assert (branch_name(_TASK_ID, _TASK_TITLE) in branches) is kept
 
 
+_LEAVE_BRANCH = {
+    "switched_branch": ["switch", "-c", "feature/other"],
+    "detached_head": ["switch", "--detach"],
+}
+
+
+@pytest.mark.parametrize("leave", _LEAVE_BRANCH.values(), ids=_LEAVE_BRANCH.keys())
+async def test_cleanup_keeps_a_worktree_whose_head_left_the_task_branch(
+    tmp_path: Path, leave: list[str]
+) -> None:
+    runner = SubprocessRunner()
+    project_root = tmp_path / "project"
+    await _init_repo_with_commit(project_root)
+    builder = _builder(project_root)
+    state = await builder.build(_TASK_ID, _TASK_TITLE)
+    root = task_root(project_root, _TASK_ID)
+    await runner.run(["git", *leave], cwd=root, timeout=10, check=True)
+    (root / "work.txt").write_text("work\n")
+    await commit_all(runner, root, "work")
+    head = await Git(runner).rev_parse(root, "HEAD")
+
+    retained = await builder.cleanup(_TASK_ID, state, integrated=True)
+
+    assert retained == root
+    assert await Git(runner).rev_parse(root, "HEAD") == head
+    assert branch_name(_TASK_ID, _TASK_TITLE) in await _local_branches(runner, project_root)
+
+
 async def test_append_to_exclude_adds_exactly_one_line_when_the_file_already_ends_in_a_newline(
     tmp_path: Path,
 ) -> None:

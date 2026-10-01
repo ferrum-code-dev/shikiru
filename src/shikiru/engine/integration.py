@@ -14,6 +14,7 @@ from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
 from shikiru.errors import CommandFailed, CommandTimeoutError, InvariantError, ShikiruError
 from shikiru.paths import task_root
 from shikiru.workspace.base_refs import BaseFetchFailed, MergedBaseUnavailable
+from shikiru.workspace.facts import describe_off_branch
 from shikiru.workspace.github import PullRequestState
 
 if TYPE_CHECKING:
@@ -91,6 +92,18 @@ class UncommittedWork(ShikiruError):
         """Build the error for `task_id` listing the porcelain status lines in `paths`."""
         listed = ", ".join(line.strip() for line in paths)
         super().__init__(f"{task_id} has uncommitted changes that cannot be integrated: {listed}")
+
+
+class OffTaskBranch(ShikiruError):
+    """The task worktree's `HEAD` is off the task branch, so merging the branch loses its work."""
+
+    reason = EscalationReason.OFF_TASK_BRANCH
+
+    def __init__(
+        self, task_id: str, branch: str, head_branch: str | None, commits: Sequence[str]
+    ) -> None:
+        """Build the error for `task_id`, naming where `HEAD` is and the commits at risk."""
+        super().__init__(f"{task_id}: {describe_off_branch(branch, head_branch, commits)}")
 
 
 class PullRequestClosed(ShikiruError):
@@ -598,7 +611,7 @@ class Integrator:
             current = task
             current_metadata = metadata
             task_dir = task_root(self._project_root, current.id)
-            await self._require_committed(current, task_dir)
+            await self._require_integrable(current, repo, task_dir)
             base_ref = await self._resolve_base(repo)
             base_sha = await self._git.rev_parse(task_dir, base_ref)
             branch_sha = await self._git.rev_parse(task_dir, repo.branch)
@@ -607,7 +620,7 @@ class Integrator:
                     current, lambda: self._continue_rebase(current.id, task_dir)
                 )
                 await self._continue_rebase(current.id, task_dir)
-            await self._require_committed(current, task_dir)
+            await self._require_integrable(current, repo, task_dir)
             self._require_not_held(current.id)
             commits = await self._strategy.merge(
                 MergeRequest(
@@ -638,9 +651,13 @@ class Integrator:
         if self._is_held(task_id):
             raise IntegrationHeld
 
-    async def _require_committed(self, task: Task, task_dir: Path) -> None:
+    async def _require_integrable(self, task: Task, repo: RepoState, task_dir: Path) -> None:
         if await self._git.is_rebase_in_progress(task_dir):
             return
+        head_branch = await self._git.head_branch(task_dir)
+        if head_branch != repo.branch:
+            commits = await self._git.log_oneline(task_dir, f"{repo.base_ref}..HEAD")
+            raise OffTaskBranch(task.id, repo.branch, head_branch, commits)
         status = await self._git.status_porcelain(task_dir)
         if status:
             raise UncommittedWork(task.id, status)

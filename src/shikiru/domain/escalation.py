@@ -43,6 +43,7 @@ _OPTIONS_BY_REASON: dict[EscalationReason, tuple[EscalationOption, ...]] = {
     EscalationReason.INTEGRATION_CONFLICT: _RETRY_OR_CANCEL,
     EscalationReason.INTEGRATION_BLOCKED: _RETRY_OR_CANCEL,
     EscalationReason.UNCOMMITTED_WORK: _RETRY_OR_CANCEL,
+    EscalationReason.OFF_TASK_BRANCH: _RETRY_OR_CANCEL,
     EscalationReason.PR_CLOSED: _RETRY_OR_CANCEL,
     EscalationReason.AGENT_AUTH: _RETRY_OR_CANCEL,
     EscalationReason.AGENT_ERROR: _RETRY_OR_CANCEL,

@@ -109,7 +109,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 - [ ] Task 74h: Phase 7c verification and release evidence (last AC closes with Task 74p)
 
 ## Phase 7d — Release-blocker remediation (2026-10-01)
-- [ ] Task 74j: Integration requires the task branch
+- [x] Task 74j: Integration requires the task branch
 - [ ] Task 74k: Graceful shutdown on SIGTERM and SIGINT
 - [ ] Task 74l: Notifications survive a restart; command handler errors are retried
 - [ ] Task 74m: Regression power of the Codex sandbox and reconcile fixes

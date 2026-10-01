@@ -44,6 +44,7 @@ class AcceptStep(_StepModel):
     kind: Literal["accept"] = "accept"
     new_tasks: list[NewTaskSpec] = Field(default_factory=list)
     uncommitted: str = ""
+    leave_branch: Literal["", "branch", "detach"] = ""
     corrupt_report: bool = False
     stall_after_report: bool = False
     triage_title: str = "fake triage"

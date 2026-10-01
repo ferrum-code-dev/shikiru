@@ -15,7 +15,7 @@ from shikiru.domain.escalation import transition_for_resolution
 from shikiru.domain.events import EventKind
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Hold, Mode, Status, Step
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step
 from shikiru.engine.integration import PR_POLL, PullRequest
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
@@ -26,7 +26,7 @@ from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.roots import task_root
 from tests.support import fake_gh
 from tests.support.clock import FakeClock
-from tests.support.engine import build_fault_reporter
+from tests.support.engine import build_fault_reporter, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import commit_all
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from tests.support.engine import EngineEnv
     from tests.support.github import FakeGitHub
+    from tests.support.tmux import TmuxServer
 
 _WAIT_SECONDS = 60
 _RETRY_SLOT = 1
@@ -269,6 +270,36 @@ async def test_pull_request_lands_through_the_done_path(
             await _retry_closed(engine_env, run, task.id, case)
 
     await _assert_landed(engine_env, fake_github, remote_dir, task, len(case.outcomes))
+
+
+@pytest.mark.parametrize("leave", ["branch", "detach"])
+async def test_an_agent_that_left_its_task_branch_opens_no_pull_request(
+    leave: str,
+    engine_env: EngineEnv,
+    tmux_server: TmuxServer,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "accept", "leave_branch": leave}, {"kind": "accept"}, {"kind": "accept"}],
+    )
+    run = _Run(engine_env, settings, task.id)
+
+    await asyncio.wait_for(run.flow, timeout=_WAIT_SECONDS)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.ESCALATED
+    assert fake_github.pull_requests() == []
+    assert task_root(engine_env.project_root, task.id).is_dir()
+    assert await _git(task_root(engine_env.project_root, task.id), "log", "main..HEAD")
 
 
 @pytest.mark.parametrize("style", list(MergeStyle))

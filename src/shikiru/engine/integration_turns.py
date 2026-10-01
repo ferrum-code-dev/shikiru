@@ -21,6 +21,7 @@ from shikiru.engine.integration import (
     IntegrationCoordinator,
     IntegrationHeld,
     IntegrationMetadata,
+    OffTaskBranch,
     PullRequestClosed,
     UncommittedWork,
 )
@@ -83,6 +84,7 @@ class IntegrationTurns:
         except (
             IntegrationBlocked,
             IntegrationConflict,
+            OffTaskBranch,
             PullRequestClosed,
             UncommittedWork,
         ) as error:

@@ -51,6 +51,7 @@ _GIT_TIMEOUT_SECONDS = 10.0
 _REPORT_TIMEOUT_SECONDS = 10.0
 _MAX_COMMIT_SUBJECT_LENGTH = 72
 _COMMIT_IDENTITY_ARGS = ("-c", "user.name=Fake Agent", "-c", "user.email=fake-agent@shikiru.test")
+_OTHER_BRANCH = "feature/agent-chose-this"
 _KINDS_WITH_COMMITS = (ReportKind.IMPLEMENTATION, ReportKind.PLAN)
 
 
@@ -188,6 +189,13 @@ async def _commit_changes(runner: SubprocessRunner, cwd: Path, prompt_text: str)
     return commits
 
 
+async def _leave_branch(ctx: ScriptContext, how: str) -> None:
+    arguments = ["--detach"] if how == "detach" else ["-c", _OTHER_BRANCH]
+    await ctx.runner.run(
+        ["git", "switch", *arguments], timeout=_GIT_TIMEOUT_SECONDS, cwd=ctx.cwd, check=True
+    )
+
+
 def _unsupported(kind: ReportKind, step: TurnStep) -> NoReturn:
     message = f"fake agent step {step.kind!r} is not supported for report kind {kind.value!r}"
     raise ValueError(message)
@@ -303,6 +311,8 @@ async def submit_scripted_report(ctx: ScriptContext, step: TurnStep, prompt_text
         and os.environ.get(TICK_A1_ENV_VAR) == TICK_A1_ENABLED_VALUE
     ):
         await asyncio.to_thread(_tick_a1, ctx.cwd)
+    if isinstance(step, AcceptStep) and step.leave_branch:
+        await _leave_branch(ctx, step.leave_branch)
     commits = (
         await _commit_changes(ctx.runner, ctx.cwd, prompt_text)
         if isinstance(step, AcceptStep) and kind in _KINDS_WITH_COMMITS

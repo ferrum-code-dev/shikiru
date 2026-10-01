@@ -58,6 +58,9 @@ _HEADLINE_SENTENCES: dict[EscalationReason, str] = {
     EscalationReason.UNCOMMITTED_WORK: (
         "The task workspace has uncommitted changes; commit or discard them, then retry."
     ),
+    EscalationReason.OFF_TASK_BRANCH: (
+        "The task workspace is not on its task branch; move its work onto the branch, then retry."
+    ),
     EscalationReason.PR_CLOSED: "The pull request was closed without merging.",
     EscalationReason.AGENT_AUTH: (
         "The agent cannot access its provider; check credentials, billing, or account status."

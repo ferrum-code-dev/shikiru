@@ -671,8 +671,8 @@ Source: the three independent reviews of `a371b41` (finding traceability with fi
 
 ### Task 74j: Integration requires the task branch
 Refs: 03 §6, invariant 3. Reviewer reproducer: an agent runs `git switch -c feature/x`, commits; facts and acceptance read `HEAD`, the merge uses `shikiru/T-n`, so `LocalMerge.merge` returns no commits and the task is `done` with the work reachable from no integrated branch (detached `HEAD` is worse: cleanup removes the worktree).
-- [ ] Before facts collection, acceptance, rebase and integration (local merge and PR mode), the engine verifies that the worktree `HEAD` is `refs/heads/<repo.branch>`. A different or detached `HEAD` never reaches `done`: the task escalates (or the agent is nudged first, whichever 03 prescribes for a recoverable agent action) naming the actual branch and the commits at risk, and cleanup never deletes the task branch or the worktree while commits exist outside it.
-- [ ] 03 §6 states the rule; the agent prompt tells the agent to stay on the task branch.
+- [x] Before facts collection, acceptance, rebase and integration (local merge and PR mode), the engine verifies that the worktree `HEAD` is `refs/heads/<repo.branch>`. A different or detached `HEAD` never reaches `done`: the task escalates (or the agent is nudged first, whichever 03 prescribes for a recoverable agent action) naming the actual branch and the commits at risk, and cleanup never deletes the task branch or the worktree while commits exist outside it.
+- [x] 03 §6 states the rule; the agent prompt tells the agent to stay on the task branch.
 - Tests: integration with real git and the fake agent: switch to another branch and commit, detach `HEAD`: the task does not reach `done`, nothing is deleted, the commits remain reachable and an escalation is raised; a task that stays on its branch is unaffected; the same in PR mode with the fake `gh`.
 
 ### Task 74k: Graceful shutdown on SIGTERM and SIGINT

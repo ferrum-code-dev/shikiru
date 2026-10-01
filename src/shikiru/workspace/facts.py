@@ -17,10 +17,28 @@ if TYPE_CHECKING:
 class WorkspaceFacts:
     """The facts computed for a task's worktree."""
 
+    head_branch: str | None = None
     commits: tuple[str, ...] = field(default_factory=tuple)
     diff_stat: str = ""
     status: tuple[str, ...] = field(default_factory=tuple)
     changed_trackers: tuple[str, ...] = field(default_factory=tuple)
+
+
+DETACHED_HEAD = "a detached HEAD"
+OFF_BRANCH_ISSUE = (
+    "The workspace is on {actual}, not its task branch {branch}, so its commits "
+    "({commits}) would never be integrated. Bring that work onto {branch}, switch back to it "
+    "and stay on it."
+)
+
+
+def describe_off_branch(branch: str, head_branch: str | None, commits: Sequence[str]) -> str:
+    """Describe a worktree whose `HEAD` is not on `branch`, naming the commits at risk (03 §6)."""
+    return OFF_BRANCH_ISSUE.format(
+        actual=head_branch or DETACHED_HEAD,
+        branch=branch,
+        commits="; ".join(commits) or "none ahead of the base",
+    )
 
 
 def render_facts(facts: WorkspaceFacts) -> str:
@@ -51,12 +69,14 @@ class GitFacts:
         self, task_root: Path, repo: RepoState, trackers: Sequence[str]
     ) -> WorkspaceFacts:
         """Collect facts for the worktree at `task_root`, checked out as `repo`."""
+        head_branch = await self._git.head_branch(task_root)
         diff_range = f"{repo.base_ref}...HEAD"
         commits = await self._git.log_oneline(task_root, f"{repo.base_ref}..HEAD")
         diff_stat = await self._git.diff_stat(task_root, diff_range)
         status = await self._git.status_porcelain(task_root)
         changed_paths = set(await self._git.diff_name_only(task_root, diff_range))
         return WorkspaceFacts(
+            head_branch=head_branch,
             commits=tuple(commits),
             diff_stat=diff_stat,
             status=tuple(status),
