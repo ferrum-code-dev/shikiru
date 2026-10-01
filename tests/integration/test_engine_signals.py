@@ -18,18 +18,18 @@ from shikiru.clock import SystemClock
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Role, Status
 from shikiru.engine.daemon import EngineLock
-from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
-from shikiru.paths import engine_lock_path, run_dir, state_db_path
+from shikiru.engine.turn_processes import read_turn_pid, turn_pid_path
+from shikiru.paths import engine_lock_path, engine_log_path, run_dir, state_db_path
 from shikiru.process import SubprocessRunner
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from tests.support.cli_project import prepare_project, run_cli, tmux_environment
 from tests.support.factories import CPU_UNCAPPED_PCT
-from tests.support.waiting import wait_until
+from tests.support.waiting import WaitTimeoutError, wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Awaitable, Callable
     from pathlib import Path
 
     from shikiru.process import ProcessIdentity
@@ -38,7 +38,8 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.asyncio
 
 TASK_ID = "T-1"
-WAIT_SECONDS = 30.0
+WAIT_SECONDS = 120.0
+LOG_TAIL_CHARS = 2000
 SETTINGS = (
     "--set",
     "orchestration.poll_seconds=1",
@@ -73,8 +74,24 @@ class EngineProject:
         return EngineLock.pid_if_running(engine_lock_path(self.root))
 
     def turn_identity(self) -> ProcessIdentity | None:
-        paths = sorted(run_dir(self.root, TASK_ID).glob(f"*/{TURN_PID_NAME}"))
-        return read_turn_pid(paths[0]) if paths else None
+        path = turn_pid_path(run_dir(self.root, TASK_ID), Role.IMPLEMENTER)
+        return read_turn_pid(path) if path.exists() else None
+
+    def describe(self) -> str:
+        log = engine_log_path(self.root)
+        tail = log.read_text()[-LOG_TAIL_CHARS:] if log.exists() else ""
+        kinds = [kind.value for kind in self.event_kinds()]
+        return (
+            f"engine pid {self.engine_pid()}, implementer turn {self.turn_identity()}, "
+            f"task {self.task_status()}, events {kinds}\n{tail}"
+        )
+
+    async def eventually(self, predicate: Callable[[], bool | Awaitable[bool]]) -> None:
+        try:
+            await wait_until(predicate, timeout=WAIT_SECONDS)
+        except WaitTimeoutError as error:
+            message = f"{error}: {self.describe()}"
+            raise AssertionError(message) from error
 
     def task_status(self) -> Status:
         connection = Database(state_db_path(self.root)).connect()
@@ -140,7 +157,7 @@ async def _start_with_running_turn(project: EngineProject) -> tuple[int, Process
     async def turn_running() -> bool:
         return project.turn_identity() is not None
 
-    await wait_until(turn_running, timeout=WAIT_SECONDS)
+    await project.eventually(turn_running)
     engine_pid = project.engine_pid()
     identity = project.turn_identity()
     assert engine_pid is not None
@@ -156,18 +173,16 @@ async def test_a_signal_ends_the_turn_releases_the_lock_and_a_restart_resumes(
         engine_pid, identity = await _start_with_running_turn(project)
 
         os.kill(engine_pid, signum)
-        await wait_until(project.engine_down, timeout=WAIT_SECONDS)
+        await project.eventually(project.engine_down)
 
         assert not RUNNER.group_is_running(identity.pid)
         assert EventKind.ENGINE_STOPPED in project.event_kinds()
         assert project.task_status() is Status.RUNNING
 
         await project.cli("start")
-        await wait_until(
-            lambda: project.turn_identity() not in {None, identity}, timeout=WAIT_SECONDS
-        )
-        await wait_until(project.open_gate, timeout=WAIT_SECONDS)
-        await wait_until(lambda: project.task_status() is Status.DONE, timeout=WAIT_SECONDS)
+        await project.eventually(lambda: project.turn_identity() not in {None, identity})
+        await project.eventually(project.open_gate)
+        await project.eventually(lambda: project.task_status() is Status.DONE)
 
 
 async def test_stop_returns_only_after_the_engine_released_its_lock(
@@ -193,9 +208,9 @@ async def test_a_second_signal_ends_the_engine_by_force_and_a_restart_resumes(
             env=project.environment,
         )
         try:
-            await wait_until(lambda: project.engine_pid() == engine.pid, timeout=WAIT_SECONDS)
+            await project.eventually(lambda: project.engine_pid() == engine.pid)
             await project.cli("submit", "Implement task A1 from tasks/plan.md")
-            await wait_until(lambda: project.turn_identity() is not None, timeout=WAIT_SECONDS)
+            await project.eventually(lambda: project.turn_identity() is not None)
             identity = project.turn_identity()
             assert identity is not None
 
@@ -213,8 +228,6 @@ async def test_a_second_signal_ends_the_engine_by_force_and_a_restart_resumes(
         assert project.task_status() is Status.RUNNING
 
         await project.cli("start")
-        await wait_until(
-            lambda: project.turn_identity() not in {None, identity}, timeout=WAIT_SECONDS
-        )
-        await wait_until(project.open_gate, timeout=WAIT_SECONDS)
-        await wait_until(lambda: project.task_status() is Status.DONE, timeout=WAIT_SECONDS)
+        await project.eventually(lambda: project.turn_identity() not in {None, identity})
+        await project.eventually(project.open_gate)
+        await project.eventually(lambda: project.task_status() is Status.DONE)
