@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from rich.text import Text
-from textual.widgets import Static
+from textual.containers import VerticalScroll
+from textual.geometry import Region
+from textual.widgets import Button, Static
 
 from shikiru.agents.contracts import (
     QuotaWindow,
@@ -174,6 +176,17 @@ def _write_current_turn_log(project_dir: Path, task: Task, views: StateDashboard
     return log_path
 
 
+def _write_session_start_only_log(project_dir: Path, task: Task) -> Path:
+    role_root = role_dir(run_dir(project_dir, task.id), Role.IMPLEMENTER.value)
+    role_root.mkdir(parents=True)
+    turn_dir = turns_dir(project_dir, task.id) / _TURN_NAME
+    turn_dir.mkdir(parents=True)
+    (role_root / CURRENT_TURN_LINK_NAME).symlink_to(turn_dir, target_is_directory=True)
+    log_path = view_log_path(run_dir(project_dir, task.id), Role.IMPLEMENTER.value)
+    log_path.write_text(f"{_row(_START, _TURN_NAME, VIEW_SESSION_STARTED_SIGNAL)}\n")
+    return log_path
+
+
 def _open_escalation(
     connection: Connection, clock: FakeClock, project_dir: Path, task_id: str, title: str
 ) -> Escalation:
@@ -198,10 +211,22 @@ def _open_escalation(
 
 
 def _escalation_border_styles(panel: EscalationsPanel) -> set[str]:
-    content = panel.query_one("#escalation-panels").query_one(Static).content
+    content = panel.query_one("#escalation-panels", VerticalScroll).query_one(Static).content
     group = cast("Group", content)
     panels = (item for item in group.renderables if isinstance(item, Text))
     return {str(span.style) for panel_content in panels for span in panel_content.spans}
+
+
+def _text_line_is_visible(scroll: VerticalScroll, card: Static, text: str) -> bool:
+    lines = card.render_lines(Region(0, 0, card.size.width, card.size.height))
+    selected_line = next(
+        (index for index, line in enumerate(lines) if text in line.text),
+        None,
+    )
+    if selected_line is None:
+        return False
+    visible_y = card.region.y - scroll.region.y + scroll.scroll_y + selected_line
+    return 0 <= visible_y < scroll.size.height
 
 
 def test_role_view_tail_recovers_a_new_turn_consumed_under_the_old_turn_name(
@@ -342,6 +367,107 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
                 handle.write(f"{_row(clock.now(), _TURN_NAME, VIEW_TOOL_FINISHED_SIGNAL)}\n")
             clock.advance(2.5)
             await wait_until(lambda: GLYPH_STALLED in cast("Text", strips.content).plain, timeout=1)
+    finally:
+        reader.close()
+
+
+async def test_home_attention_count_updates_from_motion_without_database_changes(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    base_settings = _motion_settings(project_dir)
+    settings = base_settings.model_copy(
+        update={"dashboard": base_settings.dashboard.model_copy(update={"widgets": ["strips"]})}
+    )
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, task)
+        _write_session_start_only_log(project_dir, task)
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        app = DashboardApp(
+            focus_task=None,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        async with app.run_test(size=(100, 30)):
+            attention_button = app.query_one("#workspace-summary-attention", Button)
+            await wait_until(clock.has_pending_sleep, timeout=1)
+            assert plain_text(attention_button.label) == "Attention 0"
+            clock.advance(3)
+            await wait_until(
+                lambda: plain_text(attention_button.label) == "Attention 1",
+                timeout=1,
+            )
+            assert views.attention().stalls == 1
+    finally:
+        reader.close()
+
+
+async def test_summary_motion_waits_for_home_when_modal_opens_and_closes(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    base_settings = _motion_settings(project_dir)
+    settings = base_settings.model_copy(
+        update={"dashboard": base_settings.dashboard.model_copy(update={"widgets": ["strips"]})}
+    )
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, task)
+        _write_session_start_only_log(project_dir, task)
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        app = DashboardApp(
+            focus_task=None,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            summary_button = app.query_one("#workspace-summary-attention", Button)
+            home_screen = pilot.app.screen
+            await wait_until(clock.has_pending_sleep, timeout=1)
+            assert plain_text(summary_button.label) == "Attention 0"
+
+            app.query_one("#workspace-command-history", Button).focus()
+            await pilot.press("enter")
+            await wait_until(lambda: pilot.app.screen is not home_screen, timeout=1)
+            clock.advance(3)
+            await wait_until(clock.has_pending_sleep, timeout=1)
+            assert plain_text(summary_button.label) == "Attention 0"
+
+            await pilot.press("escape")
+            await wait_until(lambda: pilot.app.screen is home_screen, timeout=1)
+            clock.advance(1)
+            await wait_until(
+                lambda: plain_text(summary_button.label) == "Attention 1",
+                timeout=1,
+            )
+            assert views.attention().stalls == 1
     finally:
         reader.close()
 
@@ -556,7 +682,7 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
         )
         async with app.run_test(size=(100, 30)) as pilot:
             panel = app.query_one(EscalationsPanel)
-            scroll = panel.query_one("#escalation-panels")
+            scroll = panel.query_one("#escalation-panels", VerticalScroll)
             await wait_until(lambda: len(list(scroll.query(Static))) == 1, timeout=1)
             panel.focus()
             await pilot.press("right")
@@ -564,6 +690,7 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
                 lambda: "▶ E-2 · Second packet" in plain_text(scroll.query(Static)[0].content),
                 timeout=1,
             )
+            assert _text_line_is_visible(scroll, scroll.query_one(Static), "E-2 · Second packet")
             scroll.scroll_end(animate=False)
             await wait_until(lambda: scroll.max_scroll_y > 0, timeout=1)
             scroll.scroll_to(y=scroll.max_scroll_y, animate=False)
@@ -598,6 +725,81 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             )
             assert panel.display
             assert views.escalations()[0].escalation_id == reopened.id
+    finally:
+        reader.close()
+
+
+async def test_attention_keyboard_scrolls_the_selected_group_into_view(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    base_settings = _motion_settings(project_dir)
+    settings = base_settings.model_copy(
+        update={
+            "dashboard": base_settings.dashboard.model_copy(update={"widgets": ["escalations"]})
+        }
+    )
+    tasks: list[Task] = []
+    escalations = EscalationStore(connection, clock)
+    for index in range(10):
+        task = seed_task(connection, clock, title=f"Attention group {index}")
+        tasks.append(task)
+        escalations.open(
+            task.id,
+            step=task.step,
+            reason=EscalationReason.DECISION_REQUIRED,
+            headline=f"Missing packet decision {index}",
+            packet_path=f".shikiru/escalations/missing-{index}.md",
+            options=options_for(EscalationReason.DECISION_REQUIRED),
+        )
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, tasks[0])
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        app = DashboardApp(
+            focus_task=None,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        selected_group = views.attention().groups[8]
+        async with app.run_test(size=(100, 32)) as pilot:
+            panel = app.query_one(EscalationsPanel)
+            scroll = panel.query_one("#escalation-panels", VerticalScroll)
+            await wait_until(lambda: len(list(scroll.query(Static))) == 10, timeout=1)
+            panel.focus()
+            await pilot.press(*("down" for _ in range(8)))
+            await pilot.pause()
+
+            selected_card = next(
+                card
+                for card in scroll.query(Static)
+                if f"▶ {selected_group.task_id} · {selected_group.title}"
+                in plain_text(card.content)
+            )
+            await wait_until(
+                lambda: (
+                    selected_card.region.y < scroll.region.bottom
+                    and selected_card.region.bottom > scroll.region.y
+                ),
+                timeout=1,
+            )
+            selected_text = plain_text(selected_card.content)
+            assert f"▶ {selected_group.task_id} · {selected_group.title}" in selected_text
+            assert selected_card.region.y < scroll.region.bottom
+            assert selected_card.region.bottom > scroll.region.y
+            assert scroll.scroll_y > 0
     finally:
         reader.close()
 

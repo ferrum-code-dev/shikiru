@@ -971,7 +971,8 @@ class PaletteScreen(ModalScreen[None]):
             form.scroll_to_widget(result, animate=False, immediate=True)
 
     def _is_current_screen(self) -> bool:
-        return self.is_mounted and cast("App[None]", self.app).screen is self
+        app = cast("App[None]", self.app)
+        return app.is_running and self.is_mounted and app.screen is self
 
     def _input(self, name: str) -> str:
         return self.query_one(f"#{name}", Input).value

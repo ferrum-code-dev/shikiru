@@ -115,6 +115,10 @@ class _TaskBrowserNavigation(Protocol):
     async def activate_filter(self, task_filter: TaskBrowserFilter) -> None: ...
 
 
+class _AttentionPanelNavigation(Protocol):
+    def activate_attention(self) -> None: ...
+
+
 class WorkspaceSummaryBar(Horizontal):
     """Show bounded home counts with direct navigation to each content list."""
 
@@ -140,6 +144,7 @@ class WorkspaceSummaryBar(Horizontal):
     async def on_mount(self) -> None:
         await self._refresh()
         self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self._widget_context.on_motion(self._refresh_while_mounted)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         name = _SUMMARY_BY_BUTTON.get(event.button.id or "")
@@ -156,6 +161,10 @@ class WorkspaceSummaryBar(Horizontal):
         }
         for name, label, button_id in _SUMMARY_BUTTONS:
             self.query_one(f"#{button_id}", Button).label = f"{label} {counts[name]}"
+
+    async def _refresh_while_mounted(self) -> None:
+        if self.is_mounted and self.is_on_screen and self.screen.is_active:
+            await self._refresh()
 
 
 class WidgetPluginError(ConfigError):
@@ -638,9 +647,8 @@ class DashboardApp(App[None]):
                     "Attention content is not configured."
                 )
                 return
-            attention_panel = cast("Widget", panel)
-            attention_panel.display = True
-            attention_panel.focus()
+            attention_panel = cast("_AttentionPanelNavigation", panel)
+            attention_panel.activate_attention()
             return
         task_filter = {
             _SUMMARY_RUNNING: TaskBrowserFilter.ACTIVE,

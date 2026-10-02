@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.console import Group, RenderableType
 from textual.containers import VerticalScroll
+from textual.geometry import Region
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
@@ -75,6 +76,8 @@ class EscalationsPanel(Static):
         self._attention = AttentionView((), decisions=0, stalls=0, faults=0)
         self._selected = 0
         self._selected_escalation_id: str | None = None
+        self._has_rendered = False
+        self._keep_empty_visible = False
 
     def compose(self) -> ComposeResult:
         """Reserve a bounded, scrollable area for home attention groups."""
@@ -85,6 +88,12 @@ class EscalationsPanel(Static):
         await self._refresh()
         self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
         self._widget_context.on_motion(self._refresh)
+
+    def activate_attention(self) -> None:
+        """Show the attention content, retaining its useful empty state while selected."""
+        self._keep_empty_visible = True
+        self.display = True
+        self.focus()
 
     async def on_key(self, event: events.Key) -> None:
         """Select a group, open its task or evidence, or request the first decision's resolution."""
@@ -109,7 +118,7 @@ class EscalationsPanel(Static):
         self._selected_escalation_id = (
             group.escalations[0].escalation_id if group.escalations else None
         )
-        await self._render_panels()
+        await self._render_panels(reveal_selection=True)
 
     async def _move_decision(self, step: int) -> bool:
         decisions = self._attention.groups[self._selected].escalations
@@ -125,7 +134,7 @@ class EscalationsPanel(Static):
         )
         current = (current + step) % len(decisions)
         self._selected_escalation_id = decisions[current].escalation_id
-        await self._render_panels()
+        await self._render_panels(reveal_selection=True)
         return True
 
     async def _open_task_detail(self, event: events.Key) -> None:
@@ -155,7 +164,7 @@ class EscalationsPanel(Static):
         selected_id = self._selected_group_id()
         selected_escalation_id = self._selected_escalation_id
         self._attention = attention
-        self.display = bool(attention.groups)
+        self.display = bool(attention.groups) or self._keep_empty_visible
         if not attention.groups:
             self._selected = 0
         elif had_selection:
@@ -188,9 +197,10 @@ class EscalationsPanel(Static):
             )
         else:
             self._selected_escalation_id = None
-        if groups_unchanged:
+        if groups_unchanged and self._has_rendered:
             return
         await self._render_panels()
+        self._has_rendered = True
 
     def _selected_group_id(self) -> str | None:
         if not self._attention.groups or self._selected >= len(self._attention.groups):
@@ -210,7 +220,7 @@ class EscalationsPanel(Static):
             group.escalations[0] if group.escalations else None,
         )
 
-    async def _render_panels(self) -> None:
+    async def _render_panels(self, *, reveal_selection: bool = False) -> None:
         panels = self.query_one("#escalation-panels", VerticalScroll)
         scroll_x, scroll_y = panels.scroll_x, panels.scroll_y
         if not self._attention.groups:
@@ -232,7 +242,10 @@ class EscalationsPanel(Static):
                 zip(children, self._attention.groups, strict=True)
             ):
                 card.update(self._render_group(index, group))
-            panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+            if reveal_selection:
+                self._reveal_selection(panels, children[self._selected])
+            else:
+                panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
             return
         await panels.remove_children()
         cards = [
@@ -240,7 +253,28 @@ class EscalationsPanel(Static):
             for index, group in enumerate(self._attention.groups)
         ]
         await panels.mount(*cards)
-        panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+        if reveal_selection:
+            self._reveal_selection(panels, cards[self._selected])
+        else:
+            panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+
+    def _reveal_selection(self, panels: VerticalScroll, card: Static) -> None:
+        decision_id = self._selected_escalation_id
+        if decision_id is None:
+            panels.scroll_to_widget(card, top=True, animate=False)
+            return
+        lines = card.render_lines(Region(0, 0, card.size.width, card.size.height))
+        decision_line = next(
+            (index for index, line in enumerate(lines) if decision_id in line.text),
+            0,
+        )
+        card_top = card.region.y - panels.region.y + panels.scroll_y
+        decision_top = card_top + decision_line
+        panels.scroll_to(
+            x=panels.scroll_x,
+            y=max(decision_top - panels.size.height + 1, 0),
+            animate=False,
+        )
 
     def _render_group(self, index: int, group: AttentionGroupView) -> Group:
         marker = _SELECTED_MARKER if index == self._selected else "  "

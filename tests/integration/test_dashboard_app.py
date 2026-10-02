@@ -18,6 +18,7 @@ from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import Hold, Mode, Status
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
+from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.store.commands import CommandQueue
 from shikiru.store.reader import StateReader
@@ -185,14 +186,14 @@ async def test_dashboard_mounts_the_default_widgets(
 async def test_home_summary_buttons_navigate_to_their_task_content(
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
-    del connection
     project_dir = write_minimal_project(tmp_path)
     reader = StateReader(database, SystemClock())
     try:
         app = _app(reader, project_dir, widget_names=load_settings(project_dir).dashboard.widgets)
         async with app.run_test(size=(72, 40)) as pilot:
             active_screen = pilot.app.screen
-            await pilot.click("#workspace-summary-running")
+            app.query_one("#workspace-summary-running", Button).focus()
+            await pilot.press("enter")
             await wait_until(
                 lambda: cast(
                     "Text", app.query_one("#task-filter-active", Button).label
@@ -201,12 +202,8 @@ async def test_home_summary_buttons_navigate_to_their_task_content(
             )
             assert app.focused is app.query_one("#task-browser-list")
 
-            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
-            dashboard.scroll_to_widget(
-                app.query_one("#workspace-summary-waiting"), top=True, animate=False
-            )
-            await pilot.pause()
-            await pilot.click("#workspace-summary-waiting")
+            app.query_one("#workspace-summary-waiting", Button).focus()
+            await pilot.press("enter")
             await wait_until(
                 lambda: cast(
                     "Text", app.query_one("#task-filter-waiting", Button).label
@@ -215,13 +212,28 @@ async def test_home_summary_buttons_navigate_to_their_task_content(
             )
             assert app.focused is app.query_one("#task-browser-list")
 
-            dashboard.scroll_to_widget(
-                app.query_one("#workspace-summary-attention"), top=True, animate=False
-            )
-            await pilot.pause()
-            await pilot.click("#workspace-summary-attention")
+            app.query_one("#workspace-summary-attention", Button).focus()
+            await pilot.press("enter")
             assert app.focused is app.query_one("#escalations")
             assert app.screen is active_screen
+            panel = app.query_one(EscalationsPanel)
+            assert panel.display
+            assert "No open decisions" in _rendered_text(
+                panel.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            )
+
+            seed_task(connection, SystemClock(), title="Waiting after attention navigation")
+            await wait_until(
+                lambda: cast(
+                    "Text", app.query_one("#workspace-summary-waiting", Button).label
+                ).plain.endswith("1"),
+                timeout=2,
+            )
+            assert panel.display
+            assert app.focused is panel
+            assert "No open decisions" in _rendered_text(
+                panel.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            )
     finally:
         reader.close()
 

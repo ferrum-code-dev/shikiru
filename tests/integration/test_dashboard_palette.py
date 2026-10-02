@@ -429,6 +429,40 @@ async def test_palette_serializes_pending_action_and_closes_without_worker_error
     assert len(queue.pending()) == 1
 
 
+async def test_palette_shutdown_keeps_a_pending_command_without_stale_ui_refresh(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Shutdown with pending command")
+    commands, queries, queue = _services(
+        connection,
+        reader,
+        clock,
+        tmp_path,
+        engine_up=True,
+    )
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(task_id=task.id, role=Role.LEADER.value),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        await _open_action(pilot, screen, "message")
+        screen.query_one("#message", TextArea).text = "Keep the durable command on shutdown."
+        await pilot.click("#palette-submit")
+        await wait_until(clock.has_pending_sleep, timeout=2)
+        assert len(queue.pending()) == 1
+
+    assert len(queue.pending()) == 1
+
+
 async def test_palette_keeps_acknowledgement_timeout_pending_with_current_engine_state(
     connection: Connection,
     reader: StateReader,
