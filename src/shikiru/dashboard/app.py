@@ -320,9 +320,13 @@ class DashboardApp(App[None]):
         if (
             event.key != _SEARCH_KEY
             or isinstance(self.focused, Input)
+            or isinstance(self.screen, ModalScreen)
             or _WIDGET_QUEUE not in self._widget_names
         ):
             return
+        if self._expanded_section is not None:
+            self._return_to_sections()
+        self._select_section(_SECTION_WORKSPACE)
         self.set_focus(self.query_one("#task-browser-search", Input))
         event.stop()
 

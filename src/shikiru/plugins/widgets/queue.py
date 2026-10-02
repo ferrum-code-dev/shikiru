@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
@@ -47,6 +48,14 @@ class _BrowserListItem(ListItem):
     def __init__(self, row: TaskBrowserRow) -> None:
         super().__init__(Static(_row_text(row), markup=False), id=f"task-row-{row.task_id}")
         self.task_id = row.task_id
+        self.row = row
+
+    def update_row(self, row: TaskBrowserRow) -> bool:
+        if row == self.row:
+            return False
+        self.row = row
+        self.query_one(Static).update(_row_text(row))
+        return True
 
 
 def _row_text(row: TaskBrowserRow) -> str:
@@ -102,9 +111,11 @@ class QueuePanel(Vertical):
         self._filter = TaskBrowserFilter.ALL
         self._search = ""
         self._selected_task_id = context.focus_task
-        self._visible_limit = BROWSER_PAGE_SIZE
+        self._loaded_page_count = 1
         self._view: TaskBrowserView | None = None
         self._refreshing = False
+        self._refresh_lock = asyncio.Lock()
+        self._list_render_version = 0
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="task-browser-tools"):
@@ -127,9 +138,7 @@ class QueuePanel(Vertical):
     async def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != SEARCH_INPUT_ID:
             return
-        self._search = event.value
-        self._visible_limit = BROWSER_PAGE_SIZE
-        await self._refresh()
+        await self._refresh(search=event.value, reset_pages=True)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == SEARCH_INPUT_ID:
@@ -139,20 +148,16 @@ class QueuePanel(Vertical):
         button_id = event.button.id or ""
         selected_filter = FILTER_BY_BUTTON_ID.get(button_id)
         if selected_filter is not None:
-            self._filter = selected_filter
-            self._visible_limit = BROWSER_PAGE_SIZE
-            await self._refresh()
+            await self._refresh(task_filter=selected_filter, reset_pages=True)
             self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
         elif button_id == CLEAR_BUTTON_ID:
             search = self.query_one(f"#{SEARCH_INPUT_ID}", Input)
             search.value = ""
             if not self._search:
-                self._visible_limit = BROWSER_PAGE_SIZE
-                await self._refresh()
+                await self._refresh(search="", reset_pages=True)
             search.focus()
         elif button_id == MORE_BUTTON_ID:
-            self._visible_limit += BROWSER_PAGE_SIZE
-            await self._refresh()
+            await self._refresh(append_page=True)
             self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
         elif button_id == REVEAL_BUTTON_ID:
             await self._reveal_selected_task()
@@ -203,50 +208,195 @@ class QueuePanel(Vertical):
         selected = self._view.selected_task
         if selected is None:
             return
-        self._filter = _filter_for_task(selected)
-        self._search = ""
-        self._visible_limit = BROWSER_PAGE_SIZE
+        task_filter = _filter_for_task(selected)
         self.query_one(f"#{SEARCH_INPUT_ID}", Input).value = ""
-        await self._refresh()
+        await self._refresh(task_filter=task_filter, search="", reset_pages=True)
         list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
         list_view.focus()
 
-    async def _refresh(self) -> None:
-        list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
-        scroll_y = list_view.scroll_y
-        self._refreshing = True
-        view = self._widget_context.views.task_browser(
+    async def _refresh(
+        self,
+        *,
+        append_page: bool = False,
+        task_filter: TaskBrowserFilter | None = None,
+        search: str | None = None,
+        reset_pages: bool = False,
+    ) -> None:
+        async with self._refresh_lock:
+            self._refreshing = True
+            try:
+                if task_filter is not None:
+                    self._filter = task_filter
+                if search is not None:
+                    self._search = search
+                if reset_pages:
+                    self._loaded_page_count = 1
+                view = self._load_next_page() if append_page else self._load_pages()
+                if self._selected_task_id is None and view.rows:
+                    self._selected_task_id = view.rows[0].task_id
+                    view = replace(
+                        view,
+                        selected_task=view.rows[0],
+                        selected_task_matches=True,
+                    )
+                self._view = view
+                list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
+                await self._sync_list_rows(list_view, view.rows)
+                self._sync_selection(list_view, view.rows)
+                self._render_view(view)
+            finally:
+                self._refreshing = False
+
+    def _load_page(self, offset: int) -> TaskBrowserView:
+        return self._widget_context.views.task_browser(
             task_filter=self._filter,
             search=self._search,
-            offset=0,
-            limit=self._visible_limit,
+            offset=offset,
+            limit=BROWSER_PAGE_SIZE,
             selected_task_id=self._selected_task_id,
         )
-        if self._selected_task_id is None and view.rows:
-            self._selected_task_id = view.rows[0].task_id
-            view = replace(
-                view,
-                selected_task=view.rows[0],
-                selected_task_matches=True,
+
+    def _load_pages(self) -> TaskBrowserView:
+        pages: list[TaskBrowserView] = []
+        rows: list[TaskBrowserRow] = []
+        for page_index in range(self._loaded_page_count):
+            page = self._load_page(page_index * BROWSER_PAGE_SIZE)
+            pages.append(page)
+            rows.extend(page.rows)
+            if not page.has_more:
+                break
+        self._loaded_page_count = len(pages)
+        return replace(pages[-1], rows=tuple(rows))
+
+    def _load_next_page(self) -> TaskBrowserView:
+        current = self._view
+        if (
+            current is not None
+            and current.filter is self._filter
+            and current.search == self._search
+        ):
+            if not current.has_more:
+                return current
+            offset = len(current.rows)
+            page = self._load_page(offset)
+            if page.rows:
+                self._loaded_page_count += 1
+                return replace(page, rows=(*current.rows, *page.rows))
+            return replace(page, rows=current.rows)
+        return self._load_pages()
+
+    async def _sync_list_rows(self, list_view: ListView, rows: tuple[TaskBrowserRow, ...]) -> None:
+        items = {
+            item.task_id: item for item in list_view.children if isinstance(item, _BrowserListItem)
+        }
+        current_ids = tuple(items)
+        desired_ids = tuple(row.task_id for row in rows)
+        if current_ids == desired_ids:
+            anchor, anchor_offset = self._visible_anchor(list_view, tuple(items.values()))
+            changed = False
+            for row in rows:
+                changed = items[row.task_id].update_row(row) or changed
+            if changed:
+                self._restore_list_position_after_refresh(
+                    list_view,
+                    tuple(items.values()),
+                    anchor,
+                    anchor_offset,
+                )
+            return
+
+        wanted_ids = set(desired_ids)
+        anchor, anchor_offset = self._visible_anchor(
+            list_view,
+            tuple(item for task_id, item in items.items() if task_id in wanted_ids),
+        )
+        removed = [item for task_id, item in items.items() if task_id not in wanted_ids]
+        if removed:
+            await asyncio.gather(*(item.remove() for item in removed))
+            items = {task_id: item for task_id, item in items.items() if task_id in wanted_ids}
+
+        new_items = [_BrowserListItem(row) for row in rows if row.task_id not in items]
+        items.update({item.task_id: item for item in new_items})
+        for row in rows:
+            items[row.task_id].update_row(row)
+        if new_items:
+            await list_view.extend(new_items)
+        for index, row in enumerate(rows):
+            item = items[row.task_id]
+            if list_view.children[index] is not item:
+                list_view.move_child(item, before=index)
+        self._restore_list_position_after_refresh(
+            list_view,
+            tuple(items.values()),
+            anchor,
+            anchor_offset,
+        )
+
+    def _visible_anchor(
+        self,
+        list_view: ListView,
+        items: tuple[_BrowserListItem, ...],
+    ) -> tuple[_BrowserListItem | None, int]:
+        content_region = list_view.scrollable_content_region
+        visible_items = [item for item in items if item.region.overlaps(content_region)]
+        if not visible_items:
+            return None, 0
+        anchor = min(visible_items, key=lambda item: item.region.y)
+        return anchor, anchor.region.y - content_region.y
+
+    def _restore_list_position_after_refresh(
+        self,
+        list_view: ListView,
+        items: tuple[_BrowserListItem, ...],
+        anchor: _BrowserListItem | None = None,
+        anchor_offset: int = 0,
+    ) -> None:
+        self._list_render_version += 1
+        selected_item = next(
+            (item for item in items if item.task_id == self._selected_task_id),
+            None,
+        )
+        list_view.call_after_refresh(
+            self._restore_list_position,
+            list_view,
+            selected_item,
+            anchor,
+            anchor_offset,
+            self._list_render_version,
+        )
+
+    def _restore_list_position(
+        self,
+        list_view: ListView,
+        selected_item: _BrowserListItem | None,
+        anchor: _BrowserListItem | None,
+        anchor_offset: int,
+        render_version: int,
+    ) -> None:
+        if render_version != self._list_render_version:
+            return
+        content_region = list_view.scrollable_content_region
+        if anchor is not None and anchor.parent is list_view:
+            anchor_offset_now = anchor.region.y - content_region.y
+            list_view.scroll_to(
+                y=list_view.scroll_y + anchor_offset_now - anchor_offset,
+                animate=False,
+                immediate=True,
             )
-        self._view = view
-        await list_view.clear()
-        for row in view.rows:
-            await list_view.append(_BrowserListItem(row))
-        if self._selected_task_id is not None:
-            selected_index = next(
-                (
-                    index
-                    for index, row in enumerate(view.rows)
-                    if row.task_id == self._selected_task_id
-                ),
-                None,
-            )
+        if (
+            selected_item is not None
+            and selected_item.parent is list_view
+            and not selected_item.region.overlaps(list_view.scrollable_content_region)
+        ):
+            list_view.scroll_to_widget(selected_item, animate=False, immediate=True)
+
+    def _sync_selection(self, list_view: ListView, rows: tuple[TaskBrowserRow, ...]) -> None:
+        selected_index = next(
+            (index for index, row in enumerate(rows) if row.task_id == self._selected_task_id),
+            None,
+        )
+        if list_view.index != selected_index:
             list_view.index = selected_index
-        self._refreshing = False
-        self._render_view(view)
-        if self._selected_task_id is None or list_view.index is None:
-            list_view.scroll_to(y=scroll_y, animate=False)
 
     def _render_view(self, view: TaskBrowserView) -> None:
         count = f"{FILTER_LABELS[view.filter]} · {len(view.rows)} of {view.matching_count}"

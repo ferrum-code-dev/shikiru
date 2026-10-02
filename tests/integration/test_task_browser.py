@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
-from textual.widgets import Input, ListView, Static
+from textual.widgets import Button, Input, ListView, Static
 
 from shikiru.agents.contracts import role_dir
 from shikiru.config.loader import load_settings
@@ -45,6 +45,7 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shikiru.domain.tasks import Task
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
 
@@ -52,6 +53,8 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 PAGE_SIZE = 24
 STALL_SECONDS = 2
 STALL_TURN_NAME = "001-implement-i1"
+READING_INDEX = 10
+READING_SCROLL_POSITION = 12
 
 
 def _start_task(connection: Connection, clock: FakeClock, task_id: str) -> None:
@@ -72,6 +75,14 @@ def _finish_task(connection: Connection, clock: FakeClock, task_id: str) -> None
 def _static_text(widget: Static) -> str:
     rendered = widget.render()
     return rendered.plain if isinstance(rendered, Text) else str(rendered)
+
+
+def _visible_task_ids(list_view: ListView) -> tuple[str, ...]:
+    return tuple(
+        item.id.removeprefix("task-row-")
+        for item in list_view.children
+        if item.id is not None and item.region.overlaps(list_view.scrollable_content_region)
+    )
 
 
 async def test_task_browser_queries_apply_filter_order_search_and_page_counts(
@@ -126,6 +137,12 @@ async def test_task_browser_queries_apply_filter_order_search_and_page_counts(
         limit=1,
         offset=0,
     )
+    history_next_page = reader.task_browser_page(
+        category=TaskBrowserFilter.HISTORY.value,
+        search="",
+        limit=1,
+        offset=1,
+    )
     searched_page = reader.task_browser_page(
         category=TaskBrowserFilter.WAITING.value,
         search="äDD pArSeR",
@@ -150,6 +167,8 @@ async def test_task_browser_queries_apply_filter_order_search_and_page_counts(
     assert [task.id for task in history_page.tasks] == [latest_finished.id]
     assert history_page.matching_count == 2
     assert history_page.filtered_count == 2
+    assert [task.id for task in history_next_page.tasks] == [first_finished.id]
+    assert history_next_page.matching_count == history_page.matching_count
     assert history_page.project_count == 8
     assert searched_page.matching_count == 1
     assert [task.id for task in searched_page.tasks] == [queued.id]
@@ -297,12 +316,13 @@ async def test_history_load_more_keeps_the_selected_task(
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
+    tasks: list[Task] = []
     for index in range(PAGE_SIZE + 1):
         old_task = seed_task(connection, clock, title=f"Old result {index}")
+        tasks.append(old_task)
         _finish_task(connection, clock, old_task.id)
         clock.advance(1)
-    selected = seed_task(connection, clock, title="Latest result")
-    _finish_task(connection, clock, selected.id)
+    selected = tasks[0]
     context = replace(
         widget_context(reader, project_dir, clock, services=StubServices()),
         focus_task=selected.id,
@@ -316,9 +336,60 @@ async def test_history_load_more_keeps_the_selected_task(
         task_list = widget.query_one("#task-browser-list", ListView)
         assert len(task_list.children) == PAGE_SIZE
         assert selected.id in _static_text(widget.query_one("#task-browser-preview", Static))
+        first_page = tuple(item.id for item in task_list.children)
+        assert selected.id not in first_page
+        load_more = widget.query_one("#task-browser-more", Button)
+        assert not load_more.disabled
         assert await pilot.click("#task-browser-more")
+        await wait_until(
+            lambda: (
+                len(task_list.children) == PAGE_SIZE + 1
+                and str(PAGE_SIZE + 1)
+                in _static_text(widget.query_one("#task-browser-count", Static))
+            ),
+            timeout=5.0,
+        )
+        assert len(task_list.children) == PAGE_SIZE + 1
+        assert tuple(item.id for item in task_list.children[:PAGE_SIZE]) == first_page
+        assert widget.query_one("#task-browser-more", Button).disabled
+        assert task_list.children[-1].id == f"task-row-{selected.id}"
+        assert selected.id in _static_text(widget.query_one("#task-browser-preview", Static))
+
+
+async def test_state_refresh_preserves_visible_list_position_and_selected_task(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tasks = [
+        seed_task(connection, clock, title=f"Queued task {index}") for index in range(PAGE_SIZE)
+    ]
+    widget = cast("QueuePanel", QueueWidget().create(widget_context(reader, project_dir, clock)))
+
+    async with WidgetHostApp(widget).run_test(size=(90, 100)) as pilot:
         await pilot.pause()
-        assert len(task_list.children) == PAGE_SIZE + 2
+        list_view = widget.query_one("#task-browser-list", ListView)
+        list_view.focus()
+        list_view.index = READING_INDEX
+        await pilot.pause()
+        list_view.scroll_to(y=READING_SCROLL_POSITION, animate=False)
+        await pilot.pause()
+        visible_before = _visible_task_ids(list_view)
+        selected = tasks[READING_INDEX]
+        assert visible_before
+        assert selected.id in visible_before
+
+        TaskStore(connection, clock).set_priority(tasks[-1].id, -1)
+        await wait_until(
+            lambda: (
+                "priority -1"
+                in _static_text(widget.query_one(f"#task-row-{tasks[-1].id} > Static", Static))
+            ),
+            timeout=5.0,
+        )
+        await wait_until(lambda: _visible_task_ids(list_view) == visible_before, timeout=5.0)
+
+        assert list_view.has_focus
         assert selected.id in _static_text(widget.query_one("#task-browser-preview", Static))
 
 
@@ -347,15 +418,27 @@ async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         open_palette=ignore_palette_action,
-        widget_names=["queue"],
+        widget_names=["queue", "usage"],
     )
 
     async with app.run_test(size=(90, 60)) as pilot:
         await pilot.pause()
         search = app.query_one("#task-browser-search", Input)
+        await pilot.click("#section-tab-usage")
+        await pilot.click("#workspace-expand")
+        await pilot.pause()
+        assert not app.query_one("#section-workspace").display
         await pilot.press("slash")
+        await pilot.pause()
+        assert app.query_one("#section-workspace").display
         assert search.has_focus
+        assert search.is_on_screen
         assert search.value == ""
         await pilot.press("slash")
 
         assert search.value == "/"
+        await pilot.click("#workspace-help")
+        await pilot.pause()
+        await pilot.press("slash")
+        assert not search.has_focus
+        assert app.screen.query_one("#workspace-help-frame")
