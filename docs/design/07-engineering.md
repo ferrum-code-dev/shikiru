@@ -94,17 +94,17 @@ Plugin offline checks replay protocol fixtures committed under `tests/fixtures/a
 - `poe e2e` writes `build/e2e/<start UTC date and time>.json`, keyed by the invocation's start so a later or partial invocation never overwrites an earlier one, and copies it to `build/e2e/latest.json`. Per scenario it records pass/fail, the wall `duration_seconds`, the agent-reported cost (`null` when no agent reported one, otherwise the sum over its attempts) and `attempts`: every attempt with its status, `failure_class`, `rerun_reason`, cost, duration and diagnostics path. It also records the run's `source_commit`, `source_dirty` (uncommitted changes in the tree), `tool_versions` (claude, codex, tmux, git, python; `null` for a tool that is not installed) and `started_at`/`finished_at` (UTC). `build/` is git-ignored; the release summary of the last full passing invocation is committed as `docs/e2e-results.md` (a hand-copied excerpt of that artifact, refreshed with each release-readiness document).
 - A plan AC that names an E2E scenario is ticked only after a passing `poe e2e` run; the ticking commit message states the run date, scenarios and cost.
 
-| Scenario | Attempt budget | Measured duration (2026-10-01, one attempt each) |
+| Scenario | Attempt budget | Measured duration (2026-10-02, `159db49`) |
 |---|---|---|
-| fake-agent operator flow | 45 s | not recorded; the seven tests took 1263.96 s together, 6 s more than the six real scenarios |
-| E1 | 10 min | 118 s |
-| E2 | 10 min | 190 s |
-| E3 | 20 min | 378 s (the slowest) |
-| E4 | 10 min | 176 s |
-| E5 | 10 min | 113 s |
-| E6 | 12 min | 284 s |
+| fake-agent operator flow | 45 s | not recorded; the seven tests took 1468.61 s together |
+| E1 | 10 min | 104 s |
+| E2 | 10 min | 175 s |
+| E3 | 20 min | 563 s over two attempts (157 s failed, 406 s passed; the slowest) |
+| E4 | 10 min | 186 s |
+| E5 | 10 min | 109 s |
+| E6 | 12 min | 327 s |
 
-The durations are the artifact's `duration_seconds` of the invocation that started at 2026-10-01 07:59:03 UTC at `e78c057`: every scenario passed at its first attempt, the invocation took 21 m 03 s (`docs/e2e-results.md`, `docs/release-readiness-2026-10-01-phase7c.md`). They are one sample, not a distribution. The budgets are 2.5 to 5.3 times those values (E6 2.5, E2 to E4 3.2 to 3.4, E1 and E5 about 5), headroom for a slower agent turn and a flaky run; the 2026-09-30 invocation, which had no per-scenario record, took 24 m 52 s in all and 31 m 11 s with a rerun on the second. A run that exceeds its row is a finding, not a reason to raise the row unseen. The 2026-09-30 E3 stall (a Codex implementer also wrote the plan, tracker and test files into the operator checkout by absolute path, and the merge then waited the full 30 minutes for a clean checkout twice over) is the case the `integration_wait` setting, the `integration_waiting` event and the stall detector exist for. Shikiru cannot prevent an agent from writing outside its worktree (01 §6), so this is an agent-behaviour limit, and the diagnostics name it.
+The durations are the artifact's `duration_seconds` of the invocation that started at 2026-10-02 05:38:44 UTC at `159db49`; it took 24 m 28 s (`docs/e2e-results.md`, `docs/release-readiness-2026-10-02-phase7d.md`). E3 failed its first attempt (the leader triaged the request as one implement task instead of a plan, an agent decision) and passed on the one rerun; the 2026-10-01 `d5624af` invocation did the same, and an E3-only A/B showed the cause is not the Task 74j prompt sentence. They are samples, not a distribution. A single attempt took at most 406 s (E3), against budgets of 10, 12 and 20 minutes; a run that exceeds its row is a finding, not a reason to raise the row unseen. The 2026-09-30 E3 stall (a Codex implementer also wrote the plan, tracker and test files into the operator checkout by absolute path, and the merge then waited the full 30 minutes for a clean checkout twice over) is the case the `integration_wait` setting, the `integration_waiting` event and the stall detector exist for. Shikiru cannot prevent an agent from writing outside its worktree (01 §6), so this is an agent-behaviour limit, and the diagnostics name it.
 
 | # | Scenario | Proves |
 |---|---|---|
