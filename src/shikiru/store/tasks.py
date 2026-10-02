@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
 from shikiru.agents.contracts import Rung
+from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.reports import SIBLING_REFERENCE_PREFIX, resolve_dependency
 from shikiru.domain.scheduling import find_dependency_cycle
 from shikiru.domain.tasks import (
@@ -56,6 +58,31 @@ _RUNG_INDEX_ADAPTER: TypeAdapter[dict[Role, int]] = TypeAdapter(dict[Role, int])
 _OVERRIDES_ADAPTER: TypeAdapter[dict[Role, Rung]] = TypeAdapter(dict[Role, Rung])
 _PANES_ADAPTER: TypeAdapter[dict[Role, str]] = TypeAdapter(dict[Role, str])
 _REPO_ADAPTER: TypeAdapter[RepoState] = TypeAdapter(RepoState)
+_BROWSER_CATEGORY_ACTIVE = "active"
+_BROWSER_CATEGORY_WAITING = "waiting"
+_BROWSER_CATEGORY_HISTORY = "history"
+_BROWSER_CATEGORY_ALL = "all"
+_BROWSER_FILTERS = frozenset(
+    {
+        _BROWSER_CATEGORY_ACTIVE,
+        _BROWSER_CATEGORY_WAITING,
+        _BROWSER_CATEGORY_HISTORY,
+        _BROWSER_CATEGORY_ALL,
+    }
+)
+
+
+@dataclass(frozen=True)
+class TaskBrowserPage:
+    """A bounded task page with counts for the chosen filter and current project."""
+
+    tasks: tuple[Task, ...]
+    open_decision_task_ids: frozenset[str]
+    matching_count: int
+    filtered_count: int
+    project_count: int
+    selected_task_matches: bool
+
 
 _TASK_COLUMNS = (
     "id, seq, parent_id, origin, title, request, mode, complexity, complexity_explicit, "
@@ -142,6 +169,166 @@ def fetch_tasks(
             tuple(status.value for status in statuses),
         ).fetchall()
     return _rows_to_tasks(connection, rows)
+
+
+def fetch_task_browser_page(
+    connection: sqlite3.Connection,
+    *,
+    category: str,
+    search: str,
+    limit: int,
+    offset: int,
+    selected_task_id: str | None = None,
+    diagnosed_stall_task_ids: Sequence[str] = (),
+) -> TaskBrowserPage:
+    """Read one ordered browser page and exact counts without loading the full task table."""
+    if category not in _BROWSER_FILTERS:
+        message = f"unknown task browser filter: {category!r}"
+        raise ValueError(message)
+    if limit < 1 or offset < 0:
+        message = "task browser limit must be positive and offset must be non-negative"
+        raise ValueError(message)
+
+    category_where, category_parameters = _task_browser_category(category)
+    match_where, match_parameters = _task_browser_search(category_where, search)
+    counts = connection.execute(
+        "SELECT "
+        f"(SELECT COUNT(*) FROM tasks t WHERE {category_where}) AS filtered_count, "
+        f"(SELECT COUNT(*) FROM tasks t WHERE {match_where}) AS matching_count, "
+        "(SELECT COUNT(*) FROM tasks) AS project_count",
+        (*category_parameters, *category_parameters, *match_parameters),
+    ).fetchone()
+    order, order_parameters = _task_browser_order(category, diagnosed_stall_task_ids)
+    rows = connection.execute(
+        f"SELECT {_TASK_COLUMNS}, "
+        "EXISTS (SELECT 1 FROM escalations e WHERE e.task_id = t.id AND e.status = ?) "
+        f"AS has_open_decision FROM tasks t WHERE {match_where} "
+        f"ORDER BY {order} LIMIT ? OFFSET ?",
+        (
+            EscalationStatus.OPEN.value,
+            *category_parameters,
+            *match_parameters,
+            *order_parameters,
+            limit,
+            offset,
+        ),
+    ).fetchall()
+    selected_task_matches = False
+    if selected_task_id is not None:
+        selected_task_matches = (
+            connection.execute(
+                f"SELECT EXISTS (SELECT 1 FROM tasks t WHERE t.id = ? AND {match_where})",
+                (selected_task_id, *category_parameters, *match_parameters),
+            ).fetchone()[0]
+            == 1
+        )
+    tasks = _rows_to_tasks(connection, rows)
+    return TaskBrowserPage(
+        tasks=tuple(tasks),
+        open_decision_task_ids=frozenset(row["id"] for row in rows if row["has_open_decision"]),
+        matching_count=counts["matching_count"],
+        filtered_count=counts["filtered_count"],
+        project_count=counts["project_count"],
+        selected_task_matches=selected_task_matches,
+    )
+
+
+def _task_browser_category(category: str) -> tuple[str, tuple[str, ...]]:
+    if category == _BROWSER_CATEGORY_ALL:
+        return "1 = 1", ()
+    if category == _BROWSER_CATEGORY_WAITING:
+        return (
+            (
+                "(t.status = ? OR t.status = ? OR "
+                "(t.status IN (?, ?) AND "
+                "(json_array_length(t.holds) > 0 OR t.wait_reason IS NOT NULL)))"
+            ),
+            (
+                Status.QUEUED.value,
+                Status.ESCALATED.value,
+                Status.RUNNING.value,
+                Status.INTEGRATING.value,
+            ),
+        )
+    statuses = {
+        _BROWSER_CATEGORY_ACTIVE: (Status.RUNNING, Status.INTEGRATING, Status.ESCALATED),
+        _BROWSER_CATEGORY_HISTORY: (Status.DONE, Status.CANCELLED),
+    }
+    selected = statuses[category]
+    placeholders = ", ".join("?" for _ in selected)
+    return (
+        f"t.status IN ({placeholders})",
+        tuple(status.value for status in selected),
+    )
+
+
+def _task_browser_search(category_where: str, search: str) -> tuple[str, tuple[str, ...]]:
+    if not search:
+        return category_where, ()
+    return (
+        (
+            f"{category_where} AND "
+            "(instr(casefold(t.id), casefold(?)) > 0 OR "
+            "instr(casefold(t.title), casefold(?)) > 0)"
+        ),
+        (search, search),
+    )
+
+
+def _task_browser_order(
+    category: str,
+    diagnosed_stall_task_ids: Sequence[str],
+) -> tuple[str, tuple[str, ...]]:
+    queued = Status.QUEUED.value
+    running = Status.RUNNING.value
+    integrating = Status.INTEGRATING.value
+    escalated = Status.ESCALATED.value
+    done = Status.DONE.value
+    cancelled = Status.CANCELLED.value
+    open_status = EscalationStatus.OPEN.value
+    decision_first = (
+        f"CASE WHEN t.status = '{escalated}' OR EXISTS ("
+        f"SELECT 1 FROM escalations e WHERE e.task_id = t.id AND e.status = '{open_status}'"
+        ") THEN 0 ELSE 1 END"
+    )
+    if category == _BROWSER_CATEGORY_ACTIVE:
+        stall_first = ""
+        if diagnosed_stall_task_ids:
+            placeholders = ", ".join("?" for _ in diagnosed_stall_task_ids)
+            stall_first = f"CASE WHEN t.id IN ({placeholders}) THEN 0 ELSE 1 END, "
+        return (
+            f"{decision_first}, {stall_first}COALESCE(t.started_at, t.created_at), t.seq",
+            tuple(diagnosed_stall_task_ids),
+        )
+    if category == _BROWSER_CATEGORY_WAITING:
+        return (
+            (
+                f"CASE WHEN t.status = '{queued}' THEN 0 ELSE 1 END, "
+                f"CASE WHEN t.status = '{queued}' AND t.requeued_at IS NULL THEN 1 ELSE 0 END, "
+                f"CASE WHEN t.status = '{queued}' THEN -t.priority ELSE 0 END, "
+                f"CASE WHEN t.status = '{queued}' THEN t.seq END, "
+                f"CASE WHEN t.status != '{queued}' THEN COALESCE(t.started_at, t.created_at) END, "
+                "t.seq"
+            ),
+            (),
+        )
+    if category == _BROWSER_CATEGORY_HISTORY:
+        return "t.finished_at DESC, t.seq DESC", ()
+    return (
+        (
+            f"CASE WHEN t.status IN ('{done}', '{cancelled}') THEN 1 ELSE 0 END, "
+            f"{decision_first}, "
+            f"CASE WHEN t.status = '{queued}' THEN 1 ELSE 0 END, "
+            f"CASE WHEN t.status = '{queued}' AND t.requeued_at IS NULL THEN 1 ELSE 0 END, "
+            f"CASE WHEN t.status = '{queued}' THEN -t.priority ELSE 0 END, "
+            f"CASE WHEN t.status = '{queued}' THEN t.seq END, "
+            f"CASE WHEN t.status IN ('{running}', '{integrating}', '{escalated}') "
+            "THEN COALESCE(t.started_at, t.created_at) END, "
+            f"CASE WHEN t.status IN ('{done}', '{cancelled}') THEN t.finished_at END DESC, "
+            "t.seq"
+        ),
+        (),
+    )
 
 
 class TaskStore:

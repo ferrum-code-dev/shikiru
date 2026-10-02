@@ -76,7 +76,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `agents.registry` | Loads `AgentFactory` entry points plus factories registered by `bootstrap` (tests register the fake agent the same way through its own test-only package entry point) | `AgentRegistry` |
 | `agents.testing` | Contract test kit | `AgentContractSuite` |
 | `domain` | Pure rules, no I/O | `Task`, `Status`, `Step`, `Hold`, `Counters`, `EventKind`, command models, report models, `next_step()`, `pick_rung()`, `recovery.decide()`, `scheduling.pick_ready()`, `escalation.options_for()`, `activity.is_stalled()` |
-| `store` | SQLite schema, migrations, stores per aggregate, read-only reader | `Database`, `TaskStore`, `RunStore`, `EscalationStore`, `QuotaStore`, `EventLog`, `CommandQueue`, `StateReader` |
+| `store` | SQLite schema, migrations, stores per aggregate, read-only reader | `Database`, `TaskStore`, bounded `TaskBrowserPage` queries, `RunStore`, `EscalationStore`, `QuotaStore`, `EventLog`, `CommandQueue`, `StateReader` |
 | `workspace` | Task roots, worktrees, caches, git facts, pull requests through `gh` | `TaskRootBuilder`, `CacheCloner`, `GitFacts`, `Git`, `GitHub` |
 | `tmux` | tmux client; session, windows, layout; pane decorations; pane respawn and liveness | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator` |
 | `prompts` | Jinja2 templates (packaged, overridable) | `PromptRenderer` |
@@ -85,7 +85,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
 | `operator` | Use cases for interfaces; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
-| `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract. `DashboardApp` groups configured widgets, tracks local section focus and opens the shared palette; it does not decide workflow eligibility or issue commands itself | `app`, `build_server()`, `DashboardApp`, `PaletteApp`, `DashboardWidget`, `DashboardViews` |
+| `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract. `DashboardApp` groups configured widgets, tracks local section focus and opens the shared palette; `dashboard.views` composes bounded task browser pages and current selection context; neither decides workflow eligibility nor issues commands | `app`, `build_server()`, `DashboardApp`, `PaletteApp`, `DashboardWidget`, `DashboardViews`, `TaskBrowserView` |
 
 **Engine components**, each with one responsibility:
 
@@ -191,7 +191,7 @@ strips = "shikiru.plugins.widgets.strips:StripsWidget"
 
 A plugin that is missing or broken fails `start` and `doctor` with its name and error.
 
-The dashboard places the built-in `header`, `escalations`, `strips` and `queue` widgets in Workspace; `dialogue` in Activity; `usage` in Usage; and `resources` and `docker` in Diagnostics. The configured order is kept within each section. Every other configured widget entry point is mounted in Extensions in its configured relative order. The same `DashboardWidget` and `WidgetContext` contract serves all sections; plugins continue to receive view models and callbacks only.
+The dashboard places the built-in `header`, `escalations`, `strips` and `queue` widgets in Workspace; `queue` is the selectable task browser and retains its entry-point name. It places `dialogue` in Activity; `usage` in Usage; and `resources` and `docker` in Diagnostics. The configured order is kept within each section. Every other configured widget entry point is mounted in Extensions in its configured relative order. The same `DashboardWidget` and `WidgetContext` contract serves all sections; plugins continue to receive view models and callbacks only.
 
 ## 5. Runtime layout on disk
 

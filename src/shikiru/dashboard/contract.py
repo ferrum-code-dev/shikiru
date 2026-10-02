@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
@@ -14,10 +15,21 @@ if TYPE_CHECKING:
     from shikiru.ui.strip import TaskStripData
 
 WIDGET_ENTRY_POINT_GROUP = "shikiru.widgets"
+TASK_STATUS_QUEUED = "queued"
+TASK_TERMINAL_STATUSES = frozenset({"done", "cancelled"})
 OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
 MotionRegistration = Callable[[OnChange], None]
 OpenPalette = Callable[[str], Awaitable[None]]
+
+
+class TaskBrowserFilter(StrEnum):
+    """A task browser category with membership and order defined by Workspace §5.1."""
+
+    ACTIVE = "active"
+    WAITING = "waiting"
+    HISTORY = "history"
+    ALL = "all"
 
 
 @dataclass(frozen=True)
@@ -51,6 +63,42 @@ class QueueRow:
     priority: int
     dependencies: tuple[str, ...]
     wait_reason: str | None
+
+
+@dataclass(frozen=True)
+class TaskBrowserRow:
+    """One task row with its identity and state prepared for the selectable browser."""
+
+    task_id: str
+    title: str
+    status: str
+    step: str | None
+    iteration: int
+    acting_role: str | None
+    priority: int
+    dependencies: tuple[str, ...]
+    wait_reason: str | None
+    holds: tuple[str, ...]
+    age: str
+    group_label: str | None
+    open_decision: bool
+    diagnosed_stall: bool
+
+
+@dataclass(frozen=True)
+class TaskBrowserView:
+    """A bounded page of matching tasks and the selected task's retained context."""
+
+    filter: TaskBrowserFilter
+    search: str
+    rows: tuple[TaskBrowserRow, ...]
+    selected_task: TaskBrowserRow | None
+    selected_task_missing: bool
+    selected_task_matches: bool
+    matching_count: int
+    filtered_count: int
+    project_count: int
+    has_more: bool
 
 
 @dataclass(frozen=True)
@@ -141,6 +189,18 @@ class DashboardViews(Protocol):
 
     def queue(self) -> list[QueueRow]:
         """Return queued tasks in dispatch order."""
+        ...
+
+    def task_browser(
+        self,
+        *,
+        task_filter: TaskBrowserFilter,
+        search: str,
+        offset: int,
+        limit: int,
+        selected_task_id: str | None,
+    ) -> TaskBrowserView:
+        """Return one bounded browser page and preserve context for a selected task."""
         ...
 
     def escalations(self) -> list[EscalationPanelView]:

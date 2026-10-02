@@ -12,6 +12,7 @@ from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView, Wid
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.operator.queries import OperatorQueries
+from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -52,6 +53,7 @@ class WidgetHostApp(App[None]):
 
     def __init__(self, widget: Widget) -> None:
         super().__init__()
+        install_theme(self)
         self._widget = widget
 
     def compose(self) -> ComposeResult:

@@ -11,7 +11,7 @@ from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
 from shikiru.store.events import fetch_events_since, fetch_latest_events
 from shikiru.store.quotas import fetch_quota_agents, fetch_quotas
 from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task
-from shikiru.store.tasks import fetch_task, fetch_tasks
+from shikiru.store.tasks import fetch_task, fetch_task_browser_page, fetch_tasks
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,8 +23,10 @@ if TYPE_CHECKING:
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Status, Task
     from shikiru.store.database import Database
+    from shikiru.store.tasks import TaskBrowserPage
 
 DASHBOARD_CHANGE_POLL_SECONDS = 0.5
+CASEFOLD_SQL_FUNCTION = "casefold"
 
 OnChange = Callable[[], Awaitable[None]]
 
@@ -35,6 +37,12 @@ class StateReader:
     def __init__(self, database: Database, clock: Clock) -> None:
         """Open `database`'s read-only connection, polled through `clock` by `watch`."""
         self._connection = database.connect_readonly()
+        self._connection.create_function(
+            CASEFOLD_SQL_FUNCTION,
+            1,
+            str.casefold,
+            deterministic=True,
+        )
         self._database_path = database.path
         self._clock = clock
 
@@ -46,6 +54,31 @@ class StateReader:
         """See `shikiru.store.tasks.fetch_tasks`."""
         try:
             return fetch_tasks(self._connection, statuses=statuses)
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
+
+    def task_browser_page(
+        self,
+        *,
+        category: str,
+        search: str,
+        limit: int,
+        offset: int,
+        selected_task_id: str | None = None,
+        diagnosed_stall_task_ids: Sequence[str] = (),
+    ) -> TaskBrowserPage:
+        """Read one bounded task browser page and its matching and project counts."""
+        try:
+            return fetch_task_browser_page(
+                self._connection,
+                category=category,
+                search=search,
+                limit=limit,
+                offset=offset,
+                selected_task_id=selected_task_id,
+                diagnosed_stall_task_ids=diagnosed_stall_task_ids,
+            )
         except sqlite3.Error as error:
             message = f"could not query read-only database {self._database_path}: {error}"
             raise DatabaseError(message) from error

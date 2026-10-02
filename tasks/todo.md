@@ -129,7 +129,7 @@ Target: [Operator Workspace](../docs/tui-workspace.md); acceptance criteria: [pl
 Delivery order: task navigation and contextual control, attention and evidence views, then responsive behaviour, export, documentation and release verification. Task 75's shell is shipped; later tasks remain planned until their acceptance criteria pass.
 
 - [x] Task 75: Workspace design alignment and shared visual shell
-- [ ] Task 76: Selectable task browser and search
+- [x] Task 76: Selectable task browser and search
 - [ ] Task 77: Task detail and navigation to existing windows
 - [ ] Task 78: Contextual actions and searchable palette
 - [ ] Task 79: Durable command feedback and ownership banners

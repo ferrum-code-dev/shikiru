@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, cast
 
 from rich.cells import cell_len
 from rich.text import Text
+from textual.widgets import Static
 
 from shikiru.domain.events import EventKind
 from shikiru.domain.scheduling import WaitReason
@@ -228,7 +229,8 @@ async def test_queue_lists_a_queued_task_with_its_priority_and_wait_reason(
     widget = cast("QueuePanel", QueueWidget().create(context))
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
-        text = cast("str", widget.content)
+        text = _plain(widget.query_one("#task-browser-preview", Static).render())
         assert task.id in text
-        assert "priority 3" in text
+        assert "Add retry" in text
+        assert "Dispatch priority: 3" in text
         assert "slot" in text

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from textual.app import App
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static
+from textual.widgets import Button, Input, Label, Static
 
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, WidgetContext
@@ -39,6 +39,7 @@ _SECTION_DIAGNOSTICS = "diagnostics"
 _SECTION_EXTENSIONS = "extensions"
 _WIDGET_DIALOGUE = "dialogue"
 _WIDGET_ESCALATIONS = "escalations"
+_WIDGET_QUEUE = "queue"
 _SECTION_LABELS = (
     (_SECTION_WORKSPACE, "Workspace"),
     (_SECTION_ACTIVITY, "Activity"),
@@ -51,7 +52,7 @@ _BUILTIN_SECTIONS = {
     "header": _SECTION_WORKSPACE,
     _WIDGET_ESCALATIONS: _SECTION_WORKSPACE,
     "strips": _SECTION_WORKSPACE,
-    "queue": _SECTION_WORKSPACE,
+    _WIDGET_QUEUE: _SECTION_WORKSPACE,
     _WIDGET_DIALOGUE: _SECTION_ACTIVITY,
     "usage": _SECTION_USAGE,
     "resources": _SECTION_DIAGNOSTICS,
@@ -65,6 +66,7 @@ _RETURN_BUTTON = "workspace-return"
 _HELP_BUTTON = "workspace-help"
 _HELP_CLOSE_BUTTON = "workspace-help-close"
 _HELP_CONTEXT = "workspace-help-context"
+_SEARCH_KEY = "slash"
 
 
 class WidgetPluginError(ConfigError):
@@ -128,6 +130,8 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
             lines.append("Escalations: Up/Down select, o opens evidence, r opens resolution")
         if _WIDGET_DIALOGUE in self._widget_names:
             lines.append("Dialogue: Enter opens full text")
+        if _WIDGET_QUEUE in self._widget_names:
+            lines.append("Task browser: / search, Up/Down select, filters and Clear search")
         with Vertical(id="workspace-help-frame"):
             yield Label(f"Help · {view} · {self._current_section}", id=_HELP_CONTEXT)
             yield Static(
@@ -311,6 +315,16 @@ class DashboardApp(App[None]):
         section_id = self._section_for_widget(event.widget)
         if section_id is not None:
             self._select_section(section_id, scroll=False)
+
+    def on_key(self, event: events.Key) -> None:
+        if (
+            event.key != _SEARCH_KEY
+            or isinstance(self.focused, Input)
+            or _WIDGET_QUEUE not in self._widget_names
+        ):
+            return
+        self.set_focus(self.query_one("#task-browser-search", Input))
+        event.stop()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Apply navigation, expansion, return and help button activations."""

@@ -15,10 +15,14 @@ from shikiru.dashboard.contract import (
     QuotaGaugeView,
     RepoStatus,
     ResourceView,
+    TaskBrowserFilter,
+    TaskBrowserRow,
+    TaskBrowserView,
 )
 from shikiru.domain.events import EventKind
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
+from shikiru.domain.steps import ACTING_ROLE
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
@@ -26,7 +30,7 @@ from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 
 if TYPE_CHECKING:
-    from datetime import timedelta
+    from datetime import datetime, timedelta
 
     from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
@@ -54,6 +58,7 @@ _DIALOGUE_KINDS = (
     EventKind.SCOPE_CHANGE,
     EventKind.TASK_DONE,
 )
+_ACTIVE_TURN_STATUSES = (Status.RUNNING, Status.INTEGRATING)
 
 
 class DashboardSources(Protocol):
@@ -155,6 +160,126 @@ class StateDashboardViews:
             )
             for task in tasks
         ]
+
+    def task_browser(
+        self,
+        *,
+        task_filter: TaskBrowserFilter,
+        search: str,
+        offset: int,
+        limit: int,
+        selected_task_id: str | None,
+    ) -> TaskBrowserView:
+        """Build one ready-to-render browser page and retain the selected task context."""
+        now = self._clock.now()
+        motion_task_ids: set[str] = set()
+        stalled_ids: set[str] = set()
+        diagnosed_stall_task_ids: tuple[str, ...] = ()
+        if task_filter is TaskBrowserFilter.ACTIVE:
+            current_turn_tasks = self._state.list_tasks(statuses=_ACTIVE_TURN_STATUSES)
+            motion_task_ids.update(task.id for task in current_turn_tasks)
+            frames = self._motion.frames(tuple(current_turn_tasks), now)
+            stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
+            diagnosed_stall_task_ids = tuple(sorted(stalled_ids))
+        page = self._state.task_browser_page(
+            category=task_filter.value,
+            search=search,
+            limit=limit,
+            offset=offset,
+            selected_task_id=selected_task_id,
+            diagnosed_stall_task_ids=diagnosed_stall_task_ids,
+        )
+        selected_task = None
+        if selected_task_id is not None:
+            selected_task = next(
+                (task for task in page.tasks if task.id == selected_task_id),
+                None,
+            )
+            if selected_task is None:
+                selected_task = self._state.get_task(selected_task_id)
+
+        framed_tasks = [
+            task
+            for task in page.tasks
+            if task.status in ACTIVE_STATUSES and task.id not in motion_task_ids
+        ]
+        if (
+            selected_task is not None
+            and selected_task.status in ACTIVE_STATUSES
+            and selected_task.id not in motion_task_ids
+            and selected_task.id not in {task.id for task in framed_tasks}
+        ):
+            framed_tasks.append(selected_task)
+        if framed_tasks:
+            frames = self._motion.frames(tuple(framed_tasks), now)
+            stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
+        open_decision_ids = page.open_decision_task_ids
+        rows = [
+            self._task_browser_row(
+                task,
+                open_decision=task.id in open_decision_ids,
+                diagnosed_stall=task.id in stalled_ids,
+                now=now,
+                task_filter=task_filter,
+            )
+            for task in page.tasks
+        ]
+        if task_filter is TaskBrowserFilter.ACTIVE:
+            rows.sort(key=lambda row: not (row.open_decision or row.diagnosed_stall))
+        selected_row = next(
+            (row for row in rows if row.task_id == selected_task_id),
+            None,
+        )
+        if selected_row is None and selected_task is not None:
+            selected_row = self._task_browser_row(
+                selected_task,
+                open_decision=selected_task.status is Status.ESCALATED,
+                diagnosed_stall=selected_task.id in stalled_ids,
+                now=now,
+                task_filter=task_filter,
+            )
+        return TaskBrowserView(
+            filter=task_filter,
+            search=search,
+            rows=tuple(rows),
+            selected_task=selected_row,
+            selected_task_missing=selected_task_id is not None and selected_task is None,
+            selected_task_matches=page.selected_task_matches,
+            matching_count=page.matching_count,
+            filtered_count=page.filtered_count,
+            project_count=page.project_count,
+            has_more=offset + len(rows) < page.matching_count,
+        )
+
+    def _task_browser_row(
+        self,
+        task: Task,
+        *,
+        open_decision: bool,
+        diagnosed_stall: bool,
+        now: datetime,
+        task_filter: TaskBrowserFilter,
+    ) -> TaskBrowserRow:
+        role = ACTING_ROLE.get(task.step) if task.step is not None else None
+        group_label = None
+        if task_filter is TaskBrowserFilter.WAITING:
+            group_label = "Queued" if task.status is Status.QUEUED else "Started waiting"
+        return TaskBrowserRow(
+            task_id=task.id,
+            title=task.title,
+            status=task.status.value,
+            step=task.step.value if task.step is not None else None,
+            iteration=task.iteration,
+            acting_role=role.value if role is not None else None,
+            priority=task.priority,
+            dependencies=tuple(task.depends_on),
+            wait_reason=task.wait_reason,
+            holds=tuple(sorted(hold.value for hold in task.holds)),
+            age=_age(now - task.created_at),
+            group_label=group_label,
+            open_decision=open_decision,
+            diagnosed_stall=diagnosed_stall,
+        )
 
     def escalations(self) -> list[EscalationPanelView]:
         """Build splash panels from each stored packet's headline, question and options."""

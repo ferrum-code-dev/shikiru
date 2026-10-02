@@ -766,10 +766,10 @@ Refs: [Workspace §1–3, §13, §15](../docs/tui-workspace.md#13-visual-system)
 
 ### Task 76: Selectable task browser and search
 Refs: Workspace §5/§7/§15, 03 §10, 06 §5.4.
-- [ ] Add ready-to-render task rows and bounded read queries consumed by an interactive browser. ID, title and state remain accessible; Active, Waiting, History and All membership/order follow §5.1, with queued tasks in scheduler dispatch order.
-- [ ] Search task ID/title and combine it with filters; show matching count and distinguish an empty project from an empty search result.
-- [ ] Preserve selected task ID, filter/search and scroll across state updates and row reordering. When selection leaves a filter, retain its detail/context until deliberate navigation; keep the selected visible row in view.
-- [ ] Update 02's component list, 06's widget contract/navigation and 05 only for introduced settings. Preserve existing widget fields/callbacks; new capabilities are additive and have consumers.
+- [x] Add ready-to-render task rows and bounded read queries consumed by an interactive browser. ID, title and state remain accessible; Active, Waiting, History and All membership/order follow §5.1, with queued tasks in scheduler dispatch order.
+- [x] Search task ID/title and combine it with filters; show matching count and distinguish an empty project from an empty search result.
+- [x] Preserve selected task ID, filter/search and scroll across state updates and row reordering. When selection leaves a filter, retain its detail/context until deliberate navigation; keep the selected visible row in view.
+- [x] Update 02's component list, 06's widget contract/navigation and 05 only for introduced settings. Preserve existing widget fields/callbacks; new capabilities are additive and have consumers.
 - Tests: Textual over real SQLite: search by title, combine a filter, reorder tasks while selected, complete the selected task, clear search, and load more history without resetting selection. Unit tests only for new domain projection rules.
 
 ### Task 77: Task detail and navigation to existing windows
