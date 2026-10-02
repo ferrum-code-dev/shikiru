@@ -81,11 +81,11 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `tmux` | tmux client; session, windows, layout; pane decorations; pane respawn and liveness | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator` |
 | `prompts` | Jinja2 templates (packaged, overridable) | `PromptRenderer` |
 | `helper` | Joshu calls | `Helper` |
-| `ui` | Visual language and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.glyphs`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
+| `ui` | Semantic colors, Textual theme and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.theme`, `ui.glyphs`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
 | `operator` | Use cases for interfaces; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
-| `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract | `app`, `build_server()`, `DashboardApp`, `PaletteApp`, `DashboardWidget`, `DashboardViews` |
+| `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract. `DashboardApp` groups configured widgets, tracks local section focus and opens the shared palette; it does not decide workflow eligibility or issue commands itself | `app`, `build_server()`, `DashboardApp`, `PaletteApp`, `DashboardWidget`, `DashboardViews` |
 
 **Engine components**, each with one responsibility:
 
@@ -153,7 +153,7 @@ src/shikiru/
   tmux/         client.py session.py layout.py decorator.py
   prompts/      renderer.py templates/
   helper/       helper.py models.py
-  ui/           tokens.py age.py size.py glyphs.py status.py strip.py bubbles.py splash.py gauge.py stream.py
+  ui/           theme.py tokens.py age.py size.py glyphs.py status.py strip.py bubbles.py splash.py gauge.py stream.py
   telemetry/    resources.py docker.py disk.py
   engine/       daemon.py tick_guard.py fault_reporter.py session_guard.py supervisor.py lifecycle.py scheduler.py dependency.py agents.py sessions.py
                 flow.py step_runner.py turn_loop.py acceptance.py turn_context.py turn_execution.py recovery.py
@@ -190,6 +190,8 @@ strips = "shikiru.plugins.widgets.strips:StripsWidget"
 ```
 
 A plugin that is missing or broken fails `start` and `doctor` with its name and error.
+
+The dashboard places the built-in `header`, `escalations`, `strips` and `queue` widgets in Workspace; `dialogue` in Activity; `usage` in Usage; and `resources` and `docker` in Diagnostics. The configured order is kept within each section. Every other configured widget entry point is mounted in Extensions in its configured relative order. The same `DashboardWidget` and `WidgetContext` contract serves all sections; plugins continue to receive view models and callbacks only.
 
 ## 5. Runtime layout on disk
 

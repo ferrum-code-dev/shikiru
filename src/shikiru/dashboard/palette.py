@@ -22,6 +22,7 @@ from shikiru.domain.commands import (
 from shikiru.domain.tasks import Mode, Role
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import AckStatus
+from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -106,12 +107,33 @@ class PaletteScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
     DEFAULT_CSS = """
     PaletteScreen { align: center middle; }
-    #palette-frame { width: 90%; height: 90%; max-width: 100; border: round $accent; padding: 1 2; }
+    #palette-frame {
+        width: 90%;
+        height: 90%;
+        max-width: 100;
+        border: round $neutral-border;
+        padding: 1 2;
+        background: $surface;
+        color: $primary-text;
+    }
     #palette-form { height: 1fr; }
     .palette-field { height: auto; margin-bottom: 1; }
     .palette-field Label { height: 1; }
     .palette-field Input, .palette-field Select { width: 100%; }
-    #palette-packet-scroll { height: auto; max-height: 16; border: round $surface; padding: 1; }
+    .palette-field Input:focus,
+    .palette-field TextArea:focus,
+    #palette-submit:focus {
+        border: round $focus;
+        text-style: bold reverse;
+    }
+    .palette-field Select:focus > SelectCurrent { border: tall $focus; }
+    #palette-packet-scroll {
+        height: auto;
+        max-height: 16;
+        border: round $neutral-border;
+        padding: 1;
+        background: $background;
+    }
     #palette-result-scroll { height: auto; max-height: 12; margin-top: 1; }
     #palette-packet, #palette-result { height: auto; }
     #request { height: 6; }
@@ -563,6 +585,7 @@ class PaletteApp(App[None]):
     ) -> None:
         """Retain the services used by the palette screen."""
         super().__init__()
+        install_theme(self)
         self._commands = commands
         self._queries = queries
         self._pane_selector = pane_selector

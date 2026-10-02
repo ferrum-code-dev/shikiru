@@ -9,5 +9,6 @@
 | [05-data.md](05-data.md) | Configuration reference, state DB, run files, report schemas |
 | [06-operator.md](06-operator.md) | CLI, MCP, dashboard, tmux session, attach, notifications, style |
 | [07-engineering.md](07-engineering.md) | Stack, conventions, quality gates, testing and E2E scenarios |
+| [Operator Workspace target](../tui-workspace.md) | Phase 8 TUI specification; Task 75 shell is shipped, later browser/detail/action capabilities remain planned |
 
 Read the docs in order. Each doc is normative. When a later doc refines an earlier one, it names the section it refines.

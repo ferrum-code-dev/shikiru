@@ -2,7 +2,7 @@
 
 ## 1. Status and relationship to the design
 
-This document specifies the target TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). It describes planned behaviour, not a claim that the current dashboard already implements it. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
+This document specifies the target TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). Task 75 has shipped the shared visual theme and navigable shell for the current widgets, including Workspace, Activity, Usage, Diagnostics and Extensions sections, contextual help, focus cues and section expansion/back navigation. The selectable task browser, detailed task view, contextual task actions and the remaining sections in this specification are planned work and are not claimed as shipped. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
 
 The workspace refines [06 · Operator Interfaces](design/06-operator.md), especially §5.4–5.5 and §6: the system pane becomes a navigable workspace with distinct home and task views, contextual actions, and persistent command feedback. The comic strip remains the task's expanded progress view. The architecture and workflow in [02](design/02-architecture.md) and [03](design/03-workflow.md) govern all state changes.
 

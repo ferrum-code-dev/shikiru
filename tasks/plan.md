@@ -759,9 +759,9 @@ Each task updates the relevant sections of 01–07 and the workspace specificati
 
 ### Task 75: Workspace design alignment and shared visual shell
 Refs: [Workspace §1–3, §13, §15](../docs/tui-workspace.md#13-visual-system), 01 D18, 02 §2/4, 06 §5.4/§6.
-- [ ] Record the workspace composition decision in 01 and its responsibilities in 02; update 06 to distinguish the home workspace, task detail and secondary views. Link the target specification from the design index and README, clearly distinguishing planned and shipped behaviour.
-- [ ] Introduce shared background, surface, neutral border, text and focus tokens; apply them to the dashboard shell, palette and evidence modals while preserving role/state meanings, width-safe glyphs and monochrome cues.
-- [ ] Add the shell's visible focus, contextual footer, help and section expansion/back navigation, using current widgets. Keep Textual/Rich and existing plugin entry points; document placement/order of configured built-ins and reachable third-party Extensions. No configured plugin is silently dropped.
+- [x] Record the workspace composition decision in 01 and its responsibilities in 02; update 06 to distinguish the home workspace, task detail and secondary views. Link the target specification from the design index and README, clearly distinguishing planned and shipped behaviour.
+- [x] Introduce shared background, surface, neutral border, text and focus tokens; apply them to the dashboard shell, palette and evidence modals while preserving role/state meanings, width-safe glyphs and monochrome cues.
+- [x] Add the shell's visible focus, contextual footer, help and section expansion/back navigation, using current widgets. Keep Textual/Rich and existing plugin entry points; document placement/order of configured built-ins and reachable third-party Extensions. No configured plugin is silently dropped.
 - Tests: Textual integration: navigate/expand/return to a section with keyboard and mouse, preserve focus, reach a configured external widget, and read state/focus without colour. Assert behaviour and width properties, not token inventories or screenshots.
 
 ### Task 76: Selectable task browser and search

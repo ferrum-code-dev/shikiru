@@ -29,6 +29,16 @@ class PacketScreen(ModalScreen[None]):
     """Show the complete escalation packet until the Operator dismisses it."""
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    PacketScreen { background: $background; }
+    #escalation-packet {
+        background: $surface;
+        color: $foreground;
+        border: round $border;
+        padding: 1 2;
+    }
+    #escalation-packet:focus { border: round $accent; text-style: bold reverse; }
+    """
 
     def __init__(self, packet: str) -> None:
         """Hold the packet text to display in the modal."""

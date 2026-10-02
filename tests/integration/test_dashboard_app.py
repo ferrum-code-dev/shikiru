@@ -5,12 +5,13 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import TextArea
+from textual.widgets import Button, Static, TextArea
 
 import shikiru.agents.registry as registry_module
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
+from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.steps import first_step
 from shikiru.domain.tasks import Mode
@@ -23,18 +24,41 @@ from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
-from tests.support.entry_points import ambiguous_entry_points
+from tests.support.entry_points import FakeDistribution, ambiguous_entry_points
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
+_EXTERNAL_WIDGET_NAME = "outside-widget"
+
+
+class _ExternalWidget:
+    name = _EXTERNAL_WIDGET_NAME
+
+    def create(self, context: WidgetContext) -> Widget:
+        del context
+        return Static(id="external-widget-panel")
+
+
+class _ExternalEntryPoint:
+    name = _EXTERNAL_WIDGET_NAME
+    dist = FakeDistribution("test-extension")
+
+    def load(self) -> type[_ExternalWidget]:
+        return _ExternalWidget
+
+
+def _rendered_text(widget: Static) -> str:
+    return cast("Text", widget.render()).plain
+
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from rich.text import Text
+    from textual.widget import Widget
 
-    from shikiru.dashboard.contract import OpenPalette
+    from shikiru.dashboard.contract import OpenPalette, WidgetContext
     from shikiru.store.database import Database
     from tests.support.store import Connection
 
@@ -139,6 +163,115 @@ async def test_default_dashboard_widgets_fit_a_narrow_system_pane(
             await pilot.pause()
             assert resources.region.y < dashboard.region.bottom
             assert resources.region.bottom > dashboard.region.y
+    finally:
+        reader.close()
+
+
+async def test_dashboard_keyboard_navigation_expands_and_restores_focus_without_color(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del connection
+    monkeypatch.setenv("NO_COLOR", "1")
+    project_dir = write_minimal_project(tmp_path)
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=["header", "dialogue", "usage"])
+        async with app.run_test(size=(36, 20)) as pilot:
+            await pilot.press("tab")
+            await pilot.pause()
+            activity_tab = app.query_one("#section-tab-activity", Button)
+            footer = app.query_one("#workspace-footer-copy", Static)
+            assert app.focused is activity_tab
+            footer_text = _rendered_text(footer)
+            assert footer_text.startswith(">")
+            assert "Activity" in footer_text
+            assert footer.region.width > 0
+            assert footer.region.right <= app.size.width
+
+            await pilot.press("z")
+            await pilot.pause()
+            assert app.query_one("#section-activity").display
+            assert not app.query_one("#section-usage").display
+            assert app.focused is app.query_one("#workspace-return", Button)
+            assert "Activity" in _rendered_text(footer)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.query_one("#section-usage").display
+            assert app.focused is activity_tab
+            footer_text = _rendered_text(footer)
+            assert footer_text.startswith(">")
+            assert "Activity" in footer_text
+
+            workspace_screen = app.screen
+            await pilot.press("?")
+            await pilot.pause()
+            assert app.screen is not workspace_screen
+            assert app.screen.query_one("#workspace-help-copy", Static).region.height > 0
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.screen is workspace_screen
+    finally:
+        reader.close()
+
+
+async def test_dashboard_mouse_navigation_expands_and_restores_external_widget(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del connection
+    entry_points = registry_module.entry_points
+
+    def entry_points_with_extension(*, group: str) -> list[object]:
+        registered = entry_points(group=group)
+        if group == WIDGET_ENTRY_POINT_GROUP:
+            return [*registered, _ExternalEntryPoint()]
+        return list(registered)
+
+    monkeypatch.setattr(registry_module, "entry_points", entry_points_with_extension)
+    project_dir = write_minimal_project(tmp_path)
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=["usage", _EXTERNAL_WIDGET_NAME])
+        async with app.run_test(size=(72, 30)) as pilot:
+            assert await pilot.click("#section-tab-extensions", offset=(7, 1))
+            await pilot.pause()
+            extension_tab = app.query_one("#section-tab-extensions", Button)
+            assert app.focused is extension_tab
+            footer = app.query_one("#workspace-footer-copy", Static)
+            footer_text = _rendered_text(footer)
+            assert footer_text.startswith(">")
+            assert "Extensions" in footer_text
+
+            workspace_screen = app.screen
+            assert await pilot.click("#workspace-help", offset=(4, 1))
+            await pilot.pause()
+            assert app.screen is not workspace_screen
+            assert app.screen.query_one("#workspace-help-copy", Static).region.height > 0
+            assert await pilot.click("#workspace-help-close", offset=(6, 1))
+            await pilot.pause()
+            assert app.screen is workspace_screen
+            assert app.focused is app.query_one("#workspace-help", Button)
+
+            assert await pilot.click("#workspace-expand", offset=(5, 1))
+            await pilot.pause()
+            assert not app.query_one("#section-usage").display
+            assert app.query_one("#section-extensions").display
+            extension_panel = app.query_one("#section-extensions").query_one(
+                "#external-widget-panel", Static
+            )
+            assert extension_panel.region.width > 0
+
+            assert await pilot.click("#workspace-return", offset=(3, 1))
+            await pilot.pause()
+            assert app.focused is app.query_one("#workspace-expand", Button)
+            assert app.query_one("#section-usage").display
+            assert app.query_one("#section-extensions").display
     finally:
         reader.close()
 

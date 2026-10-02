@@ -100,9 +100,11 @@ The CLI gets an Operator into a project, in and out of its session, and back out
   - Window options `@shk_state_color` and `@shk_state_glyph` feed the window-status formats.
   - `TurnMonitor` and `TaskFlow` update them on change.
 
-### 5.4 System pane and widgets
+### 5.4 Workspace shell and widgets
 
-`shikiru dash --home | --task T-n` is a Textual app that stacks the `dashboard.widgets` panels in configured order.
+`shikiru dash --home | --task T-n` is a Textual app with one shared navigable shell. The permanent home window opens the Home workspace. A task window opens the same shell with its existing `focus_task` context. This task-scoped widget view is not yet the task detail described in the Phase 8 target; detail ships separately. Usage and diagnostics remain secondary sections instead of occupying the main task area.
+
+The shell groups current widgets in Workspace (`header`, `escalations`, `strips`, `queue`), Activity (`dialogue`), Usage (`usage`) and Diagnostics (`resources`, `docker`). Configured order is preserved within each section. A configured third-party widget is mounted in Extensions, in its relative configured order, so it remains reachable without changing its entry point or context. `Tab` and `Shift+Tab` move section focus, mouse activation selects a section, `z` expands the focused section, and `Escape` returns to the section list with the previous focus and scroll position restored. The footer names the focused or expanded section and its available keys. `?` opens help for the current home or task context. Focus is shown by a marker and reverse/bold styling so it remains readable with `NO_COLOR`.
 
 ```python
 class DashboardWidget(Protocol):
@@ -127,22 +129,26 @@ class DashboardViews(Protocol):
 
 Widgets re-read their view when `on_change` fires. Samplers such as resources and docker have their own interval.
 
-| Widget | Content |
-|---|---|
-| `header` | Project, engine up/down, slots `2/2`, the checkout's branch, ahead/behind `base` and dirty count (git data cached 10 s), then one alert line per open engine fault streak and the age of the oldest unresolved escalation |
-| `escalations` | Splash panel per open escalation (§6.4); `r` resolves through the palette form, `o` opens the packet |
-| `strips` | Active tasks as strips (§6.2); the focused task expanded; children grouped under `parent_id` |
-| `queue` | Queued tasks in dispatch order: priority, dependencies, `wait_reason` |
-| `dialogue` | Last 20 speech bubbles (§6.3); `enter` shows the full text |
-| `usage` | Per agent: tokens; cost with an "API-equivalent" label when applicable, `–` when unknown; quota gauges with reset countdown and observation age, only for reported windows |
-| `resources` | Host CPU%/RAM, and this instance's CPU%/RSS (engine plus the process trees of all panes), sampled every 2 s |
-| `docker` | Containers with CPU% and memory (`docker stats --no-stream --format json` every 5 s); hidden when Docker is unavailable |
+| Section | Widget | Content |
+|---|---|---|
+| Workspace | `header` | Project, engine up/down, slots `2/2`, the checkout's branch, ahead/behind `base` and dirty count (git data cached 10 s), then one alert line per open engine fault streak and the age of the oldest unresolved escalation |
+| Workspace | `escalations` | Splash panel per open escalation (§6.4); `r` resolves through the palette form, `o` opens the packet |
+| Workspace | `strips` | Active tasks as strips (§6.2); the focused task expanded; children grouped under `parent_id` |
+| Workspace | `queue` | Queued tasks in dispatch order: priority, dependencies, `wait_reason` |
+| Activity | `dialogue` | Last 20 speech bubbles (§6.3); `Enter` shows the full text |
+| Usage | `usage` | Per agent: tokens; cost with an "API-equivalent" label when applicable, `–` when unknown; quota gauges with reset countdown and observation age, only for reported windows |
+| Diagnostics | `resources` | Host CPU%/RAM, and this instance's CPU%/RSS (engine plus the process trees of all panes), sampled every 2 s |
+| Diagnostics | `docker` | Containers with CPU% and memory (`docker stats --no-stream --format json` every 5 s); hidden when Docker is unavailable |
+| Extensions | Configured third-party widgets | Each configured widget outside the built-in set, using the existing plugin entry point and context |
+
+The system-pane shell uses only current widgets. The selectable task browser and detailed task view are planned Phase 8 capabilities; the existing focused strip does not claim to be a task detail view.
 
 ### 5.5 Palette
 
 - `PaletteApp` offers: submit (complexity defaults to "Triage decides"), prioritise, pause/resume, take over (then select that pane) / hand back, cancel, retry, change rung, message agent, peek, resolve escalation (a form with the packet and options), stop engine.
 - It opens as a tmux popup (`prefix + Space`), and `Ctrl+P` in `dash` pushes the same screen.
 - Every action calls `OperatorCommands` and shows the `Ack`.
+- The dashboard and popup use the shared Textual theme. Packet and dialogue evidence modals use its surface, border, text and focus tokens.
 
 ### 5.6 `ls` and `attach`
 
@@ -223,7 +229,7 @@ Every colour, glyph and movement answers one of three questions: *who acts*, *wh
 
 ### 6.1 Tokens and glyphs
 
-**Colours**: one palette, rendered on the app's own dark background. Truecolor, with 256/16 fallback; `NO_COLOR` switches to monochrome with bold, dim and reverse.
+**Colours**: Rich renderables keep the existing semantic role/state palette; the Textual shell, palette and evidence modals share named `background`, `surface`, `neutral-border`, `primary-text`, `secondary-text` and `focus` tokens. Truecolor, with 256/16 fallback; `NO_COLOR` switches to monochrome with bold, dim and reverse. Role and state colors keep their existing meanings.
 
 | Token | Colour | Meaning |
 |---|---|---|
@@ -237,6 +243,12 @@ Every colour, glyph and movement answers one of three questions: *who acts*, *wh
 | `hold` | yellow `#facc15` | Paused, quota, waiting |
 | `alert` | red `#f87171` | Escalation, failure |
 | `idle` | grey `#64748b` | Pending, queued |
+| `background` | dark navy | Application background |
+| `surface` | blue-grey | Ordinary panel surface |
+| `neutral-border` | slate | Section and modal edges |
+| `primary-text` | pale grey | Main text |
+| `secondary-text` | muted grey | Supporting text |
+| `focus` | near-white | Keyboard and mouse focus |
 
 Gauges (context, quota, CPU, RAM) are green below 70%, yellow below 90%, red above.
 

@@ -21,6 +21,16 @@ class DialogueTextScreen(ModalScreen[None]):
     """Show the full text of one dialogue bubble."""
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    DialogueTextScreen { background: $background; }
+    #dialogue-full-text {
+        background: $surface;
+        color: $foreground;
+        border: round $border;
+        padding: 1 2;
+    }
+    #dialogue-full-text:focus { border: round $accent; text-style: bold reverse; }
+    """
 
     def __init__(self, text: str) -> None:
         """Hold the full event text to display."""
