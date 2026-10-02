@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.agents.contracts import (
@@ -56,7 +57,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rich.console import Group
-    from rich.text import Text
 
     from shikiru.config.settings import Settings
     from shikiru.dashboard.views import StateDashboardViews
@@ -200,8 +200,8 @@ def _open_escalation(
 def _escalation_border_styles(panel: EscalationsPanel) -> set[str]:
     content = panel.query_one("#escalation-panels").query_one(Static).content
     group = cast("Group", content)
-    first = cast("Text", group.renderables[0])
-    return {str(span.style) for span in first.spans}
+    panels = (item for item in group.renderables if isinstance(item, Text))
+    return {str(span.style) for panel_content in panels for span in panel_content.spans}
 
 
 def test_role_view_tail_recovers_a_new_turn_consumed_under_the_old_turn_name(
@@ -557,11 +557,11 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
         async with app.run_test(size=(100, 30)) as pilot:
             panel = app.query_one(EscalationsPanel)
             scroll = panel.query_one("#escalation-panels")
-            await wait_until(lambda: len(list(scroll.query(Static))) == 3, timeout=1)
+            await wait_until(lambda: len(list(scroll.query(Static))) == 1, timeout=1)
             panel.focus()
-            await pilot.press("down")
+            await pilot.press("right")
             await wait_until(
-                lambda: "▶ E-2 · Second packet" in plain_text(scroll.query(Static)[1].content),
+                lambda: "▶ E-2 · Second packet" in plain_text(scroll.query(Static)[0].content),
                 timeout=1,
             )
             scroll.scroll_end(animate=False)
@@ -582,7 +582,7 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             assert list(scroll.query(Static)) == cards
             assert scroll.scroll_y == scroll_y
             assert pilot.app.focused is panel
-            assert "▶ E-2 · Second packet" in plain_text(scroll.query(Static)[1].content)
+            assert "▶ E-2 · Second packet" in plain_text(scroll.query(Static)[0].content)
 
             store = EscalationStore(connection, clock)
             store.resolve(first.id, "retry")

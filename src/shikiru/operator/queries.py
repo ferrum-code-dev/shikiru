@@ -197,7 +197,8 @@ class EscalationView(OperatorView):
     """An escalation row and its packet text."""
 
     escalation: Escalation
-    packet: str
+    packet: str | None
+    packet_error: str | None = None
 
 
 class PeekPane(OperatorView):
@@ -553,18 +554,27 @@ class OperatorQueries:
         return task_root(self._project_root, task_id)
 
     def list_escalations(self) -> list[EscalationView]:
-        """Return all currently open escalation packets."""
-        return [
-            EscalationView(escalation=escalation, packet=self._packet_text(escalation))
-            for escalation in self._reader.list_open_escalations()
-        ]
+        """Return every durable open decision with packet text or its read error."""
+        escalations = self._reader.list_open_escalations()
+        escalations.sort(key=lambda item: (item.created_at, item.id))
+        return [self._escalation_view(escalation) for escalation in escalations]
 
     def get_escalation(self, escalation_id: str) -> EscalationView | None:
         """Return one escalation and packet text, or `None` when absent."""
         escalation = self._reader.get_escalation(escalation_id)
         if escalation is None:
             return None
-        return EscalationView(escalation=escalation, packet=self._packet_text(escalation))
+        return self._escalation_view(escalation)
+
+    def _escalation_view(self, escalation: Escalation) -> EscalationView:
+        try:
+            return EscalationView(escalation=escalation, packet=self._packet_text(escalation))
+        except OperatorQueryError as error:
+            return EscalationView(
+                escalation=escalation,
+                packet=None,
+                packet_error=str(error),
+            )
 
     def peek_session(self, task_id: str, role: Role | None = None) -> PeekView | None:
         """Return the last message, usage and recent view lines of one or every task role."""
@@ -599,7 +609,7 @@ class OperatorQueries:
             raise OperatorQueryError(message)
         try:
             return packet_path.read_text()
-        except OSError as error:
+        except (OSError, UnicodeError) as error:
             message = f"cannot read escalation packet {packet_path}: {error}"
             raise OperatorQueryError(message) from error
 

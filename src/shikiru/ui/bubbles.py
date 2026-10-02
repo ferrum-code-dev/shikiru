@@ -36,5 +36,6 @@ class SpeechBubble:
         result = Text()
         result.append(f"{glyph} {speaker}: ", style=color)
         result.append(f"“{line}”")
-        result.append(f"   {self.task_id} · {self.age}", style="dim")
+        context = f"{self.task_id} · {self.age}" if self.task_id else self.age
+        result.append(f"   {context}", style="dim")
         return result

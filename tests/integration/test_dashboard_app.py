@@ -182,6 +182,50 @@ async def test_dashboard_mounts_the_default_widgets(
         reader.close()
 
 
+async def test_home_summary_buttons_navigate_to_their_task_content(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=load_settings(project_dir).dashboard.widgets)
+        async with app.run_test(size=(72, 40)) as pilot:
+            active_screen = pilot.app.screen
+            await pilot.click("#workspace-summary-running")
+            await wait_until(
+                lambda: cast(
+                    "Text", app.query_one("#task-filter-active", Button).label
+                ).plain.startswith(">"),
+                timeout=2,
+            )
+            assert app.focused is app.query_one("#task-browser-list")
+
+            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
+            dashboard.scroll_to_widget(
+                app.query_one("#workspace-summary-waiting"), top=True, animate=False
+            )
+            await pilot.pause()
+            await pilot.click("#workspace-summary-waiting")
+            await wait_until(
+                lambda: cast(
+                    "Text", app.query_one("#task-filter-waiting", Button).label
+                ).plain.startswith(">"),
+                timeout=2,
+            )
+            assert app.focused is app.query_one("#task-browser-list")
+
+            dashboard.scroll_to_widget(
+                app.query_one("#workspace-summary-attention"), top=True, animate=False
+            )
+            await pilot.pause()
+            await pilot.click("#workspace-summary-attention")
+            assert app.focused is app.query_one("#escalations")
+            assert app.screen is active_screen
+    finally:
+        reader.close()
+
+
 async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
     database: Database,
     connection: Connection,

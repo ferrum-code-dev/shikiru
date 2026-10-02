@@ -6,13 +6,14 @@ configured interval so a dashboard refresh never spawns a git process on every t
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from shikiru.dashboard.contract import ContainerView, DockerView, RepoStatus, ResourceView
 from shikiru.domain.tasks import Role, Status
 from shikiru.errors import ShikiruError
 from shikiru.tmux.session import HOME_WINDOW_NAME
+from shikiru.ui.age import format_age
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,10 +74,10 @@ class GitRepoStatusService:
         if self._cache is not None:
             age = (now - self._cache.fetched_at).total_seconds()
             if age < self._cache_ttl_seconds:
-                return self._cache.status
+                return replace(self._cache.status, sampled_ago=format_age(age))
         status = await self._status()
         self._cache = _CachedRepoStatus(fetched_at=now, status=status)
-        return status
+        return replace(status, sampled_ago=format_age(0))
 
     async def _status(self) -> RepoStatus:
         repo = self._repo

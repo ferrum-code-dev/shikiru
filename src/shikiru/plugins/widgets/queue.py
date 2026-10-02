@@ -162,6 +162,11 @@ class QueuePanel(Vertical):
         elif button_id == REVEAL_BUTTON_ID:
             await self._reveal_selected_task()
 
+    async def activate_filter(self, task_filter: TaskBrowserFilter) -> None:
+        """Navigate to a task category while retaining search and selected identity."""
+        await self._refresh(task_filter=task_filter, reset_pages=True)
+        self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
+
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id != TASK_LIST_ID or self._refreshing:
             return

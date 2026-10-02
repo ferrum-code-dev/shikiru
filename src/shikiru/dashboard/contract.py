@@ -65,6 +65,7 @@ class RepoStatus:
     ahead: int
     behind: int
     dirty: int
+    sampled_ago: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,24 @@ class HeaderView:
     maximum_slots: int
     repo: RepoStatus
     alerts: tuple[str, ...]
+    integration_mode: str = ""
+
+
+@dataclass(frozen=True)
+class WorkspaceSummaryView:
+    """Task and attention counts for the home summary controls."""
+
+    attention_groups: int
+    decisions: int
+    stalls: int
+    faults: int
+    running: int
+    waiting: int
+
+    @property
+    def attention(self) -> int:
+        """Count grouped attention rows, which may overlap waiting tasks."""
+        return self.attention_groups
 
 
 @dataclass(frozen=True)
@@ -272,6 +291,30 @@ class EscalationPanelView:
     options: tuple[str, ...]
     packet: str
     pulse_red: bool
+    task_title: str = ""
+    age: str = ""
+    resolution_actions: tuple[str, ...] = ()
+    evidence_error: str | None = None
+
+
+@dataclass(frozen=True)
+class AttentionGroupView:
+    """One task's open decisions, diagnosed stall and recorded engine faults."""
+
+    task_id: str | None
+    title: str
+    reasons: tuple[str, ...]
+    escalations: tuple[EscalationPanelView, ...]
+
+
+@dataclass(frozen=True)
+class AttentionView:
+    """Grouped inspection items and their decision, stall and fault counts."""
+
+    groups: tuple[AttentionGroupView, ...]
+    decisions: int
+    stalls: int
+    faults: int
 
 
 @dataclass(frozen=True)
@@ -341,6 +384,14 @@ class DashboardViews(Protocol):
 
     async def header(self) -> HeaderView:
         """Return the project, engine, slots and repository view."""
+        ...
+
+    def workspace_summary(self) -> WorkspaceSummaryView:
+        """Return attention, running and waiting counts for home navigation."""
+        ...
+
+    def attention(self) -> AttentionView:
+        """Return open decisions, diagnosed stalls and recorded engine faults."""
         ...
 
     def strips(self) -> list[TaskStripData]:
@@ -442,3 +493,4 @@ class WidgetContext:
     navigate_role_pane: NavigateRolePane | None = None
     navigate_home: NavigateHome | None = None
     on_task_selected: SelectTaskContext | None = None
+    activate_home_summary: Callable[[str], Awaitable[None]] | None = None

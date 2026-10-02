@@ -264,8 +264,13 @@ async def test_missing_packet_and_session_are_operator_errors(
     )
     queries = _queries(tmp_path, reader)
 
-    with pytest.raises(OperatorQueryError):
-        queries.get_escalation(escalation.id)
+    view = queries.get_escalation(escalation.id)
+    assert view is not None
+    assert view.packet is None
+    assert view.packet_error is not None
+    assert view.escalation.id == escalation.id
+    assert view.escalation.task_id == task.id
+    assert view.escalation.headline == "question"
     with pytest.raises(OperatorQueryError):
         queries.peek_session(task.id)
 

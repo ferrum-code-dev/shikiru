@@ -9,7 +9,7 @@ from textual.widgets import Static
 
 from shikiru.domain.events import EventKind
 from shikiru.domain.scheduling import WaitReason
-from shikiru.domain.steps import Transition, first_step
+from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Status
 from shikiru.plugins.widgets.header import HeaderPanel, HeaderWidget
 from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
@@ -19,7 +19,7 @@ from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, WidgetHostApp, widget_context
+from tests.support.dashboard import StubServices, WidgetHostApp, state_views, widget_context
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -64,6 +64,7 @@ async def test_header_shows_project_name_engine_state_and_slots(
         assert "demo" in text
         assert "engine up" in text
         assert "slots 1/2" in text
+        assert "integration merge" in text
         assert "+1/-0" in text
         assert "2 dirty" in text
 
@@ -84,6 +85,31 @@ async def test_header_does_not_count_an_escalated_slot_as_occupied(
         await pilot.pause()
 
         assert "slots 0/2" in cast("str", widget.content)
+
+
+async def test_home_summary_separates_paused_and_external_waits_from_slot_occupancy(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tasks = TaskStore(connection, clock)
+    paused_id = _submit_task(connection, clock)
+    tasks.set_holds(paused_id, frozenset({Hold.PAUSED}))
+    running_id = _submit_task(connection, clock)
+    tasks.set_slot(running_id, 1)
+    external_wait = seed_task(connection, clock, title="Pull request wait")
+    tasks.apply_transition(
+        external_wait.id,
+        Transition.stay(external_wait, step=Step.INTEGRATE, status=Status.INTEGRATING),
+    )
+    tasks.set_wait_reason(external_wait.id, WaitReason.PR_OPEN)
+
+    views = state_views(reader, project_dir, clock, StubServices())
+    summary = views.workspace_summary()
+    header = await views.header()
+
+    assert (summary.running, summary.waiting) == (1, 2)
+    assert (header.occupied_slots, header.maximum_slots) == (2, 2)
 
 
 async def test_header_shows_an_open_fault_streak_and_the_age_of_the_oldest_escalation(

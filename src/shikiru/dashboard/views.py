@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Protocol
 
 from shikiru.dashboard.contract import (
     AgentUsageView,
+    AttentionGroupView,
+    AttentionView,
     CommandFeedbackEntryView,
     CommandFeedbackStatus,
     CommandHistoryView,
@@ -30,6 +32,7 @@ from shikiru.dashboard.contract import (
     TaskSessionView,
     TaskSignalView,
     TaskTestView,
+    WorkspaceSummaryView,
 )
 from shikiru.domain.commands import CommandStatus
 from shikiru.domain.events import EventKind
@@ -59,6 +62,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.motion import DashboardMotion
+    from shikiru.domain.faults import FaultStreak
     from shikiru.domain.motion import TaskMotionFrame
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
@@ -81,14 +85,23 @@ INTEGRATION_STEP = "integration"
 REWORK_STEP = "rework"
 PACKET_QUESTION_HEADING = "Question"
 PACKET_OPTIONS_HEADING = "Options"
-_DIALOGUE_KINDS = (
+_ACTIVITY_KINDS = (
     EventKind.VERDICT,
     EventKind.TURN_COMPLETED,
+    EventKind.TURN_FAILED,
+    EventKind.TURN_STOPPED,
     EventKind.HELPER_ACTION,
     EventKind.RUNG_CHANGED,
     EventKind.QUOTA_BLOCKED,
+    EventKind.QUOTA_CLEARED,
     EventKind.SCOPE_CHANGE,
+    EventKind.HOLD_SET,
+    EventKind.HOLD_CLEARED,
+    EventKind.TASK_RETRIED,
+    EventKind.INTEGRATION_WAITING,
     EventKind.TASK_DONE,
+    EventKind.ENGINE_FAULT,
+    EventKind.ENGINE_RECOVERED,
 )
 _ACTIVE_TURN_STATUSES = (Status.RUNNING, Status.INTEGRATING)
 
@@ -139,6 +152,8 @@ class StateDashboardViews:
         self._usage_cache: tuple[list[UsageView], dict[str, list[QuotaWindow]]] | None = None
         self._escalation_version = -1
         self._escalation_cache: list[EscalationView] | None = None
+        self._fault_version = -1
+        self._fault_cache: tuple[FaultStreak, ...] | None = None
 
     async def header(self) -> HeaderView:
         """Build the project, engine, slot and repository summary."""
@@ -150,18 +165,56 @@ class StateDashboardViews:
             maximum_slots=self._settings.orchestration.max_parallel,
             repo=await self._sources.repo_status(),
             alerts=self._alerts(),
+            integration_mode=self._settings.orchestration.integration,
+        )
+
+    def workspace_summary(self) -> WorkspaceSummaryView:
+        """Count home categories without treating them as disjoint task totals."""
+        attention = self.attention()
+        tasks = self._state.list_tasks()
+        running = sum(
+            task.status in _ACTIVE_TURN_STATUSES and not task.held and task.wait_reason is None
+            for task in tasks
+        )
+        waiting = sum(
+            task.status not in (Status.DONE, Status.CANCELLED)
+            and (
+                task.status in (Status.QUEUED, Status.ESCALATED)
+                or task.held
+                or task.wait_reason is not None
+            )
+            for task in tasks
+        )
+        return WorkspaceSummaryView(
+            attention_groups=len(attention.groups),
+            decisions=attention.decisions,
+            stalls=attention.stalls,
+            faults=attention.faults,
+            running=running,
+            waiting=waiting,
         )
 
     def _alerts(self) -> tuple[str, ...]:
         lines = [
             f"{GLYPH_STALLED} {fault.scope}{f' {fault.task_id}' if fault.task_id else ''}: "
             f"{fault.error} x{fault.repeat} since {fault.first_seen.strftime(ALERT_TIME_FORMAT)}"
-            for fault in self._queries.open_faults()
+            for fault in self._cached_faults()
         ]
         age = self._queries.oldest_escalation_age_seconds()
         if age is not None:
             lines.append(f"oldest escalation {format_age(age)}")
         return tuple(lines)
+
+    def _cached_faults(self) -> tuple[FaultStreak, ...]:
+        version = self._state.data_version()
+        if version != self._fault_version:
+            self._fault_version = version
+            self._fault_cache = tuple(self._queries.open_faults())
+        faults = self._fault_cache
+        if faults is None:
+            message = "fault cache was not initialized"
+            raise RuntimeError(message)
+        return faults
 
     def strips(self) -> list[TaskStripData]:
         """Build the active task strips, placing the focused task first."""
@@ -396,7 +449,10 @@ class StateDashboardViews:
         )
 
     def escalations(self) -> list[EscalationPanelView]:
-        """Build splash panels from each stored packet's headline, question and options."""
+        """Build every durable open decision, retaining its row when evidence is unreadable."""
+        return list(self._decision_views(self._clock.now()).values())
+
+    def _cached_escalations(self) -> list[EscalationView]:
         version = self._state.data_version()
         if version != self._escalation_version:
             self._escalation_version = version
@@ -405,21 +461,120 @@ class StateDashboardViews:
         if items is None:
             message = "escalation cache was not initialized"
             raise RuntimeError(message)
-        pulse = self._motion.frames(
-            (), self._clock.now(), escalations_open=bool(items)
-        ).escalation_red
-        return [
-            EscalationPanelView(
-                escalation_id=item.escalation.id,
-                task_id=item.escalation.task_id,
-                headline=_packet_headline(item.packet),
-                question=_packet_section(item.packet, PACKET_QUESTION_HEADING, allow_empty=True),
-                options=_packet_options(item.packet),
-                packet=item.packet,
+        return items
+
+    def _decision_views(self, now: datetime) -> dict[str, EscalationPanelView]:
+        items = self._cached_escalations()
+        pulse = self._motion.frames((), now, escalations_open=bool(items)).escalation_red
+        tasks = {task.id: task for task in self._state.list_tasks()}
+        result: dict[str, EscalationPanelView] = {}
+        for item in items:
+            escalation = item.escalation
+            question = ""
+            options: tuple[str, ...] = ()
+            evidence_error = item.packet_error
+            if item.packet is not None:
+                try:
+                    question = _packet_section(
+                        item.packet, PACKET_QUESTION_HEADING, allow_empty=True
+                    )
+                    options = _packet_options(item.packet)
+                except ValueError as error:
+                    evidence_error = str(error)
+            task = tasks.get(escalation.task_id)
+            result[escalation.id] = EscalationPanelView(
+                escalation_id=escalation.id,
+                task_id=escalation.task_id,
+                headline=escalation.headline,
+                question=question,
+                options=options,
+                packet=item.packet or "",
                 pulse_red=pulse,
+                task_title=task.title if task is not None else escalation.task_id,
+                age=_age(now - escalation.created_at),
+                resolution_actions=tuple(option.label.value for option in escalation.options),
+                evidence_error=evidence_error,
             )
-            for item in items
+        return result
+
+    def _dialogue_view(self, task_id: str | None = None) -> list[DialogueBubbleView]:
+        now = self._clock.now()
+        return [
+            DialogueBubbleView(
+                role=_event_role(event.kind, event.data),
+                text=_event_text(event.kind, event.message, event.data),
+                task_id=event.task_id or "",
+                age=_age(now - event.ts),
+            )
+            for event in self._state.latest_events(
+                DIALOGUE_LINE_LIMIT,
+                kinds=_ACTIVITY_KINDS,
+                implementer_turns_only=True,
+                task_id=task_id,
+            )
         ]
+
+    def attention(self) -> AttentionView:
+        """Group durable decisions, existing stall diagnoses and open fault streaks by task."""
+        now = self._clock.now()
+        tasks = {task.id: task for task in self._state.list_tasks()}
+        decision_views = self._decision_views(now)
+        group_reasons: dict[str | None, list[str]] = {}
+        group_decisions: dict[str | None, list[EscalationPanelView]] = {}
+        decision_order: dict[str | None, tuple[datetime, str]] = {}
+        group_titles: dict[str | None, str] = {}
+
+        for item in self._cached_escalations():
+            task_id = item.escalation.task_id
+            group_decisions.setdefault(task_id, []).append(decision_views[item.escalation.id])
+            task = tasks.get(task_id)
+            group_titles[task_id] = task.title if task is not None else task_id
+            order = (item.escalation.created_at, item.escalation.id)
+            if task_id not in decision_order or order < decision_order[task_id]:
+                decision_order[task_id] = order
+
+        active = self._state.list_tasks(statuses=_ACTIVE_TURN_STATUSES)
+        frames = self._motion.frames(tuple(active), now)
+        stalled_ids = {item.task_id for item in frames.tasks if item.stalled}
+        for task_id in stalled_ids:
+            group_reasons.setdefault(task_id, []).append("diagnosed stall")
+            group_titles[task_id] = tasks[task_id].title
+
+        faults = self._cached_faults()
+        for fault in faults:
+            task_id = fault.task_id
+            reason = f"engine fault · {fault.scope}: {fault.error} x{fault.repeat}"
+            if task_id is None:
+                group_titles[None] = "Project"
+            else:
+                task = tasks.get(task_id)
+                group_titles[task_id] = task.title if task is not None else task_id
+            group_reasons.setdefault(task_id, []).append(reason)
+
+        group_ids = set(group_reasons) | set(group_decisions)
+        decision_groups = sorted(
+            (task_id for task_id in group_ids if task_id in decision_order),
+            key=lambda task_id: decision_order[task_id],
+        )
+        other_groups = sorted(
+            (task_id for task_id in group_ids if task_id not in decision_order),
+            key=lambda task_id: (task_id is None, task_id or ""),
+        )
+        entries = tuple(
+            AttentionGroupView(
+                task_id=task_id,
+                title=group_titles[task_id],
+                reasons=tuple(group_reasons.get(task_id, ())),
+                escalations=tuple(group_decisions.get(task_id, ())),
+            )
+            for task_id in (*decision_groups, *other_groups)
+        )
+        return AttentionView(
+            groups=entries,
+            decisions=len(decision_views),
+            stalls=len(stalled_ids),
+            faults=len(faults),
+        )
 
     async def task_detail(self, task_id: str) -> TaskDetailView | None:
         """Project current task state and its bounded, recorded evidence for the detail view."""
@@ -497,23 +652,8 @@ class StateDashboardViews:
         )
 
     def dialogue(self, task_id: str | None = None) -> list[DialogueBubbleView]:
-        """Build recent speech-worthy events for the project or one task, oldest first."""
-        now = self._clock.now()
-        return [
-            DialogueBubbleView(
-                role=_event_role(event.kind, event.data),
-                text=_event_text(event.kind, event.message, event.data),
-                task_id=event.task_id or "",
-                age=_age(now - event.ts),
-            )
-            for event in self._state.latest_events(
-                DIALOGUE_LINE_LIMIT,
-                kinds=_DIALOGUE_KINDS,
-                implementer_turns_only=True,
-                task_id=task_id,
-            )
-            if event.task_id is not None
-        ]
+        """Build recent project or task decisions and activity in event order."""
+        return self._dialogue_view(task_id)
 
     def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
         """Build project usage or usage recorded for one task."""
@@ -665,14 +805,6 @@ class StateDashboardViews:
         elif motion.stamp_kind is MotionStampKind.MERGED:
             stamp = StripStamp(StampKind.MERGED, flash=motion.stamp_flash)
         return replace(data, panels=tuple(panels), stamp=stamp)
-
-
-def _packet_headline(packet: str) -> str:
-    lines = packet.splitlines()
-    if not lines or not lines[0].startswith("# "):
-        message = "escalation packet has no headline"
-        raise ValueError(message)
-    return lines[0].removeprefix("# ")
 
 
 def _packet_section(packet: str, heading: str, *, allow_empty: bool = False) -> str:

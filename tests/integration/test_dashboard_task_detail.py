@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from textual.containers import HorizontalScroll
 from textual.widgets import Button, DataTable, ListView, Select, Static
 
 import shikiru.agents.registry as registry_module
@@ -17,6 +18,7 @@ from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
 from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_ROLE,
+    TASK_DETAIL_ATTENTION_BUTTON,
     TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON,
     TASK_DETAIL_HAND_BACK_LEADER_BUTTON,
     TASK_DETAIL_IDENTITY,
@@ -105,6 +107,7 @@ if TYPE_CHECKING:
     from textual.widget import Widget
 
     from shikiru.dashboard.contract import (
+        NavigateHome,
         NavigateRolePane,
         NavigateTaskWindow,
         OpenPaletteContext,
@@ -155,6 +158,7 @@ def _dashboard_app(
     widget_names: list[str],
     navigate_task_window: NavigateTaskWindow | None = None,
     navigate_role_pane: NavigateRolePane | None = None,
+    navigate_home: NavigateHome | None = None,
     open_palette_context: OpenPaletteContext | None = None,
 ) -> DashboardApp:
     settings = load_settings(project_root)
@@ -178,6 +182,7 @@ def _dashboard_app(
         open_palette_context=open_palette_context,
         navigate_task_window=navigate_task_window,
         navigate_role_pane=navigate_role_pane,
+        navigate_home=navigate_home,
     )
 
 
@@ -1062,7 +1067,15 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
             situation = _text(app.query_one("#task-detail-situation", Static))
             assert "Global attention · 1 decisions · 1 engine faults" in situation
             dialogue = cast("DataTable[object]", app.query_one("#dialogue-table", DataTable))
-            assert dialogue.row_count == 1
+            assert dialogue.row_count == 2
+            dialogue_text = " ".join(
+                plain_text(cell)
+                for row in range(dialogue.row_count)
+                for cell in dialogue.get_row_at(row)
+            )
+            assert "Focused activity only" in dialogue_text
+            assert "recorded fault" in dialogue_text
+            assert "Unrelated activity" not in dialogue_text
             usage_text = plain_text(app.query_one("#usage", Static).content)
             assert focused_run.agent in usage_text
             assert "4" in usage_text
@@ -1071,6 +1084,49 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
             assert app.query_one("#task-view-extension-panel", Static).region.width > 0
             assert len(app.query("#task-browser-list")) == 0
             assert app.query_one("#task-detail-window", Button).region.width > 0
+    finally:
+        reader.close()
+
+
+async def test_task_window_global_attention_uses_injected_home_navigation(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    task = seed_task(connection, SystemClock(), title="Return to project attention")
+    reader = StateReader(database, SystemClock())
+    home_results: list[str] = []
+
+    async def navigate_home() -> str:
+        result = "opened existing home window"
+        home_results.append(result)
+        return result
+
+    try:
+        app = _dashboard_app(
+            reader,
+            project_root,
+            focus_task=task.id,
+            widget_names=TASK_DETAIL_WIDGETS,
+            navigate_home=navigate_home,
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            await wait_until(lambda: task.title in _text(identity), timeout=2)
+            toolbar = app.query_one("#task-detail-toolbar", HorizontalScroll)
+            toolbar.scroll_to_widget(
+                app.query_one(f"#{TASK_DETAIL_ATTENTION_BUTTON}", Button),
+                animate=False,
+            )
+            await pilot.pause()
+            await pilot.click(f"#{TASK_DETAIL_ATTENTION_BUTTON}")
+            feedback = app.query_one("#task-detail-feedback", Static)
+            await wait_until(
+                lambda: "opened existing home window" in _text(feedback),
+                timeout=2,
+            )
+            assert home_results == ["opened existing home window"]
     finally:
         reader.close()
 

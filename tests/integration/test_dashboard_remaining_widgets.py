@@ -14,9 +14,10 @@ from textual.widgets import DataTable, Static
 from shikiru.agents.contracts import QuotaWindow, Rung, Usage
 from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.services import DashboardServices, GitRepoStatusService
-from shikiru.domain.escalation import options_for
+from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import EscalationReason, Role
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import EscalationReason, Role, Status
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
 from shikiru.plugins.widgets.usage import UsagePanel, UsageWidget
@@ -25,6 +26,7 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
+from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.docker import (
     DOCKER_BINARY,
     DOCKER_FORMAT_FLAG,
@@ -48,6 +50,7 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shikiru.store.database import Database
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -129,6 +132,157 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
         widget.focus()
         await pilot.press("r")
         assert actions == ["resolve E-1"]
+
+
+async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packet(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Choose retry behavior")
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=task.step, status=Status.ESCALATED),
+    )
+    EventLog(connection, clock).append(
+        EventKind.ENGINE_FAULT,
+        task_id=task.id,
+        message="recorded engine failure",
+        data={
+            "scope": "engine tick",
+            "error": "CommandFailed",
+            "recoverable": True,
+            "repeat": 1,
+        },
+    )
+    EventLog(connection, clock).append(
+        EventKind.ENGINE_RECOVERED,
+        task_id=task.id,
+        message="engine recovered",
+        data={"scope": "engine tick"},
+    )
+    escalation = EscalationStore(connection, clock).open(
+        task.id,
+        step=task.step,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="Choose whether to retry",
+        packet_path=".shikiru/escalations/missing-packet.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+    context = widget_context(reader, project_dir, clock)
+    decision = context.views.attention().groups[0].escalations[0]
+    assert context.views.attention().decisions == 1
+    assert context.views.attention().faults == 0
+    assert any(item.text == "engine recovered" for item in context.views.dialogue())
+    assert decision.escalation_id == escalation.id
+    assert decision.task_id == task.id
+    assert decision.headline == "Choose whether to retry"
+    assert decision.resolution_actions == ("answer", "cancel")
+    assert decision.evidence_error is not None
+    assert "missing-packet.md" in decision.evidence_error
+
+    panel = cast("EscalationsPanel", EscalationsWidget().create(context))
+    async with WidgetHostApp(panel).run_test() as pilot:
+        await wait_until(
+            lambda: (
+                escalation.id
+                in plain_text(panel.query_one("#escalation-panels").query(Static)[0].content)
+            ),
+            timeout=2,
+        )
+        panel.focus()
+        await pilot.press("o")
+        await pilot.pause()
+        evidence = cast("Static", pilot.app.screen.query_one("#escalation-packet"))
+        evidence_text = plain_text(evidence.render())
+        assert escalation.id in evidence_text
+        assert "answer, cancel" in evidence_text
+        assert "Evidence error" in evidence_text
+        current = EscalationStore(connection, clock).get(escalation.id)
+        assert current is not None
+        assert current.status is EscalationStatus.OPEN
+        assert not (project_dir / ".shikiru/escalations/missing-packet.md").exists()
+
+
+async def test_attention_refreshes_after_another_client_resolves_without_stealing_focus(
+    database: Database,
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Choose retry behavior")
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=task.step, status=Status.ESCALATED),
+    )
+    escalation = EscalationStore(connection, clock).open(
+        task.id,
+        step=task.step,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="Choose whether to retry",
+        packet_path=".shikiru/escalations/missing-packet.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+    context = widget_context(reader, project_dir, clock)
+    panel = cast("EscalationsPanel", EscalationsWidget().create(context))
+    second_client = database.connect()
+    try:
+        async with WidgetHostApp(panel).run_test() as pilot:
+            await wait_until(
+                lambda: (
+                    escalation.id
+                    in plain_text(panel.query_one("#escalation-panels").query(Static)[0].content)
+                ),
+                timeout=2,
+            )
+            assert context.views.workspace_summary().attention == 1
+            panel.focus()
+            active_screen = pilot.app.screen
+            fault_data = {
+                "scope": "engine tick",
+                "error": "CommandFailed",
+                "recoverable": True,
+                "repeat": 1,
+            }
+            EventLog(second_client, clock).append(
+                EventKind.ENGINE_FAULT,
+                task_id=task.id,
+                message="new engine fault",
+                data=fault_data,
+            )
+            await wait_until(
+                lambda: (
+                    "engine fault"
+                    in plain_text(panel.query_one("#escalation-panels").query(Static)[0].content)
+                ),
+                timeout=2,
+            )
+            assert pilot.app.focused is panel
+            assert pilot.app.screen is active_screen
+            assert f"▶ {task.id} · Choose retry behavior" in plain_text(
+                panel.query_one("#escalation-panels").query(Static)[0].content
+            )
+            assert context.views.workspace_summary().attention == 1
+
+            EscalationStore(second_client, clock).resolve(escalation.id, "cancel")
+            await wait_until(
+                lambda: (
+                    escalation.id
+                    not in plain_text(
+                        panel.query_one("#escalation-panels").query(Static)[0].content
+                    )
+                ),
+                timeout=2,
+            )
+            assert context.views.attention().decisions == 0
+            assert pilot.app.focused is panel
+            assert pilot.app.screen is active_screen
+    finally:
+        second_client.close()
 
 
 async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(

@@ -17,8 +17,11 @@ def _header_text(view: HeaderView) -> str:
     summary = (
         f"{view.project} · engine {engine_state} · slots {view.occupied_slots}/{view.maximum_slots}"
     )
+    if view.integration_mode:
+        summary = f"{summary} · integration {view.integration_mode}"
     repo = view.repo
-    repo_line = f"{repo.branch} · +{repo.ahead}/-{repo.behind} · {repo.dirty} dirty"
+    sampled = f" · sampled {repo.sampled_ago} ago" if repo.sampled_ago else ""
+    repo_line = f"{repo.branch} · +{repo.ahead}/-{repo.behind} · {repo.dirty} dirty{sampled}"
     return "\n".join((summary, repo_line, *view.alerts))
 
 

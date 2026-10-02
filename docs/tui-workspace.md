@@ -2,7 +2,7 @@
 
 ## 1. Status and relationship to the design
 
-This document specifies the TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). Task 75 shipped the shared visual theme and navigable shell for current widgets. Task 76 shipped the selectable task browser and bounded search through the existing `queue` entry point. Task 77 shipped shared task detail, task-scoped activity and usage, and navigation to existing task windows and role panes. Task 78 shipped contextual actions and the searchable palette. Task 79 shipped bounded durable command feedback and persistent ownership/hold banners. Richer family/history views, responsive composition and export remain later work. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
+This document specifies the TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). Task 75 shipped the shared visual theme and navigable shell for current widgets. Task 76 shipped the selectable task browser and bounded search through the existing `queue` entry point. Task 77 shipped shared task detail, task-scoped activity and usage, and navigation to existing task windows and role panes. Task 78 shipped contextual actions and the searchable palette. Task 79 shipped bounded durable command feedback and persistent ownership/hold banners. Task 80 shipped the Home summary composition, durable grouped attention, project activity and header context. Richer family/history views, responsive composition and export remain later work. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
 
 The workspace refines [06 · Operator Interfaces](design/06-operator.md), especially §5.4–5.5 and §6: the system pane becomes a navigable workspace with distinct home and task views, contextual actions, and persistent command feedback. The comic strip remains the task's expanded progress view. The architecture and workflow in [02](design/02-architecture.md) and [03](design/03-workflow.md) govern all state changes.
 
@@ -56,6 +56,8 @@ The summary area contains:
 
 The Running count describes workflow state, not CPU activity or a guarantee that a process is executing at that instant. Waiting includes tasks whose status is still `running` while paused. Attention and Waiting can overlap; label their categories and do not present the cards as an additive total. Slots continue to follow the domain's slot accounting, including paused tasks and PR waits.
 
+Attention counts grouped task/project rows; reasons for one task share one row. Open decisions lead in creation-time/ID order. A missing or unreadable packet leaves its durable escalation ID, task, headline and allowed actions visible beside the evidence error. Opening evidence never creates a packet or changes the decision. The shell refreshes from durable state, including another client's resolution, without moving focus or opening a modal. Existing diagnosed stall and unrecovered engine-fault evidence is shown alongside decisions. Retries, quota waits, expected rework, and deliberate pauses remain informational workflow states. Engine-lock liveness, fault records and agent signals are distinct observations; attention adds no heartbeat, long-wait classifier or notification policy.
+
 Use compact cards when space permits and one summary line in a narrow or short pane. Large branding, charts and diagnostics must not push attention or task navigation out of reach.
 
 ### 4.2 Attention
@@ -68,9 +70,9 @@ An escalation remains visible until durable state says it is resolved. When its 
 
 ### 4.3 Main body
 
-The home body contains a selectable task browser, the selected task's detail, and recent project activity. On a wide pane, browser and detail sit side by side. On a compact pane, Enter opens detail and Escape returns to the browser with its previous selection and scroll position.
+The home body contains a selectable task browser, shared task detail access, and recent project activity. On a wide pane, browser and detail sit side by side. On a compact pane, Enter opens detail and Escape returns to the browser with its previous selection and scroll position. Task 80 composes these with the existing header and bounded summaries; responsive wide/compact layout remains Task 85 work.
 
-Recent activity covers verdicts, scope changes, completions, holds, recovery and engine faults. Routine tool traffic belongs in task evidence and the role panes. Usage and diagnostics are secondary views reachable from the workspace navigation and palette.
+Recent activity covers verdicts, scope changes, completions, holds, retry/rework transitions, quota changes, integration waits, engine faults and recovery. Routine tool traffic belongs in task evidence and the role panes. Usage and diagnostics are secondary views reachable from the workspace navigation and palette.
 
 Illustrative wide home view; the numbers and task names are examples:
 

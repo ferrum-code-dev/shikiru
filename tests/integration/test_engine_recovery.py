@@ -16,8 +16,10 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.quotas import QuotaStore
+from shikiru.store.reader import StateReader
 from shikiru.workspace.roots import run_dir
 from tests.support.clock import FakeClock
+from tests.support.dashboard import StubServices, state_views
 from tests.support.engine import FAKE_AGENT_ALIAS, FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
 from tests.support.factories import TASK_CREATED_AT
 from tests.support.flow import (
@@ -31,6 +33,7 @@ from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
+    from shikiru.store.database import Database
     from tests.support.engine import EngineEnv
     from tests.support.tmux import TmuxServer
 
@@ -234,7 +237,7 @@ async def test_auth_failure_escalates_with_the_agent_auth_reason(
 
 
 async def test_other_failure_retries_once_on_the_same_session(
-    engine_env: EngineEnv, tmux_server: TmuxServer
+    database: Database, engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     settings = flow_settings()
@@ -265,6 +268,19 @@ async def test_other_failure_retries_once_on_the_same_session(
         )
         == 2
     )
+    reader = StateReader(database, clock)
+    try:
+        views = state_views(
+            reader,
+            engine_env.project_root,
+            clock,
+            StubServices(),
+            settings=settings,
+        )
+        assert views.attention().decisions == 0
+        assert views.workspace_summary().attention == 0
+    finally:
+        reader.close()
 
 
 async def test_unknown_failure_with_high_confidence_retries(

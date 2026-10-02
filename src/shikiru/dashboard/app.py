@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 from textual.app import App
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
@@ -16,6 +16,7 @@ from shikiru.dashboard.contract import (
     CommandFeedbackStatus,
     CommandHistoryView,
     PaletteRequest,
+    TaskBrowserFilter,
     WidgetContext,
 )
 from shikiru.dashboard.detail import TaskDetailPanel, TaskDetailScreen
@@ -98,6 +99,63 @@ _COMMAND_HISTORY_PREVIOUS_KEY = "left"
 _COMMAND_HISTORY_NEXT_KEY = "right"
 COMMAND_ACTION_SAY = "Say"
 _SEARCH_KEY = "slash"
+_SUMMARY_ATTENTION = "attention"
+_SUMMARY_RUNNING = "running"
+_SUMMARY_WAITING = "waiting"
+_SUMMARY_BAR_HEIGHT = 3
+_SUMMARY_BUTTONS = (
+    (_SUMMARY_ATTENTION, "Attention", "workspace-summary-attention"),
+    (_SUMMARY_RUNNING, "Running", "workspace-summary-running"),
+    (_SUMMARY_WAITING, "Waiting", "workspace-summary-waiting"),
+)
+_SUMMARY_BY_BUTTON = {button_id: name for name, _, button_id in _SUMMARY_BUTTONS}
+
+
+class _TaskBrowserNavigation(Protocol):
+    async def activate_filter(self, task_filter: TaskBrowserFilter) -> None: ...
+
+
+class WorkspaceSummaryBar(Horizontal):
+    """Show bounded home counts with direct navigation to each content list."""
+
+    DEFAULT_CSS = f"""
+    WorkspaceSummaryBar {{ height: {_SUMMARY_BAR_HEIGHT}; width: 100%; padding: 0 1; }}
+    WorkspaceSummaryBar Button {{
+        width: 1fr; min-width: 1; height: {_SUMMARY_BAR_HEIGHT}; padding: 0; margin: 0;
+        border: round $neutral-border; background: $surface; color: $muted-text;
+    }}
+    WorkspaceSummaryBar Button:focus {{
+        border: round $focus; color: $primary-text; text-style: bold reverse;
+    }}
+    """
+
+    def __init__(self, context: WidgetContext) -> None:
+        super().__init__(id="workspace-summary")
+        self._widget_context = context
+
+    def compose(self) -> ComposeResult:
+        for _, label, button_id in _SUMMARY_BUTTONS:
+            yield Button(label, id=button_id)
+
+    async def on_mount(self) -> None:
+        await self._refresh()
+        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        name = _SUMMARY_BY_BUTTON.get(event.button.id or "")
+        callback = self._widget_context.activate_home_summary
+        if name is not None and callback is not None:
+            await callback(name)
+
+    async def _refresh(self) -> None:
+        view = self._widget_context.views.workspace_summary()
+        counts = {
+            _SUMMARY_ATTENTION: view.attention,
+            _SUMMARY_RUNNING: view.running,
+            _SUMMARY_WAITING: view.waiting,
+        }
+        for name, label, button_id in _SUMMARY_BUTTONS:
+            self.query_one(f"#{button_id}", Button).label = f"{label} {counts[name]}"
 
 
 class WidgetPluginError(ConfigError):
@@ -488,6 +546,7 @@ class DashboardApp(App[None]):
             for section_widgets in self._widget_names_by_section.values()
             for name in section_widgets
         )
+        self._widget_instances: dict[str, object] = {}
         self._section_ids = tuple(
             section_id
             for section_id, _ in _SECTION_LABELS
@@ -529,13 +588,17 @@ class DashboardApp(App[None]):
                                     self._focus_task,
                                     fixed=True,
                                 )
+                            elif section_id == _SECTION_WORKSPACE:
+                                yield WorkspaceSummaryBar(context)
                             names = self._widget_names_by_section[section_id]
                             if not names and not (
                                 section_id == _SECTION_WORKSPACE and self._focus_task is not None
                             ):
                                 yield Static("No configured widgets.", markup=False)
                             for name in names:
-                                yield _load_widget(name).create(context)
+                                widget = _load_widget(name).create(context)
+                                self._widget_instances[name] = widget
+                                yield widget
             with Vertical(id="workspace-footer"):
                 yield Static(self._footer_text(), id="workspace-footer-copy", markup=False)
                 with HorizontalScroll(id="workspace-footer-controls"):
@@ -563,7 +626,36 @@ class DashboardApp(App[None]):
             navigate_role_pane=self._navigate_role_pane,
             navigate_home=self._navigate_home,
             on_task_selected=self._select_task_context,
+            activate_home_summary=self._activate_home_summary,
         )
+
+    async def _activate_home_summary(self, summary: str) -> None:
+        self._select_section(_SECTION_WORKSPACE)
+        if summary == _SUMMARY_ATTENTION:
+            panel = self._widget_instances.get(_WIDGET_ESCALATIONS)
+            if panel is None:
+                self.query_one("#workspace-footer-copy", Static).update(
+                    "Attention content is not configured."
+                )
+                return
+            attention_panel = cast("Widget", panel)
+            attention_panel.display = True
+            attention_panel.focus()
+            return
+        task_filter = {
+            _SUMMARY_RUNNING: TaskBrowserFilter.ACTIVE,
+            _SUMMARY_WAITING: TaskBrowserFilter.WAITING,
+        }.get(summary)
+        if task_filter is None:
+            message = f"unknown home summary {summary!r}"
+            raise ValueError(message)
+        browser = self._widget_instances.get(_WIDGET_QUEUE)
+        if browser is None:
+            self.query_one("#workspace-footer-copy", Static).update(
+                "Task browser content is not configured."
+            )
+            return
+        await cast("_TaskBrowserNavigation", browser).activate_filter(task_filter)
 
     def _select_task_context(self, task_id: str | None) -> None:
         self._selected_task_id = task_id

@@ -59,9 +59,12 @@ async def test_repo_status_is_cached_within_the_ttl(tmp_path: Path) -> None:
 
     first = await service.repo_status()
     (repo_dir / "b.txt").write_text("2")
+    clock.advance(2)
     cached = await service.repo_status()
     assert cached.dirty == first.dirty == 0
+    assert first.sampled_ago == "0:00:00"
+    assert cached.sampled_ago == "0:00:02"
 
-    clock.advance(cache_ttl_seconds + 1)
+    clock.advance(cache_ttl_seconds - 1)
     refreshed = await service.repo_status()
     assert refreshed.dirty == 1

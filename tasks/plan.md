@@ -798,10 +798,10 @@ Refs: Workspace §9/§15, 05 §2, 06 §1/§5.5, 03 §7/§9.
 
 ### Task 80: Home overview and attention composition
 Refs: Workspace §3–4, 06 §5.4/§5.7, 01 D18/D21.
-- [ ] Compose the home header, Attention/Running/Waiting summaries, task browser/detail, and recent project decisions/activity. Counts follow the specified definitions and distinguish task categories from slot occupancy.
-- [ ] Attention groups open escalations, diagnosed stalls and recorded engine faults; informational retries, quota waits and deliberate pauses retain their own meanings. Engine lock liveness stays distinct from fault and signal observations.
-- [ ] Summaries navigate to their content, decisions stay visible until durable resolution, and a missing packet shows its evidence error while retaining durable escalation information. Global task-window attention routes back to home.
-- [ ] Update 06 composition/attention rules and 02 data sources; use existing recorded faults and activity rules without a heartbeat, new long-wait policy or external notification system.
+- [x] Compose the home header, Attention/Running/Waiting summaries, task browser/detail, and recent project decisions/activity. Counts follow the specified definitions and distinguish task categories from slot occupancy.
+- [x] Attention groups open escalations, diagnosed stalls and recorded engine faults; informational retries, quota waits and deliberate pauses retain their own meanings. Engine lock liveness stays distinct from fault and signal observations.
+- [x] Summaries navigate to their content, decisions stay visible until durable resolution, and a missing packet shows its evidence error while retaining durable escalation information. Global task-window attention routes back to home.
+- [x] Update 06 composition/attention rules and 02 data sources; use existing recorded faults and activity rules without a heartbeat, new long-wait policy or external notification system.
 - Tests: seeded real state plus fake-agent transitions: paused/PR-waiting tasks and slots count correctly, escalation resolves from another client, unavailable packet retains the decision, recovery does not appear as an open decision, and attention updates without stealing focus.
 
 ### Task 81: Escalation resolution with structured evidence
