@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import TYPE_CHECKING, ClassVar, cast, get_args
 
 from textual.app import App
@@ -14,10 +15,10 @@ from textual.widgets import Button, Collapsible, Input, Label, Select, Static, T
 from shikiru.agents.contracts import parse_rung
 from shikiru.config.settings import ComplexityName
 from shikiru.dashboard.contract import PaletteRequest
-from shikiru.dashboard.escalation_evidence import EscalationPacket, parse_escalation_packet
 from shikiru.domain.commands import CommandKind, CommandStatus, ResolutionKind
 from shikiru.domain.escalation import EscalationStatus
-from shikiru.domain.tasks import Mode, Role, Status
+from shikiru.domain.escalation_evidence import EscalationPacket, parse_escalation_packet
+from shikiru.domain.tasks import Mode, Role
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import (
     ACK_TIMEOUT_MESSAGE,
@@ -29,6 +30,7 @@ from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.widget import Widget
     from textual.worker import Worker
 
     from shikiru.agents.contracts import Rung
@@ -241,7 +243,8 @@ class PaletteScreen(ModalScreen[None]):
     #palette-result-scroll { height: auto; max-height: 12; margin-top: 1; }
     #palette-escalation-summary, #palette-escalation-status, #palette-evidence-error,
     #palette-original-packet, #palette-result { height: auto; }
-    .palette-evidence { height: auto; max-height: 12; }
+    #palette-evidence { height: auto; }
+    .palette-evidence { height: auto; }
     #request { height: 6; }
     #message { height: 4; }
     #resolution-text { height: 5; }
@@ -439,16 +442,7 @@ class PaletteScreen(ModalScreen[None]):
             self._update_fields(event.value)
             self._refresh_action_availability()
         elif event.select.id == _FIELD_ESCALATION:
-            if (
-                self._route_error is not None
-                and isinstance(event.value, str)
-                and self._is_open_escalation(event.value)
-            ):
-                self._route_error = None
-                self.query_one(f"#{_SUBMIT_ID}", Button).disabled = False
-                self._show_result(_EMPTY)
-            self._show_escalation(event.value)
-            self._refresh_action_availability()
+            self._handle_escalation_selection(event.value)
         elif event.select.id == _FIELD_RESOLUTION:
             self._update_fields(self._selected_value(_FIELD_ACTION))
             self._refresh_action_availability()
@@ -459,6 +453,21 @@ class PaletteScreen(ModalScreen[None]):
             if not self._role_is_explicit and event.select.has_focus:
                 self._role_is_explicit = True
             self._refresh_action_availability()
+
+    def _handle_escalation_selection(self, value: object) -> None:
+        selected_id = value if isinstance(value, str) else None
+        if selected_id != self._selected_value(_FIELD_ESCALATION):
+            return
+        if (
+            self._route_error is not None
+            and selected_id is not None
+            and self._is_open_escalation(selected_id)
+        ):
+            self._route_error = None
+            self.query_one(f"#{_SUBMIT_ID}", Button).disabled = False
+            self._show_result(_EMPTY)
+        self._show_escalation(value)
+        self._refresh_action_availability()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Filter palette actions and task targets or refresh current eligibility."""
@@ -613,7 +622,7 @@ class PaletteScreen(ModalScreen[None]):
             reason = _SELECT_REQUIRED
         else:
             item = self._escalations.get(escalation_id)
-            if item is None or item.escalation.status is not EscalationStatus.OPEN:
+            if item is None:
                 reason = self._missing_escalation_message(escalation_id)
             elif self._escalation_state_message is not None:
                 reason = self._escalation_state_message
@@ -643,6 +652,10 @@ class PaletteScreen(ModalScreen[None]):
 
     def _refresh_escalations(self) -> None:
         selected_id = self._selected_value(_FIELD_ESCALATION)
+        same_target = selected_id is not None and selected_id == self._shown_escalation_id
+        form = self.query_one("#palette-form", VerticalScroll)
+        scroll_y = form.scroll_y
+        focused = cast("App[None]", self.app).focused
         escalations = {item.escalation.id: item for item in self._queries.list_escalations()}
         if selected_id is not None and selected_id not in escalations:
             item = self._queries.get_escalation(selected_id)
@@ -652,6 +665,19 @@ class PaletteScreen(ModalScreen[None]):
         self._refresh_escalation_options(preserve=selected_id)
         if selected_id is not None:
             self._show_escalation(selected_id, force=True)
+        if same_target:
+            self.call_after_refresh(partial(self._restore_escalation_form_state, scroll_y, focused))
+
+    def _restore_escalation_form_state(self, scroll_y: float, focused: Widget | None) -> None:
+        if not self._is_current_screen():
+            return
+        if focused is not None and focused.is_mounted and focused.screen is self:
+            focused.focus()
+        self.query_one("#palette-form", VerticalScroll).scroll_to(
+            y=scroll_y,
+            animate=False,
+            immediate=True,
+        )
 
     def _escalation_select_options(self) -> list[tuple[str, str]]:
         return [
@@ -678,18 +704,6 @@ class PaletteScreen(ModalScreen[None]):
 
     def _missing_escalation_message(self, escalation_id: str) -> str:
         return f"escalation {escalation_id} is not open"
-
-    def _escalation_status_message(self, item: EscalationView) -> str | None:
-        escalation = item.escalation
-        task = self._queries.get_task_state(escalation.task_id)
-        task_state = task.status.value if task is not None else "missing"
-        if escalation.status is not EscalationStatus.OPEN:
-            return f"{escalation.id} was resolved; task {escalation.task_id} is {task_state}."
-        if task is None:
-            return f"task {escalation.task_id} is missing; {escalation.id} is stale."
-        if task.status is not Status.ESCALATED:
-            return f"task {escalation.task_id} is {task_state}; {escalation.id} is stale."
-        return None
 
     def _refresh_pending_commands(self) -> None:
         completed: set[int] = set()
@@ -956,7 +970,9 @@ class PaletteScreen(ModalScreen[None]):
             resolution.set_options(())
             return
 
-        self._escalation_state_message = self._escalation_status_message(item)
+        self._escalation_state_message = self._queries.escalation_resolution_disabled_reason(
+            escalation_id
+        )
         status.update(self._escalation_state_message or "Open escalation")
         self._escalation_packet = (
             parse_escalation_packet(item.packet) if item.packet is not None else None
@@ -969,13 +985,15 @@ class PaletteScreen(ModalScreen[None]):
             )
             for option in item.escalation.options
         )
-        resolution.set_options(options)
         selected_resolution = self._selected_value(_FIELD_RESOLUTION)
+        resolution.set_options(options)
         if target_changed or selected_resolution not in {value for _, value in options}:
             recommended = next(
                 option.label.value for option in item.escalation.options if option.recommended
             )
             resolution.value = recommended
+        else:
+            resolution.value = selected_resolution
         question = (
             parsed.agent_request.question
             if parsed is not None and parsed.agent_request is not None

@@ -34,8 +34,8 @@ from shikiru.dashboard.contract import (
     TaskTestView,
     WorkspaceSummaryView,
 )
-from shikiru.dashboard.escalation_evidence import parse_escalation_packet
 from shikiru.domain.commands import CommandStatus, ResolutionKind
+from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.reports import (

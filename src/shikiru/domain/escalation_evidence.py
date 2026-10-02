@@ -23,7 +23,9 @@ _NONE_RECORDED = "(none recorded)"
 _TOP_LEVEL_PREFIX = "## "
 _SUBSECTION_PREFIX = "### "
 _OPTION_PREFIX = "- `"
+_OPTION_KIND_DELIMITER = "`"
 _RECOMMENDED_MARKER = " ★"
+_CONSEQUENCE_PREFIX = ": "
 _EMPTY_PACKET = "escalation packet is empty"
 _SECTION_MISSING = "escalation packet has no {heading!r} section"
 _SECTION_AMBIGUOUS = "escalation packet has ambiguous {heading!r} section boundaries"
@@ -125,13 +127,12 @@ def _resolutions(packet: str, errors: list[str]) -> tuple[PacketResolution, ...]
         if not line.startswith(_OPTION_PREFIX):
             continue
         entry = line.removeprefix(_OPTION_PREFIX)
-        kind_text, separator, details = entry.partition("`")
+        kind_text, separator, details = entry.partition(_OPTION_KIND_DELIMITER)
         if not separator:
             errors.append(_OPTIONS_INVALID)
             continue
         details = details.removeprefix(_RECOMMENDED_MARKER)
-        consequence_prefix = ": "
-        if not details.startswith(consequence_prefix):
+        if not details.startswith(_CONSEQUENCE_PREFIX):
             errors.append(_OPTIONS_INVALID)
             continue
         try:
@@ -139,7 +140,7 @@ def _resolutions(packet: str, errors: list[str]) -> tuple[PacketResolution, ...]
         except ValueError:
             errors.append(_OPTIONS_INVALID)
             continue
-        resolutions.append(PacketResolution(kind, details.removeprefix(consequence_prefix)))
+        resolutions.append(PacketResolution(kind, details.removeprefix(_CONSEQUENCE_PREFIX)))
     if not resolutions:
         errors.append(_OPTIONS_EMPTY)
     return tuple(resolutions)

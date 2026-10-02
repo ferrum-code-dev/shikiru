@@ -25,6 +25,7 @@ from shikiru.domain.commands import (
     Submit,
     TakeOver,
 )
+from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
 from shikiru.domain.reports import FACTS_FILENAME, Report, ReportKind
@@ -69,6 +70,10 @@ TASK_PANE_CONTEXT_STATUSES = (*ACTIVE_STATUSES, Status.QUEUED)
 TASK_TARGET_SEARCH_CATEGORY = "all"
 RECENT_COMMAND_HISTORY_LIMIT = 3
 PROJECT_COMMAND_HISTORY_LIMIT = 50
+ESCALATION_STATUS_MISSING = "task {task_id} is missing; {escalation_id} is stale."
+ESCALATION_STATUS_STALE = "task {task_id} is {status}; {escalation_id} is stale."
+ESCALATION_STATUS_RESOLVED = "{escalation_id} was resolved; task {task_id} is {status}."
+ESCALATION_STATUS_NOT_OPEN = "escalation {escalation_id} is not open"
 
 
 class OperatorTaskAction(StrEnum):
@@ -565,6 +570,32 @@ class OperatorQueries:
         if escalation is None:
             return None
         return self._escalation_view(escalation)
+
+    def escalation_resolution_disabled_reason(self, escalation_id: str) -> str | None:
+        """Project whether current durable escalation and task state allow resolution."""
+        escalation = self._reader.get_escalation(escalation_id)
+        if escalation is None:
+            return ESCALATION_STATUS_NOT_OPEN.format(escalation_id=escalation_id)
+        task = self._reader.get_task(escalation.task_id)
+        task_state = task.status.value if task is not None else "missing"
+        if escalation.status is not EscalationStatus.OPEN:
+            return ESCALATION_STATUS_RESOLVED.format(
+                escalation_id=escalation.id,
+                task_id=escalation.task_id,
+                status=task_state,
+            )
+        if task is None:
+            return ESCALATION_STATUS_MISSING.format(
+                task_id=escalation.task_id,
+                escalation_id=escalation.id,
+            )
+        if task.status is not Status.ESCALATED:
+            return ESCALATION_STATUS_STALE.format(
+                task_id=escalation.task_id,
+                status=task_state,
+                escalation_id=escalation.id,
+            )
+        return None
 
     def _escalation_view(self, escalation: Escalation) -> EscalationView:
         try:

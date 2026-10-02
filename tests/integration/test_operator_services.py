@@ -10,7 +10,7 @@ from shikiru.domain.commands import COMMAND_POLL_SECONDS, CommandStatus, Priorit
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ConsultAnswer
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import EscalationReason, RepoState, Role, Status
+from shikiru.domain.tasks import EscalationReason, RepoState, Role, Status, Step
 from shikiru.errors import DatabaseError
 from shikiru.operator.commands import (
     COMMAND_ACK_WAIT_SECONDS,
@@ -271,6 +271,12 @@ async def test_missing_packet_and_session_are_operator_errors(
     assert view.escalation.id == escalation.id
     assert view.escalation.task_id == task.id
     assert view.escalation.headline == "question"
+    assert queries.escalation_resolution_disabled_reason(escalation.id) is not None
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.CONSULT),
+    )
+    assert queries.escalation_resolution_disabled_reason(escalation.id) is None
     with pytest.raises(OperatorQueryError):
         queries.peek_session(task.id)
 
