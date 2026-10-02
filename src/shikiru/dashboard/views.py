@@ -803,9 +803,10 @@ class StateDashboardViews:
             return None
         role = task_acting_role(task)
         agent = pick_rung(task, role, self._settings).agent
-        failure = self._current_quota_failure(task, role, agent)
-        if failure is None:
+        quota_events = self._current_quota_wait_events(task, role, agent)
+        if quota_events is None:
             return None
+        failure, quota_block = quota_events
         block = self._state.agent_block(agent)
         if block is None or block.until <= now:
             return None
@@ -820,7 +821,7 @@ class StateDashboardViews:
         lines = [
             f"Current turn quota wait · {role.value} · {agent}",
             f"Provider-reported quota reset · {reset_text}",
-            f"Task quota-block event · {failure.ts.isoformat()}",
+            f"Task quota-block event · {quota_block.ts.isoformat()}",
             f"Engine retry/probe deadline · {block.reason} · {block.until.isoformat()}",
         ]
         windows = self._state.list_quotas((agent,)).get(agent, [])
@@ -837,7 +838,12 @@ class StateDashboardViews:
             lines.append(f"Provider quota observation · {agent} · unavailable")
         return tuple(lines)
 
-    def _current_quota_failure(self, task: Task, role: Role, agent: str) -> Event | None:
+    def _current_quota_wait_events(
+        self,
+        task: Task,
+        role: Role,
+        agent: str,
+    ) -> tuple[Event, Event] | None:
         if task.step is None:
             return None
         lifecycle = self._state.latest_events(
@@ -880,7 +886,7 @@ class StateDashboardViews:
             or quota_events[0].data.get("agent") != agent
         ):
             return None
-        return failure
+        return failure, quota_events[0]
 
     def _slot_evidence(self) -> tuple[list[str], tuple[TaskReferenceView, ...]]:
         occupied = [

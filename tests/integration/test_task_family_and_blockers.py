@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
 
     from shikiru.config.settings import Settings
+    from shikiru.domain.events import Event
     from shikiru.domain.tasks import Task
     from shikiru.store.database import Database
     from shikiru.store.reader import StateReader
@@ -60,6 +61,7 @@ TASK_CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 TASK_BROWSER_PAGE_SIZE = 24
 RESOURCE_SAMPLE_AGE_SECONDS = 120
 QUOTA_BLOCK_SECONDS = 300
+QUOTA_EVENT_DELAY_SECONDS = 1
 
 
 def _task_detail_app(
@@ -109,23 +111,25 @@ def _record_quota_wait(
     role: Role,
     rung: Rung,
     until: datetime,
-) -> None:
+) -> tuple[Event, Event]:
     _record_turn_start(connection, clock, task, role, rung)
     assert task.step is not None
     events = EventLog(connection, clock)
-    events.append(
+    failure = events.append(
         EventKind.TURN_FAILED,
         task_id=task.id,
         message="quota",
         data={"kind": "quota", "step": task.step.value, "resets_at": None},
     )
-    events.append(
+    clock.advance(QUOTA_EVENT_DELAY_SECONDS)
+    quota_block = events.append(
         EventKind.QUOTA_BLOCKED,
         task_id=task.id,
         message="quota wait",
         data={"agent": rung.agent, "until": until.isoformat()},
     )
     QuotaStore(connection).block(rung.agent, until, "quota")
+    return failure, quota_block
 
 
 def _nested_plan_family(
@@ -812,7 +816,7 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
     owner = seed_task(connection, clock, title="Leader quota wait", mode=Mode.PLAN)
     store.apply_transition(owner.id, Transition.stay(owner, step=Step.PLAN))
     owner = store.require(owner.id)
-    _record_quota_wait(
+    failure, quota_block = _record_quota_wait(
         connection,
         clock,
         owner,
@@ -880,7 +884,11 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
 
     assert owner_detail is not None
     assert owner_detail.blocker is not None
-    assert "Current turn quota wait · leader" in "\n".join(owner_detail.blocker.lines)
+    owner_evidence = "\n".join(owner_detail.blocker.lines)
+    assert "Current turn quota wait · leader" in owner_evidence
+    assert failure.ts != quota_block.ts
+    assert f"Task quota-block event · {quota_block.ts.isoformat()}" in owner_evidence
+    assert f"Task quota-block event · {failure.ts.isoformat()}" not in owner_evidence
     assert unrelated_detail is not None
     assert unrelated_detail.blocker is None
     assert other_role_detail is not None
