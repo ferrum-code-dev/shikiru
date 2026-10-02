@@ -23,6 +23,8 @@ from shikiru.domain.reports import (
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
     ImplementationReport,
+    Issue,
+    ReportKind,
     TriageReport,
     Verdict,
 )
@@ -57,6 +59,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 TASK_DETAIL_WIDGETS = ["header", "queue", "dialogue", "usage", "resources"]
 TASK_WINDOW_OPENED = "opened existing task window"
 TASK_WINDOW_MISSING = "task window is unavailable"
+TASK_ROLE_PANE_MISMATCH = "role pane is outside the recorded task window"
 TASK_TERMINAL = "task is terminal; its workflow window is unavailable"
 EXTENSION_WIDGET = "task-view-extension"
 TMUX_WINDOW_ID_FORMAT = "#{window_id}"
@@ -113,6 +116,16 @@ class _NavigationContext:
     pending_before: list[QueuedCommand]
 
 
+@dataclass(frozen=True)
+class _VerdictCase:
+    turns: tuple[tuple[str, ReportKind, str, str | None], ...]
+    expected_report: str
+    expected_report_source: str
+    expected_verdict: str
+    expected_verdict_source: str
+    expected_verdict_turn: str
+
+
 def _dashboard_app(
     reader: StateReader,
     project_root: Path,
@@ -147,6 +160,38 @@ def _dashboard_app(
 
 def _text(widget: Static) -> str:
     return cast("Text", widget.render()).plain
+
+
+def _write_report_turn(
+    turns_root: Path,
+    turn: str,
+    kind: ReportKind,
+    summary: str,
+    engine_override: str | None,
+) -> None:
+    turn_dir = turns_root / turn
+    turn_dir.mkdir(parents=True)
+    report = (
+        Verdict(decision="accept", summary=summary)
+        if kind is ReportKind.VERDICT
+        else ImplementationReport(
+            status="completed",
+            summary=summary,
+            commits=[],
+            tests=[],
+            trackers_updated=False,
+        )
+    )
+    (turn_dir / REPORT_KIND_FILENAME).write_text(kind.value)
+    (turn_dir / REPORT_FILENAME).write_text(report.model_dump_json())
+    if engine_override is not None:
+        (turn_dir / ENGINE_VERDICT_FILENAME).write_text(
+            Verdict(
+                decision="changes_requested",
+                summary=engine_override,
+                issues=[Issue(severity="blocker", description="engine override")],
+            ).model_dump_json()
+        )
 
 
 async def _navigation_context(
@@ -316,6 +361,120 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     assert detail.sessions[0].input_tokens == 12
     assert detail.ownership == (Role.IMPLEMENTER.value,)
     assert detail.evidence_errors
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            _VerdictCase(
+                turns=(("01-verify-i1", ReportKind.VERDICT, "Leader verdict", None),),
+                expected_report="Leader verdict",
+                expected_report_source="agent",
+                expected_verdict="Leader verdict",
+                expected_verdict_source="agent",
+                expected_verdict_turn="01-verify-i1",
+            ),
+            id="ordinary-leader-verdict",
+        ),
+        pytest.param(
+            _VerdictCase(
+                turns=(
+                    ("01-verify-i1", ReportKind.VERDICT, "Earlier leader verdict", None),
+                    (
+                        "02-implement-i2",
+                        ReportKind.IMPLEMENTATION,
+                        "Rework implementation",
+                        None,
+                    ),
+                ),
+                expected_report="Rework implementation",
+                expected_report_source="agent",
+                expected_verdict="Earlier leader verdict",
+                expected_verdict_source="agent",
+                expected_verdict_turn="01-verify-i1",
+            ),
+            id="rework-verdict-retained-after-implementation",
+        ),
+        pytest.param(
+            _VerdictCase(
+                turns=(("03-verify-i2", ReportKind.VERDICT, "Leader verdict", "Engine override"),),
+                expected_report="Leader verdict",
+                expected_report_source="agent",
+                expected_verdict="Engine override",
+                expected_verdict_source="engine",
+                expected_verdict_turn="03-verify-i2",
+            ),
+            id="same-turn-engine-override-wins",
+        ),
+        pytest.param(
+            _VerdictCase(
+                turns=(
+                    ("99-verify-i1", ReportKind.VERDICT, "Older leader", "Older engine override"),
+                    ("100-verify-i2", ReportKind.VERDICT, "Newer leader", None),
+                ),
+                expected_report="Newer leader",
+                expected_report_source="agent",
+                expected_verdict="Newer leader",
+                expected_verdict_source="agent",
+                expected_verdict_turn="100-verify-i2",
+            ),
+            id="newer-leader-verdict-wins-over-older-override",
+        ),
+    ],
+)
+async def test_detail_selects_the_latest_report_and_turn_scoped_verdict(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    case: _VerdictCase,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Verdict ordering", mode=Mode.IMPLEMENT)
+    turns_root = project_root / ".shikiru" / "runs" / task.id / "turns"
+    for turn, kind, summary, engine_override in case.turns:
+        _write_report_turn(turns_root, turn, kind, summary, engine_override)
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    assert detail.latest_report is not None
+    assert detail.latest_report.summary == case.expected_report
+    assert detail.latest_report.provenance == case.expected_report_source
+    assert detail.latest_verdict is not None
+    assert detail.latest_verdict.summary == case.expected_verdict
+    assert detail.latest_verdict.provenance == case.expected_verdict_source
+    assert detail.latest_verdict.turn == case.expected_verdict_turn
+
+
+@pytest.mark.parametrize("turns_path", ["missing", "not-a-directory"])
+async def test_detail_reads_role_signals_when_turn_report_path_is_unavailable(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    turns_path: str,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Signals without reports", mode=Mode.IMPLEMENT)
+    RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
+    signal_path = run_dir(project_root, task.id) / Role.IMPLEMENTER.value / "view.jsonl"
+    signal_path.parent.mkdir(parents=True)
+    signal_path.write_text(json.dumps({"signal": "ToolFinished", "name": "pytest"}) + "\n")
+    turns_root = run_dir(project_root, task.id) / "turns"
+    if turns_path == "not-a-directory":
+        turns_root.write_text("invalid turns path")
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    assert detail.title == "Signals without reports"
+    assert detail.signals
+    assert detail.signals[0].role == Role.IMPLEMENTER.value
+    assert "pytest" in detail.signals[0].lines[0]
+    if turns_path == "not-a-directory":
+        assert any("not a directory" in error for error in detail.evidence_errors)
 
 
 async def test_enter_opens_shared_detail_and_escape_restores_browser_selection_and_scroll(
@@ -556,3 +715,66 @@ async def test_navigation_uses_activation_time_targets_and_terminal_cleanup_crea
             assert final_windows.stdout == windows_before.stdout
     finally:
         reader.close()
+
+
+async def test_role_navigation_rejects_a_recorded_pane_moved_to_another_window(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    context = await _navigation_context(connection, database, tmp_path, tmux_server)
+    try:
+        spare_pane = await context.tmux.split_window(
+            context.window_current,
+            axis="v",
+            size_pct=50,
+        )
+        await tmux_server.run(
+            "join-pane",
+            "-s",
+            context.pane_current,
+            "-t",
+            context.window_old,
+        )
+        assert await context.tmux.window_id(context.pane_current) == context.window_old
+        await context.tmux.select_window(context.window_current)
+        await context.tmux.select_pane(spare_pane)
+        windows_before = await tmux_server.run(
+            "list-windows",
+            "-t",
+            context.session_target,
+            "-F",
+            TMUX_WINDOW_ID_FORMAT,
+        )
+
+        result = await context.navigation.role_pane(context.task.id, Role.LEADER)
+
+        assert result == f"{context.task.id} leader: {TASK_ROLE_PANE_MISMATCH}"
+        windows_after = await tmux_server.run(
+            "list-windows",
+            "-t",
+            context.session_target,
+            "-F",
+            TMUX_WINDOW_ID_FORMAT,
+        )
+        assert windows_after.stdout == windows_before.stdout
+        active_window_rows = await tmux_server.run(
+            "list-windows",
+            "-t",
+            context.session_target,
+            "-F",
+            TMUX_ACTIVE_WINDOW_FORMAT,
+        )
+        assert f"{context.window_current} 1" in active_window_rows.stdout.splitlines()
+        active_pane_rows = await tmux_server.run(
+            "list-panes",
+            "-t",
+            context.window_current,
+            "-F",
+            TMUX_ACTIVE_PANE_FORMAT,
+        )
+        assert f"{spare_pane} 1" in active_pane_rows.stdout.splitlines()
+        assert CommandQueue(connection, context.clock).pending() == context.pending_before
+    finally:
+        context.reader.close()

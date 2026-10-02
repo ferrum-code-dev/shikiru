@@ -40,7 +40,7 @@ from shikiru.domain.runs import RunStatus
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import ACTING_ROLE, Step
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status
-from shikiru.operator.queries import AGENT_REPORT_SOURCE, ENGINE_REPORT_SOURCE
+from shikiru.operator.queries import AGENT_REPORT_SOURCE
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
 from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
@@ -430,7 +430,7 @@ class StateDashboardViews:
             (
                 _task_report(item)
                 for item in reversed(detail.reports)
-                if item.source == ENGINE_REPORT_SOURCE and isinstance(item.data, Verdict)
+                if isinstance(item.data, Verdict)
             ),
             None,
         )

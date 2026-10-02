@@ -385,11 +385,11 @@ class OperatorQueries:
         roles: tuple[str, ...],
     ) -> tuple[list[ReportRow], dict[str, list[str]], str | None, str | None, list[str]]:
         turn_dirs, errors = self._task_turn_dirs(task_id)
+        signals, signal_errors = self._task_signals(task_id, roles)
         if turn_dirs is None:
-            return [], {}, None, None, errors
+            return [], signals, None, None, [*errors, *signal_errors]
         reports, report_errors = self._task_reports(turn_dirs)
         recorded_facts, facts_turn, fact_errors = _task_facts(turn_dirs)
-        signals, signal_errors = self._task_signals(task_id, roles)
         return (
             reports,
             signals,
@@ -415,7 +415,7 @@ class OperatorQueries:
 
     def _task_reports(self, turn_dirs: Sequence[Path]) -> tuple[list[ReportRow], list[str]]:
         latest_agent: ReportRow | None = None
-        latest_engine: ReportRow | None = None
+        latest_verdict: ReportRow | None = None
         latest_triage: ReportRow | None = None
         errors: list[str] = []
         for turn_dir in reversed(turn_dirs):
@@ -424,16 +424,36 @@ class OperatorQueries:
             for report in turn_reports:
                 if report.source == AGENT_REPORT_SOURCE and latest_agent is None:
                     latest_agent = report
-                elif report.source == ENGINE_REPORT_SOURCE and latest_engine is None:
-                    latest_engine = report
                 if report.kind is ReportKind.TRIAGE and latest_triage is None:
                     latest_triage = report
-            if latest_agent is not None and latest_engine is not None and latest_triage is not None:
+            if latest_verdict is None:
+                latest_verdict = next(
+                    (
+                        report
+                        for report in turn_reports
+                        if report.source == ENGINE_REPORT_SOURCE
+                        and report.kind is ReportKind.VERDICT
+                    ),
+                    None,
+                ) or next(
+                    (
+                        report
+                        for report in turn_reports
+                        if report.source == AGENT_REPORT_SOURCE
+                        and report.kind is ReportKind.VERDICT
+                    ),
+                    None,
+                )
+            if (
+                latest_agent is not None
+                and latest_verdict is not None
+                and latest_triage is not None
+            ):
                 break
         turn_order = {turn_dir.name: index for index, turn_dir in enumerate(turn_dirs)}
         reports = {
-            (report.turn, report.kind): report
-            for report in (latest_agent, latest_engine, latest_triage)
+            (report.turn, report.kind, report.source): report
+            for report in (latest_agent, latest_verdict, latest_triage)
             if report is not None
         }
         return sorted(reports.values(), key=lambda report: turn_order[report.turn]), errors

@@ -33,6 +33,7 @@ TASK_WINDOW_UNRECORDED = "task window is not recorded"
 TASK_WINDOW_MISSING = "task window is unavailable"
 TASK_ROLE_PANE_UNRECORDED = "role pane is not recorded"
 TASK_ROLE_PANE_MISSING = "role pane is unavailable"
+TASK_ROLE_PANE_WINDOW_MISMATCH = "role pane is outside the recorded task window"
 HOME_WINDOW_MISSING = "home window is unavailable"
 TERMINAL_TASK_TARGET = "task is terminal; its workflow window is unavailable"
 TASK_TARGET_OPENED = "opened existing task window"
@@ -198,10 +199,21 @@ class TaskNavigation:
         if task.window_id is None or not await self._tmux.target_exists(task.window_id):
             return f"{task_id}: {TASK_WINDOW_MISSING}"
         pane_id = task.panes.get(role)
+        return await self._select_role_pane(task_id, role, pane_id, task.window_id)
+
+    async def _select_role_pane(
+        self,
+        task_id: str,
+        role: Role,
+        pane_id: str | None,
+        window_id: str,
+    ) -> str:
         if pane_id is None or not await self._tmux.pane_exists(pane_id):
             reason = TASK_ROLE_PANE_UNRECORDED if pane_id is None else TASK_ROLE_PANE_MISSING
             return f"{task_id} {role.value}: {reason}"
         try:
+            if await self._tmux.window_id(pane_id) != window_id:
+                return f"{task_id} {role.value}: {TASK_ROLE_PANE_WINDOW_MISMATCH}"
             await self._tmux.select_pane(pane_id)
         except ShikiruError as error:
             return f"{task_id} {role.value}: {TASK_ROLE_PANE_MISSING}: {error}"
