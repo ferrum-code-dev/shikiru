@@ -34,6 +34,7 @@ class StubServices:
 
     def __init__(self, *, engine_running: bool = False) -> None:
         self._engine_running = engine_running
+        self.resource_observation: ResourceView | None = None
 
     async def repo_status(self) -> RepoStatus:
         return RepoStatus(branch="main", ahead=REPO_AHEAD, behind=0, dirty=REPO_DIRTY)
@@ -43,6 +44,9 @@ class StubServices:
 
     async def resources(self) -> ResourceView:
         return RESOURCES
+
+    def resource_sample(self) -> ResourceView | None:
+        return self.resource_observation
 
     async def containers(self) -> DockerView:
         return DockerView(available=False, containers=())

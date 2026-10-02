@@ -12,6 +12,7 @@ from textual.widgets import Button, Input, ListItem, ListView, Static
 from shikiru.dashboard.contract import (
     TASK_STATUS_QUEUED,
     TASK_TERMINAL_STATUSES,
+    TaskBrowserContextRow,
     TaskBrowserFilter,
     TaskBrowserRow,
     TaskBrowserView,
@@ -30,6 +31,7 @@ TASK_LIST_ID = "task-browser-list"
 TASK_PREVIEW_ID = "task-browser-preview"
 COUNT_ID = "task-browser-count"
 EMPTY_ID = "task-browser-empty"
+FAMILY_CONTEXT_ID = "task-browser-family-context"
 CLEAR_BUTTON_ID = "task-browser-clear"
 MORE_BUTTON_ID = "task-browser-more"
 REVEAL_BUTTON_ID = "task-browser-reveal"
@@ -63,7 +65,9 @@ def _row_text(row: TaskBrowserRow) -> str:
     state = row.status.replace("_", " ")
     step = f" · {row.step}" if row.step else ""
     role = f" · {row.acting_role}" if row.acting_role else ""
-    state_line = f"{group}{state}{step} · iteration {row.iteration}{role} · {row.age}"
+    state_line = f"{group}{state}{step} · iteration {row.iteration}{role} · submitted {row.age}"
+    if row.requeued_age is not None:
+        state_line += f" · requeued {row.requeued_age}"
     signals: list[str] = []
     if row.open_decision:
         signals.append("decision")
@@ -100,6 +104,7 @@ class QueuePanel(Vertical):
     #task-browser-count { height: 1; color: $primary-text; }
     #task-browser-list { height: 12; min-height: 3; border: solid $neutral-border; }
     #task-browser-empty { height: auto; padding: 1; color: $muted-text; }
+    #task-browser-family-context { height: auto; padding: 0 1; color: $secondary-text; }
     #task-browser-more { width: auto; min-width: 1; }
     #task-browser-preview { height: auto; padding: 1; border: round $neutral-border; }
     #task-browser-reveal { width: auto; min-width: 1; }
@@ -126,6 +131,7 @@ class QueuePanel(Vertical):
                 yield Button(label, id=button_id)
         yield Static("", id=COUNT_ID, markup=False)
         yield Static("", id=EMPTY_ID, markup=False)
+        yield Static("", id=FAMILY_CONTEXT_ID, markup=False)
         yield ListView(id=TASK_LIST_ID)
         yield Button("Load more", id=MORE_BUTTON_ID)
         yield Static("Select a task to keep its context here.", id=TASK_PREVIEW_ID, markup=False)
@@ -271,7 +277,18 @@ class QueuePanel(Vertical):
             selected_task_id=self._selected_task_id,
         )
         self._loaded_page_count = len(pages)
-        return replace(pages[-1], rows=tuple(row for page in pages for row in page.rows))
+        rows = tuple(row for page in pages for row in page.rows)
+        matched_ids = {row.task_id for row in rows}
+        ancestors: dict[str, TaskBrowserContextRow] = {}
+        for page in pages:
+            for ancestor in page.ancestor_context:
+                if ancestor.task_id not in matched_ids:
+                    ancestors[ancestor.task_id] = ancestor
+        return replace(
+            pages[-1],
+            rows=rows,
+            ancestor_context=tuple(ancestors.values()),
+        )
 
     def _load_next_page(self) -> TaskBrowserView:
         current = self._view
@@ -416,6 +433,19 @@ class QueuePanel(Vertical):
             empty.update(f"No tasks match {view.search!r} in {FILTER_LABELS[view.filter]}.")
         else:
             empty.update(f"No {FILTER_LABELS[view.filter].lower()} tasks.")
+        context = self.query_one(f"#{FAMILY_CONTEXT_ID}", Static)
+        context.display = bool(view.ancestor_context)
+        if view.ancestor_context:
+            context.update(
+                "Family context · not counted as matches\n"
+                + "\n".join(
+                    f"{row.task_id} · {row.title} · {row.status}"
+                    + (f" · {row.mode}" if row.mode else "")
+                    for row in view.ancestor_context
+                )
+            )
+        else:
+            context.update("")
         self._render_preview(view)
 
     def _render_preview(self, view: TaskBrowserView) -> None:
@@ -456,8 +486,9 @@ class QueuePanel(Vertical):
             note = f"\nSelected task is outside {FILTER_LABELS[view.filter]} or the current search."
         preview.update(
             f"Selected · {selected.task_id} · {selected.title}\n"
-            f"{state}{step} · iteration {selected.iteration}{role} · age {selected.age}"
-            f"{blocker_text}{priority}{dependencies}{note}"
+            f"{state}{step} · iteration {selected.iteration}{role} · submitted {selected.age}"
+            + (f" · requeued {selected.requeued_age}" if selected.requeued_age is not None else "")
+            + f"{blocker_text}{priority}{dependencies}{note}"
         )
 
 

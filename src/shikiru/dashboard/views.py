@@ -22,11 +22,16 @@ from shikiru.dashboard.contract import (
     QuotaGaugeView,
     RepoStatus,
     ResourceView,
+    TaskBlockerView,
+    TaskBrowserContextRow,
     TaskBrowserFilter,
     TaskBrowserRow,
     TaskBrowserView,
     TaskDetailView,
     TaskEventView,
+    TaskFamilyOutcomeView,
+    TaskReferenceView,
+    TaskRelationshipsView,
     TaskReportView,
     TaskRolePaneView,
     TaskSessionView,
@@ -37,6 +42,7 @@ from shikiru.dashboard.contract import (
 from shikiru.domain.commands import CommandStatus, ResolutionKind
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
+from shikiru.domain.ladder import pick_rung
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.reports import (
     ConsultAnswer,
@@ -46,9 +52,9 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.runs import RunStatus
-from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
+from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
-from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status
+from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
 from shikiru.operator.queries import AGENT_REPORT_SOURCE
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
@@ -69,7 +75,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from shikiru.operator.queries import EscalationView, OperatorQueries, ReportRow, UsageView
     from shikiru.store.reader import StateReader
-    from shikiru.store.tasks import TaskBrowserPage
+    from shikiru.store.tasks import TaskBrowserPage, TaskRelationships
 
 DIALOGUE_LINE_LIMIT = 20
 ALERT_TIME_FORMAT = "%H:%M:%S"
@@ -122,6 +128,10 @@ class DashboardSources(Protocol):
 
     async def containers(self) -> DockerView:
         """Return the current Docker sample."""
+        ...
+
+    def resource_sample(self) -> ResourceView | None:
+        """Return the latest dashboard resource sample without taking a new one."""
         ...
 
 
@@ -415,6 +425,16 @@ class StateDashboardViews:
             filtered_count=page.filtered_count,
             project_count=page.project_count,
             has_more=offset + len(rows) < page.matching_count,
+            ancestor_context=tuple(
+                TaskBrowserContextRow(
+                    task_id=task.id,
+                    title=task.title,
+                    status=task.status.value,
+                    mode=task.mode.value if task.mode is not None else None,
+                )
+                for task in page.ancestor_tasks
+                if task.id not in {row.task_id for row in rows}
+            ),
         )
 
     def _task_browser_row(
@@ -445,6 +465,7 @@ class StateDashboardViews:
             group_label=group_label,
             open_decision=open_decision,
             diagnosed_stall=diagnosed_stall,
+            requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
         )
 
     def escalations(self) -> list[EscalationPanelView]:
@@ -585,6 +606,7 @@ class StateDashboardViews:
         if detail is None:
             return None
         task = detail.task
+        now = self._clock.now()
         triage = next(
             (item.data for item in reversed(detail.reports) if isinstance(item.data, TriageReport)),
             None,
@@ -607,6 +629,12 @@ class StateDashboardViews:
         )
         ownership = tuple(
             run.role.value for run in detail.sessions if run.status is RunStatus.TAKEN_OVER
+        )
+        stored_relationships = self._state.task_relationships(task.id)
+        relationships = (
+            _task_relationships_view(stored_relationships)
+            if stored_relationships is not None
+            else None
         )
         return TaskDetailView(
             task_id=task.id,
@@ -652,7 +680,156 @@ class StateDashboardViews:
             ),
             sessions=tuple(_task_session(run) for run in detail.sessions),
             attention=self.global_attention(),
+            relationships=relationships,
+            blocker=self._task_blocker(task, relationships, ownership, now),
+            submitted_age=_age(now - task.created_at),
+            requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
         )
+
+    def _task_blocker(
+        self,
+        task: Task,
+        relationships: TaskRelationshipsView | None,
+        ownership: tuple[str, ...],
+        now: datetime,
+    ) -> TaskBlockerView | None:
+        wait_reason = task.wait_reason
+        if wait_reason is None and not task.holds:
+            return None
+        hold_reason = Hold.PAUSED.value if Hold.PAUSED in task.holds else Hold.INTERVENTION.value
+        reason = wait_reason or hold_reason
+        lines = _hold_evidence(task, ownership)
+        if wait_reason is not None:
+            lines.insert(0, f"Recorded scheduler reason · {wait_reason}")
+        related: tuple[TaskReferenceView, ...] = ()
+        match wait_reason:
+            case WaitReason.DEPENDENCY.value:
+                extra_lines, related = self._dependency_evidence(relationships)
+            case WaitReason.SLOT.value:
+                extra_lines, related = self._slot_evidence()
+            case WaitReason.RESOURCES.value:
+                extra_lines = self._resource_evidence(now)
+            case WaitReason.QUOTA.value:
+                extra_lines = self._quota_evidence(task, now)
+            case WaitReason.PR_OPEN.value:
+                extra_lines = self._pull_request_evidence(task.id)
+            case WaitReason.PAUSED.value:
+                extra_lines = ["Resume clears the scheduler pause wait when submitted."]
+            case None:
+                extra_lines = []
+            case _:
+                extra_lines = ["No additional blocker evidence is recorded."]
+        lines.extend(extra_lines)
+        return TaskBlockerView(kind=reason, lines=tuple(lines), related_tasks=related)
+
+    def _dependency_evidence(
+        self,
+        relationships: TaskRelationshipsView | None,
+    ) -> tuple[list[str], tuple[TaskReferenceView, ...]]:
+        if relationships is None:
+            return ["Dependency relationship evidence is unavailable."], ()
+        related = tuple(
+            item for item in relationships.dependencies if item.status != Status.DONE.value
+        )
+        lines = (
+            [
+                "Blocking dependencies · "
+                + "; ".join(f"{item.task_id} {item.title} ({item.status})" for item in related)
+            ]
+            if related
+            else ["No unfinished dependency is present in the current stored state."]
+        )
+        if relationships.dependency_count > len(relationships.dependencies):
+            lines.append(
+                f"Showing {len(relationships.dependencies)} of "
+                f"{relationships.dependency_count} dependencies."
+            )
+        return lines, related
+
+    def _slot_evidence(self) -> tuple[list[str], tuple[TaskReferenceView, ...]]:
+        occupied = [
+            task
+            for task in self._state.list_tasks(statuses=(Status.RUNNING, Status.INTEGRATING))
+            if task.slot is not None
+        ]
+        lines = [
+            f"Current occupancy · {len(occupied)}/{self._settings.orchestration.max_parallel} slots"
+        ]
+        if occupied:
+            lines.append(
+                "Occupying tasks · "
+                + "; ".join(f"{item.id} {item.title} (slot {item.slot})" for item in occupied)
+            )
+        return lines, tuple(_task_reference_view(item) for item in occupied)
+
+    def _resource_evidence(self, now: datetime) -> list[str]:
+        sample = self._sources.resource_sample()
+        if sample is None or sample.sampled_at is None:
+            lines = ["Dashboard resource sample · unavailable"]
+        else:
+            lines = [
+                (
+                    "Dashboard resource sample · "
+                    f"host CPU {sample.host_cpu_pct:.1f}% · "
+                    f"free RAM {sample.free_ram_gb:.1f} GiB · "
+                    f"sample age {_age(now - sample.sampled_at)}"
+                )
+            ]
+        lines.append("The dashboard sample is separate from the scheduler's gate decision.")
+        return lines
+
+    def _quota_evidence(self, task: Task, now: datetime) -> list[str]:
+        lines: list[str] = []
+        required_agents = tuple(
+            dict.fromkeys(
+                pick_rung(task, role, self._settings).agent
+                for role in (Role.LEADER, Role.IMPLEMENTER)
+            )
+        )
+        for agent in required_agents:
+            block = self._state.agent_block(agent)
+            deadline = (
+                f"{block.reason} · {block.until.isoformat()}"
+                if block is not None
+                else "not recorded"
+            )
+            lines.append(f"Engine quota retry/probe deadline · {agent} · {deadline}")
+            windows = self._state.list_quotas((agent,)).get(agent, [])
+            if not windows:
+                lines.append(f"Provider quota observation · {agent} · unavailable")
+            for window in windows:
+                reset = (
+                    window.resets_at.isoformat() if window.resets_at is not None else "not reported"
+                )
+                lines.append(
+                    f"Provider quota · {agent} {window.name} · reset {reset} · "
+                    f"observed {_age(now - window.observed_at)} ago"
+                )
+        return lines
+
+    def _pull_request_evidence(self, task_id: str) -> list[str]:
+        events = self._state.latest_events(
+            1,
+            kinds=(EventKind.PR_OPENED, EventKind.PR_WITHDRAWN),
+            task_id=task_id,
+        )
+        if not events:
+            return [
+                "No recorded pull-request event is available.",
+                "CI state is shown only when an engine observation recorded it.",
+            ]
+        event = events[0]
+        lines: list[str] = []
+        url = event.data.get("url")
+        state = event.data.get("state")
+        if isinstance(url, str):
+            lines.append(f"Recorded PR URL · {url}")
+        if isinstance(state, str):
+            lines.append(f"Latest recorded PR state · {state} · {event.ts.isoformat()}")
+        else:
+            lines.append(f"Latest recorded PR event · {event.kind.value} · {event.ts.isoformat()}")
+        lines.append("CI state is shown only when an engine observation recorded it.")
+        return lines
 
     def dialogue(self, task_id: str | None = None) -> list[DialogueBubbleView]:
         """Build recent project or task decisions and activity in event order."""
@@ -826,6 +1003,48 @@ def _event_text(kind: EventKind, message: str, data: dict[str, object]) -> str:
     summary = str(data["summary"])
     question = data.get("question")
     return f"{summary}\n{question}" if isinstance(question, str) and question else summary
+
+
+def _task_reference_view(task: Task) -> TaskReferenceView:
+    return TaskReferenceView(
+        task_id=task.id,
+        title=task.title,
+        status=task.status.value,
+        status_reason=task.status_reason.value if task.status_reason is not None else None,
+        mode=task.mode.value if task.mode is not None else None,
+    )
+
+
+def _hold_evidence(task: Task, ownership: tuple[str, ...]) -> list[str]:
+    lines: list[str] = []
+    if Hold.PAUSED in task.holds:
+        lines.append("Pause hold · Resume clears this hold when submitted.")
+    if Hold.INTERVENTION in task.holds:
+        lines.append(
+            "Ownership hold · taken-over roles · "
+            + (", ".join(ownership) if ownership else "not recorded")
+        )
+        lines.append("Hand back each taken-over role to return it to automation.")
+    return lines
+
+
+def _task_relationships_view(relationships: TaskRelationships) -> TaskRelationshipsView:
+    return TaskRelationshipsView(
+        family_parent=_task_reference_view(relationships.family_parent),
+        family_root=_task_reference_view(relationships.family_root),
+        family_children=tuple(_task_reference_view(task) for task in relationships.family_children),
+        family_child_count=relationships.family_child_count,
+        dependencies=tuple(_task_reference_view(task) for task in relationships.dependencies),
+        dependency_count=relationships.dependency_count,
+        dependents=tuple(_task_reference_view(task) for task in relationships.dependents),
+        dependent_count=relationships.dependent_count,
+        replacements=tuple(_task_reference_view(task) for task in relationships.replacements),
+        replacement_count=relationships.replacement_count,
+        family_outcomes=tuple(
+            TaskFamilyOutcomeView(outcome=outcome, count=count)
+            for outcome, count in relationships.family_outcomes
+        ),
+    )
 
 
 def _age(duration: timedelta) -> str:

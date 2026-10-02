@@ -135,7 +135,7 @@ Delivery order: task navigation and contextual control, attention and evidence v
 - [x] Task 79: Durable command feedback and ownership banners
 - [x] Task 80: Home overview and attention composition
 - [x] Task 81: Escalation resolution with structured evidence
-- [ ] Task 82: Blocker navigation and task families
+- [x] Task 82: Blocker navigation and task families
 - [ ] Task 83: Completion history and task evidence timeline
 - [ ] Task 84: Honest usage and secondary diagnostics
 - [ ] Task 85: Responsive layouts and accessible refresh behaviour

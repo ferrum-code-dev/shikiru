@@ -814,10 +814,10 @@ Refs: Workspace §10.1, 03 §8, 06 §5.4–5.5/§6.4.
 
 ### Task 82: Blocker navigation and task families
 Refs: Workspace §10.2–10.3, 03 §2/§6/§10, 06 §5.4.
-- [ ] Show specific dependency/slot/resource/quota/pause/ownership/PR blockers with their available evidence and navigation. Distinguish dashboard resource sample age, scheduler reason, provider quota reset and engine retry/probe time.
-- [ ] Group children under parents with expand/collapse and filter-matched ancestor context. Show dependencies/dependents separately and superseded replacements only when supported by recorded evidence.
-- [ ] Keep plan-parent integration separate from child implementation completion; show exact family outcome counts. Show submitted/recorded queue age without inventing current-blocker duration, ETA or guaranteed start position.
-- [ ] Update 02/06 consumed relationship/blocker view contracts and 03's operator-facing explanations; reuse dispatch/domain rules and existing stored graph relationships.
+- [x] Show specific dependency/slot/resource/quota/pause/ownership/PR blockers with their available evidence and navigation. Distinguish dashboard resource sample age, scheduler reason, provider quota reset and engine retry/probe time.
+- [x] Group children under parents with expand/collapse and filter-matched ancestor context. Show dependencies/dependents separately and superseded replacements only when supported by recorded evidence.
+- [x] Keep plan-parent integration separate from child implementation completion; show exact family outcome counts. Show submitted/recorded queue age without inventing current-blocker duration, ETA or guaranteed start position.
+- [x] Update 02/06 consumed relationship/blocker view contracts and 03's operator-facing explanations; reuse dispatch/domain rules and existing stored graph relationships.
 - Tests: real SQLite/Git/fake-agent decomposition and supersede: follow a blocked dependency, navigate back with selection intact, see active children under a done parent, search a child with ancestor context, and distinguish unknown quota resets and cancelled replacements.
 
 ### Task 83: Completion history and task evidence timeline

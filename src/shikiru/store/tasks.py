@@ -20,6 +20,7 @@ from shikiru.domain.tasks import (
     RepoState,
     Role,
     Status,
+    StatusReason,
     Step,
     Task,
     TaskOrigin,
@@ -70,6 +71,16 @@ _BROWSER_FILTERS = frozenset(
         _BROWSER_CATEGORY_ALL,
     }
 )
+_RELATIONSHIP_LIMIT = 24
+_FAMILY_OUTCOME_ORDER = (
+    Status.QUEUED.value,
+    Status.RUNNING.value,
+    Status.INTEGRATING.value,
+    Status.ESCALATED.value,
+    Status.DONE.value,
+    Status.CANCELLED.value,
+    StatusReason.SUPERSEDED.value,
+)
 
 
 @dataclass(frozen=True)
@@ -82,6 +93,24 @@ class TaskBrowserPage:
     filtered_count: int
     project_count: int
     selected_task_matches: bool
+    ancestor_tasks: tuple[Task, ...] = ()
+
+
+@dataclass(frozen=True)
+class TaskRelationships:
+    """A bounded task family group, separate dependency edges and recorded replacements."""
+
+    family_parent: Task
+    family_root: Task
+    family_children: tuple[Task, ...]
+    family_child_count: int
+    dependencies: tuple[Task, ...]
+    dependency_count: int
+    dependents: tuple[Task, ...]
+    dependent_count: int
+    replacements: tuple[Task, ...]
+    replacement_count: int
+    family_outcomes: tuple[tuple[str, int], ...]
 
 
 _TASK_COLUMNS = (
@@ -223,6 +252,7 @@ def fetch_task_browser_page(
             == 1
         )
     tasks = _rows_to_tasks(connection, rows)
+    ancestor_tasks = _fetch_task_ancestors(connection, [task.id for task in tasks])
     return TaskBrowserPage(
         tasks=tuple(tasks),
         open_decision_task_ids=frozenset(row["id"] for row in rows if row["has_open_decision"]),
@@ -230,6 +260,164 @@ def fetch_task_browser_page(
         filtered_count=counts["filtered_count"],
         project_count=counts["project_count"],
         selected_task_matches=selected_task_matches,
+        ancestor_tasks=tuple(ancestor_tasks),
+    )
+
+
+def _fetch_task_ancestors(connection: sqlite3.Connection, task_ids: Sequence[str]) -> list[Task]:
+    if not task_ids:
+        return []
+    placeholders = ", ".join("?" for _ in task_ids)
+    rows = connection.execute(
+        "WITH RECURSIVE ancestry(parent_id) AS ("
+        f"SELECT parent_id FROM tasks WHERE id IN ({placeholders}) AND parent_id IS NOT NULL "
+        "UNION SELECT parent.parent_id FROM tasks parent "
+        "JOIN ancestry child ON parent.id = child.parent_id "
+        "WHERE parent.parent_id IS NOT NULL) "
+        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id IN "
+        "(SELECT parent_id FROM ancestry) ORDER BY seq",
+        tuple(task_ids),
+    ).fetchall()
+    return _rows_to_tasks(connection, rows)
+
+
+def _fetch_tasks_by_ids(
+    connection: sqlite3.Connection, task_ids: Sequence[str]
+) -> tuple[Task, ...]:
+    if not task_ids:
+        return ()
+    placeholders = ", ".join("?" for _ in task_ids)
+    rows = connection.execute(
+        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id IN ({placeholders}) ORDER BY seq",
+        tuple(task_ids),
+    ).fetchall()
+    return tuple(_rows_to_tasks(connection, rows))
+
+
+def _fetch_relationship_tasks(
+    connection: sqlite3.Connection,
+    *,
+    column: str,
+    task_id: str,
+) -> tuple[tuple[Task, ...], int]:
+    rows = connection.execute(
+        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE {column} = ? ORDER BY seq LIMIT ?",
+        (task_id, _RELATIONSHIP_LIMIT),
+    ).fetchall()
+    count = connection.execute(
+        f"SELECT COUNT(*) FROM tasks WHERE {column} = ?", (task_id,)
+    ).fetchone()[0]
+    return tuple(_rows_to_tasks(connection, rows)), count
+
+
+def _fetch_dependency_tasks(
+    connection: sqlite3.Connection, task_id: str
+) -> tuple[tuple[Task, ...], int]:
+    rows = connection.execute(
+        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id IN "
+        "(SELECT depends_on FROM task_deps WHERE task_id = ?) ORDER BY seq LIMIT ?",
+        (task_id, _RELATIONSHIP_LIMIT),
+    ).fetchall()
+    count = connection.execute(
+        "SELECT COUNT(*) FROM task_deps WHERE task_id = ?", (task_id,)
+    ).fetchone()[0]
+    return tuple(_rows_to_tasks(connection, rows)), count
+
+
+def _fetch_dependent_tasks(
+    connection: sqlite3.Connection, task_id: str
+) -> tuple[tuple[Task, ...], int]:
+    rows = connection.execute(
+        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id IN "
+        "(SELECT task_id FROM task_deps WHERE depends_on = ?) ORDER BY seq LIMIT ?",
+        (task_id, _RELATIONSHIP_LIMIT),
+    ).fetchall()
+    count = connection.execute(
+        "SELECT COUNT(*) FROM task_deps WHERE depends_on = ?", (task_id,)
+    ).fetchone()[0]
+    return tuple(_rows_to_tasks(connection, rows)), count
+
+
+def _family_root_id(connection: sqlite3.Connection, task_id: str) -> str:
+    row = connection.execute(
+        "WITH RECURSIVE ancestors(id, parent_id) AS ("
+        "SELECT id, parent_id FROM tasks WHERE id = ? UNION ALL "
+        "SELECT parent.id, parent.parent_id FROM tasks parent "
+        "JOIN ancestors child ON parent.id = child.parent_id) "
+        "SELECT id FROM ancestors WHERE parent_id IS NULL LIMIT ?",
+        (task_id, 1),
+    ).fetchone()
+    if row is None:
+        message = f"task {task_id} has no family root"
+        raise ValueError(message)
+    return row[0]
+
+
+def _family_outcomes(connection: sqlite3.Connection, root_id: str) -> tuple[tuple[str, int], ...]:
+    rows = connection.execute(
+        "WITH RECURSIVE family(id) AS ("
+        "SELECT id FROM tasks WHERE id = ? UNION ALL "
+        "SELECT child.id FROM tasks child JOIN family parent ON child.parent_id = parent.id) "
+        "SELECT tasks.status, tasks.status_reason, COUNT(*) AS count "
+        "FROM tasks JOIN family ON family.id = tasks.id GROUP BY tasks.status, tasks.status_reason",
+        (root_id,),
+    ).fetchall()
+    counts = dict.fromkeys(_FAMILY_OUTCOME_ORDER, 0)
+    for row in rows:
+        outcome = (
+            StatusReason.SUPERSEDED.value
+            if row["status"] == Status.CANCELLED.value
+            and row["status_reason"] == StatusReason.SUPERSEDED.value
+            else row["status"]
+        )
+        counts[outcome] += row["count"]
+    return tuple((outcome, counts[outcome]) for outcome in _FAMILY_OUTCOME_ORDER)
+
+
+def fetch_task_relationships(
+    connection: sqlite3.Connection,
+    task: Task,
+    *,
+    replacement_task_ids: Sequence[str] = (),
+) -> TaskRelationships:
+    """Read bounded parent, child, dependency and recorded replacement relationships."""
+    family_parent = fetch_task(connection, task.parent_id) if task.parent_id is not None else task
+    if family_parent is None:
+        message = f"task {task.id} has a missing parent {task.parent_id}"
+        raise ValueError(message)
+    family_children, family_child_count = _fetch_relationship_tasks(
+        connection,
+        column="parent_id",
+        task_id=family_parent.id,
+    )
+    if task.parent_id is not None and all(child.id != task.id for child in family_children):
+        family_children = tuple(sorted((*family_children, task), key=lambda child: child.seq))
+    dependencies, dependency_count = _fetch_dependency_tasks(connection, task.id)
+    dependents, dependent_count = _fetch_dependent_tasks(connection, task.id)
+    replacements = tuple(
+        replacement
+        for replacement in _fetch_tasks_by_ids(
+            connection, replacement_task_ids[:_RELATIONSHIP_LIMIT]
+        )
+        if replacement.parent_id == task.id
+    )
+    root_id = _family_root_id(connection, task.id)
+    family_root = fetch_task(connection, root_id)
+    if family_root is None:
+        message = f"family root {root_id} disappeared while reading {task.id}"
+        raise ValueError(message)
+    return TaskRelationships(
+        family_parent=family_parent,
+        family_root=family_root,
+        family_children=family_children,
+        family_child_count=family_child_count,
+        dependencies=dependencies,
+        dependency_count=dependency_count,
+        dependents=dependents,
+        dependent_count=dependent_count,
+        replacements=replacements,
+        replacement_count=len(replacement_task_ids),
+        family_outcomes=_family_outcomes(connection, root_id),
     )
 
 

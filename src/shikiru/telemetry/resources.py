@@ -27,6 +27,7 @@ class ResourceSnapshot:
     free_ram_gb: float
     instance_cpu_pct: float | None = None
     instance_rss_gb: float | None = None
+    sampled_at: datetime | None = None
 
 
 class ResourceSampler:
@@ -53,6 +54,7 @@ class ResourceSampler:
             host_cpu_pct=_average(value for _, value in self._host_cpu),
             host_ram_used_pct=virtual_memory.percent,
             free_ram_gb=virtual_memory.available / _BYTES_PER_GIB,
+            sampled_at=now,
         )
         self._sampled_at = now
         return self._last
@@ -98,6 +100,7 @@ class ResourceSampler:
                 host_cpu_pct=host_sample.host_cpu_pct,
                 host_ram_used_pct=host_sample.host_ram_used_pct,
                 free_ram_gb=host_sample.free_ram_gb,
+                sampled_at=now,
             )
         else:
             cpu_count = psutil.cpu_count(logical=True)
@@ -112,8 +115,13 @@ class ResourceSampler:
                 free_ram_gb=host_sample.free_ram_gb,
                 instance_cpu_pct=cpu_pct,
                 instance_rss_gb=rss_bytes / _BYTES_PER_GIB,
+                sampled_at=now,
             )
         self._instance_sampled_at = now
+        return self._last
+
+    def latest(self) -> ResourceSnapshot:
+        """Return the latest sample without starting a new observation."""
         return self._last
 
     def _process_tree(

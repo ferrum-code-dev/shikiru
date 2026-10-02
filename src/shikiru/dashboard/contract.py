@@ -8,6 +8,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from textual.widget import Widget
 
     from shikiru.agents.contracts import CostBasis
@@ -35,6 +37,7 @@ OpenPalette = Callable[[str], Awaitable[None]]
 OpenPaletteContext = Callable[[PaletteRequest], Awaitable[None]]
 SelectTaskContext = Callable[[str | None], None]
 OpenTaskDetail = Callable[[str], Awaitable[None]]
+OpenRelatedTaskDetail = Callable[[str], Awaitable[None]]
 NavigateTaskWindow = Callable[[str], Awaitable[str]]
 NavigateRolePane = Callable[[str, str], Awaitable[str]]
 NavigateHome = Callable[[], Awaitable[str]]
@@ -127,6 +130,17 @@ class TaskBrowserRow:
     group_label: str | None
     open_decision: bool
     diagnosed_stall: bool
+    requeued_age: str | None = None
+
+
+@dataclass(frozen=True)
+class TaskBrowserContextRow:
+    """An ancestor shown as family context outside the matching task count."""
+
+    task_id: str
+    title: str
+    status: str
+    mode: str | None
 
 
 @dataclass(frozen=True)
@@ -143,6 +157,18 @@ class TaskBrowserView:
     filtered_count: int
     project_count: int
     has_more: bool
+    ancestor_context: tuple[TaskBrowserContextRow, ...] = ()
+
+
+@dataclass(frozen=True)
+class TaskReferenceView:
+    """A related task's identity and recorded workflow state."""
+
+    task_id: str
+    title: str
+    status: str
+    status_reason: str | None
+    mode: str | None
 
 
 @dataclass(frozen=True)
@@ -278,6 +304,44 @@ class TaskDetailView:
     role_panes: tuple[TaskRolePaneView, ...]
     sessions: tuple[TaskSessionView, ...]
     attention: GlobalAttentionView
+    relationships: TaskRelationshipsView | None = None
+    blocker: TaskBlockerView | None = None
+    submitted_age: str = ""
+    requeued_age: str | None = None
+
+
+@dataclass(frozen=True)
+class TaskFamilyOutcomeView:
+    """The exact recorded count of family tasks in one lifecycle outcome."""
+
+    outcome: str
+    count: int
+
+
+@dataclass(frozen=True)
+class TaskRelationshipsView:
+    """Parentage, dependencies and recorded replacements kept as separate relationships."""
+
+    family_parent: TaskReferenceView
+    family_root: TaskReferenceView
+    family_children: tuple[TaskReferenceView, ...]
+    family_child_count: int
+    dependencies: tuple[TaskReferenceView, ...]
+    dependency_count: int
+    dependents: tuple[TaskReferenceView, ...]
+    dependent_count: int
+    replacements: tuple[TaskReferenceView, ...]
+    replacement_count: int
+    family_outcomes: tuple[TaskFamilyOutcomeView, ...]
+
+
+@dataclass(frozen=True)
+class TaskBlockerView:
+    """Recorded blocker reason and evidence, with navigable related tasks."""
+
+    kind: str
+    lines: tuple[str, ...]
+    related_tasks: tuple[TaskReferenceView, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -360,6 +424,7 @@ class ResourceView:
     free_ram_gb: float
     instance_cpu_pct: float | None
     instance_rss_gb: float | None
+    sampled_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -489,6 +554,7 @@ class WidgetContext:
     open_palette: OpenPalette
     open_palette_context: OpenPaletteContext | None = None
     open_task_detail: OpenTaskDetail | None = None
+    open_related_task_detail: OpenRelatedTaskDetail | None = None
     navigate_task_window: NavigateTaskWindow | None = None
     navigate_role_pane: NavigateRolePane | None = None
     navigate_home: NavigateHome | None = None

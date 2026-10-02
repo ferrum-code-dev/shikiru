@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import RepoConfig
     from shikiru.operator.queries import OperatorQueries
     from shikiru.telemetry.docker import DockerSampler
-    from shikiru.telemetry.resources import ResourceSampler
+    from shikiru.telemetry.resources import ResourceSampler, ResourceSnapshot
     from shikiru.tmux.client import Tmux
     from shikiru.workspace.git import Git
 
@@ -135,13 +135,12 @@ class DashboardServices:
                     raise ValueError(message)
                 pane_pids.append(int(pid_text))
         snapshot = self._resources.sample_process_trees(self._engine_pid(), pane_pids)
-        return ResourceView(
-            host_cpu_pct=snapshot.host_cpu_pct,
-            host_ram_used_pct=snapshot.host_ram_used_pct,
-            free_ram_gb=snapshot.free_ram_gb,
-            instance_cpu_pct=snapshot.instance_cpu_pct,
-            instance_rss_gb=snapshot.instance_rss_gb,
-        )
+        return _resource_view(snapshot)
+
+    def resource_sample(self) -> ResourceView | None:
+        """Return the latest dashboard resource reading without sampling again."""
+        snapshot = self._resources.latest()
+        return _resource_view(snapshot) if snapshot.sampled_at is not None else None
 
     async def containers(self) -> DockerView:
         """Return Docker stats in the stable dashboard contract shape."""
@@ -230,3 +229,14 @@ class TaskNavigation:
         except ShikiruError as error:
             return f"{HOME_WINDOW_MISSING}: {error}"
         return HOME_TARGET_OPENED
+
+
+def _resource_view(snapshot: ResourceSnapshot) -> ResourceView:
+    return ResourceView(
+        host_cpu_pct=snapshot.host_cpu_pct,
+        host_ram_used_pct=snapshot.host_ram_used_pct,
+        free_ram_gb=snapshot.free_ram_gb,
+        instance_cpu_pct=snapshot.instance_cpu_pct,
+        instance_rss_gb=snapshot.instance_rss_gb,
+        sampled_at=snapshot.sampled_at,
+    )

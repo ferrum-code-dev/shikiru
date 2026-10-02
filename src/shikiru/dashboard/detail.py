@@ -13,7 +13,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Select, Static
 
 from shikiru.dashboard.contract import PaletteRequest
-from shikiru.domain.tasks import Hold, Role
+from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason
 from shikiru.errors import ShikiruError
 from shikiru.ui.strip import TaskStrip
 
@@ -21,7 +21,13 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
     from textual.worker import Worker
 
-    from shikiru.dashboard.contract import TaskDetailView, TaskReportView, WidgetContext
+    from shikiru.dashboard.contract import (
+        TaskDetailView,
+        TaskReferenceView,
+        TaskRelationshipsView,
+        TaskReportView,
+        WidgetContext,
+    )
 
 TASK_DETAIL_WORKER_GROUP = "task-detail-updates"
 TASK_DETAIL_ESCAPE = "escape"
@@ -48,6 +54,12 @@ TASK_DETAIL_FACTS = "task-detail-facts"
 TASK_DETAIL_WORKSPACE = "task-detail-workspace"
 TASK_DETAIL_SESSIONS = "task-detail-sessions"
 TASK_DETAIL_FEEDBACK = "task-detail-feedback"
+TASK_DETAIL_BLOCKER = "task-detail-blocker"
+TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
+TASK_DETAIL_RELATIONSHIPS_BUTTON = "task-detail-relationships-toggle"
+TASK_DETAIL_RELATED_TOOLS = "task-detail-related-tools"
+TASK_DETAIL_RELATED_TASK = "task-detail-related-task"
+TASK_DETAIL_OPEN_RELATED = "task-detail-open-related"
 NO_VALUE = "\N{EN DASH}"
 NO_REPORT = "No validated report is recorded."
 NO_VERDICT = "No validated verdict is recorded."
@@ -104,6 +116,7 @@ class TaskDetailPanel(Vertical):
         self._refresh_lock = asyncio.Lock()
         self._refresh_worker: Worker[None] | None = None
         self._change_worker: Worker[None] | None = None
+        self._relationships_expanded = False
 
     def compose(self) -> ComposeResult:
         with HorizontalScroll(id="task-detail-toolbar"):
@@ -128,6 +141,23 @@ class TaskDetailPanel(Vertical):
         yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
         with VerticalScroll(id="task-detail-body"):
             yield Static("", id=TASK_DETAIL_SITUATION, classes="task-detail-section", markup=False)
+            yield Static("", id=TASK_DETAIL_BLOCKER, classes="task-detail-section", markup=False)
+            yield Button("Expand family and relationships", id=TASK_DETAIL_RELATIONSHIPS_BUTTON)
+            with HorizontalScroll(id=TASK_DETAIL_RELATED_TOOLS):
+                yield Select(
+                    (),
+                    prompt="Related task",
+                    allow_blank=True,
+                    value=Select.BLANK,
+                    id=TASK_DETAIL_RELATED_TASK,
+                )
+                yield Button("Open related task", id=TASK_DETAIL_OPEN_RELATED)
+            yield Static(
+                "",
+                id=TASK_DETAIL_RELATIONSHIPS,
+                classes="task-detail-section",
+                markup=False,
+            )
             yield Static("", id=TASK_DETAIL_PROGRESS, classes="task-detail-section")
             yield Static("", id=TASK_DETAIL_REQUEST, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_CRITERIA, classes="task-detail-section", markup=False)
@@ -152,25 +182,30 @@ class TaskDetailPanel(Vertical):
             self._change_worker.cancel()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id
-        if button_id == TASK_DETAIL_BACK_BUTTON:
-            await self._back()
-        elif button_id == TASK_DETAIL_WINDOW_BUTTON:
-            await self._navigate_task_window()
-        elif button_id == TASK_DETAIL_LEADER_BUTTON:
-            await self._navigate_role_pane(Role.LEADER)
-        elif button_id == TASK_DETAIL_IMPLEMENTER_BUTTON:
-            await self._navigate_role_pane(Role.IMPLEMENTER)
-        elif button_id == TASK_DETAIL_HAND_BACK_LEADER_BUTTON:
-            await self._open_palette(Role.LEADER, action="hand-back")
-        elif button_id == TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON:
-            await self._open_palette(Role.IMPLEMENTER, action="hand-back")
-        elif button_id == TASK_DETAIL_RESUME_BUTTON:
-            await self._open_palette(action="resume")
-        elif button_id == TASK_DETAIL_ACTIONS_BUTTON:
-            await self.open_palette()
-        elif button_id == TASK_DETAIL_ATTENTION_BUTTON:
-            await self._navigate_home()
+        handlers = {
+            TASK_DETAIL_BACK_BUTTON: self._back,
+            TASK_DETAIL_WINDOW_BUTTON: self._navigate_task_window,
+            TASK_DETAIL_LEADER_BUTTON: lambda: self._navigate_role_pane(Role.LEADER),
+            TASK_DETAIL_IMPLEMENTER_BUTTON: lambda: self._navigate_role_pane(Role.IMPLEMENTER),
+            TASK_DETAIL_HAND_BACK_LEADER_BUTTON: lambda: self._open_palette(
+                Role.LEADER, action="hand-back"
+            ),
+            TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON: lambda: self._open_palette(
+                Role.IMPLEMENTER, action="hand-back"
+            ),
+            TASK_DETAIL_RESUME_BUTTON: lambda: self._open_palette(action="resume"),
+            TASK_DETAIL_ACTIONS_BUTTON: self.open_palette,
+            TASK_DETAIL_ATTENTION_BUTTON: self._navigate_home,
+            TASK_DETAIL_RELATIONSHIPS_BUTTON: self._toggle_relationships,
+            TASK_DETAIL_OPEN_RELATED: self._open_related_task,
+        }
+        handler = handlers.get(event.button.id or "")
+        if handler is not None:
+            await handler()
+
+    async def _toggle_relationships(self) -> None:
+        self._relationships_expanded = not self._relationships_expanded
+        self._render_relationship_visibility()
 
     async def _back(self) -> None:
         if self._fixed:
@@ -271,6 +306,9 @@ class TaskDetailPanel(Vertical):
             situation.append(f"Holds · {', '.join(view.holds)}")
         if view.wait_reason is not None:
             situation.append(f"Waiting · {view.wait_reason}")
+        situation.append(f"Submitted age · {view.submitted_age}")
+        if view.requeued_age is not None:
+            situation.append(f"Recorded requeued age · {view.requeued_age}")
         if view.ownership:
             situation.append(f"Operator owns · {', '.join(view.ownership)}")
         self._render_ownership(view)
@@ -279,6 +317,11 @@ class TaskDetailPanel(Vertical):
             f"Global attention · {attention.decisions} decisions · {attention.faults} engine faults"
         )
         self.query_one(f"#{TASK_DETAIL_SITUATION}", Static).update("\n".join(situation))
+        blocker_lines = list(view.blocker.lines) if view.blocker is not None else []
+        blocker = self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+        blocker.display = bool(blocker_lines)
+        blocker.update("Blocker evidence\n" + "\n".join(blocker_lines) if blocker_lines else "")
+        self._render_relationships(view)
         progress_width = max(self.size.width - PANEL_WIDTH_PADDING, 1)
         progress = TaskStrip(view.progress).render(progress_width)
         self.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).update(
@@ -304,6 +347,41 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_FACTS}", Static).update(facts)
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(_workspace_text(view))
         self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
+
+    async def _open_related_task(self) -> None:
+        selected = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select)).value
+        callback = self._widget_context.open_related_task_detail
+        if isinstance(selected, str) and callback is not None:
+            await callback(selected)
+
+    def _render_relationships(self, view: TaskDetailView) -> None:
+        related_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))
+        previous_value = related_select.value
+        options = tuple(
+            (f"{item.task_id} · {item.title} · {item.status}", item.task_id)
+            for item in _related_references(view)
+        )
+        related_select.set_options(options)
+        valid_values = {value for _, value in options}
+        related_select.value = (
+            previous_value
+            if isinstance(previous_value, str) and previous_value in valid_values
+            else Select.BLANK
+        )
+        self.query_one(f"#{TASK_DETAIL_OPEN_RELATED}", Button).disabled = not options
+        self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update(
+            _relationships_text(view.task_id, view.status_reason, view.relationships)
+        )
+        self._render_relationship_visibility()
+
+    def _render_relationship_visibility(self) -> None:
+        expanded = self._relationships_expanded
+        self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).display = expanded
+        self.query_one(f"#{TASK_DETAIL_RELATED_TOOLS}", HorizontalScroll).display = expanded
+        toggle = self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS_BUTTON}", Button)
+        toggle.label = (
+            "Collapse family and relationships" if expanded else "Expand family and relationships"
+        )
 
     def _render_ownership(self, view: TaskDetailView) -> None:
         for role, button_id in (
@@ -390,6 +468,106 @@ def _report_text(label: str, report: TaskReportView | None, missing: str) -> str
             )
         )
     return "\n".join(lines)
+
+
+def _related_references(view: TaskDetailView) -> tuple[TaskReferenceView, ...]:
+    references: list[TaskReferenceView] = []
+    if view.blocker is not None:
+        references.extend(view.blocker.related_tasks)
+    relationships = view.relationships
+    if relationships is not None:
+        references.extend(
+            (
+                relationships.family_parent,
+                *relationships.family_children,
+                *relationships.dependencies,
+                *relationships.dependents,
+                *relationships.replacements,
+            )
+        )
+    seen: set[str] = set()
+    unique: list[TaskReferenceView] = []
+    for reference in references:
+        if reference.task_id not in seen:
+            seen.add(reference.task_id)
+            unique.append(reference)
+    return tuple(unique)
+
+
+def _relationships_text(
+    task_id: str,
+    status_reason: str | None,
+    relationships: TaskRelationshipsView | None,
+) -> str:
+    if relationships is None:
+        return "Relationships\nRelationship evidence is unavailable."
+    family_parent = relationships.family_parent
+    lines = [f"Family group · {family_parent.task_id} {family_parent.title}"]
+    if relationships.family_children:
+        lines.extend(
+            f"  ↳ {child.task_id} · {child.title} · {child.status}"
+            f"{' · selected' if child.task_id == task_id else ''}"
+            for child in relationships.family_children
+        )
+    else:
+        lines.append("  No child tasks are recorded under this parent.")
+    if relationships.family_child_count > len(relationships.family_children):
+        lines.append(
+            f"Showing {len(relationships.family_children)} of "
+            f"{relationships.family_child_count} children in this group."
+        )
+    outcomes = " · ".join(f"{item.outcome} {item.count}" for item in relationships.family_outcomes)
+    root = relationships.family_root
+    lines.append(f"Family-wide outcomes · root {root.task_id} · {outcomes}")
+    unfinished_family = any(
+        item.count > 0
+        and item.outcome
+        in {
+            Status.QUEUED.value,
+            Status.RUNNING.value,
+            Status.INTEGRATING.value,
+            Status.ESCALATED.value,
+        }
+        for item in relationships.family_outcomes
+    )
+    if root.mode == Mode.PLAN.value and root.status == Status.DONE.value and unfinished_family:
+        lines.append(
+            "The plan parent integrated; unfinished child tasks remain part of the family."
+        )
+    _append_relationship_group(lines, "Dependencies", relationships.dependencies)
+    if relationships.dependency_count > len(relationships.dependencies):
+        lines.append(
+            f"Showing {len(relationships.dependencies)} of "
+            f"{relationships.dependency_count} dependencies."
+        )
+    _append_relationship_group(lines, "Dependents", relationships.dependents)
+    if relationships.dependent_count > len(relationships.dependents):
+        lines.append(
+            f"Showing {len(relationships.dependents)} of "
+            f"{relationships.dependent_count} dependents."
+        )
+    if relationships.replacements:
+        _append_relationship_group(lines, "Recorded replacements", relationships.replacements)
+        if relationships.replacement_count > len(relationships.replacements):
+            lines.append(
+                f"Showing {len(relationships.replacements)} of "
+                f"{relationships.replacement_count} recorded replacements."
+            )
+    elif status_reason == StatusReason.SUPERSEDED.value:
+        lines.append("No replacement task IDs are present in the recorded scope-change event.")
+    return "Relationships\n" + "\n".join(lines)
+
+
+def _append_relationship_group(
+    lines: list[str],
+    label: str,
+    references: tuple[TaskReferenceView, ...],
+) -> None:
+    if references:
+        lines.append(
+            f"{label} · "
+            + "; ".join(f"{item.task_id} {item.title} ({item.status})" for item in references)
+        )
 
 
 def _evidence_text(view: TaskDetailView) -> str:

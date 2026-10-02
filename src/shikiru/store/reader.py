@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import sqlite3  # noqa: TID251
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from shikiru.domain.events import EventKind
+from shikiru.domain.tasks import StatusReason
 from shikiru.errors import DatabaseError
 from shikiru.store.commands import (
     CommandHistoryPage,
@@ -16,12 +18,13 @@ from shikiru.store.commands import (
 )
 from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
 from shikiru.store.events import fetch_events_since, fetch_latest_events
-from shikiru.store.quotas import fetch_quota_agents, fetch_quotas
+from shikiru.store.quotas import AgentBlock, fetch_agent_block, fetch_quota_agents, fetch_quotas
 from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task
 from shikiru.store.tasks import (
     fetch_task,
     fetch_task_browser_page,
     fetch_task_browser_pages,
+    fetch_task_relationships,
     fetch_tasks,
 )
 
@@ -32,11 +35,11 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.domain.commands import Command, CommandStatus
     from shikiru.domain.escalation import Escalation
-    from shikiru.domain.events import Event, EventKind
+    from shikiru.domain.events import Event
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Status, Task
     from shikiru.store.database import Database
-    from shikiru.store.tasks import TaskBrowserPage
+    from shikiru.store.tasks import TaskBrowserPage, TaskRelationships
 
 DASHBOARD_CHANGE_POLL_SECONDS = 0.5
 CASEFOLD_SQL_FUNCTION = "casefold"
@@ -118,6 +121,49 @@ class StateReader:
                 selected_task_id=selected_task_id,
                 diagnosed_stall_task_ids=diagnosed_stall_task_ids,
             )
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
+
+    def task_relationships(self, task_id: str) -> TaskRelationships | None:
+        """Read a task's bounded family group and its distinct stored graph relationships."""
+        try:
+            task = fetch_task(self._connection, task_id)
+            if task is None:
+                return None
+            replacement_ids: list[str] = []
+            if task.status_reason is StatusReason.SUPERSEDED:
+                events = fetch_latest_events(
+                    self._connection,
+                    1,
+                    kinds=[EventKind.SCOPE_CHANGE],
+                    task_id=task_id,
+                )
+                if events:
+                    recorded_ids = events[0].data.get("new_task_ids")
+                    if isinstance(recorded_ids, list):
+                        recorded_task_ids = cast("list[object]", recorded_ids)
+                        if all(
+                            isinstance(task_id_value, str) for task_id_value in recorded_task_ids
+                        ):
+                            replacement_ids = [
+                                task_id_value
+                                for task_id_value in recorded_task_ids
+                                if isinstance(task_id_value, str)
+                            ]
+            return fetch_task_relationships(
+                self._connection,
+                task,
+                replacement_task_ids=replacement_ids,
+            )
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
+
+    def agent_block(self, agent: str) -> AgentBlock | None:
+        """Read the engine's recorded quota block for one required agent."""
+        try:
+            return fetch_agent_block(self._connection, agent)
         except sqlite3.Error as error:
             message = f"could not query read-only database {self._database_path}: {error}"
             raise DatabaseError(message) from error
