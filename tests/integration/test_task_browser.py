@@ -22,6 +22,7 @@ from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
+from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from shikiru.view_log import (
     VIEW_SESSION_STARTED_SIGNAL,
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.domain.tasks import Task
-    from shikiru.store.reader import StateReader
+    from shikiru.store.database import Database
     from tests.support.store import Connection
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -354,6 +355,71 @@ async def test_history_load_more_keeps_the_selected_task(
         assert widget.query_one("#task-browser-more", Button).disabled
         assert task_list.children[-1].id == f"task-row-{selected.id}"
         assert selected.id in _static_text(widget.query_one("#task-browser-preview", Static))
+
+
+async def test_history_load_more_reconciles_a_new_task_before_watch_poll(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tasks: list[Task] = []
+    for index in range(PAGE_SIZE + 1):
+        task = seed_task(connection, clock, title=f"History task {index}")
+        tasks.append(task)
+        _finish_task(connection, clock, task.id)
+        if index < PAGE_SIZE:
+            clock.advance(1)
+    selected = tasks[-1 - READING_INDEX]
+    reader = StateReader(database, clock)
+    widget = cast("QueuePanel", QueueWidget().create(widget_context(reader, project_dir, clock)))
+
+    try:
+        async with WidgetHostApp(widget).run_test(size=(90, 100)) as pilot:
+            await pilot.pause()
+            await pilot.click("#task-filter-history")
+            await pilot.pause()
+            list_view = widget.query_one("#task-browser-list", ListView)
+            list_view.focus()
+            list_view.index = READING_INDEX
+            await pilot.pause()
+            list_view.scroll_to(y=READING_SCROLL_POSITION, animate=False)
+            await pilot.pause()
+            visible_before = _visible_task_ids(list_view)
+            assert selected.id in visible_before
+            assert selected.id in _static_text(widget.query_one("#task-browser-preview", Static))
+            await wait_until(clock.has_pending_sleep, timeout=5.0)
+
+            new_task = seed_task(connection, clock, title="Inserted before the next page")
+            _finish_task(connection, clock, new_task.id)
+            assert len(list_view.children) == PAGE_SIZE
+            assert f"of {PAGE_SIZE + 1}" in _static_text(
+                widget.query_one("#task-browser-count", Static)
+            )
+
+            assert await pilot.click("#task-browser-more")
+            await wait_until(
+                lambda: (
+                    len(list_view.children) == PAGE_SIZE + 2
+                    and f"of {PAGE_SIZE + 2}"
+                    in _static_text(widget.query_one("#task-browser-count", Static))
+                ),
+                timeout=5.0,
+            )
+            await wait_until(
+                lambda: _visible_task_ids(list_view) == visible_before,
+                timeout=5.0,
+            )
+
+            loaded_ids = tuple(
+                item.id.removeprefix("task-row-") for item in list_view.children if item.id
+            )
+            assert loaded_ids == (new_task.id, *(task.id for task in reversed(tasks)))
+            assert len(set(loaded_ids)) == len(loaded_ids)
+            assert selected.id in _visible_task_ids(list_view)
+            assert selected.id in _static_text(widget.query_one("#task-browser-preview", Static))
+            assert list_view.has_focus
+    finally:
+        reader.close()
 
 
 async def test_state_refresh_preserves_visible_list_position_and_selected_task(

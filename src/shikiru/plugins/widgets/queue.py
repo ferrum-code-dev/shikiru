@@ -275,6 +275,7 @@ class QueuePanel(Vertical):
             and current.filter is self._filter
             and current.search == self._search
         ):
+            current = self._load_pages()
             if not current.has_more:
                 return current
             offset = len(current.rows)
