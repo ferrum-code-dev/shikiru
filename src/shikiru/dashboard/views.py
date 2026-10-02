@@ -38,7 +38,7 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
-from shikiru.domain.steps import ACTING_ROLE, Step
+from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status
 from shikiru.operator.queries import AGENT_REPORT_SOURCE
 from shikiru.operator.strip_views import task_strip_data
@@ -452,6 +452,7 @@ class StateDashboardViews:
             status_reason=task.status_reason.value if task.status_reason is not None else None,
             mode=task.mode.value if task.mode is not None else None,
             step=_step_label(task.status, task.step, task.iteration),
+            acting_role=task_acting_role(task).value,
             iteration=task.iteration,
             holds=tuple(sorted(hold.value for hold in task.holds)),
             wait_reason=task.wait_reason,

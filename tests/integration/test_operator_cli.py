@@ -191,7 +191,11 @@ async def test_start_reports_that_an_existing_engine_was_reused(
     assert result.session == exact_target(session_name(settings.project.name))
     key_lines = await tmux_server.run("list-keys", "-T", "prefix")
     binding = next(line for line in key_lines.stdout.splitlines() if " Space " in line)
-    assert f"display-popup -E {shlex.join(PALETTE_COMMAND)}" in shlex.split(binding)
+    binding_tokens = shlex.split(binding)
+    if_shell_index = binding_tokens.index("if-shell")
+    run_shell_tokens = shlex.split(binding_tokens[if_shell_index + 3])
+    popup_command = shlex.split(run_shell_tokens[1])
+    assert popup_command == ["tmux", "display-popup", "-E", *PALETTE_COMMAND]
 
 
 @pytest.mark.parametrize("repo_relative", ["child", ".."])

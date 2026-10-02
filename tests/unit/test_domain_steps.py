@@ -12,6 +12,7 @@ from shikiru.domain.steps import (
     Transition,
     first_step,
     next_step,
+    task_acting_role,
 )
 from shikiru.domain.tasks import (
     Counters,
@@ -67,6 +68,22 @@ def test_first_step_with_mode_implement_starts_at_iteration_one() -> None:
 
     assert transition.step is Step.IMPLEMENT
     assert transition.iteration == 1
+
+
+@pytest.mark.parametrize(
+    ("mode", "step", "expected"),
+    [
+        (Mode.IMPLEMENT, None, Role.IMPLEMENTER),
+        (Mode.PLAN, None, Role.LEADER),
+        (None, Step.IMPLEMENT, Role.IMPLEMENTER),
+    ],
+)
+def test_task_acting_role_uses_current_or_first_scheduled_step(
+    mode: Mode | None, step: Step | None, expected: Role
+) -> None:
+    task = make_task(mode=mode, step=step)
+
+    assert task_acting_role(task) is expected
 
 
 def test_triage_implement_starts_the_first_implement_at_iteration_one() -> None:

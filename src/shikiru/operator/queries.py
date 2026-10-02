@@ -19,6 +19,7 @@ from shikiru.domain.faults import FaultStreak, open_fault_streaks
 from shikiru.domain.reports import FACTS_FILENAME, Report, ReportKind
 from shikiru.domain.runs import Run, RunStatus
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
+from shikiru.domain.steps import task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
 from shikiru.paths import engine_output_path, run_dir, runs_root, task_root, turns_dir
@@ -53,6 +54,7 @@ TASK_ACTION_OTHER_ROLE_TAKEN_OVER = "hand back all taken-over roles before resum
 TASK_ACTION_NO_HOLD = "task has no pause or ownership hold"
 TASK_ACTION_NOT_QUEUED = "task can only be prioritized while queued"
 TASK_PANE_CONTEXT_STATUSES = (*ACTIVE_STATUSES, Status.QUEUED)
+TASK_TARGET_SEARCH_CATEGORY = "all"
 
 
 class OperatorTaskAction(StrEnum):
@@ -82,6 +84,17 @@ class TaskActionAvailability:
     def enabled(self) -> bool:
         """Whether the current task state permits presenting this action as available."""
         return self.disabled_reason is None
+
+
+@dataclass(frozen=True)
+class TaskTargetSearchPage:
+    """One bounded page of task targets and any selected target outside its search."""
+
+    tasks: tuple[TaskSummary, ...]
+    selected_task: TaskSummary | None
+    matching_count: int
+    project_count: int
+    has_more: bool
 
 
 class OperatorView(BaseModel):
@@ -304,6 +317,43 @@ class OperatorQueries:
     def list_tasks(self, *, statuses: Sequence[Status] | None = None) -> list[TaskSummary]:
         """Return task summaries ordered by their allocated task sequence."""
         return [TaskSummary.from_task(task) for task in self._reader.list_tasks(statuses=statuses)]
+
+    def search_task_targets(
+        self,
+        search: str,
+        *,
+        limit: int,
+        offset: int,
+        selected_task_id: str | None = None,
+    ) -> TaskTargetSearchPage:
+        """Read a bounded ID/title target page and retain a selected target outside the match."""
+        page = self._reader.task_browser_page(
+            category=TASK_TARGET_SEARCH_CATEGORY,
+            search=search,
+            limit=limit,
+            offset=offset,
+            selected_task_id=selected_task_id,
+        )
+        tasks = tuple(TaskSummary.from_task(task) for task in page.tasks)
+        selected_task = None
+        if selected_task_id is not None and all(task.id != selected_task_id for task in tasks):
+            task = self._reader.get_task(selected_task_id)
+            if task is not None:
+                selected_task = TaskSummary.from_task(task)
+        return TaskTargetSearchPage(
+            tasks=tasks,
+            selected_task=selected_task,
+            matching_count=page.matching_count,
+            project_count=page.project_count,
+            has_more=offset + len(tasks) < page.matching_count,
+        )
+
+    def task_action_role(self, task_id: str) -> Role:
+        """Return the role at this task's current or first scheduled step."""
+        task = self._reader.get_task(task_id)
+        if task is None:
+            return Role.LEADER
+        return task_acting_role(task)
 
     def get_task(self, task_id: str) -> TaskDetail | None:
         """Return one task, its runs and its event timeline, or `None` when absent."""

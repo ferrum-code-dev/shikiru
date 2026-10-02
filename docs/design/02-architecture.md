@@ -84,7 +84,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `ui` | Semantic colors, Textual theme and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.theme`, `ui.glyphs`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
-| `operator` | Use cases for interfaces; current task-action applicability and disabled reasons; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
+| `operator` | Use cases for interfaces; current task-action applicability and disabled reasons; bounded task-target search; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
 | `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract. `DashboardApp` groups configured widgets, opens shared detail from Home and opens the shared palette; additive `WidgetContext` callbacks carry palette context and browser selection while existing callback fields remain available; `dashboard.views` composes bounded browser/detail data; `TaskNavigation` selects current existing tmux targets. The operator layer prepares action availability, while the engine remains authoritative for command acceptance | `app`, `build_server()`, `DashboardApp`, `TaskDetailScreen`, `TaskNavigation`, `PaletteApp`, `DashboardWidget`, `DashboardViews`, `TaskBrowserView`, `TaskDetailView` |
 
 **Engine components**, each with one responsibility:

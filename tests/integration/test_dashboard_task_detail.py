@@ -17,7 +17,8 @@ from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
 from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_ROLE,
-    TASK_DETAIL_ACTIONS_BUTTON,
+    TASK_DETAIL_IDENTITY,
+    TASK_DETAIL_SITUATION,
     TaskDetailScreen,
 )
 from shikiru.dashboard.services import TaskNavigation
@@ -33,7 +34,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.reports import TestRun as AgentTestRun
-from shikiru.domain.steps import Transition
+from shikiru.domain.steps import Step, Transition
 from shikiru.domain.tasks import EscalationReason, Mode, RepoState, Role, Status, Task
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import run_dir, task_root
@@ -567,7 +568,113 @@ async def test_detail_actions_carry_task_and_selected_role_to_shared_palette(
         async with app.run_test(size=(80, 40)) as pilot:
             await pilot.pause()
             app.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select).value = Role.IMPLEMENTER.value
-            await pilot.click(f"#{TASK_DETAIL_ACTIONS_BUTTON}")
+            TaskStore(connection, clock).apply_transition(
+                task.id,
+                Transition.stay(task, step=task.step, status=Status.DONE),
+            )
+            await wait_until(
+                lambda: "done" in _text(app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)),
+                timeout=2,
+            )
+            await pilot.press("ctrl+p")
+            await wait_until(lambda: bool(opened), timeout=2)
+
+        assert opened == [PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)]
+    finally:
+        reader.close()
+
+
+async def test_pushed_task_detail_ctrl_p_carries_selected_role(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Pushed detail action target")
+    reader = StateReader(database, SystemClock())
+    opened: list[PaletteRequest] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        opened.append(request)
+
+    try:
+        app = _dashboard_app(
+            reader,
+            project_root,
+            focus_task=None,
+            widget_names=TASK_DETAIL_WIDGETS,
+            open_palette_context=open_palette_context,
+        )
+        async with app.run_test(size=(80, 40)) as pilot:
+            browser = app.query_one("#task-browser-list", ListView)
+            browser.focus()
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+            detail = app.screen
+            await wait_until(
+                lambda: (
+                    "Pushed detail action target"
+                    in _text(detail.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                ),
+                timeout=2,
+            )
+            detail.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select).value = Role.IMPLEMENTER.value
+            await pilot.press("ctrl+p")
+            await wait_until(lambda: bool(opened), timeout=2)
+
+        assert opened == [PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)]
+    finally:
+        reader.close()
+
+
+async def test_implementation_step_defaults_detail_palette_role_to_implementer(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(
+        connection,
+        clock,
+        title="Implementation role default",
+        mode=Mode.IMPLEMENT,
+    )
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.IMPLEMENT, status=Status.RUNNING),
+    )
+    reader = StateReader(database, SystemClock())
+    opened: list[PaletteRequest] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        opened.append(request)
+
+    try:
+        detail_view = await state_views(reader, project_root, clock, StubServices()).task_detail(
+            task.id
+        )
+        assert detail_view is not None
+        assert detail_view.acting_role == Role.IMPLEMENTER.value
+        app = _dashboard_app(
+            reader,
+            project_root,
+            focus_task=task.id,
+            widget_names=TASK_DETAIL_WIDGETS,
+            open_palette_context=open_palette_context,
+        )
+        async with app.run_test(size=(80, 40)) as pilot:
+            await wait_until(
+                lambda: (
+                    "Implementation role default"
+                    in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                ),
+                timeout=2,
+            )
+            role = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select)).value
+            assert role == Role.IMPLEMENTER.value
+            await pilot.press("ctrl+p")
             await wait_until(lambda: bool(opened), timeout=2)
 
         assert opened == [PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)]

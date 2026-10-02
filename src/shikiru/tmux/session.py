@@ -23,6 +23,7 @@ HOME_WINDOW_NAME = "shikiru"
 DETACHED_SIZE = (240, 64)
 
 _PALETTE_KEY = "Space"
+_TMUX_COMMAND = "tmux"
 _GLOB_SPECIAL_CHARS = "\\[]*?"
 
 
@@ -54,13 +55,16 @@ async def bind_palette_key(tmux: Tmux, palette_command: Sequence[str]) -> None:
     Elsewhere the key keeps tmux's own default, `next-layout` (06 §5.2): there is no global
     override, only this one conditional binding.
     """
-    popup_command = "display-popup -E " + " ".join(shlex.quote(part) for part in palette_command)
+    popup_command = f"{_TMUX_COMMAND} display-popup -E " + " ".join(
+        shlex.quote(part) for part in palette_command
+    )
+    expanded_popup_command = f"run-shell {shlex.quote(popup_command)}"
     await tmux.bind_key(
         _PALETTE_KEY,
         "if-shell",
         "-F",
         SHIKIRU_SESSION_PATTERN,
-        popup_command,
+        expanded_popup_command,
         _DEFAULT_PALETTE_KEY_COMMAND,
     )
 

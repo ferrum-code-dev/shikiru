@@ -28,6 +28,7 @@ from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.worker import Worker
 
     from shikiru.agents.contracts import Rung
     from shikiru.operator.commands import Ack, OperatorCommands
@@ -110,7 +111,12 @@ _FIELD_ROLE = "role"
 _ACTION_STATE_ID = "palette-action-state"
 _GUIDANCE_ID = "palette-guidance"
 _SUBMIT_ID = "palette-submit"
+_TASK_COUNT_ID = "palette-task-count"
+_TASK_MORE_ID = "palette-task-more"
+_ADVANCED_TOGGLE_ID = "palette-advanced-toggle"
+_ADVANCED_FIELDS_ID = "palette-advanced-fields"
 _SELECT_REQUIRED = "Select an item"
+_TASK_SEARCH_PAGE_LIMIT = 50
 _TAKEOVER_SELECTION_FAILURE = "take-over succeeded, but the role pane could not be selected"
 _ACTION_GUIDANCE = {
     _ACTION_SUBMIT: "Creates a new task using the request and optional submission fields.",
@@ -209,13 +215,21 @@ class PaletteScreen(ModalScreen[None]):
         self._initial_context = initial_context or PaletteRequest()
         self._initial_action = self._initial_context.action or initial_action
         self._pane_selector = pane_selector
-        self._tasks: tuple[TaskSummary, ...] = ()
+        self._task_search_tasks: tuple[TaskSummary, ...] = ()
+        self._task_search_count = 0
+        self._task_search_offset = 0
+        self._task_search_matching_count = 0
+        self._task_search_project_count = 0
+        self._task_search_has_more = False
         self._action_states: dict[str, TaskActionAvailability] = {}
         self._shown_action_options: tuple[tuple[str, str], ...] = ()
         self._escalations: dict[str, EscalationView] = {}
         self._shown_escalation_id: str | None = None
         self._route_error: str | None = None
         self._route_action: str | None = None
+        self._advanced_expanded = False
+        self._action_in_flight = False
+        self._action_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
         """Show one compact form with fields enabled for the selected action."""
@@ -229,19 +243,24 @@ class PaletteScreen(ModalScreen[None]):
                     "Find task by ID or title", _FIELD_TASK_SEARCH, "T-1 or title"
                 )
                 yield from self._select_field("Task match", _FIELD_TASK_CHOICE, ())
+                yield Static("", id=_TASK_COUNT_ID, markup=False)
+                yield Button("More matches", id=_TASK_MORE_ID)
+                yield Button("Advanced submission options", id=_ADVANCED_TOGGLE_ID)
                 yield from self._input_field("Task ID · editable", _FIELD_TASK_ID, "T-1")
-                yield from self._text_area_field("Request", "request", "Describe the work")
-                yield from self._input_field("Title (optional)", "title", "Task title")
-                yield from self._select_field("Mode", "mode", _MODE_OPTIONS)
-                yield from self._select_field("Complexity", "complexity", _COMPLEXITY_OPTIONS)
                 yield from self._input_field("Priority", "priority", "0")
-                yield from self._input_field(
-                    "Dependencies (comma separated)", "dependencies", "T-1, T-2"
-                )
-                yield from self._input_field("Leader rung", "leader-rung", "agent:model:effort")
-                yield from self._input_field(
-                    "Implementer rung", "implementer-rung", "agent:model:effort"
-                )
+                yield from self._text_area_field("Request", "request", "Describe the work")
+                with Vertical(id=_ADVANCED_FIELDS_ID):
+                    yield from self._input_field("Title (optional)", "title", "Task title")
+                    yield from self._select_field("Mode", "mode", _MODE_OPTIONS)
+                    yield from self._select_field("Complexity", "complexity", _COMPLEXITY_OPTIONS)
+                    yield from self._input_field("Submission priority", "submission-priority", "0")
+                    yield from self._input_field(
+                        "Dependencies (comma separated)", "dependencies", "T-1, T-2"
+                    )
+                    yield from self._input_field("Leader rung", "leader-rung", "agent:model:effort")
+                    yield from self._input_field(
+                        "Implementer rung", "implementer-rung", "agent:model:effort"
+                    )
                 yield from self._select_field("Role", _FIELD_ROLE, _ROLE_OPTIONS)
                 yield from self._input_field("Rung", "rung", "agent:model:effort")
                 yield from self._text_area_field("Message", "message", "Message for the next turn")
@@ -263,7 +282,6 @@ class PaletteScreen(ModalScreen[None]):
     async def on_mount(self) -> None:
         """Load open escalation packets and activate an action routed from a widget."""
         self._escalations = {item.escalation.id: item for item in self._queries.list_escalations()}
-        self._tasks = tuple(self._queries.list_tasks())
         escalation_select = cast("Select[str]", self.query_one("#escalation", Select))
         escalation_select.set_options(
             (f"{item.escalation.id} · {item.escalation.headline}", item.escalation.id)
@@ -297,19 +315,27 @@ class PaletteScreen(ModalScreen[None]):
             action_select.value = self._initial_action
         cast("Select[str]", self.query_one("#mode", Select)).value = _EMPTY
         cast("Select[str]", self.query_one("#complexity", Select)).value = _EMPTY
-        role = self._initial_context.role or Role.LEADER.value
+        task_id = self._initial_context.task_id
+        default_role = (
+            self._queries.task_action_role(task_id).value
+            if task_id is not None
+            else Role.LEADER.value
+        )
+        role = self._initial_context.role or default_role
         if role not in {item.value for item in _TASK_ROLES}:
             self._route_error = f"unknown role context: {role}"
             role = Role.LEADER.value
         cast("Select[str]", self.query_one(f"#{_FIELD_ROLE}", Select)).value = role
         self.query_one("#priority", Input).value = "0"
+        self.query_one("#submission-priority", Input).value = "0"
         self.query_one(f"#{_FIELD_TASK_ID}", Input).value = self._initial_context.task_id or _EMPTY
         self._refresh_task_choices()
         self._route_action = self._selected_value(_FIELD_ACTION)
         self._update_fields(action_select.value)
         self._refresh_action_availability()
         if self._route_error is not None:
-            self._show_result(self._route_error)
+            self.query_one("#palette-result", Static).update(self._route_error)
+            self.call_after_refresh(self._reveal_result)
             self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
 
     async def on_select_changed(self, event: Select.Changed) -> None:
@@ -345,15 +371,37 @@ class PaletteScreen(ModalScreen[None]):
         if event.input.id == _FIELD_ACTION_SEARCH:
             self._refresh_action_availability()
         elif event.input.id == _FIELD_TASK_SEARCH:
+            self._task_search_tasks = ()
+            self._task_search_count = 0
+            self._task_search_offset = 0
             self._refresh_task_choices()
         elif event.input.id == _FIELD_TASK_ID:
+            self._task_search_tasks = ()
+            self._task_search_count = 0
+            self._task_search_offset = 0
+            self._refresh_task_choices()
             self._refresh_action_availability()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Run the selected action in a worker so the palette stays responsive."""
+        if event.button.id == _TASK_MORE_ID:
+            self._refresh_task_choices()
+            return
+        if event.button.id == _ADVANCED_TOGGLE_ID:
+            self._advanced_expanded = not self._advanced_expanded
+            self.query_one(f"#{_ADVANCED_FIELDS_ID}").display = self._advanced_expanded
+            return
         if event.button.id == _SUBMIT_ID:
+            if self._action_in_flight:
+                return
+            self._action_in_flight = True
             event.button.disabled = True
-            self.run_worker(self._run_action(), exclusive=True)
+            self._action_worker = self.run_worker(self._run_action(), exclusive=True)
+
+    def on_unmount(self) -> None:
+        worker = self._action_worker
+        if worker is not None and worker.is_running:
+            worker.cancel()
 
     async def action_close(self) -> None:
         """Dismiss the shared screen or exit its standalone popup app."""
@@ -383,6 +431,8 @@ class PaletteScreen(ModalScreen[None]):
                 ):
                     await self._select_role_pane(ack, task_id, role)
         finally:
+            self._action_in_flight = False
+            self._action_worker = None
             if self._is_current_screen():
                 self._refresh_action_availability()
 
@@ -395,7 +445,7 @@ class PaletteScreen(ModalScreen[None]):
                 title=self._optional_input("title"),
                 mode=self._mode(),
                 complexity=self._complexity(),
-                priority=self._integer("priority"),
+                priority=self._integer("submission-priority"),
                 depends_on=self._dependencies(),
                 leader=self._optional_rung("leader-rung"),
                 implementer=self._optional_rung("implementer-rung"),
@@ -444,7 +494,7 @@ class PaletteScreen(ModalScreen[None]):
         selected_action = _TASK_ACTION_BY_ID[action]
         state = next(
             item
-            for item in self._commands.task_action_availability(task_id, self._role())
+            for item in self._queries.task_action_availability(task_id, self._role())
             if item.action is selected_action
         )
         if state.disabled_reason is not None:
@@ -455,7 +505,7 @@ class PaletteScreen(ModalScreen[None]):
         self._action_states = (
             {
                 state.action.value: state
-                for state in self._commands.task_action_availability(task_id, self._role())
+                for state in self._queries.task_action_availability(task_id, self._role())
             }
             if task_id
             else {}
@@ -468,7 +518,7 @@ class PaletteScreen(ModalScreen[None]):
         guidance = _ACTION_GUIDANCE.get(action or "", _EMPTY)
         self.query_one(f"#{_GUIDANCE_ID}", Static).update(guidance)
         self.query_one(f"#{_SUBMIT_ID}", Button).disabled = (
-            self._route_error is not None or disabled_reason is not None
+            self._route_error is not None or disabled_reason is not None or self._action_in_flight
         )
 
     def _refresh_action_options(self) -> None:
@@ -505,24 +555,45 @@ class PaletteScreen(ModalScreen[None]):
         return state.disabled_reason
 
     def _refresh_task_choices(self) -> None:
-        search = self._input(_FIELD_TASK_SEARCH).strip().casefold()
-        options = tuple(
-            (f"{task.id} · {task.title}", task.id)
-            for task in self._tasks
-            if not search or search in f"{task.id} {task.title}".casefold()
+        search = self._input(_FIELD_TASK_SEARCH).strip()
+        page = self._queries.search_task_targets(
+            search,
+            limit=_TASK_SEARCH_PAGE_LIMIT,
+            offset=self._task_search_offset,
+            selected_task_id=self._input(_FIELD_TASK_ID).strip() or None,
         )
-        current_task_id = self._input(_FIELD_TASK_ID).strip()
-        if current_task_id and all(value != current_task_id for _, value in options):
-            current_task = next((task for task in self._tasks if task.id == current_task_id), None)
-            if current_task is not None:
-                options += ((f"{current_task.id} · {current_task.title}", current_task.id),)
+        if page.tasks:
+            tasks_by_id = {task.id: task for task in self._task_search_tasks}
+            tasks_by_id.update((task.id, task) for task in page.tasks)
+            self._task_search_tasks = tuple(tasks_by_id.values())
+            self._task_search_offset += len(page.tasks)
+            self._task_search_count = len(self._task_search_tasks)
+        self._task_search_matching_count = page.matching_count
+        self._task_search_project_count = page.project_count
+        self._task_search_has_more = page.has_more
+        tasks = list(self._task_search_tasks)
+        if page.selected_task is not None and all(
+            task.id != page.selected_task.id for task in tasks
+        ):
+            tasks.append(page.selected_task)
+        options = tuple((f"{task.id} · {task.title}", task.id) for task in tasks)
         task_select = cast("Select[str]", self.query_one(f"#{_FIELD_TASK_CHOICE}", Select))
         selected = self._selected_value(_FIELD_TASK_CHOICE)
+        if selected is None:
+            selected = self._input(_FIELD_TASK_ID).strip() or None
         task_select.set_options(options)
         if selected in {value for _, value in options}:
             task_select.value = selected
         else:
             task_select.value = Select.BLANK
+        self.query_one(f"#{_TASK_COUNT_ID}", Static).update(
+            f"Showing {self._task_search_count} of {self._task_search_matching_count} matches · "
+            f"{self._task_search_project_count} tasks in project"
+        )
+        self.query_one(f"#{_TASK_MORE_ID}", Button).display = (
+            self._selected_value(_FIELD_ACTION) in _TASK_TARGET_ACTIONS
+            and self._task_search_has_more
+        )
 
     async def _select_role_pane(self, ack: Ack, task_id: str, role: Role) -> None:
         detail = self._queries.get_task(task_id)
@@ -618,7 +689,8 @@ class PaletteScreen(ModalScreen[None]):
             "title": action == _ACTION_SUBMIT,
             "mode": action == _ACTION_SUBMIT,
             "complexity": action == _ACTION_SUBMIT,
-            "priority": action in {_ACTION_PRIORITIZE, _ACTION_SUBMIT},
+            "priority": action == _ACTION_PRIORITIZE,
+            "submission-priority": action == _ACTION_SUBMIT,
             "dependencies": action == _ACTION_SUBMIT,
             "leader-rung": action == _ACTION_SUBMIT,
             "implementer-rung": action == _ACTION_SUBMIT,
@@ -637,6 +709,14 @@ class PaletteScreen(ModalScreen[None]):
             self.query_one(f"#field-{field}").display = visible
         self.query_one(f"#{_ACTION_STATE_ID}").display = action in _TASK_TARGET_ACTIONS
         self.query_one(f"#{_GUIDANCE_ID}").display = action in _ACTION_GUIDANCE
+        self.query_one(f"#{_TASK_COUNT_ID}").display = action in _TASK_TARGET_ACTIONS
+        self.query_one(f"#{_TASK_MORE_ID}").display = (
+            action in _TASK_TARGET_ACTIONS and self._task_search_has_more
+        )
+        self.query_one(f"#{_ADVANCED_TOGGLE_ID}").display = action == _ACTION_SUBMIT
+        self.query_one(f"#{_ADVANCED_FIELDS_ID}").display = (
+            action == _ACTION_SUBMIT and self._advanced_expanded
+        )
         self.query_one("#palette-packet-scroll").display = action == _ACTION_RESOLVE
         self._show_escalation(self._selected_value(_FIELD_ESCALATION))
 
@@ -662,7 +742,7 @@ class PaletteScreen(ModalScreen[None]):
             form.scroll_to_widget(result, animate=False, immediate=True)
 
     def _is_current_screen(self) -> bool:
-        return cast("App[None]", self.app).screen is self
+        return self.is_mounted and cast("App[None]", self.app).screen is self
 
     def _input(self, name: str) -> str:
         return self.query_one(f"#{name}", Input).value

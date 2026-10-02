@@ -34,7 +34,6 @@ if TYPE_CHECKING:
         OnChangeRegistration,
         OpenPalette,
         OpenPaletteContext,
-        SelectTaskContext,
     )
 
 _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
@@ -241,7 +240,6 @@ class DashboardApp(App[None]):
         navigate_task_window: NavigateTaskWindow | None = None,
         navigate_role_pane: NavigateRolePane | None = None,
         navigate_home: NavigateHome | None = None,
-        on_task_selected: SelectTaskContext | None = None,
     ) -> None:
         """Build the home or task workspace with the configured widgets."""
         super().__init__()
@@ -256,7 +254,6 @@ class DashboardApp(App[None]):
         self._open_palette = open_palette
         self._open_palette_context = open_palette_context
         self._selected_task_id = focus_task
-        self._external_task_selection = on_task_selected
         self._navigate_task_window = navigate_task_window
         self._navigate_role_pane = navigate_role_pane
         self._navigate_home = navigate_home
@@ -354,9 +351,6 @@ class DashboardApp(App[None]):
 
     def _select_task_context(self, task_id: str | None) -> None:
         self._selected_task_id = task_id
-        callback = self._external_task_selection
-        if callback is not None:
-            callback(task_id)
 
     async def on_mount(self) -> None:
         """Focus section navigation and start the signal-driven motion refresh."""
@@ -510,6 +504,9 @@ class DashboardApp(App[None]):
 
     async def action_open_palette(self) -> None:
         """Open the operator palette through the shared dashboard callback."""
+        if self._focus_task is not None:
+            await self.query_one("#task-detail-panel", TaskDetailPanel).open_palette()
+            return
         if self._open_palette_context is not None:
             task_id = self._focus_task or self._selected_task_id
             await self._open_palette_context(PaletteRequest(task_id=task_id))

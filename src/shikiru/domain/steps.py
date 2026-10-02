@@ -152,6 +152,12 @@ def first_step(task: Task) -> Transition:
     return dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
 
 
+def task_acting_role(task: Task) -> Role:
+    """Return the role for the current step or the task's first scheduled step."""
+    step = task.step if task.step is not None else first_step(task).step
+    return Role.LEADER if step is None else ACTING_ROLE[step]
+
+
 def _triaged_complexity(task: Task, outcome: TriageReport) -> ComplexityName | None:
     return outcome.complexity if task.complexity is None else None
 

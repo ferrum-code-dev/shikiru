@@ -85,7 +85,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
   - Each restoration emits `pane_restored`.
 
   There are no global key-binding overrides, so closing a pane has no lasting effect.
-- **Palette key**: one conditional binding. `prefix + Space` opens `shikiru palette` in a popup inside `[shikiru]` sessions and keeps its default (`next-layout`) elsewhere. The binding passes tmux's originating `#{pane_id}` through hidden `--origin-pane`; the operator layer resolves the current task and role from the project's recorded pane mapping instead of relying on the popup's inherited `TMUX_PANE`.
+- **Palette key**: one conditional binding. `prefix + Space` opens `shikiru palette` in a popup inside `[shikiru]` sessions and keeps its default (`next-layout`) elsewhere. The binding passes tmux's originating `#{pane_id}` through hidden `--origin-pane`; it runs the popup command through a format-expanded `run-shell` so the pane ID is resolved before shell quoting. The operator layer resolves the current task and role from the project's recorded pane mapping instead of relying on the popup's inherited `TMUX_PANE`.
 
 ### 5.3 Titles and decorations
 
@@ -163,7 +163,7 @@ The system-pane shell uses current widgets. The selectable task browser and shar
 
 ### 5.5 Palette
 
-- `PaletteApp` offers searchable actions and task targets searched by ID or title, with an editable task ID and role. Context comes from selected detail/browser identity or from the originating role pane in the tmux popup; a home popup has no preselected task. Submission fields and role rung overrides remain available.
+- `PaletteApp` offers searchable actions and task targets searched by ID or title through bounded pages with visible counts and a More control. It keeps an editable task ID and role, reads current stored state on each search, and retains the selected target outside the current match. Context comes from selected detail/browser identity or from the originating role pane in the tmux popup; a home popup has no preselected task. Advanced submission fields, including submission and role rung overrides, remain available in an expandable area.
 - The operator layer prepares task-action applicability and disabled reasons from current task/run state. The palette refreshes this projection before dispatch; the engine can still reject a command if state changes after that read. Widgets call `OperatorCommands` and do not create workflow commands or duplicate eligibility rules.
 - Forms explain next-turn delivery for messages and rung changes, pause versus pause-now, task ownership during take over, and restrictions remaining after resume or hand back. Cancel and stop show their scope and work-preservation effects before the form's explicit Run action.
 - It opens as a tmux popup (`prefix + Space`), and `Ctrl+P` in `dash` pushes the same screen.

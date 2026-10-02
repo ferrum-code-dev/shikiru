@@ -21,7 +21,7 @@ from shikiru.domain.commands import (
 )
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Role, Status, Step
+from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
 from shikiru.errors import ConfigError
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
@@ -29,7 +29,7 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
-from shikiru.tmux.client import Tmux, exact_target
+from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
@@ -80,7 +80,6 @@ def _services(
         queue,
         clock,
         engine_up=lambda: engine_up,
-        queries=queries,
     )
     return commands, queries, queue
 
@@ -210,6 +209,98 @@ async def test_palette_task_search_changes_the_editable_target(
         )
 
 
+async def test_palette_task_search_is_bounded_current_and_retains_selected_target(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    for index in range(52):
+        seed_task(connection, clock, title=f"Older palette task {index}")
+    commands, queries, _queue = _services(connection, reader, clock, tmp_path)
+    app = PaletteApp(commands, queries, _selection_must_not_run)
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        await _open_action(pilot, screen, "message")
+        assert "Showing 50 of 52 matches" in _static_text(screen, "#palette-task-count")
+        assert screen.query_one("#palette-task-more", Button).display
+        screen.query_one("#palette-task-more", Button).focus()
+        await pilot.press("enter")
+        await wait_until(
+            lambda: "Showing 52 of 52 matches" in _static_text(screen, "#palette-task-count"),
+            timeout=2,
+        )
+        assert not screen.query_one("#palette-task-more", Button).display
+
+        arriving_task = seed_task(connection, clock, title="Arrived while palette is open")
+        screen.query_one("#task-search", Input).value = "Arrived while palette is open"
+        await pilot.pause()
+        assert "Showing 1 of 1 matches" in _static_text(screen, "#palette-task-count")
+        task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
+        task_choice.value = arriving_task.id
+        await pilot.pause()
+        screen.query_one("#task-search", Input).value = "No current match"
+        await pilot.pause()
+
+        assert "Showing 0 of 0 matches" in _static_text(screen, "#palette-task-count")
+        assert task_choice.value == arriving_task.id
+        assert screen.query_one("#task-id", Input).value == arriving_task.id
+
+
+async def test_palette_serializes_pending_action_and_closes_without_worker_errors(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Pending command target")
+    other_task = seed_task(connection, clock, title="Edited command target")
+    commands, queries, queue = _services(
+        connection,
+        reader,
+        clock,
+        tmp_path,
+        engine_up=True,
+    )
+    app = PaletteApp(
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(task_id=task.id, role=Role.LEADER.value),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        await _open_action(pilot, screen, "message")
+        screen.query_one("#message", TextArea).text = "Send once while awaiting acknowledgement."
+        await pilot.click("#palette-submit")
+        await wait_until(clock.has_pending_sleep, timeout=2)
+        assert len(queue.pending()) == 1
+        assert screen.query_one("#palette-submit", Button).disabled
+
+        screen.query_one("#action-search", Input).value = "message"
+        screen.query_one("#task-id", Input).value = other_task.id
+        screen.query_one("#role", Select).value = Role.IMPLEMENTER.value
+        await pilot.pause()
+        assert screen.query_one("#palette-submit", Button).disabled
+        await pilot.click("#palette-submit")
+        assert len(queue.pending()) == 1
+        assert queue.pending()[0].command == Say(
+            task_id=task.id,
+            role=Role.LEADER,
+            text="Send once while awaiting acknowledgement.",
+            command_id=queue.pending()[0].id,
+        )
+        await pilot.press("escape")
+
+    clock.advance(1)
+    assert not clock.has_pending_sleep()
+    assert len(queue.pending()) == 1
+
+
 async def test_palette_revalidates_task_state_before_queueing(
     connection: Connection,
     reader: StateReader,
@@ -278,6 +369,12 @@ async def test_palette_submit_queues_a_typed_command_and_shows_its_ack(
         assert request.has_focus
         await _enter_text(pilot, "first line\nsecond line")
         assert screen.query_one("#request", TextArea).text == "first line\nsecond line"
+        await pilot.click("#palette-advanced-toggle")
+        screen.query_one("#mode", Select).value = Mode.IMPLEMENT.value
+        screen.query_one("#submission-priority", Input).value = "17"
+        screen.query_one("#dependencies", Input).value = "T-8, T-9"
+        screen.query_one("#leader-rung", Input).value = "codex:sol:high"
+        screen.query_one("#implementer-rung", Input).value = "codex:sol:high"
         screen.query_one("#title", Input).value = "Palette"
         await pilot.click("#palette-submit")
         await _wait_for_ack(screen)
@@ -287,6 +384,11 @@ async def test_palette_submit_queues_a_typed_command_and_shows_its_ack(
         assert isinstance(queued[0].command, Submit)
         assert queued[0].command.request == "first line\nsecond line"
         assert queued[0].command.title == "Palette"
+        assert queued[0].command.mode is Mode.IMPLEMENT
+        assert queued[0].command.priority == 17
+        assert queued[0].command.depends_on == ["T-8", "T-9"]
+        assert queued[0].command.leader == _LIVE_RUNG
+        assert queued[0].command.implementer == _LIVE_RUNG
         assert "queued" in _static_text(screen, "#palette-result")
 
 
@@ -473,7 +575,8 @@ async def test_popup_pane_context_selects_its_recorded_task_and_role(
     task = seed_task(connection, clock, title="Popup context")
     TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: pane_id})
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    task_role = queries.task_role_for_pane(pane_id)
+    originating_pane = await tmux.display(pane_id, FORMAT_PANE_ID)
+    task_role = queries.task_role_for_pane(originating_pane)
     assert task_role is not None
     assert task_role == (task.id, Role.IMPLEMENTER)
     context_task_id, role = task_role

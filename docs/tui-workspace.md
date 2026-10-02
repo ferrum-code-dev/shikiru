@@ -162,13 +162,13 @@ Printable shortcuts act only outside text inputs. Escape first cancels an input'
 
 Reserve a compact footer for the focused section and its available controls. Keep the complete key bindings in help so the footer stays bounded in narrow panes. Focus uses a border or marker plus a text cue under `NO_COLOR`. New task data never steals focus or opens a modal automatically.
 
-tmux keeps its normal bindings. `prefix + Space` remains the conditional palette popup. The popup derives task and role from the originating pane through the existing project/pane mapping; the home context offers a task picker. No global key overrides or automatic pane rearrangement are added.
+tmux keeps its normal bindings. `prefix + Space` remains the conditional palette popup. The binding resolves the originating pane ID before launching the popup; the palette derives task and role through the existing project/pane mapping. The home context offers a task picker. No global key overrides or automatic pane rearrangement are added.
 
 ## 8. Contextual palette and action semantics
 
 The palette offers a searchable action list and a form for the chosen action. The dashboard and tmux popup use the same screen, commands and results. Forms start with the current task, and with the current role when it is known. In task detail, a role-specific action defaults to the selected role; otherwise offer the acting role and an explicit role selector. Every target is visible and editable.
 
-Task selection searches IDs and titles instead of requiring a manually typed ID. Dependencies use task selection with the existing graph validation. Advanced submission fields and rung overrides remain available in an expandable area.
+Task selection searches IDs and titles through bounded pages, shows the match count and a More control, and reads current stored state on each search. The selected target stays visible in the editable ID field and picker even when it falls outside the current search. Dependencies use task selection with the existing graph validation. Advanced submission fields, including submission and role rung overrides, remain available in an expandable area.
 
 Applicable actions and their disabled reasons are prepared by the operator layer using current domain state. The engine remains authoritative: refresh before dispatch and display a rejection if state changed. Do not duplicate eligibility rules inside widgets or automatically retry a rejected mutation.
 
@@ -308,7 +308,7 @@ The shell assigns built-in widgets to the home/task sections defined here. Confi
 
 State subscriptions belong to mounted screens and are cancelled on unmount. Background reads, file loading and export stay off the UI event loop as appropriate. Use bounded queries and caches for expensive data; display read failures and allow a retry. A partial JSONL row is not presented as a complete signal. No new process reader competes with `TurnMonitor` for an agent's stdout.
 
-The Task 77 detail refresh reads task, run and bounded event rows through the UI-owned SQLite connection, then loads report, verdict, facts and signal files in a worker thread. Motion callbacks update only lightweight animation data; detail file loading is triggered by mount or a state change, never by a motion tick. The detail screen cancels both refresh and state-watch workers when it unmounts. Task 78 adds palette context and task-selection callbacks to the existing widget contract, and keeps action eligibility in the operator layer.
+The Task 77 detail refresh reads task, run and bounded event rows through the UI-owned SQLite connection, then loads report, verdict, facts and signal files in a worker thread. Motion callbacks update only lightweight animation data; detail file loading is triggered by mount or a state change, never by a motion tick. The detail screen cancels both refresh and state-watch workers when it unmounts. Task 78 adds palette context and task-selection callbacks to the existing widget contract, keeps action eligibility in the operator layer, and uses bounded current-state search in the palette.
 
 No workflow commands, network service, generic replay framework, agent pricing table or widget preference database are introduced for this redesign. Any mutation continues through `OperatorCommands`; exporting a file and local navigation are the explicit exceptions that affect no engine state.
 

@@ -109,7 +109,9 @@ class TaskDetailPanel(Vertical):
             yield Button("Implementer pane", id=TASK_DETAIL_IMPLEMENTER_BUTTON)
             yield Select(
                 ((role.value.title(), role.value) for role in (Role.LEADER, Role.IMPLEMENTER)),
-                allow_blank=False,
+                prompt="Acting role",
+                allow_blank=True,
+                value=Select.BLANK,
                 id=TASK_DETAIL_ACTION_ROLE,
             )
             yield Button("Actions · Ctrl+P", id=TASK_DETAIL_ACTIONS_BUTTON)
@@ -152,11 +154,7 @@ class TaskDetailPanel(Vertical):
         elif button_id == TASK_DETAIL_IMPLEMENTER_BUTTON:
             await self._navigate_role_pane(Role.IMPLEMENTER)
         elif button_id == TASK_DETAIL_ACTIONS_BUTTON:
-            role_value = cast(
-                "Select[str]", self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select)
-            ).value
-            role = Role(role_value) if isinstance(role_value, str) else None
-            await self._open_palette(role)
+            await self.open_palette()
         elif button_id == TASK_DETAIL_ATTENTION_BUTTON:
             await self._navigate_home()
 
@@ -175,6 +173,14 @@ class TaskDetailPanel(Vertical):
             )
             return
         await self._widget_context.open_palette("")
+
+    async def open_palette(self) -> None:
+        """Open the shared palette with this detail's current task and selected role."""
+        role_value = cast(
+            "Select[str]", self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select)
+        ).value
+        role = Role(role_value) if isinstance(role_value, str) else None
+        await self._open_palette(role)
 
     async def _navigate_task_window(self) -> None:
         callback = self._widget_context.navigate_task_window
@@ -226,6 +232,9 @@ class TaskDetailPanel(Vertical):
             self._render_view(view)
 
     def _render_view(self, view: TaskDetailView) -> None:
+        action_role = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
+        if not isinstance(action_role.value, str):
+            action_role.value = view.acting_role
         identity = (
             f"{view.task_id} · {view.title}\n"
             f"{view.status} · {view.step} · iteration {view.iteration}"
@@ -277,7 +286,10 @@ class TaskDetailPanel(Vertical):
 class TaskDetailScreen(ModalScreen[None]):
     """Show a selected task's shared detail over the Home browser."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [(TASK_DETAIL_ESCAPE, "close", "Back")]
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        (TASK_DETAIL_ESCAPE, "close", "Back"),
+        ("ctrl+p", "open_palette", "Palette"),
+    ]
     DEFAULT_CSS = """
     TaskDetailScreen { width: 100%; height: 100%; background: $background; }
     """
@@ -301,6 +313,9 @@ class TaskDetailScreen(ModalScreen[None]):
 
     async def action_close(self) -> None:
         self.dismiss()
+
+    async def action_open_palette(self) -> None:
+        await self.query_one("#task-detail-panel", TaskDetailPanel).open_palette()
 
 
 type CloseDetail = Callable[[], Awaitable[None]]

@@ -206,6 +206,7 @@ class TaskDetailView:
     status_reason: str | None
     mode: str | None
     step: str
+    acting_role: str
     iteration: int
     holds: tuple[str, ...]
     wait_reason: str | None

@@ -433,7 +433,6 @@ def build_operator(
         command_queue,
         resolved_clock,
         engine_up=engine_state,
-        queries=queries,
     )
     events = EventFeed(reader, resolved_clock)
 
