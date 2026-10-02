@@ -193,7 +193,9 @@ async def test_palette_task_search_changes_the_editable_target(
         await _open_action(pilot, screen, "message")
         screen.query_one("#task-search", Input).value = "Chosen by title"
         await pilot.pause()
-        screen.query_one("#task-choice", Select).value = selected_task.id
+        task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
+        task_choice.focus()
+        task_choice.value = selected_task.id
         await pilot.pause()
         assert screen.query_one("#task-id", Input).value == selected_task.id
         screen.query_one("#message", TextArea).text = "Use the deliberately selected task."
@@ -207,6 +209,64 @@ async def test_palette_task_search_changes_the_editable_target(
             text="Use the deliberately selected task.",
             command_id=queued.id,
         )
+
+
+async def test_manual_task_id_edit_stays_authoritative_outside_search(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    context_task = seed_task(connection, clock, title="Detail task")
+    selected_task = seed_task(connection, clock, title="Other task")
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = PaletteApp(
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(
+            action="message",
+            task_id=context_task.id,
+            role=Role.LEADER.value,
+        ),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        screen.query_one("#task-search", Input).value = context_task.title
+        await pilot.pause()
+        task_id = screen.query_one("#task-id", Input)
+        task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
+        task_id.value = selected_task.id
+        await wait_until(
+            lambda: task_id.value == selected_task.id and task_choice.value == selected_task.id,
+            timeout=2,
+        )
+
+        task_id.value = "T-999"
+        await wait_until(
+            lambda: task_id.value == "T-999" and task_choice.value is Select.BLANK,
+            timeout=2,
+        )
+        assert task_id.value == "T-999"
+
+        task_id.value = selected_task.id
+        await wait_until(
+            lambda: task_id.value == selected_task.id and task_choice.value == selected_task.id,
+            timeout=2,
+        )
+        screen.query_one("#message", TextArea).text = "Use the manually entered task."
+        await pilot.click("#palette-submit")
+        await _wait_for_ack(screen)
+
+    queued = queue.pending()[0]
+    assert queued.command == Say(
+        task_id=selected_task.id,
+        role=Role.LEADER,
+        text="Use the manually entered task.",
+        command_id=queued.id,
+    )
 
 
 async def test_palette_task_search_is_bounded_current_and_retains_selected_target(
@@ -239,6 +299,7 @@ async def test_palette_task_search_is_bounded_current_and_retains_selected_targe
         await pilot.pause()
         assert "Showing 1 of 1 matches" in _static_text(screen, "#palette-task-count")
         task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
+        task_choice.focus()
         task_choice.value = arriving_task.id
         await pilot.pause()
         screen.query_one("#task-search", Input).value = "No current match"
@@ -333,7 +394,62 @@ async def test_palette_revalidates_task_state_before_queueing(
             timeout=2,
         )
         assert screen.query_one("#palette-submit", Button).disabled
-        assert not queue.pending()
+    assert not queue.pending()
+
+
+async def test_implicit_role_default_tracks_task_selection_until_explicitly_changed(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    leader_task = seed_task(connection, clock, title="Leader default")
+    implementer_task = seed_task(
+        connection,
+        clock,
+        title="Implementer default",
+        mode=Mode.IMPLEMENT,
+    )
+    TaskStore(connection, clock).apply_transition(
+        implementer_task.id,
+        Transition.stay(implementer_task, step=Step.IMPLEMENT, status=Status.RUNNING),
+    )
+    commands, queries, _queue = _services(connection, reader, clock, tmp_path)
+    app = PaletteApp(
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(
+            action="message",
+            task_id=leader_task.id,
+        ),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        role = cast("Select[str]", screen.query_one("#role", Select))
+        task_id = screen.query_one("#task-id", Input)
+        assert role.value == Role.LEADER.value
+
+        screen.query_one("#task-search", Input).value = implementer_task.title
+        await pilot.pause()
+        task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
+        task_choice.focus()
+        task_choice.value = implementer_task.id
+        await wait_until(
+            lambda: task_id.value == implementer_task.id and role.value == Role.IMPLEMENTER.value,
+            timeout=2,
+        )
+
+        role.focus()
+        role.value = Role.LEADER.value
+        await pilot.pause()
+        task_id.value = leader_task.id
+        await wait_until(lambda: task_id.value == leader_task.id, timeout=2)
+        task_id.value = implementer_task.id
+        await pilot.pause()
+        assert role.value == Role.LEADER.value
 
 
 async def _selection_must_not_run(pane_id: str) -> None:

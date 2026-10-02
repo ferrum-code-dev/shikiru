@@ -233,8 +233,7 @@ class TaskDetailPanel(Vertical):
 
     def _render_view(self, view: TaskDetailView) -> None:
         action_role = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
-        if not isinstance(action_role.value, str):
-            action_role.value = view.acting_role
+        action_role.prompt = f"Acting · {view.acting_role.title()}"
         identity = (
             f"{view.task_id} · {view.title}\n"
             f"{view.status} · {view.step} · iteration {view.iteration}"

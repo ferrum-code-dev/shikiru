@@ -215,6 +215,7 @@ class PaletteScreen(ModalScreen[None]):
         self._initial_context = initial_context or PaletteRequest()
         self._initial_action = self._initial_context.action or initial_action
         self._pane_selector = pane_selector
+        self._role_is_explicit = self._initial_context.role is not None
         self._task_search_tasks: tuple[TaskSummary, ...] = ()
         self._task_search_count = 0
         self._task_search_offset = 0
@@ -325,6 +326,7 @@ class PaletteScreen(ModalScreen[None]):
         if role not in {item.value for item in _TASK_ROLES}:
             self._route_error = f"unknown role context: {role}"
             role = Role.LEADER.value
+            self._role_is_explicit = True
         cast("Select[str]", self.query_one(f"#{_FIELD_ROLE}", Select)).value = role
         self.query_one("#priority", Input).value = "0"
         self.query_one("#submission-priority", Input).value = "0"
@@ -361,9 +363,11 @@ class PaletteScreen(ModalScreen[None]):
         elif event.select.id == _FIELD_RESOLUTION:
             self._update_fields(self._selected_value(_FIELD_ACTION))
         elif event.select.id == _FIELD_TASK_CHOICE:
-            if isinstance(event.value, str):
+            if isinstance(event.value, str) and event.select.has_focus:
                 self.query_one(f"#{_FIELD_TASK_ID}", Input).value = event.value
         elif event.select.id == _FIELD_ROLE:
+            if not self._role_is_explicit and event.select.has_focus:
+                self._role_is_explicit = True
             self._refresh_action_availability()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
@@ -380,6 +384,7 @@ class PaletteScreen(ModalScreen[None]):
             self._task_search_count = 0
             self._task_search_offset = 0
             self._refresh_task_choices()
+            self._refresh_implicit_role()
             self._refresh_action_availability()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -578,9 +583,7 @@ class PaletteScreen(ModalScreen[None]):
             tasks.append(page.selected_task)
         options = tuple((f"{task.id} · {task.title}", task.id) for task in tasks)
         task_select = cast("Select[str]", self.query_one(f"#{_FIELD_TASK_CHOICE}", Select))
-        selected = self._selected_value(_FIELD_TASK_CHOICE)
-        if selected is None:
-            selected = self._input(_FIELD_TASK_ID).strip() or None
+        selected = self._input(_FIELD_TASK_ID).strip() or None
         task_select.set_options(options)
         if selected in {value for _, value in options}:
             task_select.value = selected
@@ -594,6 +597,15 @@ class PaletteScreen(ModalScreen[None]):
             self._selected_value(_FIELD_ACTION) in _TASK_TARGET_ACTIONS
             and self._task_search_has_more
         )
+
+    def _refresh_implicit_role(self) -> None:
+        if self._role_is_explicit:
+            return
+        task_id = self._input(_FIELD_TASK_ID).strip()
+        role = self._queries.task_action_role(task_id).value if task_id else Role.LEADER.value
+        role_select = cast("Select[str]", self.query_one(f"#{_FIELD_ROLE}", Select))
+        if role_select.value != role:
+            role_select.value = role
 
     async def _select_role_pane(self, ack: Ack, task_id: str, role: Role) -> None:
         detail = self._queries.get_task(task_id)

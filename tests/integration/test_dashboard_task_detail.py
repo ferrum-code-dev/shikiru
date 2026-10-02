@@ -543,14 +543,23 @@ async def test_enter_opens_shared_detail_and_escape_restores_browser_selection_a
         reader.close()
 
 
-async def test_detail_actions_carry_task_and_selected_role_to_shared_palette(
+async def test_explicit_detail_role_survives_implementation_step_change(
     connection: Connection,
     database: Database,
     tmp_path: Path,
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Detail action target")
+    task = seed_task(
+        connection,
+        clock,
+        title="Detail action target",
+        mode=Mode.IMPLEMENT,
+    )
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.IMPLEMENT, status=Status.RUNNING),
+    )
     reader = StateReader(database, SystemClock())
     opened: list[PaletteRequest] = []
 
@@ -567,15 +576,19 @@ async def test_detail_actions_carry_task_and_selected_role_to_shared_palette(
         )
         async with app.run_test(size=(80, 40)) as pilot:
             await pilot.pause()
-            app.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select).value = Role.IMPLEMENTER.value
+            action_role = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
+            action_role.value = Role.IMPLEMENTER.value
+            current_task = reader.get_task(task.id)
+            assert current_task is not None
             TaskStore(connection, clock).apply_transition(
                 task.id,
-                Transition.stay(task, step=task.step, status=Status.DONE),
+                Transition.stay(current_task, step=Step.VERIFY, status=Status.RUNNING),
             )
             await wait_until(
-                lambda: "done" in _text(app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)),
+                lambda: "verify" in _text(app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)),
                 timeout=2,
             )
+            assert action_role.value == Role.IMPLEMENTER.value
             await pilot.press("ctrl+p")
             await wait_until(lambda: bool(opened), timeout=2)
 
@@ -628,7 +641,7 @@ async def test_pushed_task_detail_ctrl_p_carries_selected_role(
         reader.close()
 
 
-async def test_implementation_step_defaults_detail_palette_role_to_implementer(
+async def test_implicit_detail_role_tracks_step_change_at_palette_activation(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -672,12 +685,26 @@ async def test_implementation_step_defaults_detail_palette_role_to_implementer(
                 ),
                 timeout=2,
             )
-            role = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select)).value
-            assert role == Role.IMPLEMENTER.value
+            action_role = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
+            assert action_role.value is Select.BLANK
+            assert Role.IMPLEMENTER.value.title() in action_role.prompt
+            current_task = reader.get_task(task.id)
+            assert current_task is not None
+            TaskStore(connection, clock).apply_transition(
+                task.id,
+                Transition.stay(current_task, step=Step.VERIFY, status=Status.RUNNING),
+            )
+            await wait_until(
+                lambda: (
+                    "verify" in _text(app.query_one(f"#{TASK_DETAIL_SITUATION}", Static))
+                    and Role.LEADER.value.title() in action_role.prompt
+                ),
+                timeout=2,
+            )
             await pilot.press("ctrl+p")
             await wait_until(lambda: bool(opened), timeout=2)
 
-        assert opened == [PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)]
+        assert opened == [PaletteRequest(task_id=task.id)]
     finally:
         reader.close()
 
