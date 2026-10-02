@@ -2,7 +2,7 @@
 
 ## 1. Status and relationship to the design
 
-This document specifies the TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). Task 75 shipped the shared visual theme and navigable shell for current widgets. Task 76 shipped the selectable task browser and bounded search through the existing `queue` entry point. Task 77 shipped shared task detail, task-scoped activity and usage, and navigation to existing task windows and role panes. Task 78 shipped contextual actions and the searchable palette. Task 79 shipped bounded durable command feedback and persistent ownership/hold banners. Task 80 shipped the Home summary composition, durable grouped attention, project activity and header context. Richer family/history views, responsive composition and export remain later work. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
+This document specifies the TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). Task 75 shipped the shared visual theme and navigable shell for current widgets. Task 76 shipped the selectable task browser and bounded search through the existing `queue` entry point. Task 77 shipped shared task detail, task-scoped activity and usage, and navigation to existing task windows and role panes. Task 78 shipped contextual actions and the searchable palette. Task 79 shipped bounded durable command feedback and persistent ownership/hold banners. Task 80 shipped the Home summary composition, durable grouped attention, project activity and header context. Task 81 shipped structured escalation resolution with durable allowed kinds, preserved original packets, expandable evidence and stale-form updates. Richer family/history views, responsive composition and export remain later work. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
 
 The workspace refines [06 · Operator Interfaces](design/06-operator.md), especially §5.4–5.5 and §6: the system pane becomes a navigable workspace with distinct home and task views, contextual actions, and persistent command feedback. The comic strip remains the task's expanded progress view. The architecture and workflow in [02](design/02-architecture.md) and [03](design/03-workflow.md) govern all state changes.
 
@@ -213,7 +213,7 @@ Hand back issues the existing role command; View holds opens the task's hold det
 
 ### 10.1 Escalation decisions
 
-Resolution presents the question, the recommended option, each available option's consequences and any required answer/rung fields. Keep the full packet accessible under Evidence, with timeline, reports, git facts and stream tails separately expandable when their structure is available.
+Resolution presents the question, the recommended agent alternative with its consequences, and the engine's allowed resolution kinds with their consequences. The engine kinds come from the durable escalation row; answer requires guidance and retry may include a valid rung. Keep the full original packet accessible under Evidence, with timeline, reports, git facts, sessions and stream tails separately expandable when their structure is available.
 
 Preserve the packet's full original text and the distinction between an agent's decision alternatives and the engine's allowed resolution kinds. Do not infer a command from option wording. Map selections through the existing validated resolution contract and keep the recommended marker visible.
 

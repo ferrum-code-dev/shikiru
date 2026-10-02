@@ -34,7 +34,8 @@ from shikiru.dashboard.contract import (
     TaskTestView,
     WorkspaceSummaryView,
 )
-from shikiru.domain.commands import CommandStatus
+from shikiru.dashboard.escalation_evidence import parse_escalation_packet
+from shikiru.domain.commands import CommandStatus, ResolutionKind
 from shikiru.domain.events import EventKind
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.reports import (
@@ -83,8 +84,6 @@ UNSTARTED_STEP = "not started"
 CONSULT_STEP = "consult"
 INTEGRATION_STEP = "integration"
 REWORK_STEP = "rework"
-PACKET_QUESTION_HEADING = "Question"
-PACKET_OPTIONS_HEADING = "Options"
 _ACTIVITY_KINDS = (
     EventKind.VERDICT,
     EventKind.TURN_COMPLETED,
@@ -471,29 +470,33 @@ class StateDashboardViews:
         for item in items:
             escalation = item.escalation
             question = ""
-            options: tuple[str, ...] = ()
-            evidence_error = item.packet_error
+            consequences: dict[ResolutionKind, str] = {}
+            evidence_errors = [item.packet_error] if item.packet_error is not None else []
             if item.packet is not None:
-                try:
-                    question = _packet_section(
-                        item.packet, PACKET_QUESTION_HEADING, allow_empty=True
-                    )
-                    options = _packet_options(item.packet)
-                except ValueError as error:
-                    evidence_error = str(error)
+                packet = parse_escalation_packet(item.packet)
+                evidence_errors.extend(packet.errors)
+                if packet.agent_request is not None:
+                    question = packet.agent_request.question
+                elif packet.question is not None:
+                    question = packet.question
+                consequences = {item.kind: item.consequences for item in packet.resolutions}
             task = tasks.get(escalation.task_id)
             result[escalation.id] = EscalationPanelView(
                 escalation_id=escalation.id,
                 task_id=escalation.task_id,
                 headline=escalation.headline,
                 question=question,
-                options=options,
-                packet=item.packet or "",
+                options=tuple(
+                    f"`{option.label.value}`{' ★' if option.recommended else ''}"
+                    + (f": {consequences[option.label]}" if option.label in consequences else "")
+                    for option in escalation.options
+                ),
+                packet=item.packet if item.packet is not None else "",
                 pulse_red=pulse,
                 task_title=task.title if task is not None else escalation.task_id,
                 age=_age(now - escalation.created_at),
                 resolution_actions=tuple(option.label.value for option in escalation.options),
-                evidence_error=evidence_error,
+                evidence_error="; ".join(evidence_errors) if evidence_errors else None,
             )
         return result
 
@@ -805,37 +808,6 @@ class StateDashboardViews:
         elif motion.stamp_kind is MotionStampKind.MERGED:
             stamp = StripStamp(StampKind.MERGED, flash=motion.stamp_flash)
         return replace(data, panels=tuple(panels), stamp=stamp)
-
-
-def _packet_section(packet: str, heading: str, *, allow_empty: bool = False) -> str:
-    lines = packet.splitlines()
-    marker = f"## {heading}"
-    try:
-        start = lines.index(marker) + 1
-    except ValueError as error:
-        message = f"escalation packet has no {heading!r} section"
-        raise ValueError(message) from error
-    end = (
-        lines.index(f"## {PACKET_OPTIONS_HEADING}", start)
-        if heading == PACKET_QUESTION_HEADING
-        else len(lines)
-    )
-    content = "\n".join(lines[start:end]).strip()
-    if not content and not allow_empty:
-        message = f"escalation packet has an empty {heading!r} section"
-        raise ValueError(message)
-    return content
-
-
-def _packet_options(packet: str) -> tuple[str, ...]:
-    section = _packet_section(packet, PACKET_OPTIONS_HEADING)
-    options = tuple(
-        line.removeprefix("- ") for line in section.splitlines() if line.startswith("- ")
-    )
-    if not options:
-        message = "escalation packet has no options"
-        raise ValueError(message)
-    return options
 
 
 def _event_role(kind: EventKind, data: dict[str, object]) -> Role | None:

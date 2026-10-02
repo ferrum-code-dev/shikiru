@@ -12,8 +12,18 @@ from shikiru.agents.contracts import Rung, role_dir
 from shikiru.clock import SystemClock
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
-from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, ReportKind
+from shikiru.domain.reports import (
+    REPORT_FILENAME,
+    REPORT_KIND_FILENAME,
+    ConsultAnswer,
+    EscalationRequest,
+    ReportKind,
+)
+from shikiru.domain.reports import (
+    Option as AgentOption,
+)
 from shikiru.domain.scheduling import WaitReason
+from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Role, Step
 from shikiru.engine.escalations import PacketContext, render_packet
 from shikiru.errors import ShikiruError
@@ -104,6 +114,66 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     assert "claude --resume sess-123" in packet_text
     raised_events = events.since(0, kinds=[EventKind.ESCALATION], task_id=task.id)
     assert len(raised_events) == 1
+
+
+def _write_consult_turn(turn_dir: Path, request: EscalationRequest) -> None:
+    turn_dir.mkdir(parents=True)
+    (turn_dir / REPORT_KIND_FILENAME).write_text(ReportKind.CONSULT.value)
+    (turn_dir / REPORT_FILENAME).write_text(
+        ConsultAnswer(decision="escalate", escalation=request).model_dump_json()
+    )
+
+
+async def test_restored_packet_uses_the_latest_typed_agent_alternatives(
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Restore agent alternatives")
+    reason = EscalationReason.DECISION_REQUIRED
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.escalate(task, reason, step=Step.CONSULT),
+    )
+    old_request = EscalationRequest(
+        question="Should the old behavior remain?",
+        options=[
+            AgentOption(
+                label="Old choice", consequences="Keep the earlier behavior.", recommended=True
+            )
+        ],
+    )
+    current_request = EscalationRequest(
+        question="Which behavior should remain?",
+        options=[
+            AgentOption(
+                label="Current choice", consequences="Keep the current behavior.", recommended=True
+            )
+        ],
+    )
+    turns = turns_dir(tmp_path, task.id)
+    await asyncio.to_thread(_write_consult_turn, turns / "01-consult", old_request)
+    await asyncio.to_thread(_write_consult_turn, turns / "02-consult", current_request)
+    escalation = EscalationStore(connection, clock).open(
+        task.id,
+        step=Step.CONSULT,
+        reason=reason,
+        headline="The Leader needs an Operator decision to continue.",
+        packet_path=str(tmp_path / "restored-escalation.md"),
+        options=options_for(reason),
+    )
+
+    await build_raiser(connection, clock, tmp_path).ensure_actionable(task)
+
+    packet = await asyncio.to_thread(Path(escalation.packet_path).read_text)
+    alternatives_start = packet.index("## Agent alternatives")
+    options_start = packet.index("\n## Options", alternatives_start)
+    alternatives = packet[alternatives_start:options_start]
+    assert "Which behavior should remain?" in alternatives
+    assert "Current choice" in alternatives
+    assert "Old choice" not in alternatives
+    assert "`answer` ★" in packet
+    assert "cancel" in packet
 
 
 async def _raise(

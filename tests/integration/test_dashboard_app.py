@@ -31,6 +31,7 @@ from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
+_APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 
 
@@ -557,6 +558,12 @@ async def test_dashboard_compact_footer_and_persisted_state_are_readable_without
             assert await pilot.click("#workspace-return")
             await pilot.pause()
             assert app.focused is expand_button
+            assert app.is_running
+            app.exit()
+            await wait_until(
+                lambda: not app.is_running,
+                timeout=_APP_SHUTDOWN_TIMEOUT_SECONDS,
+            )
     finally:
         reader.close()
 

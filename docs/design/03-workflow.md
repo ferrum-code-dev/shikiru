@@ -314,10 +314,10 @@ Commands that only set a value (`prioritize`) are naturally repeatable.
 - timeline of recent events
 - what was tried
 - evidence: latest reports and verdict, facts, the last 60 view lines per role (read from the end of the log, never the whole file), session ids and resume commands; a report history that cannot be read is logged and the packet's facts section says so, instead of silently showing no reports
-- the Leader's question
-- applicable options with consequences and exactly one ★
+- the Leader's question and typed agent-proposed alternatives, each with its recorded consequences and exactly one ★
+- applicable engine resolution kinds with consequences and exactly one ★; these remain separate from the agent's alternatives
 
-**Resolution**: one of `answer TEXT`, `retry [rung]`, `accept`, `cancel`, through the palette (06 §5.5) or `resolve_escalation` (06 §4).
+**Resolution**: the palette presents the question and recommended agent alternative before expandable evidence. It offers only the engine resolution kinds stored on the escalation row: `answer TEXT`, `retry [rung]`, `accept` or `cancel`, through the palette (06 §5.5) or `resolve_escalation` (06 §4). An agent alternative's wording never selects or implies a command. `answer` requires non-empty guidance; `retry` may include an allowed rung override.
 - `answer` runs a consult turn (the Leader receives the Operator's text), then continues with implement at the same iteration; for `iterations_exhausted` the next verify is again a final round.
 - `retry` re-runs the failed step.
 - `accept` integrates.
@@ -328,6 +328,8 @@ Commands that only set a value (`prioritize`) are naturally repeatable.
 Resolved tasks are re-queued with `requeued_at`. Raising an escalation frees the slot and notifies.
 
 An escalation acts only on the task state it was raised for. `resolve` is rejected unless the task is still `escalated`, and a resolved escalation cannot be resolved again. A direct `cancel` or `retry` settles the task's open escalations in the same transaction as its transition, so a stale escalation can never resurrect or redirect the task. A resolution's status change, escalation row and event are one transaction; a failed tmux title refresh afterwards is logged and never turns the acknowledgement into a rejection.
+
+The palette observes durable escalation state while its form is open. A resolution or cancellation from another Operator disables the stale form and retains entered guidance for copying. If state changes after submission, the engine rejects that command; the palette shows the rejection and does not issue a replacement.
 
 ## 9. Operator access and intervention
 

@@ -806,10 +806,10 @@ Refs: Workspace §3–4, 06 §5.4/§5.7, 01 D18/D21.
 
 ### Task 81: Escalation resolution with structured evidence
 Refs: Workspace §10.1, 03 §8, 06 §5.4–5.5/§6.4.
-- [ ] Present the question, recommended alternative, consequences and allowed resolution fields before expandable reports, facts, timeline and tails. Keep the complete original packet accessible and preserve agent alternatives versus engine resolution-kind semantics.
-- [ ] Route the selected escalation through the shared palette with its exact ID; map choices using the validated resolution contract, including answer/rung requirements.
-- [ ] Refresh forms when another Operator resolves/cancels the task; disable stale submission, preserve entered text for copying and show engine rejections from later races without resubmitting.
-- [ ] Update 03/06 packet and resolution presentation, keeping escalation state/evidence and existing work-preservation rules authoritative.
+- [x] Present the question, recommended alternative, consequences and allowed resolution fields before expandable reports, facts, timeline and tails. Keep the complete original packet accessible and preserve agent alternatives versus engine resolution-kind semantics.
+- [x] Route the selected escalation through the shared palette with its exact ID; map choices using the validated resolution contract, including answer/rung requirements.
+- [x] Refresh forms when another Operator resolves/cancels the task; disable stale submission, preserve entered text for copying and show engine rejections from later races without resubmitting.
+- [x] Update 03/06 packet and resolution presentation, keeping escalation state/evidence and existing work-preservation rules authoritative.
 - Tests: Textual over real SQLite/fake engine: inspect consequences and full evidence, submit each applicable resolution class, resolve from another client while editing, and handle packet-read failure and the submission race.
 
 ### Task 82: Blocker navigation and task families

@@ -1,11 +1,7 @@
 """`EscalationRaiser`: builds the packet and records the escalation (docs/design/03-workflow.md §8).
 
-The packet's *actionable* options are always `domain.escalation.options_for(reason)` — the
-fixed `answer`/`retry`/`accept`/`cancel` actions the Operator resolves an escalation with, each
-with a static consequence sentence and exactly one recommended by default. Whatever options a
-Leader may have proposed as the *product* decision (an `EscalationRequest`'s own `Option`s) are
-part of the caller-supplied `question` text instead: they are content for a human to read, not
-another action set to choose from.
+The packet keeps an agent's product alternatives separate from the engine's allowed resolution
+actions. Only the latter are accepted by the resolution command contract.
 """
 
 from __future__ import annotations
@@ -17,9 +13,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from pydantic import TypeAdapter
+
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import EscalationOption, options_for
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import (
+    DECISION_ESCALATE,
+    REPORT_JSON_INDENT,
+    ConsultAnswer,
+    EscalationRequest,
+    Verdict,
+)
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason
 from shikiru.paths import run_dir
@@ -49,6 +54,10 @@ LOST_ESCALATION_ATTEMPTED = (
 )
 RESTORED_PACKET_ATTEMPTED = "The packet file was missing and was rewritten from recorded state."
 _LOGGER = logging.getLogger(__name__)
+_REPORT_DATA = TypeAdapter(dict[str, object])
+_REPORT_DECISION_KEY = "decision"
+_VERDICT_SUMMARY_KEY = "summary"
+_CONSULT_ANSWER_KEY = "answer"
 
 _HEADLINE_SENTENCES: dict[EscalationReason, str] = {
     EscalationReason.DECISION_REQUIRED: "The Leader needs an Operator decision to continue.",
@@ -79,7 +88,8 @@ _CONSEQUENCES: dict[ResolutionKind, str] = {
     ResolutionKind.RETRY: "Re-run the step that raised this escalation.",
     ResolutionKind.ACCEPT: "Integrate the work as it stands.",
     ResolutionKind.CANCEL: (
-        "Cancel the task; its branch is kept, and its worktree too when it holds uncommitted work."
+        "Cancel the task and keep its branch; preserve its worktree when uncommitted work remains "
+        "or it is off its task branch."
     ),
 }
 
@@ -99,6 +109,7 @@ class PacketContext:
     sessions: str
     question: str
     options: tuple[EscalationOption, ...]
+    agent_request: EscalationRequest | None = None
 
 
 def _headline(context: PacketContext) -> str:
@@ -115,13 +126,33 @@ def _options_section(options: tuple[EscalationOption, ...]) -> str:
     return "\n".join(lines)
 
 
+def _agent_request_from_reports(reports: Sequence[dict[str, str]]) -> EscalationRequest | None:
+    if not reports:
+        return None
+    data = _REPORT_DATA.validate_json(reports[-1]["json"])
+    if data.get(_REPORT_DECISION_KEY) != DECISION_ESCALATE:
+        return None
+    if _VERDICT_SUMMARY_KEY in data:
+        report = Verdict.model_validate(data)
+    elif _CONSULT_ANSWER_KEY in data:
+        report = ConsultAnswer.model_validate(data)
+    else:
+        return None
+    return report.escalation
+
+
 def render_packet(context: PacketContext) -> str:
     """Render `context` as the packet markdown (03 §8).
 
-    Headline, timeline, what was tried, evidence, the Leader's question and the resolvable
-    options, exactly one of them recommended.
+    Headline, timeline, what was tried, evidence, the Leader's question and typed agent
+    alternatives, then the engine's resolvable options. Each option set has one recommendation.
     """
     timeline = "\n".join(f"- {line}" for line in context.timeline) or "(no recorded events)"
+    agent_alternatives = (
+        context.agent_request.model_dump_json(indent=REPORT_JSON_INDENT)
+        if context.agent_request
+        else "(none recorded)"
+    )
     return (
         f"# {_headline(context)}\n\n"
         f"## Timeline\n\n{timeline}\n\n"
@@ -132,6 +163,8 @@ def render_packet(context: PacketContext) -> str:
         f"### Recent turn signals\n\n{context.view_tail or '(none)'}\n\n"
         f"### Sessions\n\n{context.sessions or '(none)'}\n\n"
         f"## Question\n\n{context.question}\n\n"
+        f"## Agent alternatives\n\n"
+        f"{agent_alternatives}\n\n"
         f"## Options\n\n{_options_section(context.options)}\n"
     )
 
@@ -175,6 +208,7 @@ class EscalationRaiser:
         facts: str,
         view_tail: str,
         apply_state: Callable[[], Task],
+        agent_request: EscalationRequest | None = None,
     ) -> Escalation:
         """Write the packet, then commit `apply_state`, the escalation row and its event as one.
 
@@ -197,6 +231,7 @@ class EscalationRaiser:
             sessions=self._sessions_evidence(task.id),
             question=question,
             options=options,
+            agent_request=agent_request,
         )
         headline = _headline(context)
         escalation_id = self._escalations.reserve_id()
@@ -270,6 +305,7 @@ class EscalationRaiser:
             sessions=self._sessions_evidence(task.id),
             question=escalation.headline,
             options=escalation.options,
+            agent_request=_agent_request_from_reports(evidence.reports),
         )
 
     def _packet_directory_ready(self, task_id: str, path: Path) -> bool:

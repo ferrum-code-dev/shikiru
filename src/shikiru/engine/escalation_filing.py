@@ -28,7 +28,9 @@ def escalation_narrative(
     question = "An Operator decision is needed to continue."
     attempted = "Automatic recovery has no option left"
     if reason is EscalationReason.ITERATIONS_EXHAUSTED:
-        question = "The final round still requested changes; choose accept, supersede or cancel."
+        question = (
+            "The final round still requested changes; give final-round guidance, accept or cancel."
+        )
         attempted = "Implement and verify cycled to the configured iteration limit."
     elif reason is EscalationReason.ENGINE_ERROR:
         attempted = "The engine raised an error no automatic recovery covers."
@@ -90,6 +92,9 @@ class EscalationFiler:
             raise InvariantError(message)
         narrative_question, attempted = escalation_narrative(reason, outcome, result)
         evidence = await self._evidence.collect(task, transition.step, role)
+        agent_request = (
+            outcome.escalation if isinstance(outcome, (ConsultAnswer, Verdict)) else None
+        )
         await self._raiser.raise_escalation(
             task,
             step=transition.step,
@@ -100,5 +105,6 @@ class EscalationFiler:
             facts=evidence.facts,
             view_tail=evidence.view_tail,
             apply_state=lambda: self._writer.persist(task, transition, outcome),
+            agent_request=agent_request,
         )
         return self._tasks.require(task.id)

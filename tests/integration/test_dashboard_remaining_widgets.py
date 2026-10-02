@@ -126,7 +126,10 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
         await pilot.press("o")
         await pilot.pause()
         packet_view = cast("Static", pilot.app.screen.query_one("#escalation-packet"))
-        assert cast("str", packet_view.content) == packet
+        packet_copy = cast("str", packet_view.content)
+        assert "E-1 · T-1 · decision needed" in packet_copy
+        assert "Evidence error:" in packet_copy
+        assert f"Original packet:\n{packet}" in packet_copy
         await pilot.press("escape")
         await pilot.pause()
         widget.focus()

@@ -143,7 +143,7 @@ class WorkspaceSummaryBar(Horizontal):
 
     async def on_mount(self) -> None:
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh_while_mounted), exclusive=True)
         self._widget_context.on_motion(self._refresh_while_mounted)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -163,7 +163,8 @@ class WorkspaceSummaryBar(Horizontal):
             self.query_one(f"#{button_id}", Button).label = f"{label} {counts[name]}"
 
     async def _refresh_while_mounted(self) -> None:
-        if self.is_mounted and self.is_on_screen and self.screen.is_active:
+        app = cast("App[None]", self.app)
+        if app.is_running and self.is_mounted and self.is_on_screen and self.screen.is_active:
             await self._refresh()
 
 

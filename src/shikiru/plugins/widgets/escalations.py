@@ -309,10 +309,14 @@ def _packet_copy(item: EscalationPanelView) -> str:
     if item.evidence_error is None:
         return item.packet
     actions = ", ".join(item.resolution_actions) or "none recorded"
-    return (
-        f"{item.escalation_id} · {item.task_id} · {item.headline}\n"
-        f"Allowed actions: {actions}\nEvidence error: {item.evidence_error}"
-    )
+    lines = [
+        f"{item.escalation_id} · {item.task_id} · {item.headline}",
+        f"Allowed actions: {actions}",
+        f"Evidence error: {item.evidence_error}",
+    ]
+    if item.packet:
+        lines.extend(("", "Original packet:", item.packet))
+    return "\n".join(lines)
 
 
 class EscalationsWidget:
