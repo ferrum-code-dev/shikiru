@@ -201,7 +201,7 @@ async def test_a_blocked_hook_never_drops_an_urgent_event_but_bounds_the_informa
     events = EventLog(connection, clock)
     fifo, released, received = tmp_path / "hook.fifo", tmp_path / "released", tmp_path / "log"
     os.mkfifo(fifo)
-    script = f"cat >> {received}; echo >> {received}; [ -e {released} ] || read line < {fifo}"
+    script = f"printf '%s\\n' \"$(cat)\" >> {received}; [ -e {released} ] || read line < {fifo}"
     notifier = Notifier(
         build_tmux(tmux_server),
         SubprocessRunner(),

@@ -141,7 +141,7 @@ async def test_a_failing_hook_is_logged_recorded_once_and_delivery_continues(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     received = tmp_path / "received.jsonl"
-    hook = _hook(f"cat >> {received}; echo >> {received}; exit {_FAILING_HOOK_EXIT_CODE}")
+    hook = _hook(f"printf '%s\\n' \"$(cat)\" >> {received}; exit {_FAILING_HOOK_EXIT_CODE}")
     async with _engine(tmp_path, tmux_server, hook) as env:
         env.escalate("first")
         env.escalate("second")
@@ -176,7 +176,7 @@ async def test_a_missing_hook_command_is_logged_per_event(
 
 
 def _recording_hook(received: Path) -> str:
-    return _hook(f"cat >> {received}; echo >> {received}")
+    return _hook(f"printf '%s\\n' \"$(cat)\" >> {received}")
 
 
 def _delivered_messages(received: Path) -> list[str]:
