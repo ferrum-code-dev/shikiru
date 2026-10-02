@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.domain.commands import COMMAND_POLL_SECONDS, Prioritize
+from shikiru.domain.commands import COMMAND_POLL_SECONDS, CommandStatus, Prioritize
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ConsultAnswer
 from shikiru.domain.steps import Transition, first_step
@@ -58,7 +58,7 @@ async def test_commands_report_queued_when_engine_is_down(connection: Connection
 
 
 async def test_commands_distinguish_ack_timeout_from_engine_down(
-    connection: Connection,
+    connection: Connection, reader: StateReader
 ) -> None:
     clock = FakeClock(START)
     queue = CommandQueue(connection, clock)
@@ -76,6 +76,12 @@ async def test_commands_distinguish_ack_timeout_from_engine_down(
     assert ack.message
     assert down_ack.message
     assert ack.message != down_ack.message
+    applied_result = {"priority": 5}
+    queue.mark_done(ack.id, applied_result)
+    stored = reader.command_status(ack.id)
+    assert stored is not None
+    assert stored.status is CommandStatus.DONE
+    assert stored.result == applied_result
 
 
 async def test_commands_return_done_ack_after_engine_marks_command(

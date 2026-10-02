@@ -13,7 +13,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Select, Static
 
 from shikiru.dashboard.contract import PaletteRequest
-from shikiru.domain.tasks import Role
+from shikiru.domain.tasks import Hold, Role
 from shikiru.errors import ShikiruError
 from shikiru.ui.strip import TaskStrip
 
@@ -31,8 +31,12 @@ TASK_DETAIL_LEADER_BUTTON = "task-detail-leader"
 TASK_DETAIL_IMPLEMENTER_BUTTON = "task-detail-implementer"
 TASK_DETAIL_ACTIONS_BUTTON = "task-detail-actions"
 TASK_DETAIL_ACTION_ROLE = "task-detail-action-role"
+TASK_DETAIL_HAND_BACK_LEADER_BUTTON = "task-detail-hand-back-leader"
+TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON = "task-detail-hand-back-implementer"
+TASK_DETAIL_RESUME_BUTTON = "task-detail-resume"
 TASK_DETAIL_ATTENTION_BUTTON = "task-detail-attention"
 TASK_DETAIL_IDENTITY = "task-detail-identity"
+TASK_DETAIL_OWNERSHIP = "task-detail-ownership"
 TASK_DETAIL_SITUATION = "task-detail-situation"
 TASK_DETAIL_PROGRESS = "task-detail-progress"
 TASK_DETAIL_REQUEST = "task-detail-request"
@@ -62,7 +66,7 @@ class TaskDetailPanel(Vertical):
         height: auto; padding: 1; border-bottom: solid $neutral-border;
         background: $panel; color: $primary-text; text-style: bold;
     }
-    #task-detail-toolbar { height: 3; padding: 0 1; }
+    #task-detail-toolbar { width: 100%; height: 3; padding: 0 1; }
     #task-detail-toolbar Button {
         width: auto; min-width: 1; margin-right: 1;
         border: round $neutral-border; background: $surface; color: $primary-text;
@@ -107,6 +111,9 @@ class TaskDetailPanel(Vertical):
             yield Button("Task window", id=TASK_DETAIL_WINDOW_BUTTON)
             yield Button("Leader pane", id=TASK_DETAIL_LEADER_BUTTON)
             yield Button("Implementer pane", id=TASK_DETAIL_IMPLEMENTER_BUTTON)
+            yield Button("Hand back Leader", id=TASK_DETAIL_HAND_BACK_LEADER_BUTTON)
+            yield Button("Hand back Implementer", id=TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON)
+            yield Button("Resume", id=TASK_DETAIL_RESUME_BUTTON)
             yield Select(
                 ((role.value.title(), role.value) for role in (Role.LEADER, Role.IMPLEMENTER)),
                 prompt="Acting role",
@@ -117,6 +124,7 @@ class TaskDetailPanel(Vertical):
             yield Button("Actions · Ctrl+P", id=TASK_DETAIL_ACTIONS_BUTTON)
             yield Button("Attention · Home", id=TASK_DETAIL_ATTENTION_BUTTON)
         yield Static("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
+        yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
         yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
         with VerticalScroll(id="task-detail-body"):
             yield Static("", id=TASK_DETAIL_SITUATION, classes="task-detail-section", markup=False)
@@ -153,6 +161,12 @@ class TaskDetailPanel(Vertical):
             await self._navigate_role_pane(Role.LEADER)
         elif button_id == TASK_DETAIL_IMPLEMENTER_BUTTON:
             await self._navigate_role_pane(Role.IMPLEMENTER)
+        elif button_id == TASK_DETAIL_HAND_BACK_LEADER_BUTTON:
+            await self._open_palette(Role.LEADER, action="hand-back")
+        elif button_id == TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON:
+            await self._open_palette(Role.IMPLEMENTER, action="hand-back")
+        elif button_id == TASK_DETAIL_RESUME_BUTTON:
+            await self._open_palette(action="resume")
         elif button_id == TASK_DETAIL_ACTIONS_BUTTON:
             await self.open_palette()
         elif button_id == TASK_DETAIL_ATTENTION_BUTTON:
@@ -165,14 +179,23 @@ class TaskDetailPanel(Vertical):
         if self._close_detail is not None:
             await self._close_detail()
 
-    async def _open_palette(self, role: Role | None = None) -> None:
+    async def _open_palette(
+        self,
+        role: Role | None = None,
+        *,
+        action: str | None = None,
+    ) -> None:
         callback = self._widget_context.open_palette_context
         if callback is not None:
             await callback(
-                PaletteRequest(task_id=self._task_id, role=role.value if role is not None else None)
+                PaletteRequest(
+                    action=action,
+                    task_id=self._task_id,
+                    role=role.value if role is not None else None,
+                )
             )
             return
-        await self._widget_context.open_palette("")
+        await self._widget_context.open_palette(action or "")
 
     async def open_palette(self) -> None:
         """Open the shared palette with this detail's current task and selected role."""
@@ -250,6 +273,7 @@ class TaskDetailPanel(Vertical):
             situation.append(f"Waiting · {view.wait_reason}")
         if view.ownership:
             situation.append(f"Operator owns · {', '.join(view.ownership)}")
+        self._render_ownership(view)
         attention = view.attention
         situation.append(
             f"Global attention · {attention.decisions} decisions · {attention.faults} engine faults"
@@ -280,6 +304,30 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_FACTS}", Static).update(facts)
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(_workspace_text(view))
         self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
+
+    def _render_ownership(self, view: TaskDetailView) -> None:
+        for role, button_id in (
+            (Role.LEADER, TASK_DETAIL_HAND_BACK_LEADER_BUTTON),
+            (Role.IMPLEMENTER, TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON),
+        ):
+            self.query_one(f"#{button_id}", Button).disabled = role.value not in view.ownership
+        self.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled = (
+            Hold.PAUSED.value not in view.holds or bool(view.ownership)
+        )
+        ownership_lines: list[str] = []
+        if view.ownership:
+            ownership_lines.append(
+                f"Operator owns · {', '.join(role.title() for role in view.ownership)}"
+            )
+        if view.holds:
+            ownership_lines.append(f"Remaining holds · {', '.join(view.holds)}")
+        if view.ownership and Hold.PAUSED.value in view.holds:
+            ownership_lines.append(
+                "Hand back alone will not clear the pause; Resume is a separate action."
+            )
+        elif Hold.PAUSED.value in view.holds:
+            ownership_lines.append("Use Resume to clear the pause.")
+        self.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static).update("\n".join(ownership_lines))
 
 
 class TaskDetailScreen(ModalScreen[None]):

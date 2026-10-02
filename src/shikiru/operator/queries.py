@@ -14,6 +14,17 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from shikiru.agents.contracts import COST_BASIS_UNKNOWN, CostBasis, QuotaWindow, Usage
+from shikiru.domain.commands import (
+    Command,
+    CommandStatus,
+    HandBack,
+    Resolve,
+    Say,
+    SetRung,
+    Stop,
+    Submit,
+    TakeOver,
+)
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
 from shikiru.domain.reports import FACTS_FILENAME, Report, ReportKind
@@ -34,6 +45,7 @@ from shikiru.workspace.reports import (
 
 if TYPE_CHECKING:
     from shikiru.clock import Clock
+    from shikiru.store.commands import StoredCommand
     from shikiru.store.reader import StateReader
 
 PEEK_TAIL_LINES = 60
@@ -55,6 +67,8 @@ TASK_ACTION_NO_HOLD = "task has no pause or ownership hold"
 TASK_ACTION_NOT_QUEUED = "task can only be prioritized while queued"
 TASK_PANE_CONTEXT_STATUSES = (*ACTIVE_STATUSES, Status.QUEUED)
 TASK_TARGET_SEARCH_CATEGORY = "all"
+RECENT_COMMAND_HISTORY_LIMIT = 3
+PROJECT_COMMAND_HISTORY_LIMIT = 50
 
 
 class OperatorTaskAction(StrEnum):
@@ -101,6 +115,24 @@ class OperatorView(BaseModel):
     """Base model for JSON-safe operator views."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class CommandHistoryEntry(OperatorView):
+    """One durable command with its stored lifecycle state and returned result."""
+
+    id: int
+    action: str
+    target: str
+    status: CommandStatus
+    result: dict[str, object] | None
+    timestamp: str
+
+
+class CommandHistory(OperatorView):
+    """A bounded newest-first command history and the engine's current liveness."""
+
+    engine_up: bool
+    entries: list[CommandHistoryEntry]
 
 
 class TaskSummary(OperatorView):
@@ -317,6 +349,29 @@ class OperatorQueries:
     def list_tasks(self, *, statuses: Sequence[Status] | None = None) -> list[TaskSummary]:
         """Return task summaries ordered by their allocated task sequence."""
         return [TaskSummary.from_task(task) for task in self._reader.list_tasks(statuses=statuses)]
+
+    def command_history(self, *, expanded: bool = False) -> CommandHistory:
+        """Return a bounded newest-first history, preserving stored command outcomes."""
+        limit = PROJECT_COMMAND_HISTORY_LIMIT if expanded else RECENT_COMMAND_HISTORY_LIMIT
+        return CommandHistory(
+            engine_up=self._engine_up(),
+            entries=[self._command_entry(row) for row in self._reader.command_history(limit=limit)],
+        )
+
+    def command_status(self, command_id: int) -> CommandHistoryEntry | None:
+        """Read one durable command status by id without creating or acknowledging it."""
+        row = self._reader.command_status(command_id)
+        return self._command_entry(row) if row is not None else None
+
+    def _command_entry(self, row: StoredCommand) -> CommandHistoryEntry:
+        return CommandHistoryEntry(
+            id=row.id,
+            action=row.command.kind.value.replace("_", " ").title(),
+            target=_command_target(row.command, self._project),
+            status=row.status,
+            result=row.result,
+            timestamp=row.ts,
+        )
 
     def search_task_targets(
         self,
@@ -709,6 +764,21 @@ def _signal_tail(path: Path) -> list[str]:
             raise TypeError(message)
         signals.append(json.dumps(row, ensure_ascii=False, sort_keys=True))
     return signals
+
+
+def _command_target(command: Command, project: str) -> str:
+    if isinstance(command, Submit):
+        if command.task_id is None:
+            message = "stored submit command has no allocated task id"
+            raise ValueError(message)
+        return command.task_id
+    if isinstance(command, Resolve):
+        return command.escalation_id
+    if isinstance(command, Stop):
+        return project
+    if isinstance(command, (Say, SetRung, TakeOver, HandBack)):
+        return f"{command.task_id} · {command.role.value}"
+    return command.task_id
 
 
 def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:

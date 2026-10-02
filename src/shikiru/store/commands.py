@@ -56,6 +56,53 @@ class CommandOutcome:
     result: dict[str, Any] | None
 
 
+@dataclass(frozen=True, slots=True)
+class StoredCommand:
+    """One durable command row read for bounded operator history."""
+
+    id: int
+    ts: str
+    command: Command
+    status: CommandStatus
+    result: dict[str, Any] | None
+
+
+def fetch_command_history(
+    connection: sqlite3.Connection,
+    *,
+    limit: int,
+) -> list[StoredCommand]:
+    """Read the newest bounded command rows with their stored status and result."""
+    rows = connection.execute(
+        "SELECT id, ts, payload, status, result FROM commands ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [_stored_command(row) for row in rows]
+
+
+def fetch_command(
+    connection: sqlite3.Connection,
+    command_id: int,
+) -> StoredCommand | None:
+    """Read one durable command status by id without changing its lifecycle."""
+    row = connection.execute(
+        "SELECT id, ts, payload, status, result FROM commands WHERE id = ?",
+        (command_id,),
+    ).fetchone()
+    return _stored_command(row) if row is not None else None
+
+
+def _stored_command(row: sqlite3.Row) -> StoredCommand:
+    result = row["result"]
+    return StoredCommand(
+        id=row["id"],
+        ts=row["ts"],
+        command=load_json(_COMMAND_ADAPTER, row["payload"]),
+        status=CommandStatus(row["status"]),
+        result=load_json(_RESULT_ADAPTER, result) if result is not None else None,
+    )
+
+
 class CommandQueue:
     """Appends operator commands and lets the engine dispatch and acknowledge them."""
 

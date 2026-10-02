@@ -9,10 +9,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import QuotaWindow, Rung
+from shikiru.domain.commands import CommandStatus, Prioritize, Say
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Role, Status
 from shikiru.process import SubprocessRunner
+from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
@@ -22,6 +24,7 @@ from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from shikiru.store.database import Database
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
 
@@ -37,6 +40,35 @@ def test_reader_sees_a_task_the_writer_committed(
 
     assert reader.get_task(task.id) == task
     assert reader.get_task("T-does-not-exist") is None
+
+
+def test_reader_serves_bounded_command_outcomes_from_another_client(
+    connection: Connection,
+    database: Database,
+    reader: StateReader,
+) -> None:
+    clock = FakeClock(START)
+    queue = CommandQueue(connection, clock)
+    applied = queue.append(Prioritize(task_id="T-1", priority=7))
+    queue.mark_done(applied.id, {"priority": 7})
+    other_client = database.connect()
+    try:
+        other_queue = CommandQueue(other_client, clock)
+        pending = other_queue.append(Say(task_id="T-2", role=Role.IMPLEMENTER, text="next turn"))
+        rejected = other_queue.append(Prioritize(task_id="T-3", priority=9))
+        rejection = {"error": "engine rejected the priority"}
+        other_queue.mark_rejected(rejected.id, rejection)
+    finally:
+        other_client.close()
+
+    history = reader.command_history(limit=2)
+    assert [entry.id for entry in history] == [rejected.id, pending.id]
+    assert [entry.status for entry in history] == [CommandStatus.REJECTED, CommandStatus.PENDING]
+    assert history[0].result == rejection
+    applied_status = reader.command_status(applied.id)
+    assert applied_status is not None
+    assert applied_status.status is CommandStatus.DONE
+    assert applied_status.result == {"priority": 7}
 
 
 async def test_reader_in_another_process_sees_the_writers_commit(

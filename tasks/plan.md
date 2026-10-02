@@ -790,10 +790,10 @@ Refs: Workspace §7–8, 03 §9, 06 §5.2/§5.5.
 
 ### Task 79: Durable command feedback and ownership banners
 Refs: Workspace §9/§15, 05 §2, 06 §1/§5.5, 03 §7/§9.
-- [ ] Expose bounded read-only command history/status through `StateReader` and operator queries. Show Sending, Pending, Applied or Rejected with command ID, target and returned result; preserve stored command statuses and distinguish engine-stopped queueing from acknowledgement timeout.
-- [ ] Track pending outcomes after the palette closes and recover them after dashboard restart, including commands from another dashboard or MCP. A pending form cannot accidentally submit the same action again on refresh or return.
-- [ ] Applied message feedback describes guidance queued for the role's next turn. Persistent ownership banners name taken-over roles and all remaining holds; hand back and resume issue their own explicit existing commands.
-- [ ] Document the read API, outcome vocabulary and acknowledgement-versus-delivery distinction in 02/05/06. Add no command writer, acknowledgement path or navigation-state table.
+- [x] Expose bounded read-only command history/status through `StateReader` and operator queries. Show Sending, Pending, Applied or Rejected with command ID, target and returned result; preserve stored command statuses and distinguish engine-stopped queueing from acknowledgement timeout.
+- [x] Track pending outcomes after the palette closes and recover them after dashboard restart, including commands from another dashboard or MCP. A pending form cannot accidentally submit the same action again on refresh or return.
+- [x] Applied message feedback describes guidance queued for the role's next turn. Persistent ownership banners name taken-over roles and all remaining holds; hand back and resume issue their own explicit existing commands.
+- [x] Document the read API, outcome vocabulary and acknowledgement-versus-delivery distinction in 02/05/06. Add no command writer, acknowledgement path or navigation-state table.
 - Tests: real SQLite/fake engine and Textual: command completes after the acknowledgement wait, palette closes while pending, dashboard restarts, another client submits, rejection appears, and hand back leaves another ownership/pause hold visible. Assert one applied command effect.
 
 ### Task 80: Home overview and attention composition

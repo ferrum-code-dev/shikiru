@@ -13,6 +13,7 @@ from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
 from shikiru.dashboard.palette import PaletteScreen
+from shikiru.domain.commands import Prioritize, Stop
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import Hold, Mode, Status
 from shikiru.operator.commands import OperatorCommands
@@ -177,6 +178,139 @@ async def test_dashboard_mounts_the_default_widgets(
             assert dashboard.scroll_y == 0
             assert strips.region.y < app.size.height
             assert task.id in cast("Text", strips.content).plain
+    finally:
+        reader.close()
+
+
+async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+    settings = load_settings(project_dir)
+    services = StubServices()
+    queue = CommandQueue(connection, clock)
+    commands = OperatorCommands(queue, clock, engine_up=services.engine_up)
+    queries = OperatorQueries(
+        reader,
+        project=settings.project.name,
+        project_root=project_dir,
+        engine_up=services.engine_up,
+        max_parallel=settings.orchestration.max_parallel,
+        clock=clock,
+    )
+    active_apps: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        del request
+        await active_apps[0].push_screen(
+            PaletteScreen(
+                commands,
+                queries,
+                _unexpected_pane_selection,
+                initial_context=PaletteRequest(action="stop"),
+            )
+        )
+
+    try:
+        first_app = _app(
+            reader,
+            project_dir,
+            widget_names=[],
+            open_palette_context=open_palette_context,
+        )
+        active_apps[:] = [first_app]
+        async with first_app.run_test(size=(100, 34)) as pilot:
+            dashboard_screen = first_app.screen
+            await pilot.press("ctrl+p")
+            await wait_until(lambda: isinstance(first_app.screen, PaletteScreen), timeout=2)
+            palette = cast("PaletteScreen", first_app.screen)
+            await pilot.click("#palette-submit")
+            await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
+            pending_id = queue.pending()[0].id
+            await wait_until(
+                lambda: (
+                    f"Pending · command {pending_id}"
+                    in _rendered_text(palette.query_one("#palette-result", Static))
+                ),
+                timeout=2,
+            )
+            assert isinstance(queue.pending()[0].command, Stop)
+            await pilot.press("escape")
+            await wait_until(lambda: first_app.screen is dashboard_screen, timeout=2)
+            await wait_until(
+                lambda: (
+                    f"#{pending_id} · Pending"
+                    in _rendered_text(first_app.query_one("#workspace-command-status", Static))
+                ),
+                timeout=2,
+            )
+            await pilot.click("#workspace-command-history")
+            await wait_until(lambda: first_app.screen is not dashboard_screen, timeout=2)
+            history_screen = first_app.screen
+            history_copy = history_screen.query_one("#command-history-copy", Static)
+            await pilot.pause()
+            assert "Loading" not in _rendered_text(history_copy), type(history_screen).__name__
+            assert f"#{pending_id} · Pending" in _rendered_text(history_copy)
+            await pilot.press("escape")
+            await wait_until(lambda: first_app.screen is dashboard_screen, timeout=2)
+    finally:
+        reader.close()
+
+
+async def test_dashboard_restart_recovers_another_clients_rejected_command(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+    queue = CommandQueue(connection, clock)
+    try:
+        first_app = _app(reader, project_dir, widget_names=[])
+        async with first_app.run_test(size=(100, 34)):
+            pass
+
+        pending = queue.append(Stop())
+        other_client = database.connect()
+        try:
+            other_queue = CommandQueue(other_client, clock)
+            rejected = other_queue.append(Prioritize(task_id="T-404", priority=4))
+            rejection = {"error": "fake engine rejected the target"}
+            other_queue.mark_rejected(rejected.id, rejection)
+        finally:
+            other_client.close()
+
+        restarted_app = _app(reader, project_dir, widget_names=[])
+        async with restarted_app.run_test(size=(100, 34)) as pilot:
+            status = restarted_app.query_one("#workspace-command-status", Static)
+            await wait_until(
+                lambda: (
+                    f"#{pending.id} · Pending" in _rendered_text(status)
+                    and f"#{rejected.id} · Rejected" in _rendered_text(status)
+                    and rejection["error"] in _rendered_text(status)
+                ),
+                timeout=2,
+            )
+            await pilot.click("#workspace-command-history")
+            history_screen = restarted_app.screen
+            history_copy = history_screen.query_one("#command-history-copy", Static)
+            await wait_until(
+                lambda: (
+                    f"#{pending.id} · Pending" in _rendered_text(history_copy)
+                    and "original acknowledgement wait context unknown"
+                    in _rendered_text(history_copy)
+                ),
+                timeout=2,
+            )
+            history_text = _rendered_text(history_copy)
+            assert f"#{rejected.id} · Rejected" in history_text
+            assert "T-404" in history_text
+            assert rejection["error"] in history_text
     finally:
         reader.close()
 

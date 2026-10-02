@@ -361,7 +361,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 
 **`resume` while a role is taken over is rejected** with a message to hand the role back first. There is no implicit hand-back: an interactive pane owns the workspace until every taken-over role is handed back, so no headless turn can run beside the Operator's session (invariant 1).
 
-**`say`** (`Say(task, role, text)`) writes `runs/T/messages/<role>/NNN-c<id>.md` (`<id>` is the command id; a replay files it once, §7). A headless turn takes no input mid-turn, so the message is delivered at the start of that role's next turn (§4.3 step 2), never interrupting; a message delivered into a turn that dies without a report is delivered again with the replacement turn (§4.3 step 2); interrupting is what take over is for. `say` never sets a hold.
+**`say`** (`Say(task, role, text)`) writes `runs/T/messages/<role>/NNN-c<id>.md` (`<id>` is the command id; a replay files it once, §7). An **Applied** command acknowledgement means this guidance was queued for the role's next turn; it does not mean an agent has consumed it. A headless turn takes no input mid-turn, so the message is delivered at the start of that role's next turn (§4.3 step 2), never interrupting; a message delivered into a turn that dies without a report is delivered again with the replacement turn (§4.3 step 2); interrupting is what take over is for. `say` never sets a hold.
 
 ## 10. Scheduling
 

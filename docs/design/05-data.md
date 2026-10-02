@@ -255,6 +255,8 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
 - `Say`, `HandBack`, `TakeOver`, `Cancel`, `Retry` and `Resolve` carry the queue's row id as `command_id` when the engine reads them (`IdentifiedCommand`), and the event recording their effect repeats it, so a replay recognises the effect (03 §7)
 - `Prioritize`, `Pause`, `Resume`, `Cancel`, `Retry`, `SetRung`, `Say`, `TakeOver`, `HandBack`, `Resolve`, `Stop`
 
+`StateReader.command_history(limit)` reads newest-first command rows with the stored `pending`, `done` or `rejected` status and returned result. `StateReader.command_status(command_id)` reads one row. Both are read-only; history requires a limit from 1 through 50. `OperatorQueries.command_history(expanded=False)` exposes the three newest rows, or up to 50 when expanded. The operator-facing labels are **Pending**, **Applied** (`done`) and **Rejected**. **Sending** is local form state and is never stored. An acknowledgement wait timeout leaves a row `pending`; the row does not record whether its client first saw a stopped engine or elapsed acknowledgement wait. The dashboard shows current engine liveness alongside recovered pending rows without inferring that submission-time context.
+
 ## 3. Run files
 
 See 02 §5. `report.kind` names the report model of the turn. `helper.json` exists only for rebuilt reports. `view.jsonl` holds one line per signal (`ts`, `turn`, `signal` type, its fields); only the engine appends and only `shikiru view` and peek read it.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, ClassVar, cast, get_args
 
@@ -17,12 +18,14 @@ from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
     CancelResolution,
+    CommandKind,
+    CommandStatus,
     ResolutionKind,
     RetryResolution,
 )
 from shikiru.domain.tasks import Mode, Role
 from shikiru.errors import ShikiruError
-from shikiru.operator.commands import AckStatus
+from shikiru.operator.commands import ACK_TIMEOUT_MESSAGE, QUEUED_MESSAGE, AckStatus
 from shikiru.operator.queries import OperatorTaskAction
 from shikiru.ui.theme import install_theme
 
@@ -33,6 +36,7 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
     from shikiru.operator.commands import Ack, OperatorCommands
     from shikiru.operator.queries import (
+        CommandHistoryEntry,
         EscalationView,
         OperatorQueries,
         TaskActionAvailability,
@@ -108,6 +112,19 @@ _FIELD_TASK_SEARCH = "task-search"
 _FIELD_TASK_CHOICE = "task-choice"
 _FIELD_TASK_ID = "task-id"
 _FIELD_ROLE = "role"
+_FIELD_PRIORITY = "priority"
+_FIELD_REQUEST = "request"
+_FIELD_TITLE = "title"
+_FIELD_MODE = "mode"
+_FIELD_COMPLEXITY = "complexity"
+_FIELD_SUBMISSION_PRIORITY = "submission-priority"
+_FIELD_DEPENDENCIES = "dependencies"
+_FIELD_LEADER_RUNG = "leader-rung"
+_FIELD_IMPLEMENTER_RUNG = "implementer-rung"
+_FIELD_RUNG = "rung"
+_FIELD_MESSAGE = "message"
+_FIELD_RESOLUTION_TEXT = "resolution-text"
+_FIELD_RESOLUTION_RUNG = "resolution-rung"
 _ACTION_STATE_ID = "palette-action-state"
 _GUIDANCE_ID = "palette-guidance"
 _SUBMIT_ID = "palette-submit"
@@ -118,6 +135,30 @@ _ADVANCED_FIELDS_ID = "palette-advanced-fields"
 _SELECT_REQUIRED = "Select an item"
 _TASK_SEARCH_PAGE_LIMIT = 50
 _TAKEOVER_SELECTION_FAILURE = "take-over succeeded, but the role pane could not be selected"
+_FORM_IDENTITY_FIELDS = {
+    _ACTION_SUBMIT: (
+        _FIELD_REQUEST,
+        _FIELD_TITLE,
+        _FIELD_MODE,
+        _FIELD_COMPLEXITY,
+        _FIELD_SUBMISSION_PRIORITY,
+        _FIELD_DEPENDENCIES,
+        _FIELD_LEADER_RUNG,
+        _FIELD_IMPLEMENTER_RUNG,
+    ),
+    _ACTION_PRIORITIZE: (_FIELD_PRIORITY,),
+    _ACTION_RUNG: (_FIELD_RUNG,),
+    _ACTION_MESSAGE: (_FIELD_MESSAGE,),
+    _ACTION_RESOLVE: (
+        _FIELD_ESCALATION,
+        _FIELD_RESOLUTION,
+        _FIELD_RESOLUTION_TEXT,
+        _FIELD_RESOLUTION_RUNG,
+    ),
+}
+_FORM_ROLE_ACTIONS = frozenset(
+    {_ACTION_TAKE_OVER, _ACTION_HAND_BACK, _ACTION_RUNG, _ACTION_MESSAGE, _ACTION_PEEK}
+)
 _ACTION_GUIDANCE = {
     _ACTION_SUBMIT: "Creates a new task using the request and optional submission fields.",
     _ACTION_PRIORITIZE: "Changes dispatch order while the task is queued.",
@@ -230,6 +271,10 @@ class PaletteScreen(ModalScreen[None]):
         self._route_action: str | None = None
         self._advanced_expanded = False
         self._action_in_flight = False
+        self._pending_command_id: int | None = None
+        self._pending_form_identity: tuple[str, ...] | None = None
+        self._command_action = _EMPTY
+        self._command_target = _EMPTY
         self._action_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
@@ -386,6 +431,12 @@ class PaletteScreen(ModalScreen[None]):
             self._refresh_task_choices()
             self._refresh_implicit_role()
             self._refresh_action_availability()
+        else:
+            self._refresh_action_availability()
+
+    async def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id in {_FIELD_REQUEST, _FIELD_MESSAGE, _FIELD_RESOLUTION_TEXT}:
+            self._refresh_action_availability()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Run the selected action in a worker so the palette stays responsive."""
@@ -420,13 +471,32 @@ class PaletteScreen(ModalScreen[None]):
         try:
             action = self._value(_FIELD_ACTION)
             task_id = self._input(_FIELD_TASK_ID).strip()
-            role = self._role() if action == _ACTION_TAKE_OVER else None
+            role = (
+                self._role()
+                if action
+                in {
+                    _ACTION_TAKE_OVER,
+                    _ACTION_HAND_BACK,
+                    _ACTION_RUNG,
+                    _ACTION_MESSAGE,
+                    _ACTION_PEEK,
+                }
+                else None
+            )
+            self._command_action = action
+            self._command_target = self._target_for_action(action, task_id, role)
+            form_identity = self._form_identity()
+            if action != _ACTION_PEEK:
+                self._show_result(f"Sending · {self._command_target}")
             ack = await self._dispatch()
         except (ShikiruError, ValueError) as error:
             if self._is_current_screen():
                 self._show_result(str(error))
         else:
             if ack is not None:
+                if ack.status is AckStatus.QUEUED:
+                    self._pending_command_id = ack.id
+                    self._pending_form_identity = form_identity
                 if self._is_current_screen():
                     self._show_ack(ack)
                 if (
@@ -506,6 +576,7 @@ class PaletteScreen(ModalScreen[None]):
             raise ValueError(state.disabled_reason)
 
     def _refresh_action_availability(self) -> None:
+        self._refresh_pending_command()
         task_id = self._input(_FIELD_TASK_ID).strip()
         self._action_states = (
             {
@@ -522,9 +593,58 @@ class PaletteScreen(ModalScreen[None]):
         state.update(f"Unavailable: {disabled_reason}" if disabled_reason is not None else _EMPTY)
         guidance = _ACTION_GUIDANCE.get(action or "", _EMPTY)
         self.query_one(f"#{_GUIDANCE_ID}", Static).update(guidance)
+        pending_same_form = self._pending_form_identity == self._form_identity()
         self.query_one(f"#{_SUBMIT_ID}", Button).disabled = (
-            self._route_error is not None or disabled_reason is not None or self._action_in_flight
+            self._route_error is not None
+            or disabled_reason is not None
+            or self._action_in_flight
+            or pending_same_form
         )
+
+    def _refresh_pending_command(self) -> None:
+        command_id = self._pending_command_id
+        if command_id is None:
+            return
+        outcome = self._queries.command_status(command_id)
+        if outcome is None:
+            message = f"pending command {command_id} is missing from durable history"
+            raise RuntimeError(message)
+        if outcome.status is not CommandStatus.PENDING:
+            self._pending_command_id = None
+            self._pending_form_identity = None
+            self._show_stored_command(outcome)
+
+    def _form_identity(self) -> tuple[str, ...]:
+        action = self._selected_value(_FIELD_ACTION) or _EMPTY
+        return (
+            action,
+            self._input(_FIELD_TASK_ID).strip(),
+            (self._selected_value(_FIELD_ROLE) or _EMPTY)
+            if action in _FORM_ROLE_ACTIONS
+            else _EMPTY,
+            *(self._identity_value(field) for field in _FORM_IDENTITY_FIELDS.get(action, ())),
+        )
+
+    def _identity_value(self, field: str) -> str:
+        control = self.query_one(f"#{field}")
+        if isinstance(control, Input):
+            return control.value
+        if isinstance(control, TextArea):
+            return control.text
+        if isinstance(control, Select):
+            value = cast("Select[str]", control).value
+            return value if isinstance(value, str) else _EMPTY
+        message = f"unsupported palette form field: {field}"
+        raise TypeError(message)
+
+    def _target_for_action(self, action: str, task_id: str, role: Role | None) -> str:
+        if action in {_ACTION_SUBMIT, _ACTION_STOP}:
+            return "project"
+        if action == _ACTION_RESOLVE:
+            return self._selected_value(_FIELD_ESCALATION) or "escalation"
+        if role is not None:
+            return f"{task_id} · {role.value}"
+        return task_id or "task"
 
     def _refresh_action_options(self) -> None:
         search = self._input(_FIELD_ACTION_SEARCH).strip().casefold()
@@ -733,14 +853,74 @@ class PaletteScreen(ModalScreen[None]):
         self._show_escalation(self._selected_value(_FIELD_ESCALATION))
 
     def _show_ack(self, ack: Ack, additional_detail: str | None = None) -> None:
-        result = ack.result or {}
-        task_id = result.get("task_id")
-        detail = f" · {task_id}" if task_id is not None else _EMPTY
-        message = f"{ack.status.value} · command {ack.id}{detail}"
-        for detail_message in (ack.message, additional_detail):
-            if detail_message:
-                message = f"{message}\n{detail_message}"
+        outcome = self._queries.command_status(ack.id)
+        if outcome is None:
+            message = f"acknowledged command {ack.id} is missing from durable history"
+            raise RuntimeError(message)
+        target = outcome.target
+        if ack.status is AckStatus.QUEUED:
+            label = "Pending"
+            if ack.message == QUEUED_MESSAGE:
+                details = "queued while the engine was stopped"
+            elif ack.message == ACK_TIMEOUT_MESSAGE:
+                engine_state = "running" if self._queries.command_history().engine_up else "stopped"
+                details = (
+                    f"acknowledgement wait elapsed; engine is currently {engine_state}; "
+                    "still pending"
+                )
+            else:
+                details = "waiting for engine acknowledgement"
+        elif ack.status is AckStatus.DONE:
+            label = "Applied"
+            details = self._applied_result(ack)
+        else:
+            label = "Rejected"
+            details = ack.message or "engine rejected the command"
+            returned = self._returned_result(ack)
+            if returned is not None:
+                details = f"{details}\nReturned result · {returned}"
+        message = f"{label} · command {ack.id} · {target}\n{details}"
+        if additional_detail is not None:
+            message = f"{message}\n{additional_detail}"
         self._show_result(message)
+
+    def _show_stored_command(self, entry: CommandHistoryEntry) -> None:
+        if entry.status is CommandStatus.DONE:
+            label = "Applied"
+            details = (
+                "guidance queued for the selected role's next turn"
+                if entry.action == CommandKind.SAY.value.title()
+                else "engine applied the command effect"
+            )
+            returned = self._returned_result_value(entry.result)
+            if returned is not None:
+                details = f"{details}\nReturned result · {returned}"
+        elif entry.status is CommandStatus.REJECTED:
+            label = "Rejected"
+            details = self._returned_result_value(entry.result) or "engine rejected the command"
+        else:
+            label = "Pending"
+            details = "command remains pending"
+        self._show_result(f"{label} · command {entry.id} · {entry.target}\n{details}")
+
+    def _applied_result(self, ack: Ack) -> str:
+        if self._command_action == _ACTION_MESSAGE:
+            details = "guidance queued for the selected role's next turn"
+        elif self._command_action == _ACTION_RUNG:
+            details = "selected rung applies to this role's next turn"
+        else:
+            details = "engine applied the command effect"
+        returned = self._returned_result(ack)
+        return f"{details}\nReturned result · {returned}" if returned is not None else details
+
+    def _returned_result(self, ack: Ack) -> str | None:
+        return self._returned_result_value(ack.result)
+
+    @staticmethod
+    def _returned_result_value(result: dict[str, object] | None) -> str | None:
+        return (
+            json.dumps(result, ensure_ascii=False, sort_keys=True) if result is not None else None
+        )
 
     def _show_result(self, text: str) -> None:
         if self._is_current_screen():

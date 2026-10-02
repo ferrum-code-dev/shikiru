@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from shikiru.errors import DatabaseError
+from shikiru.store.commands import StoredCommand, fetch_command, fetch_command_history
 from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
 from shikiru.store.events import fetch_events_since, fetch_latest_events
 from shikiru.store.quotas import fetch_quota_agents, fetch_quotas
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 
 DASHBOARD_CHANGE_POLL_SECONDS = 0.5
 CASEFOLD_SQL_FUNCTION = "casefold"
+MAX_COMMAND_HISTORY_LIMIT = 50
 
 OnChange = Callable[[], Awaitable[None]]
 
@@ -120,6 +122,25 @@ class StateReader:
     def list_all_runs(self) -> list[Run]:
         """See `shikiru.store.runs.fetch_all_runs`."""
         return fetch_all_runs(self._connection)
+
+    def command_history(self, *, limit: int) -> list[StoredCommand]:
+        """Read a bounded newest-first command history, preserving each stored status."""
+        if not 0 < limit <= MAX_COMMAND_HISTORY_LIMIT:
+            message = f"command history limit must be between 1 and {MAX_COMMAND_HISTORY_LIMIT}"
+            raise ValueError(message)
+        try:
+            return fetch_command_history(self._connection, limit=limit)
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
+
+    def command_status(self, command_id: int) -> StoredCommand | None:
+        """Read one durable command status by id without changing its lifecycle."""
+        try:
+            return fetch_command(self._connection, command_id)
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
 
     def get_escalation(self, escalation_id: str) -> Escalation | None:
         """See `shikiru.store.escalations.fetch_escalation`."""

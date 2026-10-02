@@ -6,9 +6,11 @@ CLI, MCP and the dashboard palette are thin adapters over three small services:
 
 | Service | Responsibility |
 |---|---|
-| `OperatorQueries` | Read-only views over `StateReader`: status, tasks, task detail, escalations (with packet), peek (DB + the role's `view.jsonl`) |
-| `OperatorCommands` | `send(command) -> Ack`. Inserts the typed command row (a database that stays locked past its 5 s busy timeout raises `DatabaseError`, the CLI's readable exit, and queues nothing: retry); if the engine is up, waits up to 10 s for `done`/`rejected`; if it's down, returns `queued` ("applies when the engine starts"). Delivery is at least once and handlers are idempotent by command id (03 §7), so a command applied just before an engine restart is acknowledged `done`, never `rejected`, when replayed |
+| `OperatorQueries` | Read-only views over `StateReader`: status, tasks, task detail, escalations (with packet), peek (DB + the role's `view.jsonl`), bounded command history and one-command status |
+| `OperatorCommands` | `send(command) -> Ack`. Inserts the typed command row (a database that stays locked past its 5 s busy timeout raises `DatabaseError`, the CLI's readable exit, and queues nothing: retry); if the engine is up, waits up to 10 s for `done`/`rejected`; if it's down, returns `queued` ("applies when the engine starts"). The client message distinguishes engine-down queueing from an elapsed acknowledgement wait; both remain `pending` in storage until handled. Delivery is at least once and handlers are idempotent by command id (03 §7), so a command applied just before an engine restart is acknowledged `done`, never `rejected`, when replayed |
 | `EventFeed` | `read(since, kinds, task)` and `wait(since, kinds, task, timeout)` over `events` |
+
+`StateReader.command_history(limit)` returns bounded newest-first rows and `command_status(command_id)` returns one row. `OperatorQueries.command_history(expanded=False)` reads the three newest; the expanded project view is capped at 50. Stored `pending`, `done` and `rejected` are shown as **Pending**, **Applied** and **Rejected**; **Sending** is local to a form. An elapsed acknowledgement wait is not a rejection. A recovered pending row shows current engine liveness and leaves its original acknowledgement wait context unknown because the command row does not persist it.
 
 ## 2. CLI
 
@@ -167,7 +169,8 @@ The system-pane shell uses current widgets. The selectable task browser and shar
 - The operator layer prepares task-action applicability and disabled reasons from current task/run state. The palette refreshes this projection before dispatch; the engine can still reject a command if state changes after that read. Widgets call `OperatorCommands` and do not create workflow commands or duplicate eligibility rules.
 - Forms explain next-turn delivery for messages and rung changes, pause versus pause-now, task ownership during take over, and restrictions remaining after resume or hand back. Cancel and stop show their scope and work-preservation effects before the form's explicit Run action.
 - It opens as a tmux popup (`prefix + Space`), and `Ctrl+P` in `dash` pushes the same screen.
-- Every action calls `OperatorCommands` and shows the existing `Ack`.
+- Every mutation calls `OperatorCommands`. The palette shows `Sending`, then its returned `Ack`: `Pending`, `Applied` or `Rejected`, with command ID, target and result. **Applied** means the engine applied the command effect. For `say`, guidance is queued for the selected role's next turn; this status does not claim that an agent consumed it.
+- The dashboard keeps a compact recent-command status under its title and opens a bounded project history of up to 50 rows. Both read through `StateReader` and `OperatorQueries`, refresh from database changes, and recover commands submitted through another dashboard or MCP. Pending rows report current engine liveness without guessing whether their original client saw an engine-down queue or an acknowledgement timeout. A pending form stays disabled while its command is outstanding; changing the form creates a distinct action, and returning to a view never resends it.
 - The dashboard and popup use the shared Textual theme. Packet and dialogue evidence modals use its surface, border, text and focus tokens.
 
 ### 5.6 `ls` and `attach`

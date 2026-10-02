@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol
 
 from shikiru.dashboard.contract import (
     AgentUsageView,
+    CommandFeedbackEntryView,
+    CommandFeedbackStatus,
+    CommandHistoryView,
     DialogueBubbleView,
     DockerView,
     EscalationPanelView,
@@ -27,6 +31,7 @@ from shikiru.dashboard.contract import (
     TaskSignalView,
     TaskTestView,
 )
+from shikiru.domain.commands import CommandStatus
 from shikiru.domain.events import EventKind
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.reports import (
@@ -584,6 +589,27 @@ class StateDashboardViews:
             faults=len(self._queries.open_faults()),
         )
 
+    def command_history(self, *, expanded: bool = False) -> CommandHistoryView:
+        """Project a bounded durable command history and current engine liveness."""
+        history = self._queries.command_history(expanded=expanded)
+        return CommandHistoryView(
+            engine_up=history.engine_up,
+            entries=tuple(
+                CommandFeedbackEntryView(
+                    command_id=entry.id,
+                    action=entry.action,
+                    target=entry.target,
+                    status=_command_feedback_status(entry.status),
+                    result=(
+                        json.dumps(entry.result, ensure_ascii=False, sort_keys=True)
+                        if entry.result is not None
+                        else None
+                    ),
+                )
+                for entry in history.entries
+            ),
+        )
+
     async def resources(self) -> ResourceView:
         """Return the current host and engine/task-pane process-tree sample."""
         return await self._sources.resources()
@@ -796,3 +822,11 @@ def _task_session(run: Run) -> TaskSessionView:
         cost_basis=run.usage.cost_basis,
         context_used_pct=run.usage.context_used_pct,
     )
+
+
+def _command_feedback_status(status: CommandStatus) -> CommandFeedbackStatus:
+    if status is CommandStatus.PENDING:
+        return CommandFeedbackStatus.PENDING
+    if status is CommandStatus.DONE:
+        return CommandFeedbackStatus.APPLIED
+    return CommandFeedbackStatus.REJECTED

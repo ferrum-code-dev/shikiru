@@ -11,6 +11,7 @@ from shikiru.dashboard.contract import PaletteRequest
 from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.domain.commands import (
     AnswerResolution,
+    CommandStatus,
     Pause,
     Prioritize,
     Resolve,
@@ -23,7 +24,7 @@ from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
 from shikiru.errors import ConfigError
-from shikiru.operator.commands import OperatorCommands
+from shikiru.operator.commands import COMMAND_ACK_WAIT_SECONDS, OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
@@ -103,11 +104,10 @@ async def _set_role(pilot: Pilot[None], screen: PaletteScreen, role: Role) -> No
     await pilot.pause()
 
 
-async def _wait_for_ack(screen: PaletteScreen, status: str = "queued") -> None:
+async def _wait_for_ack(screen: PaletteScreen, status: str = "Pending") -> None:
     await wait_until(
         lambda: (
             status in _static_text(screen, "#palette-result")
-            and not screen.query_one("#palette-submit", Button).disabled
             and screen.query_one("#palette-result-scroll").region.y
             >= screen.query_one("#palette-form").region.y
             and screen.query_one("#palette-result-scroll").region.bottom
@@ -153,19 +153,61 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
         await pilot.pause()
         await _open_action(pilot, screen, "rung")
         screen.query_one("#rung", Input).value = "codex:sol:high"
-        await pilot.click("#palette-submit")
-        await wait_until(
-            lambda: (
-                len(queue.pending()) == 2
-                and not screen.query_one("#palette-submit", Button).disabled
-            ),
-            timeout=2,
+        assert not screen.query_one("#palette-submit", Button).disabled, _static_text(
+            screen, "#palette-action-state"
         )
+        await pilot.click("#palette-submit")
+        await wait_until(lambda: len(queue.pending()) == 2, timeout=2)
         assert queue.pending()[1].command == SetRung(
             task_id=task.id,
             role=Role.IMPLEMENTER,
             rung=_LIVE_RUNG,
         )
+
+
+async def test_applied_message_feedback_keeps_next_turn_guidance_and_engine_result(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Guidance acknowledgement")
+    commands, queries, queue = _services(
+        connection,
+        reader,
+        clock,
+        tmp_path,
+        engine_up=True,
+    )
+    app = PaletteApp(
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(
+            action="message",
+            task_id=task.id,
+            role=Role.IMPLEMENTER.value,
+        ),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        screen.query_one("#message", TextArea).text = "Review the updated evidence."
+        await pilot.click("#palette-submit")
+        await wait_until(clock.has_pending_sleep, timeout=2)
+        queued = queue.pending()[0]
+        returned = {"queued_for_next_turn": True}
+        queue.mark_done(queued.id, returned)
+        clock.advance(_POLL_SECONDS)
+        await _wait_for_ack(screen, "Applied")
+
+        feedback = _static_text(screen, "#palette-result")
+        assert f"command {queued.id}" in feedback
+        assert f"{task.id} · implementer" in feedback
+        assert "guidance queued for the selected role's next turn" in feedback
+        assert "Returned result" in feedback
+        assert "queued_for_next_turn" in feedback
 
 
 async def test_palette_task_search_changes_the_editable_target(
@@ -339,6 +381,8 @@ async def test_palette_serializes_pending_action_and_closes_without_worker_error
         screen.query_one("#message", TextArea).text = "Send once while awaiting acknowledgement."
         await pilot.click("#palette-submit")
         await wait_until(clock.has_pending_sleep, timeout=2)
+        assert "Sending" in _static_text(screen, "#palette-result")
+        assert f"{task.id} · leader" in _static_text(screen, "#palette-result")
         assert len(queue.pending()) == 1
         assert screen.query_one("#palette-submit", Button).disabled
 
@@ -360,6 +404,52 @@ async def test_palette_serializes_pending_action_and_closes_without_worker_error
     clock.advance(1)
     assert not clock.has_pending_sleep()
     assert len(queue.pending()) == 1
+
+
+async def test_palette_keeps_acknowledgement_timeout_pending_with_current_engine_state(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Acknowledgement wait")
+    commands, queries, queue = _services(
+        connection,
+        reader,
+        clock,
+        tmp_path,
+        engine_up=True,
+    )
+    app = PaletteApp(
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(
+            action="message",
+            task_id=task.id,
+            role=Role.LEADER.value,
+        ),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        screen.query_one("#message", TextArea).text = "Keep waiting for the engine."
+        await pilot.click("#palette-submit")
+        await wait_until(clock.has_pending_sleep, timeout=2)
+        queued = queue.pending()[0]
+        clock.advance(COMMAND_ACK_WAIT_SECONDS)
+        await _wait_for_ack(screen)
+
+        feedback = _static_text(screen, "#palette-result")
+        assert f"command {queued.id}" in feedback
+        assert f"{task.id} · leader" in feedback
+        assert "acknowledgement wait elapsed" in feedback
+        assert "engine is currently running" in feedback
+        assert "Rejected" not in feedback
+        outcome = queue.status(queued.id)
+        assert outcome is not None
+        assert outcome.status is CommandStatus.PENDING
 
 
 async def test_palette_revalidates_task_state_before_queueing(
@@ -505,7 +595,7 @@ async def test_palette_submit_queues_a_typed_command_and_shows_its_ack(
         assert queued[0].command.depends_on == ["T-8", "T-9"]
         assert queued[0].command.leader == _LIVE_RUNG
         assert queued[0].command.implementer == _LIVE_RUNG
-        assert "queued" in _static_text(screen, "#palette-result")
+        assert "Pending" in _static_text(screen, "#palette-result")
 
 
 async def test_palette_prioritize_queues_the_selected_priority(
@@ -528,7 +618,10 @@ async def test_palette_prioritize_queues_the_selected_priority(
         queued = queue.pending()
         assert len(queued) == 1
         assert queued[0].command == Prioritize(task_id=task.id, priority=17)
-        assert "queued" in _static_text(screen, "#palette-result")
+        feedback = _static_text(screen, "#palette-result")
+        assert "Pending" in feedback
+        assert "engine was stopped" in feedback
+        assert "acknowledgement wait elapsed" not in feedback
 
 
 async def test_palette_resolve_uses_the_packet_options_and_answer_form(
@@ -573,7 +666,7 @@ async def test_palette_resolve_uses_the_packet_options_and_answer_form(
         assert isinstance(queued[0].command, Resolve)
         assert queued[0].command.escalation_id == escalation.id
         assert queued[0].command.resolution == AnswerResolution(text="Keep the current behavior.")
-        assert "queued" in _static_text(screen, "#palette-result")
+        assert "Pending" in _static_text(screen, "#palette-result")
 
 
 async def test_palette_takeover_queues_a_task_role_command(
@@ -602,7 +695,7 @@ async def test_palette_takeover_queues_a_task_role_command(
         assert queued[0].command == TakeOver(
             task_id=task.id, role=Role.LEADER, command_id=queued[0].id
         )
-        assert "queued" in _static_text(screen, "#palette-result")
+        assert "Pending" in _static_text(screen, "#palette-result")
 
 
 async def test_completed_takeover_selects_the_role_pane_and_its_window(
@@ -646,7 +739,7 @@ async def test_completed_takeover_selects_the_role_pane_and_its_window(
         assert len(queued) == 1
         queue.mark_done(queued[0].id, {"task_id": task.id})
         clock.advance(_POLL_SECONDS)
-        await _wait_for_ack(screen, "done")
+        await _wait_for_ack(screen, "Applied")
 
     session_target = exact_target(tmux_server.session)
     windows = await tmux_server.run(
@@ -748,9 +841,13 @@ async def test_rejected_takeover_never_selects_the_role_pane(
         assert len(queued) == 1
         queue.mark_rejected(queued[0].id, {"message": "take over unavailable"})
         clock.advance(_POLL_SECONDS)
-        await _wait_for_ack(screen, "rejected")
+        await _wait_for_ack(screen, "Rejected")
 
-        assert "rejected" in _static_text(screen, "#palette-result")
+        feedback = _static_text(screen, "#palette-result")
+        assert f"command {queued[0].id}" in feedback
+        assert f"{task.id} · leader" in feedback
+        assert "Rejected" in feedback
+        assert "take over unavailable" in feedback
 
 
 @pytest.mark.parametrize(
@@ -803,7 +900,7 @@ async def test_done_takeover_keeps_ack_with_pane_selection_error(
         clock.advance(_POLL_SECONDS)
         await wait_until(
             lambda: (
-                "done" in _static_text(screen, "#palette-result")
+                "Applied" in _static_text(screen, "#palette-result")
                 and "could not select %not-a-real-pane" in _static_text(screen, "#palette-result")
             ),
             timeout=2,

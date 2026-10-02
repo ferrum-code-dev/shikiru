@@ -17,11 +17,17 @@ from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
 from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_ROLE,
+    TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON,
+    TASK_DETAIL_HAND_BACK_LEADER_BUTTON,
     TASK_DETAIL_IDENTITY,
+    TASK_DETAIL_OWNERSHIP,
+    TASK_DETAIL_RESUME_BUTTON,
     TASK_DETAIL_SITUATION,
     TaskDetailScreen,
 )
+from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.services import TaskNavigation
+from shikiru.domain.commands import HandBack, Resume
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     FACTS_FILENAME,
@@ -35,7 +41,8 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.reports import TestRun as AgentTestRun
 from shikiru.domain.steps import Step, Transition
-from shikiru.domain.tasks import EscalationReason, Mode, RepoState, Role, Status, Task
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, RepoState, Role, Status, Task
+from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import run_dir, task_root
 from shikiru.store.commands import CommandQueue
@@ -70,6 +77,8 @@ EXTENSION_WIDGET = "task-view-extension"
 TMUX_WINDOW_ID_FORMAT = "#{window_id}"
 TMUX_ACTIVE_WINDOW_FORMAT = "#{window_id} #{window_active}"
 TMUX_ACTIVE_PANE_FORMAT = "#{pane_id} #{pane_active}"
+LEADER_PANE_ID = "%1"
+IMPLEMENTER_PANE_ID = "%2"
 
 
 class _ExtensionWidget:
@@ -92,6 +101,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rich.text import Text
+    from textual.pilot import Pilot
     from textual.widget import Widget
 
     from shikiru.dashboard.contract import (
@@ -100,6 +110,7 @@ if TYPE_CHECKING:
         OpenPaletteContext,
         WidgetContext,
     )
+    from shikiru.domain.runs import Run
     from shikiru.store.commands import QueuedCommand
     from shikiru.store.database import Database
     from shikiru.workspace.roots import TaskRootBuilder
@@ -172,6 +183,91 @@ def _dashboard_app(
 
 def _text(widget: Static) -> str:
     return cast("Text", widget.render()).plain
+
+
+async def _unexpected_pane_selection(pane_id: str) -> None:
+    raise AssertionError(pane_id)
+
+
+def _seed_owned_task(
+    connection: Connection,
+    clock: FakeClock,
+) -> tuple[Task, RunStore, TaskStore, CommandQueue, Run, Run]:
+    task = seed_task(connection, clock, title="Owned roles and holds")
+    runs = RunStore(connection, clock)
+    leader = runs.start(task.id, Role.LEADER, LEADER_RUNG)
+    implementer = runs.start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
+    runs.mark_taken_over(leader.id)
+    runs.mark_taken_over(implementer.id)
+    tasks = TaskStore(connection, clock)
+    tasks.set_panes(
+        task.id,
+        {Role.LEADER: LEADER_PANE_ID, Role.IMPLEMENTER: IMPLEMENTER_PANE_ID},
+    )
+    tasks.set_holds(task.id, frozenset({Hold.PAUSED, Hold.INTERVENTION}))
+    queue = CommandQueue(connection, clock)
+    for submitted in queue.pending():
+        queue.mark_done(submitted.id)
+    return task, runs, tasks, queue, leader, implementer
+
+
+def _operator_task_app(
+    reader: StateReader,
+    project_root: Path,
+    task_id: str,
+    queue: CommandQueue,
+    clock: FakeClock,
+) -> DashboardApp:
+    settings = load_settings(project_root)
+    services = StubServices()
+    commands = OperatorCommands(queue, clock, engine_up=services.engine_up)
+    queries = OperatorQueries(
+        reader,
+        project=settings.project.name,
+        project_root=project_root,
+        engine_up=services.engine_up,
+        max_parallel=settings.orchestration.max_parallel,
+        clock=clock,
+    )
+    active_apps: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        await active_apps[0].push_screen(
+            PaletteScreen(
+                commands,
+                queries,
+                _unexpected_pane_selection,
+                initial_context=request,
+            )
+        )
+
+    app = _dashboard_app(
+        reader,
+        project_root,
+        focus_task=task_id,
+        widget_names=TASK_DETAIL_WIDGETS,
+        open_palette_context=open_palette_context,
+    )
+    active_apps.append(app)
+    return app
+
+
+async def _submit_detail_command(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    queue: CommandQueue,
+    button_id: str,
+) -> QueuedCommand:
+    dashboard_screen = app.screen
+    app.query_one(f"#{button_id}", Button).focus()
+    await pilot.press("enter")
+    await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+    await pilot.click("#palette-submit")
+    await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
+    command = queue.pending()[0]
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is dashboard_screen, timeout=2)
+    return command
 
 
 def _write_report_turn(
@@ -705,6 +801,135 @@ async def test_implicit_detail_role_tracks_step_change_at_palette_activation(
             await wait_until(lambda: bool(opened), timeout=2)
 
         assert opened == [PaletteRequest(task_id=task.id)]
+    finally:
+        reader.close()
+
+
+async def test_hand_back_and_resume_remain_explicit_while_other_holds_survive(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task, runs, tasks, queue, leader, _implementer = _seed_owned_task(connection, clock)
+    reader = StateReader(database, SystemClock())
+
+    try:
+        app = _operator_task_app(reader, project_root, task.id, queue, clock)
+        async with app.run_test(size=(80, 40)) as pilot:
+            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+            await wait_until(
+                lambda: (
+                    "Leader" in _text(ownership)
+                    and "Implementer" in _text(ownership)
+                    and Hold.PAUSED.value in _text(ownership)
+                    and Hold.INTERVENTION.value in _text(ownership)
+                ),
+                timeout=2,
+            )
+
+            first_command = await _submit_detail_command(
+                app,
+                pilot,
+                queue,
+                TASK_DETAIL_HAND_BACK_LEADER_BUTTON,
+            )
+            assert isinstance(first_command.command, HandBack)
+            assert first_command.command.role is Role.LEADER
+            runs.mark_live(leader.id)
+            tasks.set_holds(task.id, frozenset({Hold.PAUSED, Hold.INTERVENTION}))
+            queue.mark_done(first_command.id, {"role": Role.LEADER.value})
+            await wait_until(
+                lambda: (
+                    "Operator owns · Implementer" in _text(ownership)
+                    and "Leader" not in _text(ownership)
+                    and Hold.PAUSED.value in _text(ownership)
+                    and Hold.INTERVENTION.value in _text(ownership)
+                ),
+                timeout=2,
+            )
+            assert app.query_one(f"#{TASK_DETAIL_HAND_BACK_LEADER_BUTTON}", Button).disabled
+            assert not app.query_one(
+                f"#{TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON}", Button
+            ).disabled
+            assert app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
+            task_after_partial_hand_back = reader.get_task(task.id)
+            assert task_after_partial_hand_back is not None
+            assert task_after_partial_hand_back.holds == frozenset({Hold.PAUSED, Hold.INTERVENTION})
+    finally:
+        reader.close()
+
+
+async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Separate resume command")
+    runs = RunStore(connection, clock)
+    leader = runs.start(task.id, Role.LEADER, LEADER_RUNG)
+    runs.mark_taken_over(leader.id)
+    tasks = TaskStore(connection, clock)
+    tasks.set_panes(task.id, {Role.LEADER: LEADER_PANE_ID})
+    tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
+    queue = CommandQueue(connection, clock)
+    for submitted in queue.pending():
+        queue.mark_done(submitted.id)
+    reader = StateReader(database, SystemClock())
+
+    try:
+        app = _operator_task_app(reader, project_root, task.id, queue, clock)
+        async with app.run_test(size=(80, 40)) as pilot:
+            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+            await wait_until(
+                lambda: (
+                    "Operator owns · Leader" in _text(ownership)
+                    and Hold.PAUSED.value in _text(ownership)
+                ),
+                timeout=2,
+            )
+            assert app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
+
+            hand_back = await _submit_detail_command(
+                app,
+                pilot,
+                queue,
+                TASK_DETAIL_HAND_BACK_LEADER_BUTTON,
+            )
+            assert isinstance(hand_back.command, HandBack)
+            assert hand_back.command.role is Role.LEADER
+            runs.mark_live(leader.id)
+            tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
+            queue.mark_done(hand_back.id, {"role": Role.LEADER.value})
+            await wait_until(
+                lambda: (
+                    "Remaining holds · paused" in _text(ownership)
+                    and not app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
+                ),
+                timeout=2,
+            )
+            paused_task = tasks.get(task.id)
+            assert paused_task is not None
+            assert paused_task.holds == {Hold.PAUSED}
+
+            resume_command = await _submit_detail_command(
+                app,
+                pilot,
+                queue,
+                TASK_DETAIL_RESUME_BUTTON,
+            )
+            assert isinstance(resume_command.command, Resume)
+            assert resume_command.command.task_id == task.id
+            task_before_resume = tasks.get(task.id)
+            assert task_before_resume is not None
+            assert task_before_resume.holds == {Hold.PAUSED}
+
+            tasks.set_holds(task.id, frozenset())
+            queue.mark_done(resume_command.id)
+            await wait_until(lambda: not _text(ownership), timeout=2)
     finally:
         reader.close()
 

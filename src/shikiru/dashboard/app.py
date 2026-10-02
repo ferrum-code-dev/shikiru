@@ -10,7 +10,14 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
 from shikiru.agents.registry import load_unique_entry_point
-from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest, WidgetContext
+from shikiru.dashboard.contract import (
+    WIDGET_ENTRY_POINT_GROUP,
+    CommandFeedbackEntryView,
+    CommandFeedbackStatus,
+    CommandHistoryView,
+    PaletteRequest,
+    WidgetContext,
+)
 from shikiru.dashboard.detail import TaskDetailPanel, TaskDetailScreen
 from shikiru.errors import ConfigError
 from shikiru.ui.theme import install_theme
@@ -72,8 +79,13 @@ _SECTION_HEADING_PREFIX = "section-heading-"
 _EXPAND_BUTTON = "workspace-expand"
 _RETURN_BUTTON = "workspace-return"
 _HELP_BUTTON = "workspace-help"
+_COMMAND_HISTORY_BUTTON = "workspace-command-history"
 _HELP_CLOSE_BUTTON = "workspace-help-close"
 _HELP_CONTEXT = "workspace-help-context"
+_COMMAND_HISTORY_CLOSE = "command-history-close"
+_COMMAND_HISTORY_COPY = "command-history-copy"
+_COMMAND_HISTORY_WORKER = "command-history-updates"
+COMMAND_ACTION_SAY = "Say"
 _SEARCH_KEY = "slash"
 
 
@@ -91,6 +103,37 @@ def _load_widget(name: str) -> DashboardWidget:
 
 def _section_for_widget(name: str) -> str:
     return _BUILTIN_SECTIONS.get(name, _SECTION_EXTENSIONS)
+
+
+def _command_history_text(history: CommandHistoryView) -> str:
+    if not history.entries:
+        return "No commands recorded."
+    return "\n".join(
+        _command_entry_text(entry, engine_up=history.engine_up) for entry in history.entries
+    )
+
+
+def _command_entry_text(entry: CommandFeedbackEntryView, *, engine_up: bool) -> str:
+    if entry.status is CommandFeedbackStatus.PENDING:
+        engine_state = "running" if engine_up else "stopped"
+        detail = f"engine currently {engine_state}; original acknowledgement wait context unknown"
+    elif entry.status is CommandFeedbackStatus.APPLIED:
+        detail = (
+            "guidance queued for the selected role's next turn"
+            if entry.action == COMMAND_ACTION_SAY
+            else "engine applied the command effect"
+        )
+        if entry.result is not None:
+            detail = f"{detail}; returned {entry.result}"
+    else:
+        detail = (
+            f"returned {entry.result}"
+            if entry.result is not None
+            else "engine rejected the command without a returned result"
+        )
+    return (
+        f"#{entry.command_id} · {entry.status.value} · {entry.action} · {entry.target} · {detail}"
+    )
 
 
 class _WorkspaceHelpScreen(ModalScreen[None]):
@@ -159,6 +202,77 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
         self.dismiss()
 
 
+class _CommandHistoryScreen(ModalScreen[None]):
+    BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
+    DEFAULT_CSS = """
+    _CommandHistoryScreen { align: center middle; }
+    #command-history-frame {
+        width: 90%; height: 85%; max-width: 100;
+        border: round $neutral-border; padding: 1 2;
+        background: $surface; color: $primary-text;
+    }
+    #command-history-copy { height: 1fr; padding: 1; border: round $neutral-border; }
+    """
+
+    def __init__(self, views: DashboardViews, on_change: OnChangeRegistration) -> None:
+        super().__init__()
+        self._views = views
+        self._on_change = on_change
+        self._change_worker = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="command-history-frame"):
+            yield Label("Project command history")
+            yield Static("Loading command history…", id=_COMMAND_HISTORY_COPY, markup=False)
+            yield Button("Back", id=_COMMAND_HISTORY_CLOSE)
+
+    async def on_mount(self) -> None:
+        self._display_history()
+        self._change_worker = self.run_worker(
+            self._on_change(self._refresh), group=_COMMAND_HISTORY_WORKER
+        )
+
+    def on_unmount(self) -> None:
+        if self._change_worker is not None:
+            self._change_worker.cancel()
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == _COMMAND_HISTORY_CLOSE:
+            self.dismiss()
+
+    async def action_close(self) -> None:
+        self.dismiss()
+
+    async def _refresh(self) -> None:
+        if self.is_mounted:
+            self._display_history()
+
+    def _display_history(self) -> None:
+        history = self._views.command_history(expanded=True)
+        self.query_one(f"#{_COMMAND_HISTORY_COPY}", Static).update(_command_history_text(history))
+
+
+class _CommandStatusLine(Static):
+    def __init__(self, views: DashboardViews, on_change: OnChangeRegistration) -> None:
+        super().__init__("", id="workspace-command-status", markup=False)
+        self._views = views
+        self._on_change = on_change
+
+    async def on_mount(self) -> None:
+        self._display_history()
+        self.run_worker(self._on_change(self._refresh), group=_COMMAND_HISTORY_WORKER)
+
+    async def _refresh(self) -> None:
+        if self.is_mounted:
+            self._display_history()
+
+    def _display_history(self) -> None:
+        history = self._views.command_history()
+        self.display = bool(history.entries)
+        if history.entries:
+            self.update(_command_history_text(history))
+
+
 class DashboardApp(App[None]):
     """Group configured widgets into navigable sections for one system pane."""
 
@@ -179,6 +293,7 @@ class DashboardApp(App[None]):
         background: $surface;
     }
     #workspace-title { text-style: bold; color: $primary-text; }
+    #workspace-command-status { height: auto; color: $secondary-text; }
     #workspace-navigation { height: 3; padding: 0 1; background: $surface; }
     #workspace-navigation Button, #workspace-footer Button {
         width: auto;
@@ -296,6 +411,7 @@ class DashboardApp(App[None]):
         with Vertical(id="workspace-root"):
             with Horizontal(id="workspace-header"):
                 yield Label(f"Shikiru · {view_label}", id="workspace-title")
+            yield _CommandStatusLine(self._views, self._on_change)
             with HorizontalScroll(id="workspace-navigation"):
                 for section_id in self._section_ids:
                     yield Button(self._section_label(section_id), id=f"{_TAB_PREFIX}{section_id}")
@@ -327,6 +443,7 @@ class DashboardApp(App[None]):
                     yield Button("Expand", id=_EXPAND_BUTTON)
                     yield Button("Back", id=_RETURN_BUTTON)
                     yield Button("Help", id=_HELP_BUTTON)
+                    yield Button("Commands", id=_COMMAND_HISTORY_BUTTON)
 
     def _widget_context(self) -> WidgetContext:
         async def open_task_detail(task_id: str) -> None:
@@ -394,6 +511,8 @@ class DashboardApp(App[None]):
             self._return_to_sections()
         elif button_id == _HELP_BUTTON:
             await self.action_show_help()
+        elif button_id == _COMMAND_HISTORY_BUTTON:
+            await self.push_screen(_CommandHistoryScreen(self._views, self._on_change))
 
     async def _motion_loop(self) -> None:
         interval = self._motion_interval_seconds

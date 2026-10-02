@@ -49,6 +49,14 @@ class TaskBrowserFilter(StrEnum):
     ALL = "all"
 
 
+class CommandFeedbackStatus(StrEnum):
+    """Operator-facing names for stored command lifecycle states."""
+
+    PENDING = "Pending"
+    APPLIED = "Applied"
+    REJECTED = "Rejected"
+
+
 @dataclass(frozen=True)
 class RepoStatus:
     """The project checkout's state, as shown by the `header` widget (06 §5.4)."""
@@ -186,6 +194,25 @@ class GlobalAttentionView:
 
     decisions: int
     faults: int
+
+
+@dataclass(frozen=True)
+class CommandFeedbackEntryView:
+    """One stored command and its current result, ready for compact display."""
+
+    command_id: int
+    action: str
+    target: str
+    status: CommandFeedbackStatus
+    result: str | None
+
+
+@dataclass(frozen=True)
+class CommandHistoryView:
+    """A bounded command history with current engine liveness for pending rows."""
+
+    engine_up: bool
+    entries: tuple[CommandFeedbackEntryView, ...]
 
 
 @dataclass(frozen=True)
@@ -361,6 +388,10 @@ class DashboardViews(Protocol):
 
     def global_attention(self) -> GlobalAttentionView:
         """Return the compact global decision and engine-fault counts."""
+        ...
+
+    def command_history(self, *, expanded: bool = False) -> CommandHistoryView:
+        """Return bounded recent or expanded project command history."""
         ...
 
     async def resources(self) -> ResourceView:
