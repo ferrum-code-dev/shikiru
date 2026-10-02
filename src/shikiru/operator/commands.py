@@ -26,7 +26,7 @@ from shikiru.domain.commands import (
     TakeOver,
 )
 from shikiru.domain.tasks import TASK_TITLE_MAX_LENGTH
-from shikiru.errors import DatabaseError
+from shikiru.errors import ConfigError, DatabaseError
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import OperationalDatabaseError
 
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import ComplexityName
     from shikiru.domain.commands import Command
     from shikiru.domain.tasks import Mode, Role
+    from shikiru.operator.queries import OperatorQueries, TaskActionAvailability
 
 COMMAND_ACK_WAIT_SECONDS = 10.0
 QUEUED_MESSAGE = "applies when the engine starts"
@@ -77,11 +78,22 @@ class OperatorCommands:
         clock: Clock,
         *,
         engine_up: EngineState,
+        queries: OperatorQueries | None = None,
     ) -> None:
-        """Use `queue` for writes and `clock` for the bounded acknowledgement wait."""
+        """Use `queue`, `clock` and current queries for command and action state boundaries."""
         self._queue = queue
         self._clock = clock
         self._engine_up = engine_up
+        self._queries = queries
+
+    def task_action_availability(
+        self, task_id: str, role: Role
+    ) -> tuple[TaskActionAvailability, ...]:
+        """Return current task action availability from the injected operator query service."""
+        if self._queries is None:
+            message = "task action availability requires operator queries"
+            raise ConfigError(message)
+        return self._queries.task_action_availability(task_id, role)
 
     async def send(self, command: Command) -> Ack:
         """Queue `command`, returning done/rejected or queued when the engine is down."""

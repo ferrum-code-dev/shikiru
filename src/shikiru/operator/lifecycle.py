@@ -14,7 +14,7 @@ from shikiru.operator.commands import Ack, AckStatus
 from shikiru.paths import engine_output_path
 from shikiru.private import make_private_dir
 from shikiru.process import TURN_STOP_GRACE
-from shikiru.tmux.client import exact_target
+from shikiru.tmux.client import FORMAT_PANE_ID, exact_target
 from shikiru.tmux.session import bind_palette_key, session_name
 
 if TYPE_CHECKING:
@@ -38,7 +38,15 @@ PACKAGE_NAME = "shikiru"
 CLI_ENGINE_COMMAND = "engine"
 CLI_DASH_COMMAND = "dash"
 CLI_PALETTE_COMMAND = "palette"
-PALETTE_COMMAND = (sys.executable, "-m", PACKAGE_NAME, CLI_PALETTE_COMMAND)
+CLI_PALETTE_ORIGIN_PANE_OPTION = "--origin-pane"
+PALETTE_COMMAND = (
+    sys.executable,
+    "-m",
+    PACKAGE_NAME,
+    CLI_PALETTE_COMMAND,
+    CLI_PALETTE_ORIGIN_PANE_OPTION,
+    FORMAT_PANE_ID,
+)
 TMUX_ATTACH_ARGV = ("tmux", "attach-session", "-t")
 ENGINE_START_WAIT_SECONDS = 5.0
 ENGINE_START_POLL_SECONDS = 0.05

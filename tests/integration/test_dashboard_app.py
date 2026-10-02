@@ -11,7 +11,7 @@ import shikiru.agents.registry as registry_module
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
-from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP
+from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import Hold, Mode, Status
@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import OpenPalette, WidgetContext
+    from shikiru.dashboard.contract import OpenPalette, OpenPaletteContext, WidgetContext
     from shikiru.store.database import Database
     from tests.support.store import Connection
 
@@ -117,6 +117,7 @@ def _app(
     *,
     widget_names: list[str],
     open_palette: OpenPalette = ignore_palette_action,
+    open_palette_context: OpenPaletteContext | None = None,
 ) -> DashboardApp:
     settings = load_settings(project_dir)
     return DashboardApp(
@@ -129,6 +130,7 @@ def _app(
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         open_palette=open_palette,
         widget_names=widget_names,
+        open_palette_context=open_palette_context,
     )
 
 
@@ -424,6 +426,37 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
             assert opened == ["", ""]
             queue.mark_done(queued[0].id, {"task_id": "T-2"})
             clock.advance(0.25)
+    finally:
+        reader.close()
+
+
+async def test_ctrl_p_carries_the_selected_browser_task(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    task = seed_task(connection, SystemClock(), title="Selected browser task")
+    reader = StateReader(database, SystemClock())
+    opened: list[PaletteRequest] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        opened.append(request)
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue"],
+            open_palette_context=open_palette_context,
+        )
+        async with app.run_test(size=(72, 32)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+p")
+            await pilot.pause()
+
+            assert len(opened) == 1
+            assert opened[0].task_id == task.id
     finally:
         reader.close()
 

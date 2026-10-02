@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.console import Group
 from rich.text import Text
 from textual.containers import HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
+from shikiru.dashboard.contract import PaletteRequest
 from shikiru.domain.tasks import Role
 from shikiru.errors import ShikiruError
 from shikiru.ui.strip import TaskStrip
@@ -29,6 +30,7 @@ TASK_DETAIL_WINDOW_BUTTON = "task-detail-window"
 TASK_DETAIL_LEADER_BUTTON = "task-detail-leader"
 TASK_DETAIL_IMPLEMENTER_BUTTON = "task-detail-implementer"
 TASK_DETAIL_ACTIONS_BUTTON = "task-detail-actions"
+TASK_DETAIL_ACTION_ROLE = "task-detail-action-role"
 TASK_DETAIL_ATTENTION_BUTTON = "task-detail-attention"
 TASK_DETAIL_IDENTITY = "task-detail-identity"
 TASK_DETAIL_SITUATION = "task-detail-situation"
@@ -105,6 +107,11 @@ class TaskDetailPanel(Vertical):
             yield Button("Task window", id=TASK_DETAIL_WINDOW_BUTTON)
             yield Button("Leader pane", id=TASK_DETAIL_LEADER_BUTTON)
             yield Button("Implementer pane", id=TASK_DETAIL_IMPLEMENTER_BUTTON)
+            yield Select(
+                ((role.value.title(), role.value) for role in (Role.LEADER, Role.IMPLEMENTER)),
+                allow_blank=False,
+                id=TASK_DETAIL_ACTION_ROLE,
+            )
             yield Button("Actions · Ctrl+P", id=TASK_DETAIL_ACTIONS_BUTTON)
             yield Button("Attention · Home", id=TASK_DETAIL_ATTENTION_BUTTON)
         yield Static("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
@@ -145,7 +152,11 @@ class TaskDetailPanel(Vertical):
         elif button_id == TASK_DETAIL_IMPLEMENTER_BUTTON:
             await self._navigate_role_pane(Role.IMPLEMENTER)
         elif button_id == TASK_DETAIL_ACTIONS_BUTTON:
-            await self._widget_context.open_palette("")
+            role_value = cast(
+                "Select[str]", self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select)
+            ).value
+            role = Role(role_value) if isinstance(role_value, str) else None
+            await self._open_palette(role)
         elif button_id == TASK_DETAIL_ATTENTION_BUTTON:
             await self._navigate_home()
 
@@ -155,6 +166,15 @@ class TaskDetailPanel(Vertical):
             return
         if self._close_detail is not None:
             await self._close_detail()
+
+    async def _open_palette(self, role: Role | None = None) -> None:
+        callback = self._widget_context.open_palette_context
+        if callback is not None:
+            await callback(
+                PaletteRequest(task_id=self._task_id, role=role.value if role is not None else None)
+            )
+            return
+        await self._widget_context.open_palette("")
 
     async def _navigate_task_window(self) -> None:
         callback = self._widget_context.navigate_task_window

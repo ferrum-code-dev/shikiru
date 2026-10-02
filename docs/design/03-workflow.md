@@ -336,11 +336,13 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 | Action | Human | Tool / AI (MCP) | Engine behaviour |
 |---|---|---|---|
 | Watch | attach, select the window (role panes are live views) | `peek_session` | Last message, recent view lines, usage (from the DB and `view.jsonl`) |
-| Message an agent | palette | `send_message` | Queued for the role's next turn (below) |
-| Take over / hand back | palette; hand back also by exiting the agent's TUI | `take_over`, `hand_back` | Below |
-| Pause / resume | palette | `pause_task` (`now`), `resume_task` | `pause` stops before the next turn or integration effect (§6); `now` stops the running turn and cancels the current step |
-| Change model | palette | `set_rung` | Applied at the next turn (§4.1) |
+| Message an agent | searchable palette | `send_message` | Queued for the selected role's next turn; does not interrupt a running turn (below) |
+| Take over / hand back | searchable palette; hand back also by exiting the agent's TUI | `take_over`, `hand_back` | Take over holds only this task; hand back resumes only when other taken-over roles and holds allow it (below) |
+| Pause / resume | searchable palette | `pause_task` (`now`), `resume_task` | `pause` holds before the next turn or integration effect; `now` stops the running turn, cancels its current step and holds the task; resume is rejected while a role is taken over |
+| Change model | searchable palette | `set_rung` | Applied to the selected role's next turn (§4.1) |
 | Redo current step | palette | `retry_task` | Cancels and re-runs the current step |
+| Cancel task | searchable palette | `cancel_task` | Cancels only the selected task; the branch is kept, and dirty or off-task-branch worktrees are preserved with their path returned (§6) |
+| Stop engine | searchable palette | `stop` | Stops this project's engine and running turns; task state, sessions and worktrees remain for the next engine start (06 §2) |
 | Open elsewhere | `status T-n` lists the resume command | `get_task` | — |
 
 **Take over** (`TakeOver(task, role)`, by `Takeover`):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from importlib import import_module
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
@@ -131,6 +131,12 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import LoggingConfig, Settings
     from shikiru.engine.integration import IntegrationCoordinator
+
+
+class _PaletteContext(Protocol):
+    action: str | None
+    task_id: str | None
+    role: str | None
 
 
 def build_clock() -> Clock:
@@ -328,7 +334,7 @@ async def run_dashboard(
 
         app_instance = None
 
-        async def open_palette(action: str) -> None:
+        async def push_palette(action: str, context: _PaletteContext | None = None) -> None:
             if app_instance is None:
                 message = "dashboard palette is not mounted"
                 raise ConfigError(message)
@@ -337,8 +343,15 @@ async def run_dashboard(
                 services.queries,
                 tmux.select_pane,
                 initial_action=action,
+                initial_context=context,
             )
             await app_instance.push_screen(palette)
+
+        async def open_palette(action: str) -> None:
+            await push_palette(action)
+
+        async def open_palette_context(request: _PaletteContext) -> None:
+            await push_palette(request.action or "", request)
 
         app_instance = dashboard_app_module.DashboardApp(
             focus_task=focus_task,
@@ -352,6 +365,7 @@ async def run_dashboard(
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
+            open_palette_context=open_palette_context,
             navigate_task_window=navigation.task_window,
             navigate_role_pane=navigate_role_pane,
             navigate_home=navigation.home,
@@ -361,17 +375,28 @@ async def run_dashboard(
         services.close()
 
 
-async def run_palette(project_root: Path, overrides: Sequence[str]) -> None:
+async def run_palette(
+    project_root: Path, overrides: Sequence[str], origin_pane: str | None = None
+) -> None:
     """Run the operator palette as a popup using project-local operator services."""
     palette_module = import_module("shikiru.dashboard.palette")
+    palette_request = import_module("shikiru.dashboard.contract").PaletteRequest
     clock = build_clock()
     settings = load_settings(project_root, overrides)
     services = build_operator(project_root, settings, clock=clock)
     try:
+        task_role = (
+            services.queries.task_role_for_pane(origin_pane) if origin_pane is not None else None
+        )
+        initial_context = None
+        if task_role is not None:
+            task_id, role = task_role
+            initial_context = palette_request(task_id=task_id, role=role.value)
         app_instance = palette_module.PaletteApp(
             services.commands,
             services.queries,
             Tmux(SubprocessRunner()).select_pane,
+            initial_context=initial_context,
         )
         await app_instance.run_async()
     finally:
@@ -404,7 +429,12 @@ def build_operator(
         max_parallel=resolved_settings.orchestration.max_parallel,
         clock=resolved_clock,
     )
-    commands = OperatorCommands(command_queue, resolved_clock, engine_up=engine_state)
+    commands = OperatorCommands(
+        command_queue,
+        resolved_clock,
+        engine_up=engine_state,
+        queries=queries,
+    )
     events = EventFeed(reader, resolved_clock)
 
     def close() -> None:

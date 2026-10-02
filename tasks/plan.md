@@ -782,10 +782,10 @@ Refs: Workspace §6/§7, 02 §2, 06 §5.1/§5.4/§6.2.
 
 ### Task 78: Contextual actions and searchable palette
 Refs: Workspace §7–8, 03 §9, 06 §5.2/§5.5.
-- [ ] The shared palette offers searchable actions and task selection by ID/title. Carry the selected task/role from detail and the originating task/role pane from the tmux popup; show editable targets and advanced submission/rung fields.
-- [ ] Prepare applicable actions and disabled reasons through the operator layer using domain state; revalidate when dispatching and preserve the engine's authoritative rejection. Widgets do not implement workflow eligibility or construct commands.
-- [ ] Display action timing and consequences: message/rung changes apply to the next turn; pause differs from pause-now; takeover holds the task; resume/hand-back respect remaining restrictions. Cancellation and stop expose scope/work-preservation consequences in the action form.
-- [ ] Update 03/06 descriptions and 02/06 contracts for the consumed context/navigation callbacks; preserve the small CLI surface and conditional tmux palette binding.
+- [x] The shared palette offers searchable actions and task selection by ID/title. Carry the selected task/role from detail and the originating task/role pane from the tmux popup; show editable targets and advanced submission/rung fields.
+- [x] Prepare applicable actions and disabled reasons through the operator layer using domain state; revalidate when dispatching and preserve the engine's authoritative rejection. Widgets do not implement workflow eligibility or construct commands.
+- [x] Display action timing and consequences: message/rung changes apply to the next turn; pause differs from pause-now; takeover holds the task; resume/hand-back respect remaining restrictions. Cancellation and stop expose scope/work-preservation consequences in the action form.
+- [x] Update 03/06 descriptions and 02/06 contracts for the consumed context/navigation callbacks; preserve the small CLI surface and conditional tmux palette binding.
 - Tests: Textual and `tmux_server`: message and change rung without typing the task ID, change the target deliberately, open the popup from a role pane, and reject an action whose target state changed. Existing fake-agent boundary tests establish timing.
 
 ### Task 79: Durable command feedback and ownership banners

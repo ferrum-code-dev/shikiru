@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -15,7 +17,7 @@ from shikiru.agents.contracts import COST_BASIS_UNKNOWN, CostBasis, QuotaWindow,
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
 from shikiru.domain.reports import FACTS_FILENAME, Report, ReportKind
-from shikiru.domain.runs import Run
+from shikiru.domain.runs import Run, RunStatus
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
@@ -41,6 +43,45 @@ AGENT_REPORT_SOURCE = "agent"
 ENGINE_SIGNAL_ERROR = "could not read recorded agent signals for {role}: {error}"
 TASK_REPORT_ERROR = "could not read report evidence: {error}"
 TASK_FACTS_ERROR = "could not read recorded git facts: {error}"
+TASK_ACTION_MISSING = "task no longer exists"
+TASK_ACTION_TERMINAL = "task is terminal"
+TASK_ACTION_ROLE_MISSING = "role pane is unavailable"
+TASK_ACTION_TAKEN_OVER = "this role is already taken over"
+TASK_ACTION_SESSION_MISSING = "this role has no live session to take over"
+TASK_ACTION_NOT_TAKEN_OVER = "this role is not taken over"
+TASK_ACTION_OTHER_ROLE_TAKEN_OVER = "hand back all taken-over roles before resuming"
+TASK_ACTION_NO_HOLD = "task has no pause or ownership hold"
+TASK_ACTION_NOT_QUEUED = "task can only be prioritized while queued"
+TASK_PANE_CONTEXT_STATUSES = (*ACTIVE_STATUSES, Status.QUEUED)
+
+
+class OperatorTaskAction(StrEnum):
+    """A task action whose availability is projected from current operator-visible state."""
+
+    PRIORITIZE = "prioritize"
+    PAUSE = "pause"
+    PAUSE_NOW = "pause-now"
+    RESUME = "resume"
+    TAKE_OVER = "take-over"
+    HAND_BACK = "hand-back"
+    CANCEL = "cancel"
+    RETRY = "retry"
+    RUNG = "rung"
+    MESSAGE = "message"
+    PEEK = "peek"
+
+
+@dataclass(frozen=True)
+class TaskActionAvailability:
+    """The current availability and any disabled reason for one task action."""
+
+    action: OperatorTaskAction
+    disabled_reason: str | None
+
+    @property
+    def enabled(self) -> bool:
+        """Whether the current task state permits presenting this action as available."""
+        return self.disabled_reason is None
 
 
 class OperatorView(BaseModel):
@@ -306,6 +347,77 @@ class OperatorQueries:
     def get_task_state(self, task_id: str) -> Task | None:
         """Return current task state without loading report or signal files."""
         return self._reader.get_task(task_id)
+
+    def task_action_availability(
+        self, task_id: str, role: Role
+    ) -> tuple[TaskActionAvailability, ...]:
+        """Project task command availability and disabled reasons from current state."""
+        task = self._reader.get_task(task_id)
+        if task is None:
+            return tuple(
+                TaskActionAvailability(action, TASK_ACTION_MISSING) for action in OperatorTaskAction
+            )
+        runs = self._reader.list_runs(task_id)
+        role_is_taken_over = any(
+            run.role is role and run.status is RunStatus.TAKEN_OVER for run in runs
+        )
+        any_role_taken_over = any(run.status is RunStatus.TAKEN_OVER for run in runs)
+        role_has_live_session = any(
+            run.role is role and run.status is RunStatus.LIVE and run.session_id is not None
+            for run in runs
+        )
+        terminal = task.status in (Status.DONE, Status.CANCELLED)
+        pane_missing = role not in task.panes
+        reasons = {
+            OperatorTaskAction.PRIORITIZE: (
+                None if task.status is Status.QUEUED else TASK_ACTION_NOT_QUEUED
+            ),
+            OperatorTaskAction.PAUSE: TASK_ACTION_TERMINAL if terminal else None,
+            OperatorTaskAction.PAUSE_NOW: TASK_ACTION_TERMINAL if terminal else None,
+            OperatorTaskAction.RESUME: (
+                TASK_ACTION_TERMINAL
+                if terminal
+                else TASK_ACTION_OTHER_ROLE_TAKEN_OVER
+                if any_role_taken_over
+                else TASK_ACTION_NO_HOLD
+                if not task.holds
+                else None
+            ),
+            OperatorTaskAction.TAKE_OVER: (
+                TASK_ACTION_TAKEN_OVER
+                if role_is_taken_over
+                else TASK_ACTION_TERMINAL
+                if terminal
+                else TASK_ACTION_ROLE_MISSING
+                if pane_missing
+                else TASK_ACTION_SESSION_MISSING
+                if not role_has_live_session
+                else None
+            ),
+            OperatorTaskAction.HAND_BACK: (
+                TASK_ACTION_NOT_TAKEN_OVER
+                if not role_is_taken_over
+                else TASK_ACTION_ROLE_MISSING
+                if pane_missing
+                else None
+            ),
+            OperatorTaskAction.CANCEL: TASK_ACTION_TERMINAL if terminal else None,
+            OperatorTaskAction.RETRY: TASK_ACTION_TERMINAL if terminal else None,
+            OperatorTaskAction.RUNG: TASK_ACTION_TERMINAL if terminal else None,
+            OperatorTaskAction.MESSAGE: TASK_ACTION_TERMINAL if terminal else None,
+            OperatorTaskAction.PEEK: None,
+        }
+        return tuple(
+            TaskActionAvailability(action, reasons[action]) for action in OperatorTaskAction
+        )
+
+    def task_role_for_pane(self, pane_id: str) -> tuple[str, Role] | None:
+        """Return the recorded task and role whose pane matches an invoking tmux pane."""
+        for task in self._reader.list_tasks(statuses=TASK_PANE_CONTEXT_STATUSES):
+            for role, recorded_pane in task.panes.items():
+                if recorded_pane == pane_id:
+                    return task.id, role
+        return None
 
     def task_worktree_path(self, task_id: str) -> Path:
         """Return the recorded layout location used for this task's worktree."""

@@ -12,6 +12,7 @@ from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
 from shikiru.agents.contracts import parse_rung
 from shikiru.config.settings import ComplexityName
+from shikiru.dashboard.contract import PaletteRequest
 from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
@@ -22,6 +23,7 @@ from shikiru.domain.commands import (
 from shikiru.domain.tasks import Mode, Role
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import AckStatus
+from shikiru.operator.queries import OperatorTaskAction
 from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
@@ -29,7 +31,12 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import Rung
     from shikiru.operator.commands import Ack, OperatorCommands
-    from shikiru.operator.queries import EscalationView, OperatorQueries
+    from shikiru.operator.queries import (
+        EscalationView,
+        OperatorQueries,
+        TaskActionAvailability,
+        TaskSummary,
+    )
 
 
 _ACTION_SUBMIT = "submit"
@@ -60,6 +67,7 @@ _TASK_ACTIONS = frozenset(
         _ACTION_MESSAGE,
     }
 )
+_TASK_TARGET_ACTIONS = _TASK_ACTIONS | {_ACTION_PEEK}
 PALETTE_ACTIONS = (
     ("Submit task", _ACTION_SUBMIT),
     ("Prioritize task", _ACTION_PRIORITIZE),
@@ -94,9 +102,52 @@ _EMPTY = ""
 _FIELD_ACTION = "action"
 _FIELD_ESCALATION = "escalation"
 _FIELD_RESOLUTION = "resolution"
+_FIELD_ACTION_SEARCH = "action-search"
+_FIELD_TASK_SEARCH = "task-search"
+_FIELD_TASK_CHOICE = "task-choice"
+_FIELD_TASK_ID = "task-id"
+_FIELD_ROLE = "role"
+_ACTION_STATE_ID = "palette-action-state"
+_GUIDANCE_ID = "palette-guidance"
 _SUBMIT_ID = "palette-submit"
 _SELECT_REQUIRED = "Select an item"
 _TAKEOVER_SELECTION_FAILURE = "take-over succeeded, but the role pane could not be selected"
+_ACTION_GUIDANCE = {
+    _ACTION_SUBMIT: "Creates a new task using the request and optional submission fields.",
+    _ACTION_PRIORITIZE: "Changes dispatch order while the task is queued.",
+    _ACTION_PAUSE: "Holds the task before its next turn or integration effect.",
+    _ACTION_PAUSE_NOW: "Stops the current turn and cancels its step, then holds the task.",
+    _ACTION_RESUME: (
+        "Clears task holds; dependencies, slots and other scheduling limits still apply."
+    ),
+    _ACTION_TAKE_OVER: (
+        "Stops automation and holds this task while the selected role is owned; "
+        "other tasks continue."
+    ),
+    _ACTION_HAND_BACK: (
+        "Returns this role to automation; another taken-over role or pause can still hold the task."
+    ),
+    _ACTION_CANCEL: (
+        "Cancels only this task and keeps its branch. Dirty or off-branch worktrees are preserved "
+        "with their path returned; a clean worktree is removed during cleanup."
+    ),
+    _ACTION_RETRY: "Cancels and re-runs this task's current step.",
+    _ACTION_RUNG: (
+        "Uses the selected rung on this role's next turn; an in-flight turn is unchanged."
+    ),
+    _ACTION_MESSAGE: (
+        "Queues guidance for this role's next turn; it does not interrupt a running turn."
+    ),
+    _ACTION_PEEK: "Shows recorded session activity for this task and role.",
+    _ACTION_RESOLVE: "Applies one of the open escalation's allowed resolutions.",
+    _ACTION_STOP: (
+        "Stops this project's engine and running turns. Task state, sessions and worktrees "
+        "remain for the next engine start."
+    ),
+}
+_TASK_ACTION_BY_ID = {action.value: action for action in OperatorTaskAction}
+_NO_TASK_TARGET = "Choose a task target first"
+_ACTION_DISABLED_PREFIX = "unavailable: "
 
 PaneSelector = Callable[[str], Awaitable[None]]
 
@@ -149,13 +200,18 @@ class PaletteScreen(ModalScreen[None]):
         pane_selector: PaneSelector,
         *,
         initial_action: str = _EMPTY,
+        initial_context: PaletteRequest | None = None,
     ) -> None:
         """Use the operator services for actions and queries and inject pane selection."""
         super().__init__()
         self._commands = commands
         self._queries = queries
-        self._initial_action = initial_action
+        self._initial_context = initial_context or PaletteRequest()
+        self._initial_action = self._initial_context.action or initial_action
         self._pane_selector = pane_selector
+        self._tasks: tuple[TaskSummary, ...] = ()
+        self._action_states: dict[str, TaskActionAvailability] = {}
+        self._shown_action_options: tuple[tuple[str, str], ...] = ()
         self._escalations: dict[str, EscalationView] = {}
         self._shown_escalation_id: str | None = None
         self._route_error: str | None = None
@@ -166,8 +222,14 @@ class PaletteScreen(ModalScreen[None]):
         with Vertical(id="palette-frame"):
             yield Label("Shikiru operator palette")
             with VerticalScroll(id="palette-form"):
+                yield from self._input_field("Find action", _FIELD_ACTION_SEARCH, "message")
                 yield from self._select_field("Action", _FIELD_ACTION, PALETTE_ACTIONS)
-                yield from self._input_field("Task id", "task-id", "T-1")
+                yield Static("", id=_ACTION_STATE_ID, markup=False)
+                yield from self._input_field(
+                    "Find task by ID or title", _FIELD_TASK_SEARCH, "T-1 or title"
+                )
+                yield from self._select_field("Task match", _FIELD_TASK_CHOICE, ())
+                yield from self._input_field("Task ID · editable", _FIELD_TASK_ID, "T-1")
                 yield from self._text_area_field("Request", "request", "Describe the work")
                 yield from self._input_field("Title (optional)", "title", "Task title")
                 yield from self._select_field("Mode", "mode", _MODE_OPTIONS)
@@ -180,7 +242,7 @@ class PaletteScreen(ModalScreen[None]):
                 yield from self._input_field(
                     "Implementer rung", "implementer-rung", "agent:model:effort"
                 )
-                yield from self._select_field("Role", "role", _ROLE_OPTIONS)
+                yield from self._select_field("Role", _FIELD_ROLE, _ROLE_OPTIONS)
                 yield from self._input_field("Rung", "rung", "agent:model:effort")
                 yield from self._text_area_field("Message", "message", "Message for the next turn")
                 yield from self._select_field("Escalation", _FIELD_ESCALATION, ())
@@ -191,6 +253,7 @@ class PaletteScreen(ModalScreen[None]):
                 yield from self._input_field(
                     "Retry rung (optional)", "resolution-rung", "agent:model:effort"
                 )
+                yield Static("", id=_GUIDANCE_ID, markup=False)
                 with VerticalScroll(id="palette-packet-scroll"):
                     yield Static("", id="palette-packet", markup=False)
                 with VerticalScroll(id="palette-result-scroll"):
@@ -200,6 +263,7 @@ class PaletteScreen(ModalScreen[None]):
     async def on_mount(self) -> None:
         """Load open escalation packets and activate an action routed from a widget."""
         self._escalations = {item.escalation.id: item for item in self._queries.list_escalations()}
+        self._tasks = tuple(self._queries.list_tasks())
         escalation_select = cast("Select[str]", self.query_one("#escalation", Select))
         escalation_select.set_options(
             (f"{item.escalation.id} · {item.escalation.headline}", item.escalation.id)
@@ -233,10 +297,17 @@ class PaletteScreen(ModalScreen[None]):
             action_select.value = self._initial_action
         cast("Select[str]", self.query_one("#mode", Select)).value = _EMPTY
         cast("Select[str]", self.query_one("#complexity", Select)).value = _EMPTY
-        cast("Select[str]", self.query_one("#role", Select)).value = Role.LEADER.value
+        role = self._initial_context.role or Role.LEADER.value
+        if role not in {item.value for item in _TASK_ROLES}:
+            self._route_error = f"unknown role context: {role}"
+            role = Role.LEADER.value
+        cast("Select[str]", self.query_one(f"#{_FIELD_ROLE}", Select)).value = role
         self.query_one("#priority", Input).value = "0"
+        self.query_one(f"#{_FIELD_TASK_ID}", Input).value = self._initial_context.task_id or _EMPTY
+        self._refresh_task_choices()
         self._route_action = self._selected_value(_FIELD_ACTION)
         self._update_fields(action_select.value)
+        self._refresh_action_availability()
         if self._route_error is not None:
             self._show_result(self._route_error)
             self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
@@ -254,6 +325,7 @@ class PaletteScreen(ModalScreen[None]):
                 self.query_one(f"#{_SUBMIT_ID}", Button).disabled = False
                 self._show_result(_EMPTY)
             self._update_fields(event.value)
+            self._refresh_action_availability()
         elif event.select.id == _FIELD_ESCALATION:
             if self._route_error is not None and event.value in self._escalations:
                 self._route_error = None
@@ -262,6 +334,20 @@ class PaletteScreen(ModalScreen[None]):
             self._show_escalation(event.value)
         elif event.select.id == _FIELD_RESOLUTION:
             self._update_fields(self._selected_value(_FIELD_ACTION))
+        elif event.select.id == _FIELD_TASK_CHOICE:
+            if isinstance(event.value, str):
+                self.query_one(f"#{_FIELD_TASK_ID}", Input).value = event.value
+        elif event.select.id == _FIELD_ROLE:
+            self._refresh_action_availability()
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter palette actions and task targets or refresh current eligibility."""
+        if event.input.id == _FIELD_ACTION_SEARCH:
+            self._refresh_action_availability()
+        elif event.input.id == _FIELD_TASK_SEARCH:
+            self._refresh_task_choices()
+        elif event.input.id == _FIELD_TASK_ID:
+            self._refresh_action_availability()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Run the selected action in a worker so the palette stays responsive."""
@@ -280,7 +366,7 @@ class PaletteScreen(ModalScreen[None]):
     async def _run_action(self) -> None:
         try:
             action = self._value(_FIELD_ACTION)
-            task_id = self._input("task-id").strip()
+            task_id = self._input(_FIELD_TASK_ID).strip()
             role = self._role() if action == _ACTION_TAKE_OVER else None
             ack = await self._dispatch()
         except (ShikiruError, ValueError) as error:
@@ -298,11 +384,11 @@ class PaletteScreen(ModalScreen[None]):
                     await self._select_role_pane(ack, task_id, role)
         finally:
             if self._is_current_screen():
-                self.query_one(f"#{_SUBMIT_ID}", Button).disabled = False
+                self._refresh_action_availability()
 
     async def _dispatch(self) -> Ack | None:
         action = self._value(_FIELD_ACTION)
-        task_id = self._input("task-id").strip()
+        task_id = self._input(_FIELD_TASK_ID).strip()
         if action == _ACTION_SUBMIT:
             return await self._commands.submit_task(
                 self._text("request"),
@@ -327,6 +413,7 @@ class PaletteScreen(ModalScreen[None]):
         raise ValueError(message)
 
     async def _dispatch_task_action(self, action: str, task_id: str) -> Ack:
+        self._validate_task_action(action, task_id)
         operations: dict[str, Callable[[], Awaitable[Ack]]] = {
             _ACTION_PRIORITIZE: lambda: self._commands.prioritize_task(
                 task_id, self._integer("priority")
@@ -350,6 +437,92 @@ class PaletteScreen(ModalScreen[None]):
             message = f"unsupported task action: {action}"
             raise ValueError(message)
         return await operation()
+
+    def _validate_task_action(self, action: str, task_id: str) -> None:
+        if not task_id:
+            raise ValueError(_NO_TASK_TARGET)
+        selected_action = _TASK_ACTION_BY_ID[action]
+        state = next(
+            item
+            for item in self._commands.task_action_availability(task_id, self._role())
+            if item.action is selected_action
+        )
+        if state.disabled_reason is not None:
+            raise ValueError(state.disabled_reason)
+
+    def _refresh_action_availability(self) -> None:
+        task_id = self._input(_FIELD_TASK_ID).strip()
+        self._action_states = (
+            {
+                state.action.value: state
+                for state in self._commands.task_action_availability(task_id, self._role())
+            }
+            if task_id
+            else {}
+        )
+        self._refresh_action_options()
+        action = self._selected_value(_FIELD_ACTION)
+        disabled_reason = self._disabled_reason(action, task_id)
+        state = self.query_one(f"#{_ACTION_STATE_ID}", Static)
+        state.update(f"Unavailable: {disabled_reason}" if disabled_reason is not None else _EMPTY)
+        guidance = _ACTION_GUIDANCE.get(action or "", _EMPTY)
+        self.query_one(f"#{_GUIDANCE_ID}", Static).update(guidance)
+        self.query_one(f"#{_SUBMIT_ID}", Button).disabled = (
+            self._route_error is not None or disabled_reason is not None
+        )
+
+    def _refresh_action_options(self) -> None:
+        search = self._input(_FIELD_ACTION_SEARCH).strip().casefold()
+        options: list[tuple[str, str]] = []
+        for label, action in PALETTE_ACTIONS:
+            reason = self._disabled_reason(action, self._input(_FIELD_TASK_ID).strip())
+            option_label = (
+                f"{label} · {_ACTION_DISABLED_PREFIX}{reason}" if reason is not None else label
+            )
+            searchable = f"{label} {action} {reason or _EMPTY}".casefold()
+            if not search or search in searchable:
+                options.append((option_label, action))
+        rendered = tuple(options)
+        if rendered == self._shown_action_options:
+            return
+        selected = self._selected_value(_FIELD_ACTION)
+        self._shown_action_options = rendered
+        action_select = cast("Select[str]", self.query_one(f"#{_FIELD_ACTION}", Select))
+        action_select.set_options(rendered)
+        if selected in {value for _, value in rendered}:
+            action_select.value = selected
+        else:
+            action_select.value = Select.BLANK
+
+    def _disabled_reason(self, action: str | None, task_id: str) -> str | None:
+        if action not in _TASK_TARGET_ACTIONS:
+            return None
+        if not task_id:
+            return _NO_TASK_TARGET
+        state = self._action_states.get(action)
+        if state is None:
+            return _NO_TASK_TARGET
+        return state.disabled_reason
+
+    def _refresh_task_choices(self) -> None:
+        search = self._input(_FIELD_TASK_SEARCH).strip().casefold()
+        options = tuple(
+            (f"{task.id} · {task.title}", task.id)
+            for task in self._tasks
+            if not search or search in f"{task.id} {task.title}".casefold()
+        )
+        current_task_id = self._input(_FIELD_TASK_ID).strip()
+        if current_task_id and all(value != current_task_id for _, value in options):
+            current_task = next((task for task in self._tasks if task.id == current_task_id), None)
+            if current_task is not None:
+                options += ((f"{current_task.id} · {current_task.title}", current_task.id),)
+        task_select = cast("Select[str]", self.query_one(f"#{_FIELD_TASK_CHOICE}", Select))
+        selected = self._selected_value(_FIELD_TASK_CHOICE)
+        task_select.set_options(options)
+        if selected in {value for _, value in options}:
+            task_select.value = selected
+        else:
+            task_select.value = Select.BLANK
 
     async def _select_role_pane(self, ack: Ack, task_id: str, role: Role) -> None:
         detail = self._queries.get_task(task_id)
@@ -387,7 +560,7 @@ class PaletteScreen(ModalScreen[None]):
         return await self._commands.resolve_escalation(escalation_id, resolution)
 
     def _show_peek(self, task_id: str) -> None:
-        selected_role = self._selected_value("role")
+        selected_role = self._selected_value(_FIELD_ROLE)
         view = self._queries.peek_session(task_id, Role(selected_role) if selected_role else None)
         if view is None:
             self._show_result(f"task not found: {task_id}")
@@ -437,20 +610,10 @@ class PaletteScreen(ModalScreen[None]):
     def _update_fields(self, value: object) -> None:
         action = value if isinstance(value, str) else _EMPTY
         groups = {
-            "task-id": action
-            in {
-                _ACTION_PRIORITIZE,
-                _ACTION_PAUSE,
-                _ACTION_PAUSE_NOW,
-                _ACTION_RESUME,
-                _ACTION_TAKE_OVER,
-                _ACTION_HAND_BACK,
-                _ACTION_CANCEL,
-                _ACTION_RETRY,
-                _ACTION_RUNG,
-                _ACTION_MESSAGE,
-                _ACTION_PEEK,
-            },
+            _FIELD_ACTION_SEARCH: True,
+            _FIELD_TASK_SEARCH: action in _TASK_TARGET_ACTIONS,
+            _FIELD_TASK_CHOICE: action in _TASK_TARGET_ACTIONS,
+            _FIELD_TASK_ID: action in _TASK_TARGET_ACTIONS,
             "request": action == _ACTION_SUBMIT,
             "title": action == _ACTION_SUBMIT,
             "mode": action == _ACTION_SUBMIT,
@@ -459,7 +622,7 @@ class PaletteScreen(ModalScreen[None]):
             "dependencies": action == _ACTION_SUBMIT,
             "leader-rung": action == _ACTION_SUBMIT,
             "implementer-rung": action == _ACTION_SUBMIT,
-            "role": action
+            _FIELD_ROLE: action
             in {_ACTION_TAKE_OVER, _ACTION_HAND_BACK, _ACTION_RUNG, _ACTION_MESSAGE, _ACTION_PEEK},
             "rung": action == _ACTION_RUNG,
             "message": action == _ACTION_MESSAGE,
@@ -472,6 +635,8 @@ class PaletteScreen(ModalScreen[None]):
         }
         for field, visible in groups.items():
             self.query_one(f"#field-{field}").display = visible
+        self.query_one(f"#{_ACTION_STATE_ID}").display = action in _TASK_TARGET_ACTIONS
+        self.query_one(f"#{_GUIDANCE_ID}").display = action in _ACTION_GUIDANCE
         self.query_one("#palette-packet-scroll").display = action == _ACTION_RESOLVE
         self._show_escalation(self._selected_value(_FIELD_ESCALATION))
 
@@ -538,7 +703,7 @@ class PaletteScreen(ModalScreen[None]):
         raise ValueError(message)
 
     def _role(self) -> Role:
-        return Role(self._value("role"))
+        return Role(self._value(_FIELD_ROLE))
 
     def _value(self, name: str) -> str:
         value = self._selected_value(name)
@@ -582,6 +747,8 @@ class PaletteApp(App[None]):
         commands: OperatorCommands,
         queries: OperatorQueries,
         pane_selector: PaneSelector,
+        *,
+        initial_context: PaletteRequest | None = None,
     ) -> None:
         """Retain the services used by the palette screen."""
         super().__init__()
@@ -589,6 +756,7 @@ class PaletteApp(App[None]):
         self._commands = commands
         self._queries = queries
         self._pane_selector = pane_selector
+        self._initial_context = initial_context
 
     def compose(self) -> ComposeResult:
         """Keep a neutral base screen beneath the modal palette."""
@@ -596,4 +764,11 @@ class PaletteApp(App[None]):
 
     async def on_mount(self) -> None:
         """Open the same screen used by Ctrl+P in the dashboard."""
-        self.push_screen(PaletteScreen(self._commands, self._queries, self._pane_selector))
+        self.push_screen(
+            PaletteScreen(
+                self._commands,
+                self._queries,
+                self._pane_selector,
+                initial_context=self._initial_context,
+            )
+        )

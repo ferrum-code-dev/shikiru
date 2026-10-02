@@ -45,7 +45,12 @@ from shikiru.errors import (
     UsageError,
 )
 from shikiru.operator.commands import Ack, AckStatus
-from shikiru.operator.lifecycle import CLI_DASH_COMMAND, CLI_ENGINE_COMMAND, PACKAGE_NAME
+from shikiru.operator.lifecycle import (
+    CLI_DASH_COMMAND,
+    CLI_ENGINE_COMMAND,
+    CLI_PALETTE_ORIGIN_PANE_OPTION,
+    PACKAGE_NAME,
+)
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.view_log import CLI_VIEW_COMMAND
 
@@ -325,7 +330,14 @@ def dash(
 
 
 @app.command(hidden=True)
-def palette(context: typer.Context) -> None:
+def palette(
+    context: typer.Context,
+    *,
+    origin_pane: Annotated[
+        str | None,
+        typer.Option(CLI_PALETTE_ORIGIN_PANE_OPTION, hidden=True),
+    ] = None,
+) -> None:
     """Run the operator palette for the invoking Shikiru tmux session."""
     try:
         state = state_from(context)
@@ -334,7 +346,7 @@ def palette(context: typer.Context) -> None:
             session_project = os.environ.get(PROJECT_DIR_ENV_VAR)
             project = Path(session_project) if session_project is not None else None
         root = project_root(CliState(project, state.json_output, state.overrides))
-        _run(run_palette(root, state.overrides))
+        _run(run_palette(root, state.overrides, origin_pane))
     except ShikiruError as error:
         _fail(error)
 

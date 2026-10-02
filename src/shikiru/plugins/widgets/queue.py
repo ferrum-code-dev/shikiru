@@ -190,6 +190,9 @@ class QueuePanel(Vertical):
 
     def _select_task(self, task_id: str) -> None:
         self._selected_task_id = task_id
+        callback = self._widget_context.on_task_selected
+        if callback is not None:
+            callback(task_id)
         if self._view is None:
             return
         row = next(
@@ -243,6 +246,9 @@ class QueuePanel(Vertical):
                         selected_task_matches=True,
                     )
                 self._view = view
+                callback = self._widget_context.on_task_selected
+                if callback is not None:
+                    callback(self._selected_task_id)
                 list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
                 await self._sync_list_rows(list_view, view.rows)
                 self._sync_selection(list_view, view.rows)

@@ -20,7 +20,20 @@ TASK_TERMINAL_STATUSES = frozenset({"done", "cancelled"})
 OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
 MotionRegistration = Callable[[OnChange], None]
+
+
+@dataclass(frozen=True)
+class PaletteRequest:
+    """Optional task, role and action context for the shared operator palette."""
+
+    action: str | None = None
+    task_id: str | None = None
+    role: str | None = None
+
+
 OpenPalette = Callable[[str], Awaitable[None]]
+OpenPaletteContext = Callable[[PaletteRequest], Awaitable[None]]
+SelectTaskContext = Callable[[str | None], None]
 OpenTaskDetail = Callable[[str], Awaitable[None]]
 NavigateTaskWindow = Callable[[str], Awaitable[str]]
 NavigateRolePane = Callable[[str, str], Awaitable[str]]
@@ -379,7 +392,9 @@ class WidgetContext:
     on_change: OnChangeRegistration
     on_motion: MotionRegistration
     open_palette: OpenPalette
+    open_palette_context: OpenPaletteContext | None = None
     open_task_detail: OpenTaskDetail | None = None
     navigate_task_window: NavigateTaskWindow | None = None
     navigate_role_pane: NavigateRolePane | None = None
     navigate_home: NavigateHome | None = None
+    on_task_selected: SelectTaskContext | None = None

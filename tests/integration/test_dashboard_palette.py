@@ -6,22 +6,28 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from textual.widgets import Button, Input, Select, Static, TextArea
 
+from shikiru.agents.contracts import Rung
+from shikiru.dashboard.contract import PaletteRequest
 from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.domain.commands import (
     AnswerResolution,
     Pause,
     Prioritize,
     Resolve,
+    Say,
+    SetRung,
     Submit,
     TakeOver,
 )
 from shikiru.domain.escalation import options_for
-from shikiru.domain.tasks import EscalationReason, Role, Step
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import EscalationReason, Role, Status, Step
 from shikiru.errors import ConfigError
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
+from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux, exact_target
 from tests.support.clock import FakeClock
@@ -42,6 +48,13 @@ if TYPE_CHECKING:
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _POLL_SECONDS = 0.25
 _APP_SIZE = (120, 32)
+_LIVE_RUNG = Rung(agent="codex", model="sol", effort="high")
+
+
+def _seed_live_session(connection: Connection, clock: FakeClock, task_id: str) -> None:
+    runs = RunStore(connection, clock)
+    run = runs.start(task_id, Role.LEADER, _LIVE_RUNG)
+    runs.set_session(run.id, "session-current", "resume-current")
 
 
 def _services(
@@ -55,7 +68,6 @@ def _services(
     queue = CommandQueue(connection, clock)
     for command in queue.pending():
         queue.mark_done(command.id)
-    commands = OperatorCommands(queue, clock, engine_up=lambda: engine_up)
     queries = OperatorQueries(
         reader,
         project="palette-test",
@@ -63,6 +75,12 @@ def _services(
         engine_up=lambda: engine_up,
         max_parallel=2,
         clock=clock,
+    )
+    commands = OperatorCommands(
+        queue,
+        clock,
+        engine_up=lambda: engine_up,
+        queries=queries,
     )
     return commands, queries, queue
 
@@ -73,6 +91,16 @@ def _screen(app: PaletteApp) -> PaletteScreen:
 
 async def _open_action(pilot: Pilot[None], screen: PaletteScreen, action: str) -> None:
     screen.query_one("#action", Select).value = action
+    await pilot.pause()
+
+
+async def _set_target(pilot: Pilot[None], screen: PaletteScreen, task_id: str) -> None:
+    screen.query_one("#task-id", Input).value = task_id
+    await pilot.pause()
+
+
+async def _set_role(pilot: Pilot[None], screen: PaletteScreen, role: Role) -> None:
+    screen.query_one("#role", Select).value = role.value
     await pilot.pause()
 
 
@@ -88,6 +116,133 @@ async def _wait_for_ack(screen: PaletteScreen, status: str = "queued") -> None:
         ),
         timeout=2,
     )
+
+
+async def test_palette_context_targets_message_and_rung_without_id_entry(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Context task")
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    context = PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)
+    app = PaletteApp(commands, queries, _selection_must_not_run, initial_context=context)
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        assert screen.query_one("#task-id", Input).value == task.id
+        assert cast("Select[str]", screen.query_one("#role", Select)).value == (
+            Role.IMPLEMENTER.value
+        )
+
+        screen.query_one("#action-search", Input).value = "message"
+        await pilot.pause()
+        await _open_action(pilot, screen, "message")
+        screen.query_one("#message", TextArea).text = "Check the failing integration path."
+        await pilot.click("#palette-submit")
+        await _wait_for_ack(screen)
+        assert queue.pending()[0].command == Say(
+            task_id=task.id,
+            role=Role.IMPLEMENTER,
+            text="Check the failing integration path.",
+            command_id=queue.pending()[0].id,
+        )
+
+        screen.query_one("#action-search", Input).value = "rung"
+        await pilot.pause()
+        await _open_action(pilot, screen, "rung")
+        screen.query_one("#rung", Input).value = "codex:sol:high"
+        await pilot.click("#palette-submit")
+        await wait_until(
+            lambda: (
+                len(queue.pending()) == 2
+                and not screen.query_one("#palette-submit", Button).disabled
+            ),
+            timeout=2,
+        )
+        assert queue.pending()[1].command == SetRung(
+            task_id=task.id,
+            role=Role.IMPLEMENTER,
+            rung=_LIVE_RUNG,
+        )
+
+
+async def test_palette_task_search_changes_the_editable_target(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    context_task = seed_task(connection, clock, title="Detail task")
+    selected_task = seed_task(connection, clock, title="Chosen by title")
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = PaletteApp(
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(
+            task_id=context_task.id,
+            role=Role.LEADER.value,
+        ),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        await _open_action(pilot, screen, "message")
+        screen.query_one("#task-search", Input).value = "Chosen by title"
+        await pilot.pause()
+        screen.query_one("#task-choice", Select).value = selected_task.id
+        await pilot.pause()
+        assert screen.query_one("#task-id", Input).value == selected_task.id
+        screen.query_one("#message", TextArea).text = "Use the deliberately selected task."
+        await pilot.click("#palette-submit")
+        await _wait_for_ack(screen)
+
+        (queued,) = queue.pending()
+        assert queued.command == Say(
+            task_id=selected_task.id,
+            role=Role.LEADER,
+            text="Use the deliberately selected task.",
+            command_id=queued.id,
+        )
+
+
+async def test_palette_revalidates_task_state_before_queueing(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock)
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = PaletteApp(
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(action="prioritize", task_id=task.id),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        assert not screen.query_one("#palette-submit", Button).disabled
+        TaskStore(connection, clock).apply_transition(
+            task.id,
+            Transition.stay(task, step=task.step, status=Status.DONE),
+        )
+        await pilot.click("#palette-submit")
+        await wait_until(
+            lambda: (
+                screen.query_one("#palette-submit", Button).disabled
+                and bool(_static_text(screen, "#palette-result"))
+            ),
+            timeout=2,
+        )
+        assert screen.query_one("#palette-submit", Button).disabled
+        assert not queue.pending()
 
 
 async def _selection_must_not_run(pane_id: str) -> None:
@@ -114,9 +269,7 @@ async def test_palette_submit_queues_a_typed_command_and_shows_its_ack(
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        await pilot.click("#action")
-        await pilot.press("enter", "p", "enter", "enter", "s", "enter")
-        assert cast("str", screen.query_one("#action", Select).value) == "submit"
+        await _open_action(pilot, screen, "submit")
         request = screen.query_one("#request", TextArea)
         for _ in range(12):
             if request.has_focus:
@@ -149,7 +302,7 @@ async def test_palette_prioritize_queues_the_selected_priority(
         await pilot.pause()
         screen = _screen(app)
         await _open_action(pilot, screen, "prioritize")
-        screen.query_one("#task-id", Input).value = task.id
+        await _set_target(pilot, screen, task.id)
         screen.query_one("#priority", Input).value = "17"
         await pilot.click("#palette-submit")
         await _wait_for_ack(screen)
@@ -213,6 +366,7 @@ async def test_palette_takeover_queues_a_task_role_command(
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
     TaskStore(connection, clock).set_panes(task.id, {Role.LEADER: "%7"})
+    _seed_live_session(connection, clock, task.id)
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
     app = PaletteApp(commands, queries, _selection_must_not_run)
 
@@ -220,8 +374,8 @@ async def test_palette_takeover_queues_a_task_role_command(
         await pilot.pause()
         screen = _screen(app)
         await _open_action(pilot, screen, "take-over")
-        screen.query_one("#task-id", Input).value = task.id
-        screen.query_one("#role", Select).value = Role.LEADER.value
+        await _set_target(pilot, screen, task.id)
+        await _set_role(pilot, screen, Role.LEADER)
         await pilot.click("#palette-submit")
         await _wait_for_ack(screen)
 
@@ -256,6 +410,9 @@ async def test_completed_takeover_selects_the_role_pane_and_its_window(
     other_active_pane_id = await tmux.split_window(other_pane_id, axis="h", size_pct=50)
     await tmux.select_pane(other_active_pane_id)
     TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: pane_id})
+    runs = RunStore(connection, clock)
+    run = runs.start(task.id, Role.IMPLEMENTER, _LIVE_RUNG)
+    runs.set_session(run.id, "session-current", "resume-current")
     commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
     app = PaletteApp(commands, queries, tmux.select_pane)
 
@@ -263,8 +420,8 @@ async def test_completed_takeover_selects_the_role_pane_and_its_window(
         await pilot.pause()
         screen = _screen(app)
         await _open_action(pilot, screen, "take-over")
-        screen.query_one("#task-id", Input).value = task.id
-        screen.query_one("#role", Select).value = Role.IMPLEMENTER.value
+        await _set_target(pilot, screen, task.id)
+        await _set_role(pilot, screen, Role.IMPLEMENTER)
         await pilot.click("#palette-submit")
         await wait_until(clock.has_pending_sleep, timeout=2)
         queued = queue.pending()
@@ -294,11 +451,70 @@ async def test_completed_takeover_selects_the_role_pane_and_its_window(
     assert f"{inactive_pane_id} 0" in panes.stdout.splitlines()
 
 
+async def test_popup_pane_context_selects_its_recorded_task_and_role(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    clock = FakeClock(_START)
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
+    pane_id = await tmux.new_window(
+        exact_target(tmux_server.session),
+        name="task",
+        cwd=tmp_path,
+    )
+    stale_task = seed_task(connection, clock, title="Closed popup task")
+    TaskStore(connection, clock).apply_transition(
+        stale_task.id,
+        Transition.stay(stale_task, step=stale_task.step, status=Status.DONE),
+    )
+    TaskStore(connection, clock).set_panes(stale_task.id, {Role.LEADER: pane_id})
+    task = seed_task(connection, clock, title="Popup context")
+    TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: pane_id})
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    task_role = queries.task_role_for_pane(pane_id)
+    assert task_role is not None
+    assert task_role == (task.id, Role.IMPLEMENTER)
+    context_task_id, role = task_role
+    app = PaletteApp(
+        commands,
+        queries,
+        tmux.select_pane,
+        initial_context=PaletteRequest(
+            action="message",
+            task_id=context_task_id,
+            role=role.value,
+        ),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        assert screen.query_one("#task-id", Input).value == task.id
+        assert cast("Select[str]", screen.query_one("#role", Select)).value == (
+            Role.IMPLEMENTER.value
+        )
+        screen.query_one("#message", TextArea).text = "Continue the implementer turn."
+        await pilot.click("#palette-submit")
+        await _wait_for_ack(screen)
+
+    queued = queue.pending()[0]
+    assert queued.command == Say(
+        task_id=task.id,
+        role=Role.IMPLEMENTER,
+        text="Continue the implementer turn.",
+        command_id=queued.id,
+    )
+
+
 async def test_rejected_takeover_never_selects_the_role_pane(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
+    TaskStore(connection, clock).set_panes(task.id, {Role.LEADER: "%7"})
+    _seed_live_session(connection, clock, task.id)
     commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
     app = PaletteApp(commands, queries, _selection_must_not_run)
 
@@ -306,7 +522,7 @@ async def test_rejected_takeover_never_selects_the_role_pane(
         await pilot.pause()
         screen = _screen(app)
         await _open_action(pilot, screen, "take-over")
-        screen.query_one("#task-id", Input).value = task.id
+        await _set_target(pilot, screen, task.id)
         await pilot.click("#palette-submit")
         await wait_until(clock.has_pending_sleep, timeout=2)
         queued = queue.pending()
@@ -320,9 +536,9 @@ async def test_rejected_takeover_never_selects_the_role_pane(
 
 @pytest.mark.parametrize(
     ("task_exists", "expected"),
-    [(True, "leader pane is missing"), (False, "task is missing")],
+    [(True, "role pane is unavailable"), (False, "task no longer exists")],
 )
-async def test_done_takeover_reports_missing_task_or_pane_and_keeps_ack(
+async def test_palette_disables_takeover_without_task_or_role_pane(
     connection: Connection, reader: StateReader, tmp_path: Path, task_exists: bool, expected: str
 ) -> None:
     clock = FakeClock(_START)
@@ -334,20 +550,10 @@ async def test_done_takeover_reports_missing_task_or_pane_and_keeps_ack(
         await pilot.pause()
         screen = _screen(app)
         await _open_action(pilot, screen, "take-over")
-        screen.query_one("#task-id", Input).value = task_id
-        await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=2)
-        queued = queue.pending()
-        assert len(queued) == 1
-        queue.mark_done(queued[0].id, {"task_id": task_id})
-        clock.advance(_POLL_SECONDS)
-        await wait_until(
-            lambda: (
-                "done" in _static_text(screen, "#palette-result")
-                and expected in _static_text(screen, "#palette-result")
-            ),
-            timeout=2,
-        )
+        await _set_target(pilot, screen, task_id)
+        assert screen.query_one("#palette-submit", Button).disabled
+        assert expected in _static_text(screen, "#palette-action-state")
+        assert not queue.pending()
 
 
 async def test_done_takeover_keeps_ack_with_pane_selection_error(
@@ -356,6 +562,7 @@ async def test_done_takeover_keeps_ack_with_pane_selection_error(
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
     TaskStore(connection, clock).set_panes(task.id, {Role.LEADER: "%not-a-real-pane"})
+    _seed_live_session(connection, clock, task.id)
     commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
 
     async def pane_selection_fails(pane_id: str) -> None:
@@ -368,7 +575,7 @@ async def test_done_takeover_keeps_ack_with_pane_selection_error(
         await pilot.pause()
         screen = _screen(app)
         await _open_action(pilot, screen, "take-over")
-        screen.query_one("#task-id", Input).value = task.id
+        await _set_target(pilot, screen, task.id)
         await pilot.click("#palette-submit")
         await wait_until(clock.has_pending_sleep, timeout=2)
         queued = queue.pending()
@@ -396,7 +603,7 @@ async def test_palette_pause_now_queues_immediate_pause(
         await pilot.pause()
         screen = _screen(app)
         await _open_action(pilot, screen, "pause-now")
-        screen.query_one("#task-id", Input).value = task.id
+        await _set_target(pilot, screen, task.id)
         await pilot.click("#palette-submit")
         await _wait_for_ack(screen)
 

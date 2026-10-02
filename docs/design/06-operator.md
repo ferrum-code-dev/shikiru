@@ -85,7 +85,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
   - Each restoration emits `pane_restored`.
 
   There are no global key-binding overrides, so closing a pane has no lasting effect.
-- **Palette key**: one conditional binding. `prefix + Space` opens `shikiru palette` in a popup inside `[shikiru]` sessions and keeps its default (`next-layout`) elsewhere.
+- **Palette key**: one conditional binding. `prefix + Space` opens `shikiru palette` in a popup inside `[shikiru]` sessions and keeps its default (`next-layout`) elsewhere. The binding passes tmux's originating `#{pane_id}` through hidden `--origin-pane`; the operator layer resolves the current task and role from the project's recorded pane mapping instead of relying on the popup's inherited `TMUX_PANE`.
 
 ### 5.3 Titles and decorations
 
@@ -110,7 +110,7 @@ Configured widget order is preserved within each section. A configured third-par
 
 In Home, `Enter` on a selected browser row opens the shared task detail. `Escape` returns to the same browser selection, search and reading position. The detail shows task situation, the semantic strip for its actual mode and step, latest validated agent report and latest validated verdict, request and acceptance criteria, bounded recorded evidence, workspace targets, sessions and usage. A Leader verdict remains available after a later implementation report. An engine override replaces an agent verdict only in the same numeric turn; a newer Leader verdict takes precedence over an older engine override. Each report and verdict shows its recorded source. Missing or unreadable report/facts paths do not suppress independent role signals, and basic SQLite task state remains visible. Detail file reads run away from the UI loop and refresh on state changes, not animation ticks; its mounted state subscription is cancelled when detail closes.
 
-`dash --task T-n` fixes the detail to `T-n`. Its Activity and Usage sections are scoped to that task and its situation includes a compact global decision/fault count. The task view omits project-wide header, queue, escalations, strips and diagnostics panels. Configured third-party widgets remain in Extensions. Detail actions select only existing task windows or role panes through activation-time state reads; missing and terminal targets are reported without creating workflow resources. The actions button opens the shared palette. Eligibility and contextual action behavior remain with the later workspace task.
+`dash --task T-n` fixes the detail to `T-n`. Its Activity and Usage sections are scoped to that task and its situation includes a compact global decision/fault count. The task view omits project-wide header, queue, escalations, strips and diagnostics panels. Configured third-party widgets remain in Extensions. Detail actions select only existing task windows or role panes through activation-time state reads; missing and terminal targets are reported without creating workflow resources. The actions button opens the shared palette with the task and selected role. Home browser selection and `Ctrl+P` carry their current task identity through the additive `WidgetContext` callbacks; old callback fields remain available.
 
 ```python
 class DashboardWidget(Protocol):
@@ -122,6 +122,8 @@ class DashboardWidget(Protocol):
 class WidgetContext:  views: DashboardViews; focus_task: str | None
                       on_change: Callable[[OnChange], Awaitable[None]]   # StateReader.watch
                       open_palette: Callable[[str], Awaitable[None]]
+                      open_palette_context: Callable[[PaletteRequest], Awaitable[None]] | None = None
+                      on_task_selected: Callable[[str | None], None] | None = None
                       open_task_detail: Callable[[str], Awaitable[None]] | None = None
                       navigate_task_window: Callable[[str], Awaitable[str]] | None = None
                       navigate_role_pane: Callable[[str, str], Awaitable[str]] | None = None
@@ -139,7 +141,9 @@ class DashboardViews(Protocol):
     def global_attention(self) -> GlobalAttentionView: ...
 ```
 
-**Views are the widget API.** `dashboard.views` builds them from `StateReader`, `Settings` and existing domain rules (dispatch order, acting role and diagnosed task activity). For Active ordering it diagnoses current running and integrating turns with `DashboardMotion`, then passes stalled IDs to the SQL page query before pagination; it does not read history rows to calculate that order. A browser page query returns one SQL-limited page plus exact counts for the active filter and search; a page-range query returns contiguous bounded pages and their counts from one read snapshot. Neither loads history and slices it in Python. The existing `queue()` result remains available to configured widgets. A widget only renders: it never sees the state DB, domain types, config or tmux, so an external widget depends on `dashboard.contract` and `ui` alone. View models are frozen dataclasses in `dashboard.contract` (`TaskStripData` is `ui`'s). Existing widget names, view fields and callbacks remain stable; the `task_browser()` and `task_browser_pages()` capabilities are additive.
+**Views are the widget API.** `dashboard.views` builds them from `StateReader`, `Settings` and existing domain rules (dispatch order, acting role and diagnosed task activity). For Active ordering it diagnoses current running and integrating turns with `DashboardMotion`, then passes stalled IDs to the SQL page query before pagination; it does not read history rows to calculate that order. A browser page query returns one SQL-limited page plus exact counts for the active filter and search; a page-range query returns contiguous bounded pages and their counts from one read snapshot. Neither loads history and slices it in Python. The existing `queue()` result remains available to configured widgets. A widget only renders: it never sees the state DB, domain types, config or tmux, so an external widget depends on `dashboard.contract` and `ui` alone. View models are frozen dataclasses in `dashboard.contract` (`TaskStripData` is `ui`'s). Existing widget names, view fields and callbacks remain stable; browser task-selection and palette-context callbacks are additive.
+
+`WidgetContext.open_palette` remains available for existing widgets. `open_palette_context` carries an optional action, task ID and role to the shared screen; `on_task_selected` reports browser identity to the dashboard. The dashboard owns current navigation state and exposes no services or typed workflow commands to widgets.
 
 Widgets re-read their view when `on_change` fires. Samplers such as resources and docker have their own interval.
 
@@ -159,9 +163,11 @@ The system-pane shell uses current widgets. The selectable task browser and shar
 
 ### 5.5 Palette
 
-- `PaletteApp` offers: submit (complexity defaults to "Triage decides"), prioritise, pause/resume, take over (then select that pane) / hand back, cancel, retry, change rung, message agent, peek, resolve escalation (a form with the packet and options), stop engine.
+- `PaletteApp` offers searchable actions and task targets searched by ID or title, with an editable task ID and role. Context comes from selected detail/browser identity or from the originating role pane in the tmux popup; a home popup has no preselected task. Submission fields and role rung overrides remain available.
+- The operator layer prepares task-action applicability and disabled reasons from current task/run state. The palette refreshes this projection before dispatch; the engine can still reject a command if state changes after that read. Widgets call `OperatorCommands` and do not create workflow commands or duplicate eligibility rules.
+- Forms explain next-turn delivery for messages and rung changes, pause versus pause-now, task ownership during take over, and restrictions remaining after resume or hand back. Cancel and stop show their scope and work-preservation effects before the form's explicit Run action.
 - It opens as a tmux popup (`prefix + Space`), and `Ctrl+P` in `dash` pushes the same screen.
-- Every action calls `OperatorCommands` and shows the `Ack`.
+- Every action calls `OperatorCommands` and shows the existing `Ack`.
 - The dashboard and popup use the shared Textual theme. Packet and dialogue evidence modals use its surface, border, text and focus tokens.
 
 ### 5.6 `ls` and `attach`

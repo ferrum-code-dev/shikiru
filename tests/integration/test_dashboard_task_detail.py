@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from textual.widgets import Button, DataTable, ListView, Static
+from textual.widgets import Button, DataTable, ListView, Select, Static
 
 import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import Usage
@@ -14,8 +14,12 @@ from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.app import DashboardApp
-from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP
-from shikiru.dashboard.detail import TaskDetailScreen
+from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
+from shikiru.dashboard.detail import (
+    TASK_DETAIL_ACTION_ROLE,
+    TASK_DETAIL_ACTIONS_BUTTON,
+    TaskDetailScreen,
+)
 from shikiru.dashboard.services import TaskNavigation
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -89,7 +93,12 @@ if TYPE_CHECKING:
     from rich.text import Text
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import NavigateRolePane, NavigateTaskWindow, WidgetContext
+    from shikiru.dashboard.contract import (
+        NavigateRolePane,
+        NavigateTaskWindow,
+        OpenPaletteContext,
+        WidgetContext,
+    )
     from shikiru.store.commands import QueuedCommand
     from shikiru.store.database import Database
     from shikiru.workspace.roots import TaskRootBuilder
@@ -134,6 +143,7 @@ def _dashboard_app(
     widget_names: list[str],
     navigate_task_window: NavigateTaskWindow | None = None,
     navigate_role_pane: NavigateRolePane | None = None,
+    open_palette_context: OpenPaletteContext | None = None,
 ) -> DashboardApp:
     settings = load_settings(project_root)
     clock = SystemClock()
@@ -153,6 +163,7 @@ def _dashboard_app(
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         open_palette=ignore_palette_action,
         widget_names=widget_names,
+        open_palette_context=open_palette_context,
         navigate_task_window=navigate_task_window,
         navigate_role_pane=navigate_role_pane,
     )
@@ -527,6 +538,39 @@ async def test_enter_opens_shared_detail_and_escape_restores_browser_selection_a
             assert restored_list.children[restored_index].id == selected_id
             assert restored_list.scroll_y == scroll_y
             assert app.focused is restored_list
+    finally:
+        reader.close()
+
+
+async def test_detail_actions_carry_task_and_selected_role_to_shared_palette(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Detail action target")
+    reader = StateReader(database, SystemClock())
+    opened: list[PaletteRequest] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        opened.append(request)
+
+    try:
+        app = _dashboard_app(
+            reader,
+            project_root,
+            focus_task=task.id,
+            widget_names=TASK_DETAIL_WIDGETS,
+            open_palette_context=open_palette_context,
+        )
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.pause()
+            app.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select).value = Role.IMPLEMENTER.value
+            await pilot.click(f"#{TASK_DETAIL_ACTIONS_BUTTON}")
+            await wait_until(lambda: bool(opened), timeout=2)
+
+        assert opened == [PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)]
     finally:
         reader.close()
 

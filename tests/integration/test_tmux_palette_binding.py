@@ -6,13 +6,20 @@ import shlex
 import sys
 from typing import TYPE_CHECKING
 
-from shikiru.tmux.client import Tmux
+from shikiru.tmux.client import FORMAT_PANE_ID, Tmux
 from shikiru.tmux.session import SHIKIRU_SESSION_PATTERN, bind_palette_key
 
 if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
 
-_PALETTE_COMMAND = (sys.executable, "-m", "shikiru", "palette")
+_PALETTE_COMMAND = (
+    sys.executable,
+    "-m",
+    "shikiru",
+    "palette",
+    "--origin-pane",
+    FORMAT_PANE_ID,
+)
 
 
 async def _bound_space_tokens(tmux_server: TmuxServer) -> list[str]:
@@ -37,3 +44,6 @@ async def test_bind_palette_key_dispatches_on_the_shikiru_session_pattern_else_n
     assert tokens[if_shell_index + 1] == "-F"
     assert tokens[if_shell_index + 2] == SHIKIRU_SESSION_PATTERN
     assert tokens[-1] == "next-layout"
+    popup_tokens = shlex.split(tokens[if_shell_index + 3])
+    assert popup_tokens[:2] == ["display-popup", "-E"]
+    assert popup_tokens[-2:] == ["--origin-pane", FORMAT_PANE_ID]

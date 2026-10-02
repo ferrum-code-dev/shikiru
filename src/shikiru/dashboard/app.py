@@ -10,7 +10,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
 from shikiru.agents.registry import load_unique_entry_point
-from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, WidgetContext
+from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest, WidgetContext
 from shikiru.dashboard.detail import TaskDetailPanel, TaskDetailScreen
 from shikiru.errors import ConfigError
 from shikiru.ui.theme import install_theme
@@ -33,6 +33,8 @@ if TYPE_CHECKING:
         OnChange,
         OnChangeRegistration,
         OpenPalette,
+        OpenPaletteContext,
+        SelectTaskContext,
     )
 
 _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
@@ -235,9 +237,11 @@ class DashboardApp(App[None]):
         docker_refresh_seconds: float,
         open_palette: OpenPalette,
         widget_names: Sequence[str],
+        open_palette_context: OpenPaletteContext | None = None,
         navigate_task_window: NavigateTaskWindow | None = None,
         navigate_role_pane: NavigateRolePane | None = None,
         navigate_home: NavigateHome | None = None,
+        on_task_selected: SelectTaskContext | None = None,
     ) -> None:
         """Build the home or task workspace with the configured widgets."""
         super().__init__()
@@ -250,6 +254,9 @@ class DashboardApp(App[None]):
         self._resources_refresh_seconds = resources_refresh_seconds
         self._docker_refresh_seconds = docker_refresh_seconds
         self._open_palette = open_palette
+        self._open_palette_context = open_palette_context
+        self._selected_task_id = focus_task
+        self._external_task_selection = on_task_selected
         self._navigate_task_window = navigate_task_window
         self._navigate_role_pane = navigate_role_pane
         self._navigate_home = navigate_home
@@ -326,6 +333,7 @@ class DashboardApp(App[None]):
 
     def _widget_context(self) -> WidgetContext:
         async def open_task_detail(task_id: str) -> None:
+            self._select_task_context(task_id)
             await self.push_screen(TaskDetailScreen(self._widget_context(), task_id))
 
         return WidgetContext(
@@ -336,11 +344,19 @@ class DashboardApp(App[None]):
             on_change=self._on_change,
             on_motion=self._motion_callbacks.append,
             open_palette=self._open_palette,
+            open_palette_context=self._open_palette_context,
             open_task_detail=open_task_detail,
             navigate_task_window=self._navigate_task_window,
             navigate_role_pane=self._navigate_role_pane,
             navigate_home=self._navigate_home,
+            on_task_selected=self._select_task_context,
         )
+
+    def _select_task_context(self, task_id: str | None) -> None:
+        self._selected_task_id = task_id
+        callback = self._external_task_selection
+        if callback is not None:
+            callback(task_id)
 
     async def on_mount(self) -> None:
         """Focus section navigation and start the signal-driven motion refresh."""
@@ -494,4 +510,8 @@ class DashboardApp(App[None]):
 
     async def action_open_palette(self) -> None:
         """Open the operator palette through the shared dashboard callback."""
+        if self._open_palette_context is not None:
+            task_id = self._focus_task or self._selected_task_id
+            await self._open_palette_context(PaletteRequest(task_id=task_id))
+            return
         await self._open_palette("")
