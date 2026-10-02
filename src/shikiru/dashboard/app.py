@@ -58,10 +58,13 @@ _BUILTIN_SECTIONS = {
     "docker": _SECTION_DIAGNOSTICS,
 }
 _TAB_PREFIX = "section-tab-"
+_SECTION_PREFIX = "section-"
+_SECTION_HEADING_PREFIX = "section-heading-"
 _EXPAND_BUTTON = "workspace-expand"
 _RETURN_BUTTON = "workspace-return"
 _HELP_BUTTON = "workspace-help"
 _HELP_CLOSE_BUTTON = "workspace-help-close"
+_HELP_CONTEXT = "workspace-help-context"
 
 
 class WidgetPluginError(ConfigError):
@@ -126,7 +129,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
         if _WIDGET_DIALOGUE in self._widget_names:
             lines.append("Dialogue: Enter opens full text")
         with Vertical(id="workspace-help-frame"):
-            yield Label(f"Help · {view} · {self._current_section}")
+            yield Label(f"Help · {view} · {self._current_section}", id=_HELP_CONTEXT)
             yield Static(
                 "\n".join(lines),
                 id="workspace-help-copy",
@@ -195,12 +198,14 @@ class DashboardApp(App[None]):
     }
     .workspace-section-content { height: auto; padding: 0 1; }
     #workspace-footer {
-        height: auto;
+        height: 5;
         padding: 0 1;
         border-top: solid $neutral-border;
         background: $panel;
     }
-    #workspace-footer-copy { width: 1fr; height: auto; color: $primary-text; }
+    #workspace-footer-copy { width: 100%; height: 1; color: $primary-text; }
+    #workspace-footer-controls { width: 100%; height: 3; }
+    #workspace-footer-controls Button { padding: 0 1; }
     #workspace-return { display: none; }
     #workspace-root.expanded #workspace-navigation { display: none; }
     #workspace-root.expanded #workspace-expand { display: none; }
@@ -275,6 +280,7 @@ class DashboardApp(App[None]):
                     with Vertical(id=f"section-{section_id}", classes="workspace-section"):
                         yield Label(
                             self._section_label(section_id),
+                            id=f"{_SECTION_HEADING_PREFIX}{section_id}",
                             classes="workspace-section-heading",
                         )
                         with Vertical(classes="workspace-section-content"):
@@ -283,11 +289,12 @@ class DashboardApp(App[None]):
                                 yield Static("No configured widgets.", markup=False)
                             for name in names:
                                 yield _load_widget(name).create(context)
-            with Horizontal(id="workspace-footer"):
+            with Vertical(id="workspace-footer"):
                 yield Static(self._footer_text(), id="workspace-footer-copy", markup=False)
-                yield Button("Expand section", id=_EXPAND_BUTTON)
-                yield Button("Return", id=_RETURN_BUTTON)
-                yield Button("? Help", id=_HELP_BUTTON)
+                with Horizontal(id="workspace-footer-controls"):
+                    yield Button("Expand", id=_EXPAND_BUTTON)
+                    yield Button("Back", id=_RETURN_BUTTON)
+                    yield Button("Help", id=_HELP_BUTTON)
 
     async def on_mount(self) -> None:
         """Focus section navigation and start the signal-driven motion refresh."""
@@ -300,6 +307,10 @@ class DashboardApp(App[None]):
         section_id = self._section_for_tab(event.widget.id)
         if section_id is not None:
             self._select_section(section_id)
+            return
+        section_id = self._section_for_widget(event.widget)
+        if section_id is not None:
+            self._select_section(section_id, scroll=False)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Apply navigation, expansion, return and help button activations."""
@@ -329,7 +340,17 @@ class DashboardApp(App[None]):
         section_id = widget_id.removeprefix(_TAB_PREFIX)
         return section_id if section_id in self._section_ids else None
 
-    def _select_section(self, section_id: str) -> None:
+    def _section_for_widget(self, widget: Widget | None) -> str | None:
+        while widget is not None:
+            widget_id = widget.id
+            if widget_id is not None and widget_id.startswith(_SECTION_PREFIX):
+                section_id = widget_id.removeprefix(_SECTION_PREFIX)
+                if section_id in self._section_ids:
+                    return section_id
+            widget = cast("Widget | None", widget.parent)
+        return None
+
+    def _select_section(self, section_id: str, *, scroll: bool = True) -> None:
         if self._expanded_section is not None:
             return
         self._selected_section = section_id
@@ -337,34 +358,41 @@ class DashboardApp(App[None]):
             button = self.query_one(f"#{_TAB_PREFIX}{candidate}", Button)
             label = self._section_label(candidate)
             button.label = f"> {label}" if candidate == section_id else label
+            heading = self.query_one(f"#{_SECTION_HEADING_PREFIX}{candidate}", Label)
+            heading.update(f"> {label}" if candidate == section_id else label)
         self.query_one("#workspace-footer-copy", Static).update(self._footer_text())
-        section = self.query_one(f"#section-{section_id}")
-        self.query_one("#dashboard-panels", VerticalScroll).scroll_to_widget(
-            section, animate=False, top=True
-        )
+        if scroll:
+            section = self.query_one(f"#{_SECTION_PREFIX}{section_id}")
+            self.query_one("#dashboard-panels", VerticalScroll).scroll_to_widget(
+                section, animate=False, top=True
+            )
 
     def _expand_selected_section(self) -> None:
         if self._expanded_section is not None:
             return
         self._return_focus = self.focused
+        focused_section = self._section_for_widget(self._return_focus)
+        if focused_section is not None:
+            self._select_section(focused_section, scroll=False)
         panels = self.query_one("#dashboard-panels", VerticalScroll)
         self._return_scroll_position = (panels.scroll_x, panels.scroll_y)
         self._expanded_section = self._selected_section
         self.query_one("#workspace-root").add_class("expanded")
         for section_id in self._section_ids:
-            self.query_one(f"#section-{section_id}").display = section_id == self._expanded_section
+            self.query_one(f"#{_SECTION_PREFIX}{section_id}").display = (
+                section_id == self._expanded_section
+            )
         self.query_one("#workspace-footer-copy", Static).update(self._footer_text())
+        if focused_section is not None and self._return_focus is not None:
+            panels.scroll_to_widget(self._return_focus, animate=False)
         self.set_focus(self.query_one(f"#{_RETURN_BUTTON}", Button))
-        panels.scroll_to_widget(
-            self.query_one(f"#section-{self._expanded_section}"), animate=False, top=True
-        )
 
     def _return_to_sections(self) -> None:
         if self._expanded_section is None:
             return
         self.query_one("#workspace-root").remove_class("expanded")
         for section_id in self._section_ids:
-            self.query_one(f"#section-{section_id}").display = True
+            self.query_one(f"#{_SECTION_PREFIX}{section_id}").display = True
         self._expanded_section = None
         self.query_one("#workspace-footer-copy", Static).update(self._footer_text())
         panels = self.query_one("#dashboard-panels", VerticalScroll)
@@ -379,11 +407,8 @@ class DashboardApp(App[None]):
     def _footer_text(self) -> str:
         label = self._section_label(self._selected_section)
         if self._expanded_section is not None:
-            return f"Expanded section: {label} · Escape returns · ? opens help"
-        return (
-            f"> Focused section: {label} · Tab/Shift+Tab navigate · z expands"
-            " · Ctrl+P actions · ? help"
-        )
+            return f"{label} expanded"
+        return f"> {label}"
 
     def _section_label(self, section_id: str) -> str:
         return _SECTION_BY_ID[section_id]

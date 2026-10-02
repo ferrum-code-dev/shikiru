@@ -156,7 +156,7 @@ Opening an existing task window resolves its current target at activation time. 
 
 Printable shortcuts act only outside text inputs. Escape first cancels an input's transient interaction before leaving its form. Mouse activation and keyboard activation have identical effects.
 
-Reserve a footer for available keys and the focused section. On very small panes, show the essentials and keep the complete help reachable. Focus uses a border or marker plus a text cue under `NO_COLOR`. New task data never steals focus or opens a modal automatically.
+Reserve a compact footer for the focused section and its available controls. Keep the complete key bindings in help so the footer stays bounded in narrow panes. Focus uses a border or marker plus a text cue under `NO_COLOR`. New task data never steals focus or opens a modal automatically.
 
 tmux keeps its normal bindings. `prefix + Space` remains the conditional palette popup. The popup derives task and role from the originating pane through the existing project/pane mapping; the home context offers a task picker. No global key overrides or automatic pane rearrangement are added.
 
