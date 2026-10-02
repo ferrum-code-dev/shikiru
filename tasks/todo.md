@@ -130,7 +130,7 @@ Delivery order: task navigation and contextual control, attention and evidence v
 
 - [x] Task 75: Workspace design alignment and shared visual shell
 - [x] Task 76: Selectable task browser and search
-- [ ] Task 77: Task detail and navigation to existing windows
+- [x] Task 77: Task detail and navigation to existing windows
 - [ ] Task 78: Contextual actions and searchable palette
 - [ ] Task 79: Durable command feedback and ownership banners
 - [ ] Task 80: Home overview and attention composition

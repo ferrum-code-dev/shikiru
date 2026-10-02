@@ -21,6 +21,10 @@ OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
 MotionRegistration = Callable[[OnChange], None]
 OpenPalette = Callable[[str], Awaitable[None]]
+OpenTaskDetail = Callable[[str], Awaitable[None]]
+NavigateTaskWindow = Callable[[str], Awaitable[str]]
+NavigateRolePane = Callable[[str, str], Awaitable[str]]
+NavigateHome = Callable[[], Awaitable[str]]
 
 
 class TaskBrowserFilter(StrEnum):
@@ -99,6 +103,116 @@ class TaskBrowserView:
     filtered_count: int
     project_count: int
     has_more: bool
+
+
+@dataclass(frozen=True)
+class TaskTestView:
+    """An agent-reported test entry with its source made explicit."""
+
+    name: str
+    result: str
+    details: str
+    provenance: str
+
+
+@dataclass(frozen=True)
+class TaskReportView:
+    """One validated agent report or engine verdict for task detail."""
+
+    turn: str
+    kind: str
+    role: str
+    provenance: str
+    summary: str
+    decision: str | None
+    question: str
+    issues: tuple[str, ...]
+    risks: tuple[str, ...]
+    tests: tuple[TaskTestView, ...]
+
+
+@dataclass(frozen=True)
+class TaskEventView:
+    """One recent durable task event for the detail evidence panel."""
+
+    timestamp: str
+    kind: str
+    message: str
+
+
+@dataclass(frozen=True)
+class TaskSessionView:
+    """One task session's recorded identity, status and usage."""
+
+    role: str
+    agent: str
+    model: str
+    effort: str | None
+    session_id: str | None
+    status: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float | None
+    cost_basis: CostBasis
+    context_used_pct: float | None
+
+
+@dataclass(frozen=True)
+class TaskSignalView:
+    """A bounded set of recorded signal lines for one agent role."""
+
+    role: str
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class GlobalAttentionView:
+    """Compact project-wide counts displayed in task detail."""
+
+    decisions: int
+    faults: int
+
+
+@dataclass(frozen=True)
+class TaskRolePaneView:
+    """A task role and its recorded tmux pane target, if any."""
+
+    role: str
+    recorded_target: str | None
+
+
+@dataclass(frozen=True)
+class TaskDetailView:
+    """Ready-to-render task state, evidence and existing target metadata."""
+
+    task_id: str
+    title: str
+    status: str
+    status_reason: str | None
+    mode: str | None
+    step: str
+    iteration: int
+    holds: tuple[str, ...]
+    wait_reason: str | None
+    ownership: tuple[str, ...]
+    request: str
+    acceptance_criteria: tuple[str, ...]
+    progress: TaskStripData
+    latest_report: TaskReportView | None
+    latest_verdict: TaskReportView | None
+    events: tuple[TaskEventView, ...]
+    signals: tuple[TaskSignalView, ...]
+    recorded_facts: str | None
+    facts_turn: str | None
+    evidence_errors: tuple[str, ...]
+    branch: str | None
+    worktree_path: str
+    window_id: str | None
+    role_panes: tuple[TaskRolePaneView, ...]
+    sessions: tuple[TaskSessionView, ...]
+    attention: GlobalAttentionView
 
 
 @dataclass(frozen=True)
@@ -215,16 +329,24 @@ class DashboardViews(Protocol):
         """Return contiguous bounded browser pages from one consistent read snapshot."""
         ...
 
+    async def task_detail(self, task_id: str) -> TaskDetailView | None:
+        """Return task state and its recorded report, signal and workspace evidence."""
+        ...
+
     def escalations(self) -> list[EscalationPanelView]:
         """Return every open escalation and its question and options from the packet."""
         ...
 
-    def dialogue(self) -> list[DialogueBubbleView]:
-        """Return the latest speech-worthy events, oldest first."""
+    def dialogue(self, task_id: str | None = None) -> list[DialogueBubbleView]:
+        """Return speech-worthy events for the project or one task, oldest first."""
         ...
 
-    def usage(self) -> list[AgentUsageView]:
-        """Return per-agent usage and only quota windows reported by that agent."""
+    def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
+        """Return project usage or usage recorded for one task."""
+        ...
+
+    def global_attention(self) -> GlobalAttentionView:
+        """Return the compact global decision and engine-fault counts."""
         ...
 
     async def resources(self) -> ResourceView:
@@ -257,3 +379,7 @@ class WidgetContext:
     on_change: OnChangeRegistration
     on_motion: MotionRegistration
     open_palette: OpenPalette
+    open_task_detail: OpenTaskDetail | None = None
+    navigate_task_window: NavigateTaskWindow | None = None
+    navigate_role_pane: NavigateRolePane | None = None
+    navigate_home: NavigateHome | None = None

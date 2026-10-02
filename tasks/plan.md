@@ -774,10 +774,10 @@ Refs: Workspace §5/§7/§15, 03 §10, 06 §5.4.
 
 ### Task 77: Task detail and navigation to existing windows
 Refs: Workspace §6/§7, 02 §2, 06 §5.1/§5.4/§6.2.
-- [ ] Render shared task detail from operator queries: situation, expanded strip, latest report/verdict, request/ACs, recorded evidence, workspace/session metadata and actions. Mark reported tests and engine-computed facts with their source; distinguish unavailable evidence.
-- [ ] `dash --task` opens detail fixed to its task, with task-scoped activity/usage and a compact global attention indicator. Home Enter opens/focuses the selected task detail and Escape restores browser context.
-- [ ] Open an existing task/role pane through injected navigation callbacks that resolve the current target at activation. A missing or terminal task window produces a readable result without recreating workflow resources.
-- [ ] Document task-view composition and narrow identity/title requirements in 06; preserve plan/implement, setup, consult, rework and integration meanings.
+- [x] Render shared task detail from operator queries: situation, expanded strip, latest report/verdict, request/ACs, recorded evidence, workspace/session metadata and actions. Mark reported tests and engine-computed facts with their source; distinguish unavailable evidence.
+- [x] `dash --task` opens detail fixed to its task, with task-scoped activity/usage and a compact global attention indicator. Home Enter opens/focuses the selected task detail and Escape restores browser context.
+- [x] Open an existing task/role pane through injected navigation callbacks that resolve the current target at activation. A missing or terminal task window produces a readable result without recreating workflow resources.
+- [x] Document task-view composition and narrow identity/title requirements in 06; preserve plan/implement, setup, consult, rework and integration meanings.
 - Tests: real SQLite/Git reports plus Textual and `tmux_server`: inspect a task's latest verdict, return to the same browser position, switch to its existing window, and inspect a completed task after window/worktree cleanup without recreating them.
 
 ### Task 78: Contextual actions and searchable palette

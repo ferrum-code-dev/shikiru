@@ -72,7 +72,7 @@ class UsagePanel(Static):
         self._widget_context.on_motion(self._refresh)
 
     async def _refresh(self) -> None:
-        usage = self._widget_context.views.usage()
+        usage = self._widget_context.views.usage(self._widget_context.focus_task)
         self.update(
             Group(*[_agent_block(item) for item in usage]) if usage else "no usage reported"
         )

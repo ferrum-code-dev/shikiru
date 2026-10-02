@@ -11,6 +11,7 @@ from textual.widgets import Button, Input, Label, Static
 
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, WidgetContext
+from shikiru.dashboard.detail import TaskDetailPanel, TaskDetailScreen
 from shikiru.errors import ConfigError
 from shikiru.ui.theme import install_theme
 
@@ -26,6 +27,9 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import (
         DashboardViews,
         DashboardWidget,
+        NavigateHome,
+        NavigateRolePane,
+        NavigateTaskWindow,
         OnChange,
         OnChangeRegistration,
         OpenPalette,
@@ -40,6 +44,9 @@ _SECTION_EXTENSIONS = "extensions"
 _WIDGET_DIALOGUE = "dialogue"
 _WIDGET_ESCALATIONS = "escalations"
 _WIDGET_QUEUE = "queue"
+_TASK_VIEW_OMITTED_WIDGETS = frozenset(
+    {"header", _WIDGET_ESCALATIONS, "strips", _WIDGET_QUEUE, "resources", "docker"}
+)
 _SECTION_LABELS = (
     (_SECTION_WORKSPACE, "Workspace"),
     (_SECTION_ACTIVITY, "Activity"),
@@ -228,6 +235,9 @@ class DashboardApp(App[None]):
         docker_refresh_seconds: float,
         open_palette: OpenPalette,
         widget_names: Sequence[str],
+        navigate_task_window: NavigateTaskWindow | None = None,
+        navigate_role_pane: NavigateRolePane | None = None,
+        navigate_home: NavigateHome | None = None,
     ) -> None:
         """Build the home or task workspace with the configured widgets."""
         super().__init__()
@@ -240,6 +250,9 @@ class DashboardApp(App[None]):
         self._resources_refresh_seconds = resources_refresh_seconds
         self._docker_refresh_seconds = docker_refresh_seconds
         self._open_palette = open_palette
+        self._navigate_task_window = navigate_task_window
+        self._navigate_role_pane = navigate_role_pane
+        self._navigate_home = navigate_home
         self._widget_names = tuple(widget_names)
         self._motion_callbacks: list[OnChange] = []
         self._widget_names_by_section: dict[str, list[str]] = {
@@ -247,10 +260,21 @@ class DashboardApp(App[None]):
         }
         for name in self._widget_names:
             self._widget_names_by_section[_section_for_widget(name)].append(name)
+        if self._focus_task is not None:
+            for section_widgets in self._widget_names_by_section.values():
+                section_widgets[:] = [
+                    name for name in section_widgets if name not in _TASK_VIEW_OMITTED_WIDGETS
+                ]
+        self._widget_names = tuple(
+            name
+            for section_widgets in self._widget_names_by_section.values()
+            for name in section_widgets
+        )
         self._section_ids = tuple(
             section_id
             for section_id, _ in _SECTION_LABELS
             if self._widget_names_by_section[section_id]
+            or (self._focus_task is not None and section_id == _SECTION_WORKSPACE)
         ) or (_SECTION_WORKSPACE,)
         self._selected_section = self._section_ids[0]
         self._expanded_section: str | None = None
@@ -259,15 +283,7 @@ class DashboardApp(App[None]):
 
     def compose(self) -> ComposeResult:
         """Mount every configured widget within its documented workspace section."""
-        context = WidgetContext(
-            views=self._views,
-            focus_task=self._focus_task,
-            resources_refresh_seconds=self._resources_refresh_seconds,
-            docker_refresh_seconds=self._docker_refresh_seconds,
-            on_change=self._on_change,
-            on_motion=self._motion_callbacks.append,
-            open_palette=self._open_palette,
-        )
+        context = self._widget_context()
         view_label = (
             f"Task workspace · {self._focus_task}"
             if self._focus_task is not None
@@ -288,8 +304,16 @@ class DashboardApp(App[None]):
                             classes="workspace-section-heading",
                         )
                         with Vertical(classes="workspace-section-content"):
+                            if section_id == _SECTION_WORKSPACE and self._focus_task is not None:
+                                yield TaskDetailPanel(
+                                    context,
+                                    self._focus_task,
+                                    fixed=True,
+                                )
                             names = self._widget_names_by_section[section_id]
-                            if not names:
+                            if not names and not (
+                                section_id == _SECTION_WORKSPACE and self._focus_task is not None
+                            ):
                                 yield Static("No configured widgets.", markup=False)
                             for name in names:
                                 yield _load_widget(name).create(context)
@@ -299,6 +323,24 @@ class DashboardApp(App[None]):
                     yield Button("Expand", id=_EXPAND_BUTTON)
                     yield Button("Back", id=_RETURN_BUTTON)
                     yield Button("Help", id=_HELP_BUTTON)
+
+    def _widget_context(self) -> WidgetContext:
+        async def open_task_detail(task_id: str) -> None:
+            await self.push_screen(TaskDetailScreen(self._widget_context(), task_id))
+
+        return WidgetContext(
+            views=self._views,
+            focus_task=self._focus_task,
+            resources_refresh_seconds=self._resources_refresh_seconds,
+            docker_refresh_seconds=self._docker_refresh_seconds,
+            on_change=self._on_change,
+            on_motion=self._motion_callbacks.append,
+            open_palette=self._open_palette,
+            open_task_detail=open_task_detail,
+            navigate_task_window=self._navigate_task_window,
+            navigate_role_pane=self._navigate_role_pane,
+            navigate_home=self._navigate_home,
+        )
 
     async def on_mount(self) -> None:
         """Focus section navigation and start the signal-driven motion refresh."""

@@ -85,7 +85,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
 | `operator` | Use cases for interfaces; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
-| `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract. `DashboardApp` groups configured widgets, tracks local section focus and opens the shared palette; `dashboard.views` composes bounded task browser pages and current selection context; neither decides workflow eligibility nor issues commands | `app`, `build_server()`, `DashboardApp`, `PaletteApp`, `DashboardWidget`, `DashboardViews`, `TaskBrowserView` |
+| `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract. `DashboardApp` groups configured widgets, opens shared detail from Home and opens the shared palette; `dashboard.views` composes bounded browser/detail data; `TaskNavigation` selects current existing tmux targets. The dashboard does not decide workflow eligibility or issue workflow commands | `app`, `build_server()`, `DashboardApp`, `TaskDetailScreen`, `TaskNavigation`, `PaletteApp`, `DashboardWidget`, `DashboardViews`, `TaskBrowserView`, `TaskDetailView` |
 
 **Engine components**, each with one responsibility:
 
@@ -191,7 +191,7 @@ strips = "shikiru.plugins.widgets.strips:StripsWidget"
 
 A plugin that is missing or broken fails `start` and `doctor` with its name and error.
 
-The dashboard places the built-in `header`, `escalations`, `strips` and `queue` widgets in Workspace; `queue` is the selectable task browser and retains its entry-point name. It places `dialogue` in Activity; `usage` in Usage; and `resources` and `docker` in Diagnostics. The configured order is kept within each section. Every other configured widget entry point is mounted in Extensions in its configured relative order. The same `DashboardWidget` and `WidgetContext` contract serves all sections; plugins continue to receive view models and callbacks only.
+The dashboard places the built-in `header`, `escalations`, `strips` and `queue` widgets in Workspace; `queue` is the selectable task browser and retains its entry-point name. It places `dialogue` in Activity; `usage` in Usage; and `resources` and `docker` in Diagnostics. A task-focused window puts the shared detail first in Workspace, scopes Activity and Usage to the focused task, and omits project-wide header, queue, escalation, strip and diagnostics widgets. Every other configured widget entry point remains mounted in Extensions in its configured relative order. The same additive `DashboardWidget` and `WidgetContext` contract serves all sections; plugins continue to receive view models and callbacks only. Detail navigation reads current task state at activation and selects existing tmux targets without creating windows, sessions or worktrees.
 
 ## 5. Runtime layout on disk
 

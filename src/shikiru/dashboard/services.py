@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from shikiru.dashboard.contract import ContainerView, DockerView, RepoStatus, ResourceView
+from shikiru.domain.tasks import Role, Status
+from shikiru.errors import ShikiruError
+from shikiru.tmux.session import HOME_WINDOW_NAME
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -18,12 +21,23 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.config.settings import RepoConfig
+    from shikiru.operator.queries import OperatorQueries
     from shikiru.telemetry.docker import DockerSampler
     from shikiru.telemetry.resources import ResourceSampler
     from shikiru.tmux.client import Tmux
     from shikiru.workspace.git import Git
 
 _PANE_RESOURCE_FORMAT = "#{pane_id} #{pane_pid}"
+TASK_MISSING = "task is missing"
+TASK_WINDOW_UNRECORDED = "task window is not recorded"
+TASK_WINDOW_MISSING = "task window is unavailable"
+TASK_ROLE_PANE_UNRECORDED = "role pane is not recorded"
+TASK_ROLE_PANE_MISSING = "role pane is unavailable"
+HOME_WINDOW_MISSING = "home window is unavailable"
+TERMINAL_TASK_TARGET = "task is terminal; its workflow window is unavailable"
+TASK_TARGET_OPENED = "opened existing task window"
+ROLE_TARGET_OPENED = "opened existing role pane"
+HOME_TARGET_OPENED = "opened home workspace"
 
 
 @dataclass(frozen=True)
@@ -141,3 +155,65 @@ class DashboardServices:
                 for container in snapshot.containers
             ),
         )
+
+
+class TaskNavigation:
+    """Select recorded task, role-pane or home targets without creating resources."""
+
+    def __init__(
+        self,
+        tmux: Tmux,
+        queries: OperatorQueries,
+        session_target: str,
+    ) -> None:
+        """Use the existing tmux client, current task queries and home session target."""
+        self._tmux = tmux
+        self._queries = queries
+        self._session_target = session_target
+
+    async def task_window(self, task_id: str) -> str:
+        """Select the task's current window or return a readable availability result."""
+        task = self._queries.get_task_state(task_id)
+        if task is None:
+            return f"{task_id}: {TASK_MISSING}"
+        if task.status in (Status.DONE, Status.CANCELLED):
+            return f"{task_id}: {TERMINAL_TASK_TARGET}"
+        if task.window_id is None:
+            return f"{task_id}: {TASK_WINDOW_UNRECORDED}"
+        if not await self._tmux.target_exists(task.window_id):
+            return f"{task_id}: {TASK_WINDOW_MISSING}"
+        try:
+            await self._tmux.select_window(task.window_id)
+        except ShikiruError as error:
+            return f"{task_id}: {TASK_WINDOW_MISSING}: {error}"
+        return f"{task_id}: {TASK_TARGET_OPENED}"
+
+    async def role_pane(self, task_id: str, role: Role) -> str:
+        """Select the task's current recorded role pane or explain why it is unavailable."""
+        task = self._queries.get_task_state(task_id)
+        if task is None:
+            return f"{task_id}: {TASK_MISSING}"
+        if task.status in (Status.DONE, Status.CANCELLED):
+            return f"{task_id}: {TERMINAL_TASK_TARGET}"
+        if task.window_id is None or not await self._tmux.target_exists(task.window_id):
+            return f"{task_id}: {TASK_WINDOW_MISSING}"
+        pane_id = task.panes.get(role)
+        if pane_id is None or not await self._tmux.pane_exists(pane_id):
+            reason = TASK_ROLE_PANE_UNRECORDED if pane_id is None else TASK_ROLE_PANE_MISSING
+            return f"{task_id} {role.value}: {reason}"
+        try:
+            await self._tmux.select_pane(pane_id)
+        except ShikiruError as error:
+            return f"{task_id} {role.value}: {TASK_ROLE_PANE_MISSING}: {error}"
+        return f"{task_id} {role.value}: {ROLE_TARGET_OPENED}"
+
+    async def home(self) -> str:
+        """Select the existing home window or report that it is unavailable."""
+        target = f"{self._session_target}:{HOME_WINDOW_NAME}"
+        if not await self._tmux.target_exists(target):
+            return HOME_WINDOW_MISSING
+        try:
+            await self._tmux.select_window(target)
+        except ShikiruError as error:
+            return f"{HOME_WINDOW_MISSING}: {error}"
+        return HOME_TARGET_OPENED

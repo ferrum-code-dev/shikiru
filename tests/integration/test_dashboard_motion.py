@@ -293,7 +293,7 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
             del action
 
         app = DashboardApp(
-            focus_task=task.id,
+            focus_task=None,
             views=views,
             on_change=reader.watch,
             clock=clock,
@@ -544,7 +544,7 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             del action
 
         app = DashboardApp(
-            focus_task=task.id,
+            focus_task=None,
             views=views,
             on_change=reader.watch,
             clock=clock,
@@ -627,7 +627,7 @@ async def test_disabled_animations_only_refresh_static_frames_after_a_database_c
             del action
 
         app = DashboardApp(
-            focus_task=task.id,
+            focus_task=None,
             views=views,
             on_change=reader.watch,
             clock=clock,

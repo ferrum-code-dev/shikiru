@@ -23,7 +23,7 @@ It escalates to the Operator only when something critical comes up.
 - **Live role views** in tmux panes show each headless turn; Operators can take over a role in its native TUI when needed.
 - **Parallel tasks**: each task gets its own git worktree and branch, with instant copy-on-write build caches, a dependency graph, priorities and resource-aware scheduling.
 - **Resilient**: model ladders, a wait for quota resets followed by a real session resume, and recovery after crashes or restarts.
-- **Comic-strip workspace**: the Textual shell groups current widgets into navigable workspace, activity, usage, diagnostics and extension sections. The task browser and detailed task view are Phase 8 work in progress.
+- **Comic-strip workspace**: the Textual shell groups current widgets into navigable workspace, activity, usage, diagnostics and extension sections. The selectable task browser, shared task detail and navigation to existing task/role windows are implemented; contextual actions and responsive composition remain Phase 8 work.
 - **Operators everywhere**: a dashboard with a command palette for humans, an MCP server for AI Operators, a small CLI (`--json`) for scripts, and `ls`/`attach` across machines over SSH.
 - **Works with your setup**: your CLAUDE.md/AGENTS.md, skills, plugins, plan and todo files; one git repository per project.
 
@@ -72,7 +72,7 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 ## Documentation
 
 - Design: [`docs/design`](docs/design/README.md)
-- Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — the Phase 8 target; the shared shell and current-widget navigation have shipped, while the task browser, task detail and later operator capabilities remain planned.
+- Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — Phase 8 specification and implementation status; the shared shell, task browser, task detail and existing-window navigation have shipped, while later operator capabilities remain planned.
 - Implementation plan: [`tasks/plan.md`](tasks/plan.md), progress: [`tasks/todo.md`](tasks/todo.md)
 
 ## Requirements

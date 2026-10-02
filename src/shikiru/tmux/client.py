@@ -164,6 +164,10 @@ class Tmux:
         await self._run("select-window", "-t", target)
         await self._run("select-pane", "-t", target)
 
+    async def select_window(self, target: str) -> None:
+        """Select an existing window target."""
+        await self._run("select-window", "-t", target)
+
     async def new_window(
         self,
         target_session: str,

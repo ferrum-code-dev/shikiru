@@ -168,9 +168,12 @@ class QueuePanel(Vertical):
         if isinstance(event.item, _BrowserListItem):
             self._select_task(event.item.task_id)
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    async def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id == TASK_LIST_ID and isinstance(event.item, _BrowserListItem):
             self._select_task(event.item.task_id)
+            open_detail = self._widget_context.open_task_detail
+            if open_detail is not None:
+                await open_detail(event.item.task_id)
 
     def on_key(self, event: events.Key) -> None:
         focused = cast("App[object]", self.app).focused

@@ -15,9 +15,12 @@ from shikiru.domain.reports import (
 from shikiru.engine.integration import IntegrationMetadata
 from shikiru.engine.turns import read_turn_report
 from shikiru.paths import turns_dir
-from shikiru.private import TEXT_ENCODING
 from shikiru.view_log import ordered_turn_dirs
-from shikiru.workspace.reports import InvalidTurnReportError
+from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME as _ENGINE_VERDICT_FILENAME
+from shikiru.workspace.reports import (
+    InvalidTurnReportError,
+    load_engine_verdict,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -26,9 +29,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
 
 _LOGGER = logging.getLogger(__name__)
-
-ENGINE_VERDICT_FILENAME = "engine-verdict.json"
-"""The engine verdict replacing an accept on a dirty workspace (03 §6)."""
+ENGINE_VERDICT_FILENAME = _ENGINE_VERDICT_FILENAME
 
 
 class ReportHistory:
@@ -52,14 +53,16 @@ class ReportHistory:
                 report = None
             if report is not None:
                 history.append((turn_dir.name, report))
-            engine_verdict = turn_dir / ENGINE_VERDICT_FILENAME
-            if engine_verdict.is_file():
+            try:
+                engine_verdict = load_engine_verdict(turn_dir)
+            except InvalidTurnReportError:
+                _LOGGER.exception("invalid engine verdict in %s", turn_dir)
+                engine_verdict = None
+            if engine_verdict is not None:
                 history.append(
                     (
                         turn_dir.name,
-                        Verdict.model_validate_json(
-                            engine_verdict.read_text(encoding=TEXT_ENCODING)
-                        ),
+                        engine_verdict,
                     )
                 )
         return history

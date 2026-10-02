@@ -184,6 +184,7 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
         {
             "turn": "01-triage-i0",
             "kind": "triage",
+            "source": "agent",
             "data": {
                 "title": "triage",
                 "mode": "implement",
@@ -218,6 +219,7 @@ async def test_task_detail_uses_a_valid_helper_rebuild_when_agent_report_is_inva
         {
             "turn": "01-consult-i0",
             "kind": "consult",
+            "source": "agent",
             "data": helper.model_dump(mode="json"),
         }
     ]

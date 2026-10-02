@@ -10,6 +10,7 @@ from shikiru.dashboard.contract import (
     DialogueBubbleView,
     DockerView,
     EscalationPanelView,
+    GlobalAttentionView,
     HeaderView,
     QueueRow,
     QuotaGaugeView,
@@ -18,12 +19,28 @@ from shikiru.dashboard.contract import (
     TaskBrowserFilter,
     TaskBrowserRow,
     TaskBrowserView,
+    TaskDetailView,
+    TaskEventView,
+    TaskReportView,
+    TaskRolePaneView,
+    TaskSessionView,
+    TaskSignalView,
+    TaskTestView,
 )
 from shikiru.domain.events import EventKind
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
+from shikiru.domain.reports import (
+    ConsultAnswer,
+    ImplementationReport,
+    PlanReport,
+    TriageReport,
+    Verdict,
+)
+from shikiru.domain.runs import RunStatus
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
-from shikiru.domain.steps import ACTING_ROLE
+from shikiru.domain.steps import ACTING_ROLE, Step
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status
+from shikiru.operator.queries import AGENT_REPORT_SOURCE, ENGINE_REPORT_SOURCE
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
 from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
@@ -38,8 +55,9 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.dashboard.motion import DashboardMotion
     from shikiru.domain.motion import TaskMotionFrame
+    from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
-    from shikiru.operator.queries import EscalationView, OperatorQueries, UsageView
+    from shikiru.operator.queries import EscalationView, OperatorQueries, ReportRow, UsageView
     from shikiru.store.reader import StateReader
     from shikiru.store.tasks import TaskBrowserPage
 
@@ -49,6 +67,13 @@ SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
 HOURS_PER_DAY = 24
 TIME_UNKNOWN = "\N{EN DASH}"
+AGENT_REPORTED_TESTS = "agent-reported"
+TASK_ROLES = (Role.LEADER, Role.IMPLEMENTER)
+SETUP_STEP = "setup"
+UNSTARTED_STEP = "not started"
+CONSULT_STEP = "consult"
+INTEGRATION_STEP = "integration"
+REWORK_STEP = "rework"
 PACKET_QUESTION_HEADING = "Question"
 PACKET_OPTIONS_HEADING = "Options"
 _DIALOGUE_KINDS = (
@@ -391,8 +416,82 @@ class StateDashboardViews:
             for item in items
         ]
 
-    def dialogue(self) -> list[DialogueBubbleView]:
-        """Build the latest twenty speech-worthy events, oldest first."""
+    async def task_detail(self, task_id: str) -> TaskDetailView | None:
+        """Project current task state and its bounded, recorded evidence for the detail view."""
+        detail = await self._queries.get_task_detail(task_id)
+        if detail is None:
+            return None
+        task = detail.task
+        triage = next(
+            (item.data for item in reversed(detail.reports) if isinstance(item.data, TriageReport)),
+            None,
+        )
+        verdict = next(
+            (
+                _task_report(item)
+                for item in reversed(detail.reports)
+                if item.source == ENGINE_REPORT_SOURCE and isinstance(item.data, Verdict)
+            ),
+            None,
+        )
+        latest_report = next(
+            (
+                _task_report(item)
+                for item in reversed(detail.reports)
+                if item.source == AGENT_REPORT_SOURCE
+            ),
+            None,
+        )
+        ownership = tuple(
+            run.role.value for run in detail.sessions if run.status is RunStatus.TAKEN_OVER
+        )
+        return TaskDetailView(
+            task_id=task.id,
+            title=task.title,
+            status=task.status.value,
+            status_reason=task.status_reason.value if task.status_reason is not None else None,
+            mode=task.mode.value if task.mode is not None else None,
+            step=_step_label(task.status, task.step, task.iteration),
+            iteration=task.iteration,
+            holds=tuple(sorted(hold.value for hold in task.holds)),
+            wait_reason=task.wait_reason,
+            ownership=ownership,
+            request=task.request,
+            acceptance_criteria=tuple(triage.acceptance_criteria) if triage is not None else (),
+            progress=task_strip_data(task, self._settings),
+            latest_report=latest_report,
+            latest_verdict=verdict,
+            events=tuple(
+                TaskEventView(
+                    timestamp=event.ts.isoformat(),
+                    kind=event.kind.value,
+                    message=event.message,
+                )
+                for event in detail.events
+            ),
+            signals=tuple(
+                TaskSignalView(role=role, lines=tuple(lines))
+                for role, lines in detail.signals.items()
+            ),
+            recorded_facts=detail.recorded_facts,
+            facts_turn=detail.facts_turn,
+            evidence_errors=tuple(detail.evidence_errors),
+            branch=task.repo.branch if task.repo is not None else None,
+            worktree_path=str(self._queries.task_worktree_path(task.id)),
+            window_id=task.window_id,
+            role_panes=tuple(
+                TaskRolePaneView(
+                    role=role.value,
+                    recorded_target=task.panes.get(role),
+                )
+                for role in TASK_ROLES
+            ),
+            sessions=tuple(_task_session(run) for run in detail.sessions),
+            attention=self.global_attention(),
+        )
+
+    def dialogue(self, task_id: str | None = None) -> list[DialogueBubbleView]:
+        """Build recent speech-worthy events for the project or one task, oldest first."""
         now = self._clock.now()
         return [
             DialogueBubbleView(
@@ -405,12 +504,27 @@ class StateDashboardViews:
                 DIALOGUE_LINE_LIMIT,
                 kinds=_DIALOGUE_KINDS,
                 implementer_turns_only=True,
+                task_id=task_id,
             )
             if event.task_id is not None
         ]
 
-    def usage(self) -> list[AgentUsageView]:
-        """Build per-agent usage and reported quota windows for every known agent."""
+    def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
+        """Build project usage or usage recorded for one task."""
+        if task_id is not None:
+            return [
+                AgentUsageView(
+                    agent=item.agent,
+                    input_tokens=item.input_tokens,
+                    output_tokens=item.output_tokens,
+                    cache_read_tokens=item.cache_read_tokens,
+                    cache_write_tokens=item.cache_write_tokens,
+                    cost_usd=item.cost_usd,
+                    cost_basis=item.cost_basis,
+                    quotas=(),
+                )
+                for item in self._queries.task_usage(task_id)
+            ]
         now = self._clock.now()
         version = self._state.data_version()
         if version != self._usage_version:
@@ -461,6 +575,13 @@ class StateDashboardViews:
                 )
             )
         return result
+
+    def global_attention(self) -> GlobalAttentionView:
+        """Count open decisions and fault streaks for the task window's global indicator."""
+        return GlobalAttentionView(
+            decisions=len(self._state.list_open_escalations()),
+            faults=len(self._queries.open_faults()),
+        )
 
     async def resources(self) -> ResourceView:
         """Return the current host and engine/task-pane process-tree sample."""
@@ -589,3 +710,88 @@ def _quota_countdown(seconds: int | None, has_reset: bool) -> str:
         message = "a quota reset deadline did not produce a countdown"
         raise RuntimeError(message)
     return _duration(seconds)
+
+
+def _step_label(status: Status, step: Step | None, iteration: int) -> str:
+    if step is None:
+        return SETUP_STEP if status is Status.RUNNING else UNSTARTED_STEP
+    if step is Step.CONSULT:
+        return CONSULT_STEP
+    if step is Step.INTEGRATE:
+        return INTEGRATION_STEP
+    if step is Step.IMPLEMENT and iteration > 1:
+        return REWORK_STEP
+    return step.value
+
+
+def _task_report(row: ReportRow) -> TaskReportView:
+    report = row.data
+    summary = ""
+    decision = None
+    question = ""
+    issues: tuple[str, ...] = ()
+    risks: tuple[str, ...] = ()
+    tests: tuple[TaskTestView, ...] = ()
+    if isinstance(report, TriageReport):
+        summary = report.title
+    elif isinstance(report, ImplementationReport):
+        summary = report.summary
+        question = report.question
+        risks = tuple(report.risks)
+        tests = tuple(
+            TaskTestView(
+                name=test.name,
+                result=test.result,
+                details=test.details,
+                provenance=AGENT_REPORTED_TESTS,
+            )
+            for test in report.tests
+        )
+    elif isinstance(report, PlanReport):
+        summary = report.summary
+        risks = tuple(report.scope_changes)
+    elif isinstance(report, ConsultAnswer):
+        summary = report.answer or report.decision
+        decision = report.decision
+    else:
+        summary = report.summary
+        decision = report.decision
+        issues = tuple(
+            f"{issue.severity}: {issue.description} {issue.location}".rstrip()
+            for issue in report.issues
+        )
+        risks = tuple(report.residual_risks)
+    return TaskReportView(
+        turn=row.turn,
+        kind=row.kind.value,
+        role=(
+            Role.IMPLEMENTER.value
+            if isinstance(report, ImplementationReport)
+            else Role.LEADER.value
+        ),
+        provenance=row.source,
+        summary=summary,
+        decision=decision,
+        question=question,
+        issues=issues,
+        risks=risks,
+        tests=tests,
+    )
+
+
+def _task_session(run: Run) -> TaskSessionView:
+    return TaskSessionView(
+        role=run.role.value,
+        agent=run.agent,
+        model=run.model,
+        effort=run.effort,
+        session_id=run.session_id,
+        status=run.status.value,
+        input_tokens=run.usage.input_tokens,
+        output_tokens=run.usage.output_tokens,
+        cache_read_tokens=run.usage.cache_read_tokens,
+        cache_write_tokens=run.usage.cache_write_tokens,
+        cost_usd=run.usage.cost_usd,
+        cost_basis=run.usage.cost_basis,
+        context_used_pct=run.usage.context_used_pct,
+    )

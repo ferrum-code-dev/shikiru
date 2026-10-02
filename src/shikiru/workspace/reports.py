@@ -14,6 +14,7 @@ from shikiru.domain.reports import (
     REPORT_KIND_FILENAME,
     Report,
     ReportKind,
+    Verdict,
     model_for,
 )
 from shikiru.errors import ShikiruError
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _REPORT_FILENAMES = (REPORT_FILENAME, HELPER_REPORT_FILENAME)
+ENGINE_VERDICT_FILENAME = "engine-verdict.json"
 
 
 class InvalidTurnReportError(ShikiruError):
@@ -59,6 +61,19 @@ def load_turn_report(turn_dir: Path) -> LoadedReport | None:
     if invalid is not None:
         raise invalid
     return None
+
+
+def load_engine_verdict(turn_dir: Path) -> Verdict | None:
+    """Load the engine-computed verdict stored beside a turn's agent report."""
+    path = turn_dir / ENGINE_VERDICT_FILENAME
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError) as error:
+        message = f"cannot read engine verdict {path}: {error}"
+        raise InvalidTurnReportError(message) from error
+    return Verdict.model_validate_json(text)
 
 
 def _file_exists(path: Path) -> bool:

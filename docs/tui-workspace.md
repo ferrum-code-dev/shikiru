@@ -2,7 +2,7 @@
 
 ## 1. Status and relationship to the design
 
-This document specifies the target TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). Task 75 shipped the shared visual theme and navigable shell for the current widgets, including Workspace, Activity, Usage, Diagnostics and Extensions sections, contextual help, focus cues and section expansion/back navigation. Task 76 ships the selectable task browser and search through the existing `queue` widget entry point, with bounded read queries and local selection context. Full task detail, contextual task actions and the remaining sections in this specification are planned work and are not claimed as shipped. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
+This document specifies the target TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). Task 75 shipped the shared visual theme and navigable shell for current widgets. Task 76 shipped the selectable task browser and bounded search through the existing `queue` entry point. Task 77 ships shared task detail, task-scoped activity and usage, and navigation to existing task windows and role panes. Contextual actions, richer family/history views, responsive composition and export remain later work. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
 
 The workspace refines [06 · Operator Interfaces](design/06-operator.md), especially §5.4–5.5 and §6: the system pane becomes a navigable workspace with distinct home and task views, contextual actions, and persistent command feedback. The comic strip remains the task's expanded progress view. The architecture and workflow in [02](design/02-architecture.md) and [03](design/03-workflow.md) govern all state changes.
 
@@ -138,13 +138,17 @@ Label test results from reports as agent-reported; git facts retain their engine
 
 Opening an existing task window resolves its current target at activation time. If it closed or disappeared, keep detail readable and explain the unavailable target. Takeover continues to select the acknowledged role pane. A completed or cancelled task remains inspectable from home without recreating its worktree, sessions or tmux window.
 
+Task 77 ships situation and ownership, the semantic strip for the task's actual mode and step, latest validated agent report and engine verdict, request and triage acceptance criteria, bounded recent engine events and recorded role signals, the latest recorded engine git facts, branch/worktree/window/pane metadata and session usage. Report tests are labelled as agent-reported; git facts are labelled engine-computed. Missing or unreadable evidence is identified while the task's basic state remains visible. Older report browsing and evidence filters belong to the later history work in §11. The narrow task layout keeps task ID and the full title in its visible identity block; its horizontal toolbar remains scrollable, and the detail body scrolls independently.
+
+In Home, Enter pushes this shared detail screen for the selected task. Escape dismisses it and restores the browser selection, focus and scroll position. In `dash --task`, the detail is fixed at the start of Workspace; Activity and Usage use only that task's rows, and Situation shows global decision and engine-fault counts. The task view omits project-wide header, queue, escalation, strip and diagnostics widgets. Configured third-party widgets remain reachable in Extensions. Detail offers existing-window and role-pane navigation, Home/back and the shared palette entry point; contextual workflow eligibility and action forms remain Task 78 work.
+
 ## 7. Navigation and keyboard contract
 
 | Context | Keys | Behaviour |
 |---|---|---|
 | Workspace | `Tab`, `Shift+Tab` | Move between visible interactive sections. |
 | Task or attention list | `Up`, `Down` | Move the selection and keep it visible. |
-| Selected task | `Enter` | Open detail; focus detail when already visible beside the list. |
+| Selected task | `Enter` | Open shared detail in a screen and preserve the browser context underneath. |
 | Detail, section or evidence | `z` | Expand the focused section to the available body area. |
 | Detail, expanded view or modal | `Escape` | Return to the previous view and restore its focus. |
 | Workspace or detail | `Ctrl+P` | Open the shared palette with the current task and role context. |
@@ -303,6 +307,8 @@ Widget plugins receive view models and callbacks; they do not read the database,
 The shell assigns built-in widgets to the home/task sections defined here. Configured order is respected within each section. Existing third-party widgets mount in a reachable Extensions section unless they adopt an additive placement capability. Configured widgets must not disappear silently; unknown or broken plugins continue to fail validation with their names. Defaults and placement behaviour are documented with the implementing task.
 
 State subscriptions belong to mounted screens and are cancelled on unmount. Background reads, file loading and export stay off the UI event loop as appropriate. Use bounded queries and caches for expensive data; display read failures and allow a retry. A partial JSONL row is not presented as a complete signal. No new process reader competes with `TurnMonitor` for an agent's stdout.
+
+The Task 77 detail refresh reads task, run and bounded event rows through the UI-owned SQLite connection, then loads report, verdict, facts and signal files in a worker thread. Motion callbacks update only lightweight animation data; detail file loading is triggered by mount or a state change, never by a motion tick. The detail screen cancels both refresh and state-watch workers when it unmounts.
 
 No workflow commands, network service, generic replay framework, agent pricing table or widget preference database are introduced for this redesign. Any mutation continues through `OperatorCommands`; exporting a file and local navigation are the explicit exceptions that affect no engine state.
 

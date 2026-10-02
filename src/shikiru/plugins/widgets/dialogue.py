@@ -77,7 +77,7 @@ class DialoguePanel(Static):
             cast("App[None]", self.app).push_screen(DialogueTextScreen(bubble.text))
 
     async def _refresh(self) -> None:
-        self._bubbles = self._widget_context.views.dialogue()
+        self._bubbles = self._widget_context.views.dialogue(self._widget_context.focus_task)
         table = cast("DataTable[object]", self.query_one("#dialogue-table", DataTable))
         table.clear(columns=True)
         table.add_column("dialogue")

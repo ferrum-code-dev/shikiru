@@ -211,6 +211,7 @@ forbidden_modules = [
   "shikiru.config",
   "shikiru.dashboard.activity",
   "shikiru.dashboard.app",
+  "shikiru.dashboard.detail",
   "shikiru.dashboard.motion",
   "shikiru.dashboard.palette",
   "shikiru.dashboard.services",

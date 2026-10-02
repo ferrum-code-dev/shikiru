@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -12,22 +14,33 @@ from pydantic import BaseModel, ConfigDict, Field
 from shikiru.agents.contracts import COST_BASIS_UNKNOWN, CostBasis, QuotaWindow, Usage
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
-from shikiru.domain.reports import Report, ReportKind
+from shikiru.domain.reports import FACTS_FILENAME, Report, ReportKind
 from shikiru.domain.runs import Run
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
-from shikiru.paths import engine_output_path, run_dir, runs_root, turns_dir
+from shikiru.paths import engine_output_path, run_dir, runs_root, task_root, turns_dir
 from shikiru.store.escalations import Escalation
 from shikiru.telemetry.disk import directory_usage
-from shikiru.view_log import ordered_turn_dirs, view_log_path
-from shikiru.workspace.reports import load_turn_report
+from shikiru.view_log import ordered_turn_dirs, read_tail_lines, view_log_path
+from shikiru.workspace.reports import (
+    InvalidTurnReportError,
+    load_engine_verdict,
+    load_turn_report,
+)
 
 if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.store.reader import StateReader
 
 PEEK_TAIL_LINES = 60
+TASK_DETAIL_EVENT_LIMIT = 40
+TASK_DETAIL_SIGNAL_LIMIT = 20
+ENGINE_REPORT_SOURCE = "engine"
+AGENT_REPORT_SOURCE = "agent"
+ENGINE_SIGNAL_ERROR = "could not read recorded agent signals for {role}: {error}"
+TASK_REPORT_ERROR = "could not read report evidence: {error}"
+TASK_FACTS_ERROR = "could not read recorded git facts: {error}"
 
 
 class OperatorView(BaseModel):
@@ -72,6 +85,7 @@ class ReportRow(OperatorView):
     turn: str
     kind: ReportKind
     data: Report
+    source: str = AGENT_REPORT_SOURCE
 
 
 class TaskDetail(OperatorView):
@@ -80,6 +94,10 @@ class TaskDetail(OperatorView):
     task: Task
     events: list[Event] = Field(default_factory=list)
     reports: list[ReportRow] = Field(default_factory=list)
+    signals: dict[str, list[str]] = Field(default_factory=dict)
+    recorded_facts: str | None = None
+    facts_turn: str | None = None
+    evidence_errors: list[str] = Field(default_factory=list)
     branches: list[str] = Field(default_factory=list)
     sessions: list[Run] = Field(default_factory=list)
 
@@ -238,6 +256,10 @@ class OperatorQueries:
         agents = sorted({run.agent for run in runs} | set(self._reader.list_quota_agents()))
         return _aggregate_usage(runs), self._reader.list_quotas(agents)
 
+    def task_usage(self, task_id: str) -> list[UsageView]:
+        """Return agent-reported usage totals for one task's sessions."""
+        return _aggregate_usage(self._reader.list_runs(task_id))
+
     def list_tasks(self, *, statuses: Sequence[Status] | None = None) -> list[TaskSummary]:
         """Return task summaries ordered by their allocated task sequence."""
         return [TaskSummary.from_task(task) for task in self._reader.list_tasks(statuses=statuses)]
@@ -255,6 +277,39 @@ class OperatorQueries:
             branches=[task.repo.branch] if task.repo is not None else [],
             sessions=runs,
         )
+
+    async def get_task_detail(self, task_id: str) -> TaskDetail | None:
+        """Read bounded task events and load its file evidence away from the UI loop."""
+        task = self._reader.get_task(task_id)
+        if task is None:
+            return None
+        runs = self._reader.list_runs(task_id)
+        events = self._reader.latest_events(TASK_DETAIL_EVENT_LIMIT, task_id=task_id)
+        files = await asyncio.to_thread(
+            self._task_files,
+            task_id,
+            tuple(dict.fromkeys(run.role.value for run in runs)),
+        )
+        reports, signals, recorded_facts, facts_turn, evidence_errors = files
+        return TaskDetail(
+            task=task,
+            events=events,
+            reports=reports,
+            signals=signals,
+            recorded_facts=recorded_facts,
+            facts_turn=facts_turn,
+            evidence_errors=evidence_errors,
+            branches=[task.repo.branch] if task.repo is not None else [],
+            sessions=runs,
+        )
+
+    def get_task_state(self, task_id: str) -> Task | None:
+        """Return current task state without loading report or signal files."""
+        return self._reader.get_task(task_id)
+
+    def task_worktree_path(self, task_id: str) -> Path:
+        """Return the recorded layout location used for this task's worktree."""
+        return task_root(self._project_root, task_id)
 
     def list_escalations(self) -> list[EscalationView]:
         """Return all currently open escalation packets."""
@@ -314,21 +369,164 @@ class OperatorQueries:
         reports: list[ReportRow] = []
         for turn_dir in ordered_turn_dirs(task_turns_dir):
             loaded = load_turn_report(turn_dir)
-            if loaded is None:
-                continue
-            reports.append(ReportRow(turn=turn_dir.name, kind=loaded.kind, data=loaded.report))
+            if loaded is not None:
+                reports.append(
+                    ReportRow(
+                        turn=turn_dir.name,
+                        kind=loaded.kind,
+                        data=loaded.report,
+                    )
+                )
         return reports
+
+    def _task_files(
+        self,
+        task_id: str,
+        roles: tuple[str, ...],
+    ) -> tuple[list[ReportRow], dict[str, list[str]], str | None, str | None, list[str]]:
+        turn_dirs, errors = self._task_turn_dirs(task_id)
+        if turn_dirs is None:
+            return [], {}, None, None, errors
+        reports, report_errors = self._task_reports(turn_dirs)
+        recorded_facts, facts_turn, fact_errors = _task_facts(turn_dirs)
+        signals, signal_errors = self._task_signals(task_id, roles)
+        return (
+            reports,
+            signals,
+            recorded_facts,
+            facts_turn,
+            [*errors, *report_errors, *fact_errors, *signal_errors],
+        )
+
+    def _task_turn_dirs(self, task_id: str) -> tuple[list[Path] | None, list[str]]:
+        task_turns_dir = turns_dir(self._project_root, task_id)
+        try:
+            task_turns_dir.stat()
+        except FileNotFoundError:
+            return None, []
+        except OSError as error:
+            return None, [TASK_REPORT_ERROR.format(error=error)]
+        if not task_turns_dir.is_dir():
+            return None, [TASK_REPORT_ERROR.format(error=f"not a directory: {task_turns_dir}")]
+        try:
+            return ordered_turn_dirs(task_turns_dir), []
+        except (OSError, ValueError) as error:
+            return None, [TASK_REPORT_ERROR.format(error=error)]
+
+    def _task_reports(self, turn_dirs: Sequence[Path]) -> tuple[list[ReportRow], list[str]]:
+        latest_agent: ReportRow | None = None
+        latest_engine: ReportRow | None = None
+        latest_triage: ReportRow | None = None
+        errors: list[str] = []
+        for turn_dir in reversed(turn_dirs):
+            turn_reports, turn_errors = _task_turn_reports(turn_dir)
+            errors.extend(turn_errors)
+            for report in turn_reports:
+                if report.source == AGENT_REPORT_SOURCE and latest_agent is None:
+                    latest_agent = report
+                elif report.source == ENGINE_REPORT_SOURCE and latest_engine is None:
+                    latest_engine = report
+                if report.kind is ReportKind.TRIAGE and latest_triage is None:
+                    latest_triage = report
+            if latest_agent is not None and latest_engine is not None and latest_triage is not None:
+                break
+        turn_order = {turn_dir.name: index for index, turn_dir in enumerate(turn_dirs)}
+        reports = {
+            (report.turn, report.kind): report
+            for report in (latest_agent, latest_engine, latest_triage)
+            if report is not None
+        }
+        return sorted(reports.values(), key=lambda report: turn_order[report.turn]), errors
+
+    def _task_signals(
+        self,
+        task_id: str,
+        roles: tuple[str, ...],
+    ) -> tuple[dict[str, list[str]], list[str]]:
+        signals: dict[str, list[str]] = {}
+        errors: list[str] = []
+        for role in roles:
+            signal_path = view_log_path(run_dir(self._project_root, task_id), role)
+            try:
+                lines = _signal_tail(signal_path)
+            except (OSError, UnicodeError, ValueError, TypeError) as error:
+                errors.append(ENGINE_SIGNAL_ERROR.format(role=role, error=error))
+            else:
+                if lines:
+                    signals[role] = lines
+        return signals, errors
+
+
+def _task_turn_reports(turn_dir: Path) -> tuple[list[ReportRow], list[str]]:
+    reports: list[ReportRow] = []
+    errors: list[str] = []
+    try:
+        loaded = load_turn_report(turn_dir)
+    except (InvalidTurnReportError, OSError, ValueError) as error:
+        errors.append(str(error))
+    else:
+        if loaded is not None:
+            reports.append(
+                ReportRow(
+                    turn=turn_dir.name,
+                    kind=loaded.kind,
+                    data=loaded.report,
+                    source=AGENT_REPORT_SOURCE,
+                )
+            )
+    try:
+        verdict = load_engine_verdict(turn_dir)
+    except (InvalidTurnReportError, OSError, ValueError) as error:
+        errors.append(str(error))
+    else:
+        if verdict is not None:
+            reports.append(
+                ReportRow(
+                    turn=turn_dir.name,
+                    kind=ReportKind.VERDICT,
+                    data=verdict,
+                    source=ENGINE_REPORT_SOURCE,
+                )
+            )
+    return reports, errors
+
+
+def _task_facts(turn_dirs: Sequence[Path]) -> tuple[str | None, str | None, list[str]]:
+    for turn_dir in reversed(turn_dirs):
+        facts_path = turn_dir / FACTS_FILENAME
+        try:
+            facts = facts_path.read_text()
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeError) as error:
+            return None, None, [TASK_FACTS_ERROR.format(error=error)]
+        return facts, turn_dir.name, []
+    return None, None, []
 
 
 def _view_tail(path: Path) -> list[str]:
     if not path.is_file():
         return []
     try:
-        lines = path.read_text().splitlines()
+        return read_tail_lines(path, PEEK_TAIL_LINES)
     except OSError as error:
         message = f"cannot read view log {path}: {error}"
         raise OperatorQueryError(message) from error
-    return lines[-PEEK_TAIL_LINES:]
+
+
+def _signal_tail(path: Path) -> list[str]:
+    try:
+        lines = read_tail_lines(path, TASK_DETAIL_SIGNAL_LIMIT)
+    except FileNotFoundError:
+        return []
+    signals: list[str] = []
+    for line in lines:
+        row = json.loads(line)
+        if not isinstance(row, dict):
+            message = "recorded signal row is not an object"
+            raise TypeError(message)
+        signals.append(json.dumps(row, ensure_ascii=False, sort_keys=True))
+    return signals
 
 
 def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:

@@ -102,11 +102,15 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 
 ### 5.4 Workspace shell and widgets
 
-`shikiru dash --home | --task T-n` is a Textual app with one shared navigable shell. The permanent home window opens the Home workspace. A task window opens the same shell with its existing `focus_task` context. This task-scoped widget view is not yet the task detail described in the Phase 8 target; detail ships separately. Usage and diagnostics remain secondary sections instead of occupying the main task area.
+`shikiru dash --home | --task T-n` is a Textual app with one shared navigable shell. The permanent home window opens the Home workspace. A task window opens the same shell with its existing `focus_task` context and the shared task detail fixed to that task.
 
 The shell groups current widgets in Workspace (`header`, `escalations`, `strips`, `queue`), Activity (`dialogue`), Usage (`usage`) and Diagnostics (`resources`, `docker`). `queue` is the selectable task browser. It searches task IDs and titles case-insensitively, combines search with Active, Waiting, History or All, reports the matching count, and loads longer lists in fixed-size bounded pages. Load more reads the loaded page range and the next page from one SQLite snapshot before appending; state updates also refresh the loaded range while retaining the visible reading position. Up/Down moves its selected task and keeps that row visible. `/` focuses search; from another expanded section it returns to Workspace first. Text inputs and modal screens retain `/` as input. Clear and filter buttons are explicit controls. Escape clears a non-empty search first, then moves focus to the list when search is empty. The selected task's compact identity and situation stay visible when a refresh, filter or search removes its row; Reveal clears the search and opens the matching task category. The browser keeps navigation state in the dashboard process and reads task pages and counts through `StateReader`; it writes no state.
 
 Configured widget order is preserved within each section. A configured third-party widget is mounted in Extensions, in its relative configured order, so it remains reachable without changing its entry point or context. `Tab` and `Shift+Tab` move section focus, mouse activation selects a section, `z` expands the focused section, and `Escape` returns to the section list with the previous focus and scroll position restored. The compact footer names the focused or expanded section and provides Expand, Back and Help controls. `?` opens contextual help with all key bindings. Focus is shown by a marker and reverse/bold styling so it remains readable with `NO_COLOR`.
+
+In Home, `Enter` on a selected browser row opens the shared task detail. `Escape` returns to the same browser selection, search and reading position. The detail shows task situation, the semantic strip for its actual mode and step, latest validated agent report and engine verdict, request and acceptance criteria, bounded recorded evidence, workspace targets, sessions and usage. Reported tests and engine-computed facts retain their provenance. Invalid or missing files are shown as unavailable while the SQLite task state remains visible. Detail file reads run away from the UI loop and refresh on state changes, not animation ticks; its mounted state subscription is cancelled when detail closes.
+
+`dash --task T-n` fixes the detail to `T-n`. Its Activity and Usage sections are scoped to that task and its situation includes a compact global decision/fault count. The task view omits project-wide header, queue, escalations, strips and diagnostics panels. Configured third-party widgets remain in Extensions. Detail actions select only existing task windows or role panes through activation-time state reads; missing and terminal targets are reported without creating workflow resources. The actions button opens the shared palette. Eligibility and contextual action behavior remain with the later workspace task.
 
 ```python
 class DashboardWidget(Protocol):
@@ -118,6 +122,10 @@ class DashboardWidget(Protocol):
 class WidgetContext:  views: DashboardViews; focus_task: str | None
                       on_change: Callable[[OnChange], Awaitable[None]]   # StateReader.watch
                       open_palette: Callable[[str], Awaitable[None]]
+                      open_task_detail: Callable[[str], Awaitable[None]] | None = None
+                      navigate_task_window: Callable[[str], Awaitable[str]] | None = None
+                      navigate_role_pane: Callable[[str, str], Awaitable[str]] | None = None
+                      navigate_home: Callable[[], Awaitable[str]] | None = None
 
 class DashboardViews(Protocol):
     """Ready-to-render view models; the only data a widget sees."""
@@ -125,7 +133,10 @@ class DashboardViews(Protocol):
     def strips(self) -> list[TaskStripData]: ...         # active tasks, focused first, children under parents
     def queue(self) -> list[QueueRow]: ...               # dispatch order
     def task_browser(self, *, task_filter, search, offset, limit, selected_task_id) -> TaskBrowserView: ...
-    # escalations(), dialogue(), usage(), resources(), containers() arrive with their widgets
+    async def task_detail(self, task_id: str) -> TaskDetailView | None: ...
+    def dialogue(self, task_id: str | None = None) -> list[DialogueBubbleView]: ...
+    def usage(self, task_id: str | None = None) -> list[AgentUsageView]: ...
+    def global_attention(self) -> GlobalAttentionView: ...
 ```
 
 **Views are the widget API.** `dashboard.views` builds them from `StateReader`, `Settings` and existing domain rules (dispatch order, acting role and diagnosed task activity). For Active ordering it diagnoses current running and integrating turns with `DashboardMotion`, then passes stalled IDs to the SQL page query before pagination; it does not read history rows to calculate that order. A browser page query returns one SQL-limited page plus exact counts for the active filter and search; a page-range query returns contiguous bounded pages and their counts from one read snapshot. Neither loads history and slices it in Python. The existing `queue()` result remains available to configured widgets. A widget only renders: it never sees the state DB, domain types, config or tmux, so an external widget depends on `dashboard.contract` and `ui` alone. View models are frozen dataclasses in `dashboard.contract` (`TaskStripData` is `ui`'s). Existing widget names, view fields and callbacks remain stable; the `task_browser()` and `task_browser_pages()` capabilities are additive.
@@ -144,7 +155,7 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 | Diagnostics | `docker` | Containers with CPU% and memory (`docker stats --no-stream --format json` every 5 s); hidden when Docker is unavailable |
 | Extensions | Configured third-party widgets | Each configured widget outside the built-in set, using the existing plugin entry point and context |
 
-The system-pane shell uses current widgets. The selectable task browser is shipped through the existing `queue` entry point. Full task detail and navigation to existing windows remain later Phase 8 capabilities; the compact selected-task preview does not claim to be full detail.
+The system-pane shell uses current widgets. The selectable task browser and shared task detail are shipped through the existing widget and dashboard contracts. `TaskNavigation` resolves the task's recorded window or pane from current state when activated and selects only that existing target. A terminal task remains inspectable after its window and worktree have been cleaned up.
 
 ### 5.5 Palette
 

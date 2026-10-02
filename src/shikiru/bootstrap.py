@@ -11,6 +11,7 @@ from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_default_orchestration, load_session_settings, load_settings
 from shikiru.config.settings import PULL_REQUEST_INTEGRATION
+from shikiru.domain.tasks import Role
 from shikiru.engine.acceptance import AcceptanceGuard
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.cosmetic_decorator import CosmeticDecorator
@@ -316,6 +317,14 @@ async def run_dashboard(
             clock=clock,
             motion=motion,
         )
+        navigation = dashboard_services_module.TaskNavigation(
+            tmux,
+            services.queries,
+            session_target,
+        )
+
+        async def navigate_role_pane(task_id: str, role_name: str) -> str:
+            return await navigation.role_pane(task_id, Role(role_name))
 
         app_instance = None
 
@@ -343,6 +352,9 @@ async def run_dashboard(
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
+            navigate_task_window=navigation.task_window,
+            navigate_role_pane=navigate_role_pane,
+            navigate_home=navigation.home,
         )
         await app_instance.run_async()
     finally:
