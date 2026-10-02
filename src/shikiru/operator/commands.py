@@ -11,14 +11,19 @@ from pydantic import BaseModel, ConfigDict
 
 from shikiru.domain.commands import (
     COMMAND_POLL_SECONDS,
+    AcceptResolution,
+    AnswerResolution,
     Cancel,
+    CancelResolution,
     HandBack,
     Pause,
     Prioritize,
     Resolution,
+    ResolutionKind,
     Resolve,
     Resume,
     Retry,
+    RetryResolution,
     Say,
     SetRung,
     Stop,
@@ -123,67 +128,157 @@ class OperatorCommands:
         implementer: Rung | None = None,
     ) -> Ack:
         """Queue a `Submit` command, allocating its task id atomically in the store."""
-        task_title = title if title is not None else title_from_request(request)
         return await self.send(
-            Submit(
-                title=task_title,
-                request=request,
+            self.prepare_submit_task(
+                request,
+                title=title,
                 mode=mode,
                 complexity=complexity,
                 priority=priority,
-                depends_on=list(depends_on),
+                depends_on=depends_on,
                 leader=leader,
                 implementer=implementer,
             )
         )
 
+    def prepare_submit_task(
+        self,
+        request: str,
+        *,
+        title: str | None = None,
+        mode: Mode | None = None,
+        complexity: ComplexityName | None = None,
+        priority: int = 0,
+        depends_on: Sequence[str] = (),
+        leader: Rung | None = None,
+        implementer: Rung | None = None,
+    ) -> Submit:
+        """Prepare the typed submission used by both palette recovery and dispatch."""
+        task_title = title if title is not None else _title_from_request(request)
+        return Submit(
+            title=task_title,
+            request=request,
+            mode=mode,
+            complexity=complexity,
+            priority=priority,
+            depends_on=list(depends_on),
+            leader=leader,
+            implementer=implementer,
+        )
+
     async def prioritize_task(self, task_id: str, priority: int) -> Ack:
         """Queue a `Prioritize` command."""
-        return await self.send(Prioritize(task_id=task_id, priority=priority))
+        return await self.send(self.prepare_prioritize_task(task_id, priority))
+
+    def prepare_prioritize_task(self, task_id: str, priority: int) -> Prioritize:
+        """Prepare the typed priority command used by the palette and dispatcher."""
+        return Prioritize(task_id=task_id, priority=priority)
 
     async def pause_task(self, task_id: str, *, now: bool = False) -> Ack:
         """Queue a `Pause` command."""
-        return await self.send(Pause(task_id=task_id, now=now))
+        return await self.send(self.prepare_pause_task(task_id, now=now))
+
+    def prepare_pause_task(self, task_id: str, *, now: bool = False) -> Pause:
+        """Prepare the typed pause command used by the palette and dispatcher."""
+        return Pause(task_id=task_id, now=now)
 
     async def resume_task(self, task_id: str) -> Ack:
         """Queue a `Resume` command."""
-        return await self.send(Resume(task_id=task_id))
+        return await self.send(self.prepare_resume_task(task_id))
+
+    def prepare_resume_task(self, task_id: str) -> Resume:
+        """Prepare the typed resume command used by the palette and dispatcher."""
+        return Resume(task_id=task_id)
 
     async def cancel_task(self, task_id: str) -> Ack:
         """Queue a `Cancel` command."""
-        return await self.send(Cancel(task_id=task_id))
+        return await self.send(self.prepare_cancel_task(task_id))
+
+    def prepare_cancel_task(self, task_id: str) -> Cancel:
+        """Prepare the typed cancel command used by the palette and dispatcher."""
+        return Cancel(task_id=task_id)
 
     async def retry_task(self, task_id: str) -> Ack:
         """Queue a `Retry` command."""
-        return await self.send(Retry(task_id=task_id))
+        return await self.send(self.prepare_retry_task(task_id))
+
+    def prepare_retry_task(self, task_id: str) -> Retry:
+        """Prepare the typed retry command used by the palette and dispatcher."""
+        return Retry(task_id=task_id)
 
     async def set_rung(self, task_id: str, role: Role, rung: Rung) -> Ack:
         """Queue a `SetRung` command."""
-        return await self.send(SetRung(task_id=task_id, role=role, rung=rung))
+        return await self.send(self.prepare_set_rung(task_id, role, rung))
+
+    def prepare_set_rung(self, task_id: str, role: Role, rung: Rung) -> SetRung:
+        """Prepare the typed rung command used by the palette and dispatcher."""
+        return SetRung(task_id=task_id, role=role, rung=rung)
 
     async def send_message(self, task_id: str, role: Role, text: str) -> Ack:
         """Queue a `Say` command for the role's next turn."""
-        return await self.send(Say(task_id=task_id, role=role, text=text))
+        return await self.send(self.prepare_send_message(task_id, role, text))
+
+    def prepare_send_message(self, task_id: str, role: Role, text: str) -> Say:
+        """Prepare the typed guidance command used by the palette and dispatcher."""
+        return Say(task_id=task_id, role=role, text=text)
 
     async def take_over(self, task_id: str, role: Role) -> Ack:
         """Queue a `TakeOver` command for the role's pane."""
-        return await self.send(TakeOver(task_id=task_id, role=role))
+        return await self.send(self.prepare_take_over(task_id, role))
+
+    def prepare_take_over(self, task_id: str, role: Role) -> TakeOver:
+        """Prepare the typed takeover command used by the palette and dispatcher."""
+        return TakeOver(task_id=task_id, role=role)
 
     async def hand_back(self, task_id: str, role: Role) -> Ack:
         """Queue a `HandBack` command returning the role's session to the engine."""
-        return await self.send(HandBack(task_id=task_id, role=role))
+        return await self.send(self.prepare_hand_back(task_id, role))
+
+    def prepare_hand_back(self, task_id: str, role: Role) -> HandBack:
+        """Prepare the typed hand-back command used by the palette and dispatcher."""
+        return HandBack(task_id=task_id, role=role)
 
     async def resolve_escalation(self, escalation_id: str, resolution: Resolution) -> Ack:
         """Queue a `Resolve` command for one open escalation."""
-        return await self.send(Resolve(escalation_id=escalation_id, resolution=resolution))
+        return await self.send(self.prepare_resolve_escalation(escalation_id, resolution))
+
+    def prepare_resolve_escalation(
+        self,
+        escalation_id: str,
+        resolution: Resolution,
+    ) -> Resolve:
+        """Prepare the typed resolution command used by the palette and dispatcher."""
+        return Resolve(escalation_id=escalation_id, resolution=resolution)
+
+    def prepare_palette_resolution(
+        self,
+        escalation_id: str,
+        kind: ResolutionKind,
+        *,
+        answer: str,
+        retry_rung: Rung | None,
+    ) -> Resolve:
+        """Prepare one resolution command from the palette's selected form fields."""
+        if kind is ResolutionKind.ANSWER:
+            resolution: Resolution = AnswerResolution(text=answer)
+        elif kind is ResolutionKind.RETRY:
+            resolution = RetryResolution(rung=retry_rung)
+        elif kind is ResolutionKind.ACCEPT:
+            resolution = AcceptResolution()
+        else:
+            resolution = CancelResolution()
+        return self.prepare_resolve_escalation(escalation_id, resolution)
 
     async def stop_engine(self) -> Ack:
         """Queue the orderly engine `Stop` command."""
-        return await self.send(Stop())
+        return await self.send(self.prepare_stop_engine())
+
+    def prepare_stop_engine(self) -> Stop:
+        """Prepare the typed stop command used by the palette and dispatcher."""
+        return Stop()
 
 
-def title_from_request(request: str) -> str:
-    """Return the default task title used when a request has no explicit title."""
+def _title_from_request(request: str) -> str:
     first_line = request.splitlines()[0] if request.splitlines() else request
     return first_line[:TASK_TITLE_MAX_LENGTH]
 

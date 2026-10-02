@@ -625,10 +625,7 @@ async def test_palette_revalidates_task_state_before_queueing(
         )
         await pilot.click("#palette-submit")
         await wait_until(
-            lambda: (
-                screen.query_one("#palette-submit", Button).disabled
-                and bool(_static_text(screen, "#palette-result"))
-            ),
+            lambda: screen.query_one("#palette-submit", Button).disabled,
             timeout=2,
         )
         assert screen.query_one("#palette-submit", Button).disabled

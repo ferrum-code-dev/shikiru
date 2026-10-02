@@ -14,35 +14,13 @@ from textual.widgets import Button, Input, Label, Select, Static, TextArea
 from shikiru.agents.contracts import parse_rung
 from shikiru.config.settings import ComplexityName
 from shikiru.dashboard.contract import PaletteRequest
-from shikiru.domain.commands import (
-    AcceptResolution,
-    AnswerResolution,
-    Cancel,
-    CancelResolution,
-    Command,
-    CommandKind,
-    CommandStatus,
-    HandBack,
-    Pause,
-    Prioritize,
-    ResolutionKind,
-    Resolve,
-    Resume,
-    Retry,
-    RetryResolution,
-    Say,
-    SetRung,
-    Stop,
-    Submit,
-    TakeOver,
-)
+from shikiru.domain.commands import CommandKind, CommandStatus, ResolutionKind
 from shikiru.domain.tasks import Mode, Role
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import (
     ACK_TIMEOUT_MESSAGE,
     QUEUED_MESSAGE,
     AckStatus,
-    title_from_request,
 )
 from shikiru.operator.queries import OperatorTaskAction
 from shikiru.ui.theme import install_theme
@@ -53,6 +31,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import Rung
     from shikiru.dashboard.contract import OnChangeRegistration
+    from shikiru.domain.commands import Command
     from shikiru.operator.commands import Ack, OperatorCommands
     from shikiru.operator.queries import (
         CommandHistoryEntry,
@@ -534,54 +513,16 @@ class PaletteScreen(ModalScreen[None]):
     async def _dispatch(self) -> Ack | None:
         action = self._value(_FIELD_ACTION)
         task_id = self._input(_FIELD_TASK_ID).strip()
-        if action == _ACTION_SUBMIT:
-            return await self._commands.submit_task(
-                self._text("request"),
-                title=self._optional_input("title"),
-                mode=self._mode(),
-                complexity=self._complexity(),
-                priority=self._integer("submission-priority"),
-                depends_on=self._dependencies(),
-                leader=self._optional_rung("leader-rung"),
-                implementer=self._optional_rung("implementer-rung"),
-            )
-        if action in _TASK_ACTIONS:
-            return await self._dispatch_task_action(action, task_id)
         if action == _ACTION_PEEK:
             self._show_peek(task_id)
             return None
-        if action == _ACTION_RESOLVE:
-            return await self._resolve()
-        if action == _ACTION_STOP:
-            return await self._commands.stop_engine()
+        if action in _TASK_ACTIONS:
+            self._validate_task_action(action, task_id)
+        command = self._command_for_current_form()
+        if command is not None:
+            return await self._commands.send(command)
         message = f"unsupported palette action: {action}"
         raise ValueError(message)
-
-    async def _dispatch_task_action(self, action: str, task_id: str) -> Ack:
-        self._validate_task_action(action, task_id)
-        operations: dict[str, Callable[[], Awaitable[Ack]]] = {
-            _ACTION_PRIORITIZE: lambda: self._commands.prioritize_task(
-                task_id, self._integer("priority")
-            ),
-            _ACTION_PAUSE: lambda: self._commands.pause_task(task_id),
-            _ACTION_PAUSE_NOW: lambda: self._commands.pause_task(task_id, now=True),
-            _ACTION_RESUME: lambda: self._commands.resume_task(task_id),
-            _ACTION_TAKE_OVER: lambda: self._commands.take_over(task_id, self._role()),
-            _ACTION_HAND_BACK: lambda: self._commands.hand_back(task_id, self._role()),
-            _ACTION_CANCEL: lambda: self._commands.cancel_task(task_id),
-            _ACTION_RETRY: lambda: self._commands.retry_task(task_id),
-            _ACTION_RUNG: lambda: self._commands.set_rung(
-                task_id, self._role(), parse_rung(self._input("rung"))
-            ),
-            _ACTION_MESSAGE: lambda: self._commands.send_message(
-                task_id, self._role(), self._text("message")
-            ),
-        }
-        operation = operations.get(action)
-        if operation is None:
-            message = f"unsupported task action: {action}"
-            raise ValueError(message)
-        return await operation()
 
     def _validate_task_action(self, action: str, task_id: str) -> None:
         if not task_id:
@@ -645,7 +586,10 @@ class PaletteScreen(ModalScreen[None]):
     def _observe_pending_form(self, identity: tuple[str, ...]) -> bool:
         if identity in self._pending_form_commands:
             return True
-        command = self._command_for_current_form()
+        try:
+            command = self._command_for_current_form()
+        except ShikiruError, ValueError:
+            return False
         if command is None:
             return False
         outcome = self._queries.pending_command(command)
@@ -660,65 +604,64 @@ class PaletteScreen(ModalScreen[None]):
         action = self._selected_value(_FIELD_ACTION)
         builders: dict[str, Callable[[], Command]] = {
             _ACTION_SUBMIT: self._submit_command,
-            _ACTION_PRIORITIZE: lambda: Prioritize(
-                task_id=task_id, priority=self._integer(_FIELD_PRIORITY)
+            _ACTION_PRIORITIZE: lambda: self._commands.prepare_prioritize_task(
+                task_id, self._integer(_FIELD_PRIORITY)
             ),
-            _ACTION_PAUSE: lambda: Pause(task_id=task_id),
-            _ACTION_PAUSE_NOW: lambda: Pause(task_id=task_id, now=True),
-            _ACTION_RESUME: lambda: Resume(task_id=task_id),
-            _ACTION_TAKE_OVER: lambda: TakeOver(task_id=task_id, role=self._role()),
-            _ACTION_HAND_BACK: lambda: HandBack(task_id=task_id, role=self._role()),
-            _ACTION_CANCEL: lambda: Cancel(task_id=task_id),
-            _ACTION_RETRY: lambda: Retry(task_id=task_id),
-            _ACTION_RUNG: lambda: SetRung(
-                task_id=task_id,
-                role=self._role(),
-                rung=parse_rung(self._input(_FIELD_RUNG)),
+            _ACTION_PAUSE: lambda: self._commands.prepare_pause_task(task_id),
+            _ACTION_PAUSE_NOW: lambda: self._commands.prepare_pause_task(task_id, now=True),
+            _ACTION_RESUME: lambda: self._commands.prepare_resume_task(task_id),
+            _ACTION_TAKE_OVER: lambda: self._commands.prepare_take_over(task_id, self._role()),
+            _ACTION_HAND_BACK: lambda: self._commands.prepare_hand_back(task_id, self._role()),
+            _ACTION_CANCEL: lambda: self._commands.prepare_cancel_task(task_id),
+            _ACTION_RETRY: lambda: self._commands.prepare_retry_task(task_id),
+            _ACTION_RUNG: lambda: self._commands.prepare_set_rung(
+                task_id, self._role(), parse_rung(self._input(_FIELD_RUNG))
             ),
-            _ACTION_MESSAGE: lambda: Say(
-                task_id=task_id,
-                role=self._role(),
-                text=self._text(_FIELD_MESSAGE),
+            _ACTION_MESSAGE: lambda: self._commands.prepare_send_message(
+                task_id, self._role(), self._text(_FIELD_MESSAGE)
             ),
             _ACTION_RESOLVE: self._resolve_command,
-            _ACTION_STOP: Stop,
+            _ACTION_STOP: self._commands.prepare_stop_engine,
         }
         builder = builders.get(action or _EMPTY)
-        if builder is None:
-            return None
-        try:
-            return builder()
-        except ShikiruError, ValueError:
-            return None
+        return builder() if builder is not None else None
 
-    def _submit_command(self) -> Submit:
+    def _submit_command(self) -> Command:
         request = self._text(_FIELD_REQUEST)
-        return Submit(
-            title=self._optional_input(_FIELD_TITLE) or title_from_request(request),
-            request=request,
+        return self._commands.prepare_submit_task(
+            request,
+            title=self._optional_input(_FIELD_TITLE),
             mode=self._mode(),
             complexity=self._complexity(),
             priority=self._integer(_FIELD_SUBMISSION_PRIORITY),
-            depends_on=list(self._dependencies()),
+            depends_on=self._dependencies(),
             leader=self._optional_rung(_FIELD_LEADER_RUNG),
             implementer=self._optional_rung(_FIELD_IMPLEMENTER_RUNG),
         )
 
-    def _resolve_command(self) -> Resolve:
+    def _resolve_command(self) -> Command:
         escalation_id = self._selected_value(_FIELD_ESCALATION)
         resolution_value = self._selected_value(_FIELD_RESOLUTION)
         if escalation_id is None or resolution_value is None:
             raise ValueError(_SELECT_REQUIRED)
         kind = ResolutionKind(resolution_value)
-        if kind is ResolutionKind.ANSWER:
-            resolution = AnswerResolution(text=self._text(_FIELD_RESOLUTION_TEXT))
-        elif kind is ResolutionKind.RETRY:
-            resolution = RetryResolution(rung=self._optional_rung(_FIELD_RESOLUTION_RUNG))
-        elif kind is ResolutionKind.ACCEPT:
-            resolution = AcceptResolution()
-        else:
-            resolution = CancelResolution()
-        return Resolve(escalation_id=escalation_id, resolution=resolution)
+        item = self._escalations.get(escalation_id)
+        if item is None:
+            message = f"escalation {escalation_id} is not open"
+            raise ValueError(message)
+        if not any(option.label is kind for option in item.escalation.options):
+            message = f"{kind.value} is not an option for {escalation_id}"
+            raise ValueError(message)
+        answer = self._text(_FIELD_RESOLUTION_TEXT) if kind is ResolutionKind.ANSWER else _EMPTY
+        retry_rung = (
+            self._optional_rung(_FIELD_RESOLUTION_RUNG) if kind is ResolutionKind.RETRY else None
+        )
+        return self._commands.prepare_palette_resolution(
+            escalation_id,
+            kind,
+            answer=answer,
+            retry_rung=retry_rung,
+        )
 
     def _form_identity(self) -> tuple[str, ...]:
         action = self._selected_value(_FIELD_ACTION) or _EMPTY
@@ -847,26 +790,6 @@ class PaletteScreen(ModalScreen[None]):
         except ShikiruError as error:
             if self._is_current_screen():
                 self._show_ack(ack, f"{_TAKEOVER_SELECTION_FAILURE}: {error}")
-
-    async def _resolve(self) -> Ack:
-        escalation_id = self._value(_FIELD_ESCALATION)
-        item = self._escalations.get(escalation_id)
-        if item is None:
-            message = f"escalation {escalation_id} is not open"
-            raise ValueError(message)
-        kind = ResolutionKind(self._value(_FIELD_RESOLUTION))
-        if kind is ResolutionKind.ANSWER:
-            resolution = AnswerResolution(text=self._text("resolution-text"))
-        elif kind is ResolutionKind.RETRY:
-            resolution = RetryResolution(rung=self._optional_rung("resolution-rung"))
-        elif kind is ResolutionKind.ACCEPT:
-            resolution = AcceptResolution()
-        else:
-            resolution = CancelResolution()
-        if not any(option.label is kind for option in item.escalation.options):
-            message = f"{kind.value} is not an option for {escalation_id}"
-            raise ValueError(message)
-        return await self._commands.resolve_escalation(escalation_id, resolution)
 
     def _show_peek(self, task_id: str) -> None:
         selected_role = self._selected_value(_FIELD_ROLE)
