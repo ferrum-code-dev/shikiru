@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.console import Group
 from rich.text import Text
-from textual.containers import HorizontalScroll, Vertical, VerticalScroll
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Select, Static
 
@@ -60,7 +60,9 @@ TASK_DETAIL_RELATIONSHIPS_BUTTON = "task-detail-relationships-toggle"
 TASK_DETAIL_RELATED_TOOLS = "task-detail-related-tools"
 TASK_DETAIL_RELATED_TASK = "task-detail-related-task"
 TASK_DETAIL_OPEN_RELATED = "task-detail-open-related"
+TASK_DETAIL_PREVIOUS_RELATIONSHIPS = "task-detail-previous-relationships"
 TASK_DETAIL_MORE_RELATIONSHIPS = "task-detail-more-relationships"
+TASK_DETAIL_RELATIONSHIP_PAGE = "task-detail-relationship-page"
 NO_VALUE = "\N{EN DASH}"
 NO_REPORT = "No validated report is recorded."
 NO_VERDICT = "No validated verdict is recorded."
@@ -85,6 +87,9 @@ class TaskDetailPanel(Vertical):
         border: round $neutral-border; background: $surface; color: $primary-text;
     }
     #task-detail-toolbar Button:focus { border: round $focus; text-style: bold reverse; }
+    #task-detail-related-tools { width: 100%; height: auto; }
+    #task-detail-related-tools HorizontalScroll { width: 100%; }
+    #task-detail-related-tools Horizontal { width: 100%; }
     #task-detail-feedback { height: auto; min-height: 1; color: $secondary-text; }
     #task-detail-body { height: auto; max-height: 32; padding: 0 1; }
     .task-detail-section {
@@ -119,7 +124,10 @@ class TaskDetailPanel(Vertical):
         self._change_worker: Worker[None] | None = None
         self._relationships_expanded = False
         self._relationship_offset = 0
+        self._relationship_previous_offset: int | None = None
         self._relationship_next_offset: int | None = None
+        self._shown_related_references: tuple[TaskReferenceView, ...] = ()
+        self._selected_related_reference: TaskReferenceView | None = None
 
     def compose(self) -> ComposeResult:
         with HorizontalScroll(id="task-detail-toolbar"):
@@ -146,16 +154,20 @@ class TaskDetailPanel(Vertical):
             yield Static("", id=TASK_DETAIL_SITUATION, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_BLOCKER, classes="task-detail-section", markup=False)
             yield Button("Expand family and relationships", id=TASK_DETAIL_RELATIONSHIPS_BUTTON)
-            with HorizontalScroll(id=TASK_DETAIL_RELATED_TOOLS):
-                yield Select(
-                    (),
-                    prompt="Related task",
-                    allow_blank=True,
-                    value=Select.BLANK,
-                    id=TASK_DETAIL_RELATED_TASK,
-                )
-                yield Button("Open related task", id=TASK_DETAIL_OPEN_RELATED)
-                yield Button("More relationships", id=TASK_DETAIL_MORE_RELATIONSHIPS)
+            with Vertical(id=TASK_DETAIL_RELATED_TOOLS):
+                with HorizontalScroll():
+                    yield Select(
+                        (),
+                        prompt="Related task",
+                        allow_blank=True,
+                        value=Select.BLANK,
+                        id=TASK_DETAIL_RELATED_TASK,
+                    )
+                    yield Button("Open related task", id=TASK_DETAIL_OPEN_RELATED)
+                yield Static("Page 1", id=TASK_DETAIL_RELATIONSHIP_PAGE)
+                with Horizontal():
+                    yield Button("Prev", id=TASK_DETAIL_PREVIOUS_RELATIONSHIPS)
+                    yield Button("More", id=TASK_DETAIL_MORE_RELATIONSHIPS)
             yield Static(
                 "",
                 id=TASK_DETAIL_RELATIONSHIPS,
@@ -202,6 +214,7 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_ATTENTION_BUTTON: self._navigate_home,
             TASK_DETAIL_RELATIONSHIPS_BUTTON: self._toggle_relationships,
             TASK_DETAIL_OPEN_RELATED: self._open_related_task,
+            TASK_DETAIL_PREVIOUS_RELATIONSHIPS: self._previous_relationship_page,
             TASK_DETAIL_MORE_RELATIONSHIPS: self._next_relationship_page,
         }
         handler = handlers.get(event.button.id or "")
@@ -365,15 +378,44 @@ class TaskDetailPanel(Vertical):
     async def _next_relationship_page(self) -> None:
         if self._relationship_next_offset is None:
             return
+        more = self.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
+        focused = more.has_focus
         self._relationship_offset = self._relationship_next_offset
         await self._refresh()
+        if focused and more.disabled:
+            self.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button).focus()
+
+    async def _previous_relationship_page(self) -> None:
+        if self._relationship_previous_offset is None:
+            return
+        previous = self.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
+        focused = previous.has_focus
+        self._relationship_offset = self._relationship_previous_offset
+        await self._refresh()
+        if focused and previous.disabled:
+            self.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).focus()
 
     def _render_relationships(self, view: TaskDetailView) -> None:
         related_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))
         previous_value = related_select.value
+        if isinstance(previous_value, str):
+            self._selected_related_reference = next(
+                (item for item in self._shown_related_references if item.task_id == previous_value),
+                self._selected_related_reference,
+            )
+        references = list(_related_references(view))
+        reference_ids = {item.task_id for item in references}
+        if (
+            isinstance(previous_value, str)
+            and previous_value not in reference_ids
+            and self._selected_related_reference is not None
+            and self._selected_related_reference.task_id == previous_value
+        ):
+            references.append(self._selected_related_reference)
+        self._shown_related_references = tuple(references)
         options = tuple(
             (f"{item.task_id} · {item.title} · {item.status}", item.task_id)
-            for item in _related_references(view)
+            for item in self._shown_related_references
         )
         related_select.set_options(options)
         valid_values = {value for _, value in options}
@@ -384,14 +426,30 @@ class TaskDetailPanel(Vertical):
         )
         self.query_one(f"#{TASK_DETAIL_OPEN_RELATED}", Button).disabled = not options
         relationships = view.relationships
+        self._relationship_previous_offset = (
+            max(relationships.page_offset - relationships.page_size, 0)
+            if relationships is not None and relationships.page_offset > 0
+            else None
+        )
         self._relationship_next_offset = (
             relationships.page_offset + relationships.page_size
             if relationships is not None and relationships.has_more
             else None
         )
+        self.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button).disabled = (
+            self._relationship_previous_offset is None
+        )
         self.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).disabled = (
             self._relationship_next_offset is None
         )
+        if relationships is None:
+            page_text = "Page unavailable."
+        else:
+            page = relationships.page_offset // relationships.page_size + 1
+            start = relationships.page_offset + 1
+            end = relationships.page_offset + relationships.page_size
+            page_text = f"Page {page} · {start} to {end}"
+        self.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static).update(page_text)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update(
             _relationships_text(view.task_id, view.status_reason, view.relationships)
         )
@@ -400,7 +458,7 @@ class TaskDetailPanel(Vertical):
     def _render_relationship_visibility(self) -> None:
         expanded = self._relationships_expanded
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).display = expanded
-        self.query_one(f"#{TASK_DETAIL_RELATED_TOOLS}", HorizontalScroll).display = expanded
+        self.query_one(f"#{TASK_DETAIL_RELATED_TOOLS}", Vertical).display = expanded
         toggle = self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS_BUTTON}", Button)
         toggle.label = (
             "Collapse family and relationships" if expanded else "Expand family and relationships"

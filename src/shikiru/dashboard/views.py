@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.motion import DashboardMotion
+    from shikiru.domain.events import Event
     from shikiru.domain.faults import FaultStreak
     from shikiru.domain.motion import TaskMotionFrame
     from shikiru.domain.runs import Run
@@ -111,6 +112,14 @@ _ACTIVITY_KINDS = (
 )
 _ACTIVE_TURN_STATUSES = (Status.RUNNING, Status.INTEGRATING)
 _RESET_AT_FIELD = "resets_at"
+_QUOTA_TURN_LIFECYCLE = (
+    EventKind.STEP_STARTED,
+    EventKind.TURN_STARTED,
+    EventKind.TURN_COMPLETED,
+    EventKind.TURN_FAILED,
+    EventKind.TURN_STOPPED,
+    EventKind.RUNG_CHANGED,
+)
 
 
 class DashboardSources(Protocol):
@@ -790,33 +799,13 @@ class StateDashboardViews:
         return lines, related
 
     def _running_quota_evidence(self, task: Task, now: datetime) -> tuple[str, ...] | None:
-        if task.status is not Status.RUNNING or task.step is None:
+        if task.status not in _ACTIVE_TURN_STATUSES or task.step is None:
             return None
         role = task_acting_role(task)
         agent = pick_rung(task, role, self._settings).agent
-        quota_events = self._state.latest_events(
-            1,
-            kinds=(EventKind.QUOTA_BLOCKED, EventKind.QUOTA_CLEARED),
-            task_id=task.id,
-        )
-        if (
-            not quota_events
-            or quota_events[0].kind is not EventKind.QUOTA_BLOCKED
-            or quota_events[0].data.get("agent") != agent
-        ):
+        failure = self._current_quota_failure(task, role, agent)
+        if failure is None:
             return None
-        failures = self._state.latest_events(
-            1,
-            kinds=(EventKind.TURN_FAILED,),
-            task_id=task.id,
-        )
-        if (
-            not failures
-            or failures[0].data.get("kind") != FailureKind.QUOTA.value
-            or failures[0].data.get("step") != task.step.value
-        ):
-            return None
-        failure = failures[0]
         block = self._state.agent_block(agent)
         if block is None or block.until <= now:
             return None
@@ -831,7 +820,7 @@ class StateDashboardViews:
         lines = [
             f"Current turn quota wait · {role.value} · {agent}",
             f"Provider-reported quota reset · {reset_text}",
-            f"Task quota-block event · {quota_events[0].ts.isoformat()}",
+            f"Task quota-block event · {failure.ts.isoformat()}",
             f"Engine retry/probe deadline · {block.reason} · {block.until.isoformat()}",
         ]
         windows = self._state.list_quotas((agent,)).get(agent, [])
@@ -847,6 +836,51 @@ class StateDashboardViews:
         else:
             lines.append(f"Provider quota observation · {agent} · unavailable")
         return tuple(lines)
+
+    def _current_quota_failure(self, task: Task, role: Role, agent: str) -> Event | None:
+        if task.step is None:
+            return None
+        lifecycle = self._state.latest_events(
+            1,
+            kinds=_QUOTA_TURN_LIFECYCLE,
+            task_id=task.id,
+        )
+        if (
+            not lifecycle
+            or lifecycle[0].kind is not EventKind.TURN_FAILED
+            or lifecycle[0].data.get("kind") != FailureKind.QUOTA.value
+            or lifecycle[0].data.get("step") != task.step.value
+        ):
+            return None
+        failure = lifecycle[0]
+        starts = self._state.latest_events(
+            1,
+            kinds=(EventKind.TURN_STARTED,),
+            task_id=task.id,
+        )
+        if not starts or starts[0].id >= failure.id:
+            return None
+        started = starts[0]
+        if (
+            started.data.get("step") != task.step.value
+            or started.data.get("iteration") != task.iteration
+            or started.data.get("role") != role.value
+            or started.data.get("agent") != agent
+        ):
+            return None
+        quota_events = self._state.latest_events(
+            1,
+            kinds=(EventKind.QUOTA_BLOCKED, EventKind.QUOTA_CLEARED),
+            task_id=task.id,
+        )
+        if (
+            not quota_events
+            or quota_events[0].kind is not EventKind.QUOTA_BLOCKED
+            or quota_events[0].id <= failure.id
+            or quota_events[0].data.get("agent") != agent
+        ):
+            return None
+        return failure
 
     def _slot_evidence(self) -> tuple[list[str], tuple[TaskReferenceView, ...]]:
         occupied = [

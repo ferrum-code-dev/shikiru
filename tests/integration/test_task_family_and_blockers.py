@@ -15,7 +15,9 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_MORE_RELATIONSHIPS,
     TASK_DETAIL_OPEN_RELATED,
+    TASK_DETAIL_PREVIOUS_RELATIONSHIPS,
     TASK_DETAIL_RELATED_TASK,
+    TASK_DETAIL_RELATIONSHIP_PAGE,
     TASK_DETAIL_RELATIONSHIPS,
     TASK_DETAIL_RELATIONSHIPS_BUTTON,
     TaskDetailPanel,
@@ -25,6 +27,7 @@ from shikiru.domain.reports import NewTask, Verdict
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step, next_step
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason, TaskOrigin
+from shikiru.engine.events import emit_turn_started
 from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
@@ -85,6 +88,44 @@ def _start_task(connection: Connection, clock: FakeClock, task_id: str) -> None:
     store = TaskStore(connection, clock)
     store.set_slot(task_id, 0)
     store.apply_transition(task_id, first_step(task))
+
+
+def _record_turn_start(
+    connection: Connection,
+    clock: FakeClock,
+    task: Task,
+    role: Role,
+    rung: Rung,
+) -> None:
+    assert task.step is not None
+    emit_turn_started(EventLog(connection, clock), task, task.step, role, rung)
+
+
+def _record_quota_wait(
+    connection: Connection,
+    clock: FakeClock,
+    task: Task,
+    *,
+    role: Role,
+    rung: Rung,
+    until: datetime,
+) -> None:
+    _record_turn_start(connection, clock, task, role, rung)
+    assert task.step is not None
+    events = EventLog(connection, clock)
+    events.append(
+        EventKind.TURN_FAILED,
+        task_id=task.id,
+        message="quota",
+        data={"kind": "quota", "step": task.step.value, "resets_at": None},
+    )
+    events.append(
+        EventKind.QUOTA_BLOCKED,
+        task_id=task.id,
+        message="quota wait",
+        data={"agent": rung.agent, "until": until.isoformat()},
+    )
+    QuotaStore(connection).block(rung.agent, until, "quota")
 
 
 def _nested_plan_family(
@@ -267,14 +308,36 @@ async def _exercise_paged_relationship_navigation(
         await pilot.pause()
         await _open_browser_task(app, pilot, tasks.superseded.title, tasks.superseded.id)
         await pilot.click(f"#{TASK_DETAIL_RELATIONSHIPS_BUTTON}")
-        await pilot.click(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}")
+        more_button = app.screen.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
+        assert not more_button.disabled
+        assert await pilot.click(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}")
+        await pilot.pause()
+        assert "Page 2" in _static_text(
+            app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static)
+        )
+        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        assert app.focused is panel.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
+        assert tasks.superseded.id in _static_text(
+            panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        )
         await wait_until(
             lambda: (
-                tasks.replacements[-1].id
-                in _static_text(app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static))
+                "Page 2"
+                in _static_text(app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static))
             ),
             timeout=5.0,
         )
+        assert tasks.replacements[-1].id in _static_text(
+            app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static)
+        )
+        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        assert "Page 2" in _static_text(
+            panel.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static)
+        )
+        previous = panel.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
+        more = panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
+        assert not previous.disabled
+        assert more.disabled
         await _open_related_task(app, pilot, tasks.replacements[-1].id)
         await pilot.press("escape")
         await wait_until(
@@ -284,6 +347,27 @@ async def _exercise_paged_relationship_navigation(
             ),
             timeout=5.0,
         )
+        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        related_select = cast(
+            "Select[str]",
+            panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select),
+        )
+        assert related_select.value == tasks.replacements[-1].id
+        await pilot.click(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}")
+        await wait_until(
+            lambda: (
+                "Page 1"
+                in _static_text(panel.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static))
+            ),
+            timeout=5.0,
+        )
+        page_text = _static_text(panel.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static))
+        assert tasks.dependencies[0].id in page_text
+        assert tasks.dependencies[-1].id not in page_text
+        assert related_select.value == tasks.replacements[-1].id
+        assert panel.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button).disabled
+        assert not panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).disabled
+        assert app.focused is panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
         await pilot.press("escape")
         await pilot.pause()
         await _open_browser_task(app, pilot, tasks.blocked.title, tasks.blocked.id)
@@ -728,19 +812,14 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
     owner = seed_task(connection, clock, title="Leader quota wait", mode=Mode.PLAN)
     store.apply_transition(owner.id, Transition.stay(owner, step=Step.PLAN))
     owner = store.require(owner.id)
-    EventLog(connection, clock).append(
-        EventKind.TURN_FAILED,
-        task_id=owner.id,
-        message="quota",
-        data={"kind": "quota", "step": Step.PLAN.value, "resets_at": None},
+    _record_quota_wait(
+        connection,
+        clock,
+        owner,
+        role=Role.LEADER,
+        rung=other_rung,
+        until=clock.now() + timedelta(minutes=5),
     )
-    EventLog(connection, clock).append(
-        EventKind.QUOTA_BLOCKED,
-        task_id=owner.id,
-        message="leader agent blocked",
-        data={"agent": other_agent, "until": (clock.now() + timedelta(minutes=5)).isoformat()},
-    )
-    QuotaStore(connection).block(other_agent, clock.now() + timedelta(minutes=5), "quota")
 
     unrelated = seed_task(
         connection, clock, title="Unrelated implementer work", mode=Mode.IMPLEMENT
@@ -750,40 +829,26 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
         connection, clock, title="Previous role quota block", mode=Mode.IMPLEMENT
     )
     store.apply_transition(other_role.id, Transition.stay(other_role, step=Step.TRIAGE))
-    EventLog(connection, clock).append(
-        EventKind.TURN_FAILED,
-        task_id=other_role.id,
-        message="leader quota",
-        data={"kind": "quota", "step": Step.TRIAGE.value, "resets_at": None},
-    )
-    EventLog(connection, clock).append(
-        EventKind.QUOTA_BLOCKED,
-        task_id=other_role.id,
-        message="previous leader role blocked",
-        data={"agent": other_agent, "until": (clock.now() + timedelta(minutes=5)).isoformat()},
+    other_role = store.require(other_role.id)
+    _record_quota_wait(
+        connection,
+        clock,
+        other_role,
+        role=Role.LEADER,
+        rung=other_rung,
+        until=clock.now() + timedelta(minutes=5),
     )
     store.apply_transition(other_role.id, Transition.stay(other_role, step=Step.IMPLEMENT))
     expired = seed_task(connection, clock, title="Expired quota wait", mode=Mode.IMPLEMENT)
     store.apply_transition(expired.id, Transition.stay(expired, step=Step.IMPLEMENT))
-    EventLog(connection, clock).append(
-        EventKind.TURN_FAILED,
-        task_id=expired.id,
-        message="quota",
-        data={"kind": "quota", "step": Step.IMPLEMENT.value, "resets_at": None},
-    )
-    EventLog(connection, clock).append(
-        EventKind.QUOTA_BLOCKED,
-        task_id=expired.id,
-        message="expired implementer block",
-        data={
-            "agent": implementer_rung.agent,
-            "until": (clock.now() - timedelta(seconds=1)).isoformat(),
-        },
-    )
-    QuotaStore(connection).block(
-        implementer_rung.agent,
-        clock.now() - timedelta(seconds=1),
-        "quota",
+    expired = store.require(expired.id)
+    _record_quota_wait(
+        connection,
+        clock,
+        expired,
+        role=Role.IMPLEMENTER,
+        rung=implementer_rung,
+        until=clock.now() - timedelta(seconds=1),
     )
     views = state_views(reader, project_dir, clock, StubServices(), settings=settings)
     expired_detail = await views.task_detail(expired.id)
@@ -791,25 +856,14 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
         connection, clock, title="Changed rung quota wait", mode=Mode.IMPLEMENT
     )
     store.apply_transition(changed_rung.id, Transition.stay(changed_rung, step=Step.IMPLEMENT))
-    EventLog(connection, clock).append(
-        EventKind.TURN_FAILED,
-        task_id=changed_rung.id,
-        message="quota",
-        data={"kind": "quota", "step": Step.IMPLEMENT.value, "resets_at": None},
-    )
-    EventLog(connection, clock).append(
-        EventKind.QUOTA_BLOCKED,
-        task_id=changed_rung.id,
-        message="previous implementer rung blocked",
-        data={
-            "agent": implementer_rung.agent,
-            "until": (clock.now() + timedelta(minutes=5)).isoformat(),
-        },
-    )
-    QuotaStore(connection).block(
-        implementer_rung.agent,
-        clock.now() + timedelta(minutes=5),
-        "quota",
+    changed_rung = store.require(changed_rung.id)
+    _record_quota_wait(
+        connection,
+        clock,
+        changed_rung,
+        role=Role.IMPLEMENTER,
+        rung=implementer_rung,
+        until=clock.now() + timedelta(minutes=5),
     )
     changed = store.require(changed_rung.id)
     store.apply_transition(

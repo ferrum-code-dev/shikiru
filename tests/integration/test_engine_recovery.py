@@ -9,13 +9,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from fake_agent.scripted import FAKE_CHANGE_FILENAME
 
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.domain.commands import SetRung
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step
+from shikiru.domain.steps import Step
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
+from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
@@ -31,16 +34,19 @@ from tests.support.flow import (
     flow_settings,
     init_project_repo,
 )
+from tests.support.git_repo import commit_all
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
+    from shikiru.dashboard.views import StateDashboardViews
     from shikiru.store.database import Database
     from tests.support.engine import EngineEnv
     from tests.support.tmux import TmuxServer
 
 _FLOW_TIMEOUT_SECONDS = 60
+_RUNNER = SubprocessRunner()
 
 
 async def _drive(flow_task: asyncio.Task[None], clock: FakeClock) -> None:
@@ -49,6 +55,29 @@ async def _drive(flow_task: asyncio.Task[None], clock: FakeClock) -> None:
 
     await wait_until_advancing(clock, done, _FLOW_TIMEOUT_SECONDS)
     await flow_task
+
+
+async def _assert_task_is_not_quota_waiting(
+    views: StateDashboardViews,
+    task_id: str,
+    *,
+    running_count: int,
+    waiting_count: int,
+) -> None:
+    detail = await views.task_detail(task_id)
+    summary = views.workspace_summary()
+    waiting = views.task_browser(
+        task_filter=TaskBrowserFilter.WAITING,
+        search=task_id,
+        offset=0,
+        limit=1,
+        selected_task_id=task_id,
+    )
+    assert detail is not None
+    assert detail.blocker is None
+    assert summary.running == running_count
+    assert summary.waiting == waiting_count
+    assert waiting.matching_count == 0
 
 
 def _rung_settings(rung: Rung) -> Settings:
@@ -135,15 +164,21 @@ async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
     engine_env: EngineEnv,
     tmux_server: TmuxServer,
     database: Database,
+    tmp_path: Path,
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     settings = flow_settings()
+    release = tmp_path / "release-continued-turn"
+    os.mkfifo(release)
     flow_task, task_id = await _start_flow(
         engine_env,
         tmux_server,
         settings=settings,
         clock=clock,
-        script=[{"kind": "fail", "failure_kind": "quota"}, {"kind": "accept"}],
+        script=[
+            {"kind": "fail", "failure_kind": "quota"},
+            {"kind": "accept", "release_fifo": str(release)},
+        ],
     )
     quota = QuotaStore(engine_env.connection)
     await wait_until(
@@ -152,6 +187,7 @@ async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
     )
     reader = StateReader(database, clock)
     try:
+        flow_env = build_flow(engine_env, settings, clock=clock)
         views = state_views(
             reader,
             engine_env.project_root,
@@ -183,6 +219,105 @@ async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
         assert summary.running == 0
         assert summary.waiting == 2
         assert task_id in {row.task_id for row in waiting.rows}
+
+        async def continued_turn_started() -> bool:
+            started = flow_env.events.since(
+                0,
+                kinds=[EventKind.TURN_STARTED],
+                task_id=task_id,
+            )
+            return len(started) > 1
+
+        await wait_until_advancing(clock, continued_turn_started, _FLOW_TIMEOUT_SECONDS)
+        await _assert_task_is_not_quota_waiting(
+            views,
+            task_id,
+            running_count=1,
+            waiting_count=1,
+        )
+
+        await asyncio.to_thread(release.write_text, "continue")
+        await _drive(flow_task, clock)
+        current = engine_env.tasks.require(task_id)
+        await _assert_task_is_not_quota_waiting(
+            views,
+            task_id,
+            running_count=int(current.status in (Status.RUNNING, Status.INTEGRATING)),
+            waiting_count=1,
+        )
+    finally:
+        reader.close()
+        if not flow_task.done():
+            flow_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await flow_task
+
+
+async def test_quota_wait_during_integration_conflict_is_reported(
+    engine_env: EngineEnv,
+    tmux_server: TmuxServer,
+    database: Database,
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    (engine_env.project_root / FAKE_CHANGE_FILENAME).write_text("main change\n")
+    await commit_all(_RUNNER, engine_env.project_root, "main change")
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [
+            {"kind": "accept"},
+            {"kind": "fail", "failure_kind": "quota"},
+            {"kind": "accept"},
+        ],
+    )
+    await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
+    flow_env = build_flow(engine_env, settings, clock=clock, local_integration=True)
+    flow_task = asyncio.create_task(flow_env.flow.run(task.id))
+    quota = QuotaStore(engine_env.connection)
+
+    def integration_quota_wait() -> bool:
+        started = flow_env.events.since(
+            0,
+            kinds=[EventKind.TURN_STARTED],
+            task_id=task.id,
+        )
+        return (
+            any(event.data.get("step") == Step.INTEGRATE.value for event in started)
+            and quota.block_for(FAKE_RUNG.agent) is not None
+            and clock.has_pending_sleep()
+        )
+
+    await wait_until(integration_quota_wait, timeout=20)
+    reader = StateReader(database, clock)
+    try:
+        views = state_views(
+            reader,
+            engine_env.project_root,
+            clock,
+            StubServices(),
+            settings=settings,
+        )
+        detail = await views.task_detail(task.id)
+        summary = views.workspace_summary()
+        waiting = views.task_browser(
+            task_filter=TaskBrowserFilter.WAITING,
+            search=task.id,
+            offset=0,
+            limit=1,
+            selected_task_id=task.id,
+        )
+
+        assert engine_env.tasks.require(task.id).status is Status.INTEGRATING
+        assert engine_env.tasks.require(task.id).step is Step.INTEGRATE
+        assert detail is not None
+        assert detail.blocker is not None
+        assert "Current turn quota wait · implementer" in "\n".join(detail.blocker.lines)
+        assert summary.running == 0
+        assert summary.waiting == 1
+        assert [row.task_id for row in waiting.rows] == [task.id]
         await _drive(flow_task, clock)
     finally:
         reader.close()
