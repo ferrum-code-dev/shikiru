@@ -209,10 +209,15 @@ class CommandFeedbackEntryView:
 
 @dataclass(frozen=True)
 class CommandHistoryView:
-    """A bounded command history with current engine liveness for pending rows."""
+    """A bounded command-history page with current engine liveness for pending rows."""
 
     engine_up: bool
     entries: tuple[CommandFeedbackEntryView, ...]
+    offset: int
+    limit: int
+    total_count: int
+    has_more: bool
+    status: CommandFeedbackStatus | None
 
 
 @dataclass(frozen=True)
@@ -390,8 +395,15 @@ class DashboardViews(Protocol):
         """Return the compact global decision and engine-fault counts."""
         ...
 
-    def command_history(self, *, expanded: bool = False) -> CommandHistoryView:
-        """Return bounded recent or expanded project command history."""
+    def command_history(
+        self,
+        *,
+        expanded: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+        status: CommandFeedbackStatus | None = None,
+    ) -> CommandHistoryView:
+        """Return a bounded recent or paginated project command history."""
         ...
 
     async def resources(self) -> ResourceView:

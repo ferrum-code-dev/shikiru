@@ -123,7 +123,7 @@ class OperatorCommands:
         implementer: Rung | None = None,
     ) -> Ack:
         """Queue a `Submit` command, allocating its task id atomically in the store."""
-        task_title = title if title is not None else _title_from_request(request)
+        task_title = title if title is not None else title_from_request(request)
         return await self.send(
             Submit(
                 title=task_title,
@@ -182,7 +182,8 @@ class OperatorCommands:
         return await self.send(Stop())
 
 
-def _title_from_request(request: str) -> str:
+def title_from_request(request: str) -> str:
+    """Return the default task title used when a request has no explicit title."""
     first_line = request.splitlines()[0] if request.splitlines() else request
     return first_line[:TASK_TITLE_MAX_LENGTH]
 

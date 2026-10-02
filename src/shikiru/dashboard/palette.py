@@ -17,15 +17,33 @@ from shikiru.dashboard.contract import PaletteRequest
 from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
+    Cancel,
     CancelResolution,
+    Command,
     CommandKind,
     CommandStatus,
+    HandBack,
+    Pause,
+    Prioritize,
     ResolutionKind,
+    Resolve,
+    Resume,
+    Retry,
     RetryResolution,
+    Say,
+    SetRung,
+    Stop,
+    Submit,
+    TakeOver,
 )
 from shikiru.domain.tasks import Mode, Role
 from shikiru.errors import ShikiruError
-from shikiru.operator.commands import ACK_TIMEOUT_MESSAGE, QUEUED_MESSAGE, AckStatus
+from shikiru.operator.commands import (
+    ACK_TIMEOUT_MESSAGE,
+    QUEUED_MESSAGE,
+    AckStatus,
+    title_from_request,
+)
 from shikiru.operator.queries import OperatorTaskAction
 from shikiru.ui.theme import install_theme
 
@@ -34,6 +52,7 @@ if TYPE_CHECKING:
     from textual.worker import Worker
 
     from shikiru.agents.contracts import Rung
+    from shikiru.dashboard.contract import OnChangeRegistration
     from shikiru.operator.commands import Ack, OperatorCommands
     from shikiru.operator.queries import (
         CommandHistoryEntry,
@@ -135,6 +154,7 @@ _ADVANCED_FIELDS_ID = "palette-advanced-fields"
 _SELECT_REQUIRED = "Select an item"
 _TASK_SEARCH_PAGE_LIMIT = 50
 _TAKEOVER_SELECTION_FAILURE = "take-over succeeded, but the role pane could not be selected"
+_PALETTE_STATE_WORKER = "palette-state-updates"
 _FORM_IDENTITY_FIELDS = {
     _ACTION_SUBMIT: (
         _FIELD_REQUEST,
@@ -246,6 +266,7 @@ class PaletteScreen(ModalScreen[None]):
         queries: OperatorQueries,
         pane_selector: PaneSelector,
         *,
+        on_change: OnChangeRegistration,
         initial_action: str = _EMPTY,
         initial_context: PaletteRequest | None = None,
     ) -> None:
@@ -256,6 +277,7 @@ class PaletteScreen(ModalScreen[None]):
         self._initial_context = initial_context or PaletteRequest()
         self._initial_action = self._initial_context.action or initial_action
         self._pane_selector = pane_selector
+        self._on_change = on_change
         self._role_is_explicit = self._initial_context.role is not None
         self._task_search_tasks: tuple[TaskSummary, ...] = ()
         self._task_search_count = 0
@@ -271,11 +293,12 @@ class PaletteScreen(ModalScreen[None]):
         self._route_action: str | None = None
         self._advanced_expanded = False
         self._action_in_flight = False
-        self._pending_command_id: int | None = None
-        self._pending_form_identity: tuple[str, ...] | None = None
+        self._pending_form_commands: dict[tuple[str, ...], int] = {}
+        self._submitting_form_identity: tuple[str, ...] | None = None
         self._command_action = _EMPTY
         self._command_target = _EMPTY
         self._action_worker: Worker[None] | None = None
+        self._change_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
         """Show one compact form with fields enabled for the selected action."""
@@ -380,6 +403,10 @@ class PaletteScreen(ModalScreen[None]):
         self._route_action = self._selected_value(_FIELD_ACTION)
         self._update_fields(action_select.value)
         self._refresh_action_availability()
+        self._change_worker = self.run_worker(
+            self._on_change(self._refresh_after_database_change),
+            group=_PALETTE_STATE_WORKER,
+        )
         if self._route_error is not None:
             self.query_one("#palette-result", Static).update(self._route_error)
             self.call_after_refresh(self._reveal_result)
@@ -458,6 +485,8 @@ class PaletteScreen(ModalScreen[None]):
         worker = self._action_worker
         if worker is not None and worker.is_running:
             worker.cancel()
+        if self._change_worker is not None:
+            self._change_worker.cancel()
 
     async def action_close(self) -> None:
         """Dismiss the shared screen or exit its standalone popup app."""
@@ -469,47 +498,38 @@ class PaletteScreen(ModalScreen[None]):
 
     async def _run_action(self) -> None:
         try:
-            action = self._value(_FIELD_ACTION)
-            task_id = self._input(_FIELD_TASK_ID).strip()
-            role = (
-                self._role()
-                if action
-                in {
-                    _ACTION_TAKE_OVER,
-                    _ACTION_HAND_BACK,
-                    _ACTION_RUNG,
-                    _ACTION_MESSAGE,
-                    _ACTION_PEEK,
-                }
-                else None
-            )
-            self._command_action = action
-            self._command_target = self._target_for_action(action, task_id, role)
-            form_identity = self._form_identity()
-            if action != _ACTION_PEEK:
-                self._show_result(f"Sending · {self._command_target}")
-            ack = await self._dispatch()
+            await self._run_submission()
         except (ShikiruError, ValueError) as error:
             if self._is_current_screen():
                 self._show_result(str(error))
-        else:
-            if ack is not None:
-                if ack.status is AckStatus.QUEUED:
-                    self._pending_command_id = ack.id
-                    self._pending_form_identity = form_identity
-                if self._is_current_screen():
-                    self._show_ack(ack)
-                if (
-                    action == _ACTION_TAKE_OVER
-                    and ack.status is AckStatus.DONE
-                    and role is not None
-                ):
-                    await self._select_role_pane(ack, task_id, role)
         finally:
             self._action_in_flight = False
+            self._submitting_form_identity = None
             self._action_worker = None
             if self._is_current_screen():
                 self._refresh_action_availability()
+
+    async def _run_submission(self) -> None:
+        action = self._value(_FIELD_ACTION)
+        task_id = self._input(_FIELD_TASK_ID).strip()
+        role = self._role() if action in _FORM_ROLE_ACTIONS | {_ACTION_PEEK} else None
+        self._command_action = action
+        self._command_target = self._target_for_action(action, task_id, role)
+        form_identity = self._form_identity()
+        if action != _ACTION_PEEK and self._observe_pending_form(form_identity):
+            return
+        self._submitting_form_identity = form_identity
+        if action != _ACTION_PEEK:
+            self._show_result(f"Sending · {self._command_target}")
+        ack = await self._dispatch()
+        if ack is None:
+            return
+        if ack.status is AckStatus.QUEUED:
+            self._pending_form_commands[form_identity] = ack.id
+        if self._is_current_screen():
+            self._show_ack(ack)
+        if action == _ACTION_TAKE_OVER and ack.status is AckStatus.DONE and role is not None:
+            await self._select_role_pane(ack, task_id, role)
 
     async def _dispatch(self) -> Ack | None:
         action = self._value(_FIELD_ACTION)
@@ -576,7 +596,10 @@ class PaletteScreen(ModalScreen[None]):
             raise ValueError(state.disabled_reason)
 
     def _refresh_action_availability(self) -> None:
-        self._refresh_pending_command()
+        self._refresh_pending_commands()
+        form_identity = self._form_identity()
+        if form_identity != self._submitting_form_identity:
+            self._observe_pending_form(form_identity)
         task_id = self._input(_FIELD_TASK_ID).strip()
         self._action_states = (
             {
@@ -593,7 +616,7 @@ class PaletteScreen(ModalScreen[None]):
         state.update(f"Unavailable: {disabled_reason}" if disabled_reason is not None else _EMPTY)
         guidance = _ACTION_GUIDANCE.get(action or "", _EMPTY)
         self.query_one(f"#{_GUIDANCE_ID}", Static).update(guidance)
-        pending_same_form = self._pending_form_identity == self._form_identity()
+        pending_same_form = form_identity in self._pending_form_commands
         self.query_one(f"#{_SUBMIT_ID}", Button).disabled = (
             self._route_error is not None
             or disabled_reason is not None
@@ -601,18 +624,101 @@ class PaletteScreen(ModalScreen[None]):
             or pending_same_form
         )
 
-    def _refresh_pending_command(self) -> None:
-        command_id = self._pending_command_id
-        if command_id is None:
-            return
-        outcome = self._queries.command_status(command_id)
+    async def _refresh_after_database_change(self) -> None:
+        if self._is_current_screen():
+            self._refresh_action_availability()
+
+    def _refresh_pending_commands(self) -> None:
+        completed: set[int] = set()
+        for command_id in set(self._pending_form_commands.values()):
+            outcome = self._queries.command_status(command_id)
+            if outcome is None:
+                message = f"pending command {command_id} is missing from durable history"
+                raise RuntimeError(message)
+            if outcome.status is not CommandStatus.PENDING:
+                completed.add(command_id)
+                self._show_stored_command(outcome)
+        for identity, command_id in tuple(self._pending_form_commands.items()):
+            if command_id in completed:
+                del self._pending_form_commands[identity]
+
+    def _observe_pending_form(self, identity: tuple[str, ...]) -> bool:
+        if identity in self._pending_form_commands:
+            return True
+        command = self._command_for_current_form()
+        if command is None:
+            return False
+        outcome = self._queries.pending_command(command)
         if outcome is None:
-            message = f"pending command {command_id} is missing from durable history"
-            raise RuntimeError(message)
-        if outcome.status is not CommandStatus.PENDING:
-            self._pending_command_id = None
-            self._pending_form_identity = None
-            self._show_stored_command(outcome)
+            return False
+        self._pending_form_commands[identity] = outcome.id
+        self._show_stored_command(outcome)
+        return True
+
+    def _command_for_current_form(self) -> Command | None:
+        task_id = self._input(_FIELD_TASK_ID).strip()
+        action = self._selected_value(_FIELD_ACTION)
+        builders: dict[str, Callable[[], Command]] = {
+            _ACTION_SUBMIT: self._submit_command,
+            _ACTION_PRIORITIZE: lambda: Prioritize(
+                task_id=task_id, priority=self._integer(_FIELD_PRIORITY)
+            ),
+            _ACTION_PAUSE: lambda: Pause(task_id=task_id),
+            _ACTION_PAUSE_NOW: lambda: Pause(task_id=task_id, now=True),
+            _ACTION_RESUME: lambda: Resume(task_id=task_id),
+            _ACTION_TAKE_OVER: lambda: TakeOver(task_id=task_id, role=self._role()),
+            _ACTION_HAND_BACK: lambda: HandBack(task_id=task_id, role=self._role()),
+            _ACTION_CANCEL: lambda: Cancel(task_id=task_id),
+            _ACTION_RETRY: lambda: Retry(task_id=task_id),
+            _ACTION_RUNG: lambda: SetRung(
+                task_id=task_id,
+                role=self._role(),
+                rung=parse_rung(self._input(_FIELD_RUNG)),
+            ),
+            _ACTION_MESSAGE: lambda: Say(
+                task_id=task_id,
+                role=self._role(),
+                text=self._text(_FIELD_MESSAGE),
+            ),
+            _ACTION_RESOLVE: self._resolve_command,
+            _ACTION_STOP: Stop,
+        }
+        builder = builders.get(action or _EMPTY)
+        if builder is None:
+            return None
+        try:
+            return builder()
+        except ShikiruError, ValueError:
+            return None
+
+    def _submit_command(self) -> Submit:
+        request = self._text(_FIELD_REQUEST)
+        return Submit(
+            title=self._optional_input(_FIELD_TITLE) or title_from_request(request),
+            request=request,
+            mode=self._mode(),
+            complexity=self._complexity(),
+            priority=self._integer(_FIELD_SUBMISSION_PRIORITY),
+            depends_on=list(self._dependencies()),
+            leader=self._optional_rung(_FIELD_LEADER_RUNG),
+            implementer=self._optional_rung(_FIELD_IMPLEMENTER_RUNG),
+        )
+
+    def _resolve_command(self) -> Resolve:
+        escalation_id = self._selected_value(_FIELD_ESCALATION)
+        resolution_value = self._selected_value(_FIELD_RESOLUTION)
+        if escalation_id is None or resolution_value is None:
+            raise ValueError(_SELECT_REQUIRED)
+        kind = ResolutionKind(resolution_value)
+        if kind is ResolutionKind.ANSWER:
+            resolution = AnswerResolution(text=self._text(_FIELD_RESOLUTION_TEXT))
+        elif kind is ResolutionKind.RETRY:
+            resolution = RetryResolution(rung=self._optional_rung(_FIELD_RESOLUTION_RUNG))
+        elif kind is ResolutionKind.ACCEPT:
+            resolution = AcceptResolution()
+        else:
+            resolution = CancelResolution()
+        return Resolve(escalation_id=escalation_id, resolution=resolution)
 
     def _form_identity(self) -> tuple[str, ...]:
         action = self._selected_value(_FIELD_ACTION) or _EMPTY
@@ -900,7 +1006,11 @@ class PaletteScreen(ModalScreen[None]):
             details = self._returned_result_value(entry.result) or "engine rejected the command"
         else:
             label = "Pending"
-            details = "command remains pending"
+            engine_state = "running" if self._queries.command_history().engine_up else "stopped"
+            details = (
+                f"command remains pending; engine currently {engine_state}; "
+                "original acknowledgement wait context unknown"
+            )
         self._show_result(f"{label} · command {entry.id} · {entry.target}\n{details}")
 
     def _applied_result(self, ack: Ack) -> str:
@@ -1020,6 +1130,7 @@ class PaletteApp(App[None]):
         queries: OperatorQueries,
         pane_selector: PaneSelector,
         *,
+        on_change: OnChangeRegistration,
         initial_context: PaletteRequest | None = None,
     ) -> None:
         """Retain the services used by the palette screen."""
@@ -1028,6 +1139,7 @@ class PaletteApp(App[None]):
         self._commands = commands
         self._queries = queries
         self._pane_selector = pane_selector
+        self._on_change = on_change
         self._initial_context = initial_context
 
     def compose(self) -> ComposeResult:
@@ -1041,6 +1153,7 @@ class PaletteApp(App[None]):
                 self._commands,
                 self._queries,
                 self._pane_selector,
+                on_change=self._on_change,
                 initial_context=self._initial_context,
             )
         )

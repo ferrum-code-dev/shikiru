@@ -589,9 +589,21 @@ class StateDashboardViews:
             faults=len(self._queries.open_faults()),
         )
 
-    def command_history(self, *, expanded: bool = False) -> CommandHistoryView:
-        """Project a bounded durable command history and current engine liveness."""
-        history = self._queries.command_history(expanded=expanded)
+    def command_history(
+        self,
+        *,
+        expanded: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+        status: CommandFeedbackStatus | None = None,
+    ) -> CommandHistoryView:
+        """Project a bounded durable command-history page and engine liveness."""
+        history = self._queries.command_history(
+            expanded=expanded,
+            limit=limit,
+            offset=offset,
+            status=_stored_command_status(status),
+        )
         return CommandHistoryView(
             engine_up=history.engine_up,
             entries=tuple(
@@ -608,6 +620,11 @@ class StateDashboardViews:
                 )
                 for entry in history.entries
             ),
+            offset=history.offset,
+            limit=history.limit,
+            total_count=history.total_count,
+            has_more=history.has_more,
+            status=status,
         )
 
     async def resources(self) -> ResourceView:
@@ -830,3 +847,15 @@ def _command_feedback_status(status: CommandStatus) -> CommandFeedbackStatus:
     if status is CommandStatus.DONE:
         return CommandFeedbackStatus.APPLIED
     return CommandFeedbackStatus.REJECTED
+
+
+def _stored_command_status(
+    status: CommandFeedbackStatus | None,
+) -> CommandStatus | None:
+    if status is None:
+        return None
+    if status is CommandFeedbackStatus.PENDING:
+        return CommandStatus.PENDING
+    if status is CommandFeedbackStatus.APPLIED:
+        return CommandStatus.DONE
+    return CommandStatus.REJECTED

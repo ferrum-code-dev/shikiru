@@ -211,6 +211,7 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
                 commands,
                 queries,
                 _unexpected_pane_selection,
+                on_change=reader.watch,
                 initial_context=PaletteRequest(action="stop"),
             )
         )
@@ -290,9 +291,8 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
             status = restarted_app.query_one("#workspace-command-status", Static)
             await wait_until(
                 lambda: (
-                    f"#{pending.id} · Pending" in _rendered_text(status)
-                    and f"#{rejected.id} · Rejected" in _rendered_text(status)
-                    and rejection["error"] in _rendered_text(status)
+                    f"#{rejected.id}" in _rendered_text(status)
+                    and "Rejected" in _rendered_text(status)
                 ),
                 timeout=2,
             )
@@ -311,6 +311,107 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
             assert f"#{rejected.id} · Rejected" in history_text
             assert "T-404" in history_text
             assert rejection["error"] in history_text
+    finally:
+        reader.close()
+
+
+async def test_command_history_pages_recover_and_refresh_an_older_pending_command(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+    queue = CommandQueue(connection, clock)
+    pending = queue.append(Stop())
+    for index in range(51):
+        applied = queue.append(Stop())
+        queue.mark_done(applied.id, {"effect": index})
+
+    try:
+        app = _app(reader, project_dir, widget_names=[])
+        async with app.run_test(size=(100, 34)) as pilot:
+            home_screen = app.screen
+            await pilot.click("#workspace-command-history")
+            history_screen = app.screen
+            history_copy = history_screen.query_one("#command-history-copy", Static)
+            history_scroll = history_screen.query_one("#command-history-scroll", VerticalScroll)
+            page = cast("Static", history_screen.query_one("#command-history-page"))
+            await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
+            assert f"#{pending.id} · Pending" not in _rendered_text(history_copy)
+            assert history_scroll.max_scroll_y > 0
+
+            await pilot.click("#command-history-next")
+            await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
+            next_button = history_screen.query_one("#command-history-next", Button)
+            assert not next_button.disabled, _rendered_text(page)
+            await pilot.press("right")
+            await wait_until(lambda: "page 3" in _rendered_text(page), timeout=2)
+            assert f"#{pending.id} · Pending" in _rendered_text(history_copy), (
+                _rendered_text(page),
+                _rendered_text(history_copy),
+            )
+            page_text = _rendered_text(page)
+            assert "page 3" in page_text
+            assert "rows 41-52 of 52" in page_text
+            history_scroll.scroll_to(y=history_scroll.max_scroll_y, animate=False)
+            await pilot.pause()
+            scroll_before_refresh = history_scroll.scroll_y
+            focus_before_refresh = app.focused
+
+            engine = database.connect()
+            try:
+                CommandQueue(engine, clock).mark_done(pending.id, {"effect": "applied once"})
+            finally:
+                engine.close()
+            await wait_until(
+                lambda: (
+                    f"#{pending.id} · Applied" in _rendered_text(history_copy)
+                    and "applied once" in _rendered_text(history_copy)
+                ),
+                timeout=2,
+            )
+            await pilot.pause()
+            assert app.focused is focus_before_refresh
+            assert history_scroll.scroll_y == scroll_before_refresh
+            assert app.screen is not home_screen
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("width", [36, 48])
+async def test_narrow_dashboard_keeps_command_controls_reachable(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    width: int,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+    queue = CommandQueue(connection, clock)
+    for _ in range(3):
+        queue.append(Stop())
+
+    try:
+        app = _app(reader, project_dir, widget_names=[])
+        async with app.run_test(size=(width, 20)) as pilot:
+            await pilot.pause()
+            status = app.query_one("#workspace-command-status", Static)
+            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
+            commands_button = app.query_one("#workspace-command-history", Button)
+            assert status.size.height == 1
+            assert dashboard.size.height >= 8
+            commands_button.focus()
+            await pilot.pause()
+            assert commands_button.region.bottom <= app.size.height
+            assert commands_button.region.x < app.size.width
+            home_screen = app.screen
+            await pilot.press("enter")
+            await wait_until(lambda: app.screen is not home_screen, timeout=2)
+            page = cast("Static", app.screen.query_one("#command-history-page"))
+            assert "all statuses" in _rendered_text(page)
     finally:
         reader.close()
 
@@ -534,7 +635,14 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
         if app_instance is None:
             message = "dashboard app has not been initialized"
             raise RuntimeError(message)
-        await app_instance.push_screen(PaletteScreen(commands, queries, _unexpected_pane_selection))
+        await app_instance.push_screen(
+            PaletteScreen(
+                commands,
+                queries,
+                _unexpected_pane_selection,
+                on_change=reader.watch,
+            )
+        )
 
     try:
         app_instance = _app(reader, project_dir, widget_names=[], open_palette=open_palette)

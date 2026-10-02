@@ -36,11 +36,13 @@ from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from rich.text import Text
     from textual.pilot import Pilot
 
+    from shikiru.store.database import Database
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -89,6 +91,23 @@ def _screen(app: PaletteApp) -> PaletteScreen:
     return cast("PaletteScreen", app.screen)
 
 
+def _palette_app(
+    reader: StateReader,
+    commands: OperatorCommands,
+    queries: OperatorQueries,
+    pane_selector: Callable[[str], Awaitable[None]],
+    *,
+    initial_context: PaletteRequest | None = None,
+) -> PaletteApp:
+    return PaletteApp(
+        commands,
+        queries,
+        pane_selector,
+        on_change=reader.watch,
+        initial_context=initial_context,
+    )
+
+
 async def _open_action(pilot: Pilot[None], screen: PaletteScreen, action: str) -> None:
     screen.query_one("#action", Select).value = action
     await pilot.pause()
@@ -126,7 +145,7 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
     task = seed_task(connection, clock, title="Context task")
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
     context = PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)
-    app = PaletteApp(commands, queries, _selection_must_not_run, initial_context=context)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run, initial_context=context)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -179,7 +198,8 @@ async def test_applied_message_feedback_keeps_next_turn_guidance_and_engine_resu
         tmp_path,
         engine_up=True,
     )
-    app = PaletteApp(
+    app = _palette_app(
+        reader,
         commands,
         queries,
         _selection_must_not_run,
@@ -219,7 +239,8 @@ async def test_palette_task_search_changes_the_editable_target(
     context_task = seed_task(connection, clock, title="Detail task")
     selected_task = seed_task(connection, clock, title="Chosen by title")
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(
+    app = _palette_app(
+        reader,
         commands,
         queries,
         _selection_must_not_run,
@@ -262,7 +283,8 @@ async def test_manual_task_id_edit_stays_authoritative_outside_search(
     context_task = seed_task(connection, clock, title="Detail task")
     selected_task = seed_task(connection, clock, title="Other task")
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(
+    app = _palette_app(
+        reader,
         commands,
         queries,
         _selection_must_not_run,
@@ -320,7 +342,7 @@ async def test_palette_task_search_is_bounded_current_and_retains_selected_targe
     for index in range(52):
         seed_task(connection, clock, title=f"Older palette task {index}")
     commands, queries, _queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(commands, queries, _selection_must_not_run)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -367,7 +389,8 @@ async def test_palette_serializes_pending_action_and_closes_without_worker_error
         tmp_path,
         engine_up=True,
     )
-    app = PaletteApp(
+    app = _palette_app(
+        reader,
         commands,
         queries,
         _selection_must_not_run,
@@ -420,7 +443,8 @@ async def test_palette_keeps_acknowledgement_timeout_pending_with_current_engine
         tmp_path,
         engine_up=True,
     )
-    app = PaletteApp(
+    app = _palette_app(
+        reader,
         commands,
         queries,
         _selection_must_not_run,
@@ -452,6 +476,129 @@ async def test_palette_keeps_acknowledgement_timeout_pending_with_current_engine
         assert outcome.status is CommandStatus.PENDING
 
 
+@pytest.mark.parametrize(("terminal", "expected"), [("done", "Applied"), ("rejected", "Rejected")])
+async def test_palette_observes_outcome_after_ack_wait_without_form_edits(
+    connection: Connection,
+    database: Database,
+    reader: StateReader,
+    tmp_path: Path,
+    *,
+    terminal: str,
+    expected: str,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Observed pending outcome")
+    commands, queries, queue = _services(
+        connection,
+        reader,
+        clock,
+        tmp_path,
+        engine_up=True,
+    )
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(
+            action="message",
+            task_id=task.id,
+            role=Role.LEADER.value,
+        ),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        screen.query_one("#message", TextArea).text = "Keep this exact pending form."
+        await pilot.click("#palette-submit")
+        await wait_until(clock.has_pending_sleep, timeout=2)
+        pending = queue.pending()[0]
+        clock.advance(COMMAND_ACK_WAIT_SECONDS)
+        await _wait_for_ack(screen)
+        assert screen.query_one("#palette-submit", Button).disabled
+
+        engine = database.connect()
+        try:
+            engine_queue = CommandQueue(engine, clock)
+            if terminal == "done":
+                engine_queue.mark_done(pending.id, {"effect": "message queued"})
+            else:
+                engine_queue.mark_rejected(pending.id, {"error": "late engine rejection"})
+        finally:
+            engine.close()
+        await wait_until(
+            lambda: (
+                expected in _static_text(screen, "#palette-result")
+                and not screen.query_one("#palette-submit", Button).disabled
+            ),
+            timeout=2,
+        )
+        assert f"command {pending.id}" in _static_text(screen, "#palette-result")
+        assert len(queue.pending()) == 0
+        if terminal == "done":
+            assert "guidance queued for the selected role's next turn" in _static_text(
+                screen, "#palette-result"
+            )
+        else:
+            assert "late engine rejection" in _static_text(screen, "#palette-result")
+
+
+async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Multiple pending forms")
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    context = PaletteRequest(task_id=task.id, role=Role.LEADER.value)
+    first_app = _palette_app(
+        reader, commands, queries, _selection_must_not_run, initial_context=context
+    )
+
+    async with first_app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(first_app)
+        await _open_action(pilot, screen, "message")
+        screen.query_one("#message", TextArea).text = "Do not send twice."
+        await pilot.click("#palette-submit")
+        await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
+        say_id = queue.pending()[0].id
+
+        await _open_action(pilot, screen, "pause")
+        await _set_target(pilot, screen, task.id)
+        await pilot.click("#palette-submit")
+        await wait_until(lambda: len(queue.pending()) == 2, timeout=2)
+        pause_id = queue.pending()[1].id
+
+        await _open_action(pilot, screen, "message")
+        assert screen.query_one("#palette-submit", Button).disabled
+        await pilot.click("#palette-submit")
+        assert [item.id for item in queue.pending()] == [say_id, pause_id]
+        await pilot.press("escape")
+
+    reopened = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(
+            action="message",
+            task_id=task.id,
+            role=Role.LEADER.value,
+        ),
+    )
+    async with reopened.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(reopened)
+        screen.query_one("#message", TextArea).text = "Do not send twice."
+        await pilot.pause()
+        assert screen.query_one("#palette-submit", Button).disabled
+        assert f"command {say_id}" in _static_text(screen, "#palette-result")
+        assert [item.id for item in queue.pending()] == [say_id, pause_id]
+
+
 async def test_palette_revalidates_task_state_before_queueing(
     connection: Connection,
     reader: StateReader,
@@ -460,7 +607,8 @@ async def test_palette_revalidates_task_state_before_queueing(
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(
+    app = _palette_app(
+        reader,
         commands,
         queries,
         _selection_must_not_run,
@@ -505,7 +653,8 @@ async def test_implicit_role_default_tracks_task_selection_until_explicitly_chan
         Transition.stay(implementer_task, step=Step.IMPLEMENT, status=Status.RUNNING),
     )
     commands, queries, _queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(
+    app = _palette_app(
+        reader,
         commands,
         queries,
         _selection_must_not_run,
@@ -561,7 +710,7 @@ async def test_palette_submit_queues_a_typed_command_and_shows_its_ack(
 ) -> None:
     clock = FakeClock(_START)
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(commands, queries, _selection_must_not_run)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -604,7 +753,7 @@ async def test_palette_prioritize_queues_the_selected_priority(
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(commands, queries, _selection_must_not_run)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -645,7 +794,7 @@ async def test_palette_resolve_uses_the_packet_options_and_answer_form(
         options=options_for(reason),
     )
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(commands, queries, _selection_must_not_run)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -679,7 +828,7 @@ async def test_palette_takeover_queues_a_task_role_command(
     TaskStore(connection, clock).set_panes(task.id, {Role.LEADER: "%7"})
     _seed_live_session(connection, clock, task.id)
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(commands, queries, _selection_must_not_run)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -725,7 +874,7 @@ async def test_completed_takeover_selects_the_role_pane_and_its_window(
     run = runs.start(task.id, Role.IMPLEMENTER, _LIVE_RUNG)
     runs.set_session(run.id, "session-current", "resume-current")
     commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
-    app = PaletteApp(commands, queries, tmux.select_pane)
+    app = _palette_app(reader, commands, queries, tmux.select_pane)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -789,7 +938,8 @@ async def test_popup_pane_context_selects_its_recorded_task_and_role(
     assert task_role is not None
     assert task_role == (task.id, Role.IMPLEMENTER)
     context_task_id, role = task_role
-    app = PaletteApp(
+    app = _palette_app(
+        reader,
         commands,
         queries,
         tmux.select_pane,
@@ -828,7 +978,7 @@ async def test_rejected_takeover_never_selects_the_role_pane(
     TaskStore(connection, clock).set_panes(task.id, {Role.LEADER: "%7"})
     _seed_live_session(connection, clock, task.id)
     commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
-    app = PaletteApp(commands, queries, _selection_must_not_run)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -860,7 +1010,7 @@ async def test_palette_disables_takeover_without_task_or_role_pane(
     clock = FakeClock(_START)
     task_id = seed_task(connection, clock).id if task_exists else "T-404"
     commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
-    app = PaletteApp(commands, queries, _selection_must_not_run)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -885,7 +1035,7 @@ async def test_done_takeover_keeps_ack_with_pane_selection_error(
         message = f"could not select {pane_id}"
         raise ConfigError(message)
 
-    app = PaletteApp(commands, queries, pane_selection_fails)
+    app = _palette_app(reader, commands, queries, pane_selection_fails)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -913,7 +1063,7 @@ async def test_palette_pause_now_queues_immediate_pause(
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(commands, queries, _selection_must_not_run)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -941,13 +1091,19 @@ async def test_palette_preserves_invalid_and_missing_resolve_routes(
 ) -> None:
     clock = FakeClock(_START)
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = PaletteApp(commands, queries, _selection_must_not_run)
+    app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         await app.pop_screen()
         await app.push_screen(
-            PaletteScreen(commands, queries, _selection_must_not_run, initial_action=route)
+            PaletteScreen(
+                commands,
+                queries,
+                _selection_must_not_run,
+                on_change=reader.watch,
+                initial_action=route,
+            )
         )
         await pilot.pause()
         screen = _screen(app)

@@ -237,6 +237,7 @@ def _operator_task_app(
                 commands,
                 queries,
                 _unexpected_pane_selection,
+                on_change=reader.watch,
                 initial_context=request,
             )
         )
@@ -853,7 +854,16 @@ async def test_hand_back_and_resume_remain_explicit_while_other_holds_survive(
             assert not app.query_one(
                 f"#{TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON}", Button
             ).disabled
-            assert app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
+            assert not app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
+            app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).focus()
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            palette = cast("PaletteScreen", app.screen)
+            assert palette.query_one("#palette-submit", Button).disabled
+            assert "hand back all taken-over roles" in _text(
+                palette.query_one("#palette-action-state", Static)
+            )
+            await pilot.press("escape")
             task_after_partial_hand_back = reader.get_task(task.id)
             assert task_after_partial_hand_back is not None
             assert task_after_partial_hand_back.holds == frozenset({Hold.PAUSED, Hold.INTERVENTION})
@@ -891,7 +901,16 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
                 ),
                 timeout=2,
             )
-            assert app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
+            assert not app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
+            app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).focus()
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            palette = cast("PaletteScreen", app.screen)
+            assert palette.query_one("#palette-submit", Button).disabled
+            assert "hand back all taken-over roles" in _text(
+                palette.query_one("#palette-action-state", Static)
+            )
+            await pilot.press("escape")
 
             hand_back = await _submit_detail_command(
                 app,
@@ -930,6 +949,42 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
             tasks.set_holds(task.id, frozenset())
             queue.mark_done(resume_command.id)
             await wait_until(lambda: not _text(ownership), timeout=2)
+    finally:
+        reader.close()
+
+
+async def test_resume_availability_includes_an_intervention_only_hold(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Intervention only")
+    tasks = TaskStore(connection, clock)
+    tasks.set_holds(task.id, frozenset({Hold.INTERVENTION}))
+    queue = CommandQueue(connection, clock)
+    for submitted in queue.pending():
+        queue.mark_done(submitted.id)
+    reader = StateReader(database, SystemClock())
+
+    try:
+        app = _operator_task_app(reader, project_root, task.id, queue, clock)
+        async with app.run_test(size=(80, 40)) as pilot:
+            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+            await wait_until(lambda: Hold.INTERVENTION.value in _text(ownership), timeout=2)
+            resume_button = app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button)
+            assert not resume_button.disabled
+            resume_button.focus()
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            palette = cast("PaletteScreen", app.screen)
+            assert not palette.query_one("#palette-submit", Button).disabled
+            await pilot.click("#palette-submit")
+            await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
+            queued = queue.pending()[0]
+            assert isinstance(queued.command, Resume)
+            assert queued.command.task_id == task.id
     finally:
         reader.close()
 

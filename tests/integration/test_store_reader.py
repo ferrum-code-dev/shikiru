@@ -62,9 +62,20 @@ def test_reader_serves_bounded_command_outcomes_from_another_client(
         other_client.close()
 
     history = reader.command_history(limit=2)
-    assert [entry.id for entry in history] == [rejected.id, pending.id]
-    assert [entry.status for entry in history] == [CommandStatus.REJECTED, CommandStatus.PENDING]
-    assert history[0].result == rejection
+    assert [entry.id for entry in history.entries] == [rejected.id, pending.id]
+    assert [entry.status for entry in history.entries] == [
+        CommandStatus.REJECTED,
+        CommandStatus.PENDING,
+    ]
+    assert history.entries[0].result == rejection
+    pending_page = reader.command_history(limit=1, status=CommandStatus.PENDING)
+    assert pending_page.total_count == 1
+    assert not pending_page.has_more
+    matching_pending = reader.pending_command(
+        Say(task_id="T-2", role=Role.IMPLEMENTER, text="next turn")
+    )
+    assert matching_pending is not None
+    assert matching_pending.id == pending.id
     applied_status = reader.command_status(applied.id)
     assert applied_status is not None
     assert applied_status.status is CommandStatus.DONE

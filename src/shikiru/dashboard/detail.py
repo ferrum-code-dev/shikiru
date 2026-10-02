@@ -311,9 +311,6 @@ class TaskDetailPanel(Vertical):
             (Role.IMPLEMENTER, TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON),
         ):
             self.query_one(f"#{button_id}", Button).disabled = role.value not in view.ownership
-        self.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled = (
-            Hold.PAUSED.value not in view.holds or bool(view.ownership)
-        )
         ownership_lines: list[str] = []
         if view.ownership:
             ownership_lines.append(

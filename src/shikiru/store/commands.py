@@ -67,17 +67,49 @@ class StoredCommand:
     result: dict[str, Any] | None
 
 
+@dataclass(frozen=True, slots=True)
+class CommandHistoryPage:
+    """One bounded page of durable command rows."""
+
+    entries: list[StoredCommand]
+    offset: int
+    limit: int
+    total_count: int
+    has_more: bool
+
+
 def fetch_command_history(
     connection: sqlite3.Connection,
     *,
     limit: int,
-) -> list[StoredCommand]:
-    """Read the newest bounded command rows with their stored status and result."""
-    rows = connection.execute(
-        "SELECT id, ts, payload, status, result FROM commands ORDER BY id DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
-    return [_stored_command(row) for row in rows]
+    offset: int = 0,
+    status: CommandStatus | None = None,
+) -> CommandHistoryPage:
+    """Read one bounded newest-first page with its stored status and result."""
+    if status is None:
+        total_count = connection.execute("SELECT COUNT(*) FROM commands").fetchone()[0]
+        rows = connection.execute(
+            "SELECT id, ts, payload, status, result FROM commands "
+            "ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+    else:
+        total_count = connection.execute(
+            "SELECT COUNT(*) FROM commands WHERE status = ?", (status.value,)
+        ).fetchone()[0]
+        rows = connection.execute(
+            "SELECT id, ts, payload, status, result FROM commands WHERE status = ? "
+            "ORDER BY id DESC LIMIT ? OFFSET ?",
+            (status.value, limit, offset),
+        ).fetchall()
+    entries = [_stored_command(row) for row in rows]
+    return CommandHistoryPage(
+        entries=entries,
+        offset=offset,
+        limit=limit,
+        total_count=total_count,
+        has_more=offset + len(entries) < total_count,
+    )
 
 
 def fetch_command(
@@ -88,6 +120,23 @@ def fetch_command(
     row = connection.execute(
         "SELECT id, ts, payload, status, result FROM commands WHERE id = ?",
         (command_id,),
+    ).fetchone()
+    return _stored_command(row) if row is not None else None
+
+
+def fetch_pending_command(
+    connection: sqlite3.Connection,
+    command: Command,
+) -> StoredCommand | None:
+    """Find an identical still-pending command without scanning history into memory."""
+    row = connection.execute(
+        "SELECT id, ts, payload, status, result FROM commands "
+        "WHERE status = ? AND kind = ? AND payload = ? ORDER BY id DESC LIMIT 1",
+        (
+            CommandStatus.PENDING.value,
+            command.kind.value,
+            dump_json(_COMMAND_ADAPTER, command),
+        ),
     ).fetchone()
     return _stored_command(row) if row is not None else None
 

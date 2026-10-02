@@ -342,6 +342,7 @@ async def run_dashboard(
                 services.commands,
                 services.queries,
                 tmux.select_pane,
+                on_change=services.reader.watch,
                 initial_action=action,
                 initial_context=context,
             )
@@ -396,6 +397,7 @@ async def run_palette(
             services.commands,
             services.queries,
             Tmux(SubprocessRunner()).select_pane,
+            on_change=services.reader.watch,
             initial_context=initial_context,
         )
         await app_instance.run_async()

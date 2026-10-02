@@ -7,7 +7,13 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from shikiru.errors import DatabaseError
-from shikiru.store.commands import StoredCommand, fetch_command, fetch_command_history
+from shikiru.store.commands import (
+    CommandHistoryPage,
+    StoredCommand,
+    fetch_command,
+    fetch_command_history,
+    fetch_pending_command,
+)
 from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
 from shikiru.store.events import fetch_events_since, fetch_latest_events
 from shikiru.store.quotas import fetch_quota_agents, fetch_quotas
@@ -24,6 +30,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
+    from shikiru.domain.commands import Command, CommandStatus
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.events import Event, EventKind
     from shikiru.domain.runs import Run
@@ -123,13 +130,27 @@ class StateReader:
         """See `shikiru.store.runs.fetch_all_runs`."""
         return fetch_all_runs(self._connection)
 
-    def command_history(self, *, limit: int) -> list[StoredCommand]:
-        """Read a bounded newest-first command history, preserving each stored status."""
+    def command_history(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+        status: CommandStatus | None = None,
+    ) -> CommandHistoryPage:
+        """Read a bounded command-history page, preserving stored status and result."""
         if not 0 < limit <= MAX_COMMAND_HISTORY_LIMIT:
             message = f"command history limit must be between 1 and {MAX_COMMAND_HISTORY_LIMIT}"
             raise ValueError(message)
+        if offset < 0:
+            message = "command history offset cannot be negative"
+            raise ValueError(message)
         try:
-            return fetch_command_history(self._connection, limit=limit)
+            return fetch_command_history(
+                self._connection,
+                limit=limit,
+                offset=offset,
+                status=status,
+            )
         except sqlite3.Error as error:
             message = f"could not query read-only database {self._database_path}: {error}"
             raise DatabaseError(message) from error
@@ -138,6 +159,14 @@ class StateReader:
         """Read one durable command status by id without changing its lifecycle."""
         try:
             return fetch_command(self._connection, command_id)
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
+
+    def pending_command(self, command: Command) -> StoredCommand | None:
+        """Find one identical pending command through the read-only connection."""
+        try:
+            return fetch_pending_command(self._connection, command)
         except sqlite3.Error as error:
             message = f"could not query read-only database {self._database_path}: {error}"
             raise DatabaseError(message) from error

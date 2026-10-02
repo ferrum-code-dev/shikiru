@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from textual.app import App
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Static
+from textual.widgets import Button, Input, Label, Select, Static
 
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
     from textual.binding import BindingType
     from textual.widget import Widget
+    from textual.worker import Worker
 
     from shikiru.clock import Clock
     from shikiru.dashboard.contract import (
@@ -85,6 +86,16 @@ _HELP_CONTEXT = "workspace-help-context"
 _COMMAND_HISTORY_CLOSE = "command-history-close"
 _COMMAND_HISTORY_COPY = "command-history-copy"
 _COMMAND_HISTORY_WORKER = "command-history-updates"
+_COMMAND_HISTORY_SCROLL = "command-history-scroll"
+_COMMAND_HISTORY_FILTER = "command-history-filter"
+_COMMAND_HISTORY_PREVIOUS = "command-history-previous"
+_COMMAND_HISTORY_NEXT = "command-history-next"
+_COMMAND_HISTORY_PAGE = "command-history-page"
+_COMMAND_HISTORY_PAGE_SIZE = 20
+_COMMAND_HISTORY_ALL = "all"
+_COMMAND_STATUS_LINE_MAX_CHARS = 96
+_COMMAND_HISTORY_PREVIOUS_KEY = "left"
+_COMMAND_HISTORY_NEXT_KEY = "right"
 COMMAND_ACTION_SAY = "Say"
 _SEARCH_KEY = "slash"
 
@@ -134,6 +145,19 @@ def _command_entry_text(entry: CommandFeedbackEntryView, *, engine_up: bool) -> 
     return (
         f"#{entry.command_id} · {entry.status.value} · {entry.action} · {entry.target} · {detail}"
     )
+
+
+def _command_summary_text(history: CommandHistoryView) -> str:
+    entry = history.entries[0]
+    engine = (
+        f" · engine {'running' if history.engine_up else 'stopped'}"
+        if entry.status is CommandFeedbackStatus.PENDING
+        else ""
+    )
+    summary = (
+        f"#{entry.command_id} · {entry.status.value} · {entry.action} · {entry.target}{engine}"
+    )
+    return summary[:_COMMAND_STATUS_LINE_MAX_CHARS]
 
 
 class _WorkspaceHelpScreen(ModalScreen[None]):
@@ -203,7 +227,11 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
 
 
 class _CommandHistoryScreen(ModalScreen[None]):
-    BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
+    BINDINGS: ClassVar[list[BindingType]] = [
+        ("escape", "close", "Back"),
+        (_COMMAND_HISTORY_PREVIOUS_KEY, "previous_page", "Newer history"),
+        (_COMMAND_HISTORY_NEXT_KEY, "next_page", "Older history"),
+    ]
     DEFAULT_CSS = """
     _CommandHistoryScreen { align: center middle; }
     #command-history-frame {
@@ -211,20 +239,40 @@ class _CommandHistoryScreen(ModalScreen[None]):
         border: round $neutral-border; padding: 1 2;
         background: $surface; color: $primary-text;
     }
-    #command-history-copy { height: 1fr; padding: 1; border: round $neutral-border; }
+    #command-history-filter { width: 100%; height: 3; }
+    #command-history-scroll { height: 1fr; border: round $neutral-border; }
+    #command-history-copy { height: auto; padding: 1; }
+    #command-history-page { height: 1; }
+    #command-history-controls { height: 3; width: 100%; }
     """
 
     def __init__(self, views: DashboardViews, on_change: OnChangeRegistration) -> None:
         super().__init__()
         self._views = views
         self._on_change = on_change
-        self._change_worker = None
+        self._offset = 0
+        self._status: CommandFeedbackStatus | None = None
+        self._has_more = False
+        self._change_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="command-history-frame"):
-            yield Label("Project command history")
-            yield Static("Loading command history…", id=_COMMAND_HISTORY_COPY, markup=False)
-            yield Button("Back", id=_COMMAND_HISTORY_CLOSE)
+            yield Label("Command history · left/right or page controls")
+            yield Select(
+                (
+                    ("All statuses", _COMMAND_HISTORY_ALL),
+                    *((status.value, status.value) for status in CommandFeedbackStatus),
+                ),
+                value=_COMMAND_HISTORY_ALL,
+                id=_COMMAND_HISTORY_FILTER,
+            )
+            with VerticalScroll(id=_COMMAND_HISTORY_SCROLL):
+                yield Static("Loading command history…", id=_COMMAND_HISTORY_COPY, markup=False)
+            yield Label("", id=_COMMAND_HISTORY_PAGE)
+            with HorizontalScroll(id="command-history-controls"):
+                yield Button("Newer", id=_COMMAND_HISTORY_PREVIOUS, disabled=True)
+                yield Button("Older", id=_COMMAND_HISTORY_NEXT, disabled=True)
+                yield Button("Back", id=_COMMAND_HISTORY_CLOSE)
 
     async def on_mount(self) -> None:
         self._display_history()
@@ -239,17 +287,68 @@ class _CommandHistoryScreen(ModalScreen[None]):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == _COMMAND_HISTORY_CLOSE:
             self.dismiss()
+        elif event.button.id == _COMMAND_HISTORY_PREVIOUS:
+            self.action_previous_page()
+        elif event.button.id == _COMMAND_HISTORY_NEXT and self._has_more:
+            self.action_next_page()
+
+    async def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != _COMMAND_HISTORY_FILTER:
+            return
+        selected = event.value if isinstance(event.value, str) else _COMMAND_HISTORY_ALL
+        self._status = None if selected == _COMMAND_HISTORY_ALL else CommandFeedbackStatus(selected)
+        self._offset = 0
+        self._display_history()
 
     async def action_close(self) -> None:
         self.dismiss()
 
-    async def _refresh(self) -> None:
-        if self.is_mounted:
+    def action_previous_page(self) -> None:
+        self._offset = max(0, self._offset - _COMMAND_HISTORY_PAGE_SIZE)
+        self._display_history()
+
+    def action_next_page(self) -> None:
+        if self._has_more:
+            self._offset += _COMMAND_HISTORY_PAGE_SIZE
             self._display_history()
 
-    def _display_history(self) -> None:
-        history = self._views.command_history(expanded=True)
+    async def _refresh(self) -> None:
+        if self.is_mounted:
+            self._display_history(preserve_scroll=True)
+
+    def _display_history(self, *, preserve_scroll: bool = False) -> None:
+        scroll = self.query_one(f"#{_COMMAND_HISTORY_SCROLL}", VerticalScroll)
+        scroll_y = scroll.scroll_y if preserve_scroll and self.is_mounted else 0
+        history = self._views.command_history(
+            expanded=True,
+            limit=_COMMAND_HISTORY_PAGE_SIZE,
+            offset=self._offset,
+            status=self._status,
+        )
+        if history.total_count and history.offset >= history.total_count:
+            self._offset = max(0, (history.total_count - 1) // history.limit * history.limit)
+            history = self._views.command_history(
+                expanded=True,
+                limit=_COMMAND_HISTORY_PAGE_SIZE,
+                offset=self._offset,
+                status=self._status,
+            )
+        elif not history.total_count:
+            self._offset = 0
         self.query_one(f"#{_COMMAND_HISTORY_COPY}", Static).update(_command_history_text(history))
+        self._has_more = history.has_more
+        start = history.offset + 1 if history.entries else 0
+        end = history.offset + len(history.entries)
+        page_number = history.offset // history.limit + 1
+        filter_name = history.status.value if history.status is not None else "all statuses"
+        self.query_one(f"#{_COMMAND_HISTORY_PAGE}", Label).update(
+            f"{filter_name} · page {page_number} · {history.limit} per page · "
+            f"rows {start}-{end} of {history.total_count}"
+        )
+        self.query_one(f"#{_COMMAND_HISTORY_PREVIOUS}", Button).disabled = history.offset == 0
+        self.query_one(f"#{_COMMAND_HISTORY_NEXT}", Button).disabled = not history.has_more
+        if preserve_scroll:
+            self.call_after_refresh(lambda: scroll.scroll_to(y=scroll_y, animate=False))
 
 
 class _CommandStatusLine(Static):
@@ -270,7 +369,7 @@ class _CommandStatusLine(Static):
         history = self._views.command_history()
         self.display = bool(history.entries)
         if history.entries:
-            self.update(_command_history_text(history))
+            self.update(_command_summary_text(history))
 
 
 class DashboardApp(App[None]):
@@ -293,7 +392,7 @@ class DashboardApp(App[None]):
         background: $surface;
     }
     #workspace-title { text-style: bold; color: $primary-text; }
-    #workspace-command-status { height: auto; color: $secondary-text; }
+    #workspace-command-status { height: 1; padding: 0 1; overflow: hidden; color: $secondary-text; }
     #workspace-navigation { height: 3; padding: 0 1; background: $surface; }
     #workspace-navigation Button, #workspace-footer Button {
         width: auto;
@@ -439,7 +538,7 @@ class DashboardApp(App[None]):
                                 yield _load_widget(name).create(context)
             with Vertical(id="workspace-footer"):
                 yield Static(self._footer_text(), id="workspace-footer-copy", markup=False)
-                with Horizontal(id="workspace-footer-controls"):
+                with HorizontalScroll(id="workspace-footer-controls"):
                     yield Button("Expand", id=_EXPAND_BUTTON)
                     yield Button("Back", id=_RETURN_BUTTON)
                     yield Button("Help", id=_HELP_BUTTON)

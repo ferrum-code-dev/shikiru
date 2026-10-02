@@ -133,6 +133,11 @@ class CommandHistory(OperatorView):
 
     engine_up: bool
     entries: list[CommandHistoryEntry]
+    offset: int
+    limit: int
+    total_count: int
+    has_more: bool
+    status: CommandStatus | None
 
 
 class TaskSummary(OperatorView):
@@ -350,17 +355,36 @@ class OperatorQueries:
         """Return task summaries ordered by their allocated task sequence."""
         return [TaskSummary.from_task(task) for task in self._reader.list_tasks(statuses=statuses)]
 
-    def command_history(self, *, expanded: bool = False) -> CommandHistory:
-        """Return a bounded newest-first history, preserving stored command outcomes."""
-        limit = PROJECT_COMMAND_HISTORY_LIMIT if expanded else RECENT_COMMAND_HISTORY_LIMIT
+    def command_history(
+        self,
+        *,
+        expanded: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+        status: CommandStatus | None = None,
+    ) -> CommandHistory:
+        """Return one bounded newest-first page, preserving stored command outcomes."""
+        default_limit = PROJECT_COMMAND_HISTORY_LIMIT if expanded else RECENT_COMMAND_HISTORY_LIMIT
+        page_limit = default_limit if limit is None else limit
+        page = self._reader.command_history(limit=page_limit, offset=offset, status=status)
         return CommandHistory(
             engine_up=self._engine_up(),
-            entries=[self._command_entry(row) for row in self._reader.command_history(limit=limit)],
+            entries=[self._command_entry(row) for row in page.entries],
+            offset=page.offset,
+            limit=page.limit,
+            total_count=page.total_count,
+            has_more=page.has_more,
+            status=status,
         )
 
     def command_status(self, command_id: int) -> CommandHistoryEntry | None:
         """Read one durable command status by id without creating or acknowledging it."""
         row = self._reader.command_status(command_id)
+        return self._command_entry(row) if row is not None else None
+
+    def pending_command(self, command: Command) -> CommandHistoryEntry | None:
+        """Find an identical pending command without writing or acknowledging it."""
+        row = self._reader.pending_command(command)
         return self._command_entry(row) if row is not None else None
 
     def _command_entry(self, row: StoredCommand) -> CommandHistoryEntry:
