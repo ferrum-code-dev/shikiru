@@ -17,7 +17,7 @@ from shikiru.domain.runs import Run
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.errors import ShikiruError
-from shikiru.paths import run_dir, runs_root, turns_dir
+from shikiru.paths import engine_output_path, run_dir, runs_root, turns_dir
 from shikiru.store.escalations import Escalation
 from shikiru.telemetry.disk import directory_usage
 from shikiru.view_log import ordered_turn_dirs, view_log_path
@@ -147,6 +147,7 @@ class StatusView(OperatorView):
     faults: list[FaultStreak]
     oldest_escalation_age_seconds: float | None
     run_directories: RunDirectoryUsage
+    engine_output: str | None = None
     task: TaskDetail | None = None
 
 
@@ -205,8 +206,15 @@ class OperatorQueries:
             faults=self.open_faults(),
             oldest_escalation_age_seconds=self.oldest_escalation_age_seconds(),
             run_directories=self.run_directory_usage(),
+            engine_output=self._engine_output(),
             task=task_detail,
         )
+
+    def _engine_output(self) -> str | None:
+        path = engine_output_path(self._project_root)
+        if self._engine_up() or not path.is_file() or path.stat().st_size == 0:
+            return None
+        return str(path)
 
     def run_directory_usage(self) -> RunDirectoryUsage:
         """Return the number and total size of the task run directories under the project."""

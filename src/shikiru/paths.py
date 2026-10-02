@@ -14,6 +14,7 @@ STATE_DB_FILENAME = "state.db"
 ENGINE_LOCK_FILENAME = "engine.lock"
 ENGINE_LOG_DIR = "logs"
 ENGINE_LOG_FILENAME = "engine.log"
+ENGINE_OUTPUT_FILENAME = "engine.out"
 WORKTREES_DIR_NAME = "worktrees"
 RUNS_DIR_NAME = "runs"
 TURNS_DIR_NAME = "turns"
@@ -47,6 +48,11 @@ def engine_lock_path(project_root: Path) -> Path:
 def engine_log_path(project_root: Path) -> Path:
     """Return the project's engine log path."""
     return project_state_dir(project_root) / ENGINE_LOG_DIR / ENGINE_LOG_FILENAME
+
+
+def engine_output_path(project_root: Path) -> Path:
+    """Return the file holding the stdout and stderr of the engine process `start` spawned."""
+    return project_state_dir(project_root) / ENGINE_LOG_DIR / ENGINE_OUTPUT_FILENAME
 
 
 def runs_root(project_root: Path) -> Path:

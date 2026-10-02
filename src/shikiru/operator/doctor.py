@@ -14,7 +14,7 @@ from shikiru.config.loader import load_settings
 from shikiru.domain.versions import Version, parse_version
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import not_repository_root
-from shikiru.paths import project_config_path, state_db_path
+from shikiru.paths import engine_output_path, project_config_path, state_db_path
 from shikiru.store.database import Database
 from shikiru.tmux.client import Tmux, private_socket_name
 from shikiru.tmux.session import DETACHED_SIZE
@@ -52,6 +52,7 @@ PLUGINS_CHECK_NAME = "plugins"
 PLUGIN_CONFIG_CHECK_NAME = "config.plugins"
 COW_CHECK_NAME = "cow"
 DATABASE_CHECK_NAME = "db"
+ENGINE_OUTPUT_CHECK_NAME = "engine-output"
 PROBE_CHECK_PREFIX = "probe"
 
 
@@ -112,6 +113,7 @@ class Doctor:
         settings, config_check = self._settings_check(overrides)
         checks.append(config_check)
         checks.append(await self._database_check())
+        checks.extend(self._engine_output_check())
         checks.append(await self._cow_check())
         if settings is None:
             checks.append(
@@ -220,6 +222,18 @@ class Doctor:
         except (OSError, ShikiruError) as error:
             return DoctorCheck(name=DATABASE_CHECK_NAME, ok=False, detail=str(error))
         return DoctorCheck(name=DATABASE_CHECK_NAME, ok=True, detail=f"schema {version}")
+
+    def _engine_output_check(self) -> list[DoctorCheck]:
+        path = engine_output_path(self._project_root)
+        if not path.is_file() or path.stat().st_size == 0:
+            return []
+        return [
+            DoctorCheck(
+                name=ENGINE_OUTPUT_CHECK_NAME,
+                ok=True,
+                detail=f"the last engine start printed output: {path}",
+            )
+        ]
 
     async def _cow_check(self) -> DoctorCheck:
         try:

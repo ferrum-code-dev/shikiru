@@ -195,7 +195,7 @@ A plugin that is missing or broken fails `start` and `doctor` with its name and 
 
 ```
 <project>/.shikiru/                 # added to the repository's .git/info/exclude
-  config.toml  prompts/ (optional overrides)  state.db  engine.lock  logs/engine.log (+ .1 .. .N rotated)
+  config.toml  prompts/ (optional overrides)  state.db  engine.lock  logs/engine.log (+ .1 .. .N rotated)  logs/engine.out (stdout/stderr of the detached engine, current start only)
   worktrees/T-12/                   # the task's worktree
   runs/T-12/
     leader/  implementer/           # current_turn symlink, view.jsonl (view log), turn.pid while a turn runs

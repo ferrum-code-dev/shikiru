@@ -18,6 +18,7 @@ from shikiru.errors import (
     DetachedProcessError,
     ProcessReplacementError,
 )
+from shikiru.private import PRIVATE_FILE_MODE
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping, Sequence
@@ -321,15 +322,20 @@ class SubprocessRunner:
         self,
         argv: Sequence[str],
         *,
+        output: Path,
         env: Mapping[str, str] | None = None,
     ) -> int:
-        """Start `argv` in a new session and return its process id without waiting."""
+        """Start `argv` in a new session and return its process id without waiting.
+
+        Its stdout and stderr go to `output`, an owner-only file truncated by this start, so a
+        process that dies at once leaves its error behind.
+        """
         argv_tuple = tuple(argv)
-        null_fd = os.open(os.devnull, os.O_WRONLY)
+        output_fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE_MODE)
         try:
             file_actions = (
-                (os.POSIX_SPAWN_DUP2, null_fd, STDOUT_FILENO),
-                (os.POSIX_SPAWN_DUP2, null_fd, STDERR_FILENO),
+                (os.POSIX_SPAWN_DUP2, output_fd, STDOUT_FILENO),
+                (os.POSIX_SPAWN_DUP2, output_fd, STDERR_FILENO),
             )
             try:
                 return os.posix_spawnp(
@@ -342,7 +348,7 @@ class SubprocessRunner:
             except OSError as error:
                 raise DetachedProcessError(argv_tuple, error) from error
         finally:
-            os.close(null_fd)
+            os.close(output_fd)
 
     def identify(self, pid: int) -> ProcessIdentity | None:
         """Return the identity of process `pid`, or `None` when no inspectable process runs."""

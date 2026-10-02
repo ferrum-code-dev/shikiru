@@ -72,6 +72,8 @@ def status_renderable(view: StatusView, *, settings: Settings, width: int) -> Re
     summary.append(
         f"{view.run_directories.directories} dirs, {format_size(view.run_directories.size_bytes)}"
     )
+    if view.engine_output is not None:
+        summary.append(f"\nlast engine output: {view.engine_output}")
     blocks: list[RenderableType] = [Panel(summary, title=STATUS_PANEL_TITLE)]
     blocks.append(_tasks_table(view.active_tasks, ACTIVE_TABLE_TITLE, include_priority=False))
     blocks.append(_tasks_table(view.queued_tasks, QUEUE_TABLE_TITLE, include_priority=True))

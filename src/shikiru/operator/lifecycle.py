@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import TYPE_CHECKING, Literal
 
@@ -10,6 +11,8 @@ from pydantic import BaseModel, ConfigDict
 from shikiru.config.loader import load_settings
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import Ack, AckStatus
+from shikiru.paths import engine_output_path
+from shikiru.private import make_private_dir
 from shikiru.process import TURN_STOP_GRACE
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import bind_palette_key, session_name
@@ -39,10 +42,8 @@ PALETTE_COMMAND = (sys.executable, "-m", PACKAGE_NAME, CLI_PALETTE_COMMAND)
 TMUX_ATTACH_ARGV = ("tmux", "attach-session", "-t")
 ENGINE_START_WAIT_SECONDS = 5.0
 ENGINE_START_POLL_SECONDS = 0.05
-ENGINE_EXITED_MESSAGE = (
-    "the engine process exited before it acquired its lock; "
-    f"run `{PACKAGE_NAME} {CLI_ENGINE_COMMAND}` in the foreground to see why"
-)
+ENGINE_OUTPUT_TAIL_BYTES = 2000
+ENGINE_EXITED_MESSAGE = "the engine process exited before it acquired its lock"
 
 
 class EngineExitedError(ShikiruError):
@@ -91,6 +92,8 @@ class ProjectLifecycle:
         await bind_palette_key(self._tmux, PALETTE_COMMAND)
         started = False
         if not self._engine_up(root):
+            output = engine_output_path(root)
+            make_private_dir(output.parent)
             pid = self._runner.spawn_detached(
                 command_with_overrides(
                     (
@@ -102,7 +105,8 @@ class ProjectLifecycle:
                         CLI_ENGINE_COMMAND,
                     ),
                     overrides,
-                )
+                ),
+                output=output,
             )
             started = True
             await self._wait_for_engine(
@@ -111,6 +115,7 @@ class ProjectLifecycle:
                 seconds=ENGINE_START_WAIT_SECONDS,
                 failure="engine did not acquire its lock after start",
                 spawned=pid,
+                output=output,
             )
         if attach:
             self._runner.replace((*TMUX_ATTACH_ARGV, target))
@@ -152,15 +157,33 @@ class ProjectLifecycle:
         return ack
 
     async def _wait_for_engine(
-        self, root: Path, *, up: bool, seconds: float, failure: str, spawned: int | None = None
+        self,
+        root: Path,
+        *,
+        up: bool,
+        seconds: float,
+        failure: str,
+        spawned: int | None = None,
+        output: Path | None = None,
     ) -> None:
         deadline = self._clock.now().timestamp() + seconds
         while self._engine_up(root) != up:
             if spawned is not None and self._runner.identify(spawned) is None:
-                raise EngineExitedError(ENGINE_EXITED_MESSAGE)
+                raise EngineExitedError(_with_output(ENGINE_EXITED_MESSAGE, output))
             if self._clock.now().timestamp() >= deadline:
-                raise ShikiruError(failure)
+                raise ShikiruError(_with_output(failure, output))
             await self._clock.sleep(ENGINE_START_POLL_SECONDS)
+
+
+def _with_output(message: str, output: Path | None) -> str:
+    if output is None:
+        return message
+    with output.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        handle.seek(max(0, handle.tell() - ENGINE_OUTPUT_TAIL_BYTES))
+        tail = handle.read().decode(errors="replace").strip()
+    detail = f"engine output ({output}):\n{tail}" if tail else f"engine printed nothing ({output})"
+    return f"{message}\n{detail}"
 
 
 def home_command(root: Path) -> tuple[str, ...]:
