@@ -60,6 +60,7 @@ TASK_DETAIL_RELATIONSHIPS_BUTTON = "task-detail-relationships-toggle"
 TASK_DETAIL_RELATED_TOOLS = "task-detail-related-tools"
 TASK_DETAIL_RELATED_TASK = "task-detail-related-task"
 TASK_DETAIL_OPEN_RELATED = "task-detail-open-related"
+TASK_DETAIL_MORE_RELATIONSHIPS = "task-detail-more-relationships"
 NO_VALUE = "\N{EN DASH}"
 NO_REPORT = "No validated report is recorded."
 NO_VERDICT = "No validated verdict is recorded."
@@ -117,6 +118,8 @@ class TaskDetailPanel(Vertical):
         self._refresh_worker: Worker[None] | None = None
         self._change_worker: Worker[None] | None = None
         self._relationships_expanded = False
+        self._relationship_offset = 0
+        self._relationship_next_offset: int | None = None
 
     def compose(self) -> ComposeResult:
         with HorizontalScroll(id="task-detail-toolbar"):
@@ -152,6 +155,7 @@ class TaskDetailPanel(Vertical):
                     id=TASK_DETAIL_RELATED_TASK,
                 )
                 yield Button("Open related task", id=TASK_DETAIL_OPEN_RELATED)
+                yield Button("More relationships", id=TASK_DETAIL_MORE_RELATIONSHIPS)
             yield Static(
                 "",
                 id=TASK_DETAIL_RELATIONSHIPS,
@@ -198,6 +202,7 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_ATTENTION_BUTTON: self._navigate_home,
             TASK_DETAIL_RELATIONSHIPS_BUTTON: self._toggle_relationships,
             TASK_DETAIL_OPEN_RELATED: self._open_related_task,
+            TASK_DETAIL_MORE_RELATIONSHIPS: self._next_relationship_page,
         }
         handler = handlers.get(event.button.id or "")
         if handler is not None:
@@ -270,7 +275,10 @@ class TaskDetailPanel(Vertical):
     async def _refresh(self) -> None:
         async with self._refresh_lock:
             try:
-                view = await self._widget_context.views.task_detail(self._task_id)
+                view = await self._widget_context.views.task_detail(
+                    self._task_id,
+                    relationship_offset=self._relationship_offset,
+                )
             except (ShikiruError, OSError, ValueError, TypeError) as error:
                 if self.is_mounted:
                     self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update(
@@ -350,9 +358,15 @@ class TaskDetailPanel(Vertical):
 
     async def _open_related_task(self) -> None:
         selected = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select)).value
-        callback = self._widget_context.open_related_task_detail
+        callback = self._widget_context.open_task_detail
         if isinstance(selected, str) and callback is not None:
             await callback(selected)
+
+    async def _next_relationship_page(self) -> None:
+        if self._relationship_next_offset is None:
+            return
+        self._relationship_offset = self._relationship_next_offset
+        await self._refresh()
 
     def _render_relationships(self, view: TaskDetailView) -> None:
         related_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))
@@ -369,6 +383,15 @@ class TaskDetailPanel(Vertical):
             else Select.BLANK
         )
         self.query_one(f"#{TASK_DETAIL_OPEN_RELATED}", Button).disabled = not options
+        relationships = view.relationships
+        self._relationship_next_offset = (
+            relationships.page_offset + relationships.page_size
+            if relationships is not None and relationships.has_more
+            else None
+        )
+        self.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).disabled = (
+            self._relationship_next_offset is None
+        )
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update(
             _relationships_text(view.task_id, view.status_reason, view.relationships)
         )
@@ -479,8 +502,10 @@ def _related_references(view: TaskDetailView) -> tuple[TaskReferenceView, ...]:
         references.extend(
             (
                 relationships.family_parent,
+                relationships.family_root,
                 *relationships.family_children,
                 *relationships.dependencies,
+                *relationships.blocking_dependencies,
                 *relationships.dependents,
                 *relationships.replacements,
             )
@@ -501,8 +526,44 @@ def _relationships_text(
 ) -> str:
     if relationships is None:
         return "Relationships\nRelationship evidence is unavailable."
+    lines = _family_relationship_lines(task_id, relationships)
+    _append_paginated_relationships(
+        lines,
+        "Dependencies",
+        relationships.dependencies,
+        relationships.dependency_count,
+        relationships.page_offset,
+    )
+    _append_paginated_relationships(
+        lines,
+        "Dependents",
+        relationships.dependents,
+        relationships.dependent_count,
+        relationships.page_offset,
+    )
+    _append_paginated_relationships(
+        lines,
+        "Recorded replacements",
+        relationships.replacements,
+        relationships.replacement_count,
+        relationships.page_offset,
+    )
+    if status_reason == StatusReason.SUPERSEDED.value and relationships.replacement_count == 0:
+        lines.append("No replacement task IDs are present in the recorded scope-change event.")
+    if relationships.has_more:
+        lines.append("More recorded relationships are available from the next page.")
+    return "Relationships\n" + "\n".join(lines)
+
+
+def _family_relationship_lines(task_id: str, relationships: TaskRelationshipsView) -> list[str]:
     family_parent = relationships.family_parent
-    lines = [f"Family group · {family_parent.task_id} {family_parent.title}"]
+    family_root = relationships.family_root
+    parent_label = "Root" if family_parent.task_id == task_id else "Parent"
+    lines = [
+        f"{parent_label} · {family_parent.task_id} {family_parent.title}",
+        f"Family root · {family_root.task_id} {family_root.title}",
+        f"Children of {task_id}",
+    ]
     if relationships.family_children:
         lines.extend(
             f"  ↳ {child.task_id} · {child.title} · {child.status}"
@@ -511,10 +572,14 @@ def _relationships_text(
         )
     else:
         lines.append("  No child tasks are recorded under this parent.")
-    if relationships.family_child_count > len(relationships.family_children):
+    if (
+        relationships.page_offset + len(relationships.family_children)
+        < relationships.family_child_count
+    ):
         lines.append(
-            f"Showing {len(relationships.family_children)} of "
-            f"{relationships.family_child_count} children in this group."
+            f"Showing {relationships.page_offset + 1} to "
+            f"{relationships.page_offset + len(relationships.family_children)} of "
+            f"{relationships.family_child_count} children on this page."
         )
     outcomes = " · ".join(f"{item.outcome} {item.count}" for item in relationships.family_outcomes)
     root = relationships.family_root
@@ -534,28 +599,20 @@ def _relationships_text(
         lines.append(
             "The plan parent integrated; unfinished child tasks remain part of the family."
         )
-    _append_relationship_group(lines, "Dependencies", relationships.dependencies)
-    if relationships.dependency_count > len(relationships.dependencies):
-        lines.append(
-            f"Showing {len(relationships.dependencies)} of "
-            f"{relationships.dependency_count} dependencies."
-        )
-    _append_relationship_group(lines, "Dependents", relationships.dependents)
-    if relationships.dependent_count > len(relationships.dependents):
-        lines.append(
-            f"Showing {len(relationships.dependents)} of "
-            f"{relationships.dependent_count} dependents."
-        )
-    if relationships.replacements:
-        _append_relationship_group(lines, "Recorded replacements", relationships.replacements)
-        if relationships.replacement_count > len(relationships.replacements):
-            lines.append(
-                f"Showing {len(relationships.replacements)} of "
-                f"{relationships.replacement_count} recorded replacements."
-            )
-    elif status_reason == StatusReason.SUPERSEDED.value:
-        lines.append("No replacement task IDs are present in the recorded scope-change event.")
-    return "Relationships\n" + "\n".join(lines)
+    return lines
+
+
+def _append_paginated_relationships(
+    lines: list[str],
+    label: str,
+    references: tuple[TaskReferenceView, ...],
+    count: int,
+    offset: int,
+) -> None:
+    _append_relationship_group(lines, label, references)
+    if offset + len(references) < count:
+        noun = label.lower()
+        lines.append(f"Showing {offset + 1} to {offset + len(references)} of {count} {noun}.")
 
 
 def _append_relationship_group(

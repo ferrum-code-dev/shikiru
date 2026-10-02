@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import TypeAdapter
 
 from shikiru.agents.contracts import Rung
 from shikiru.domain.escalation import EscalationStatus
+from shikiru.domain.events import EventKind
 from shikiru.domain.reports import SIBLING_REFERENCE_PREFIX, resolve_dependency
 from shikiru.domain.scheduling import find_dependency_cycle
 from shikiru.domain.tasks import (
@@ -36,7 +37,7 @@ from shikiru.store.database import (
     require_after_insert,
     transaction,
 )
-from shikiru.store.events import EventLog
+from shikiru.store.events import EventLog, fetch_latest_events
 
 if TYPE_CHECKING:
     import sqlite3  # noqa: TID251
@@ -45,7 +46,6 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import ComplexityName
     from shikiru.domain.commands import Submit
-    from shikiru.domain.events import EventKind
     from shikiru.domain.reports import NewTask
     from shikiru.domain.scheduling import WaitReason
     from shikiru.domain.steps import Transition
@@ -106,11 +106,16 @@ class TaskRelationships:
     family_child_count: int
     dependencies: tuple[Task, ...]
     dependency_count: int
+    blocking_dependencies: tuple[Task, ...]
+    blocking_dependency_count: int
     dependents: tuple[Task, ...]
     dependent_count: int
     replacements: tuple[Task, ...]
     replacement_count: int
     family_outcomes: tuple[tuple[str, int], ...]
+    page_offset: int
+    page_size: int
+    has_more: bool
 
 
 _TASK_COLUMNS = (
@@ -209,6 +214,7 @@ def fetch_task_browser_page(
     offset: int,
     selected_task_id: str | None = None,
     diagnosed_stall_task_ids: Sequence[str] = (),
+    quota_wait_task_ids: Sequence[str] = (),
 ) -> TaskBrowserPage:
     """Read one ordered browser page and exact counts without loading the full task table."""
     if category not in _BROWSER_FILTERS:
@@ -218,7 +224,7 @@ def fetch_task_browser_page(
         message = "task browser limit must be positive and offset must be non-negative"
         raise ValueError(message)
 
-    category_where, category_parameters = _task_browser_category(category)
+    category_where, category_parameters = _task_browser_category(category, quota_wait_task_ids)
     match_where, match_parameters = _task_browser_search(category_where, search)
     counts = connection.execute(
         "SELECT "
@@ -282,14 +288,15 @@ def _fetch_task_ancestors(connection: sqlite3.Connection, task_ids: Sequence[str
 
 
 def _fetch_tasks_by_ids(
-    connection: sqlite3.Connection, task_ids: Sequence[str]
+    connection: sqlite3.Connection, task_ids: Sequence[str], *, offset: int
 ) -> tuple[Task, ...]:
-    if not task_ids:
+    page_ids = task_ids[offset : offset + _RELATIONSHIP_LIMIT]
+    if not page_ids:
         return ()
-    placeholders = ", ".join("?" for _ in task_ids)
+    placeholders = ", ".join("?" for _ in page_ids)
     rows = connection.execute(
         f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id IN ({placeholders}) ORDER BY seq",
-        tuple(task_ids),
+        tuple(page_ids),
     ).fetchall()
     return tuple(_rows_to_tasks(connection, rows))
 
@@ -299,10 +306,11 @@ def _fetch_relationship_tasks(
     *,
     column: str,
     task_id: str,
+    offset: int,
 ) -> tuple[tuple[Task, ...], int]:
     rows = connection.execute(
-        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE {column} = ? ORDER BY seq LIMIT ?",
-        (task_id, _RELATIONSHIP_LIMIT),
+        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE {column} = ? ORDER BY seq LIMIT ? OFFSET ?",
+        (task_id, _RELATIONSHIP_LIMIT, offset),
     ).fetchall()
     count = connection.execute(
         f"SELECT COUNT(*) FROM tasks WHERE {column} = ?", (task_id,)
@@ -311,12 +319,12 @@ def _fetch_relationship_tasks(
 
 
 def _fetch_dependency_tasks(
-    connection: sqlite3.Connection, task_id: str
+    connection: sqlite3.Connection, task_id: str, *, offset: int
 ) -> tuple[tuple[Task, ...], int]:
     rows = connection.execute(
         f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id IN "
-        "(SELECT depends_on FROM task_deps WHERE task_id = ?) ORDER BY seq LIMIT ?",
-        (task_id, _RELATIONSHIP_LIMIT),
+        "(SELECT depends_on FROM task_deps WHERE task_id = ?) ORDER BY seq LIMIT ? OFFSET ?",
+        (task_id, _RELATIONSHIP_LIMIT, offset),
     ).fetchall()
     count = connection.execute(
         "SELECT COUNT(*) FROM task_deps WHERE task_id = ?", (task_id,)
@@ -324,13 +332,29 @@ def _fetch_dependency_tasks(
     return tuple(_rows_to_tasks(connection, rows)), count
 
 
+def _fetch_blocking_dependency_tasks(
+    connection: sqlite3.Connection, task_id: str, *, offset: int
+) -> tuple[tuple[Task, ...], int]:
+    rows = connection.execute(
+        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE status != ? AND id IN "
+        "(SELECT depends_on FROM task_deps WHERE task_id = ?) ORDER BY seq LIMIT ? OFFSET ?",
+        (Status.DONE.value, task_id, _RELATIONSHIP_LIMIT, offset),
+    ).fetchall()
+    count = connection.execute(
+        "SELECT COUNT(*) FROM tasks WHERE status != ? AND id IN "
+        "(SELECT depends_on FROM task_deps WHERE task_id = ?)",
+        (Status.DONE.value, task_id),
+    ).fetchone()[0]
+    return tuple(_rows_to_tasks(connection, rows)), count
+
+
 def _fetch_dependent_tasks(
-    connection: sqlite3.Connection, task_id: str
+    connection: sqlite3.Connection, task_id: str, *, offset: int
 ) -> tuple[tuple[Task, ...], int]:
     rows = connection.execute(
         f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id IN "
-        "(SELECT task_id FROM task_deps WHERE depends_on = ?) ORDER BY seq LIMIT ?",
-        (task_id, _RELATIONSHIP_LIMIT),
+        "(SELECT task_id FROM task_deps WHERE depends_on = ?) ORDER BY seq LIMIT ? OFFSET ?",
+        (task_id, _RELATIONSHIP_LIMIT, offset),
     ).fetchall()
     count = connection.execute(
         "SELECT COUNT(*) FROM task_deps WHERE depends_on = ?", (task_id,)
@@ -376,49 +400,94 @@ def _family_outcomes(connection: sqlite3.Connection, root_id: str) -> tuple[tupl
 
 def fetch_task_relationships(
     connection: sqlite3.Connection,
-    task: Task,
+    task_id: str,
     *,
-    replacement_task_ids: Sequence[str] = (),
-) -> TaskRelationships:
-    """Read bounded parent, child, dependency and recorded replacement relationships."""
-    family_parent = fetch_task(connection, task.parent_id) if task.parent_id is not None else task
-    if family_parent is None:
-        message = f"task {task.id} has a missing parent {task.parent_id}"
+    offset: int = 0,
+) -> TaskRelationships | None:
+    """Read one bounded task-relationship page from a consistent database snapshot."""
+    if offset < 0:
+        message = "task relationship offset cannot be negative"
         raise ValueError(message)
-    family_children, family_child_count = _fetch_relationship_tasks(
-        connection,
-        column="parent_id",
-        task_id=family_parent.id,
-    )
-    if task.parent_id is not None and all(child.id != task.id for child in family_children):
-        family_children = tuple(sorted((*family_children, task), key=lambda child: child.seq))
-    dependencies, dependency_count = _fetch_dependency_tasks(connection, task.id)
-    dependents, dependent_count = _fetch_dependent_tasks(connection, task.id)
-    replacements = tuple(
-        replacement
-        for replacement in _fetch_tasks_by_ids(
-            connection, replacement_task_ids[:_RELATIONSHIP_LIMIT]
+    with transaction(connection):
+        task = fetch_task(connection, task_id)
+        if task is None:
+            return None
+        replacement_task_ids: list[str] = []
+        if task.status_reason is StatusReason.SUPERSEDED:
+            events = fetch_latest_events(
+                connection,
+                1,
+                kinds=[EventKind.SCOPE_CHANGE],
+                task_id=task.id,
+            )
+            if events:
+                recorded_ids = events[0].data.get("new_task_ids")
+                if isinstance(recorded_ids, list):
+                    replacement_task_ids = [
+                        replacement_id
+                        for replacement_id in cast("list[object]", recorded_ids)
+                        if isinstance(replacement_id, str)
+                    ]
+        family_parent = (
+            fetch_task(connection, task.parent_id) if task.parent_id is not None else task
         )
-        if replacement.parent_id == task.id
-    )
-    root_id = _family_root_id(connection, task.id)
-    family_root = fetch_task(connection, root_id)
-    if family_root is None:
-        message = f"family root {root_id} disappeared while reading {task.id}"
-        raise ValueError(message)
-    return TaskRelationships(
-        family_parent=family_parent,
-        family_root=family_root,
-        family_children=family_children,
-        family_child_count=family_child_count,
-        dependencies=dependencies,
-        dependency_count=dependency_count,
-        dependents=dependents,
-        dependent_count=dependent_count,
-        replacements=replacements,
-        replacement_count=len(replacement_task_ids),
-        family_outcomes=_family_outcomes(connection, root_id),
-    )
+        if family_parent is None:
+            message = f"task {task.id} has a missing parent {task.parent_id}"
+            raise ValueError(message)
+        family_children, family_child_count = _fetch_relationship_tasks(
+            connection,
+            column="parent_id",
+            task_id=task.id,
+            offset=offset,
+        )
+        dependencies, dependency_count = _fetch_dependency_tasks(connection, task.id, offset=offset)
+        blocking_dependencies, blocking_dependency_count = _fetch_blocking_dependency_tasks(
+            connection,
+            task.id,
+            offset=offset,
+        )
+        dependents, dependent_count = _fetch_dependent_tasks(connection, task.id, offset=offset)
+        replacements = tuple(
+            replacement
+            for replacement in _fetch_tasks_by_ids(
+                connection,
+                replacement_task_ids,
+                offset=offset,
+            )
+            if replacement.parent_id == task.id
+        )
+        root_id = _family_root_id(connection, task.id)
+        family_root = fetch_task(connection, root_id)
+        if family_root is None:
+            message = f"family root {root_id} disappeared while reading {task.id}"
+            raise ValueError(message)
+        return TaskRelationships(
+            family_parent=family_parent,
+            family_root=family_root,
+            family_children=family_children,
+            family_child_count=family_child_count,
+            dependencies=dependencies,
+            dependency_count=dependency_count,
+            blocking_dependencies=blocking_dependencies,
+            blocking_dependency_count=blocking_dependency_count,
+            dependents=dependents,
+            dependent_count=dependent_count,
+            replacements=replacements,
+            replacement_count=len(replacement_task_ids),
+            family_outcomes=_family_outcomes(connection, root_id),
+            page_offset=offset,
+            page_size=_RELATIONSHIP_LIMIT,
+            has_more=any(
+                offset + _RELATIONSHIP_LIMIT < count
+                for count in (
+                    family_child_count,
+                    dependency_count,
+                    blocking_dependency_count,
+                    dependent_count,
+                    len(replacement_task_ids),
+                )
+            ),
+        )
 
 
 def fetch_task_browser_pages(
@@ -430,6 +499,7 @@ def fetch_task_browser_pages(
     page_count: int,
     selected_task_id: str | None = None,
     diagnosed_stall_task_ids: Sequence[str] = (),
+    quota_wait_task_ids: Sequence[str] = (),
 ) -> tuple[TaskBrowserPage, ...]:
     """Read a bounded page range from one SQLite snapshot."""
     if page_count < 1:
@@ -448,6 +518,7 @@ def fetch_task_browser_pages(
                 offset=offset,
                 selected_task_id=selected_task_id,
                 diagnosed_stall_task_ids=diagnosed_stall_task_ids,
+                quota_wait_task_ids=quota_wait_task_ids,
             )
             pages.append(page)
             if offset + len(page.tasks) >= page.matching_count:
@@ -455,21 +526,31 @@ def fetch_task_browser_pages(
     return tuple(pages)
 
 
-def _task_browser_category(category: str) -> tuple[str, tuple[str, ...]]:
+def _task_browser_category(
+    category: str,
+    quota_wait_task_ids: Sequence[str],
+) -> tuple[str, tuple[str, ...]]:
     if category == _BROWSER_CATEGORY_ALL:
         return "1 = 1", ()
     if category == _BROWSER_CATEGORY_WAITING:
+        quota_wait = ""
+        parameters: tuple[str, ...] = ()
+        if quota_wait_task_ids:
+            placeholders = ", ".join("?" for _ in quota_wait_task_ids)
+            quota_wait = f" OR t.id IN ({placeholders})"
+            parameters = tuple(quota_wait_task_ids)
         return (
             (
                 "(t.status = ? OR t.status = ? OR "
                 "(t.status IN (?, ?) AND "
-                "(json_array_length(t.holds) > 0 OR t.wait_reason IS NOT NULL)))"
+                f"(json_array_length(t.holds) > 0 OR t.wait_reason IS NOT NULL{quota_wait})))"
             ),
             (
                 Status.QUEUED.value,
                 Status.ESCALATED.value,
                 Status.RUNNING.value,
                 Status.INTEGRATING.value,
+                *parameters,
             ),
         )
     statuses = {

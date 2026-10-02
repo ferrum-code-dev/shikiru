@@ -50,6 +50,8 @@ queued ──► running ──► integrating ──► done
 - `paused` and `intervention` are task-scoped (§9).
 - The **quota hold is derived, not stored on tasks**: a task whose next turn needs an agent with a row in `agent_blocks` waits until `until`.
 
+While a task's own running turn waits for quota, `wait_reason` remains unset. The dashboard identifies that wait only when the task's latest recorded quota-failure and quota-block events match the agent for its current role and rung, and that agent still has a live `agent_blocks.until`. A block for another task's account use does not mark this task as waiting. Provider reset remains the failed turn's reported value, including an unknown reset; the engine probe deadline is separate.
+
 ## 2. Steps
 
 | Step | Role | Template → report | Outcomes |
@@ -377,7 +379,7 @@ The `Scheduler` runs on every state change and every `orchestration.poll_seconds
    - **slot**: a free slot exists;
    - **resources**: `ResourceSampler` average over configured `resources.cpu_window_seconds` `< resources.max_cpu_pct` and available RAM `≥ resources.min_free_ram_gb`;
    - **quota**: neither the Leader's nor the Implementer's resolved agent is blocked.
-   `wait_reason` is the scheduler's last recorded gate result, not a timestamp for how long the task has been blocked. The dashboard presents that reason alongside current stored evidence. A resource sample taken by the dashboard is labelled with its own sample age and does not replace the scheduler's decision. Provider quota windows retain their reported reset and observation time; the engine's `agent_blocks.until` records its separate retry/probe deadline, including unknown-reset probes.
+   `wait_reason` is the scheduler's last recorded gate result, not a timestamp for how long the task has been blocked. A running turn inside quota recovery does not write `wait_reason`; the dashboard correlates that task's latest quota failure and block event with the active current-role agent block before showing a current-turn quota wait. Home Running excludes that evidenced wait and Waiting plus the Waiting browser include it. Other-role, expired or rung-changed agent blocks do not qualify. A resource sample taken by the dashboard is labelled with its own sample age and does not replace the scheduler's decision. Provider quota windows retain their reported reset and observation time; the engine's `agent_blocks.until` records its separate retry/probe deadline, including unknown-reset probes.
 4. **On dispatch**: assign the task's previous slot if free, else the lowest free slot, create the task window (`LayoutGuard`) and start the `TaskFlow` coroutine.
    Every tick then ensures each unheld `running` or `integrating` task has a live flow and starts a resumed one where it is missing (§7, live flow invariant); a dispatch that finds the task's previous flow still finishing is completed by that ensure on the next tick.
 5. **Dispatch failure**: if preparing the task (slot, task root, window) raises, the dispatch is rolled back, the task stays `queued` and `dispatch_failed` is logged; after `MAX_DISPATCH_FAILURES` consecutive failures it escalates with `engine_error`.

@@ -140,6 +140,9 @@ class EscalationsPanel(Static):
     async def _open_task_detail(self, event: events.Key) -> None:
         group = self._attention.groups[self._selected]
         if group.task_id is not None and self._widget_context.open_task_detail is not None:
+            on_task_selected = self._widget_context.on_task_selected
+            if on_task_selected is not None:
+                on_task_selected(group.task_id)
             await self._widget_context.open_task_detail(group.task_id)
             event.stop()
 

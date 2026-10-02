@@ -6,6 +6,7 @@ import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol
 
+from shikiru.agents.contracts import FailureKind
 from shikiru.dashboard.contract import (
     AgentUsageView,
     AttentionGroupView,
@@ -109,6 +110,7 @@ _ACTIVITY_KINDS = (
     EventKind.ENGINE_RECOVERED,
 )
 _ACTIVE_TURN_STATUSES = (Status.RUNNING, Status.INTEGRATING)
+_RESET_AT_FIELD = "resets_at"
 
 
 class DashboardSources(Protocol):
@@ -181,8 +183,15 @@ class StateDashboardViews:
         """Count home categories without treating them as disjoint task totals."""
         attention = self.attention()
         tasks = self._state.list_tasks()
+        now = self._clock.now()
+        quota_wait_ids = {
+            task.id for task in tasks if self._running_quota_evidence(task, now) is not None
+        }
         running = sum(
-            task.status in _ACTIVE_TURN_STATUSES and not task.held and task.wait_reason is None
+            task.status in _ACTIVE_TURN_STATUSES
+            and not task.held
+            and task.wait_reason is None
+            and task.id not in quota_wait_ids
             for task in tasks
         )
         waiting = sum(
@@ -191,6 +200,7 @@ class StateDashboardViews:
                 task.status in (Status.QUEUED, Status.ESCALATED)
                 or task.held
                 or task.wait_reason is not None
+                or task.id in quota_wait_ids
             )
             for task in tasks
         )
@@ -270,6 +280,9 @@ class StateDashboardViews:
             task_filter,
             now,
         )
+        quota_wait_task_ids = (
+            self._quota_wait_task_ids(now) if task_filter is TaskBrowserFilter.WAITING else ()
+        )
         page = self._state.task_browser_page(
             category=task_filter.value,
             search=search,
@@ -277,6 +290,7 @@ class StateDashboardViews:
             offset=offset,
             selected_task_id=selected_task_id,
             diagnosed_stall_task_ids=diagnosed_stall_task_ids,
+            quota_wait_task_ids=quota_wait_task_ids,
         )
         selected_task = self._selected_browser_task((page,), selected_task_id)
         return self._task_browser_view(
@@ -306,6 +320,9 @@ class StateDashboardViews:
             task_filter,
             now,
         )
+        quota_wait_task_ids = (
+            self._quota_wait_task_ids(now) if task_filter is TaskBrowserFilter.WAITING else ()
+        )
         pages = self._state.task_browser_pages(
             category=task_filter.value,
             search=search,
@@ -313,6 +330,7 @@ class StateDashboardViews:
             page_count=page_count,
             selected_task_id=selected_task_id,
             diagnosed_stall_task_ids=diagnosed_stall_task_ids,
+            quota_wait_task_ids=quota_wait_task_ids,
         )
         selected_task = self._selected_browser_task(pages, selected_task_id)
         return tuple(
@@ -343,6 +361,13 @@ class StateDashboardViews:
             frames = self._motion.frames(tuple(current_turn_tasks), now)
             stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
         return motion_task_ids, stalled_ids, tuple(sorted(stalled_ids))
+
+    def _quota_wait_task_ids(self, now: datetime) -> tuple[str, ...]:
+        return tuple(
+            task.id
+            for task in self._state.list_tasks(statuses=_ACTIVE_TURN_STATUSES)
+            if self._running_quota_evidence(task, now) is not None
+        )
 
     def _selected_browser_task(
         self,
@@ -600,7 +625,12 @@ class StateDashboardViews:
             faults=len(faults),
         )
 
-    async def task_detail(self, task_id: str) -> TaskDetailView | None:
+    async def task_detail(
+        self,
+        task_id: str,
+        *,
+        relationship_offset: int = 0,
+    ) -> TaskDetailView | None:
         """Project current task state and its bounded, recorded evidence for the detail view."""
         detail = await self._queries.get_task_detail(task_id)
         if detail is None:
@@ -630,7 +660,10 @@ class StateDashboardViews:
         ownership = tuple(
             run.role.value for run in detail.sessions if run.status is RunStatus.TAKEN_OVER
         )
-        stored_relationships = self._state.task_relationships(task.id)
+        stored_relationships = self._state.task_relationships(
+            task.id,
+            offset=relationship_offset,
+        )
         relationships = (
             _task_relationships_view(stored_relationships)
             if stored_relationships is not None
@@ -694,10 +727,11 @@ class StateDashboardViews:
         now: datetime,
     ) -> TaskBlockerView | None:
         wait_reason = task.wait_reason
-        if wait_reason is None and not task.holds:
+        quota_wait = self._running_quota_evidence(task, now)
+        if wait_reason is None and not task.holds and quota_wait is None:
             return None
         hold_reason = Hold.PAUSED.value if Hold.PAUSED in task.holds else Hold.INTERVENTION.value
-        reason = wait_reason or hold_reason
+        reason = wait_reason or (WaitReason.QUOTA.value if quota_wait is not None else hold_reason)
         lines = _hold_evidence(task, ownership)
         if wait_reason is not None:
             lines.insert(0, f"Recorded scheduler reason · {wait_reason}")
@@ -716,7 +750,7 @@ class StateDashboardViews:
             case WaitReason.PAUSED.value:
                 extra_lines = ["Resume clears the scheduler pause wait when submitted."]
             case None:
-                extra_lines = []
+                extra_lines = list(quota_wait or ())
             case _:
                 extra_lines = ["No additional blocker evidence is recorded."]
         lines.extend(extra_lines)
@@ -728,23 +762,91 @@ class StateDashboardViews:
     ) -> tuple[list[str], tuple[TaskReferenceView, ...]]:
         if relationships is None:
             return ["Dependency relationship evidence is unavailable."], ()
-        related = tuple(
-            item for item in relationships.dependencies if item.status != Status.DONE.value
-        )
-        lines = (
-            [
+        related = relationships.blocking_dependencies
+        if related:
+            lines = [
                 "Blocking dependencies · "
                 + "; ".join(f"{item.task_id} {item.title} ({item.status})" for item in related)
             ]
-            if related
-            else ["No unfinished dependency is present in the current stored state."]
-        )
-        if relationships.dependency_count > len(relationships.dependencies):
+        elif relationships.blocking_dependency_count == 0:
+            lines = ["No unfinished dependency is present in the current stored state."]
+        elif relationships.page_offset >= relationships.blocking_dependency_count:
+            lines = [
+                (
+                    f"Unfinished dependency evidence is on an earlier relationship page "
+                    f"({relationships.blocking_dependency_count} recorded)."
+                )
+            ]
+        else:
+            lines = ["Additional blocking dependencies exist beyond the current bounded page."]
+        if relationships.page_offset < relationships.blocking_dependency_count and (
+            relationships.blocking_dependency_count > relationships.page_offset + len(related)
+        ):
             lines.append(
-                f"Showing {len(relationships.dependencies)} of "
-                f"{relationships.dependency_count} dependencies."
+                f"Showing {relationships.page_offset + 1} to "
+                f"{relationships.page_offset + len(related)} of "
+                f"{relationships.blocking_dependency_count} unfinished dependencies."
             )
         return lines, related
+
+    def _running_quota_evidence(self, task: Task, now: datetime) -> tuple[str, ...] | None:
+        if task.status is not Status.RUNNING or task.step is None:
+            return None
+        role = task_acting_role(task)
+        agent = pick_rung(task, role, self._settings).agent
+        quota_events = self._state.latest_events(
+            1,
+            kinds=(EventKind.QUOTA_BLOCKED, EventKind.QUOTA_CLEARED),
+            task_id=task.id,
+        )
+        if (
+            not quota_events
+            or quota_events[0].kind is not EventKind.QUOTA_BLOCKED
+            or quota_events[0].data.get("agent") != agent
+        ):
+            return None
+        failures = self._state.latest_events(
+            1,
+            kinds=(EventKind.TURN_FAILED,),
+            task_id=task.id,
+        )
+        if (
+            not failures
+            or failures[0].data.get("kind") != FailureKind.QUOTA.value
+            or failures[0].data.get("step") != task.step.value
+        ):
+            return None
+        failure = failures[0]
+        block = self._state.agent_block(agent)
+        if block is None or block.until <= now:
+            return None
+        reset_at = failure.data.get(_RESET_AT_FIELD)
+        reset_text = (
+            reset_at
+            if isinstance(reset_at, str)
+            else "not reported"
+            if reset_at is None and _RESET_AT_FIELD in failure.data
+            else "unavailable"
+        )
+        lines = [
+            f"Current turn quota wait · {role.value} · {agent}",
+            f"Provider-reported quota reset · {reset_text}",
+            f"Task quota-block event · {quota_events[0].ts.isoformat()}",
+            f"Engine retry/probe deadline · {block.reason} · {block.until.isoformat()}",
+        ]
+        windows = self._state.list_quotas((agent,)).get(agent, [])
+        if windows:
+            for window in windows:
+                reset = (
+                    window.resets_at.isoformat() if window.resets_at is not None else "not reported"
+                )
+                lines.append(
+                    f"Provider quota · {window.name} · reset {reset} · "
+                    f"observed {_age(now - window.observed_at)} ago"
+                )
+        else:
+            lines.append(f"Provider quota observation · {agent} · unavailable")
+        return tuple(lines)
 
     def _slot_evidence(self) -> tuple[list[str], tuple[TaskReferenceView, ...]]:
         occupied = [
@@ -788,12 +890,14 @@ class StateDashboardViews:
         )
         for agent in required_agents:
             block = self._state.agent_block(agent)
-            deadline = (
-                f"{block.reason} · {block.until.isoformat()}"
-                if block is not None
-                else "not recorded"
-            )
-            lines.append(f"Engine quota retry/probe deadline · {agent} · {deadline}")
+            if block is None:
+                lines.append(f"Scheduler quota account block · {agent} · not recorded")
+            else:
+                activity = "active" if block.until > now else "expired"
+                lines.append(
+                    f"Scheduler quota account block · {agent} · {activity} · "
+                    f"{block.reason} · retry/probe deadline {block.until.isoformat()}"
+                )
             windows = self._state.list_quotas((agent,)).get(agent, [])
             if not windows:
                 lines.append(f"Provider quota observation · {agent} · unavailable")
@@ -1036,6 +1140,10 @@ def _task_relationships_view(relationships: TaskRelationships) -> TaskRelationsh
         family_child_count=relationships.family_child_count,
         dependencies=tuple(_task_reference_view(task) for task in relationships.dependencies),
         dependency_count=relationships.dependency_count,
+        blocking_dependencies=tuple(
+            _task_reference_view(task) for task in relationships.blocking_dependencies
+        ),
+        blocking_dependency_count=relationships.blocking_dependency_count,
         dependents=tuple(_task_reference_view(task) for task in relationships.dependents),
         dependent_count=relationships.dependent_count,
         replacements=tuple(_task_reference_view(task) for task in relationships.replacements),
@@ -1044,6 +1152,9 @@ def _task_relationships_view(relationships: TaskRelationships) -> TaskRelationsh
             TaskFamilyOutcomeView(outcome=outcome, count=count)
             for outcome, count in relationships.family_outcomes
         ),
+        page_offset=relationships.page_offset,
+        page_size=relationships.page_size,
+        has_more=relationships.has_more,
     )
 
 

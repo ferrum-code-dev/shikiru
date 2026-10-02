@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
 from textual.widgets import Button, Input, ListView, Select, Static
 
-from shikiru.agents.contracts import QuotaWindow
+from shikiru.agents.contracts import QuotaWindow, Rung
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter
 from shikiru.dashboard.detail import (
     TASK_DETAIL_IDENTITY,
+    TASK_DETAIL_MORE_RELATIONSHIPS,
     TASK_DETAIL_OPEN_RELATED,
     TASK_DETAIL_RELATED_TASK,
     TASK_DETAIL_RELATIONSHIPS,
@@ -27,7 +29,7 @@ from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
-from shikiru.store.tasks import TaskStore
+from shikiru.store.tasks import TaskStore, fetch_task_relationships
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
@@ -43,6 +45,11 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from textual.pilot import Pilot
+
+    from shikiru.config.settings import Settings
+    from shikiru.domain.tasks import Task
+    from shikiru.store.database import Database
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
 
@@ -80,6 +87,209 @@ def _start_task(connection: Connection, clock: FakeClock, task_id: str) -> None:
     store.apply_transition(task_id, first_step(task))
 
 
+def _nested_plan_family(
+    connection: Connection,
+    clock: FakeClock,
+) -> tuple[Task, Task, tuple[Task, ...]]:
+    root = seed_task(connection, clock, title="Parser root plan", mode=Mode.PLAN)
+    store = TaskStore(connection, clock)
+    [nested] = store.apply_scope_change(
+        root.id,
+        Transition.stay(root, step=Step.INTEGRATE, status=Status.DONE),
+        [NewTask(title="Parser nested plan", request="plan parser work")],
+        origin=TaskOrigin.LEADER,
+    )
+    nested_transition = replace(
+        Transition.stay(nested, step=Step.INTEGRATE, status=Status.DONE),
+        mode=Mode.PLAN,
+    )
+    children = store.apply_scope_change(
+        nested.id,
+        nested_transition,
+        [
+            NewTask(title="Parser implementation", request="implement parser"),
+            NewTask(title="Parser fixture update", request="update fixtures"),
+        ],
+        origin=TaskOrigin.LEADER,
+    )
+    return root, nested, tuple(children)
+
+
+@dataclass(frozen=True)
+class _PaginatedRelationshipTasks:
+    dependencies: tuple[Task, ...]
+    superseded: Task
+    replacements: tuple[Task, ...]
+    dependents: tuple[Task, ...]
+    blocked: Task
+
+
+def _seed_paginated_relationship_tasks(
+    connection: Connection,
+    clock: FakeClock,
+    settings: Settings,
+) -> _PaginatedRelationshipTasks:
+    store = TaskStore(connection, clock)
+    dependencies = tuple(
+        seed_task(connection, clock, title=f"External dependency {index}")
+        for index in range(TASK_BROWSER_PAGE_SIZE + 1)
+    )
+    for dependency in dependencies[:-1]:
+        store.apply_transition(
+            dependency.id,
+            Transition.stay(dependency, step=None, status=Status.DONE),
+        )
+    superseded = seed_task(
+        connection,
+        clock,
+        title="Paginated replacement family",
+        mode=Mode.IMPLEMENT,
+        depends_on=tuple(item.id for item in dependencies),
+    )
+    store.apply_transition(superseded.id, Transition.stay(superseded, step=Step.VERIFY))
+    superseded = store.require(superseded.id)
+    verdict = Verdict(
+        decision="supersede",
+        summary="Split the replacement work",
+        new_tasks=[
+            NewTask(title=f"Replacement {index}", request=f"replacement {index}")
+            for index in range(TASK_BROWSER_PAGE_SIZE + 1)
+        ],
+    )
+    replacements = store.apply_scope_change(
+        superseded.id,
+        next_step(superseded, verdict, settings),
+        verdict.new_tasks,
+        origin=TaskOrigin.LEADER,
+    )
+    EventLog(connection, clock).append(
+        EventKind.SCOPE_CHANGE,
+        task_id=superseded.id,
+        message="Recorded replacement task IDs",
+        data={"new_task_ids": [item.id for item in replacements]},
+    )
+    dependents = tuple(
+        seed_task(
+            connection,
+            clock,
+            title=f"Dependent task {index}",
+            depends_on=(superseded.id,),
+        )
+        for index in range(TASK_BROWSER_PAGE_SIZE + 1)
+    )
+    blocked = seed_task(
+        connection,
+        clock,
+        title="Blocked by the last dependency",
+        depends_on=tuple(item.id for item in dependencies),
+    )
+    store.set_wait_reason(blocked.id, WaitReason.DEPENDENCY)
+    return _PaginatedRelationshipTasks(
+        dependencies=dependencies,
+        superseded=superseded,
+        replacements=tuple(replacements),
+        dependents=dependents,
+        blocked=blocked,
+    )
+
+
+def _assert_relationship_pages(
+    reader: StateReader,
+    tasks: _PaginatedRelationshipTasks,
+) -> None:
+    first_page = reader.task_relationships(tasks.superseded.id)
+    last_page = reader.task_relationships(
+        tasks.superseded.id,
+        offset=TASK_BROWSER_PAGE_SIZE,
+    )
+    assert first_page is not None
+    assert first_page.has_more
+    assert first_page.family_child_count == TASK_BROWSER_PAGE_SIZE + 1
+    assert len(first_page.family_children) == TASK_BROWSER_PAGE_SIZE
+    assert len(first_page.dependencies) == TASK_BROWSER_PAGE_SIZE
+    assert len(first_page.dependents) == TASK_BROWSER_PAGE_SIZE
+    assert len(first_page.replacements) == TASK_BROWSER_PAGE_SIZE
+    assert last_page is not None
+    assert last_page.page_offset == TASK_BROWSER_PAGE_SIZE
+    assert [item.id for item in last_page.family_children] == [tasks.replacements[-1].id]
+    assert [item.id for item in last_page.dependencies] == [tasks.dependencies[-1].id]
+    assert [item.id for item in last_page.dependents] == [tasks.dependents[-1].id]
+    assert [item.id for item in last_page.replacements] == [tasks.replacements[-1].id]
+
+
+async def _open_browser_task(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    title: str,
+    task_id: str,
+) -> None:
+    search = app.query_one("#task-browser-search", Input)
+    search.value = title
+    await pilot.pause()
+    task_list = app.query_one("#task-browser-list", ListView)
+    task_list.focus()
+    task_list.index = 0
+    await pilot.press("enter")
+    await wait_until(
+        lambda: task_id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+        timeout=5.0,
+    )
+
+
+async def _open_related_task(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task_id: str,
+) -> None:
+    panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+    if not panel.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).display:
+        await pilot.click(f"#{TASK_DETAIL_RELATIONSHIPS_BUTTON}")
+    related_select = cast(
+        "Select[str]",
+        panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select),
+    )
+    related_select.value = task_id
+    await pilot.click(f"#{TASK_DETAIL_OPEN_RELATED}")
+    await wait_until(
+        lambda: task_id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+        timeout=5.0,
+    )
+
+
+async def _exercise_paged_relationship_navigation(
+    reader: StateReader,
+    project_dir: Path,
+    clock: FakeClock,
+    tasks: _PaginatedRelationshipTasks,
+) -> None:
+    app = _task_detail_app(reader, project_dir, clock, StubServices())
+    async with app.run_test(size=(110, 70)) as pilot:
+        await pilot.pause()
+        await _open_browser_task(app, pilot, tasks.superseded.title, tasks.superseded.id)
+        await pilot.click(f"#{TASK_DETAIL_RELATIONSHIPS_BUTTON}")
+        await pilot.click(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}")
+        await wait_until(
+            lambda: (
+                tasks.replacements[-1].id
+                in _static_text(app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static))
+            ),
+            timeout=5.0,
+        )
+        await _open_related_task(app, pilot, tasks.replacements[-1].id)
+        await pilot.press("escape")
+        await wait_until(
+            lambda: (
+                tasks.superseded.id
+                in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            ),
+            timeout=5.0,
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+        await _open_browser_task(app, pilot, tasks.blocked.title, tasks.blocked.id)
+        await _open_related_task(app, pilot, tasks.dependencies[-1].id)
+
+
 def _static_text(widget: Static) -> str:
     rendered = widget.render()
     return rendered.plain if isinstance(rendered, Text) else str(rendered)
@@ -92,17 +302,7 @@ async def test_child_search_shows_parent_context_and_expands_the_family_group(
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(TASK_CREATED_AT)
-    parent = seed_task(connection, clock, title="Parser plan", mode=Mode.PLAN)
-    store = TaskStore(connection, clock)
-    children = store.apply_scope_change(
-        parent.id,
-        Transition.stay(parent, step=Step.INTEGRATE, status=Status.DONE),
-        [
-            NewTask(title="Parser implementation", request="implement parser"),
-            NewTask(title="Parser fixture update", request="update fixtures"),
-        ],
-        origin=TaskOrigin.LEADER,
-    )
+    parent, nested, children = _nested_plan_family(connection, clock)
     _start_task(connection, clock, children[0].id)
     services = StubServices()
     views = state_views(reader, project_dir, clock, services)
@@ -118,12 +318,13 @@ async def test_child_search_shows_parent_context_and_expands_the_family_group(
 
     assert page.matching_count == 1
     assert [row.task_id for row in page.rows] == [children[0].id]
-    assert [row.task_id for row in page.ancestor_context] == [parent.id]
+    assert [row.task_id for row in page.ancestor_context] == [parent.id, nested.id]
     assert detail is not None
     assert detail.relationships is not None
     assert detail.relationships.family_root.task_id == parent.id
+    assert detail.relationships.family_parent.task_id == nested.id
     outcomes = {item.outcome: item.count for item in detail.relationships.family_outcomes}
-    assert outcomes[Status.DONE.value] == 1
+    assert outcomes[Status.DONE.value] == 2
     assert outcomes[Status.RUNNING.value] == 1
     assert outcomes[Status.QUEUED.value] == 1
 
@@ -136,14 +337,15 @@ async def test_child_search_shows_parent_context_and_expands_the_family_group(
         await pilot.pause()
         context = queue.query_one("#task-browser-family-context", Static)
         assert parent.id in _static_text(context)
+        assert nested.id in _static_text(context)
         assert "of 1" in _static_text(queue.query_one("#task-browser-count", Static))
 
     detail_context = widget_context(reader, project_dir, clock)
-    detail_panel = TaskDetailPanel(detail_context, children[0].id, fixed=True)
+    detail_panel = TaskDetailPanel(detail_context, nested.id, fixed=True)
     async with WidgetHostApp(detail_panel).run_test(size=(90, 80)) as pilot:
         await wait_until(
             lambda: (
-                children[0].id
+                nested.id
                 in _static_text(detail_panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
             timeout=5.0,
@@ -156,12 +358,84 @@ async def test_child_search_shows_parent_context_and_expands_the_family_group(
         await pilot.pause()
         assert relationships.display
         assert parent.id in _static_text(relationships)
+        assert nested.id in _static_text(relationships)
         assert children[0].id in _static_text(relationships)
         assert children[1].id in _static_text(relationships)
         toggle.press()
         await pilot.pause()
         await wait_until(lambda: not relationships.display, timeout=5.0)
         assert not relationships.display
+
+
+async def test_nested_family_navigation_returns_through_each_detail_to_the_selected_root(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(TASK_CREATED_AT)
+    root, nested, children = _nested_plan_family(connection, clock)
+    _start_task(connection, clock, children[0].id)
+    app = _task_detail_app(reader, project_dir, clock, StubServices())
+
+    async with app.run_test(size=(110, 70)) as pilot:
+        await pilot.pause()
+        search = app.query_one("#task-browser-search", Input)
+        search.value = root.title
+        await pilot.pause()
+        task_list = app.query_one("#task-browser-list", ListView)
+        task_list.focus()
+        task_list.index = 0
+        await pilot.press("enter")
+        await wait_until(
+            lambda: (
+                root.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            ),
+            timeout=5.0,
+        )
+
+        root_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        await pilot.click(f"#{TASK_DETAIL_RELATIONSHIPS_BUTTON}")
+        root_panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select).value = nested.id
+        await pilot.click(f"#{TASK_DETAIL_OPEN_RELATED}")
+        await wait_until(
+            lambda: (
+                nested.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            ),
+            timeout=5.0,
+        )
+
+        nested_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        await pilot.click(f"#{TASK_DETAIL_RELATIONSHIPS_BUTTON}")
+        nested_panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select).value = children[0].id
+        await pilot.click(f"#{TASK_DETAIL_OPEN_RELATED}")
+        await wait_until(
+            lambda: (
+                children[0].id
+                in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            ),
+            timeout=5.0,
+        )
+
+        await pilot.press("escape")
+        await wait_until(
+            lambda: (
+                nested.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            ),
+            timeout=5.0,
+        )
+        await pilot.press("escape")
+        await wait_until(
+            lambda: (
+                root.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            ),
+            timeout=5.0,
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert search.value == root.title
+        assert root.id in _static_text(app.query_one("#task-browser-preview", Static))
 
 
 def test_family_context_keeps_interleaved_priority_matches_in_dispatch_order(
@@ -304,6 +578,76 @@ async def test_blocked_dependency_navigation_returns_to_the_original_browser_sel
         assert dependency.id in "\n".join(detail.blocker.lines)
 
 
+async def test_relationship_pages_keep_tail_tasks_navigable_and_blocking_dependencies_visible(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = load_settings(project_dir)
+    tasks = _seed_paginated_relationship_tasks(connection, clock, settings)
+
+    _assert_relationship_pages(reader, tasks)
+    blocker_view = await state_views(
+        reader,
+        project_dir,
+        clock,
+        StubServices(),
+        settings=settings,
+    ).task_detail(tasks.blocked.id)
+    assert blocker_view is not None
+    assert blocker_view.blocker is not None
+    assert tasks.dependencies[-1].id in "\n".join(blocker_view.blocker.lines)
+    assert [item.task_id for item in blocker_view.blocker.related_tasks] == [
+        tasks.dependencies[-1].id
+    ]
+    await _exercise_paged_relationship_navigation(
+        reader,
+        project_dir,
+        clock,
+        tasks,
+    )
+
+
+def test_relationship_counts_and_family_outcomes_share_one_snapshot(
+    connection: Connection,
+    database: Database,
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    parent = seed_task(connection, clock, title="Snapshot plan", mode=Mode.PLAN)
+    writer = TaskStore(connection, clock)
+    read_connection = database.connect_readonly()
+    writer_changed_state = False
+
+    def change_before_relationship_count(statement: str) -> None:
+        nonlocal writer_changed_state
+        if not statement.startswith("SELECT COUNT(*) FROM tasks WHERE parent_id ="):
+            return
+        writer_changed_state = True
+        writer.apply_scope_change(
+            parent.id,
+            Transition.stay(parent, step=Step.INTEGRATE, status=Status.DONE),
+            [NewTask(title="Snapshot child", request="child")],
+            origin=TaskOrigin.LEADER,
+        )
+
+    read_connection.set_trace_callback(change_before_relationship_count)
+    try:
+        relationships = fetch_task_relationships(read_connection, parent.id)
+    finally:
+        read_connection.close()
+
+    assert writer_changed_state
+    assert relationships is not None
+    assert relationships.family_parent.status is Status.QUEUED
+    assert relationships.family_children == ()
+    assert relationships.family_child_count == 0
+    outcomes = dict(relationships.family_outcomes)
+    assert outcomes[Status.QUEUED.value] == 1
+    assert outcomes[Status.DONE.value] == 0
+
+
 async def test_quota_and_resource_evidence_keeps_engine_deadline_reset_and_sample_age_separate(
     connection: Connection,
     reader: StateReader,
@@ -348,7 +692,7 @@ async def test_quota_and_resource_evidence_keeps_engine_deadline_reset_and_sampl
     assert quota_detail.blocker is not None
     quota_evidence = "\n".join(quota_detail.blocker.lines)
     assert "reset not reported" in quota_evidence
-    assert "Engine quota retry/probe deadline" in quota_evidence
+    assert "retry/probe deadline" in quota_evidence
     assert (TASK_CREATED_AT + timedelta(seconds=QUOTA_BLOCK_SECONDS)).isoformat() in quota_evidence
     assert "observed 2m ago" in quota_evidence
     assert resource_detail is not None
@@ -357,6 +701,140 @@ async def test_quota_and_resource_evidence_keeps_engine_deadline_reset_and_sampl
     assert "Recorded scheduler reason · resources" in resource_evidence
     assert "Dashboard resource sample" in resource_evidence
     assert "sample age 2m" in resource_evidence
+
+
+async def test_running_quota_wait_requires_a_live_block_for_the_current_task_role(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = load_settings(project_dir)
+    implementer_rung = settings.roles.implementer.ladder[0]
+    other_agent = next(agent for agent in settings.agents if agent != implementer_rung.agent)
+    other_rung = Rung(agent=other_agent, model=implementer_rung.model, effort=None)
+    roles = settings.roles.model_copy(
+        update={
+            "leader": settings.roles.leader.model_copy(update={"ladder": [other_rung]}),
+            "implementer": settings.roles.implementer.model_copy(
+                update={"ladder": [implementer_rung, other_rung]}
+            ),
+        }
+    )
+    settings = settings.model_copy(update={"roles": roles})
+    store = TaskStore(connection, clock)
+
+    owner = seed_task(connection, clock, title="Leader quota wait", mode=Mode.PLAN)
+    store.apply_transition(owner.id, Transition.stay(owner, step=Step.PLAN))
+    owner = store.require(owner.id)
+    EventLog(connection, clock).append(
+        EventKind.TURN_FAILED,
+        task_id=owner.id,
+        message="quota",
+        data={"kind": "quota", "step": Step.PLAN.value, "resets_at": None},
+    )
+    EventLog(connection, clock).append(
+        EventKind.QUOTA_BLOCKED,
+        task_id=owner.id,
+        message="leader agent blocked",
+        data={"agent": other_agent, "until": (clock.now() + timedelta(minutes=5)).isoformat()},
+    )
+    QuotaStore(connection).block(other_agent, clock.now() + timedelta(minutes=5), "quota")
+
+    unrelated = seed_task(
+        connection, clock, title="Unrelated implementer work", mode=Mode.IMPLEMENT
+    )
+    store.apply_transition(unrelated.id, Transition.stay(unrelated, step=Step.IMPLEMENT))
+    other_role = seed_task(
+        connection, clock, title="Previous role quota block", mode=Mode.IMPLEMENT
+    )
+    store.apply_transition(other_role.id, Transition.stay(other_role, step=Step.TRIAGE))
+    EventLog(connection, clock).append(
+        EventKind.TURN_FAILED,
+        task_id=other_role.id,
+        message="leader quota",
+        data={"kind": "quota", "step": Step.TRIAGE.value, "resets_at": None},
+    )
+    EventLog(connection, clock).append(
+        EventKind.QUOTA_BLOCKED,
+        task_id=other_role.id,
+        message="previous leader role blocked",
+        data={"agent": other_agent, "until": (clock.now() + timedelta(minutes=5)).isoformat()},
+    )
+    store.apply_transition(other_role.id, Transition.stay(other_role, step=Step.IMPLEMENT))
+    expired = seed_task(connection, clock, title="Expired quota wait", mode=Mode.IMPLEMENT)
+    store.apply_transition(expired.id, Transition.stay(expired, step=Step.IMPLEMENT))
+    EventLog(connection, clock).append(
+        EventKind.TURN_FAILED,
+        task_id=expired.id,
+        message="quota",
+        data={"kind": "quota", "step": Step.IMPLEMENT.value, "resets_at": None},
+    )
+    EventLog(connection, clock).append(
+        EventKind.QUOTA_BLOCKED,
+        task_id=expired.id,
+        message="expired implementer block",
+        data={
+            "agent": implementer_rung.agent,
+            "until": (clock.now() - timedelta(seconds=1)).isoformat(),
+        },
+    )
+    QuotaStore(connection).block(
+        implementer_rung.agent,
+        clock.now() - timedelta(seconds=1),
+        "quota",
+    )
+    views = state_views(reader, project_dir, clock, StubServices(), settings=settings)
+    expired_detail = await views.task_detail(expired.id)
+    changed_rung = seed_task(
+        connection, clock, title="Changed rung quota wait", mode=Mode.IMPLEMENT
+    )
+    store.apply_transition(changed_rung.id, Transition.stay(changed_rung, step=Step.IMPLEMENT))
+    EventLog(connection, clock).append(
+        EventKind.TURN_FAILED,
+        task_id=changed_rung.id,
+        message="quota",
+        data={"kind": "quota", "step": Step.IMPLEMENT.value, "resets_at": None},
+    )
+    EventLog(connection, clock).append(
+        EventKind.QUOTA_BLOCKED,
+        task_id=changed_rung.id,
+        message="previous implementer rung blocked",
+        data={
+            "agent": implementer_rung.agent,
+            "until": (clock.now() + timedelta(minutes=5)).isoformat(),
+        },
+    )
+    QuotaStore(connection).block(
+        implementer_rung.agent,
+        clock.now() + timedelta(minutes=5),
+        "quota",
+    )
+    changed = store.require(changed_rung.id)
+    store.apply_transition(
+        changed_rung.id,
+        replace(
+            Transition.stay(changed, step=Step.IMPLEMENT),
+            rung_index={Role.IMPLEMENTER: 1},
+        ),
+    )
+    owner_detail, unrelated_detail, other_role_detail, changed_detail = [
+        await views.task_detail(task_id)
+        for task_id in (owner.id, unrelated.id, other_role.id, changed_rung.id)
+    ]
+
+    assert owner_detail is not None
+    assert owner_detail.blocker is not None
+    assert "Current turn quota wait · leader" in "\n".join(owner_detail.blocker.lines)
+    assert unrelated_detail is not None
+    assert unrelated_detail.blocker is None
+    assert other_role_detail is not None
+    assert other_role_detail.blocker is None
+    assert expired_detail is not None
+    assert expired_detail.blocker is None
+    assert changed_detail is not None
+    assert changed_detail.blocker is None
 
 
 async def test_slot_pause_ownership_and_pr_blockers_use_only_recorded_state(

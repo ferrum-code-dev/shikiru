@@ -37,7 +37,6 @@ OpenPalette = Callable[[str], Awaitable[None]]
 OpenPaletteContext = Callable[[PaletteRequest], Awaitable[None]]
 SelectTaskContext = Callable[[str | None], None]
 OpenTaskDetail = Callable[[str], Awaitable[None]]
-OpenRelatedTaskDetail = Callable[[str], Awaitable[None]]
 NavigateTaskWindow = Callable[[str], Awaitable[str]]
 NavigateRolePane = Callable[[str, str], Awaitable[str]]
 NavigateHome = Callable[[], Awaitable[str]]
@@ -328,11 +327,16 @@ class TaskRelationshipsView:
     family_child_count: int
     dependencies: tuple[TaskReferenceView, ...]
     dependency_count: int
+    blocking_dependencies: tuple[TaskReferenceView, ...]
+    blocking_dependency_count: int
     dependents: tuple[TaskReferenceView, ...]
     dependent_count: int
     replacements: tuple[TaskReferenceView, ...]
     replacement_count: int
     family_outcomes: tuple[TaskFamilyOutcomeView, ...]
+    page_offset: int
+    page_size: int
+    has_more: bool
 
 
 @dataclass(frozen=True)
@@ -491,7 +495,9 @@ class DashboardViews(Protocol):
         """Return contiguous bounded browser pages from one consistent read snapshot."""
         ...
 
-    async def task_detail(self, task_id: str) -> TaskDetailView | None:
+    async def task_detail(
+        self, task_id: str, *, relationship_offset: int = 0
+    ) -> TaskDetailView | None:
         """Return task state and its recorded report, signal and workspace evidence."""
         ...
 
@@ -554,7 +560,6 @@ class WidgetContext:
     open_palette: OpenPalette
     open_palette_context: OpenPaletteContext | None = None
     open_task_detail: OpenTaskDetail | None = None
-    open_related_task_detail: OpenRelatedTaskDetail | None = None
     navigate_task_window: NavigateTaskWindow | None = None
     navigate_role_pane: NavigateRolePane | None = None
     navigate_home: NavigateHome | None = None

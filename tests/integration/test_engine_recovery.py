@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ import pytest
 
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.config.settings import AgentConfig
+from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.domain.commands import SetRung
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step
@@ -29,6 +31,7 @@ from tests.support.flow import (
     flow_settings,
     init_project_repo,
 )
+from tests.support.store import seed_task
 from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
@@ -126,6 +129,67 @@ async def test_quota_failure_blocks_then_continues_on_the_same_session(
         if path.is_dir() and "Continue this task's current turn" in (path / "prompt.md").read_text()
     ]
     assert len(continue_dirs) == 1
+
+
+async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
+    engine_env: EngineEnv,
+    tmux_server: TmuxServer,
+    database: Database,
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = flow_settings()
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[{"kind": "fail", "failure_kind": "quota"}, {"kind": "accept"}],
+    )
+    quota = QuotaStore(engine_env.connection)
+    await wait_until(
+        lambda: quota.block_for(FAKE_RUNG.agent) is not None and clock.has_pending_sleep(),
+        timeout=10,
+    )
+    reader = StateReader(database, clock)
+    try:
+        views = state_views(
+            reader,
+            engine_env.project_root,
+            clock,
+            StubServices(),
+            settings=settings,
+        )
+        detail = await views.task_detail(task_id)
+        unrelated = seed_task(engine_env.connection, clock, title="Other account waiter")
+        unrelated_detail = await views.task_detail(unrelated.id)
+        summary = views.workspace_summary()
+        waiting = views.task_browser(
+            task_filter=TaskBrowserFilter.WAITING,
+            search=task_id,
+            offset=0,
+            limit=1,
+            selected_task_id=task_id,
+        )
+        assert detail is not None
+        assert detail.wait_reason is None
+        assert detail.blocker is not None
+        evidence = "\n".join(detail.blocker.lines)
+        assert "Current turn quota wait · implementer" in evidence
+        assert "Provider-reported quota reset · not reported" in evidence
+        assert "Engine retry/probe deadline" in evidence
+        assert "Provider quota observation" in evidence
+        assert unrelated_detail is not None
+        assert unrelated_detail.blocker is None
+        assert summary.running == 0
+        assert summary.waiting == 2
+        assert task_id in {row.task_id for row in waiting.rows}
+        await _drive(flow_task, clock)
+    finally:
+        reader.close()
+        if not flow_task.done():
+            flow_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await flow_task
 
 
 async def test_quota_wait_deadline_moves_to_a_different_agent(

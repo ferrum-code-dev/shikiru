@@ -619,10 +619,6 @@ class DashboardApp(App[None]):
 
     def _widget_context(self) -> WidgetContext:
         async def open_task_detail(task_id: str) -> None:
-            self._select_task_context(task_id)
-            await self.push_screen(TaskDetailScreen(self._widget_context(), task_id))
-
-        async def open_related_task_detail(task_id: str) -> None:
             await self.push_screen(TaskDetailScreen(self._widget_context(), task_id))
 
         return WidgetContext(
@@ -635,7 +631,6 @@ class DashboardApp(App[None]):
             open_palette=self._open_palette,
             open_palette_context=self._open_palette_context,
             open_task_detail=open_task_detail,
-            open_related_task_detail=open_related_task_detail,
             navigate_task_window=self._navigate_task_window,
             navigate_role_pane=self._navigate_role_pane,
             navigate_home=self._navigate_home,
