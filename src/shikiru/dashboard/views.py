@@ -30,6 +30,7 @@ from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime, timedelta
 
     from shikiru.agents.contracts import QuotaWindow
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from shikiru.operator.queries import EscalationView, OperatorQueries, UsageView
     from shikiru.store.reader import StateReader
+    from shikiru.store.tasks import TaskBrowserPage
 
 DIALOGUE_LINE_LIMIT = 20
 ALERT_TIME_FORMAT = "%H:%M:%S"
@@ -172,15 +174,10 @@ class StateDashboardViews:
     ) -> TaskBrowserView:
         """Build one ready-to-render browser page and retain the selected task context."""
         now = self._clock.now()
-        motion_task_ids: set[str] = set()
-        stalled_ids: set[str] = set()
-        diagnosed_stall_task_ids: tuple[str, ...] = ()
-        if task_filter is TaskBrowserFilter.ACTIVE:
-            current_turn_tasks = self._state.list_tasks(statuses=_ACTIVE_TURN_STATUSES)
-            motion_task_ids.update(task.id for task in current_turn_tasks)
-            frames = self._motion.frames(tuple(current_turn_tasks), now)
-            stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
-            diagnosed_stall_task_ids = tuple(sorted(stalled_ids))
+        motion_task_ids, stalled_ids, diagnosed_stall_task_ids = self._task_browser_motion(
+            task_filter,
+            now,
+        )
         page = self._state.task_browser_page(
             category=task_filter.value,
             search=search,
@@ -189,14 +186,101 @@ class StateDashboardViews:
             selected_task_id=selected_task_id,
             diagnosed_stall_task_ids=diagnosed_stall_task_ids,
         )
-        selected_task = None
-        if selected_task_id is not None:
-            selected_task = next(
-                (task for task in page.tasks if task.id == selected_task_id),
-                None,
+        selected_task = self._selected_browser_task((page,), selected_task_id)
+        return self._task_browser_view(
+            page,
+            task_filter=task_filter,
+            search=search,
+            offset=offset,
+            selected_task_id=selected_task_id,
+            selected_task=selected_task,
+            now=now,
+            motion_task_ids=motion_task_ids,
+            stalled_ids=stalled_ids,
+        )
+
+    def task_browser_pages(
+        self,
+        *,
+        task_filter: TaskBrowserFilter,
+        search: str,
+        limit: int,
+        page_count: int,
+        selected_task_id: str | None,
+    ) -> tuple[TaskBrowserView, ...]:
+        """Build contiguous bounded browser pages from one state snapshot."""
+        now = self._clock.now()
+        motion_task_ids, stalled_ids, diagnosed_stall_task_ids = self._task_browser_motion(
+            task_filter,
+            now,
+        )
+        pages = self._state.task_browser_pages(
+            category=task_filter.value,
+            search=search,
+            limit=limit,
+            page_count=page_count,
+            selected_task_id=selected_task_id,
+            diagnosed_stall_task_ids=diagnosed_stall_task_ids,
+        )
+        selected_task = self._selected_browser_task(pages, selected_task_id)
+        return tuple(
+            self._task_browser_view(
+                page,
+                task_filter=task_filter,
+                search=search,
+                offset=page_index * limit,
+                selected_task_id=selected_task_id,
+                selected_task=selected_task,
+                now=now,
+                motion_task_ids=motion_task_ids,
+                stalled_ids=stalled_ids,
             )
-            if selected_task is None:
-                selected_task = self._state.get_task(selected_task_id)
+            for page_index, page in enumerate(pages)
+        )
+
+    def _task_browser_motion(
+        self,
+        task_filter: TaskBrowserFilter,
+        now: datetime,
+    ) -> tuple[set[str], set[str], tuple[str, ...]]:
+        motion_task_ids: set[str] = set()
+        stalled_ids: set[str] = set()
+        if task_filter is TaskBrowserFilter.ACTIVE:
+            current_turn_tasks = self._state.list_tasks(statuses=_ACTIVE_TURN_STATUSES)
+            motion_task_ids.update(task.id for task in current_turn_tasks)
+            frames = self._motion.frames(tuple(current_turn_tasks), now)
+            stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
+        return motion_task_ids, stalled_ids, tuple(sorted(stalled_ids))
+
+    def _selected_browser_task(
+        self,
+        pages: Sequence[TaskBrowserPage],
+        selected_task_id: str | None,
+    ) -> Task | None:
+        if selected_task_id is None:
+            return None
+        selected_task = next(
+            (task for page in pages for task in page.tasks if task.id == selected_task_id),
+            None,
+        )
+        if selected_task is None:
+            selected_task = self._state.get_task(selected_task_id)
+        return selected_task
+
+    def _task_browser_view(
+        self,
+        page: TaskBrowserPage,
+        *,
+        task_filter: TaskBrowserFilter,
+        search: str,
+        offset: int,
+        selected_task_id: str | None,
+        selected_task: Task | None,
+        now: datetime,
+        motion_task_ids: set[str],
+        stalled_ids: set[str],
+    ) -> TaskBrowserView:
+        page_stalled_ids = set(stalled_ids)
 
         framed_tasks = [
             task
@@ -212,13 +296,13 @@ class StateDashboardViews:
             framed_tasks.append(selected_task)
         if framed_tasks:
             frames = self._motion.frames(tuple(framed_tasks), now)
-            stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
+            page_stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
         open_decision_ids = page.open_decision_task_ids
         rows = [
             self._task_browser_row(
                 task,
                 open_decision=task.id in open_decision_ids,
-                diagnosed_stall=task.id in stalled_ids,
+                diagnosed_stall=task.id in page_stalled_ids,
                 now=now,
                 task_filter=task_filter,
             )
@@ -234,7 +318,7 @@ class StateDashboardViews:
             selected_row = self._task_browser_row(
                 selected_task,
                 open_decision=selected_task.status is Status.ESCALATED,
-                diagnosed_stall=selected_task.id in stalled_ids,
+                diagnosed_stall=selected_task.id in page_stalled_ids,
                 now=now,
                 task_filter=task_filter,
             )

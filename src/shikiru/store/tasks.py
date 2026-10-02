@@ -233,6 +233,40 @@ def fetch_task_browser_page(
     )
 
 
+def fetch_task_browser_pages(
+    connection: sqlite3.Connection,
+    *,
+    category: str,
+    search: str,
+    limit: int,
+    page_count: int,
+    selected_task_id: str | None = None,
+    diagnosed_stall_task_ids: Sequence[str] = (),
+) -> tuple[TaskBrowserPage, ...]:
+    """Read a bounded page range from one SQLite snapshot."""
+    if page_count < 1:
+        message = "task browser page count must be positive"
+        raise ValueError(message)
+
+    with transaction(connection):
+        pages: list[TaskBrowserPage] = []
+        for page_index in range(page_count):
+            offset = page_index * limit
+            page = fetch_task_browser_page(
+                connection,
+                category=category,
+                search=search,
+                limit=limit,
+                offset=offset,
+                selected_task_id=selected_task_id,
+                diagnosed_stall_task_ids=diagnosed_stall_task_ids,
+            )
+            pages.append(page)
+            if offset + len(page.tasks) >= page.matching_count:
+                break
+    return tuple(pages)
+
+
 def _task_browser_category(category: str) -> tuple[str, tuple[str, ...]]:
     if category == _BROWSER_CATEGORY_ALL:
         return "1 = 1", ()

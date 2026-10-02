@@ -23,7 +23,7 @@ from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
-from shikiru.store.tasks import TaskStore
+from shikiru.store.tasks import TaskStore, fetch_task_browser_pages
 from shikiru.view_log import (
     VIEW_SESSION_STARTED_SIGNAL,
     VIEW_SIGNAL_KEY,
@@ -52,6 +52,8 @@ if TYPE_CHECKING:
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 PAGE_SIZE = 24
+PAGE_COUNT = 2
+PAGE_SELECT_STATEMENTS = 3
 STALL_SECONDS = 2
 STALL_TURN_NAME = "001-implement-i1"
 READING_INDEX = 10
@@ -420,6 +422,52 @@ async def test_history_load_more_reconciles_a_new_task_before_watch_poll(
             assert list_view.has_focus
     finally:
         reader.close()
+
+
+def test_browser_page_batch_keeps_one_snapshot_during_a_writer_commit(
+    connection: Connection, database: Database
+) -> None:
+    clock = FakeClock(START)
+    tasks: list[Task] = []
+    for index in range(PAGE_SIZE + 1):
+        task = seed_task(connection, clock, title=f"Snapshot history {index}")
+        tasks.append(task)
+        _finish_task(connection, clock, task.id)
+        clock.advance(1)
+
+    reader_connection = database.connect_readonly()
+    select_count = 0
+    inserted_tasks: list[Task] = []
+
+    def commit_between_page_reads(statement: str) -> None:
+        nonlocal select_count
+        if not statement.lstrip().upper().startswith("SELECT"):
+            return
+        select_count += 1
+        if select_count == PAGE_SELECT_STATEMENTS + 1:
+            inserted = seed_task(connection, clock, title="Concurrent history task")
+            _finish_task(connection, clock, inserted.id)
+            inserted_tasks.append(inserted)
+
+    reader_connection.set_trace_callback(commit_between_page_reads)
+    try:
+        pages = fetch_task_browser_pages(
+            reader_connection,
+            category=TaskBrowserFilter.HISTORY.value,
+            search="",
+            limit=PAGE_SIZE,
+            page_count=PAGE_COUNT,
+        )
+    finally:
+        reader_connection.set_trace_callback(None)
+        reader_connection.close()
+
+    rows = tuple(task for page in pages for task in page.tasks)
+    assert len(inserted_tasks) == 1
+    assert tuple(task.id for task in rows) == tuple(task.id for task in reversed(tasks))
+    assert len({task.id for task in rows}) == PAGE_SIZE + 1
+    assert all(page.matching_count == PAGE_SIZE + 1 for page in pages)
+    assert rows[0].id != inserted_tasks[0].id
 
 
 async def test_state_refresh_preserves_visible_list_position_and_selected_task(

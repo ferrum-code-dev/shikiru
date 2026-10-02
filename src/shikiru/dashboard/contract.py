@@ -203,6 +203,18 @@ class DashboardViews(Protocol):
         """Return one bounded browser page and preserve context for a selected task."""
         ...
 
+    def task_browser_pages(
+        self,
+        *,
+        task_filter: TaskBrowserFilter,
+        search: str,
+        limit: int,
+        page_count: int,
+        selected_task_id: str | None,
+    ) -> tuple[TaskBrowserView, ...]:
+        """Return contiguous bounded browser pages from one consistent read snapshot."""
+        ...
+
     def escalations(self) -> list[EscalationPanelView]:
         """Return every open escalation and its question and options from the packet."""
         ...

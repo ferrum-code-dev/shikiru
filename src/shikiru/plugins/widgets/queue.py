@@ -247,26 +247,17 @@ class QueuePanel(Vertical):
             finally:
                 self._refreshing = False
 
-    def _load_page(self, offset: int) -> TaskBrowserView:
-        return self._widget_context.views.task_browser(
+    def _load_pages(self, page_count: int | None = None) -> TaskBrowserView:
+        requested_page_count = page_count if page_count is not None else self._loaded_page_count
+        pages = self._widget_context.views.task_browser_pages(
             task_filter=self._filter,
             search=self._search,
-            offset=offset,
             limit=BROWSER_PAGE_SIZE,
+            page_count=requested_page_count,
             selected_task_id=self._selected_task_id,
         )
-
-    def _load_pages(self) -> TaskBrowserView:
-        pages: list[TaskBrowserView] = []
-        rows: list[TaskBrowserRow] = []
-        for page_index in range(self._loaded_page_count):
-            page = self._load_page(page_index * BROWSER_PAGE_SIZE)
-            pages.append(page)
-            rows.extend(page.rows)
-            if not page.has_more:
-                break
         self._loaded_page_count = len(pages)
-        return replace(pages[-1], rows=tuple(rows))
+        return replace(pages[-1], rows=tuple(row for page in pages for row in page.rows))
 
     def _load_next_page(self) -> TaskBrowserView:
         current = self._view
@@ -275,15 +266,7 @@ class QueuePanel(Vertical):
             and current.filter is self._filter
             and current.search == self._search
         ):
-            current = self._load_pages()
-            if not current.has_more:
-                return current
-            offset = len(current.rows)
-            page = self._load_page(offset)
-            if page.rows:
-                self._loaded_page_count += 1
-                return replace(page, rows=(*current.rows, *page.rows))
-            return replace(page, rows=current.rows)
+            return self._load_pages(self._loaded_page_count + 1)
         return self._load_pages()
 
     async def _sync_list_rows(self, list_view: ListView, rows: tuple[TaskBrowserRow, ...]) -> None:
