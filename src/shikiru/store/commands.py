@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 _COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
 _RESULT_ADAPTER: TypeAdapter[dict[str, Any] | None] = TypeAdapter(dict[str, Any] | None)
+_SUBMIT_TASK_ID_JSON_PATH = "$.task_id"
 
 
 def _identified(command: Command, command_id: int) -> Command:
@@ -129,15 +130,26 @@ def fetch_pending_command(
     command: Command,
 ) -> StoredCommand | None:
     """Find an identical still-pending command without scanning history into memory."""
-    row = connection.execute(
-        "SELECT id, ts, payload, status, result FROM commands "
-        "WHERE status = ? AND kind = ? AND payload = ? ORDER BY id DESC LIMIT 1",
-        (
-            CommandStatus.PENDING.value,
-            command.kind.value,
-            dump_json(_COMMAND_ADAPTER, command),
-        ),
-    ).fetchone()
+    payload = dump_json(_COMMAND_ADAPTER, command)
+    if isinstance(command, Submit):
+        row = connection.execute(
+            "SELECT id, ts, payload, status, result FROM commands "
+            "WHERE status = ? AND kind = ? AND "
+            "json_remove(payload, ?) = json_remove(?, ?) ORDER BY id DESC LIMIT 1",
+            (
+                CommandStatus.PENDING.value,
+                command.kind.value,
+                _SUBMIT_TASK_ID_JSON_PATH,
+                payload,
+                _SUBMIT_TASK_ID_JSON_PATH,
+            ),
+        ).fetchone()
+    else:
+        row = connection.execute(
+            "SELECT id, ts, payload, status, result FROM commands "
+            "WHERE status = ? AND kind = ? AND payload = ? ORDER BY id DESC LIMIT 1",
+            (CommandStatus.PENDING.value, command.kind.value, payload),
+        ).fetchone()
     return _stored_command(row) if row is not None else None
 
 

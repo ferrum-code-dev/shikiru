@@ -599,6 +599,40 @@ async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
         assert [item.id for item in queue.pending()] == [say_id, pause_id]
 
 
+async def test_pending_submit_recovers_after_store_allocates_its_task_id(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    request = "One pending task submission"
+    first_app = _palette_app(reader, commands, queries, _selection_must_not_run)
+
+    async with first_app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(first_app)
+        screen.query_one("#request", TextArea).text = request
+        await pilot.click("#palette-submit")
+        await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
+        queued = queue.pending()[0]
+        assert isinstance(queued.command, Submit)
+        assert queued.command.task_id is not None
+        assert queued.command.title == request
+        await pilot.press("escape")
+
+    reopened = _palette_app(reader, commands, queries, _selection_must_not_run)
+    async with reopened.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(reopened)
+        screen.query_one("#request", TextArea).text = request
+        await pilot.pause()
+        assert screen.query_one("#palette-submit", Button).disabled
+        assert f"command {queued.id}" in _static_text(screen, "#palette-result")
+        await pilot.click("#palette-submit")
+        assert [item.id for item in queue.pending()] == [queued.id]
+
+
 async def test_palette_revalidates_task_state_before_queueing(
     connection: Connection,
     reader: StateReader,

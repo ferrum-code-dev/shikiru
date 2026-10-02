@@ -567,6 +567,10 @@ class PaletteScreen(ModalScreen[None]):
 
     async def _refresh_after_database_change(self) -> None:
         if self._is_current_screen():
+            self.call_after_refresh(self._refresh_if_current_screen)
+
+    def _refresh_if_current_screen(self) -> None:
+        if self._is_current_screen():
             self._refresh_action_availability()
 
     def _refresh_pending_commands(self) -> None:

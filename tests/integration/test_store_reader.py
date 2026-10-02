@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import QuotaWindow, Rung
-from shikiru.domain.commands import CommandStatus, Prioritize, Say
+from shikiru.domain.commands import CommandStatus, Prioritize, Say, Submit
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
-from shikiru.domain.tasks import EscalationReason, Role, Status
+from shikiru.domain.tasks import EscalationReason, Mode, Role, Status
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
@@ -80,6 +80,45 @@ def test_reader_serves_bounded_command_outcomes_from_another_client(
     assert applied_status is not None
     assert applied_status.status is CommandStatus.DONE
     assert applied_status.result == {"priority": 7}
+
+
+def test_pending_submit_matches_without_ignoring_its_request_fields(
+    connection: Connection,
+    reader: StateReader,
+) -> None:
+    queue = CommandQueue(connection, FakeClock(START))
+    candidate = Submit(
+        title="Original title",
+        request="Original request",
+        mode=Mode.IMPLEMENT,
+        complexity="high",
+        priority=7,
+        depends_on=["T-4"],
+        leader=RUNG,
+        implementer=Rung(agent="claude", model="sonnet", effort="medium"),
+    )
+    queued = queue.append(candidate)
+
+    match = reader.pending_command(candidate)
+
+    assert match is not None
+    assert match.id == queued.id
+    assert isinstance(match.command, Submit)
+    assert isinstance(queued.command, Submit)
+    assert match.command.task_id == queued.command.task_id
+
+    changed_fields = (
+        {"title": "Changed title"},
+        {"request": "Changed request"},
+        {"mode": Mode.PLAN},
+        {"complexity": "normal"},
+        {"priority": 8},
+        {"depends_on": ["T-5"]},
+        {"leader": Rung(agent="codex", model="sol", effort="medium")},
+        {"implementer": None},
+    )
+    for change in changed_fields:
+        assert reader.pending_command(candidate.model_copy(update=change)) is None
 
 
 async def test_reader_in_another_process_sees_the_writers_commit(
