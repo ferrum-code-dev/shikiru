@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import fcntl
 import logging
 import stat
 from contextlib import asynccontextmanager, suppress
@@ -56,6 +57,7 @@ from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_
 from shikiru.engine.notifier import Notifier
 from shikiru.engine.takeover import HAND_BACK_MESSAGE
 from shikiru.errors import CommandTimeoutError
+from shikiru.paths import engine_lock_path
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
@@ -85,7 +87,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.permissions import requires_enforced_permissions
 from tests.support.store import reopen_command
-from tests.support.waiting import wait_until_advancing
+from tests.support.waiting import wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -280,6 +282,32 @@ def test_engine_lock_is_exclusive(tmp_path: Path) -> None:
         with pytest.raises(EngineAlreadyRunningError):
             EngineLock(lock_path).acquire()
     assert not engine_is_running(lock_path)
+
+
+async def test_an_engine_started_while_a_liveness_probe_holds_the_lock_waits_and_takes_it(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(
+        tmp_path, engine_settings(), clock=clock, tmux=tmux, registry=build_registry()
+    )
+    lock_path = engine_lock_path(tmp_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    probe = lock_path.open("a+")
+    fcntl.flock(probe.fileno(), fcntl.LOCK_EX)
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        await wait_until(clock.has_pending_sleep, timeout=10)
+
+        fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
+        probe.close()
+        await wait_until_advancing(clock, lambda: engine_is_running(lock_path), 10)
+    finally:
+        engine.request_stop()
+        await wait_until_advancing(clock, engine_task.done, 10)
+    await engine_task
 
 
 def test_liveness_check_does_not_create_a_missing_lock_path(tmp_path: Path) -> None:

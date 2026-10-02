@@ -42,6 +42,8 @@ if TYPE_CHECKING:
 
 ENGINE_LOGGER_NAME = "shikiru"
 _ENGINE_LOCK_METADATA_PARTS = 2
+ENGINE_LOCK_PROBE_GRACE_SECONDS = 1.0
+ENGINE_LOCK_RETRY_SECONDS = 0.02
 
 
 class EngineAlreadyRunningError(ShikiruError):
@@ -189,10 +191,22 @@ class Engine:
         self._logger = logger
         self._log_handler = log_handler
 
+    async def _acquire_lock(self) -> None:
+        deadline = self._clock.now() + timedelta(seconds=ENGINE_LOCK_PROBE_GRACE_SECONDS)
+        while True:
+            try:
+                self._lock.acquire()
+            except EngineAlreadyRunningError:
+                if self._clock.now() >= deadline:
+                    raise
+                await self._clock.sleep(ENGINE_LOCK_RETRY_SECONDS)
+            else:
+                return
+
     async def run(self) -> None:
         """Hold liveness, process commands and schedule tasks until `Stop` or cancellation."""
         try:
-            self._lock.acquire()
+            await self._acquire_lock()
         except BaseException:
             self._close_logging()
             self._close_state()
