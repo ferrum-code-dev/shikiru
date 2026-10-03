@@ -89,7 +89,7 @@ ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
 # `roles.helper.ladder` must contain exactly one rung until helper fallback is implemented.
 
 [dashboard]
-widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
+widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker", "faults"]
 animations = true                               # false renders static frames (06 §6.5)
 docker_refresh_seconds = 5
 docker_timeout_seconds = 5
@@ -181,7 +181,7 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 ## 2. State DB (`.shikiru/state.db`)
 
 - SQLite WAL mode, `busy_timeout = 5000`.
-- Migrations tracked by `PRAGMA user_version`. An open of an outdated database reads the version and applies each pending migration inside one immediate transaction, so two processes opening it at once (engine and CLI after an upgrade) apply every migration exactly once; an up-to-date database is opened without taking the write lock. A migration rewrites stored JSON when a model gains a required field (e.g. `repo.base_ref` defaults to the stored `base`, the ref tasks of that era started from), so models stay strict. `idx_events_kind` (migration 006) bounds the `command_applied` replay lookup (03 §7) to the events of one kind; `notification_cursor` (migration 007) holds the single row of the delivered-up-to event id (06 §5.7).
+- Migrations tracked by `PRAGMA user_version`. An open of an outdated database reads the version and applies each pending migration inside one immediate transaction, so two processes opening it at once (engine and CLI after an upgrade) apply every migration exactly once; an up-to-date database is opened without taking the write lock. A migration rewrites stored JSON when a model gains a required field (e.g. `repo.base_ref` defaults to the stored `base`, the ref tasks of that era started from), so models stay strict. `idx_events_kind` (migration 006) bounds the `command_applied` replay lookup (03 §7) to the events of one kind; `notification_cursor` (migration 007) holds the single row of the delivered-up-to event id (06 §5.7); `usage_reported` (migration 008) distinguishes new unreported runs, measured reports and legacy rows with unknown provenance.
 - Readers use short read transactions and `PRAGMA data_version` to detect changes.
 - Timestamps are UTC ISO-8601.
 
@@ -215,7 +215,7 @@ CREATE TABLE runs (                               -- one agent session per task 
   input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
   cost_usd REAL, cost_basis TEXT NOT NULL DEFAULT 'unknown', context_used_pct REAL,
-  -- session totals as reported (04 §1); NULL = not reported
+  usage_reported INTEGER,                         -- 0 = not yet reported, 1 = reported, NULL = legacy provenance unknown
   started_at TEXT NOT NULL, ended_at TEXT
 );
 
@@ -240,6 +240,12 @@ CREATE TABLE commands (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT N
   status TEXT NOT NULL DEFAULT 'pending',        -- pending | done | rejected
   result TEXT);
 ```
+
+**Usage records** are agent session totals from `UsageReported` (04 §1). A newly started run has `usage_reported = 0`; a received report overwrites its cumulative token, cost and context fields and sets the marker to `1`. Migration 008 leaves pre-existing rows `NULL`, because their zero token columns cannot establish whether the agent reported a measured zero. Those rows remain visible as legacy provenance unknown and do not contribute tokens or priced totals. A quota report does not mark token usage as reported.
+
+Dashboard usage has two explicit scopes: all recorded project runs or the selected task's runs. Per-agent token totals sum only runs marked reported and include the run count and reported-run count. Billed and API-equivalent costs are summed separately from reported runs with a priced cost; each subtotal carries its priced-run count, while all other runs count toward unknown-cost coverage. A zero amount from a reported priced run remains `$0.00`; an absent subtotal remains unknown. No time period or project spend is inferred. Task detail keeps each session's last reported context beside the session status; a closed session's value is labelled as last reported, not current. Quota windows retain the plugin's `observed_at` and optional reported reset, so their age and reset countdown derive from those timestamps.
+
+Dashboard resource samples retain the sampler's actual observation time. Host CPU is the configured CPU-window average and host RAM is read at the sample; process-tree CPU and RSS cover the engine and task-pane trees found for that sample. An empty process-tree sample does not mean zero use. A failed sample shows its error and keeps the last timestamped observation as stale; with no prior observation it is failed. Docker records the successful `docker stats` observation time, reports an empty result separately from an unavailable CLI or daemon, and preserves the last successful result as stale after a later failed sample. Diagnostics reads open engine fault streaks from the recorded `engine_fault` and `engine_recovered` events.
 
 **`EventKind`** (in `domain.events`; `events.data` carries typed fields):
 - `task_queued`, `task_started`, `dispatch_failed` (attempt, error), `step_started`

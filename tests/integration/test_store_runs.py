@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import Rung, Usage
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role
-from shikiru.store.runs import RunStore
+from shikiru.store.runs import RunStore, fetch_runs_for_task
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
 
 if TYPE_CHECKING:
+    from shikiru.store.database import Database
     from tests.support.store import Connection
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -43,6 +44,7 @@ def test_a_fresh_run_reports_unknown_cost_basis_before_any_usage_is_recorded(
     run = store.start(task_id, Role.IMPLEMENTER, RUNG)
 
     assert run.usage.cost_basis == "unknown"
+    assert run.usage_reported is False
 
 
 def test_close_removes_a_run_from_get_live_and_marks_it_closed(connection: Connection) -> None:
@@ -96,3 +98,25 @@ def test_session_message_and_usage_round_trip(connection: Connection) -> None:
     assert reloaded.usage.input_tokens == 100
     assert reloaded.usage.output_tokens == 50
     assert reloaded.usage.cost_usd == 0.42
+    assert reloaded.usage_reported is True
+
+
+def test_migrating_legacy_runs_preserves_unknown_usage_provenance(database: Database) -> None:
+    connection = database.connect()
+    clock = FakeClock(START)
+    task = seed_task(connection, clock)
+    store = RunStore(connection, clock)
+    run = store.start(task.id, Role.IMPLEMENTER, RUNG)
+    store.record_usage(run.id, Usage(0, 0, 0, 0, 0.0, "billed", None))
+    connection.execute("ALTER TABLE runs DROP COLUMN usage_reported")
+    connection.execute("PRAGMA user_version = 7")
+    connection.close()
+
+    migrated = database.connect()
+    try:
+        [legacy_run] = fetch_runs_for_task(migrated, task.id)
+        assert legacy_run.usage_reported is None
+        assert legacy_run.usage.input_tokens == 0
+        assert legacy_run.usage.cost_usd == 0.0
+    finally:
+        migrated.close()

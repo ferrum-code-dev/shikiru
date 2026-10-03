@@ -41,6 +41,9 @@ class DockerSnapshot:
 
     available: bool
     containers: tuple[DockerContainer, ...] = ()
+    sampled_at: datetime | None = None
+    error: str | None = None
+    failed: bool = False
 
 
 class DockerStatsError(ValueError):
@@ -70,7 +73,11 @@ class DockerSampler:
         """Probe Docker and return its current container CPU and memory readings."""
         now = self._clock.now()
         if shutil.which(DOCKER_BINARY) is None:
-            self._last = DockerSnapshot(available=False)
+            self._record_problem(
+                available=False,
+                error="Docker CLI is unavailable",
+                failed=False,
+            )
         else:
             try:
                 result = await self._runner.run(
@@ -84,18 +91,27 @@ class DockerSampler:
                     timeout=self._timeout_seconds,
                     check=False,
                 )
-            except CommandTimeoutError:
-                self._last = DockerSnapshot(available=False)
+            except (CommandTimeoutError, OSError) as error:
+                self._record_problem(available=False, error=str(error), failed=True)
             else:
                 if result.returncode == 0:
-                    self._last = DockerSnapshot(
-                        available=True,
-                        containers=tuple(
+                    try:
+                        containers = tuple(
                             _parse_container(line) for line in result.stdout.splitlines()
-                        ),
-                    )
+                        )
+                    except DockerStatsError as error:
+                        self._record_problem(available=False, error=str(error), failed=True)
+                    else:
+                        self._last = DockerSnapshot(
+                            available=True,
+                            containers=containers,
+                            sampled_at=now,
+                        )
                 else:
-                    self._last = DockerSnapshot(available=False)
+                    error = result.stderr.strip() or (
+                        f"Docker stats exited with status {result.returncode}"
+                    )
+                    self._record_problem(available=False, error=error, failed=False)
         self._sampled_at = now
         return self._last
 
@@ -108,6 +124,15 @@ class DockerSampler:
         ):
             return await self.sample()
         return self._last
+
+    def _record_problem(self, *, available: bool, error: str, failed: bool) -> None:
+        self._last = DockerSnapshot(
+            available=available,
+            containers=self._last.containers,
+            sampled_at=self._last.sampled_at,
+            error=error,
+            failed=failed,
+        )
 
 
 def _parse_container(line: str) -> DockerContainer:

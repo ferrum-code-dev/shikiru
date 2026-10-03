@@ -9,18 +9,25 @@ from typing import TYPE_CHECKING, cast
 
 import psutil
 import pytest
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, ListView, Static
 
 from shikiru.agents.contracts import QuotaWindow, Rung, Usage
+from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
+from shikiru.dashboard.activity import RoleViewTail
+from shikiru.dashboard.app import DashboardApp, TaskDetailScreen
+from shikiru.dashboard.contract import DiagnosticSampleState
+from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.services import DashboardServices, GitRepoStatusService
+from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Role, Status
+from shikiru.operator.queries import OperatorQueries
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
-from shikiru.plugins.widgets.usage import UsagePanel, UsageWidget
+from shikiru.plugins.widgets.usage import UNKNOWN_VALUE, UsagePanel, UsageWidget
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
@@ -50,6 +57,9 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shikiru.clock import Clock
+    from shikiru.config.settings import Settings
+    from shikiru.dashboard.views import DashboardSources
     from shikiru.store.database import Database
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
@@ -64,6 +74,95 @@ RSS_COMPARISON_TOLERANCE_GB = 0.01
 CPU_WORK_ITERATIONS = 10_000_000
 CPU_PERCENT_MINIMUM_TOLERANCE = 5.0
 CPU_PERCENT_RELATIVE_TOLERANCE = 0.25
+EXECUTABLE_MODE = 0o755
+UNUSED_SESSION_TARGET = "=shikiru-task84-test"
+
+
+def _dashboard_services(
+    project_dir: Path,
+    clock: Clock,
+    tmux: Tmux,
+) -> tuple[DashboardServices, Settings]:
+    settings = load_settings(project_dir)
+    runner = SubprocessRunner()
+    services = DashboardServices(
+        GitRepoStatusService(
+            Git(runner, command_timeout=settings.orchestration.timeouts.git_command),
+            settings.repo,
+            project_dir,
+            clock,
+            cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
+        ),
+        clock=clock,
+        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+        engine_up=lambda: False,
+        engine_pid=lambda: None,
+        tmux=tmux,
+        session_target=UNUSED_SESSION_TARGET,
+        resources=ResourceSampler(clock, settings.orchestration.resources),
+        docker=DockerSampler(
+            runner,
+            clock,
+            refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            timeout_seconds=settings.dashboard.docker_timeout_seconds,
+        ),
+    )
+    return services, settings
+
+
+def _dashboard_views(
+    reader: StateReader,
+    project_dir: Path,
+    clock: Clock,
+    settings: Settings,
+    sources: DashboardSources,
+) -> StateDashboardViews:
+    queries = OperatorQueries(
+        reader,
+        project=settings.project.name,
+        project_root=project_dir,
+        engine_up=sources.engine_up,
+        max_parallel=settings.orchestration.max_parallel,
+        clock=clock,
+    )
+    return StateDashboardViews(
+        reader,
+        focus_task=None,
+        settings=settings,
+        sources=sources,
+        queries=queries,
+        clock=clock,
+        motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
+    )
+
+
+def _populate_usage_records(connection: Connection, clock: FakeClock) -> str:
+    task = seed_task(connection, clock, title="Read provider usage")
+    runs = RunStore(connection, clock)
+    api_run = runs.start(task.id, Role.IMPLEMENTER, Rung("codex", "gpt-6-luna", "low"))
+    runs.record_usage(api_run.id, Usage(100, 20, 10, 5, 0.42, "api_equivalent", None))
+    billed_zero_run = runs.start(task.id, Role.LEADER, Rung("codex", "gpt-6-sol", "high"))
+    runs.record_usage(billed_zero_run.id, Usage(0, 0, 0, 0, 0.0, "billed", None))
+    runs.start(task.id, Role.LEADER, Rung("codex", "gpt-6-sol", "high"))
+    unknown_cost_run = runs.start(task.id, Role.IMPLEMENTER, Rung("codex", "gpt-6-luna", "low"))
+    runs.record_usage(unknown_cost_run.id, Usage(40, 10, 0, 0, None, "unknown", None))
+    quotas = QuotaStore(connection)
+    quotas.record(
+        "codex",
+        QuotaWindow("weekly", 50.0, START + timedelta(hours=3), START),
+    )
+    quotas.record(
+        "quota-only",
+        QuotaWindow("daily", 12.0, None, START),
+    )
+    other_task = seed_task(connection, clock, title="Other task")
+    other_run = runs.start(other_task.id, Role.IMPLEMENTER, Rung("codex", "gpt-6-sol", "high"))
+    runs.record_usage(other_run.id, Usage(900, 700, 0, 0, None, "unknown", None))
+    zero_run = runs.start(task.id, Role.LEADER, Rung("zero-agent", "model", "low"))
+    runs.record_usage(zero_run.id, Usage(0, 0, 0, 0, 0.0, "billed", None))
+    runs.start(task.id, Role.LEADER, Rung("unknown-agent", "model", "low"))
+    clock.advance(2 * 60 * 60)
+    return task.id
 
 
 async def test_escalations_open_full_packet_and_route_resolution_action(
@@ -344,41 +443,163 @@ async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(
         assert cast("str", full_text.content) == bubbles[-2].text
 
 
-async def test_usage_panel_labels_api_equivalent_cost_and_hides_incomplete_totals(
+async def test_usage_panel_separates_cost_bases_and_marks_unknown_usage_and_costs(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Read provider usage")
-    runs = RunStore(connection, clock)
-    api_run = runs.start(task.id, Role.IMPLEMENTER, Rung("codex", "gpt-6-luna", "low"))
-    runs.record_usage(api_run.id, Usage(100, 20, 10, 5, 0.42, "api_equivalent", None))
-    quota = QuotaWindow(
-        name="weekly",
-        used_pct=50.0,
-        resets_at=START + timedelta(hours=1),
-        observed_at=START,
-    )
-    QuotaStore(connection).record("codex", quota)
-    claude_cost = runs.start(task.id, Role.IMPLEMENTER, Rung("claude", "haiku", None))
-    unknown_cost = runs.start(task.id, Role.IMPLEMENTER, Rung("claude", "sonnet", None))
-    runs.record_usage(claude_cost.id, Usage(80, 20, 0, 0, 0.10, "api_equivalent", None))
-    runs.record_usage(unknown_cost.id, Usage(40, 10, 0, 0, None, "unknown", None))
+    task_id = _populate_usage_records(connection, clock)
 
     context = widget_context(reader, project_dir, clock)
     usage = context.views.usage()
-    assert next(item for item in usage if item.agent == "claude").cost_usd is None
+    codex_usage = next(item for item in usage if item.agent == "codex")
+    assert codex_usage.cost_usd is None
+    assert codex_usage.cost_basis == "unknown"
+    assert codex_usage.run_count == 5
+    assert codex_usage.usage_reported_runs == 4
+    assert codex_usage.input_tokens == 1040
+    assert codex_usage.billed_cost_usd == 0.0
+    assert codex_usage.billed_cost_runs == 1
+    assert codex_usage.api_equivalent_cost_usd == 0.42
+    assert codex_usage.api_equivalent_cost_runs == 1
+    assert codex_usage.unknown_cost_runs == 3
+    task_usage = context.views.usage(task_id)
+    task_codex_usage = next(item for item in task_usage if item.agent == "codex")
+    assert task_codex_usage.run_count == 4
+    assert task_codex_usage.input_tokens == 140
+    quota_only_usage = next(item for item in usage if item.agent == "quota-only")
+    assert quota_only_usage.run_count == 0
+    assert quota_only_usage.usage_reported_runs == 0
     widget = cast("UsagePanel", UsageWidget().create(context))
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         text = plain_text(widget.content)
         assert "codex" in text
-        assert "$0.42 API-equivalent" in text
+        assert "Project recorded usage" in text
+        assert "API-equivalent subtotal · $0.42 · partial · 1/5 runs" in text
+        assert "Billed subtotal · $0.00 · partial · 1/5 runs" in text
+        assert "Unknown cost · 3/5 runs" in text
+        assert "input 1,040" in text
         assert "weekly" in text
-        assert "claude" in text
-        assert "$0.10" not in text
+        assert "reset " in text
+        assert "observed 2h" in text
+        assert f"quota-only · tokens {UNKNOWN_VALUE} · no session usage recorded" in text
+        assert "zero-agent · input 0 · output 0 · cache read 0 · cache write 0" in text
+        assert f"unknown-agent · tokens {UNKNOWN_VALUE} · usage not reported (0/1 runs)" in text
+
+
+async def test_resource_sampling_failure_is_stale_and_task_navigation_still_works(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Readable task")
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name)
+    sources, settings = _dashboard_services(project_dir, clock, tmux)
+    initial = await sources.resources()
+    assert initial.state is DiagnosticSampleState.AVAILABLE
+
+    clock.advance(settings.orchestration.resources.sample_seconds)
+
+    def fail_cpu_sample(*, interval: float | None = None, percpu: bool = False) -> float:
+        del interval, percpu
+        raise psutil.Error
+
+    monkeypatch.setattr(psutil, "cpu_percent", fail_cpu_sample)
+    views = _dashboard_views(reader, project_dir, clock, settings, sources)
+
+    async def open_palette(action: str) -> None:
+        del action
+
+    app = DashboardApp(
+        focus_task=None,
+        views=views,
+        on_change=reader.watch,
+        clock=clock,
+        motion_interval_seconds=None,
+        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        open_palette=open_palette,
+        widget_names=["queue", "resources"],
+    )
+    async with app.run_test(size=(100, 50)) as pilot:
+        resource_panel = app.query_one("#resources", Static)
+        await wait_until(lambda: "Stale" in plain_text(resource_panel.content), timeout=2)
+        assert "Latest sample failed" in plain_text(resource_panel.content)
+        task_row = app.query_one(f"#task-row-{task.id} > Static", Static)
+        assert task.title in plain_text(task_row.content)
+
+        task_list = app.query_one("#task-browser-list", ListView)
+        task_list.focus()
+        task_list.index = 0
+        await pilot.press("enter")
+        await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+        identity = app.screen.query_one("#task-detail-identity", Static)
+        assert task.id in plain_text(identity.content)
+
+
+async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navigable(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Queue remains usable")
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name)
+    sources, settings = _dashboard_services(project_dir, clock, tmux)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    unavailable = await sources.containers()
+
+    assert unavailable.state is DiagnosticSampleState.UNAVAILABLE
+    assert unavailable.sampled_ago is None
+
+    docker = tmp_path / DOCKER_BINARY
+    docker.write_text("#!/bin/sh\nprintf 'not-json\\n'\n", encoding="utf-8")
+    docker.chmod(EXECUTABLE_MODE)
+    clock.advance(settings.dashboard.docker_refresh_seconds)
+    views = _dashboard_views(reader, project_dir, clock, settings, sources)
+
+    async def open_palette(action: str) -> None:
+        del action
+
+    app = DashboardApp(
+        focus_task=None,
+        views=views,
+        on_change=reader.watch,
+        clock=clock,
+        motion_interval_seconds=None,
+        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        open_palette=open_palette,
+        widget_names=["queue", "docker"],
+    )
+    async with app.run_test(size=(100, 50)) as pilot:
+        docker_panel = app.query_one("#docker", Static)
+        await wait_until(
+            lambda: "failed" in plain_text(docker_panel.content),
+            timeout=2,
+        )
+        assert "invalid JSON" in plain_text(docker_panel.content)
+        task_row = app.query_one(f"#task-row-{task.id} > Static", Static)
+        assert task.title in plain_text(task_row.content)
+
+        task_list = app.query_one("#task-browser-list", ListView)
+        task_list.focus()
+        task_list.index = 0
+        await pilot.press("enter")
+        await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+        identity = app.screen.query_one("#task-detail-identity", Static)
+        assert task.id in plain_text(identity.content)
 
 
 async def test_resources_service_samples_every_pane_in_the_project_session(
@@ -421,6 +642,8 @@ async def test_resources_service_samples_every_pane_in_the_project_session(
             clock,
             cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
         ),
+        clock=clock,
+        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         engine_up=lambda: False,
         engine_pid=lambda: None,
         tmux=tmux,

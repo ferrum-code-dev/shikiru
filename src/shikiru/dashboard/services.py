@@ -9,7 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from shikiru.dashboard.contract import ContainerView, DockerView, RepoStatus, ResourceView
+from shikiru.dashboard.contract import (
+    ContainerView,
+    DiagnosticSampleState,
+    DockerView,
+    RepoStatus,
+    ResourceView,
+)
 from shikiru.domain.tasks import Role, Status
 from shikiru.errors import ShikiruError
 from shikiru.tmux.session import HOME_WINDOW_NAME
@@ -98,6 +104,8 @@ class DashboardServices:
         self,
         repo_status_service: GitRepoStatusService,
         *,
+        clock: Clock,
+        resources_refresh_seconds: float,
         engine_up: Callable[[], bool],
         engine_pid: Callable[[], int | None],
         tmux: Tmux,
@@ -107,6 +115,8 @@ class DashboardServices:
     ) -> None:
         """Delegate source reads and sampling through injected process boundaries."""
         self._repo_status_service = repo_status_service
+        self._clock = clock
+        self._resources_refresh_seconds = resources_refresh_seconds
         self._engine_up = engine_up
         self._engine_pid = engine_pid
         self._tmux = tmux
@@ -124,29 +134,61 @@ class DashboardServices:
 
     async def resources(self) -> ResourceView:
         """Sample host usage and process trees for the engine and all project panes."""
-        pane_pids: list[int] = []
-        if await self._tmux.target_exists(self._session_target):
-            for line in await self._tmux.list_session_panes(
-                self._session_target, _PANE_RESOURCE_FORMAT
-            ):
-                _, separator, pid_text = line.partition(" ")
-                if not separator:
-                    message = f"tmux pane resource row is invalid: {line!r}"
-                    raise ValueError(message)
-                pane_pids.append(int(pid_text))
-        snapshot = self._resources.sample_process_trees(self._engine_pid(), pane_pids)
-        return _resource_view(snapshot)
+        try:
+            pane_pids: list[int] = []
+            if await self._tmux.target_exists(self._session_target):
+                pane_pids = [
+                    _pane_pid(line)
+                    for line in await self._tmux.list_session_panes(
+                        self._session_target, _PANE_RESOURCE_FORMAT
+                    )
+                ]
+            snapshot = self._resources.sample_process_trees(self._engine_pid(), pane_pids)
+        except (OSError, RuntimeError, ShikiruError, ValueError) as error:
+            latest = self._resources.latest()
+            state = (
+                DiagnosticSampleState.STALE
+                if latest.sampled_at is not None
+                else DiagnosticSampleState.FAILED
+            )
+            return _resource_view(latest, self._clock, state=state, error=str(error))
+        return _resource_view(snapshot, self._clock, state=DiagnosticSampleState.AVAILABLE)
 
     def resource_sample(self) -> ResourceView | None:
         """Return the latest dashboard resource reading without sampling again."""
         snapshot = self._resources.latest()
-        return _resource_view(snapshot) if snapshot.sampled_at is not None else None
+        if snapshot.sampled_at is None:
+            return None
+        age = (self._clock.now() - snapshot.sampled_at).total_seconds()
+        state = (
+            DiagnosticSampleState.STALE
+            if age >= self._resources_refresh_seconds
+            else DiagnosticSampleState.AVAILABLE
+        )
+        return _resource_view(snapshot, self._clock, state=state)
 
     async def containers(self) -> DockerView:
         """Return Docker stats in the stable dashboard contract shape."""
         snapshot = await self._docker.sample_if_due()
+        if snapshot.error is not None:
+            state = (
+                DiagnosticSampleState.STALE
+                if snapshot.sampled_at is not None
+                else DiagnosticSampleState.FAILED
+                if snapshot.failed
+                else DiagnosticSampleState.UNAVAILABLE
+            )
+        elif not snapshot.available:
+            state = DiagnosticSampleState.UNAVAILABLE
+        elif not snapshot.containers:
+            state = DiagnosticSampleState.EMPTY
+        else:
+            state = DiagnosticSampleState.AVAILABLE
         return DockerView(
             available=snapshot.available,
+            state=state,
+            sampled_ago=_sampled_ago(snapshot.sampled_at, self._clock),
+            error=snapshot.error,
             containers=tuple(
                 ContainerView(
                     name=container.name,
@@ -231,7 +273,13 @@ class TaskNavigation:
         return HOME_TARGET_OPENED
 
 
-def _resource_view(snapshot: ResourceSnapshot) -> ResourceView:
+def _resource_view(
+    snapshot: ResourceSnapshot,
+    clock: Clock,
+    *,
+    state: DiagnosticSampleState,
+    error: str | None = None,
+) -> ResourceView:
     return ResourceView(
         host_cpu_pct=snapshot.host_cpu_pct,
         host_ram_used_pct=snapshot.host_ram_used_pct,
@@ -239,4 +287,22 @@ def _resource_view(snapshot: ResourceSnapshot) -> ResourceView:
         instance_cpu_pct=snapshot.instance_cpu_pct,
         instance_rss_gb=snapshot.instance_rss_gb,
         sampled_at=snapshot.sampled_at,
+        state=state,
+        sampled_ago=_sampled_ago(snapshot.sampled_at, clock),
+        error=error,
     )
+
+
+def _sampled_ago(sampled_at: datetime | None, clock: Clock) -> str | None:
+    if sampled_at is None:
+        return None
+    age = (clock.now() - sampled_at).total_seconds()
+    return format_age(age) if age >= 0 else None
+
+
+def _pane_pid(line: str) -> int:
+    _, separator, pid_text = line.partition(" ")
+    if not separator:
+        message = f"tmux pane resource row is invalid: {line!r}"
+        raise ValueError(message)
+    return int(pid_text)

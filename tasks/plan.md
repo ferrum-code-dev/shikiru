@@ -830,10 +830,10 @@ Refs: Workspace §11, 05 §2–3, 06 §2/§5.4.
 
 ### Task 84: Honest usage and secondary diagnostics
 Refs: Workspace §12, 01 D21/D23, 04 §1, 06 §5.4.
-- [ ] Expose project recorded totals and selected-task usage with explicit scope, tokens, cost basis and priced/unknown-run coverage. Separate billed and API-equivalent totals and label partial subtotals; show unknown values distinctly from measured zero.
-- [ ] Preserve only reliable reported context and quota windows, including reset/observation age. Add no inferred pricing, spend budget, completion percentage, ETA, daily charts or time-period labels unsupported by queries.
-- [ ] Move host/process-tree resources, Docker and recorded engine-fault evidence into reachable diagnostics. Distinguish empty, unavailable, stale and failed samples; failures leave unrelated task data readable.
-- [ ] Update 05/06 metric definitions, scope, sampling/observation labels and widget placement; keep expensive reads off motion refreshes.
+- [x] Expose project recorded totals and selected-task usage with explicit scope, tokens, cost basis and priced/unknown-run coverage. Separate billed and API-equivalent totals and label partial subtotals; show unknown values distinctly from measured zero.
+- [x] Preserve only reliable reported context and quota windows, including reset/observation age. Add no inferred pricing, spend budget, completion percentage, ETA, daily charts or time-period labels unsupported by queries.
+- [x] Move host/process-tree resources, Docker and recorded engine-fault evidence into reachable diagnostics. Distinguish empty, unavailable, stale and failed samples; failures leave unrelated task data readable.
+- [x] Update 05/06 metric definitions, scope, sampling/observation labels and widget placement; keep expensive reads off motion refreshes.
 - Tests: real runs/quotas and samplers: mixed cost bases, partial pricing, unknown/zero values, per-task versus project totals, aged quota observations, unavailable Docker and a failed sample without lost task navigation.
 
 ### Task 85: Responsive layouts and accessible refresh behaviour

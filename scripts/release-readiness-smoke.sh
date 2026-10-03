@@ -255,7 +255,7 @@ assert not module_path.is_relative_to(Path.cwd())
 agents = {entry.name for entry in entry_points(group="shikiru.agents")}
 widgets = {entry.name for entry in entry_points(group="shikiru.widgets")}
 assert "fake" in agents
-assert {"header", "resources", "docker"} <= widgets
+assert {"header", "resources", "docker", "faults"} <= widgets
 print("installed defaults.toml, fake agent entry point and built-in widget entry points verified")
 PY
 

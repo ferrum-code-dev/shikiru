@@ -126,7 +126,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 
 Target: [Operator Workspace](../docs/tui-workspace.md); acceptance criteria: [plan.md](plan.md#phase-8--operator-workspace). Implement after Phase 7b.
 
-Delivery order: task navigation and contextual control, attention and evidence views, then responsive behaviour, export, documentation and release verification. Tasks 75–80 are shipped; later tasks remain planned until their acceptance criteria pass.
+Delivery order: task navigation and contextual control, attention and evidence views, then responsive behaviour, export, documentation and release verification. Tasks 75–84 are shipped; later tasks remain planned until their acceptance criteria pass.
 
 - [x] Task 75: Workspace design alignment and shared visual shell
 - [x] Task 76: Selectable task browser and search
@@ -137,7 +137,7 @@ Delivery order: task navigation and contextual control, attention and evidence v
 - [x] Task 81: Escalation resolution with structured evidence
 - [x] Task 82: Blocker navigation and task families
 - [x] Task 83: Completion history and task evidence timeline
-- [ ] Task 84: Honest usage and secondary diagnostics
+- [x] Task 84: Honest usage and secondary diagnostics
 - [ ] Task 85: Responsive layouts and accessible refresh behaviour
 - [ ] Task 86: Markdown and JSON evidence export
 - [ ] Task 87: Operator documentation and workflow walkthroughs

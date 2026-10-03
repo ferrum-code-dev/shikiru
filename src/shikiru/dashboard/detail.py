@@ -97,6 +97,7 @@ NO_VERDICT = "No validated verdict is recorded."
 NO_CRITERIA = "No validated acceptance criteria are recorded."
 NO_EVIDENCE = "No recorded agent signals or task events are available."
 NO_FACTS = "No engine-computed git facts are recorded."
+CLOSED_RUN_STATUS = "closed"
 PANEL_WIDTH_PADDING = 4
 
 
@@ -1052,13 +1053,23 @@ def _sessions_text(view: TaskDetailView) -> str:
     for session in view.sessions:
         cost = (
             NO_VALUE
-            if session.cost_usd is None
+            if not session.usage_reported or session.cost_usd is None
             else f"${session.cost_usd:.2f} · {session.cost_basis}"
         )
-        context = (
-            NO_VALUE if session.context_used_pct is None else f"{session.context_used_pct:.0f}%"
+        context = _session_context_text(
+            session.context_used_pct,
+            session.status,
+            usage_reported=session.usage_reported,
         )
         effort = f"/{session.effort}" if session.effort else ""
+        tokens = (
+            (
+                f"input {session.input_tokens} · output {session.output_tokens} · "
+                f"cache read {session.cache_read_tokens} · cache write {session.cache_write_tokens}"
+            )
+            if session.usage_reported is True
+            else _unknown_session_tokens(session.usage_reported)
+        )
         lines.extend(
             (
                 (
@@ -1066,12 +1077,30 @@ def _sessions_text(view: TaskDetailView) -> str:
                     f"{session.status}"
                 ),
                 f"Session ID · {session.session_id or NO_VALUE}",
-                (
-                    f"Tokens · input {session.input_tokens} · output {session.output_tokens} · "
-                    f"cache read {session.cache_read_tokens} · "
-                    f"cache write {session.cache_write_tokens}"
-                ),
-                f"Agent-reported cost · {cost} · context · {context}",
+                f"Tokens · {tokens}",
+                f"Agent-reported cost · {cost} · {context}",
             )
         )
     return "\n".join(lines)
+
+
+def _session_context_text(
+    context_used_pct: float | None,
+    status: str,
+    *,
+    usage_reported: bool | None,
+) -> str:
+    if usage_reported is not True or context_used_pct is None:
+        return f"Context {NO_VALUE} · no reliable context provenance"
+    age_label = "last reported context"
+    if status == CLOSED_RUN_STATUS:
+        age_label = "last reported context for closed session"
+    return f"{age_label} · {context_used_pct:.0f}%"
+
+
+def _unknown_session_tokens(usage_reported: bool | None) -> str:
+    if usage_reported is None:
+        reason = "legacy usage provenance unknown"
+    else:
+        reason = "usage was not reported"
+    return f"{NO_VALUE} · {reason}; token values are unknown"

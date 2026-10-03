@@ -29,6 +29,7 @@ dialogue = "shikiru.plugins.widgets.dialogue:DialogueWidget"
 usage = "shikiru.plugins.widgets.usage:UsageWidget"
 resources = "shikiru.plugins.widgets.resources:ResourcesWidget"
 docker = "shikiru.plugins.widgets.docker:DockerWidget"
+faults = "shikiru.plugins.widgets.faults:FaultsWidget"
 
 [build-system]
 requires = ["hatchling"]

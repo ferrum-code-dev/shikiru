@@ -14,6 +14,7 @@ from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.commands import Prioritize, Stop
+from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import Hold, Mode, Status
 from shikiru.operator.commands import OperatorCommands
@@ -21,12 +22,14 @@ from shikiru.operator.queries import OperatorQueries
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.store.commands import CommandQueue
+from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
 from tests.support.entry_points import FakeDistribution, ambiguous_entry_points
+from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -165,6 +168,17 @@ async def test_dashboard_mounts_the_default_widgets(
     task = seed_task(connection, clock, title="Visible task", mode=Mode.IMPLEMENT)
     TaskStore(connection, clock).set_slot(task.id, 0)
     TaskStore(connection, clock).apply_transition(task.id, first_step(task))
+    EventLog(connection, clock).append(
+        EventKind.ENGINE_FAULT,
+        task_id=task.id,
+        message="resource sample failed",
+        data={
+            "scope": "resource sample",
+            "error": "host sample failed",
+            "recoverable": True,
+            "repeat": 2,
+        },
+    )
     reader = StateReader(database, SystemClock())
     settings = load_settings(project_dir)
     try:
@@ -173,10 +187,12 @@ async def test_dashboard_mounts_the_default_widgets(
             await pilot.pause()
             dashboard = app.query_one("#dashboard-panels", VerticalScroll)
             strips = app.query_one(StripsPanel)
-            escalations = app.query_one("#escalations")
             docker = app.query_one("#docker")
-            assert not escalations.display
-            assert not docker.display
+            faults = app.query_one("#faults", Static)
+            assert docker.region.width > 0
+            assert app.query_one("#section-tab-diagnostics", Button).region.width > 0
+            assert "host sample failed" in plain_text(faults.content)
+            assert "repeats 2" in plain_text(faults.content)
             assert dashboard.scroll_y == 0
             assert strips.region.y < app.size.height
             assert task.id in cast("Text", strips.content).plain

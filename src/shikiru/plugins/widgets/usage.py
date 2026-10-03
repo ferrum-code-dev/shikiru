@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 from rich.console import Group
 from rich.text import Text
@@ -17,21 +17,25 @@ if TYPE_CHECKING:
 
 UNKNOWN_VALUE = "\N{EN DASH}"
 API_EQUIVALENT_LABEL = "API-equivalent"
-_BASIS_UNKNOWN: Final = "unknown"
-_BASIS_API_EQUIVALENT: Final = "api_equivalent"
-_BASIS_BILLED: Final = "billed"
 
 
 def _agent_block(usage: AgentUsageView) -> Group:
-    cost = _cost_text(usage)
-    lines = [
-        Text(
-            f"{usage.agent} · input {usage.input_tokens:,} · output {usage.output_tokens:,} · "
-            f"cache read {usage.cache_read_tokens:,} · cache write {usage.cache_write_tokens:,} · "
-            f"cost {cost}",
-            style="bold",
+    if usage.usage_reported_runs:
+        tokens = (
+            f"input {usage.input_tokens:,} · output {usage.output_tokens:,} · "
+            f"cache read {usage.cache_read_tokens:,} · cache write {usage.cache_write_tokens:,}"
         )
-    ]
+        coverage = f"usage reported {usage.usage_reported_runs}/{usage.run_count} runs"
+    else:
+        tokens = f"tokens {UNKNOWN_VALUE}"
+        coverage = (
+            f"usage not reported (0/{usage.run_count} runs)"
+            if usage.run_count
+            else "no session usage recorded"
+        )
+    lines = [Text(f"{usage.agent} · {tokens} · {coverage}", style="bold")]
+    if usage.run_count:
+        lines.extend(_cost_lines(usage))
     lines.extend(
         Text.assemble(
             "  ",
@@ -43,18 +47,43 @@ def _agent_block(usage: AgentUsageView) -> Group:
     return Group(*lines)
 
 
-def _cost_text(usage: AgentUsageView) -> str:
-    if usage.cost_usd is None:
-        if usage.cost_basis == _BASIS_UNKNOWN:
-            return UNKNOWN_VALUE
-        return f"{UNKNOWN_VALUE} ({usage.cost_basis})"
-    amount = f"${usage.cost_usd:.2f}"
-    if usage.cost_basis == _BASIS_API_EQUIVALENT:
-        return f"{amount} {API_EQUIVALENT_LABEL}"
-    if usage.cost_basis == _BASIS_BILLED:
-        return f"{amount} billed"
-    message = f"a priced cost cannot be displayed with basis {usage.cost_basis!r}"
-    raise ValueError(message)
+def _cost_lines(usage: AgentUsageView) -> list[Text]:
+    return [
+        Text(
+            _basis_cost_text(
+                "Billed",
+                usage.billed_cost_usd,
+                usage.billed_cost_runs,
+                usage.run_count,
+            )
+        ),
+        Text(
+            _basis_cost_text(
+                API_EQUIVALENT_LABEL,
+                usage.api_equivalent_cost_usd,
+                usage.api_equivalent_cost_runs,
+                usage.run_count,
+            )
+        ),
+        Text(_unknown_cost_text(usage)),
+    ]
+
+
+def _basis_cost_text(label: str, cost: float | None, runs: int, total_runs: int) -> str:
+    amount = UNKNOWN_VALUE if cost is None else f"${cost:.2f}"
+    if total_runs == 0:
+        coverage = "no runs"
+    else:
+        coverage = f"{runs}/{total_runs} runs"
+        if runs < total_runs:
+            coverage = f"partial · {coverage}"
+    return f"{label} subtotal · {amount} · {coverage}"
+
+
+def _unknown_cost_text(usage: AgentUsageView) -> str:
+    if usage.run_count == 0:
+        return "No session runs recorded."
+    return f"Unknown cost · {usage.unknown_cost_runs}/{usage.run_count} runs"
 
 
 class UsagePanel(Static):
@@ -73,8 +102,15 @@ class UsagePanel(Static):
 
     async def _refresh(self) -> None:
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
+        scope = (
+            f"Task recorded usage · {self._widget_context.focus_task}"
+            if self._widget_context.focus_task is not None
+            else "Project recorded usage · all retained runs"
+        )
         self.update(
-            Group(*[_agent_block(item) for item in usage]) if usage else "no usage reported"
+            Group(Text(scope, style="bold"), *[_agent_block(item) for item in usage])
+            if usage
+            else Group(Text(scope, style="bold"), Text("No runs or quota windows recorded."))
         )
 
 

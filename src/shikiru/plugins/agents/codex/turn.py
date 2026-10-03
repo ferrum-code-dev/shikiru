@@ -540,7 +540,12 @@ def _reported_usage(
     latest = latest_token_count(entries)
     if latest is not None:
         return rollout_usage(entries)
-    if turn_usage is not None:
+    token_fields = (
+        _INPUT_TOKENS_FIELD,
+        _OUTPUT_TOKENS_FIELD,
+        _CACHED_INPUT_TOKENS_FIELD,
+    )
+    if turn_usage is not None and any(field in turn_usage for field in token_fields):
         return _usage_from_turn(turn_usage, previous)
     return None
 

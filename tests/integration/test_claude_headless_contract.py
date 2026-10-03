@@ -230,8 +230,10 @@ class TestClaudeHeadlessContract(AgentContractSuite):
     def recorded_streams(self) -> Sequence[RecordedStream]:
         subscription_usage = Usage(100, 5, 12, 3, _COST, "api_equivalent", 115 / 200000 * 100)
         list_cost_usage = Usage(40, 8, 4, 1, 0.00002, "api_equivalent", 0.0225)
-        openrouter_usage = Usage(70, 12, 0, 0, None, "unknown", None)
-        openrouter_report_usage = Usage(2509, 238, 19865, 10067, None, "unknown", None)
+        openrouter_usage = Usage(70, 12, 0, 0, None, "unknown", 70 / 200000 * 100)
+        openrouter_report_usage = Usage(
+            2509, 238, 19865, 10067, None, "unknown", 32441 / 200000 * 100
+        )
         compact_usage = Usage(20, 8, 0, 0, 0.00003, "api_equivalent", 0.01)
         empty_stderr = _FIXTURES_DIR / "turn_rate_limit.stderr.log"
         return [
@@ -290,7 +292,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 expected_signals=[
                     SessionStarted(_OPENROUTER_LIVE_SESSION_ID),
                     Message(_OPENROUTER_LIVE_RESPONSE),
-                    UsageReported(Usage(17094, 2, 0, 0, None, "unknown", None)),
+                    UsageReported(Usage(17094, 2, 0, 0, None, "unknown", 17094 / 200000 * 100)),
                     TurnEnded(_OPENROUTER_LIVE_RESPONSE),
                 ],
                 session_id=_OPENROUTER_LIVE_SESSION_ID,
@@ -328,7 +330,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     ToolStarted("Read", '{"file_path":"[redacted]/part2.txt"}'),
                     ToolFinished("Read"),
                     UsageReported(
-                        Usage(17, 484, 15902, 18432, 0.0408912, "api_equivalent", 13.0885)
+                        Usage(17, 484, 15902, 18432, 0.0408912, "api_equivalent", 17.1755)
                     ),
                     TurnEnded(""),
                 ],

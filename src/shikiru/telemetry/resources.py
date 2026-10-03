@@ -30,6 +30,10 @@ class ResourceSnapshot:
     sampled_at: datetime | None = None
 
 
+class ResourceSampleError(RuntimeError):
+    """The operating system could not provide a complete host or process sample."""
+
+
 class ResourceSampler:
     """Samples host CPU and available memory through `psutil`."""
 
@@ -46,10 +50,13 @@ class ResourceSampler:
     def sample(self) -> ResourceSnapshot:
         """Take one host CPU and available memory sample."""
         now = self._clock.now()
-        host_cpu = psutil.cpu_percent(interval=None)
+        try:
+            host_cpu = psutil.cpu_percent(interval=None)
+            virtual_memory = psutil.virtual_memory()
+        except psutil.Error as error:
+            raise ResourceSampleError(str(error)) from error
         self._host_cpu.append((now, host_cpu))
         self._trim(now)
-        virtual_memory = psutil.virtual_memory()
         self._last = ResourceSnapshot(
             host_cpu_pct=_average(value for _, value in self._host_cpu),
             host_ram_used_pct=virtual_memory.percent,
@@ -137,11 +144,15 @@ class ResourceSampler:
                 descendants = [root, *root.children(recursive=True)]
             except psutil.NoSuchProcess, psutil.ZombieProcess:
                 continue
+            except psutil.Error as error:
+                raise ResourceSampleError(str(error)) from error
             for process in descendants:
                 try:
                     identity = (process.pid, process.create_time())
                 except psutil.NoSuchProcess, psutil.ZombieProcess:
                     continue
+                except psutil.Error as error:
+                    raise ResourceSampleError(str(error)) from error
                 found[identity] = self._processes.get(identity, process)
         self._processes = found
         return list(found.values())
@@ -152,6 +163,8 @@ class ResourceSampler:
             return process.cpu_percent(interval=None), process.memory_info().rss
         except psutil.NoSuchProcess, psutil.ZombieProcess:
             return None
+        except psutil.Error as error:
+            raise ResourceSampleError(str(error)) from error
 
     def _trim(self, now: datetime) -> None:
         cutoff = now.timestamp() - self._config.cpu_window_seconds

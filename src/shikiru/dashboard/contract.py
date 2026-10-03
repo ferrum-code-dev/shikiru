@@ -99,6 +99,16 @@ class CommandFeedbackStatus(StrEnum):
     REJECTED = "Rejected"
 
 
+class DiagnosticSampleState(StrEnum):
+    """An explicit state for a secondary diagnostic observation."""
+
+    AVAILABLE = "available"
+    EMPTY = "empty"
+    UNAVAILABLE = "unavailable"
+    STALE = "stale"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True)
 class RepoStatus:
     """The project checkout's state, as shown by the `header` widget (06 §5.4)."""
@@ -262,6 +272,7 @@ class TaskSessionView:
     cost_usd: float | None
     cost_basis: CostBasis
     context_used_pct: float | None
+    usage_reported: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -484,6 +495,13 @@ class AgentUsageView:
     cost_usd: float | None
     cost_basis: CostBasis | Literal["mixed"]
     quotas: tuple[QuotaGaugeView, ...]
+    run_count: int = 0
+    usage_reported_runs: int = 0
+    billed_cost_usd: float | None = None
+    billed_cost_runs: int = 0
+    api_equivalent_cost_usd: float | None = None
+    api_equivalent_cost_runs: int = 0
+    unknown_cost_runs: int = 0
 
 
 @dataclass(frozen=True)
@@ -496,6 +514,9 @@ class ResourceView:
     instance_cpu_pct: float | None
     instance_rss_gb: float | None
     sampled_at: datetime | None = None
+    state: DiagnosticSampleState | None = None
+    sampled_ago: str | None = None
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -509,10 +530,26 @@ class ContainerView:
 
 @dataclass(frozen=True)
 class DockerView:
-    """Docker sampling state; unavailable Docker is hidden by its widget."""
+    """Docker sampling state, including stale or failed observations."""
 
     available: bool
     containers: tuple[ContainerView, ...]
+    state: DiagnosticSampleState | None = None
+    sampled_ago: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class EngineFaultView:
+    """One open recorded engine fault streak for Diagnostics."""
+
+    scope: str
+    task_id: str | None
+    error: str
+    recoverable: bool
+    first_seen: str
+    last_seen: str
+    repeats: int
 
 
 class DashboardViews(Protocol):
@@ -528,6 +565,10 @@ class DashboardViews(Protocol):
 
     def attention(self) -> AttentionView:
         """Return open decisions, diagnosed stalls and recorded engine faults."""
+        ...
+
+    def engine_faults(self) -> tuple[EngineFaultView, ...]:
+        """Return recorded engine fault streaks that have not recovered."""
         ...
 
     def strips(self) -> list[TaskStripData]:

@@ -384,10 +384,22 @@ class ClaudeTurnParser:
         result_text = payload.get(_RESULT_FIELD)
         last_message = result_text if isinstance(result_text, str) else self._latest_message
         self._terminal = True
-        return [UsageReported(reported_usage), TurnEnded(last_message)]
+        signals: list[AgentSignal] = []
+        if reported_usage is not None:
+            signals.append(UsageReported(reported_usage))
+        signals.append(TurnEnded(last_message))
+        return signals
 
-    def _reported_usage(self, turn_usage: Mapping[str, Any] | None) -> Usage:
+    def _reported_usage(self, turn_usage: Mapping[str, Any] | None) -> Usage | None:
         source = turn_usage or self._latest_assistant_usage
+        token_fields = (
+            _INPUT_TOKENS_FIELD,
+            _OUTPUT_TOKENS_FIELD,
+            _CACHE_READ_TOKENS_FIELD,
+            _CACHE_WRITE_TOKENS_FIELD,
+        )
+        if source is None or not any(field in source for field in token_fields):
+            return None
         input_tokens = self._initial_usage.input_tokens + _integer(source, _INPUT_TOKENS_FIELD)
         output_tokens = self._initial_usage.output_tokens + _integer(source, _OUTPUT_TOKENS_FIELD)
         cache_read_tokens = self._initial_usage.cache_read_tokens + _integer(
@@ -402,10 +414,10 @@ class ClaudeTurnParser:
             if self._latest_model_usage is not None
             else None
         )
-        context_tokens = _context_tokens(self._latest_assistant_usage)
+        context_tokens = _context_tokens(source)
         context_pct = (
             context_tokens / context_window * PERCENT
-            if priced and isinstance(context_window, int | float) and context_window > 0
+            if isinstance(context_window, int | float) and context_window > 0
             else None
         )
         return Usage(

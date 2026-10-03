@@ -1077,6 +1077,7 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
             assert "recorded fault" in dialogue_text
             assert "Unrelated activity" not in dialogue_text
             usage_text = plain_text(app.query_one("#usage", Static).content)
+            assert f"Task recorded usage · {focused.id}" in usage_text
             assert focused_run.agent in usage_text
             assert "4" in usage_text
             assert other_run.agent not in usage_text

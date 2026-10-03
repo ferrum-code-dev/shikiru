@@ -41,6 +41,7 @@ class Run(DomainModel):
     last_message: str | None = None
     status: RunStatus
     usage: Usage = NO_USAGE
+    usage_reported: bool | None = None
     started_at: datetime
     ended_at: datetime | None = None
 

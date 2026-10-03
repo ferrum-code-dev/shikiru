@@ -17,6 +17,7 @@ from shikiru.dashboard.contract import (
     CommandHistoryView,
     DialogueBubbleView,
     DockerView,
+    EngineFaultView,
     EscalationPanelView,
     GlobalAttentionView,
     HeaderView,
@@ -180,7 +181,10 @@ class StateDashboardViews:
         self._clock = clock
         self._motion = motion
         self._usage_version = -1
-        self._usage_cache: tuple[list[UsageView], dict[str, list[QuotaWindow]]] | None = None
+        self._project_usage_cache: tuple[list[UsageView], dict[str, list[QuotaWindow]]] | None = (
+            None
+        )
+        self._task_usage_cache: dict[str, list[UsageView]] = {}
         self._escalation_version = -1
         self._escalation_cache: list[EscalationView] | None = None
         self._fault_version = -1
@@ -645,6 +649,21 @@ class StateDashboardViews:
             faults=len(faults),
         )
 
+    def engine_faults(self) -> tuple[EngineFaultView, ...]:
+        """Return open recorded fault streaks with their original timestamps."""
+        return tuple(
+            EngineFaultView(
+                scope=fault.scope,
+                task_id=fault.task_id,
+                error=fault.error,
+                recoverable=fault.recoverable,
+                first_seen=fault.first_seen.isoformat(),
+                last_seen=fault.last_seen.isoformat(),
+                repeats=fault.repeat,
+            )
+            for fault in self._cached_faults()
+        )
+
     async def task_detail(
         self,
         task_id: str,
@@ -1051,30 +1070,23 @@ class StateDashboardViews:
 
     def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
         """Build project usage or usage recorded for one task."""
-        if task_id is not None:
-            return [
-                AgentUsageView(
-                    agent=item.agent,
-                    input_tokens=item.input_tokens,
-                    output_tokens=item.output_tokens,
-                    cache_read_tokens=item.cache_read_tokens,
-                    cache_write_tokens=item.cache_write_tokens,
-                    cost_usd=item.cost_usd,
-                    cost_basis=item.cost_basis,
-                    quotas=(),
-                )
-                for item in self._queries.task_usage(task_id)
-            ]
         now = self._clock.now()
         version = self._state.data_version()
         if version != self._usage_version:
             self._usage_version = version
-            self._usage_cache = self._queries.usage_and_quotas()
-        usage_data = self._usage_cache
-        if usage_data is None:
-            message = "usage cache was not initialized"
-            raise RuntimeError(message)
-        usage, quotas = usage_data
+            self._project_usage_cache = None
+            self._task_usage_cache.clear()
+        if task_id is not None:
+            usage = self._task_usage_cache.get(task_id)
+            if usage is None:
+                usage = self._queries.task_usage(task_id)
+                self._task_usage_cache[task_id] = usage
+            return [_agent_usage(item, quotas=()) for item in usage]
+        project_usage = self._project_usage_cache
+        if project_usage is None:
+            project_usage = self._queries.usage_and_quotas()
+            self._project_usage_cache = project_usage
+        usage, quotas = project_usage
         by_agent = {item.agent: item for item in usage}
         agents = sorted(set(by_agent) | set(quotas))
         quota_states = tuple(
@@ -1112,6 +1124,17 @@ class StateDashboardViews:
                     cost_usd=item.cost_usd if item is not None else None,
                     cost_basis=item.cost_basis if item is not None else "unknown",
                     quotas=windows,
+                    run_count=item.run_count if item is not None else 0,
+                    usage_reported_runs=item.usage_reported_runs if item is not None else 0,
+                    billed_cost_usd=item.billed_cost_usd if item is not None else None,
+                    billed_cost_runs=item.billed_cost_runs if item is not None else 0,
+                    api_equivalent_cost_usd=(
+                        item.api_equivalent_cost_usd if item is not None else None
+                    ),
+                    api_equivalent_cost_runs=(
+                        item.api_equivalent_cost_runs if item is not None else 0
+                    ),
+                    unknown_cost_runs=item.unknown_cost_runs if item is not None else 0,
                 )
             )
         return result
@@ -1382,6 +1405,27 @@ def _task_session(run: Run) -> TaskSessionView:
         cost_usd=run.usage.cost_usd,
         cost_basis=run.usage.cost_basis,
         context_used_pct=run.usage.context_used_pct,
+        usage_reported=run.usage_reported,
+    )
+
+
+def _agent_usage(item: UsageView, *, quotas: tuple[QuotaGaugeView, ...]) -> AgentUsageView:
+    return AgentUsageView(
+        agent=item.agent,
+        input_tokens=item.input_tokens,
+        output_tokens=item.output_tokens,
+        cache_read_tokens=item.cache_read_tokens,
+        cache_write_tokens=item.cache_write_tokens,
+        cost_usd=item.cost_usd,
+        cost_basis=item.cost_basis,
+        quotas=quotas,
+        run_count=item.run_count,
+        usage_reported_runs=item.usage_reported_runs,
+        billed_cost_usd=item.billed_cost_usd,
+        billed_cost_runs=item.billed_cost_runs,
+        api_equivalent_cost_usd=item.api_equivalent_cost_usd,
+        api_equivalent_cost_runs=item.api_equivalent_cost_runs,
+        unknown_cost_runs=item.unknown_cost_runs,
     )
 
 

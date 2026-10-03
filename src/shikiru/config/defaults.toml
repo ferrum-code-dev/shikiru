@@ -45,7 +45,7 @@ pr_close_attempts = 5
 escalate_after = 2
 
 [dashboard]
-widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker"]
+widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker", "faults"]
 animations = true
 docker_refresh_seconds = 5
 docker_timeout_seconds = 5

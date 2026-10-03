@@ -88,6 +88,8 @@ TASK_REPORT_ERROR = "could not read report evidence: {error}"
 TASK_FACTS_ERROR = "could not read recorded git facts: {error}"
 TASK_ACTION_MISSING = "task no longer exists"
 TASK_ACTION_TERMINAL = "task is terminal"
+_COST_BASIS_BILLED = "billed"
+_COST_BASIS_API_EQUIVALENT = "api_equivalent"
 TASK_ACTION_ROLE_MISSING = "role pane is unavailable"
 TASK_ACTION_TAKEN_OVER = "this role is already taken over"
 TASK_ACTION_SESSION_MISSING = "this role has no live session to take over"
@@ -293,6 +295,13 @@ class UsageView(OperatorView):
     cache_write_tokens: int
     cost_usd: float | None
     cost_basis: CostBasis | Literal["mixed"]
+    run_count: int = 0
+    usage_reported_runs: int = 0
+    billed_cost_usd: float | None = None
+    billed_cost_runs: int = 0
+    api_equivalent_cost_usd: float | None = None
+    api_equivalent_cost_runs: int = 0
+    unknown_cost_runs: int = 0
 
 
 class RunDirectoryUsage(OperatorView):
@@ -1164,13 +1173,18 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
     views: list[UsageView] = []
     for agent in sorted(by_agent):
         agent_runs = by_agent[agent]
+        reported_runs = [run for run in agent_runs if run.usage_reported]
         known_costs = [run.usage.cost_usd for run in agent_runs]
         cost_bases: set[CostBasis] = {
-            run.usage.cost_basis for run in agent_runs if run.usage.cost_usd is not None
+            run.usage.cost_basis
+            for run in agent_runs
+            if run.usage_reported
+            and run.usage.cost_usd is not None
+            and run.usage.cost_basis != COST_BASIS_UNKNOWN
         }
         cost_basis: CostBasis | Literal["mixed"]
         if any(
-            cost is None or run.usage.cost_basis == COST_BASIS_UNKNOWN
+            not run.usage_reported or cost is None or run.usage.cost_basis == COST_BASIS_UNKNOWN
             for cost, run in zip(known_costs, agent_runs, strict=True)
         ):
             cost_usd = None
@@ -1179,17 +1193,52 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
             cost_usd = None
             cost_basis = "mixed"
         else:
-            cost_usd = sum((cost for cost in known_costs if cost is not None), 0.0)
+            cost_usd = sum(
+                (
+                    run.usage.cost_usd
+                    for run in agent_runs
+                    if run.usage_reported and run.usage.cost_usd is not None
+                ),
+                0.0,
+            )
             cost_basis = next(iter(cost_bases)) if cost_bases else "unknown"
+        billed_runs = [
+            run
+            for run in agent_runs
+            if run.usage_reported
+            and run.usage.cost_usd is not None
+            and run.usage.cost_basis == _COST_BASIS_BILLED
+        ]
+        api_equivalent_runs = [
+            run
+            for run in agent_runs
+            if run.usage_reported
+            and run.usage.cost_usd is not None
+            and run.usage.cost_basis == _COST_BASIS_API_EQUIVALENT
+        ]
+        priced_run_count = len(billed_runs) + len(api_equivalent_runs)
         views.append(
             UsageView(
                 agent=agent,
-                input_tokens=sum(run.usage.input_tokens for run in agent_runs),
-                output_tokens=sum(run.usage.output_tokens for run in agent_runs),
-                cache_read_tokens=sum(run.usage.cache_read_tokens for run in agent_runs),
-                cache_write_tokens=sum(run.usage.cache_write_tokens for run in agent_runs),
+                input_tokens=sum(run.usage.input_tokens for run in reported_runs),
+                output_tokens=sum(run.usage.output_tokens for run in reported_runs),
+                cache_read_tokens=sum(run.usage.cache_read_tokens for run in reported_runs),
+                cache_write_tokens=sum(run.usage.cache_write_tokens for run in reported_runs),
                 cost_usd=cost_usd,
                 cost_basis=cost_basis,
+                run_count=len(agent_runs),
+                usage_reported_runs=len(reported_runs),
+                billed_cost_usd=_priced_total(billed_runs),
+                billed_cost_runs=len(billed_runs),
+                api_equivalent_cost_usd=_priced_total(api_equivalent_runs),
+                api_equivalent_cost_runs=len(api_equivalent_runs),
+                unknown_cost_runs=len(agent_runs) - priced_run_count,
             )
         )
     return views
+
+
+def _priced_total(runs: Sequence[Run]) -> float | None:
+    if not runs:
+        return None
+    return sum((run.usage.cost_usd for run in runs if run.usage.cost_usd is not None), 0.0)

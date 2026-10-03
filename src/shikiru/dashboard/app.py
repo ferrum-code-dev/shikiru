@@ -56,7 +56,7 @@ _WIDGET_DIALOGUE = "dialogue"
 _WIDGET_ESCALATIONS = "escalations"
 _WIDGET_QUEUE = "queue"
 _TASK_VIEW_OMITTED_WIDGETS = frozenset(
-    {"header", _WIDGET_ESCALATIONS, "strips", _WIDGET_QUEUE, "resources", "docker"}
+    {"header", _WIDGET_ESCALATIONS, "strips", _WIDGET_QUEUE, "resources", "docker", "faults"}
 )
 _SECTION_LABELS = (
     (_SECTION_WORKSPACE, "Workspace"),
@@ -75,6 +75,7 @@ _BUILTIN_SECTIONS = {
     "usage": _SECTION_USAGE,
     "resources": _SECTION_DIAGNOSTICS,
     "docker": _SECTION_DIAGNOSTICS,
+    "faults": _SECTION_DIAGNOSTICS,
 }
 _TAB_PREFIX = "section-tab-"
 _SECTION_PREFIX = "section-"

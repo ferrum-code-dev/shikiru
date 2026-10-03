@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 _RUN_COLUMNS = (
     "id, task_id, role, agent, model, effort, session_id, resume_command, "
     "last_message, status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
-    "cost_usd, cost_basis, context_used_pct, started_at, ended_at"
+    "cost_usd, cost_basis, context_used_pct, usage_reported, started_at, ended_at"
 )
 
 
@@ -48,6 +48,7 @@ def _row_to_run(row: sqlite3.Row) -> Run:
             cost_basis=row["cost_basis"],
             context_used_pct=row["context_used_pct"],
         ),
+        usage_reported=(bool(row["usage_reported"]) if row["usage_reported"] is not None else None),
         started_at=parse_required_timestamp(row["started_at"]),
         ended_at=parse_timestamp(row["ended_at"]),
     )
@@ -85,8 +86,9 @@ class RunStore:
         """Start a new live run for `task_id`'s `role` on `rung`."""
         cursor = self._connection.execute(
             """
-            INSERT INTO runs (task_id, role, agent, model, effort, status, started_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO runs (
+              task_id, role, agent, model, effort, status, usage_reported, started_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)
             """,
             (
                 task_id,
@@ -169,7 +171,8 @@ class RunStore:
         self._connection.execute(
             """
             UPDATE runs SET input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
-              cache_write_tokens = ?, cost_usd = ?, cost_basis = ?, context_used_pct = ?
+              cache_write_tokens = ?, cost_usd = ?, cost_basis = ?, context_used_pct = ?,
+              usage_reported = 1
             WHERE id = ?
             """,
             (
