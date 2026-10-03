@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from shikiru.store.events import EventLog
 
 TURN_FIELD = "turn"
+ROLE_FIELD = "role"
+ITERATION_FIELD = "iteration"
 
 
 def emit_step_started(events: EventLog, task: Task, settings: Settings) -> None:
@@ -111,11 +113,12 @@ def emit_turn_failed(
     result: TurnResult,
     *,
     turn: str | None = None,
+    role: Role | None = None,
 ) -> None:
     """Record a turn that ended without a valid report."""
     if isinstance(result, Failed):
         message = result.message
-        data = {"kind": result.kind.value, "resets_at": result.resets_at}
+        data: dict[str, object] = {"kind": result.kind.value, "resets_at": result.resets_at}
     elif isinstance(result, Stalled):
         message = "agent stalled"
         data = {}
@@ -125,7 +128,14 @@ def emit_turn_failed(
     else:
         message = type(result).__name__
         data = {}
-    data.update({"step": step.value, "result": type(result).__name__, **_turn_data(turn)})
+    data.update(
+        {
+            "step": step.value,
+            "result": type(result).__name__,
+            **_provenance_data(role, task.iteration),
+            **_turn_data(turn),
+        }
+    )
     events.append(EventKind.TURN_FAILED, task_id=task.id, message=message, data=data)
 
 
@@ -152,7 +162,14 @@ def emit_turn_completed(
         },
     )
     if isinstance(outcome, Verdict):
-        emit_verdict(events, task, outcome, summary, turn=execution.turn_dir.name)
+        emit_verdict(
+            events,
+            task,
+            outcome,
+            summary,
+            turn=execution.turn_dir.name,
+            role=execution.role,
+        )
 
 
 def emit_verdict(
@@ -162,6 +179,7 @@ def emit_verdict(
     summary: str,
     *,
     turn: str | None = None,
+    role: Role | None = None,
 ) -> None:
     """Record the Leader's (or the engine's) verdict on a task."""
     events.append(
@@ -173,6 +191,7 @@ def emit_verdict(
             "summary": summary,
             "issues": [issue.model_dump() for issue in verdict.issues],
             "residual_risks": list(verdict.residual_risks),
+            **_provenance_data(role, task.iteration),
             **_turn_data(turn),
         },
     )
@@ -180,6 +199,13 @@ def emit_verdict(
 
 def _turn_data(turn: str | None) -> dict[str, str]:
     return {TURN_FIELD: turn} if turn is not None else {}
+
+
+def _provenance_data(role: Role | None, iteration: int) -> dict[str, str | int]:
+    data: dict[str, str | int] = {ITERATION_FIELD: iteration}
+    if role is not None:
+        data[ROLE_FIELD] = role.value
+    return data
 
 
 def _turn_summary(outcome: Outcome) -> str:

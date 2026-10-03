@@ -41,6 +41,7 @@ from shikiru.dashboard.contract import (
     TaskTestView,
     TaskTimelineEntryView,
     TaskTimelinePageView,
+    TaskTimelineSource,
     WorkspaceSummaryView,
 )
 from shikiru.domain.commands import CommandStatus, ResolutionKind
@@ -59,6 +60,8 @@ from shikiru.domain.runs import RunStatus
 from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
+from shikiru.domain.timeline import TIMELINE_EVIDENCE_CATEGORY
+from shikiru.errors import ShikiruError
 from shikiru.operator.queries import AGENT_REPORT_SOURCE
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
@@ -88,6 +91,11 @@ SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
 HOURS_PER_DAY = 24
 TIME_UNKNOWN = "\N{EN DASH}"
+TASK_TIMELINE_READ_ERROR_ID = "timeline-read-error"
+TASK_TIMELINE_READ_ERROR_SUMMARY = "Task evidence could not be read"
+TASK_TIMELINE_READ_ERROR_TIMESTAMP = (
+    "recorded timestamp is unavailable because the page could not be read"
+)
 AGENT_REPORTED_TESTS = "agent-reported"
 TASK_ROLES = (Role.LEADER, Role.IMPLEMENTER)
 SETUP_STEP = "setup"
@@ -651,13 +659,16 @@ class StateDashboardViews:
         detail = await self._queries.get_task_detail(task_id)
         if detail is None:
             return None
-        timeline_view = await self.task_timeline(
-            task_id,
-            cursor=timeline_cursor,
-            role=timeline_role,
-            turn=timeline_turn,
-            category=timeline_category,
-        )
+        try:
+            timeline_view = await self.task_timeline(
+                task_id,
+                cursor=timeline_cursor,
+                role=timeline_role,
+                turn=timeline_turn,
+                category=timeline_category,
+            )
+        except (ShikiruError, OSError, ValueError, TypeError) as error:
+            timeline_view = _timeline_read_error(error, role=timeline_role, turn=timeline_turn)
         if timeline_view is None:
             return None
         task = detail.task
@@ -1392,3 +1403,30 @@ def _stored_command_status(
     if status is CommandFeedbackStatus.APPLIED:
         return CommandStatus.DONE
     return CommandStatus.REJECTED
+
+
+def _timeline_read_error(
+    error: ShikiruError | OSError | ValueError | TypeError,
+    *,
+    role: str | None,
+    turn: str | None,
+) -> TaskTimelinePageView:
+    return TaskTimelinePageView(
+        entries=(
+            TaskTimelineEntryView(
+                identity=TASK_TIMELINE_READ_ERROR_ID,
+                timestamp=None,
+                timestamp_error=TASK_TIMELINE_READ_ERROR_TIMESTAMP,
+                source=TaskTimelineSource.AGENT.value,
+                category=TIMELINE_EVIDENCE_CATEGORY,
+                summary=TASK_TIMELINE_READ_ERROR_SUMMARY,
+                detail=str(error),
+                role=role,
+                turn=turn,
+                event_id=None,
+                incomplete=False,
+            ),
+        ),
+        older_cursor=None,
+        has_older=False,
+    )

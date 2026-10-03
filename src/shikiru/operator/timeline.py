@@ -35,6 +35,8 @@ CURSOR_POSITION_FIELDS = 2
 TIMELINE_CURSOR_ERROR = "task evidence cursor is invalid"
 TIMELINE_CURSOR_FILTER_ERROR = "task evidence cursor belongs to different filters"
 TIMELINE_MISSING_DETAIL = "No recorded normalized signal file is available for this role."
+TIMELINE_READ_ERROR_SUMMARY = "Could not read recorded signal evidence"
+TIMELINE_READ_ERROR_PREFIX = "unavailable:"
 
 
 @dataclass(frozen=True)
@@ -182,7 +184,7 @@ def initial_cursor(paths: Mapping[str, Path]) -> TimelineCursor:
     for role, path in paths.items():
         try:
             positions[role] = path.stat().st_size
-        except FileNotFoundError:
+        except OSError:
             positions[role] = None
     return TimelineCursor(event_before=None, signal_before=positions)
 
@@ -199,18 +201,20 @@ def read_signal_batch(
     """Read at most `limit` matching signal rows backwards without retaining the file."""
     if before_offset == -1:
         return SignalBatch(items=(), replay_offset=-1, scan_offset=-1)
-    snapshot = _signal_snapshot(path, before_offset)
-    if snapshot is None:
-        return _missing_batch(role, filters)
-    end_position = snapshot
-    return _scan_signal_file(
-        path,
-        role=role,
-        end_position=end_position,
-        filters=filters,
-        limit=limit,
-        scan_limit=scan_limit,
-    )
+    try:
+        snapshot = _signal_snapshot(path, before_offset)
+        if snapshot is None:
+            return _missing_batch(role, filters)
+        return _scan_signal_file(
+            path,
+            role=role,
+            end_position=snapshot,
+            filters=filters,
+            limit=limit,
+            scan_limit=scan_limit,
+        )
+    except (OSError, ValueError) as error:
+        return _unavailable_batch(role, filters, error)
 
 
 def _signal_snapshot(path: Path, before_offset: int | None) -> int | None:
@@ -230,6 +234,15 @@ def _missing_batch(role: str, filters: TimelineFilters) -> SignalBatch:
     if _matches_signal(missing, filters):
         return SignalBatch(items=(missing,), replay_offset=None, scan_offset=0)
     return SignalBatch(items=(), replay_offset=0, scan_offset=0)
+
+
+def _unavailable_batch(
+    role: str, filters: TimelineFilters, error: OSError | ValueError
+) -> SignalBatch:
+    unavailable = _unavailable_signal(role, error)
+    if _matches_signal(unavailable, filters):
+        return SignalBatch(items=(unavailable,), replay_offset=-1, scan_offset=-1)
+    return SignalBatch(items=(), replay_offset=-1, scan_offset=-1)
 
 
 def _scan_signal_file(
@@ -358,9 +371,31 @@ def _missing_signal(role: str) -> TimelineItem:
     )
 
 
+def _unavailable_signal(role: str, error: OSError | ValueError) -> TimelineItem:
+    return TimelineItem(
+        identity=f"{TIMELINE_READ_ERROR_PREFIX}{role}",
+        timestamp=None,
+        source=TIMELINE_SOURCE_AGENT,
+        category=TIMELINE_EVIDENCE_CATEGORY,
+        summary=TIMELINE_READ_ERROR_SUMMARY,
+        detail=str(error),
+        role=role,
+        turn=None,
+        signal_offset=None,
+        signal_end_offset=None,
+        timestamp_error="recorded timestamp is unavailable because the source could not be read",
+    )
+
+
 def _matches_signal(item: TimelineItem, filters: TimelineFilters) -> bool:
     if filters.role is not None and filters.role != item.role:
         return False
+    if item.identity.startswith(TIMELINE_READ_ERROR_PREFIX):
+        return filters.category in {
+            TIMELINE_ALL_CATEGORY,
+            TIMELINE_SIGNAL_CATEGORY,
+            TIMELINE_EVIDENCE_CATEGORY,
+        }
     if filters.turn is not None and filters.turn != item.turn:
         return False
     if filters.category in {TIMELINE_ALL_CATEGORY, TIMELINE_SIGNAL_CATEGORY}:

@@ -23,6 +23,7 @@ from shikiru.ui.strip import TaskStrip
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.events import MouseScrollUp
     from textual.worker import Worker
 
     from shikiru.dashboard.contract import (
@@ -99,6 +100,32 @@ NO_FACTS = "No engine-computed git facts are recorded."
 PANEL_WIDTH_PADDING = 4
 
 
+class TaskDetailBody(VerticalScroll):
+    def __init__(self, scroll_away: Callable[[], None]) -> None:
+        super().__init__(id="task-detail-body")
+        self._scroll_away = scroll_away
+
+    def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
+        del event
+        self._pause_if_scrolled()
+
+    def action_scroll_up(self) -> None:
+        self._pause_if_scrolled()
+        super().action_scroll_up()
+
+    def action_page_up(self) -> None:
+        self._pause_if_scrolled()
+        super().action_page_up()
+
+    def action_scroll_home(self) -> None:
+        self._pause_if_scrolled()
+        super().action_scroll_home()
+
+    def _pause_if_scrolled(self) -> None:
+        if self.scroll_y > 0:
+            self._scroll_away()
+
+
 class TaskDetailPanel(Vertical):
     """Render shared task detail from the injected dashboard view contract."""
 
@@ -164,6 +191,7 @@ class TaskDetailPanel(Vertical):
         self._timeline_selected_entry: TaskTimelineEntryView | None = None
         self._timeline_page: TaskTimelinePageView | None = None
         self._timeline_worker: Worker[None] | None = None
+        self._timeline_request_generation = 0
 
     def compose(self) -> ComposeResult:
         with HorizontalScroll(id="task-detail-toolbar"):
@@ -186,7 +214,7 @@ class TaskDetailPanel(Vertical):
         yield Static("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
         yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
         yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
-        with VerticalScroll(id="task-detail-body"):
+        with TaskDetailBody(self._pause_timeline_follow):
             yield Static("", id=TASK_DETAIL_SITUATION, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_BLOCKER, classes="task-detail-section", markup=False)
             yield Button("Expand family and relationships", id=TASK_DETAIL_RELATIONSHIPS_BUTTON)
@@ -313,26 +341,50 @@ class TaskDetailPanel(Vertical):
     async def _watch_timeline(self) -> None:
         while True:
             await self._widget_context.clock.sleep(self._widget_context.timeline_refresh_seconds)
-            if self._timeline_following:
+            if self._timeline_following and self._screen_is_active():
                 await self._refresh_timeline()
 
     async def _refresh_timeline(self) -> None:
-        try:
-            page = await self._widget_context.views.task_timeline(
-                self._task_id,
-                cursor=None if self._timeline_following else self._timeline_cursors[-1],
-                role=self._timeline_role,
-                turn=self._timeline_turn,
-                category=self._timeline_category,
-            )
-        except (ShikiruError, OSError, ValueError, TypeError) as error:
-            if self.is_mounted:
-                self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(
-                    f"Evidence timeline refresh failed: {error}"
+        async with self._refresh_lock:
+            if not self._screen_is_active():
+                return
+            generation = self._timeline_request_generation
+            cursor = None if self._timeline_following else self._timeline_cursors[-1]
+            role = self._timeline_role
+            turn = self._timeline_turn
+            category = self._timeline_category
+            try:
+                page = await self._widget_context.views.task_timeline(
+                    self._task_id,
+                    cursor=cursor,
+                    role=role,
+                    turn=turn,
+                    category=category,
                 )
+            except (ShikiruError, OSError, ValueError, TypeError) as error:
+                if self._screen_is_active() and generation == self._timeline_request_generation:
+                    self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(
+                        f"Evidence timeline refresh failed: {error}"
+                    )
+                return
+            if self._screen_is_active() and generation == self._timeline_request_generation:
+                self._render_timeline(page)
+
+    def _screen_is_active(self) -> bool:
+        return self.is_mounted and self.screen.is_current
+
+    def _pause_timeline_follow(self) -> None:
+        if not self._timeline_following:
             return
-        if self.is_mounted:
-            self._render_timeline(page)
+        self._timeline_following = False
+        self._timeline_request_generation += 1
+        if self._screen_is_active():
+            page = self._timeline_page
+            status = "Follow paused while viewing older evidence"
+            if page is not None and page.has_older:
+                status += " · older evidence available"
+            self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(status)
+            self.query_one(f"#{TASK_DETAIL_TIMELINE_FOLLOW}", Button).disabled = False
 
     async def _apply_timeline_filters(self) -> None:
         role_value = cast(
@@ -351,9 +403,12 @@ class TaskDetailPanel(Vertical):
         self._timeline_turn = turn_value or None
         self._timeline_cursors = [None]
         self._timeline_following = True
+        self._timeline_request_generation += 1
         self._timeline_selected_identity = None
         self._timeline_selected_entry = None
-        await self._refresh()
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select).value = Select.BLANK
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_SELECTED}", Static).update("No evidence selected.")
+        self._queue_refresh()
 
     async def _older_timeline_page(self) -> None:
         page = self._timeline_page
@@ -361,19 +416,22 @@ class TaskDetailPanel(Vertical):
             return
         self._timeline_cursors.append(page.older_cursor)
         self._timeline_following = False
-        await self._refresh()
+        self._timeline_request_generation += 1
+        self._queue_refresh()
 
     async def _newer_timeline_page(self) -> None:
         if len(self._timeline_cursors) <= 1:
             return
         self._timeline_cursors.pop()
         self._timeline_following = len(self._timeline_cursors) == 1
-        await self._refresh()
+        self._timeline_request_generation += 1
+        self._queue_refresh()
 
     async def _follow_latest(self) -> None:
         self._timeline_cursors = [None]
         self._timeline_following = True
-        await self._refresh()
+        self._timeline_request_generation += 1
+        self._queue_refresh()
 
     async def _toggle_relationships(self) -> None:
         self._relationships_expanded = not self._relationships_expanded
@@ -441,6 +499,9 @@ class TaskDetailPanel(Vertical):
 
     async def _refresh(self) -> None:
         async with self._refresh_lock:
+            if not self._screen_is_active():
+                return
+            generation = self._timeline_request_generation
             try:
                 view = await self._widget_context.views.task_detail(
                     self._task_id,
@@ -453,12 +514,12 @@ class TaskDetailPanel(Vertical):
                     timeline_category=self._timeline_category,
                 )
             except (ShikiruError, OSError, ValueError, TypeError) as error:
-                if self.is_mounted:
+                if self._screen_is_active() and generation == self._timeline_request_generation:
                     self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update(
                         f"Task detail refresh failed: {error}"
                     )
                 return
-            if not self.is_mounted:
+            if not self._screen_is_active():
                 return
             if view is None:
                 self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(
@@ -468,9 +529,19 @@ class TaskDetailPanel(Vertical):
                     "Task state could not be read."
                 )
                 return
-            self._render_view(view)
+            self._render_view(
+                view,
+                render_timeline=generation == self._timeline_request_generation,
+            )
 
-    def _render_view(self, view: TaskDetailView) -> None:
+    def _queue_refresh(self) -> None:
+        self.run_worker(
+            self._refresh(),
+            group=TASK_DETAIL_WORKER_GROUP,
+            exclusive=False,
+        )
+
+    def _render_view(self, view: TaskDetailView, *, render_timeline: bool = True) -> None:
         action_role = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
         action_role.prompt = f"Acting · {view.acting_role.title()}"
         identity = (
@@ -520,7 +591,8 @@ class TaskDetailPanel(Vertical):
             _report_text("Latest validated verdict", view.latest_verdict, NO_VERDICT)
         )
         self.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static).update(_evidence_text(view))
-        self._render_timeline(view.timeline)
+        if render_timeline:
+            self._render_timeline(view.timeline)
         facts = (
             f"Engine-computed git facts · {view.facts_turn}\n{view.recorded_facts}"
             if view.recorded_facts is not None

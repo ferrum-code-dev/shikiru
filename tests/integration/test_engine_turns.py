@@ -18,6 +18,7 @@ from shikiru.domain.tasks import Mode, Role, Status, Step
 from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
 from shikiru.engine.turns import NUDGE_LIMIT
 from shikiru.paths import PROMPT_OVERRIDES_RELATIVE_PATH, turns_dir
+from shikiru.store.events import fetch_timeline_events
 from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_NAME, set_role_script
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 _FLOW_TIMEOUT_SECONDS = 60
 _READ_ONLY_DIRECTORY = 0o500
 _WRITABLE_DIRECTORY = 0o700
+TIMELINE_EVENT_LIMIT = 40
 
 
 async def test_fake_cli_accept_writes_the_report_and_turn_files(
@@ -104,6 +106,15 @@ async def test_reportless_fake_turn_is_nudged_and_resumed_on_its_session(
     )
     assert implementer_completion.data["turn"] == turn_name
     assert implementer_completion.data["usage_delta"]["input_tokens"] == 240
+    filtered_nudges = fetch_timeline_events(
+        engine_env.connection,
+        task.id,
+        limit=TIMELINE_EVENT_LIMIT,
+        kinds=(EventKind.NUDGE,),
+        role=Role.IMPLEMENTER.value,
+        turn=turn_name,
+    )
+    assert [event.id for event in filtered_nudges] == [nudges[0].id]
 
 
 async def test_invalid_fake_report_is_logged_and_nudged(
@@ -213,6 +224,25 @@ async def test_operator_message_is_redelivered_when_its_turn_fails(
     [delivered] = (retried / "messages").iterdir()
     assert delivered.read_text() == "use the helper"
     assert str(delivered) in (retried / "prompt.md").read_text()
+    failed_turns = fetch_timeline_events(
+        engine_env.connection,
+        task.id,
+        limit=TIMELINE_EVENT_LIMIT,
+        kinds=(EventKind.TURN_FAILED,),
+        role=Role.IMPLEMENTER.value,
+        turn=failed.name,
+    )
+    assert len(failed_turns) == 1
+    [failed_event] = failed_turns
+    [failed_start] = fetch_timeline_events(
+        engine_env.connection,
+        task.id,
+        limit=TIMELINE_EVENT_LIMIT,
+        kinds=(EventKind.TURN_STARTED,),
+        role=Role.IMPLEMENTER.value,
+        turn=failed.name,
+    )
+    assert failed_event.data["iteration"] == failed_start.data["iteration"]
 
 
 async def test_messages_delivered_to_a_killed_turn_lead_the_replacement_prompt(

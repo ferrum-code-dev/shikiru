@@ -89,7 +89,14 @@ class TurnRecovery:
     ) -> RecoveryStep:
         """Apply the recovery `domain.recovery.decide` chooses for `execution`'s failed result."""
         result = execution.result
-        emit_turn_failed(self._events, task, step, result, turn=execution.turn_dir.name)
+        emit_turn_failed(
+            self._events,
+            task,
+            step,
+            result,
+            turn=execution.turn_dir.name,
+            role=execution.role,
+        )
         action = decide(
             result,
             counters,

@@ -50,6 +50,7 @@ from shikiru.domain.timeline import (
 )
 from shikiru.errors import ShikiruError
 from shikiru.operator.timeline import (
+    TIMELINE_READ_ERROR_PREFIX,
     SignalBatch,
     TimelineCursor,
     TimelineFilters,
@@ -1049,7 +1050,9 @@ def _next_timeline_cursor(
         elif item.role is not None:
             consumed_roles.add(item.role)
             next_signals[item.role] = (
-                -1 if item.identity.startswith("missing:") else item.signal_offset
+                -1
+                if item.identity.startswith(("missing:", TIMELINE_READ_ERROR_PREFIX))
+                else item.signal_offset
             )
     for role, batch in signal_batches.items():
         if role not in consumed_roles:

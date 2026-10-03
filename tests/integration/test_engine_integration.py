@@ -33,7 +33,7 @@ from shikiru.engine.notifier import Notifier
 from shikiru.errors import CommandFailed, CommandTimeoutError
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
-from shikiru.store.events import EventLog
+from shikiru.store.events import EventLog, fetch_timeline_events
 from shikiru.store.tasks import TaskStore
 from shikiru.workspace.base_refs import LocalBaseRefs
 from shikiru.workspace.git import Git
@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
 
 _RUNNER = SubprocessRunner()
+TIMELINE_EVENT_LIMIT = 40
 
 
 async def _repo(path: Path, filename: str = "README.md") -> Path:
@@ -658,6 +659,33 @@ async def test_taskflow_fake_agent_resolves_conflict_and_repeats_changes_request
     done_events = flow_env.events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
     assert done_events
     assert done_events[-1].data["summary"] == final.summary
+    verdicts = flow_env.events.since(0, kinds=[EventKind.VERDICT], task_id=task.id)
+    integration_verdicts = 0
+    for turn in {event.data["turn"] for event in verdicts}:
+        turn_verdicts = [event for event in verdicts if event.data["turn"] == turn]
+        filtered_verdicts = fetch_timeline_events(
+            engine_env.connection,
+            task.id,
+            limit=TIMELINE_EVENT_LIMIT,
+            kinds=(EventKind.VERDICT,),
+            role=Role.LEADER.value,
+            turn=turn,
+        )
+        [turn_start] = fetch_timeline_events(
+            engine_env.connection,
+            task.id,
+            limit=TIMELINE_EVENT_LIMIT,
+            kinds=(EventKind.TURN_STARTED,),
+            role=Role.LEADER.value,
+            turn=turn,
+        )
+        assert {event.id for event in filtered_verdicts} == {event.id for event in turn_verdicts}
+        assert all(
+            event.data["iteration"] == turn_start.data["iteration"] for event in turn_verdicts
+        )
+        assert all(event.data["role"] == Role.LEADER.value for event in turn_verdicts)
+        integration_verdicts += turn_start.data["step"] == Step.INTEGRATE.value
+    assert integration_verdicts >= 1
 
 
 async def test_uncommitted_changes_at_integration_send_the_task_back_to_implement(

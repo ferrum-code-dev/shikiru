@@ -69,7 +69,12 @@ class StepRunner:
             current, escalated = await self.advance(result.task, outcome)
         except UsageError as error:
             escalated_task = await self._escalate_scope_change_protocol(
-                result.task, step, outcome, error, turn=result.execution.turn_dir.name
+                result.task,
+                step,
+                outcome,
+                error,
+                turn=result.execution.turn_dir.name,
+                role=result.execution.role,
             )
             return escalated_task, TurnCounters(), True
         return current, TurnCounters(), escalated
@@ -115,7 +120,8 @@ class StepRunner:
         error: UsageError,
         *,
         turn: str,
+        role: Role,
     ) -> Task:
-        emit_turn_failed(self._events, task, step, ProtocolError(), turn=turn)
+        emit_turn_failed(self._events, task, step, ProtocolError(), turn=turn, role=role)
         transition = Transition.escalate(task, EscalationReason.AGENT_PROTOCOL, step=step)
         return await self._escalations.escalate(task, transition, outcome, question=str(error))
