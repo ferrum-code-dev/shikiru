@@ -19,6 +19,7 @@ from shikiru.domain.evidence_export import (
 from shikiru.domain.runs import has_positive_token_evidence
 from shikiru.domain.timeline import TIMELINE_ALL_CATEGORY, TIMELINE_ENGINE_CATEGORY
 from shikiru.errors import ShikiruError
+from shikiru.operator.queries import aggregate_usage
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -400,61 +401,33 @@ def _context_source(run: Run) -> str:
 
 
 def _usage_summary(runs: Sequence[Run]) -> list[dict[str, object]]:
-    agents = sorted({run.agent for run in runs})
     summaries: list[dict[str, object]] = []
-    for agent in agents:
-        agent_runs = [run for run in runs if run.agent == agent]
-        token_runs = [run for run in agent_runs if _token_source(run) != COST_BASIS_UNKNOWN]
-        billed_runs = [
-            run
-            for run in agent_runs
-            if _cost_source(run) != COST_BASIS_UNKNOWN and run.usage.cost_basis == COST_BASIS_BILLED
-        ]
-        api_runs = [
-            run
-            for run in agent_runs
-            if _cost_source(run) != COST_BASIS_UNKNOWN
-            and run.usage.cost_basis == COST_BASIS_API_EQUIVALENT
-        ]
+    for usage in aggregate_usage(runs):
+        token_run_count = usage.usage_reported_runs + usage.legacy_token_runs
+        tokens: dict[str, int | None] = {
+            "input": usage.input_tokens if token_run_count else None,
+            "output": usage.output_tokens if token_run_count else None,
+            "cache_read": usage.cache_read_tokens if token_run_count else None,
+            "cache_write": usage.cache_write_tokens if token_run_count else None,
+        }
         summaries.append(
             {
-                "agent": agent,
-                "run_count": len(agent_runs),
-                "reported_token_runs": sum(run.usage_reported is True for run in agent_runs),
-                "legacy_token_runs": sum(
-                    _token_source(run) == USAGE_PROVENANCE_LEGACY for run in agent_runs
-                ),
-                "unknown_token_runs": len(agent_runs) - len(token_runs),
-                "tokens": _token_totals(token_runs),
-                "billed_cost_usd": _cost_total(billed_runs),
-                "billed_cost_runs": len(billed_runs),
-                "legacy_billed_cost_runs": sum(run.usage_reported is None for run in billed_runs),
-                "api_equivalent_cost_usd": _cost_total(api_runs),
-                "api_equivalent_cost_runs": len(api_runs),
-                "legacy_api_equivalent_cost_runs": sum(
-                    run.usage_reported is None for run in api_runs
-                ),
-                "unknown_cost_runs": len(agent_runs) - len(billed_runs) - len(api_runs),
+                "agent": usage.agent,
+                "run_count": usage.run_count,
+                "reported_token_runs": usage.usage_reported_runs,
+                "legacy_token_runs": usage.legacy_token_runs,
+                "unknown_token_runs": usage.run_count - token_run_count,
+                "tokens": tokens,
+                "billed_cost_usd": usage.billed_cost_usd,
+                "billed_cost_runs": usage.billed_cost_runs,
+                "legacy_billed_cost_runs": usage.legacy_billed_cost_runs,
+                "api_equivalent_cost_usd": usage.api_equivalent_cost_usd,
+                "api_equivalent_cost_runs": usage.api_equivalent_cost_runs,
+                "legacy_api_equivalent_cost_runs": usage.legacy_api_equivalent_cost_runs,
+                "unknown_cost_runs": usage.unknown_cost_runs,
             }
         )
     return summaries
-
-
-def _token_totals(runs: Sequence[Run]) -> dict[str, int | None]:
-    if not runs:
-        return {"input": None, "output": None, "cache_read": None, "cache_write": None}
-    return {
-        "input": sum(run.usage.input_tokens for run in runs),
-        "output": sum(run.usage.output_tokens for run in runs),
-        "cache_read": sum(run.usage.cache_read_tokens for run in runs),
-        "cache_write": sum(run.usage.cache_write_tokens for run in runs),
-    }
-
-
-def _cost_total(runs: Sequence[Run]) -> float | None:
-    if not runs:
-        return None
-    return sum(run.usage.cost_usd for run in runs if run.usage.cost_usd is not None)
 
 
 def _unavailable_sections(

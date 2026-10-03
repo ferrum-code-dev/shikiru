@@ -467,11 +467,11 @@ class OperatorQueries:
         """Return shared usage totals and provider-reported quota windows."""
         runs = self._reader.list_all_runs()
         agents = sorted({run.agent for run in runs} | set(self._reader.list_quota_agents()))
-        return _aggregate_usage(runs), self._reader.list_quotas(agents)
+        return aggregate_usage(runs), self._reader.list_quotas(agents)
 
     def task_usage(self, task_id: str) -> list[UsageView]:
         """Return agent-reported usage totals for one task's sessions."""
-        return _aggregate_usage(self._reader.list_runs(task_id))
+        return aggregate_usage(self._reader.list_runs(task_id))
 
     def task_runs(self, task_id: str) -> tuple[Run, ...]:
         """Return every persisted session row for one task in recorded order."""
@@ -1367,7 +1367,8 @@ def _command_target(command: Command, project: str) -> str:
     return command.task_id
 
 
-def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
+def aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
+    """Aggregate recorded runs with the shared token and cost provenance rules."""
     by_agent: dict[str, list[Run]] = {}
     for run in runs:
         by_agent.setdefault(run.agent, []).append(run)
