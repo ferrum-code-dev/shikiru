@@ -45,6 +45,7 @@ TASK_DETAIL_WINDOW_BUTTON = "task-detail-window"
 TASK_DETAIL_LEADER_BUTTON = "task-detail-leader"
 TASK_DETAIL_IMPLEMENTER_BUTTON = "task-detail-implementer"
 TASK_DETAIL_ACTIONS_BUTTON = "task-detail-actions"
+TASK_DETAIL_EXPORT_BUTTON = "task-detail-export"
 TASK_DETAIL_ACTION_ROLE = "task-detail-action-role"
 TASK_DETAIL_HAND_BACK_LEADER_BUTTON = "task-detail-hand-back-leader"
 TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON = "task-detail-hand-back-implementer"
@@ -218,8 +219,7 @@ class TaskDetailPanel(Vertical):
                 value=Select.BLANK,
                 id=TASK_DETAIL_ACTION_ROLE,
             )
-            yield Button("Actions · Ctrl+P", id=TASK_DETAIL_ACTIONS_BUTTON)
-            yield Button("Attention · Home", id=TASK_DETAIL_ATTENTION_BUTTON)
+            yield from self._operator_action_buttons()
         yield Static("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
         yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
         yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
@@ -295,6 +295,12 @@ class TaskDetailPanel(Vertical):
             yield Static("", id=TASK_DETAIL_FACTS, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_WORKSPACE, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section", markup=False)
+
+    @staticmethod
+    def _operator_action_buttons() -> ComposeResult:
+        yield Button("Actions · Ctrl+P", id=TASK_DETAIL_ACTIONS_BUTTON)
+        yield Button("Export evidence", id=TASK_DETAIL_EXPORT_BUTTON)
+        yield Button("Attention · Home", id=TASK_DETAIL_ATTENTION_BUTTON)
 
     async def on_mount(self) -> None:
         self.disabled = self._task_id is None
@@ -437,6 +443,7 @@ class TaskDetailPanel(Vertical):
             ),
             TASK_DETAIL_RESUME_BUTTON: lambda: self._open_palette(action="resume"),
             TASK_DETAIL_ACTIONS_BUTTON: self.open_palette,
+            TASK_DETAIL_EXPORT_BUTTON: lambda: self._open_palette(action="export"),
             TASK_DETAIL_ATTENTION_BUTTON: self._navigate_home,
             TASK_DETAIL_RELATIONSHIPS_BUTTON: self._toggle_relationships,
             TASK_DETAIL_OPEN_RELATED: self._open_related_task,

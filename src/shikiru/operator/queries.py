@@ -85,6 +85,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.store.commands import StoredCommand
     from shikiru.store.reader import StateReader
+    from shikiru.store.tasks import TaskRelationships
 
 PEEK_TAIL_LINES = 60
 TASK_DETAIL_EVENT_LIMIT = 40
@@ -94,6 +95,8 @@ AGENT_REPORT_SOURCE = "agent"
 ENGINE_SIGNAL_ERROR = "could not read recorded agent signals for {role}: {error}"
 TASK_REPORT_ERROR = "could not read report evidence: {error}"
 TASK_FACTS_ERROR = "could not read recorded git facts: {error}"
+TASK_REPORT_TURN_MISSING = "No validated report or verdict is available for turn {turn}."
+TASK_FACTS_TURN_MISSING = "No recorded git facts are available for turn {turn}."
 TASK_ACTION_MISSING = "task no longer exists"
 TASK_ACTION_TERMINAL = "task is terminal"
 _COST_BASIS_BILLED = "billed"
@@ -246,6 +249,15 @@ class ReportRow(OperatorView):
     kind: ReportKind
     data: Report
     source: str = AGENT_REPORT_SOURCE
+
+
+@dataclass(frozen=True)
+class TaskExportFiles:
+    """All retained validated report and facts files with source read errors."""
+
+    reports: tuple[ReportRow, ...]
+    facts: tuple[tuple[str, str], ...]
+    errors: tuple[tuple[str, str], ...]
 
 
 class TaskDetail(OperatorView):
@@ -460,6 +472,23 @@ class OperatorQueries:
     def task_usage(self, task_id: str) -> list[UsageView]:
         """Return agent-reported usage totals for one task's sessions."""
         return _aggregate_usage(self._reader.list_runs(task_id))
+
+    def task_runs(self, task_id: str) -> tuple[Run, ...]:
+        """Return every persisted session row for one task in recorded order."""
+        return tuple(self._reader.list_runs(task_id))
+
+    def task_relationships(
+        self,
+        task_id: str,
+        *,
+        offset: int = 0,
+    ) -> TaskRelationships | None:
+        """Return one bounded page of stored relationships for the selected task."""
+        return self._reader.task_relationships(task_id, offset=offset)
+
+    async def task_export_files(self, task_id: str) -> TaskExportFiles:
+        """Load all retained validated reports and facts away from the UI event loop."""
+        return await asyncio.to_thread(self._task_all_export_files, task_id)
 
     def list_tasks(self, *, statuses: Sequence[Status] | None = None) -> list[TaskSummary]:
         """Return task summaries ordered by their allocated task sequence."""
@@ -986,6 +1015,46 @@ class OperatorQueries:
         reports, report_errors = self._task_reports(turn_dirs)
         recorded_facts, facts_turn, fact_errors = _task_facts(turn_dirs)
         return reports, recorded_facts, facts_turn, [*errors, *report_errors, *fact_errors]
+
+    def _task_all_export_files(self, task_id: str) -> TaskExportFiles:
+        turn_dirs, directory_errors = self._task_turn_dirs(task_id)
+        errors = [("reports", error) for error in directory_errors]
+        if turn_dirs is None:
+            return TaskExportFiles(reports=(), facts=(), errors=tuple(errors))
+        reports: list[ReportRow] = []
+        facts: list[tuple[str, str]] = []
+        missing_report_turns: list[str] = []
+        missing_fact_turns: list[str] = []
+        for turn_dir in turn_dirs:
+            turn_reports, report_errors = _task_turn_reports(turn_dir)
+            reports.extend(turn_reports)
+            errors.extend(("reports", error) for error in report_errors)
+            if not turn_reports and not report_errors:
+                missing_report_turns.append(turn_dir.name)
+            facts_path = turn_dir / FACTS_FILENAME
+            try:
+                facts_content = facts_path.read_text()
+            except FileNotFoundError:
+                missing_fact_turns.append(turn_dir.name)
+                continue
+            except (OSError, UnicodeError) as error:
+                errors.append(("facts", TASK_FACTS_ERROR.format(error=error)))
+            else:
+                facts.append((turn_dir.name, facts_content))
+        if reports:
+            errors.extend(
+                ("reports", TASK_REPORT_TURN_MISSING.format(turn=turn))
+                for turn in missing_report_turns
+            )
+        if facts:
+            errors.extend(
+                ("facts", TASK_FACTS_TURN_MISSING.format(turn=turn)) for turn in missing_fact_turns
+            )
+        return TaskExportFiles(
+            reports=tuple(reports),
+            facts=tuple(facts),
+            errors=tuple(errors),
+        )
 
     def _task_turn_dirs(self, task_id: str) -> tuple[list[Path] | None, list[str]]:
         task_turns_dir = turns_dir(self._project_root, task_id)

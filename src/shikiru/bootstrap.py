@@ -84,6 +84,8 @@ from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.detectors import InitWizardResult, ProjectDetectors
 from shikiru.operator.doctor import Doctor
 from shikiru.operator.events import EventFeed
+from shikiru.operator.evidence_export import TaskEvidenceExporter
+from shikiru.operator.evidence_writer import LocalEvidenceWriter
 from shikiru.operator.lifecycle import ProjectLifecycle, home_command
 from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.probe import AgentProbe
@@ -285,6 +287,11 @@ async def run_dashboard(
     git = Git(runner, command_timeout=settings.orchestration.timeouts.git_command)
     services = build_operator(project_root, settings, clock=clock)
     try:
+        evidence_exporter = TaskEvidenceExporter(
+            services.queries,
+            LocalEvidenceWriter(project_root),
+            clock,
+        )
         lock_path = engine_lock_path(project_root)
         session_target = exact_target(session_name(settings.project.name))
         tmux = Tmux(runner)
@@ -347,6 +354,7 @@ async def run_dashboard(
                 on_change=services.reader.watch,
                 initial_action=action,
                 initial_context=context,
+                evidence_exporter=evidence_exporter,
             )
 
             def refresh_task_detail(_: None) -> None:
@@ -392,6 +400,11 @@ async def run_palette(
     settings = load_settings(project_root, overrides)
     services = build_operator(project_root, settings, clock=clock)
     try:
+        evidence_exporter = TaskEvidenceExporter(
+            services.queries,
+            LocalEvidenceWriter(project_root),
+            clock,
+        )
         task_role = (
             services.queries.task_role_for_pane(origin_pane) if origin_pane is not None else None
         )
@@ -405,6 +418,7 @@ async def run_palette(
             Tmux(SubprocessRunner()).select_pane,
             on_change=services.reader.watch,
             initial_context=initial_context,
+            evidence_exporter=evidence_exporter,
         )
         await app_instance.run_async()
     finally:

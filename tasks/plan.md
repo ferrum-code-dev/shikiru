@@ -846,10 +846,10 @@ Refs: Workspace §7/§13–14, 06 §5.4/§6, 07 §3.
 
 ### Task 86: Markdown and JSON evidence export
 Refs: Workspace §11/§15, 02 §2, 05 §3, 06 §5.5.
-- [ ] Add a read-only operator export use case consumed by task detail/palette, with an injected local file writer. Export request, task outcome/relationships, available reports/facts/timeline, session/rung metadata and usage provenance; signal excerpts are an explicit inclusion option.
-- [ ] Markdown and JSON contain a format version, task ID, export time and unavailable sections; preserve recorded source ordering and unknown costs, and escape/fence embedded content. Export does not imply a complete agent transcript or reconstruct cleaned worktrees.
-- [ ] Destination selection, explicit overwrite choice, success and write failures are visible. Export never queues a workflow command or changes engine state; no recorder, timed playback, HTML renderer or network service is added.
-- [ ] Document contents, format/version, destination behaviour and retained-evidence limits in 02/05/06 and the workspace specification.
+- [x] Add a read-only operator export use case consumed by task detail/palette, with an injected local file writer. Export request, task outcome/relationships, available reports/facts/timeline, session/rung metadata and usage provenance; signal excerpts are an explicit inclusion option.
+- [x] Markdown and JSON contain a format version, task ID, export time and unavailable sections; preserve recorded source ordering and unknown costs, and escape/fence embedded content. Export does not imply a complete agent transcript or reconstruct cleaned worktrees.
+- [x] Destination selection, explicit overwrite choice, success and write failures are visible. Export never queues a workflow command or changes engine state; no recorder, timed playback, HTML renderer or network service is added.
+- [x] Document contents, format/version, destination behaviour and retained-evidence limits in 02/05/06 and the workspace specification.
 - Tests: integration with real task records/files: parse JSON, verify meaningful Markdown evidence and hostile fenced text boundaries, export after worktree cleanup, mark missing sections, and handle existing/unwritable destinations while database task/event/command state stays unchanged.
 
 ### Task 87: Operator documentation and workflow walkthroughs

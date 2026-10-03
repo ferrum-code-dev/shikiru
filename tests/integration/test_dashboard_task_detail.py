@@ -22,6 +22,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_ATTENTION_BUTTON,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BODY,
+    TASK_DETAIL_EXPORT_BUTTON,
     TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON,
     TASK_DETAIL_HAND_BACK_LEADER_BUTTON,
     TASK_DETAIL_IDENTITY,
@@ -918,6 +919,38 @@ async def test_implicit_detail_role_tracks_step_change_at_palette_activation(
             await wait_until(lambda: bool(opened), timeout=2)
 
         assert opened == [PaletteRequest(task_id=task.id)]
+    finally:
+        reader.close()
+
+
+async def test_detail_export_button_opens_contextual_export_action(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Detail export target")
+    reader = StateReader(database, SystemClock())
+    opened: list[PaletteRequest] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        opened.append(request)
+
+    try:
+        app = _dashboard_app(
+            reader,
+            project_root,
+            focus_task=task.id,
+            widget_names=TASK_DETAIL_WIDGETS,
+            open_palette_context=open_palette_context,
+        )
+        async with app.run_test(size=(80, 40)) as pilot:
+            app.query_one(f"#{TASK_DETAIL_EXPORT_BUTTON}", Button).focus()
+            await pilot.press("enter")
+            await wait_until(lambda: bool(opened), timeout=2)
+
+        assert opened == [PaletteRequest(action="export", task_id=task.id)]
     finally:
         reader.close()
 

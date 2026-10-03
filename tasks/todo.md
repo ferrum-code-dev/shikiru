@@ -139,6 +139,6 @@ Delivery order: task navigation and contextual control, attention and evidence v
 - [x] Task 83: Completion history and task evidence timeline
 - [x] Task 84: Honest usage and secondary diagnostics
 - [x] Task 85: Responsive layouts and accessible refresh behaviour
-- [ ] Task 86: Markdown and JSON evidence export
+- [x] Task 86: Markdown and JSON evidence export
 - [ ] Task 87: Operator documentation and workflow walkthroughs
 - [ ] Task 88: Workspace release verification and evidence

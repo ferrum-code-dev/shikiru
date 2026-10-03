@@ -25,6 +25,11 @@ from shikiru.operator.commands import (
     QUEUED_MESSAGE,
     AckStatus,
 )
+from shikiru.operator.evidence_export import (
+    EXPORT_FORMAT_JSON,
+    EXPORT_FORMAT_MARKDOWN,
+    TaskEvidenceExporter,
+)
 from shikiru.operator.queries import OperatorTaskAction
 from shikiru.ui.theme import install_theme
 
@@ -38,6 +43,7 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import OnChangeRegistration
     from shikiru.domain.commands import Command
     from shikiru.operator.commands import Ack, OperatorCommands
+    from shikiru.operator.evidence_export import EvidenceFormat
     from shikiru.operator.queries import (
         CommandHistoryEntry,
         EscalationView,
@@ -61,6 +67,17 @@ _ACTION_MESSAGE = "message"
 _ACTION_PEEK = "peek"
 _ACTION_RESOLVE = "resolve"
 _ACTION_STOP = "stop"
+_ACTION_EXPORT = "export"
+_FIELD_EXPORT_DESTINATION = "export-destination"
+_FIELD_EXPORT_FORMAT = "export-format"
+_FIELD_EXPORT_OVERWRITE = "export-overwrite"
+_FIELD_EXPORT_SIGNALS = "export-signals"
+_EXPORT_REFUSE = "refuse"
+_EXPORT_OVERWRITE = "overwrite"
+_EXPORT_SIGNALS_EXCLUDE = "exclude"
+_EXPORT_SIGNALS_INCLUDE = "include"
+_EXPORT_OVERWRITE_REQUIRED = "choose how to handle an existing destination"
+_EXPORT_NOT_CONFIGURED = "task evidence export is not configured"
 _TASK_ACTIONS = frozenset(
     {
         _ACTION_PRIORITIZE,
@@ -75,7 +92,7 @@ _TASK_ACTIONS = frozenset(
         _ACTION_MESSAGE,
     }
 )
-_TASK_TARGET_ACTIONS = _TASK_ACTIONS | {_ACTION_PEEK}
+_TASK_TARGET_ACTIONS = _TASK_ACTIONS | {_ACTION_PEEK, _ACTION_EXPORT}
 PALETTE_ACTIONS = (
     ("Submit task", _ACTION_SUBMIT),
     ("Prioritize task", _ACTION_PRIORITIZE),
@@ -90,6 +107,7 @@ PALETTE_ACTIONS = (
     ("Message agent", _ACTION_MESSAGE),
     ("Peek session", _ACTION_PEEK),
     ("Resolve escalation", _ACTION_RESOLVE),
+    ("Export task evidence", _ACTION_EXPORT),
     ("Stop engine", _ACTION_STOP),
 )
 _TASK_ROLES = (Role.LEADER, Role.IMPLEMENTER)
@@ -127,6 +145,18 @@ _FIELD_RUNG = "rung"
 _FIELD_MESSAGE = "message"
 _FIELD_RESOLUTION_TEXT = "resolution-text"
 _FIELD_RESOLUTION_RUNG = "resolution-rung"
+_EXPORT_FORMAT_OPTIONS = (
+    ("Markdown", EXPORT_FORMAT_MARKDOWN),
+    ("JSON", EXPORT_FORMAT_JSON),
+)
+_EXPORT_OVERWRITE_OPTIONS = (
+    ("Refuse an existing file", _EXPORT_REFUSE),
+    ("Replace an existing file", _EXPORT_OVERWRITE),
+)
+_EXPORT_SIGNALS_OPTIONS = (
+    ("Exclude normalized signal excerpts", _EXPORT_SIGNALS_EXCLUDE),
+    ("Include normalized signal excerpts", _EXPORT_SIGNALS_INCLUDE),
+)
 _ESCALATION_SUMMARY_ID = "palette-escalation-summary"
 _ESCALATION_STATUS_ID = "palette-escalation-status"
 _EVIDENCE_ERROR_ID = "palette-evidence-error"
@@ -151,7 +181,13 @@ _SELECT_REQUIRED = "Select an item"
 _TASK_SEARCH_PAGE_LIMIT = 50
 _PALETTE_FORM_ID = "palette-form"
 _PALETTE_SHORT_PANE_MAX_ROWS = 18
+_PALETTE_SHORT_PANE_MAX_COLUMNS = 40
 _PALETTE_COMPACT_TEXT_AREA_HEIGHT = 3
+_PALETTE_COMPACT_RESULT_MAX_HEIGHT = 3
+_PALETTE_RESULT_MAX_HEIGHT = 12
+_PALETTE_ZERO_VERTICAL_PADDING = 0
+_PALETTE_STANDARD_VERTICAL_PADDING = 1
+_PALETTE_HORIZONTAL_PADDING = 2
 _PALETTE_TEXT_AREA_HEIGHTS = (
     (_FIELD_REQUEST, 6),
     (_FIELD_MESSAGE, 4),
@@ -178,6 +214,12 @@ _FORM_IDENTITY_FIELDS = {
         _FIELD_RESOLUTION,
         _FIELD_RESOLUTION_TEXT,
         _FIELD_RESOLUTION_RUNG,
+    ),
+    _ACTION_EXPORT: (
+        _FIELD_EXPORT_DESTINATION,
+        _FIELD_EXPORT_FORMAT,
+        _FIELD_EXPORT_OVERWRITE,
+        _FIELD_EXPORT_SIGNALS,
     ),
 }
 _FORM_ROLE_ACTIONS = frozenset(
@@ -214,6 +256,10 @@ _ACTION_GUIDANCE = {
     _ACTION_STOP: (
         "Stops this project's engine and running turns. Task state, sessions and worktrees "
         "remain for the next engine start."
+    ),
+    _ACTION_EXPORT: (
+        "Writes retained task evidence to the selected local file path. Relative paths start at "
+        "the project root, and the parent directory must already exist."
     ),
 }
 _TASK_ACTION_BY_ID = {action.value: action for action in OperatorTaskAction}
@@ -269,6 +315,7 @@ class PaletteScreen(ModalScreen[None]):
         on_change: OnChangeRegistration,
         initial_action: str = _EMPTY,
         initial_context: PaletteRequest | None = None,
+        evidence_exporter: TaskEvidenceExporter | None = None,
     ) -> None:
         """Use the operator services for actions and queries and inject pane selection."""
         super().__init__()
@@ -278,6 +325,7 @@ class PaletteScreen(ModalScreen[None]):
         self._initial_action = self._initial_context.action or initial_action
         self._pane_selector = pane_selector
         self._on_change = on_change
+        self._evidence_exporter = evidence_exporter
         self._role_is_explicit = self._initial_context.role is not None
         self._task_search_tasks: tuple[TaskSummary, ...] = ()
         self._task_search_count = 0
@@ -318,6 +366,26 @@ class PaletteScreen(ModalScreen[None]):
                 yield Button("More matches", id=_TASK_MORE_ID)
                 yield Button("Advanced submission options", id=_ADVANCED_TOGGLE_ID)
                 yield from self._input_field("Task ID · editable", _FIELD_TASK_ID, "T-1")
+                yield from self._input_field(
+                    "Export destination · relative to project root",
+                    _FIELD_EXPORT_DESTINATION,
+                    "evidence/T-1.md",
+                )
+                yield from self._select_field(
+                    "Export format",
+                    _FIELD_EXPORT_FORMAT,
+                    _EXPORT_FORMAT_OPTIONS,
+                )
+                yield from self._select_field(
+                    "Existing destination",
+                    _FIELD_EXPORT_OVERWRITE,
+                    _EXPORT_OVERWRITE_OPTIONS,
+                )
+                yield from self._select_field(
+                    "Normalized agent signal excerpts",
+                    _FIELD_EXPORT_SIGNALS,
+                    _EXPORT_SIGNALS_OPTIONS,
+                )
                 yield from self._input_field("Priority", "priority", "0")
                 yield from self._text_area_field("Request", "request", "Describe the work")
                 with Vertical(id=_ADVANCED_FIELDS_ID):
@@ -390,12 +458,12 @@ class PaletteScreen(ModalScreen[None]):
         form = self.query_one("#palette-form", VerticalScroll)
         scroll_y = form.scroll_y
         focused = cast("App[None]", self.app).focused
-        self._set_text_area_heights(event.size.height)
+        self._set_text_area_heights(event.size.width, event.size.height)
         self.call_after_refresh(self._restore_form_layout, scroll_y, focused)
 
     async def on_mount(self) -> None:
         """Load open escalation packets and activate an action routed from a widget."""
-        self._set_text_area_heights(self.size.height)
+        self._set_text_area_heights(self.size.width, self.size.height)
         self._refresh_escalations()
         escalation_select = cast("Select[str]", self.query_one("#escalation", Select))
         action_select = cast("Select[str]", self.query_one("#action", Select))
@@ -445,6 +513,7 @@ class PaletteScreen(ModalScreen[None]):
         self.query_one("#priority", Input).value = "0"
         self.query_one("#submission-priority", Input).value = "0"
         self.query_one(f"#{_FIELD_TASK_ID}", Input).value = self._initial_context.task_id or _EMPTY
+        self._initialize_export_defaults()
         self._refresh_task_choices()
         self._route_action = self._selected_value(_FIELD_ACTION)
         self._update_fields(action_select.value)
@@ -458,12 +527,31 @@ class PaletteScreen(ModalScreen[None]):
             self.call_after_refresh(self._reveal_result)
             self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
 
-    def _set_text_area_heights(self, height: int) -> None:
+    def _set_text_area_heights(self, width: int, height: int) -> None:
         compact = height <= _PALETTE_SHORT_PANE_MAX_ROWS
+        compact_layout = compact or width <= _PALETTE_SHORT_PANE_MAX_COLUMNS
+        vertical_padding = (
+            _PALETTE_ZERO_VERTICAL_PADDING if compact_layout else _PALETTE_STANDARD_VERTICAL_PADDING
+        )
+        self.query_one("#palette-frame").styles.padding = (
+            vertical_padding,
+            _PALETTE_HORIZONTAL_PADDING,
+        )
+        self.query_one("#palette-result-scroll").styles.max_height = (
+            _PALETTE_COMPACT_RESULT_MAX_HEIGHT if compact_layout else _PALETTE_RESULT_MAX_HEIGHT
+        )
         for field, normal_height in _PALETTE_TEXT_AREA_HEIGHTS:
             self.query_one(f"#{field}", TextArea).styles.height = (
                 _PALETTE_COMPACT_TEXT_AREA_HEIGHT if compact else normal_height
             )
+
+    def _initialize_export_defaults(self) -> None:
+        cast(
+            "Select[str]", self.query_one(f"#{_FIELD_EXPORT_FORMAT}", Select)
+        ).value = EXPORT_FORMAT_MARKDOWN
+        cast(
+            "Select[str]", self.query_one(f"#{_FIELD_EXPORT_SIGNALS}", Select)
+        ).value = _EXPORT_SIGNALS_EXCLUDE
 
     def _restore_form_layout(self, scroll_y: float, focused: Widget | None) -> None:
         if not self.is_mounted:
@@ -576,8 +664,11 @@ class PaletteScreen(ModalScreen[None]):
 
     async def _run_action(self) -> None:
         try:
-            await self._run_submission()
-        except (ShikiruError, ValueError) as error:
+            if self._selected_value(_FIELD_ACTION) == _ACTION_EXPORT:
+                await self._run_evidence_export()
+            else:
+                await self._run_submission()
+        except (OSError, ShikiruError, ValueError) as error:
             if self._is_current_screen():
                 self._show_result(str(error))
         finally:
@@ -586,6 +677,55 @@ class PaletteScreen(ModalScreen[None]):
             self._action_worker = None
             if self._is_current_screen():
                 self._refresh_action_availability()
+
+    async def _run_evidence_export(self) -> None:
+        if self._evidence_exporter is None:
+            raise ShikiruError(_EXPORT_NOT_CONFIGURED)
+        task_id = self._input(_FIELD_TASK_ID).strip()
+        destination = self._input(_FIELD_EXPORT_DESTINATION)
+        export_format = cast("EvidenceFormat", self._value(_FIELD_EXPORT_FORMAT))
+        overwrite_value = self._selected_value(_FIELD_EXPORT_OVERWRITE)
+        if overwrite_value not in {_EXPORT_REFUSE, _EXPORT_OVERWRITE}:
+            raise ValueError(_EXPORT_OVERWRITE_REQUIRED)
+        include_signals = self._selected_value(_FIELD_EXPORT_SIGNALS) == _EXPORT_SIGNALS_INCLUDE
+        form_identity = self._form_identity()
+        self._set_export_controls_disabled(True)
+        try:
+            result = await self._evidence_exporter.export(
+                task_id,
+                destination,
+                export_format=export_format,
+                overwrite=overwrite_value == _EXPORT_OVERWRITE,
+                include_signals=include_signals,
+            )
+        finally:
+            if self._is_current_screen():
+                self._set_export_controls_disabled(False)
+        if self._is_current_screen() and self._form_identity() == form_identity:
+            format_label = result.format.upper()
+            signal_label = (
+                "Normalized signal excerpts included."
+                if result.signals_included
+                else "Normalized signal excerpts excluded."
+            )
+            destination_label = json.dumps(str(result.destination), ensure_ascii=False)
+            self._show_result(
+                f"Exported {format_label} task evidence to {destination_label}.\n{signal_label}"
+            )
+
+    def _set_export_controls_disabled(self, disabled: bool) -> None:
+        for field in (
+            _FIELD_ACTION_SEARCH,
+            _FIELD_ACTION,
+            _FIELD_TASK_SEARCH,
+            _FIELD_TASK_CHOICE,
+            _FIELD_TASK_ID,
+            _FIELD_EXPORT_FORMAT,
+            _FIELD_EXPORT_OVERWRITE,
+            _FIELD_EXPORT_SIGNALS,
+        ):
+            self.query_one(f"#{field}").disabled = disabled
+        self.query_one(f"#{_FIELD_EXPORT_DESTINATION}", Input).disabled = disabled
 
     async def _run_submission(self) -> None:
         action = self._value(_FIELD_ACTION)
@@ -909,6 +1049,8 @@ class PaletteScreen(ModalScreen[None]):
             action_select.value = Select.BLANK
 
     def _disabled_reason(self, action: str | None, task_id: str) -> str | None:
+        if action == _ACTION_EXPORT:
+            return None if task_id else _NO_TASK_TARGET
         if action not in _TASK_TARGET_ACTIONS:
             return None
         if not task_id:
@@ -1120,6 +1262,10 @@ class PaletteScreen(ModalScreen[None]):
             _FIELD_TASK_SEARCH: action in _TASK_TARGET_ACTIONS,
             _FIELD_TASK_CHOICE: action in _TASK_TARGET_ACTIONS,
             _FIELD_TASK_ID: action in _TASK_TARGET_ACTIONS,
+            _FIELD_EXPORT_DESTINATION: action == _ACTION_EXPORT,
+            _FIELD_EXPORT_FORMAT: action == _ACTION_EXPORT,
+            _FIELD_EXPORT_OVERWRITE: action == _ACTION_EXPORT,
+            _FIELD_EXPORT_SIGNALS: action == _ACTION_EXPORT,
             "request": action == _ACTION_SUBMIT,
             "title": action == _ACTION_SUBMIT,
             "mode": action == _ACTION_SUBMIT,
@@ -1333,6 +1479,7 @@ class PaletteApp(App[None]):
         *,
         on_change: OnChangeRegistration,
         initial_context: PaletteRequest | None = None,
+        evidence_exporter: TaskEvidenceExporter | None = None,
     ) -> None:
         """Retain the services used by the palette screen."""
         super().__init__()
@@ -1342,6 +1489,7 @@ class PaletteApp(App[None]):
         self._pane_selector = pane_selector
         self._on_change = on_change
         self._initial_context = initial_context
+        self._evidence_exporter = evidence_exporter
 
     def compose(self) -> ComposeResult:
         """Keep a neutral base screen beneath the modal palette."""
@@ -1356,5 +1504,6 @@ class PaletteApp(App[None]):
                 self._pane_selector,
                 on_change=self._on_change,
                 initial_context=self._initial_context,
+                evidence_exporter=self._evidence_exporter,
             )
         )
