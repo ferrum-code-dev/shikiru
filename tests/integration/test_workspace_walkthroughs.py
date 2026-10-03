@@ -27,9 +27,11 @@ from shikiru.domain.commands import (
     Command,
     HandBack,
     Pause,
+    ResolutionKind,
     Submit,
     TakeOver,
 )
+from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import CONSULT_LIMIT
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason, Step
@@ -69,6 +71,7 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import PaletteRequest
+    from shikiru.domain.escalation import EscalationOption
     from shikiru.store.commands import CommandOutcome
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -92,6 +95,22 @@ EXPORT_DESTINATION = "exports/terminal-task.json"
 
 def _plain(widget: Static) -> str:
     return cast("Text", widget.render()).plain
+
+
+def _assert_escalation_resolution_semantics(
+    packet_text: str,
+    expected_question: str,
+    options: tuple[EscalationOption, ...],
+    resolution: Select[str],
+) -> None:
+    packet = parse_escalation_packet(packet_text)
+    assert packet.question is not None
+    assert expected_question in packet.question
+    assert packet.agent_request is None
+    assert not packet.errors
+    assert any(item.kind is ResolutionKind.ANSWER for item in packet.resolutions)
+    assert any(option.label is ResolutionKind.ANSWER and option.recommended for option in options)
+    assert resolution.value == ResolutionKind.ANSWER.value
 
 
 @dataclass
@@ -470,19 +489,20 @@ async def test_fake_agent_escalation_updates_an_open_resolution_form_from_anothe
             await pilot.pause()
             cast("Select[str]", palette.query_one("#escalation", Select)).value = escalation.id
             await pilot.pause()
-            cast("Select[str]", palette.query_one("#resolution", Select)).value = "answer"
-            await pilot.pause()
+            packet_view = runtime.queries.get_escalation(escalation.id)
+            assert packet_view is not None
+            assert packet_view.packet is not None
+            resolution = cast("Select[str]", palette.query_one("#resolution", Select))
+            _assert_escalation_resolution_semantics(
+                packet_view.packet,
+                DECISION_QUESTION,
+                escalation.options,
+                resolution,
+            )
             answer = palette.query_one("#resolution-text", TextArea)
             answer.text = GUIDANCE_MESSAGE
             summary = _plain(palette.query_one("#palette-escalation-summary", Static))
-            assert "decision_required" in summary.lower()
-            assert f"Question: {DECISION_QUESTION}" in summary
-            assert "No structured agent alternatives are recorded." in summary
-            assert (
-                "★ answer · Give the Leader guidance; the task continues from a consult turn."
-                in summary
-            )
-            assert "cancel the task" in summary.lower()
+            assert DECISION_QUESTION in summary
             external_connection = Database(state_db_path(tmp_path)).connect()
             external_queue = CommandQueue(external_connection, runtime.clock)
             external_commands = OperatorCommands(
