@@ -96,6 +96,11 @@ def test_every_attempt_is_recorded_and_a_later_invocation_never_overwrites_an_ea
 
     files = sorted(path.name for path in tmp_path.glob("*.json"))
     assert files == ["20300102T030405Z.json", "20300102T042905Z.json", "latest.json"]
+    latest = json.loads((tmp_path / "latest.json").read_text())
+    assert latest["schema_version"] == 5
+    assert latest["real_agent_ladders"] == {
+        role: list(ladder) for role, ladder in plugin.REAL_ROLE_LADDERS.items()
+    }
     (first,) = json.loads((tmp_path / "20300102T030405Z.json").read_text())["scenarios"]
     assert [attempt["status"] for attempt in first["attempts"]] == ["failed", "passed"]
     assert first["attempts"][0]["failure_class"] == "AssertionError"

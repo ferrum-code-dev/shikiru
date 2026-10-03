@@ -55,6 +55,7 @@ from tests.e2e.diagnostics import (
     take_snapshot,
     write_diagnostics,
 )
+from tests.e2e.real_agent_config import REAL_AGENT, REAL_MODEL, REAL_ROLE_LADDERS
 from tests.e2e.watchdog import guarded
 from tests.support.e2e_attempts import ATTEMPT_FAILED, ATTEMPT_PASSED, AttemptRecord
 from tests.support.factories import CPU_UNCAPPED_PCT
@@ -143,6 +144,15 @@ def _require_shikiru(condition: bool, message: str) -> None:
         raise ShikiruFailure(message)
 
 
+REAL_ROLE_OVERRIDES = tuple(
+    argument
+    for role, ladder in REAL_ROLE_LADDERS.items()
+    for rung in ladder
+    for argument in (
+        "--set",
+        f'roles.{role}.ladder=[{{agent="{rung["agent"]}",model="{rung["model"]}",effort="{rung["effort"]}"}}]',
+    )
+)
 REAL_OVERRIDES = (
     "--set",
     f"orchestration.timeouts.integration_wait={INTEGRATION_WAIT_SECONDS}",
@@ -159,11 +169,7 @@ REAL_OVERRIDES = (
     "--set",
     f"orchestration.max_parallel={MAX_PARALLEL}",
     "--set",
-    'roles.leader.ladder=[{agent="claude",model="haiku",effort="low"}]',
-    "--set",
-    'roles.implementer.ladder=[{agent="codex",model="gpt-5.6-luna",effort="low"}]',
-    "--set",
-    'roles.helper.ladder=[{agent="claude",model="haiku",effort="low"}]',
+    *REAL_ROLE_OVERRIDES,
 )
 
 
@@ -302,11 +308,11 @@ def _cost(statuses: dict[str, object] | list[dict[str, object] | None] | None) -
     return total
 
 
-def _assert_both_agents_used(
+def _assert_real_role_usage(
     statuses: dict[str, object] | list[dict[str, object] | None] | None,
 ) -> None:
     values = statuses if isinstance(statuses, list) else [statuses]
-    agents: set[str] = set()
+    roles: set[str] = set()
     for status in values:
         detail = _task_detail(status)
         _require(detail is not None, "task detail missing")
@@ -321,20 +327,32 @@ def _assert_both_agents_used(
                 continue
             session = cast("dict[str, object]", value)
             agent = session.get("agent")
+            model = session.get("model")
+            role = session.get("role")
             usage = session.get("usage")
-            if isinstance(agent, str) and isinstance(usage, dict):
-                agents.add(agent)
-                input_tokens = cast("dict[str, object]", usage).get("input_tokens")
-                output_tokens = cast("dict[str, object]", usage).get("output_tokens")
-                _require(
-                    isinstance(input_tokens, int) and input_tokens > 0,
-                    f"{agent} input usage missing",
-                )
-                _require(
-                    isinstance(output_tokens, int) and output_tokens > 0,
-                    f"{agent} output usage missing",
-                )
-    _require({"claude", "codex"} <= agents, f"both real agents were not used: {agents}")
+            _require(isinstance(role, str), "task session role missing")
+            if not isinstance(role, str):
+                continue
+            _require(agent == REAL_AGENT, f"unexpected E2E agent for {role}: {agent}")
+            _require(model == REAL_MODEL, f"unexpected E2E model for {role}: {model}")
+            _require(isinstance(usage, dict), f"{role} usage missing")
+            if not isinstance(usage, dict):
+                continue
+            input_tokens = cast("dict[str, object]", usage).get("input_tokens")
+            output_tokens = cast("dict[str, object]", usage).get("output_tokens")
+            _require(
+                isinstance(input_tokens, int) and input_tokens > 0,
+                f"{role} input usage missing",
+            )
+            _require(
+                isinstance(output_tokens, int) and output_tokens > 0,
+                f"{role} output usage missing",
+            )
+            roles.add(role)
+    _require(
+        {Role.LEADER.value, Role.IMPLEMENTER.value} <= roles,
+        f"leader and implementer session usage was not recorded: {roles}",
+    )
 
 
 async def _assert_git_and_tracker(project: PreparedProject, *task_names: str) -> None:
@@ -572,7 +590,7 @@ async def _execute(
     await _start(project, environment, state)
     await body(project, environment, tmux_server, state)
     task_statuses = await _task_tree_statuses(project.root, environment, state)
-    _assert_both_agents_used(task_statuses)
+    _assert_real_role_usage(task_statuses)
     _assert_views_recorded(project, state.task_ids)
     await _assert_live_checkout_untouched(project)
     await _assert_windows_closed(project, tmux_server, state.task_ids)
@@ -814,7 +832,7 @@ async def _task_tree_statuses(
 async def _initialize(project: PreparedProject, environment: dict[str, str]) -> None:
     await _run_checked(project, environment, "init", "--yes")
     config = await _read_text(project.root / ".shikiru" / "config.toml")
-    missing = [name for name in ("claude", "codex") if f"[agents.{name}]" not in config]
+    missing = [REAL_AGENT] if f"[agents.{REAL_AGENT}]" not in config else []
     _require(
         not missing,
         f"init did not configure required real plugins: {', '.join(missing)}",

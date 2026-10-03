@@ -13,6 +13,7 @@ import pytest
 from shikiru.clock import SystemClock
 from shikiru.plugins.agents.codex.home import codex_home
 from shikiru.plugins.agents.codex.options import WORKSPACE_WRITE_SANDBOX
+from tests.e2e.real_agent_config import REAL_ROLE_LADDERS
 from tests.support.e2e_attempts import AttemptRecord, total_cost
 from tests.support.e2e_provenance import source_state, tool_versions
 from tests.support.project_dir import E2E_PROJECTS_PARENT
@@ -34,7 +35,7 @@ RESULTS_STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 RESULTS_LATEST_NAME = "latest"
 RESULTS_FILENAME_SUFFIX = ".json"
 RESULTS_TEMP_SUFFIX = ".tmp"
-RESULTS_SCHEMA_VERSION = 4
+RESULTS_SCHEMA_VERSION = 5
 RESULTS_STATUS_PASSED = "passed"
 RESULTS_STATUS_FAILED = "failed"
 RESULTS_STATUS_SKIPPED = "skipped"
@@ -109,6 +110,7 @@ def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
         "finished_at": finished.isoformat(),
         **asyncio.run(source_state(SOURCE_ROOT)),
         "tool_versions": asyncio.run(tool_versions()),
+        "real_agent_ladders": REAL_ROLE_LADDERS,
         "sandbox": _sandbox_settings(),
         "exit_status": exitstatus,
         "scenarios": scenarios,
