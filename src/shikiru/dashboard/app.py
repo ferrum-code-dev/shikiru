@@ -692,8 +692,13 @@ class DashboardApp(App[None]):
 
     def _widget_context(self) -> WidgetContext:
         async def open_task_detail(task_id: str) -> None:
-            await self.push_screen(TaskDetailScreen(self._widget_context(), task_id))
-            self.refresh_task_detail_after_resume()
+            def refresh_resumed_detail(_: None) -> None:
+                self.refresh_task_detail_after_resume()
+
+            await self.push_screen(
+                TaskDetailScreen(self._widget_context(), task_id),
+                callback=refresh_resumed_detail,
+            )
 
         return WidgetContext(
             views=self._views,
@@ -757,10 +762,12 @@ class DashboardApp(App[None]):
         self._apply_layout(event.size.width, event.size.height)
 
     def refresh_task_detail_after_resume(self) -> None:
-        """Refresh shared task detail after an overlay screen closes."""
+        """Refresh task detail mounted in the screen that resumed after an overlay."""
         if not self.is_running:
             return
-        self.query_one("#task-detail-panel", TaskDetailPanel).refresh_after_resume()
+        panels = self.screen.query(TaskDetailPanel)
+        if panels:
+            panels.first().refresh_after_resume()
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keep the visible section marker synchronized with keyboard focus."""

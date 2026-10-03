@@ -195,6 +195,20 @@ def _text(widget: Static) -> str:
     return cast("Text", widget.render()).plain
 
 
+def _visible_text_area_text(text_area: TextArea) -> str:
+    return "\n".join(
+        text_area.render_line(row).text for row in range(text_area.content_region.height)
+    )
+
+
+def _assert_text_area_cursor_is_visible(text_area: TextArea) -> None:
+    cursor_row, _ = text_area.cursor_location
+    visible_rows = text_area.content_region.height
+    assert visible_rows > 0
+    assert text_area.scroll_y <= cursor_row < text_area.scroll_y + visible_rows
+    assert text_area.has_focus
+
+
 async def _unexpected_pane_selection(pane_id: str) -> None:
     raise AssertionError(pane_id)
 
@@ -908,14 +922,14 @@ async def test_implicit_detail_role_tracks_step_change_at_palette_activation(
         reader.close()
 
 
-async def test_compact_palette_form_keeps_focus_and_value_after_resize(
+async def test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resize(
     connection: Connection,
     database: Database,
     tmp_path: Path,
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Compact message form")
+    task = seed_task(connection, clock, title="Compact request form")
     queue = CommandQueue(connection, clock)
     for submitted in queue.pending():
         queue.mark_done(submitted.id)
@@ -928,25 +942,30 @@ async def test_compact_palette_form_keeps_focus_and_value_after_resize(
             await pilot.press("enter")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
-            palette.query_one("#action", Select).value = "message"
-            await wait_until(lambda: palette.query_one("#field-message").display, timeout=2)
-            message = palette.query_one("#message", TextArea)
-            message.text = "Please check the recorded change."
-            message.focus()
+            palette.query_one("#action", Select).value = "submit"
+            await wait_until(lambda: palette.query_one("#field-request").display, timeout=2)
+            request = palette.query_one("#request", TextArea)
+            request.text = ""
+            request.focus()
+            await pilot.press(*"visible request text")
+            await pilot.press("end", "enter", *"second line")
             form = palette.query_one("#palette-form", VerticalScroll)
             await pilot.pause()
-            assert app.focused is message
-            assert message.region.y >= form.region.y
-            assert message.region.bottom <= form.region.bottom
+            assert request.text == "visible request text\nsecond line"
+            _assert_text_area_cursor_is_visible(request)
+            assert request.region.y >= form.region.y
+            assert request.region.bottom <= form.region.bottom
+            assert "second line" in _visible_text_area_text(request)
             submit = palette.query_one("#palette-submit", Button)
             assert submit.region.y >= 0
             assert submit.region.bottom <= app.size.height
             await pilot.resize_terminal(48, 14)
             await pilot.pause()
-            assert app.focused is message
-            assert message.text == "Please check the recorded change."
-            assert message.region.y >= form.region.y
-            assert message.region.bottom <= form.region.bottom
+            assert request.text == "visible request text\nsecond line"
+            _assert_text_area_cursor_is_visible(request)
+            assert request.region.y >= form.region.y
+            assert request.region.bottom <= form.region.bottom
+            assert "second line" in _visible_text_area_text(request)
             assert submit.region.y >= 0
             assert submit.region.bottom <= app.size.height
     finally:

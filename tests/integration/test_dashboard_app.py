@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
     from textual.widget import Widget
 
+    from shikiru.clock import Clock
     from shikiru.dashboard.contract import OpenPalette, OpenPaletteContext, WidgetContext
     from shikiru.store.database import Database
     from tests.support.store import Connection
@@ -96,6 +97,34 @@ if TYPE_CHECKING:
 async def _unexpected_pane_selection(pane_id: str) -> None:
     del pane_id
     raise AssertionError
+
+
+def _palette_screen_for_app(
+    reader: StateReader,
+    connection: Connection,
+    project_dir: Path,
+    clock: Clock,
+    request: PaletteRequest | None = None,
+) -> PaletteScreen:
+    settings = load_settings(project_dir)
+    services = StubServices()
+    queue = CommandQueue(connection, clock)
+    commands = OperatorCommands(queue, clock, engine_up=services.engine_up)
+    queries = OperatorQueries(
+        reader,
+        project=settings.project.name,
+        project_root=project_dir,
+        engine_up=services.engine_up,
+        max_parallel=settings.orchestration.max_parallel,
+        clock=clock,
+    )
+    return PaletteScreen(
+        commands,
+        queries,
+        _unexpected_pane_selection,
+        on_change=reader.watch,
+        initial_context=request,
+    )
 
 
 async def _focus_activity_table(
@@ -371,6 +400,44 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
             assert f"#{pending_id} · Pending" in _rendered_text(history_copy)
             await pilot.press("escape")
             await wait_until(lambda: first_app.screen is dashboard_screen, timeout=2)
+    finally:
+        reader.close()
+
+
+async def test_palette_resume_is_safe_when_home_has_no_task_detail(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+    active_apps: list[DashboardApp] = []
+
+    async def open_palette(action: str) -> None:
+        app = active_apps[0]
+        await app.push_screen(
+            _palette_screen_for_app(
+                reader,
+                connection,
+                project_dir,
+                clock,
+                PaletteRequest(action=action),
+            ),
+            callback=lambda _: app.refresh_task_detail_after_resume(),
+        )
+
+    try:
+        app = _app(reader, project_dir, widget_names=["usage"], open_palette=open_palette)
+        active_apps.append(app)
+        async with app.run_test(size=(100, 34)) as pilot:
+            home_screen = app.screen
+            app.refresh_task_detail_after_resume()
+            await pilot.press("ctrl+p")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
+            app.refresh_task_detail_after_resume()
     finally:
         reader.close()
 
@@ -697,21 +764,51 @@ async def test_home_shared_detail_refreshes_after_task_detail_closes(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    task = seed_task(connection, SystemClock(), title="Home detail resumes fresh")
-    reader = StateReader(database, SystemClock())
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Home detail resumes fresh")
+    reader = StateReader(database, clock)
+    active_apps: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        app = active_apps[0]
+        await app.push_screen(
+            _palette_screen_for_app(reader, connection, project_dir, clock, request),
+            callback=lambda _: app.refresh_task_detail_after_resume(),
+        )
+
     try:
-        app = _app(reader, project_dir, widget_names=["queue"])
-        async with app.run_test(size=(48, 20)) as pilot:
-            search = app.query_one("#task-browser-search", Input)
-            identity = app.query_one("#task-detail-identity", Static)
-            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue"],
+            open_palette_context=open_palette_context,
+        )
+        active_apps.append(app)
+        async with app.run_test(size=(120, 40)) as pilot:
+            home_screen = app.screen
+            search = home_screen.query_one("#task-browser-search", Input)
+            identity = home_screen.query_one("#task-detail-identity", Static)
+            ownership = home_screen.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
             search.value = task.id
             search.focus()
             await pilot.press("enter")
             await pilot.pause()
             await pilot.press("enter")
             await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
-            TaskStore(connection, SystemClock()).set_holds(task.id, frozenset({Hold.PAUSED}))
+            task_screen = app.screen
+            task_ownership = task_screen.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+            actions = task_screen.query_one(f"#{TASK_DETAIL_ACTIONS_BUTTON}", Button)
+            actions.focus()
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
+            assert Hold.PAUSED.value not in _rendered_text(ownership)
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is task_screen, timeout=2)
+            await wait_until(
+                lambda: Hold.PAUSED.value in _rendered_text(task_ownership),
+                timeout=2,
+            )
             assert Hold.PAUSED.value not in _rendered_text(ownership)
             await pilot.press("escape")
             await wait_until(

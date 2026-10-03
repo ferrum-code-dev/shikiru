@@ -10,8 +10,10 @@ from textual.widgets import Button, Input, ListView, Select, Static
 from shikiru.agents.contracts import QuotaWindow, Rung
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
-from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter
+from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter, TaskTimelineCategory
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_ACTION_ROLE,
+    TASK_DETAIL_FEEDBACK,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_MORE_RELATIONSHIPS,
     TASK_DETAIL_OPEN_RELATED,
@@ -20,6 +22,10 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_RELATIONSHIP_PAGE,
     TASK_DETAIL_RELATIONSHIPS,
     TASK_DETAIL_RELATIONSHIPS_BUTTON,
+    TASK_DETAIL_TIMELINE_CATEGORY,
+    TASK_DETAIL_TIMELINE_ROLE,
+    TASK_DETAIL_TIMELINE_TURN,
+    TASK_DETAIL_WINDOW_BUTTON,
     TaskDetailPanel,
 )
 from shikiru.domain.events import EventKind
@@ -299,6 +305,84 @@ async def _open_related_task(
         lambda: task_id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
         timeout=5.0,
     )
+
+
+async def test_home_detail_discards_related_and_filter_state_when_selection_changes(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(TASK_CREATED_AT)
+    dependency = seed_task(connection, clock, title="Dependency selected in detail")
+    first = seed_task(
+        connection,
+        clock,
+        title="Task with dependency",
+        depends_on=(dependency.id,),
+    )
+    second = seed_task(connection, clock, title="Unrelated selected task")
+    app = _task_detail_app(reader, project_dir, clock, StubServices())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+        identity = panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        search = app.query_one("#task-browser-search", Input)
+        task_list = app.query_one("#task-browser-list", ListView)
+        search.value = first.title
+        await wait_until(
+            lambda: f"task-row-{first.id}" in [child.id for child in task_list.children],
+            timeout=5.0,
+        )
+        search.focus()
+        await pilot.press("enter", "down")
+        await wait_until(lambda: first.id in _static_text(identity), timeout=5.0)
+        await pilot.click(f"#{TASK_DETAIL_RELATIONSHIPS_BUTTON}")
+        related = cast(
+            "Select[str]",
+            panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select),
+        )
+        related.value = dependency.id
+        panel.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select).value = Role.LEADER.value
+        panel.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value = "older turn"
+        panel.query_one(
+            f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select
+        ).value = TaskTimelineCategory.ENGINE.value
+        panel.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select).value = Role.LEADER.value
+        window_button = panel.query_one(f"#{TASK_DETAIL_WINDOW_BUTTON}", Button)
+        window_button.focus()
+        await pilot.press("enter")
+        feedback = panel.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static)
+        await wait_until(
+            lambda: "navigation is unavailable" in _static_text(feedback),
+            timeout=5.0,
+        )
+
+        search.value = second.title
+        await wait_until(
+            lambda: f"task-row-{second.id}" in [child.id for child in task_list.children],
+            timeout=5.0,
+        )
+        search.focus()
+        await pilot.press("enter", "down")
+        await wait_until(lambda: second.id in _static_text(identity), timeout=5.0)
+
+        assert related.value is Select.BLANK
+        assert dependency.title not in _static_text(
+            panel.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static)
+        )
+        timeline_role = cast(
+            "Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select)
+        )
+        timeline_category = cast(
+            "Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
+        )
+        action_role = cast("Select[str]", panel.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
+        assert timeline_role.value is Select.BLANK
+        assert panel.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value == ""
+        assert timeline_category.value == TaskTimelineCategory.ACTIVITY.value
+        assert action_role.value is Select.BLANK
+        assert _static_text(feedback) == ""
 
 
 async def _exercise_paged_relationship_navigation(

@@ -340,16 +340,7 @@ class TaskDetailPanel(Vertical):
         if task_id == self._task_id:
             return
         self._task_id = task_id
-        self._relationship_offset = 0
-        self._relationships_expanded = False
-        self._timeline_cursors = [None]
-        self._timeline_following = True
-        self._timeline_role = None
-        self._timeline_turn = None
-        self._timeline_category = TaskTimelineCategory.ACTIVITY.value
-        self._timeline_selected_identity = None
-        self._timeline_selected_entry = None
-        self._timeline_page = None
+        self._reset_task_identity_state()
         self._timeline_request_generation += 1
         self.disabled = task_id is None
         if not self.is_mounted:
@@ -364,6 +355,57 @@ class TaskDetailPanel(Vertical):
             return
         self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).scroll_to(y=0, animate=False)
         self._queue_refresh()
+
+    def _reset_task_identity_state(self) -> None:
+        self._relationship_offset = 0
+        self._relationships_expanded = False
+        self._relationship_previous_offset = None
+        self._relationship_next_offset = None
+        self._shown_related_references = ()
+        self._selected_related_reference = None
+        self._timeline_cursors = [None]
+        self._timeline_following = True
+        self._timeline_role = None
+        self._timeline_turn = None
+        self._timeline_category = TaskTimelineCategory.ACTIVITY.value
+        self._timeline_selected_identity = None
+        self._timeline_selected_entry = None
+        self._timeline_page = None
+        if not self.is_mounted:
+            return
+        self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select).value = Select.BLANK
+        self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update("")
+        related_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))
+        related_select.value = Select.BLANK
+        related_select.set_options(())
+        self.query_one(f"#{TASK_DETAIL_OPEN_RELATED}", Button).disabled = True
+        self.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button).disabled = True
+        self.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).disabled = True
+        self.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static).update("Page 1")
+        self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update("")
+        self._render_relationship_visibility()
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select).value = Select.BLANK
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value = ""
+        self.query_one(
+            f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select
+        ).value = TaskTimelineCategory.ACTIVITY.value
+        timeline_entry = cast(
+            "Select[str]", self.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select)
+        )
+        timeline_entry.value = Select.BLANK
+        timeline_entry.set_options(())
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_SELECTED}", Static).update(
+            "No recorded evidence is available for this page."
+        )
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(
+            "Loading evidence timeline…"
+        )
+        for control_id in (
+            TASK_DETAIL_TIMELINE_NEWER,
+            TASK_DETAIL_TIMELINE_OLDER,
+            TASK_DETAIL_TIMELINE_FOLLOW,
+        ):
+            self.query_one(f"#{control_id}", Button).disabled = True
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         handlers = {
@@ -441,7 +483,7 @@ class TaskDetailPanel(Vertical):
         if not self.is_mounted:
             return False
         app = cast("App[None]", self.app)
-        return app.is_running and self.screen.is_current
+        return app.is_running and app.screen is self.screen
 
     def _pause_timeline_follow(self) -> None:
         if not self._timeline_following:
