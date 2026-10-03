@@ -58,6 +58,7 @@ from tests.support.waiting import wait_until
 
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
+_SCROLL_SETTLE_TIMEOUT_SECONDS = 2
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 
 
@@ -779,9 +780,17 @@ async def test_task_detail_toolbar_and_timeline_form_remain_reachable_after_resi
             assert timeline_turn.value == "3"
             action_button.focus()
             await pilot.wait_for_scheduled_animations()
+            await wait_until(
+                lambda: detail_body.scroll_y == detail_body.scroll_target_y,
+                timeout=_SCROLL_SETTLE_TIMEOUT_SECONDS,
+            )
             reading_scroll = detail_body.scroll_y
             await pilot.resize_terminal(36, 20)
             await pilot.wait_for_scheduled_animations()
+            await wait_until(
+                lambda: detail_body.scroll_y == detail_body.scroll_target_y,
+                timeout=_SCROLL_SETTLE_TIMEOUT_SECONDS,
+            )
             assert app.focused is action_button
             assert detail_body.scroll_y == reading_scroll
             assert action_button.region.x >= 0
