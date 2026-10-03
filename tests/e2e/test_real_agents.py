@@ -175,7 +175,6 @@ REAL_OVERRIDES = (
     'dashboard.widgets=["header"]',
     "--set",
     f"orchestration.max_parallel={MAX_PARALLEL}",
-    "--set",
     *REAL_ROLE_OVERRIDES,
 )
 
