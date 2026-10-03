@@ -769,11 +769,11 @@ async def test_task_detail_toolbar_and_timeline_form_remain_reachable_after_resi
 
             timeline_turn.value = "3"
             timeline_turn.focus()
-            await pilot.pause()
+            await pilot.wait_for_scheduled_animations()
             await wait_until(timeline_visible, timeout=2)
             assert app.focused is timeline_turn
             await pilot.resize_terminal(48, 14)
-            await pilot.pause()
+            await pilot.wait_for_scheduled_animations()
             await wait_until(timeline_visible, timeout=2)
             assert app.focused is timeline_turn
             assert timeline_turn.value == "3"

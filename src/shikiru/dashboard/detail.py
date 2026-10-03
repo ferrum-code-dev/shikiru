@@ -120,7 +120,6 @@ class TaskDetailBody(VerticalScroll):
                 self.scroll_to_center,
                 focused,
                 animate=False,
-                immediate=True,
             )
 
     def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
@@ -348,7 +347,6 @@ class TaskDetailPanel(Vertical):
                     body.scroll_to_center,
                     event.widget,
                     animate=False,
-                    immediate=True,
                 )
                 return
         parent = event.widget.parent
@@ -730,7 +728,7 @@ class TaskDetailPanel(Vertical):
 
     def _render_view(self, view: TaskDetailView, *, render_timeline: bool = True) -> None:
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
-        scroll_y = body.scroll_y
+        scroll_y = body.scroll_target_y
         focus_generation = self._body_focus_generation
         focused = self.screen.focused
         restore_scroll = self._rendered_task_id == view.task_id
@@ -806,7 +804,7 @@ class TaskDetailPanel(Vertical):
     def _restore_body_scroll(
         self,
         body: TaskDetailBody,
-        scroll_y: int,
+        scroll_y: float,
         focus_generation: int,
         focused: Widget | None,
     ) -> None:
@@ -814,6 +812,7 @@ class TaskDetailPanel(Vertical):
             self._screen_is_active()
             and focus_generation == self._body_focus_generation
             and self.screen.focused is focused
+            and body.scroll_target_y == scroll_y
         ):
             body.scroll_to(y=scroll_y, animate=False)
 
