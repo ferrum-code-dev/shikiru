@@ -15,6 +15,30 @@ The release summary of the last full passing `SHIKIRU_E2E=1 uv run poe e2e` invo
 | Tools | Claude Code 2.1.284, Codex CLI 0.159.2, tmux 3.7c, git 2.55.0, Python 3.14.7 |
 | Sandbox | Codex `sandbox_mode` workspace-write; projects under `/Users/pavel/.cache/shikiru-e2e` (outside `$TMPDIR`, which is `/var/folders/99/dgcz2lpx7ts5bpvl7zvt4fnw0000gn/T/`); host Codex config `approvals_reviewer = auto_review`; Claude in `bypassPermissions` |
 
+## Fresh 2026-10-03 invocations (both failed)
+
+These are later, fresh runs; neither replaces the last full passing invocation above.
+
+| Run | Source / tree | UTC interval; duration | Result | Tools |
+|---|---|---|---|---|
+| `build/e2e/20261003T090653Z.json` | `12cf19e47b8bc0e016b1b078a2cfcf94b26eacd0`, clean | 09:06:53.403–09:24:07.050; 17 m 13.6 s | Exit 1; E1, E2, E4, E5, E6 passed; E3 failed both attempts | Claude Code 2.1.287, Codex CLI 0.160.0, tmux 3.7c, git 2.55.0, Python 3.14.7 |
+| `build/e2e/20261003T100358Z.json` | `0734ef38810b4ec9ef14d54a030b3ab5b19da06d`, clean | 10:03:58.389–10:20:58.371; 16 m 59.98 s (pytest 1020.51 s) | Exit 1; all E1–E6 ended on the Claude weekly quota limit; costs null, total cost unknown | Claude Code 2.1.287, Codex CLI 0.160.0, tmux 3.7c, git 2.55.0, Python 3.14.7 |
+
+| Scenario | 09:06 run: result, duration, reported cost | 10:03 run: result, duration, reported cost |
+|---|---|---|
+| E1 | passed, 84.8 s, $0.1011 | quota exhaustion after two configured attempts, 11.1 s total, unknown |
+| E2 | passed, 174.8 s, $0.1457 | quota exhaustion then watchdog stall, 246.8 s, unknown |
+| E3 | failed both attempts, 213.5 s total ($0.1371 + $0.1223) | quota exhaustion then watchdog stall, 246.3 s, unknown |
+| E4 | passed, 209.3 s, $0.2019 | quota exhaustion after two configured attempts, 11.2 s total, unknown |
+| E5 | passed, 115.6 s, $0.0994 | quota exhaustion then watchdog stall, 251.9 s, unknown |
+| E6 | passed, 230.3 s, $0.2477 | quota exhaustion then watchdog stall, 247.1 s, unknown |
+
+The 09:06 E3 artifact records two `AssertionError` attempts, both marked `an agent skipped a rule`, with durations 91.5 s and 121.9 s. During that run, investigation identified a race in the test's plan-child window observer and independent agent variation in how the phase-B decomposition request was interpreted. The observer was corrected in `0734ef3`: it now discovers child windows independently while tracking the parent task tree, instead of depending on the unrelated parent `_wait_done` timing. The original date/scenario diagnostic names collided with the later same-date invocation, so its detailed attempt text was overwritten; the invocation JSON retains each attempt's status, duration and agent-reported cost. The failure is not a passing E3 result.
+
+The 10:03 diagnostics were copied to `build/e2e/diagnostics/20261003T100358Z/` before any later invocation. E1 and E4 each used the configured one internal retry; both attempts immediately showed the agent's weekly limit message. E2, E3, E5 and E6 reached the watchdog after quota exhaustion, with no turn process and no new event. The diagnostics report “You've hit your weekly limit” and a quota block through 2026-10-03 14:01 UTC (Oct 7 at 08:00 Europe/Warsaw). Each scenario's `cost` is null, which means unknown, not zero. No later E1–E6 run was made on the quota-limited account.
+
+The 09:06 invocation has non-null reported costs totaling $1.0552 across E1–E6, but the run failed on E3. The 10:03 invocation has no reported cost. Neither invocation satisfies Task 88's requirement for all real-agent E1–E6 to pass together on the resulting revision; the last full passing invocation remains the 2026-10-02 run above.
+
 ## Scenarios
 
 | Scenario | Result | Attempts | Duration | Cost (USD) |

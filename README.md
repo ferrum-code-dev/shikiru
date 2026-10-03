@@ -92,7 +92,7 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 ## Documentation
 
 - Design: [`docs/design`](docs/design/README.md)
-- Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — Phase 8 interaction and evidence specification. Tasks 75–87 have shipped; Task 88 owns release verification.
+- Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — Phase 8 interaction and evidence specification. Tasks 75–87 have shipped. Task 88 has partial verification evidence: the macOS clean-install/navigation smoke passed, while a fresh full E1–E6 run is still open after Claude reported its weekly limit. Linux remains unverified. See the [2026-10-03 release record](docs/release-readiness-2026-10-03-phase8.md).
 - Workspace walkthrough evidence: [`docs/workspace-walkthroughs-2026-10-03.md`](docs/workspace-walkthroughs-2026-10-03.md) — executed flows, fixtures and observed limits.
 - Implementation plan: [`tasks/plan.md`](tasks/plan.md), progress: [`tasks/todo.md`](tasks/todo.md)
 

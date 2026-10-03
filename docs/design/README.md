@@ -9,6 +9,6 @@
 | [05-data.md](05-data.md) | Configuration reference, state DB, run files, report schemas |
 | [06-operator.md](06-operator.md) | CLI, MCP, dashboard, tmux session, attach, notifications, style |
 | [07-engineering.md](07-engineering.md) | Stack, conventions, quality gates, testing and E2E scenarios |
-| [Operator Workspace](../tui-workspace.md) | Phase 8 TUI specification and current implementation status; Tasks 75–87 are shipped, with release verification in Task 88 |
+| [Operator Workspace](../tui-workspace.md) | Phase 8 TUI specification and current implementation status; Tasks 75–87 shipped, and Task 88's macOS smoke passed while the fresh E1–E6 release gate remains open ([2026-10-03 record](../release-readiness-2026-10-03-phase8.md)) |
 
 Read the docs in order. Each doc is normative. When a later doc refines an earlier one, it names the section it refines.

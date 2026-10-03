@@ -97,17 +97,17 @@ Plugin offline checks replay protocol fixtures committed under `tests/fixtures/a
 - `poe e2e` writes `build/e2e/<start UTC date and time>.json`, keyed by the invocation's start so a later or partial invocation never overwrites an earlier one, and copies it to `build/e2e/latest.json`. Per scenario it records pass/fail, the wall `duration_seconds`, the agent-reported cost (`null` when no agent reported one, otherwise the sum over its attempts) and `attempts`: every attempt with its status, `failure_class`, `rerun_reason`, cost, duration and diagnostics path. It also records the run's `source_commit`, `source_dirty` (uncommitted changes in the tree), `tool_versions` (claude, codex, tmux, git, python; `null` for a tool that is not installed) and `started_at`/`finished_at` (UTC). `build/` is git-ignored; the release summary of the last full passing invocation is committed as `docs/e2e-results.md` (a hand-copied excerpt of that artifact, refreshed with each release-readiness document).
 - A plan AC that names an E2E scenario is ticked only after a passing `poe e2e` run; the ticking commit message states the run date, scenarios and cost.
 
-| Scenario | Attempt budget | Measured duration (2026-10-02, `159db49`) |
-|---|---|---|
-| fake-agent operator flow | 45 s | not recorded; the seven tests took 1468.61 s together |
-| E1 | 10 min | 104 s |
-| E2 | 10 min | 175 s |
-| E3 | 20 min | 563 s over two attempts (157 s failed, 406 s passed; the slowest) |
-| E4 | 10 min | 186 s |
-| E5 | 10 min | 109 s |
-| E6 | 12 min | 327 s |
+| Scenario | Attempt budget | Measured duration (2026-10-02, `159db49`) | Quota-limited attempt (2026-10-03, `0734ef3`) |
+|---|---|---|---|
+| fake-agent operator flow | 45 s | not recorded; the seven tests took 1468.61 s together | not selected by the real-agent artifact |
+| E1 | 10 min | 104 s | 11.1 s over two attempts; quota exhaustion |
+| E2 | 10 min | 175 s | 246.8 s; quota exhaustion then watchdog stall |
+| E3 | 20 min | 563 s over two attempts (157 s failed, 406 s passed; the slowest) | 246.3 s; quota exhaustion then watchdog stall |
+| E4 | 10 min | 186 s | 11.2 s over two attempts; quota exhaustion |
+| E5 | 10 min | 109 s | 251.9 s; quota exhaustion then watchdog stall |
+| E6 | 12 min | 327 s | 247.1 s; quota exhaustion then watchdog stall |
 
-The durations are the artifact's `duration_seconds` of the invocation that started at 2026-10-02 05:38:44 UTC at `159db49`; it took 24 m 28 s (`docs/e2e-results.md`, `docs/release-readiness-2026-10-02-phase7d.md`). E3 failed its first attempt (the leader triaged the request as one implement task instead of a plan, an agent decision) and passed on the one rerun; the 2026-10-01 `d5624af` invocation did the same, and an E3-only A/B showed the cause is not the Task 74j prompt sentence. They are samples, not a distribution. A single attempt took at most 406 s (E3), against budgets of 10, 12 and 20 minutes; a run that exceeds its row is a finding, not a reason to raise the row unseen. The 2026-09-30 E3 stall (a Codex implementer also wrote the plan, tracker and test files into the operator checkout by absolute path, and the merge then waited the full 30 minutes for a clean checkout twice over) is the case the `integration_wait` setting, the `integration_waiting` event and the stall detector exist for. Shikiru cannot prevent an agent from writing outside its worktree (01 §6), so this is an agent-behaviour limit, and the diagnostics name it.
+The passing durations are the artifact's `duration_seconds` of the invocation that started at 2026-10-02 05:38:44 UTC at `159db49`; it took 24 m 28 s (`docs/e2e-results.md`, `docs/release-readiness-2026-10-02-phase7d.md`). E3 failed its first attempt (the leader triaged the request as one implement task instead of a plan, an agent decision) and passed on the one rerun; the 2026-10-01 `d5624af` invocation did the same, and an E3-only A/B showed the cause is not the Task 74j prompt sentence. They are samples, not a distribution. The additional 2026-10-03 durations are from a failed invocation at `0734ef3`: every scenario hit the Claude weekly quota limit, so these are failure-to-quota times, not successful scenario measurements. Its costs were null (unknown). See [the invocation records](../e2e-results.md). A single passing attempt took at most 406 s (E3), against budgets of 10, 12 and 20 minutes; a run that exceeds its row is a finding, not a reason to raise the row unseen. The 2026-09-30 E3 stall (a Codex implementer also wrote the plan, tracker and test files into the operator checkout by absolute path, and the merge then waited the full 30 minutes for a clean checkout twice over) is the case the `integration_wait` setting, the `integration_waiting` event and the stall detector exist for. Shikiru cannot prevent an agent from writing outside its worktree (01 §6), so this is an agent-behaviour limit, and the diagnostics name it.
 
 | # | Scenario | Proves |
 |---|---|---|
