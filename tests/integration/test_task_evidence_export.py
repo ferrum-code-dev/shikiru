@@ -332,8 +332,10 @@ def _assert_usage_provenance(document: dict[str, Any]) -> None:
     assert usage["claude"]["unknown_cost_runs"] == 1
 
 
-def _markdown_headings_outside_fences(content: str) -> tuple[list[str], list[int]]:
-    headings: list[str] = []
+def _markdown_json_blocks(content: str) -> tuple[list[Any], str, list[int]]:
+    blocks: list[Any] = []
+    outside: list[str] = []
+    block_lines: list[str] = []
     opening_fence: str | None = None
     fence_lengths: list[int] = []
     for line in content.splitlines():
@@ -341,12 +343,16 @@ def _markdown_headings_outside_fences(content: str) -> tuple[list[str], list[int
             if line.startswith("`") and line.endswith("json"):
                 opening_fence = line.removesuffix("json")
                 fence_lengths.append(len(opening_fence))
-            elif line.startswith("#"):
-                headings.append(line)
+                block_lines = []
+            else:
+                outside.append(line)
         elif line == opening_fence:
+            blocks.append(json.loads("\n".join(block_lines)))
             opening_fence = None
+        else:
+            block_lines.append(line)
     assert opening_fence is None
-    return headings, fence_lengths
+    return blocks, "\n".join(outside), fence_lengths
 
 
 async def _prepare_export_form(
@@ -551,21 +557,35 @@ async def test_markdown_fences_untrusted_content_and_opt_in_exposes_partial_sign
     )
 
     content = result.destination.read_text()
-    headings, fence_lengths = _markdown_headings_outside_fences(content)
-    assert headings == [
-        "# Shikiru task evidence export",
-        "## Export metadata",
-        "## Request",
-        "## Recorded outcome",
-        "## Relationships",
-        "## Validated reports and verdicts",
-        "## Recorded git facts",
-        "## Recorded timeline",
-        "## Sessions, rung metadata and task usage provenance",
-        "## Unavailable sections",
-    ]
+    blocks, outside_blocks, fence_lengths = _markdown_json_blocks(content)
     assert max(fence_lengths) > 5
-    assert "[link](https://example.invalid)" in content
+    assert "## forged heading" not in outside_blocks
+    assert "[link](https://example.invalid)" not in outside_blocks
+    request_block = next(
+        block
+        for block in blocks
+        if isinstance(block, str) and block.startswith("Keep this request verbatim:")
+    )
+    assert request_block == f"Keep this request verbatim:\n{HOSTILE_CONTENT}"
+    task_block = next(
+        cast("dict[str, Any]", block)
+        for block in blocks
+        if isinstance(block, dict) and "rung_index" in block
+    )
+    assert task_block["title"] == "Evidence target"
+    assert task_block["rung_index"] == {Role.LEADER.value: 2, Role.IMPLEMENTER.value: 1}
+    usage_block = next(
+        cast("list[dict[str, Any]]", block)
+        for block in blocks
+        if isinstance(block, list)
+        and block
+        and isinstance(block[0], dict)
+        and "run_count" in block[0]
+    )
+    usage = {str(item["agent"]): item for item in usage_block}
+    assert usage["codex"]["billed_cost_usd"] == 0
+    assert usage["codex"]["api_equivalent_cost_usd"] == 0.25
+    assert usage["claude"]["tokens"]["input"] == 0
     assert SIGNAL_CONTENT in content
     assert PARTIAL_SIGNAL_CONTENT in content
     assert "jsonl row has not ended with a newline" in content.casefold()
