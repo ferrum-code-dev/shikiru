@@ -57,7 +57,7 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
 )
-from shikiru.domain.runs import RunStatus
+from shikiru.domain.runs import RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
@@ -1416,18 +1416,7 @@ def _task_session(run: Run) -> TaskSessionView:
         cost_basis=run.usage.cost_basis,
         context_used_pct=run.usage.context_used_pct,
         usage_reported=run.usage_reported,
-        legacy_token_totals=(
-            run.usage_reported is None
-            and any(
-                token > 0
-                for token in (
-                    run.usage.input_tokens,
-                    run.usage.output_tokens,
-                    run.usage.cache_read_tokens,
-                    run.usage.cache_write_tokens,
-                )
-            )
-        ),
+        legacy_token_totals=(run.usage_reported is None and has_positive_token_evidence(run)),
         legacy_cost_recorded=(run.usage_reported is None and run.usage.cost_usd is not None),
     )
 

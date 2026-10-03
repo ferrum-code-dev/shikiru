@@ -35,21 +35,10 @@ def _agent_block(usage: AgentUsageView) -> Group:
             )
             if usage.legacy_unknown_token_runs:
                 coverage += f" · legacy provenance unknown {usage.legacy_unknown_token_runs}"
-        elif usage.usage_reported_runs:
+        else:
             coverage = f"usage reported {usage.usage_reported_runs}/{usage.run_count} runs"
             if usage.legacy_unknown_token_runs:
                 coverage += f" · legacy provenance unknown {usage.legacy_unknown_token_runs}"
-        elif usage.legacy_unknown_token_runs:
-            coverage = (
-                "legacy usage provenance unknown "
-                f"{usage.legacy_unknown_token_runs}/{usage.run_count} runs"
-            )
-        else:
-            coverage = (
-                f"usage not reported (0/{usage.run_count} runs)"
-                if usage.run_count
-                else "no session usage recorded"
-            )
     else:
         tokens = f"tokens {UNKNOWN_VALUE}"
         if usage.legacy_unknown_token_runs:

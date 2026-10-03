@@ -30,7 +30,7 @@ from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
 from shikiru.domain.reports import FACTS_FILENAME, Report, ReportKind
-from shikiru.domain.runs import Run, RunStatus
+from shikiru.domain.runs import Run, RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
@@ -1181,7 +1181,7 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
         legacy_token_runs = [
             run
             for run in agent_runs
-            if run.usage_reported is None and _has_positive_token_evidence(run)
+            if run.usage_reported is None and has_positive_token_evidence(run)
         ]
         token_runs = [*reported_runs, *legacy_token_runs]
         cost_bases: set[CostBasis] = {
@@ -1222,7 +1222,7 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
                 usage_reported_runs=len(reported_runs),
                 legacy_token_runs=len(legacy_token_runs),
                 legacy_unknown_token_runs=sum(
-                    run.usage_reported is None and not _has_positive_token_evidence(run)
+                    run.usage_reported is None and not has_positive_token_evidence(run)
                     for run in agent_runs
                 ),
                 billed_cost_usd=_priced_total(billed_runs),
@@ -1237,18 +1237,6 @@ def _aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
             )
         )
     return views
-
-
-def _has_positive_token_evidence(run: Run) -> bool:
-    return any(
-        token > 0
-        for token in (
-            run.usage.input_tokens,
-            run.usage.output_tokens,
-            run.usage.cache_read_tokens,
-            run.usage.cache_write_tokens,
-        )
-    )
 
 
 def _has_priced_cost_evidence(run: Run) -> bool:

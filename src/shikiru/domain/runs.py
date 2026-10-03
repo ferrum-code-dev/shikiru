@@ -46,6 +46,19 @@ class Run(DomainModel):
     ended_at: datetime | None = None
 
 
+def has_positive_token_evidence(run: Run) -> bool:
+    """Return whether `run` records a positive token count in any usage field."""
+    return any(
+        token > 0
+        for token in (
+            run.usage.input_tokens,
+            run.usage.output_tokens,
+            run.usage.cache_read_tokens,
+            run.usage.cache_write_tokens,
+        )
+    )
+
+
 MISSING_TITLE_VALUE = "\N{EN DASH}"
 
 
