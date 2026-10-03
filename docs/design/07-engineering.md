@@ -69,6 +69,7 @@
 **Meaningful tests, no snapshot spam**:
 - Assert behaviour and properties: rendered width ≤ available columns; every state shows a word or glyph under `NO_COLOR`; a packet has all sections and exactly one ★; a template contains the request and the report instruction, and `StrictUndefined` raises on missing fields.
 - Responsive Textual integrations exercise actual pane sizes and verify visible/focusable task identity, actions, results, forms, and preserved selection, values and reading position across resize and state refresh. Visual review inspects rendered artifacts from these flows; do not turn them into golden screenshot tests.
+- [`docs/workspace-walkthroughs-2026-10-03.md`](../workspace-walkthroughs-2026-10-03.md) records the eight Task 87 executions, their source revision, commands, fixtures and observed results. It labels connected fake-agent engine runs separately from seeded SQLite UI-boundary checks; it is not evidence for real-agent E1–E6.
 - Keep named layout bounds in the UI implementation and describe the supported compact forms in the operator design. Add no layout configuration until there is a concrete Operator choice.
 - Golden snapshots are limited to one strip per mode at two widths.
 - No tests of private functions or mocks of our own classes: fake only process boundaries (agents, `gh`).

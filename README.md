@@ -8,22 +8,13 @@ the **Leader** plans and verifies, and the **Implementer** does the work.
 Each task runs on its own branch until the Leader accepts it. Then Shikiru merges it back.
 It escalates to the Operator only when something critical comes up.
 
-```
-┏━ T-12 · Add retry to parser ━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃起 Triage   ┃承 Implement ┃転 Verify    ┃結 Merge    ┃
-┃ ✔ 3m       ┃ ✔ iter 2    ┃ ▓▓▒░ 2/5    ┃  ···       ┃
-┗━━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━━━┛
- 長 Leader: “AC3 lacks a tier-2 test.”
- 員 Implementer: “Added the test; all tiers pass.”
-```
-
 ## Highlights
 
 - **Agent-agnostic**: agents are tested code plugins behind a normalized contract. Claude Code and Codex CLI are built in, and new agents are added as plugins using the agent SDK and the contract test kit.
 - **Live role views** in tmux panes show each headless turn; Operators can take over a role in its native TUI when needed.
 - **Parallel tasks**: each task gets its own git worktree and branch, with instant copy-on-write build caches, a dependency graph, priorities and resource-aware scheduling.
 - **Resilient**: model ladders, a wait for quota resets followed by a real session resume, and recovery after crashes or restarts.
-- **Comic-strip workspace**: the Textual shell groups current widgets into navigable workspace, activity, usage, diagnostics and extension sections. The selectable task browser, shared task detail, existing task/role navigation and contextual searchable action palette are implemented; richer history and responsive composition remain Phase 8 work.
+- **Operator workspace**: Home combines task search, task detail, attention and progress summaries. Task detail keeps reports, verdicts, blockers, relationships and retained timeline evidence available after ordinary window cleanup. A shared palette handles contextual actions, and configured widgets stay grouped in navigable Workspace, Activity, Usage, Diagnostics and Extensions sections.
 - **Operators everywhere**: a dashboard with a command palette for humans, an MCP server for AI Operators, a small CLI (`--json`) for scripts, and `ls`/`attach` across machines over SSH.
 - **Works with your setup**: your CLAUDE.md/AGENTS.md, skills, plugins, plan and todo files; one git repository per project.
 
@@ -43,6 +34,35 @@ shikiru attach
 Choose an explicit model supported by each selected agent in the wizard. `shikiru init --yes`
 writes editable defaults with model placeholders; review the role ladders and run `shikiru doctor`
 before starting.
+
+## Dashboard
+
+`shikiru start` creates the Home workspace in the project's `[shikiru] <name>` tmux session.
+From Home, press `/` to focus task search, enter a title or task ID, use Up/Down to select a row,
+and press Enter to open its detail. Escape returns to the same browser selection. Detail shows the
+latest validated verdict alongside the request, task state, relationships, blocker evidence and
+available history.
+
+Press `Ctrl+P` in the dashboard to open the shared action palette with the selected task and role
+pre-filled. Inside a Shikiru tmux session, `prefix + Space` opens the same palette in a popup; a
+popup opened from a role pane carries that pane's current task and role. Outside a Shikiru session,
+the tmux binding keeps its normal `next-layout` action. `?` opens workspace help.
+
+The dashboard labels command outcomes **Pending**, **Applied** or **Rejected**. Pending means the
+command is still in the durable queue; when the engine is stopped it can apply after the next
+engine start. Applied means the engine acknowledged the command effect. For an agent message, that
+means it was queued for the role's next turn, not that the agent has consumed it.
+
+Usage shows what agents reported: token totals and their coverage, priced cost with its recorded
+basis, context when an agent supplied a reliable value, and reported quota windows. Unknown values
+stay unknown; billed and API-equivalent amounts remain separate.
+
+Use **Export evidence** from task detail or the palette to write Markdown or JSON locally. Signal
+excerpts are opt-in, the destination's parent directory must already exist, and export does not
+create a workflow command. It describes retained Shikiru evidence; missing files are listed as
+unavailable. It does not recreate cleaned worktrees or provide a complete agent transcript or a
+single cross-source snapshot. See [Operator Workspace](docs/tui-workspace.md) for the full
+interaction and evidence contracts.
 
 From anywhere else:
 
@@ -72,7 +92,8 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 ## Documentation
 
 - Design: [`docs/design`](docs/design/README.md)
-- Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — Phase 8 specification and implementation status; the shared shell, task browser, task detail, existing-window navigation and contextual palette have shipped, while later operator capabilities remain planned.
+- Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — Phase 8 interaction and evidence specification. Tasks 75–87 have shipped; Task 88 owns release verification.
+- Workspace walkthrough evidence: [`docs/workspace-walkthroughs-2026-10-03.md`](docs/workspace-walkthroughs-2026-10-03.md) — executed flows, fixtures and observed limits.
 - Implementation plan: [`tasks/plan.md`](tasks/plan.md), progress: [`tasks/todo.md`](tasks/todo.md)
 
 ## Requirements

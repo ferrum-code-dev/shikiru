@@ -854,10 +854,10 @@ Refs: Workspace §11/§15, 02 §2, 05 §3, 06 §5.5.
 
 ### Task 87: Operator documentation and workflow walkthroughs
 Refs: Workspace §16, 01–07, README.
-- [ ] Reconcile 01–07 with the completed workspace: decision log, responsibilities/file list, action timing/ownership, read/export contracts, widget placement/defaults, keyboard navigation, visual/compact forms and testing requirements. Update the design index and workspace implementation status.
-- [ ] Rewrite README dashboard/navigation examples around shipped home/task views, contextual actions and evidence inspection; document palette access from tmux, pending outcomes, usage provenance and export limits without duplicating the CLI action surface.
-- [ ] Run and document the eight workspace walkthroughs with the fake agent, including another Operator's escalation resolution, remaining takeover holds, engine-down pending command recovery and terminal history after window cleanup.
-- [ ] Every published shortcut, example and screenshot/terminal sketch agrees with actual behaviour; planned or unverified capabilities are labelled. Keep the workspace specification and task references internally consistent.
+- [x] Reconcile 01–07 with the completed workspace: decision log, responsibilities/file list, action timing/ownership, read/export contracts, widget placement/defaults, keyboard navigation, visual/compact forms and testing requirements. Update the design index and workspace implementation status.
+- [x] Rewrite README dashboard/navigation examples around shipped home/task views, contextual actions and evidence inspection; document palette access from tmux, pending outcomes, usage provenance and export limits without duplicating the CLI action surface.
+- [x] Run and document the eight workspace walkthroughs with the fake agent, including another Operator's escalation resolution, remaining takeover holds, engine-down pending command recovery and terminal history after window cleanup.
+- [x] Every published shortcut, example and screenshot/terminal sketch agrees with actual behaviour; planned or unverified capabilities are labelled. Keep the workspace specification and task references internally consistent.
 - Verification: inspect real Textual/tmux flows and the produced export artifacts; review documentation links and examples. No tests that pin prose or screenshots.
 
 ### Task 88: Workspace release verification and evidence
