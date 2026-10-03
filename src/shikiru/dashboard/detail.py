@@ -351,9 +351,9 @@ class TaskDetailPanel(Vertical):
             if task_id is not None
             else "Select a task to inspect it."
         )
+        self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).scroll_to(y=0, animate=False)
         if task_id is None:
             return
-        self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).scroll_to(y=0, animate=False)
         self._queue_refresh()
 
     def _reset_task_identity_state(self) -> None:
@@ -373,6 +373,22 @@ class TaskDetailPanel(Vertical):
         self._timeline_page = None
         if not self.is_mounted:
             return
+        for section_id in (
+            TASK_DETAIL_OWNERSHIP,
+            TASK_DETAIL_SITUATION,
+            TASK_DETAIL_BLOCKER,
+            TASK_DETAIL_PROGRESS,
+            TASK_DETAIL_REQUEST,
+            TASK_DETAIL_CRITERIA,
+            TASK_DETAIL_REPORT,
+            TASK_DETAIL_VERDICT,
+            TASK_DETAIL_EVIDENCE,
+            TASK_DETAIL_FACTS,
+            TASK_DETAIL_WORKSPACE,
+            TASK_DETAIL_SESSIONS,
+        ):
+            self.query_one(f"#{section_id}", Static).update("")
+        self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static).display = False
         self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select).value = Select.BLANK
         self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update("")
         related_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))

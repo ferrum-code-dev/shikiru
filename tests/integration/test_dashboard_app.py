@@ -16,9 +16,21 @@ from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
 from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTIONS_BUTTON,
+    TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BODY,
+    TASK_DETAIL_CRITERIA,
+    TASK_DETAIL_EVIDENCE,
+    TASK_DETAIL_FACTS,
     TASK_DETAIL_OWNERSHIP,
+    TASK_DETAIL_PROGRESS,
+    TASK_DETAIL_REPORT,
+    TASK_DETAIL_REQUEST,
+    TASK_DETAIL_SESSIONS,
+    TASK_DETAIL_SITUATION,
     TASK_DETAIL_TIMELINE_TURN,
+    TASK_DETAIL_VERDICT,
+    TASK_DETAIL_WORKSPACE,
+    TaskDetailPanel,
     TaskDetailScreen,
 )
 from shikiru.dashboard.palette import PaletteScreen
@@ -67,6 +79,29 @@ class _ExternalEntryPoint:
 
 def _rendered_text(widget: Static) -> str:
     return cast("Text", widget.render()).plain
+
+
+_TASK_DETAIL_SECTION_IDS = (
+    TASK_DETAIL_OWNERSHIP,
+    TASK_DETAIL_SITUATION,
+    TASK_DETAIL_BLOCKER,
+    TASK_DETAIL_PROGRESS,
+    TASK_DETAIL_REQUEST,
+    TASK_DETAIL_CRITERIA,
+    TASK_DETAIL_REPORT,
+    TASK_DETAIL_VERDICT,
+    TASK_DETAIL_EVIDENCE,
+    TASK_DETAIL_FACTS,
+    TASK_DETAIL_WORKSPACE,
+    TASK_DETAIL_SESSIONS,
+)
+
+
+def _rendered_task_detail_sections(app: DashboardApp) -> tuple[str, ...]:
+    return tuple(
+        plain_text(app.query_one(f"#{section_id}", Static).render())
+        for section_id in _TASK_DETAIL_SECTION_IDS
+    )
 
 
 def _seed_paused_escalated_task(connection: Connection) -> str:
@@ -844,7 +879,6 @@ async def test_home_selection_discards_detail_result_from_an_in_flight_report_re
         (report_path.parent / REPORT_KIND_FILENAME).write_text(ReportKind.TRIAGE.value)
         os.mkfifo(report_path)
     writer_descriptors: dict[Path, int] = {}
-
     reader = StateReader(database, SystemClock())
     try:
         app = _app(reader, project_dir, widget_names=["queue"])
@@ -872,14 +906,95 @@ async def test_home_selection_discards_detail_result_from_an_in_flight_report_re
             await wait_until(
                 lambda: _open_report_writer(writer_descriptors, report_paths[second.id]), timeout=2
             )
-            assert _rendered_text(identity) == f"{second.id} · loading selected task"
-
             _finish_report_read(report_paths[second.id], writer_descriptors, report_text)
             await wait_until(lambda: second.title in _rendered_text(identity), timeout=2)
             assert first.title not in _rendered_text(identity)
     finally:
         for report_path in report_paths.values():
             _finish_report_read(report_path, writer_descriptors, report_text)
+        reader.close()
+
+
+async def test_home_selection_clears_rendered_task_sections_while_next_report_loads(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    first_request = "First task request evidence"
+    second_request = "Second task request evidence"
+    first = seed_task(connection, clock, title="First loaded task", request=first_request)
+    second = seed_task(connection, clock, title="Second loading task", request=second_request)
+    first_report = (
+        '{"title":"First task report evidence","mode":"implement",'
+        '"complexity":"normal","acceptance_criteria":[],"references":[]}'
+    )
+    second_report = (
+        '{"title":"Second task report evidence","mode":"implement",'
+        '"complexity":"normal","acceptance_criteria":[],"references":[]}'
+    )
+    report_paths = {
+        task.id: turns_dir(project_dir, task.id) / "01-triage-i0" / REPORT_FILENAME
+        for task in (first, second)
+    }
+    for report_path in report_paths.values():
+        report_path.parent.mkdir(parents=True)
+        (report_path.parent / REPORT_KIND_FILENAME).write_text(ReportKind.TRIAGE.value)
+    report_paths[first.id].write_text(first_report)
+    os.mkfifo(report_paths[second.id])
+    writer_descriptors: dict[Path, int] = {}
+    TaskStore(connection, clock).set_holds(first.id, frozenset({Hold.PAUSED}))
+    reader = StateReader(database, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=["queue"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            identity = app.query_one("#task-detail-identity", Static)
+            await wait_until(lambda: first.title in _rendered_text(identity), timeout=2)
+            await wait_until(
+                lambda: (
+                    "First task report evidence"
+                    in _rendered_text(app.query_one(f"#{TASK_DETAIL_REPORT}", Static))
+                ),
+                timeout=2,
+            )
+            assert first_request in "\n".join(_rendered_task_detail_sections(app))
+            assert Hold.PAUSED.value in "\n".join(_rendered_task_detail_sections(app))
+
+            search = app.query_one("#task-browser-search", Input)
+            search.value = second.id
+            list_view = app.query_one("#task-browser-list", ListView)
+            await wait_until(
+                lambda: f"task-row-{second.id}" in {item.id for item in list_view.children},
+                timeout=2,
+            )
+            list_view.focus()
+            await pilot.press("down")
+            await wait_until(
+                lambda: _rendered_text(identity) == f"{second.id} · loading selected task",
+                timeout=2,
+            )
+            await wait_until(
+                lambda: _open_report_writer(writer_descriptors, report_paths[second.id]), timeout=2
+            )
+            task_sections = "\n".join(_rendered_task_detail_sections(app))
+            assert first_request not in task_sections
+            assert "First task report evidence" not in task_sections
+            assert Hold.PAUSED.value not in task_sections
+
+            _finish_report_read(report_paths[second.id], writer_descriptors, second_report)
+            await wait_until(lambda: second.title in _rendered_text(identity), timeout=2)
+            task_sections = "\n".join(_rendered_task_detail_sections(app))
+            assert second_request in task_sections
+            assert "Second task report evidence" in task_sections
+
+            app.query_one("#task-detail-panel", TaskDetailPanel).select_task(None)
+            await wait_until(
+                lambda: _rendered_text(identity) == "Select a task to inspect it.", timeout=2
+            )
+            assert not any(_rendered_task_detail_sections(app))
+    finally:
+        _finish_report_read(report_paths[second.id], writer_descriptors, second_report)
         reader.close()
 
 
