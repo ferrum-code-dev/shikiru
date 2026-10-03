@@ -894,13 +894,8 @@ async def _e3_body(
     state: AttemptState,
 ) -> None:
     await _submit(project, environment, E3_REQUEST)
-    parallel = asyncio.create_task(_wait_parallel_new_task_windows(project, tmux_server, state))
-    try:
-        await _wait_done(project, environment, state)
-    finally:
-        observed = parallel.done() and not parallel.cancelled() and parallel.exception() is None
-        parallel.cancel()
-    _require(observed, f"{MAX_PARALLEL} new task windows were never open at once")
+    await _wait_parallel_new_task_windows(project, environment, tmux_server, state)
+    await _wait_done(project, environment, state)
     new_task_ids = state.task_ids[1:]
     _assert_dependent_new_tasks(
         [await _status(project.root, environment, task_id) for task_id in new_task_ids]
@@ -918,9 +913,17 @@ async def _e3_body(
 
 
 async def _wait_parallel_new_task_windows(
-    project: PreparedProject, tmux_server: TmuxServer, state: AttemptState
+    project: PreparedProject,
+    environment: dict[str, str],
+    tmux_server: TmuxServer,
+    state: AttemptState,
 ) -> None:
     async def parallel() -> bool:
+        if len(state.task_ids) == 1:
+            status = await _status(project.root, environment, TASK_ID)
+            _track_task_tree(status, state.task_ids)
+            if len(state.task_ids) == 1 and _task_status(status) == Status.DONE.value:
+                _require(False, "E3 request completed without planning child tasks")
         new_task_ids = set(state.task_ids[1:])
         return len(await _open_task_windows(project, tmux_server) & new_task_ids) >= MAX_PARALLEL
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, OptionList, Select, Static, TextArea
 
 from shikiru.agents.contracts import Rung
 from shikiru.dashboard.contract import PaletteRequest
@@ -1137,16 +1137,16 @@ async def test_palette_preserves_resolution_form_after_unrelated_database_update
         assert isinstance(submitted.command, Resolve)
         assert isinstance(submitted.command.resolution, AcceptResolution)
 
-        resolution.focus()
-        form.scroll_to(y=_FORM_SCROLL_TEST_OFFSET, animate=False, immediate=True)
+        resolution.focus(scroll_visible=False)
+        await wait_until(lambda: app.focused is resolution, timeout=2)
         await pilot.pause()
+        form.scroll_to(y=_FORM_SCROLL_TEST_OFFSET, animate=False, immediate=True)
         before_scroll = form.scroll_y
-        assert app.focused is resolution
         await wait_until(clock.has_pending_sleep, timeout=2)
 
         external = database.connect()
         try:
-            _seed_escalation(
+            unrelated_escalation, _ = _seed_escalation(
                 external,
                 clock,
                 other_task.id,
@@ -1156,7 +1156,13 @@ async def test_palette_preserves_resolution_form_after_unrelated_database_update
         finally:
             external.close()
         clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(
+            lambda: any(
+                unrelated_escalation.id in str(option.prompt)
+                for option in screen.query_one("#escalation", Select).query_one(OptionList).options
+            ),
+            timeout=2,
+        )
         await pilot.pause()
 
         assert resolution.value == "accept"

@@ -735,9 +735,10 @@ async def test_detail_preserves_selection_while_following_and_pauses_on_older_pa
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
             bottom_position = body.scroll_y
-            panel.query_one("#task-detail-relationships-toggle", Button).focus()
+            relationships_toggle = panel.query_one("#task-detail-relationships-toggle", Button)
+            relationships_toggle.focus()
             await wait_until(
-                lambda: body.scroll_y < bottom_position,
+                lambda: app.focused is relationships_toggle and body.scroll_y < bottom_position,
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
             assert "Following latest" in _static_text(panel, TASK_DETAIL_TIMELINE_STATUS)
