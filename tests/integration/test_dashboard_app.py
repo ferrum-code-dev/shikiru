@@ -748,20 +748,35 @@ async def test_task_detail_toolbar_and_timeline_form_remain_reachable_after_resi
             await pilot.pause()
             await pilot.press("enter")
             await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+            identity = app.screen.query_one("#task-detail-identity", Static)
+            await wait_until(
+                lambda: task.title in str(identity.content),
+                timeout=2,
+            )
             action_button = app.screen.query_one(f"#{TASK_DETAIL_ACTIONS_BUTTON}", Button)
             await _assert_task_detail_toolbar_controls_are_reachable(app, pilot)
             timeline_turn = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
             detail_body = app.screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+
+            def timeline_visible() -> bool:
+                return (
+                    detail_body.scroll_y > 0
+                    and timeline_turn.region.y >= detail_body.region.y
+                    and timeline_turn.region.bottom <= detail_body.region.bottom
+                    and timeline_turn.region.y >= 0
+                    and timeline_turn.region.bottom <= app.size.height
+                )
+
             timeline_turn.value = "3"
             timeline_turn.focus()
             await pilot.pause()
-            assert timeline_turn.region.overlaps(detail_body.region)
-            assert detail_body.scroll_y > 0
+            await wait_until(timeline_visible, timeout=2)
+            assert app.focused is timeline_turn
             await pilot.resize_terminal(48, 14)
             await pilot.pause()
+            await wait_until(timeline_visible, timeout=2)
             assert app.focused is timeline_turn
             assert timeline_turn.value == "3"
-            assert timeline_turn.region.overlaps(detail_body.region)
             action_button.focus()
             await pilot.pause()
             reading_scroll = detail_body.scroll_y

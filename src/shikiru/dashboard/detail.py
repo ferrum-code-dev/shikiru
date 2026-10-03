@@ -111,6 +111,17 @@ class TaskDetailBody(VerticalScroll):
         super().__init__(id="task-detail-body")
         self._scroll_away = scroll_away
 
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        focused = self.screen.focused
+        if focused is not None and self in focused.ancestors and not self.can_view_entire(focused):
+            self.call_after_refresh(
+                self.scroll_to_center,
+                focused,
+                animate=False,
+                immediate=True,
+            )
+
     def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
         del event
         self._pause_if_scrolled()
@@ -157,9 +168,6 @@ class TaskDetailPanel(Vertical):
         border: round $neutral-border; background: $surface; color: $primary-text;
     }
     .task-detail-fixed #task-detail-body { max-height: 24; }
-    .task-detail-screen { height: 100%; }
-    .task-detail-screen #task-detail-panel { height: 100%; }
-    .task-detail-screen #task-detail-body { height: 1fr; max-height: 1fr; }
     """
 
     def __init__(
@@ -170,12 +178,9 @@ class TaskDetailPanel(Vertical):
         fixed: bool,
         embedded: bool = False,
         close_detail: CloseDetail | None = None,
-        classes: str = "",
     ) -> None:
-        panel_classes = ["task-detail-fixed"] if fixed else []
-        if classes:
-            panel_classes.append(classes)
-        super().__init__(id="task-detail-panel", classes=" ".join(panel_classes))
+        classes = "task-detail-fixed" if fixed else ""
+        super().__init__(id="task-detail-panel", classes=classes)
         self._widget_context = context
         self._task_id = task_id
         self._fixed = fixed
@@ -200,6 +205,7 @@ class TaskDetailPanel(Vertical):
         self._timeline_page: TaskTimelinePageView | None = None
         self._timeline_worker: Worker[None] | None = None
         self._timeline_request_generation = 0
+        self._body_focus_generation = 0
         self._remove_motion_callback: Callable[[], None] | None = None
 
     def compose(self) -> ComposeResult:
@@ -332,6 +338,17 @@ class TaskDetailPanel(Vertical):
             self._remove_motion_callback = None
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
+        if body in event.widget.ancestors:
+            self._body_focus_generation += 1
+            if not body.can_view_entire(event.widget):
+                self.call_after_refresh(
+                    body.scroll_to_center,
+                    event.widget,
+                    animate=False,
+                    immediate=True,
+                )
+                return
         parent = event.widget.parent
         while parent is not None:
             if parent.id == TASK_DETAIL_TOOLBAR:
@@ -712,6 +729,7 @@ class TaskDetailPanel(Vertical):
     def _render_view(self, view: TaskDetailView, *, render_timeline: bool = True) -> None:
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         scroll_y = body.scroll_y
+        focus_generation = self._body_focus_generation
         action_role = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
         action_role.prompt = f"Acting · {view.acting_role.title()}"
         identity = (
@@ -771,10 +789,20 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_FACTS}", Static).update(facts)
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(_workspace_text(view))
         self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
-        body.call_after_refresh(self._restore_body_scroll, body, scroll_y)
+        body.call_after_refresh(
+            self._restore_body_scroll,
+            body,
+            scroll_y,
+            focus_generation,
+        )
 
-    def _restore_body_scroll(self, body: TaskDetailBody, scroll_y: int) -> None:
-        if self._screen_is_active():
+    def _restore_body_scroll(
+        self,
+        body: TaskDetailBody,
+        scroll_y: int,
+        focus_generation: int,
+    ) -> None:
+        if self._screen_is_active() and focus_generation == self._body_focus_generation:
             body.scroll_to(y=scroll_y, animate=False)
 
     def _render_timeline(self, page: TaskTimelinePageView | None) -> None:
@@ -985,6 +1013,8 @@ class TaskDetailScreen(ModalScreen[None]):
     ]
     DEFAULT_CSS = """
     TaskDetailScreen { width: 100%; height: 100%; background: $background; }
+    #task-detail-panel { height: 100%; }
+    #task-detail-panel #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     """
 
     def __init__(self, context: WidgetContext, task_id: str) -> None:
@@ -998,7 +1028,6 @@ class TaskDetailScreen(ModalScreen[None]):
             self._task_id,
             fixed=False,
             close_detail=self._close,
-            classes="task-detail-screen",
         )
 
     async def _close(self) -> None:
