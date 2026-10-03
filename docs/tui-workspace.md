@@ -2,7 +2,7 @@
 
 ## 1. Status and relationship to the design
 
-This document specifies the TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). Task 75 shipped the shared visual theme and navigable shell for current widgets. Task 76 shipped the selectable task browser and bounded search through the existing `queue` entry point. Task 77 shipped shared task detail, task-scoped activity and usage, and navigation to existing task windows and role panes. Task 78 shipped contextual actions and the searchable palette. Task 79 shipped bounded durable command feedback and persistent ownership/hold banners. Task 80 shipped the Home summary composition, durable grouped attention, project activity and header context. Task 81 shipped structured escalation resolution with durable allowed kinds, preserved original packets, expandable evidence and stale-form updates. Task 82 shipped blocker evidence, navigation to related tasks and task-family context. Task 83 shipped retained completion detail, filtered bounded evidence timelines, and latest-tail following. Task 84 shipped recorded usage coverage and reachable secondary diagnostics. Responsive composition, export, operator documentation and release verification remain later work. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
+This document specifies the TUI for [Phase 8](../tasks/plan.md#phase-8--operator-workspace). Task 75 shipped the shared visual theme and navigable shell for current widgets. Task 76 shipped the selectable task browser and bounded search through the existing `queue` entry point. Task 77 shipped shared task detail, task-scoped activity and usage, and navigation to existing task windows and role panes. Task 78 shipped contextual actions and the searchable palette. Task 79 shipped bounded durable command feedback and persistent ownership/hold banners. Task 80 shipped the Home summary composition, durable grouped attention, project activity and header context. Task 81 shipped structured escalation resolution with durable allowed kinds, preserved original packets, expandable evidence and stale-form updates. Task 82 shipped blocker evidence, navigation to related tasks and task-family context. Task 83 shipped retained completion detail, filtered bounded evidence timelines, and latest-tail following. Task 84 shipped recorded usage coverage and reachable secondary diagnostics. Task 85 shipped responsive composition and accessible static refresh. Export, operator documentation and release verification remain later work. Each Phase 8 task updates the corresponding normative design sections when its behaviour ships.
 
 The workspace refines [06 · Operator Interfaces](design/06-operator.md), especially §5.4–5.5 and §6: the system pane becomes a navigable workspace with distinct home and task views, contextual actions, and persistent command feedback. The comic strip remains the task's expanded progress view. The architecture and workflow in [02](design/02-architecture.md) and [03](design/03-workflow.md) govern all state changes.
 
@@ -72,7 +72,7 @@ An escalation remains visible until durable state says it is resolved. When its 
 
 The home body contains a selectable task browser, shared task detail access, and recent project activity. On a wide pane, browser and detail sit side by side. On a compact pane, Enter opens detail and Escape returns to the browser with its previous selection and scroll position. Task 80 composes these with the existing header and bounded summaries; responsive wide/compact layout remains Task 85 work.
 
-Recent activity covers verdicts, scope changes, completions, holds, retry/rework transitions, quota changes, integration waits, engine faults and recovery. Routine tool traffic belongs in task evidence and the role panes. Usage and diagnostics are secondary views reachable from the workspace navigation and palette.
+Recent activity covers verdicts, scope changes, completions, holds, retry/rework transitions, quota changes, integration waits, engine faults and recovery. Routine tool traffic belongs in task evidence and the role panes. Usage and diagnostics are secondary views reachable from the workspace navigation and palette. At 100 columns or more and more than 18 rows, browser and shared task detail sit side by side; compact panes stack the same mounted browser and detail so selection, search and reading state survive resize.
 
 Illustrative wide home view; the numbers and task names are examples:
 
@@ -163,6 +163,8 @@ In Home, Enter pushes this shared detail screen for the selected task. Escape di
 | Scrollable list or evidence | `PageUp`, `PageDown`, `Home`, `End` | Navigate the current content. |
 
 Printable shortcuts act only outside text inputs. Escape first cancels an input's transient interaction before leaving its form. Mouse activation and keyboard activation have identical effects.
+
+Resize changes use the dashboard pane dimensions and keep the selected task, search, focus and reading scroll. Focused browser rows, detail actions and form fields stay in view; the compact palette scrolls the focused field into view and keeps its Run control available.
 
 Reserve a compact footer for the focused section and its available controls. Keep the complete key bindings in help so the footer stays bounded in narrow panes. Focus uses a border or marker plus a text cue under `NO_COLOR`. New task data never steals focus or opens a modal automatically.
 
@@ -279,11 +281,11 @@ Add named tokens for background, panel surface, neutral border, primary/secondar
 
 The comic strip appears expanded for the selected task. Compact rows keep task identity and state. Speech bubbles remain useful for reports and verdicts; escalation splash treatment remains available within the decision view. Use the existing width-safe glyph vocabulary and textual alternatives.
 
-Motion retains the existing signal-driven spinner, diagnosed stall, verdict/merge flash and escalation pulse rules, capped at 4 Hz. No continuous queued-task shimmer or animation that implies activity without evidence. `animations = false` gives static frames; countdowns and durable state still refresh. Respect `NO_COLOR` with bold/dim/reverse plus words or marks, and retain the existing terminal-width support policy.
+Motion retains the existing signal-driven spinner, diagnosed stall, verdict/merge flash and escalation pulse rules, capped at 4 Hz. No continuous queued-task shimmer or animation that implies activity without evidence. `animations = false` gives static frames; countdowns, task state and ownership still refresh. Respect `NO_COLOR` and `TERM=dumb` with words, markers and focus styling that does not depend on color. Bounded normalized signal tails may update during motion; timeline pages keep their own interval, and report/facts/packet files are reused until their file identity changes.
 
 ## 14. Responsive layout and accessibility
 
-Choose layout from the dashboard pane's available width and height, not the outer terminal. The default task system pane may be only 36–48 columns on an ordinary terminal.
+Choose layout from the dashboard pane's available width and height, not the outer terminal. The default task system pane may be only 36–48 columns on an ordinary terminal. Layout limits are named implementation constants, not operator settings.
 
 | Available space | Behaviour |
 |---|---|
@@ -292,6 +294,10 @@ Choose layout from the dashboard pane's available width and height, not the oute
 | Short pane | Collapse cards to one line, prioritise situation/attention and keep the body scrollable. |
 | Narrow task pane | Render ID/title, state/hold/blocker and role on separate compact lines. |
 | Extremely small pane | Show a compact identity/state and accessible navigation/help; explain when more space is needed for a form. |
+
+The shared Home browser/detail split starts at `HOME_SPLIT_MIN_COLUMNS` (100 columns) and requires a pane taller than `SHORT_PANE_MAX_ROWS` (18 rows). Otherwise Home stacks the existing browser and shared detail panel in one scroll area. Its split height is clamped to `HOME_SPLIT_MIN_ROWS` (8) through `HOME_SPLIT_MAX_ROWS` (32). At `COMPACT_LAYOUT_MAX_COLUMNS` (59 columns) or a short pane, summaries collapse to one line. At `VERY_SMALL_MAX_COLUMNS` (23 columns) or `VERY_SMALL_MAX_ROWS` (9 rows), navigation uses one row and the browser list shrinks to its tiny form. The compact footer remains four rows, with a two-row control strip; at 40 columns or less its command-history button reads `Cmds`. Compact detail is bounded within Home and its body remains scrollable. The palette reduces request, message and answer text areas to two rows at 18 rows or less and scrolls the focused field into view.
+
+The interaction matrix covers 120×40, 48×20, 36×20, 48×14 and 20×8 panes, including `NO_COLOR`, `TERM=dumb` and static animation. The tested 20×8 layout keeps compact identity and navigation reachable; longer evidence and forms require scrolling, and comfortable form entry needs more rows. The supported glyph policy is unchanged: ambiguous-width CJK terminal settings remain unsupported.
 
 Define named layout limits in the shared UI implementation when they are introduced. Add configuration only for an actual Operator choice; do not create a breakpoint tuning surface. Resizing does not automatically change the user's tmux splits.
 
@@ -325,6 +331,8 @@ No workflow commands, network service, generic replay framework, agent pricing t
 Implement Phase 8 after Phase 7b's operator-control and work-preservation fixes. Each task delivers one usable slice and updates the affected design sections. Refactorings, if needed, are separate commits. Keep all Phase 8 ACs open until their implementation and required verification are complete.
 
 Behaviour verification uses real SQLite, Git and the isolated `tmux_server`, Textual `run_test`, and the fake agent. Wait with `wait_until` and inject `FakeClock`; do not mock Shikiru classes. Unit tests cover new domain rules or parsers, not theme token listings, dataclass shapes, Textual features or wording. Keep the existing snapshot limit.
+
+Task 85 visual review used rendered Textual SVGs from the integration harness. At 120×40, Home shows the browser and shared detail in adjacent independently scrolling panes with the footer visible. At 36×20, the task identity and state remain above a vertically scrollable evidence body, and the horizontal toolbar exposes each enabled action when focused. At 36×20 and 48×14, the palette keeps the focused Message text area and Run action within the form frame; the shorter pane uses a two-row text area. The 48×14 detail form retained its text and focus while the viewport scrolled it into view.
 
 Required walkthroughs cover:
 

@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from textual.containers import HorizontalScroll
-from textual.widgets import Button, DataTable, ListView, Select, Static
+from textual.containers import HorizontalScroll, VerticalScroll
+from textual.widgets import Button, DataTable, ListView, Select, Static, TextArea
 
 import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import Usage
@@ -18,7 +18,10 @@ from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
 from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_ROLE,
+    TASK_DETAIL_ACTIONS_BUTTON,
     TASK_DETAIL_ATTENTION_BUTTON,
+    TASK_DETAIL_BLOCKER,
+    TASK_DETAIL_BODY,
     TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON,
     TASK_DETAIL_HAND_BACK_LEADER_BUTTON,
     TASK_DETAIL_IDENTITY,
@@ -106,6 +109,7 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
     from textual.widget import Widget
 
+    from shikiru.clock import Clock
     from shikiru.dashboard.contract import (
         NavigateHome,
         NavigateRolePane,
@@ -160,9 +164,10 @@ def _dashboard_app(
     navigate_role_pane: NavigateRolePane | None = None,
     navigate_home: NavigateHome | None = None,
     open_palette_context: OpenPaletteContext | None = None,
+    clock: Clock | None = None,
 ) -> DashboardApp:
     settings = load_settings(project_root)
-    clock = SystemClock()
+    clock = clock or SystemClock()
     return DashboardApp(
         focus_task=focus_task,
         views=state_views(
@@ -237,6 +242,9 @@ def _operator_task_app(
     active_apps: list[DashboardApp] = []
 
     async def open_palette_context(request: PaletteRequest) -> None:
+        def refresh_task_detail(_: None) -> None:
+            active_apps[0].refresh_task_detail_after_resume()
+
         await active_apps[0].push_screen(
             PaletteScreen(
                 commands,
@@ -244,7 +252,8 @@ def _operator_task_app(
                 _unexpected_pane_selection,
                 on_change=reader.watch,
                 initial_context=request,
-            )
+            ),
+            callback=refresh_task_detail,
         )
 
     app = _dashboard_app(
@@ -253,6 +262,7 @@ def _operator_task_app(
         focus_task=task_id,
         widget_names=TASK_DETAIL_WIDGETS,
         open_palette_context=open_palette_context,
+        clock=clock,
     )
     active_apps.append(app)
     return app
@@ -652,6 +662,32 @@ async def test_detail_reads_role_signals_when_turn_report_path_is_unavailable(
         assert any("not a directory" in error for error in detail.evidence_errors)
 
 
+async def test_detail_observes_new_role_signals_without_a_database_revision(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Live role signals", mode=Mode.IMPLEMENT)
+    RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
+    signal_path = run_dir(project_root, task.id) / Role.IMPLEMENTER.value / "view.jsonl"
+    signal_path.parent.mkdir(parents=True)
+    signal_path.write_text(json.dumps({"signal": "SessionStarted"}) + "\n")
+    views = state_views(reader, project_root, clock, StubServices())
+
+    first = await views.task_detail(task.id, include_timeline=False)
+    assert first is not None
+    assert "SessionStarted" in first.signals[0].lines[0]
+
+    with signal_path.open("a") as stream:
+        stream.write(json.dumps({"signal": "ToolStarted", "name": "pytest"}) + "\n")
+    refreshed = await views.task_detail(task.id, include_timeline=False)
+
+    assert refreshed is not None
+    assert any("pytest" in line for line in refreshed.signals[0].lines)
+
+
 async def test_enter_opens_shared_detail_and_escape_restores_browser_selection_and_scroll(
     connection: Connection,
     database: Database,
@@ -868,6 +904,104 @@ async def test_implicit_detail_role_tracks_step_change_at_palette_activation(
             await wait_until(lambda: bool(opened), timeout=2)
 
         assert opened == [PaletteRequest(task_id=task.id)]
+    finally:
+        reader.close()
+
+
+async def test_compact_palette_form_keeps_focus_and_value_after_resize(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Compact message form")
+    queue = CommandQueue(connection, clock)
+    for submitted in queue.pending():
+        queue.mark_done(submitted.id)
+    reader = StateReader(database, clock)
+    try:
+        app = _operator_task_app(reader, project_root, task.id, queue, clock)
+        async with app.run_test(size=(36, 20)) as pilot:
+            await wait_until(clock.has_pending_sleep, timeout=2)
+            app.query_one(f"#{TASK_DETAIL_ACTIONS_BUTTON}", Button).focus()
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            palette = cast("PaletteScreen", app.screen)
+            palette.query_one("#action", Select).value = "message"
+            await wait_until(lambda: palette.query_one("#field-message").display, timeout=2)
+            message = palette.query_one("#message", TextArea)
+            message.text = "Please check the recorded change."
+            message.focus()
+            form = palette.query_one("#palette-form", VerticalScroll)
+            await pilot.pause()
+            assert app.focused is message
+            assert message.region.y >= form.region.y
+            assert message.region.bottom <= form.region.bottom
+            submit = palette.query_one("#palette-submit", Button)
+            assert submit.region.y >= 0
+            assert submit.region.bottom <= app.size.height
+            await pilot.resize_terminal(48, 14)
+            await pilot.pause()
+            assert app.focused is message
+            assert message.text == "Please check the recorded change."
+            assert message.region.y >= form.region.y
+            assert message.region.bottom <= form.region.bottom
+            assert submit.region.y >= 0
+            assert submit.region.bottom <= app.size.height
+    finally:
+        reader.close()
+
+
+async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Ownership changes behind palette")
+    queue = CommandQueue(connection, clock)
+    for submitted in queue.pending():
+        queue.mark_done(submitted.id)
+    reader = StateReader(database, clock)
+    try:
+        app = _operator_task_app(reader, project_root, task.id, queue, clock)
+        async with app.run_test(size=(36, 20)) as pilot:
+            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+            dashboard_screen = app.screen
+            await wait_until(lambda: task.title in _text(identity), timeout=2)
+            await wait_until(clock.has_pending_sleep, timeout=2)
+
+            app.query_one(f"#{TASK_DETAIL_ACTIONS_BUTTON}", Button).focus()
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
+            assert Hold.PAUSED.value not in _text(ownership)
+
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is dashboard_screen, timeout=2)
+            await wait_until(
+                lambda: Hold.PAUSED.value in _text(ownership),
+                timeout=2,
+            )
+            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            assert task.id in _text(identity)
+            assert task.title in _text(identity)
+            situation = app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)
+            assert "queued" in _text(situation)
+            assert Hold.PAUSED.value in _text(situation)
+            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
+            body = app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+            blocker = app.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+            body.scroll_to_widget(blocker, animate=False)
+            dashboard.scroll_to_widget(body, animate=False)
+            await pilot.pause()
+            assert blocker.display
+            assert "Pause hold" in _text(blocker)
+            assert blocker.region.y >= body.region.y
+            assert blocker.region.bottom <= body.region.bottom
     finally:
         reader.close()
 

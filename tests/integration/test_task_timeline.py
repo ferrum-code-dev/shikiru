@@ -129,6 +129,7 @@ class _GatedDashboardViews:
         timeline_role: str | None = None,
         timeline_turn: str | None = None,
         timeline_category: str = TaskTimelineCategory.ACTIVITY.value,
+        include_timeline: bool = True,
     ) -> TaskDetailView | None:
         self.detail_requests.append((timeline_role, timeline_turn, timeline_category))
         result = await self._delegate.task_detail(
@@ -138,6 +139,7 @@ class _GatedDashboardViews:
             timeline_role=timeline_role,
             timeline_turn=timeline_turn,
             timeline_category=timeline_category,
+            include_timeline=include_timeline,
         )
         self.detail_pages.append(result)
         await self._wait_at_gate(self._detail_gates)

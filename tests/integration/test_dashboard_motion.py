@@ -716,14 +716,25 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             store.resolve(second.id, "retry")
             store.resolve(third.id, "retry")
             clock.advance(0.5)
-            await wait_until(lambda: not panel.display, timeout=1)
+            await wait_until(
+                lambda: (
+                    panel.display
+                    and len(list(scroll.query(Static))) == 1
+                    and "No open decisions" in plain_text(scroll.query(Static)[0].content)
+                ),
+                timeout=1,
+            )
+            assert pilot.app.focused is panel
 
             reopened = _open_escalation(connection, clock, project_dir, task.id, "Reopened packet")
             clock.advance(0.5)
             await wait_until(
-                lambda: "Reopened packet" in plain_text(scroll.query(Static)[0].content), timeout=1
+                lambda: (
+                    panel.display
+                    and "Reopened packet" in plain_text(scroll.query(Static)[0].content)
+                ),
+                timeout=1,
             )
-            assert panel.display
             assert views.escalations()[0].escalation_id == reopened.id
     finally:
         reader.close()
@@ -804,11 +815,14 @@ async def test_attention_keyboard_scrolls_the_selected_group_into_view(
         reader.close()
 
 
-async def test_disabled_animations_only_refresh_static_frames_after_a_database_change(
+async def test_disabled_animations_keep_countdowns_live_without_animating_frames(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERM", "dumb")
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_START)
     base_settings = _motion_settings(project_dir)
@@ -833,7 +847,7 @@ async def test_disabled_animations_only_refresh_static_frames_after_a_database_c
             views=views,
             on_change=reader.watch,
             clock=clock,
-            motion_interval_seconds=None,
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
             resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=open_palette,
@@ -849,8 +863,9 @@ async def test_disabled_animations_only_refresh_static_frames_after_a_database_c
             assert "10s" in initial_usage
             clock.advance(2)
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert cast("Text", panel.content).plain == initial
-            assert plain_text(usage.content) == initial_usage
+            assert cast("Text", panel.content).plain != initial
+            assert "8s" in plain_text(usage.content)
+            assert plain_text(usage.content) != initial_usage
 
             RunStore(connection, clock).record_usage(
                 task_run.id,

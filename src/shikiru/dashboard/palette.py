@@ -29,6 +29,7 @@ from shikiru.operator.queries import OperatorTaskAction
 from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
+    from textual import events
     from textual.app import ComposeResult
     from textual.widget import Widget
     from textual.worker import Worker
@@ -148,6 +149,14 @@ _ADVANCED_TOGGLE_ID = "palette-advanced-toggle"
 _ADVANCED_FIELDS_ID = "palette-advanced-fields"
 _SELECT_REQUIRED = "Select an item"
 _TASK_SEARCH_PAGE_LIMIT = 50
+_PALETTE_FORM_ID = "palette-form"
+_PALETTE_SHORT_PANE_MAX_ROWS = 18
+_PALETTE_COMPACT_TEXT_AREA_HEIGHT = 2
+_PALETTE_TEXT_AREA_HEIGHTS = (
+    (_FIELD_REQUEST, 6),
+    (_FIELD_MESSAGE, 4),
+    (_FIELD_RESOLUTION_TEXT, 5),
+)
 _TAKEOVER_SELECTION_FAILURE = "take-over succeeded, but the role pane could not be selected"
 _PALETTE_STATE_WORKER = "palette-state-updates"
 _FORM_IDENTITY_FIELDS = {
@@ -363,8 +372,30 @@ class PaletteScreen(ModalScreen[None]):
                     yield Static("", id="palette-result", markup=False)
             yield Button("Run action", id=_SUBMIT_ID, variant="primary")
 
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        parent = event.widget.parent
+        while parent is not None:
+            if parent.id == _PALETTE_FORM_ID:
+                self.query_one("#palette-form", VerticalScroll).scroll_to_widget(
+                    event.widget,
+                    animate=False,
+                    immediate=True,
+                )
+                return
+            parent = parent.parent
+
+    def on_resize(self, event: events.Resize) -> None:
+        if not self.is_mounted:
+            return
+        form = self.query_one("#palette-form", VerticalScroll)
+        scroll_y = form.scroll_y
+        focused = cast("App[None]", self.app).focused
+        self._set_text_area_heights(event.size.height)
+        self.call_after_refresh(self._restore_form_layout, scroll_y, focused)
+
     async def on_mount(self) -> None:
         """Load open escalation packets and activate an action routed from a widget."""
+        self._set_text_area_heights(self.size.height)
         self._refresh_escalations()
         escalation_select = cast("Select[str]", self.query_one("#escalation", Select))
         action_select = cast("Select[str]", self.query_one("#action", Select))
@@ -426,6 +457,26 @@ class PaletteScreen(ModalScreen[None]):
             self.query_one("#palette-result", Static).update(self._route_error)
             self.call_after_refresh(self._reveal_result)
             self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
+
+    def _set_text_area_heights(self, height: int) -> None:
+        compact = height <= _PALETTE_SHORT_PANE_MAX_ROWS
+        for field, normal_height in _PALETTE_TEXT_AREA_HEIGHTS:
+            self.query_one(f"#{field}", TextArea).styles.height = (
+                _PALETTE_COMPACT_TEXT_AREA_HEIGHT if compact else normal_height
+            )
+
+    def _restore_form_layout(self, scroll_y: float, focused: Widget | None) -> None:
+        if not self.is_mounted:
+            return
+        form = self.query_one("#palette-form", VerticalScroll)
+        if focused is not None and focused.is_mounted and focused.screen is self:
+            parent = focused.parent
+            while parent is not None:
+                if parent.id == _PALETTE_FORM_ID:
+                    form.scroll_to_widget(focused, animate=False, immediate=True)
+                    return
+                parent = parent.parent
+        form.scroll_to(y=scroll_y, animate=False, immediate=True)
 
     async def on_select_changed(self, event: Select.Changed) -> None:
         """Refresh visible fields and escalation packet details when a selection changes."""

@@ -113,6 +113,6 @@ def widget_context(
         timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         clock=clock,
         on_change=reader.watch,
-        on_motion=lambda _: None,
+        on_motion=lambda _: lambda: None,
         open_palette=open_palette or ignore_palette_action,
     )

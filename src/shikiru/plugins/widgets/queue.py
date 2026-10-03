@@ -19,6 +19,8 @@ from shikiru.dashboard.contract import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from textual import events
     from textual.app import App, ComposeResult
     from textual.widget import Widget
@@ -121,6 +123,7 @@ class QueuePanel(Vertical):
         self._refreshing = False
         self._refresh_lock = asyncio.Lock()
         self._list_render_version = 0
+        self._remove_motion_callback: Callable[[], None] | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="task-browser-tools"):
@@ -139,7 +142,23 @@ class QueuePanel(Vertical):
 
     async def on_mount(self) -> None:
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self.run_worker(
+            self._widget_context.on_change(self._refresh_while_active),
+            exclusive=True,
+        )
+        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_active)
+
+    def on_unmount(self) -> None:
+        if self._remove_motion_callback is not None:
+            self._remove_motion_callback()
+            self._remove_motion_callback = None
+
+    async def _refresh_while_active(self) -> None:
+        if not self.is_mounted:
+            return
+        app = cast("App[object]", self.app)
+        if app.is_running and self.screen.is_current:
+            await self._refresh()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != SEARCH_INPUT_ID:

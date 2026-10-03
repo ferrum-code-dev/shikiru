@@ -14,6 +14,8 @@ from shikiru.dashboard.contract import AttentionGroupView, AttentionView, Escala
 from shikiru.ui import SplashPanel
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from textual import events
     from textual.app import App, ComposeResult
     from textual.widget import Widget
@@ -78,6 +80,7 @@ class EscalationsPanel(Static):
         self._selected_escalation_id: str | None = None
         self._has_rendered = False
         self._keep_empty_visible = False
+        self._remove_motion_callback: Callable[[], None] | None = None
 
     def compose(self) -> ComposeResult:
         """Reserve a bounded, scrollable area for home attention groups."""
@@ -86,8 +89,24 @@ class EscalationsPanel(Static):
     async def on_mount(self) -> None:
         """Render current attention and refresh on state or motion changes."""
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
-        self._widget_context.on_motion(self._refresh)
+        self.run_worker(self._widget_context.on_change(self._refresh_while_active), exclusive=True)
+        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_active)
+
+    def on_unmount(self) -> None:
+        if self._remove_motion_callback is not None:
+            self._remove_motion_callback()
+            self._remove_motion_callback = None
+
+    def on_focus(self, event: events.Focus) -> None:
+        del event
+        self._keep_empty_visible = True
+
+    async def _refresh_while_active(self) -> None:
+        if not self.is_mounted:
+            return
+        app = cast("App[None]", self.app)
+        if app.is_running and self.screen.is_current:
+            await self._refresh()
 
     def activate_attention(self) -> None:
         """Show the attention content, retaining its useful empty state while selected."""

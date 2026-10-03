@@ -348,7 +348,12 @@ async def run_dashboard(
                 initial_action=action,
                 initial_context=context,
             )
-            await app_instance.push_screen(palette)
+
+            def refresh_task_detail(_: None) -> None:
+                if app_instance is not None:
+                    app_instance.refresh_task_detail_after_resume()
+
+            await app_instance.push_screen(palette, callback=refresh_task_detail)
 
         async def open_palette(action: str) -> None:
             await push_palette(action)
@@ -361,9 +366,7 @@ async def run_dashboard(
             views=views,
             on_change=services.reader.watch,
             clock=clock,
-            motion_interval_seconds=(
-                1 / settings.dashboard.motion.refresh_hz if settings.dashboard.animations else None
-            ),
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
             resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,

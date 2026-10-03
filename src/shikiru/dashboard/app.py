@@ -25,7 +25,7 @@ from shikiru.errors import ConfigError
 from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from textual import events
     from textual.app import ComposeResult
@@ -105,6 +105,20 @@ _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
 _SUMMARY_BAR_HEIGHT = 3
+HOME_SPLIT_MIN_COLUMNS = 100
+HOME_SPLIT_MAX_ROWS = 32
+HOME_SPLIT_MIN_ROWS = 8
+HOME_LAYOUT_RESERVED_ROWS = 12
+SHORT_PANE_MAX_ROWS = 18
+COMPACT_LAYOUT_MAX_COLUMNS = 59
+VERY_SMALL_MAX_COLUMNS = 23
+VERY_SMALL_MAX_ROWS = 9
+FOOTER_COMPACT_MAX_COLUMNS = 40
+COMPACT_FOOTER_HEIGHT = 4
+COMPACT_FOOTER_CONTROLS_HEIGHT = 2
+COMPACT_DETAIL_PANEL_HEIGHT = 24
+WORKSPACE_NAVIGATION_HEIGHT = 3
+VERY_SMALL_NAVIGATION_HEIGHT = 1
 _SUMMARY_BUTTONS = (
     (_SUMMARY_ATTENTION, "Attention", "workspace-summary-attention"),
     (_SUMMARY_RUNNING, "Running", "workspace-summary-running"),
@@ -138,6 +152,7 @@ class WorkspaceSummaryBar(Horizontal):
     def __init__(self, context: WidgetContext) -> None:
         super().__init__(id="workspace-summary")
         self._widget_context = context
+        self._remove_motion_callback: Callable[[], None] | None = None
 
     def compose(self) -> ComposeResult:
         for _, label, button_id in _SUMMARY_BUTTONS:
@@ -146,7 +161,12 @@ class WorkspaceSummaryBar(Horizontal):
     async def on_mount(self) -> None:
         await self._refresh()
         self.run_worker(self._widget_context.on_change(self._refresh_while_mounted), exclusive=True)
-        self._widget_context.on_motion(self._refresh_while_mounted)
+        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_mounted)
+
+    def on_unmount(self) -> None:
+        if self._remove_motion_callback is not None:
+            self._remove_motion_callback()
+            self._remove_motion_callback = None
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         name = _SUMMARY_BY_BUTTON.get(event.button.id or "")
@@ -236,15 +256,16 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
     _WorkspaceHelpScreen { align: center middle; }
     #workspace-help-frame {
         width: 90%;
-        height: auto;
-        max-height: 90%;
+        height: 90%;
         max-width: 76;
         border: round $neutral-border;
-        padding: 1 2;
+        padding: 0 1;
         background: $surface;
     }
+    #workspace-help-context { height: 1; }
+    #workspace-help-scroll { height: 1fr; }
     #workspace-help-copy { height: auto; color: $primary-text; }
-    #workspace-help-close { margin-top: 1; }
+    #workspace-help-close { height: 3; }
     """
 
     def __init__(
@@ -279,11 +300,8 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
             lines.append("Task browser: / search, Up/Down select, filters and Clear search")
         with Vertical(id="workspace-help-frame"):
             yield Label(f"Help · {view} · {self._current_section}", id=_HELP_CONTEXT)
-            yield Static(
-                "\n".join(lines),
-                id="workspace-help-copy",
-                markup=False,
-            )
+            with VerticalScroll(id="workspace-help-scroll"):
+                yield Static("\n".join(lines), id="workspace-help-copy", markup=False)
             yield Button("Close help", id=_HELP_CLOSE_BUTTON)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -494,18 +512,57 @@ class DashboardApp(App[None]):
     }
     .workspace-section-content { height: auto; padding: 0 1; }
     #workspace-footer {
-        height: 5;
+        height: 4;
         padding: 0 1;
         border-top: solid $neutral-border;
         background: $panel;
     }
     #workspace-footer-copy { width: 100%; height: 1; color: $primary-text; }
-    #workspace-footer-controls { width: 100%; height: 3; }
-    #workspace-footer-controls Button { padding: 0 1; }
+    #workspace-footer-controls { width: 100%; height: 2; }
+    #workspace-footer-controls Button { height: 2; border: none; padding: 0 1; }
+    #workspace-footer-controls Button:focus { border: none; text-style: bold reverse; }
     #workspace-return { display: none; }
     #workspace-root.expanded #workspace-navigation { display: none; }
     #workspace-root.expanded #workspace-expand { display: none; }
     #workspace-root.expanded #workspace-return { display: block; }
+    #workspace-root.pane-short #workspace-summary { height: 1; }
+    #workspace-root.pane-short #workspace-summary Button {
+        height: 1; border: none; text-style: bold;
+    }
+    #workspace-summary.compact { height: 1; }
+    #workspace-summary.compact Button {
+        height: 1; border: none; padding: 0; text-style: bold;
+    }
+    #workspace-root.pane-tiny #workspace-command-status { display: none; }
+    #workspace-root.pane-tiny #workspace-header { height: 1; padding: 0; }
+    #workspace-root.pane-tiny #workspace-navigation {
+        height: 1; padding: 0;
+    }
+    #workspace-root.pane-tiny #workspace-navigation Button {
+        height: 1; border: none; padding: 0 1;
+    }
+    #workspace-root.pane-tiny #dashboard-panels { padding: 0; }
+    #home-browser-detail { width: 100%; height: auto; }
+    #home-browser-detail.wide { layout: horizontal; }
+    #home-browser-detail.compact { layout: vertical; }
+    #home-browser-detail.wide #queue { width: 40; min-width: 30; height: 100%; }
+    #home-browser-detail.wide #task-browser-list { height: 1fr; min-height: 3; }
+    #home-browser-detail.wide #task-browser-preview,
+    #home-browser-detail.wide #task-browser-reveal { display: none; }
+    #home-browser-detail.wide #task-detail-panel {
+        width: 1fr; height: 100%; min-width: 45;
+        border-left: solid $neutral-border;
+    }
+    #home-browser-detail.wide #task-detail-body { height: 1fr; max-height: 1fr; }
+    #home-browser-detail.compact #queue { width: 100%; height: auto; }
+    #home-browser-detail.compact #task-detail-panel { width: 100%; }
+    #home-browser-detail.compact #task-detail-body { max-height: 12; }
+    #workspace-root.pane-short #home-browser-detail.compact #task-browser-list {
+        height: 6; min-height: 3;
+    }
+    #workspace-root.pane-tiny #home-browser-detail.compact #task-browser-list {
+        height: 3; min-height: 2;
+    }
     """
 
     def __init__(
@@ -545,6 +602,7 @@ class DashboardApp(App[None]):
         self._navigate_home = navigate_home
         self._widget_names = tuple(widget_names)
         self._motion_callbacks: list[OnChange] = []
+        self._home_detail_panel: TaskDetailPanel | None = None
         self._widget_names_by_section: dict[str, list[str]] = {
             section_id: [] for section_id, _ in _SECTION_LABELS
         }
@@ -612,7 +670,18 @@ class DashboardApp(App[None]):
                             for name in names:
                                 widget = _load_widget(name).create(context)
                                 self._widget_instances[name] = widget
-                                yield widget
+                                if name == _WIDGET_QUEUE and self._focus_task is None:
+                                    with Horizontal(id="home-browser-detail"):
+                                        yield widget
+                                        self._home_detail_panel = TaskDetailPanel(
+                                            context,
+                                            self._selected_task_id,
+                                            fixed=False,
+                                            embedded=True,
+                                        )
+                                        yield self._home_detail_panel
+                                else:
+                                    yield widget
             with Vertical(id="workspace-footer"):
                 yield Static(self._footer_text(), id="workspace-footer-copy", markup=False)
                 with HorizontalScroll(id="workspace-footer-controls"):
@@ -624,6 +693,7 @@ class DashboardApp(App[None]):
     def _widget_context(self) -> WidgetContext:
         async def open_task_detail(task_id: str) -> None:
             await self.push_screen(TaskDetailScreen(self._widget_context(), task_id))
+            self.refresh_task_detail_after_resume()
 
         return WidgetContext(
             views=self._views,
@@ -633,7 +703,7 @@ class DashboardApp(App[None]):
             timeline_refresh_seconds=self._timeline_refresh_seconds,
             clock=self._clock,
             on_change=self._on_change,
-            on_motion=self._motion_callbacks.append,
+            on_motion=self._register_motion_callback,
             open_palette=self._open_palette,
             open_palette_context=self._open_palette_context,
             open_task_detail=open_task_detail,
@@ -673,12 +743,24 @@ class DashboardApp(App[None]):
 
     def _select_task_context(self, task_id: str | None) -> None:
         self._selected_task_id = task_id
+        if self._home_detail_panel is not None:
+            self._home_detail_panel.select_task(task_id)
 
     async def on_mount(self) -> None:
         """Focus section navigation and start the signal-driven motion refresh."""
         self.set_focus(self.query_one(f"#{_TAB_PREFIX}{self._selected_section}", Button))
+        self._apply_layout(self.size.width, self.size.height)
         if self._motion_interval_seconds is not None:
             self.run_worker(self._motion_loop(), group="dashboard-motion", exclusive=True)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._apply_layout(event.size.width, event.size.height)
+
+    def refresh_task_detail_after_resume(self) -> None:
+        """Refresh shared task detail after an overlay screen closes."""
+        if not self.is_running:
+            return
+        self.query_one("#task-detail-panel", TaskDetailPanel).refresh_after_resume()
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keep the visible section marker synchronized with keyboard focus."""
@@ -727,6 +809,58 @@ class DashboardApp(App[None]):
             await self._clock.sleep(interval)
             for callback in tuple(self._motion_callbacks):
                 await callback()
+
+    def _register_motion_callback(self, callback: OnChange) -> Callable[[], None]:
+        self._motion_callbacks.append(callback)
+
+        def unsubscribe() -> None:
+            if callback in self._motion_callbacks:
+                self._motion_callbacks.remove(callback)
+
+        return unsubscribe
+
+    def _apply_layout(self, width: int, height: int) -> None:
+        root = self.query_one("#workspace-root")
+        short = height <= SHORT_PANE_MAX_ROWS
+        tiny = width <= VERY_SMALL_MAX_COLUMNS or height <= VERY_SMALL_MAX_ROWS
+        wide = width >= HOME_SPLIT_MIN_COLUMNS and not short
+        self.query_one("#workspace-footer").styles.height = COMPACT_FOOTER_HEIGHT
+        self.query_one("#workspace-footer-controls").styles.height = COMPACT_FOOTER_CONTROLS_HEIGHT
+        self.query_one("#workspace-navigation").styles.height = (
+            VERY_SMALL_NAVIGATION_HEIGHT if tiny else WORKSPACE_NAVIGATION_HEIGHT
+        )
+        root.set_class(short, "pane-short")
+        root.set_class(tiny, "pane-tiny")
+        root.set_class(wide, "layout-wide")
+        root.set_class(not wide, "layout-compact")
+        home_layout = self.query("#home-browser-detail")
+        if home_layout:
+            home = cast("Horizontal", home_layout.first())
+            was_wide = home.has_class("wide")
+            home.set_class(wide, "wide")
+            home.set_class(not wide, "compact")
+            if self._home_detail_panel is not None:
+                self._home_detail_panel.styles.height = (
+                    "100%" if wide else COMPACT_DETAIL_PANEL_HEIGHT
+                )
+                if wide != was_wide:
+                    self._home_detail_panel.refresh_after_resume()
+            home.styles.height = (
+                max(
+                    HOME_SPLIT_MIN_ROWS,
+                    min(HOME_SPLIT_MAX_ROWS, height - HOME_LAYOUT_RESERVED_ROWS),
+                )
+                if wide
+                else "auto"
+            )
+        summary = self.query("#workspace-summary")
+        if summary:
+            summary.first().set_class(
+                short or width <= COMPACT_LAYOUT_MAX_COLUMNS,
+                "compact",
+            )
+        commands = self.query_one(f"#{_COMMAND_HISTORY_BUTTON}", Button)
+        commands.label = "Cmds" if width <= FOOTER_COMPACT_MAX_COLUMNS else "Commands"
 
     def _section_for_tab(self, widget_id: str | None) -> str | None:
         if widget_id is None or not widget_id.startswith(_TAB_PREFIX):

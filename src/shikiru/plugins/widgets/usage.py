@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from rich.console import Group
 from rich.text import Text
@@ -11,6 +11,9 @@ from textual.widgets import Static
 from shikiru.ui import Gauge
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from textual.app import App
     from textual.widget import Widget
 
     from shikiru.dashboard.contract import AgentUsageView, WidgetContext
@@ -121,12 +124,18 @@ class UsagePanel(Static):
         """Hold `context`; usage refreshes after state changes and for live countdowns."""
         super().__init__(id="usage")
         self._widget_context = context
+        self._remove_motion_callback: Callable[[], None] | None = None
 
     async def on_mount(self) -> None:
         """Render current usage, subscribe to state and tick quota age/countdowns."""
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
-        self._widget_context.on_motion(self._refresh)
+        self.run_worker(self._widget_context.on_change(self._refresh_while_active), exclusive=True)
+        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_active)
+
+    def on_unmount(self) -> None:
+        if self._remove_motion_callback is not None:
+            self._remove_motion_callback()
+            self._remove_motion_callback = None
 
     async def _refresh(self) -> None:
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
@@ -140,6 +149,13 @@ class UsagePanel(Static):
             if usage
             else Group(Text(scope, style="bold"), Text("No runs or quota windows recorded."))
         )
+
+    async def _refresh_while_active(self) -> None:
+        if not self.is_mounted:
+            return
+        app = cast("App[None]", self.app)
+        if app.is_running and self.screen.is_current:
+            await self._refresh()
 
 
 class UsageWidget:

@@ -68,6 +68,8 @@
 
 **Meaningful tests, no snapshot spam**:
 - Assert behaviour and properties: rendered width ≤ available columns; every state shows a word or glyph under `NO_COLOR`; a packet has all sections and exactly one ★; a template contains the request and the report instruction, and `StrictUndefined` raises on missing fields.
+- Responsive Textual integrations exercise actual pane sizes and verify visible/focusable task identity, actions, results, forms, and preserved selection, values and reading position across resize and state refresh. Visual review inspects rendered artifacts from these flows; do not turn them into golden screenshot tests.
+- Keep named layout bounds in the UI implementation and describe the supported compact forms in the operator design. Add no layout configuration until there is a concrete Operator choice.
 - Golden snapshots are limited to one strip per mode at two widths.
 - No tests of private functions or mocks of our own classes: fake only process boundaries (agents, `gh`).
 - Each test name states the behaviour (`test_rejected_twice_moves_implementer_up_one_rung`).

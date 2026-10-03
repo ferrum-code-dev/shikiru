@@ -22,7 +22,8 @@ from shikiru.errors import ShikiruError
 from shikiru.ui.strip import TaskStrip
 
 if TYPE_CHECKING:
-    from textual.app import ComposeResult
+    from textual import events
+    from textual.app import App, ComposeResult
     from textual.events import MouseScrollUp
     from textual.worker import Worker
 
@@ -62,6 +63,8 @@ TASK_DETAIL_FACTS = "task-detail-facts"
 TASK_DETAIL_WORKSPACE = "task-detail-workspace"
 TASK_DETAIL_SESSIONS = "task-detail-sessions"
 TASK_DETAIL_FEEDBACK = "task-detail-feedback"
+TASK_DETAIL_BODY = "task-detail-body"
+TASK_DETAIL_TOOLBAR = "task-detail-toolbar"
 TASK_DETAIL_BLOCKER = "task-detail-blocker"
 TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
 TASK_DETAIL_RELATIONSHIPS_BUTTON = "task-detail-relationships-toggle"
@@ -161,9 +164,10 @@ class TaskDetailPanel(Vertical):
     def __init__(
         self,
         context: WidgetContext,
-        task_id: str,
+        task_id: str | None,
         *,
         fixed: bool,
+        embedded: bool = False,
         close_detail: CloseDetail | None = None,
         classes: str = "",
     ) -> None:
@@ -174,6 +178,7 @@ class TaskDetailPanel(Vertical):
         self._widget_context = context
         self._task_id = task_id
         self._fixed = fixed
+        self._embedded = embedded
         self._close_detail = close_detail
         self._refresh_lock = asyncio.Lock()
         self._refresh_worker: Worker[None] | None = None
@@ -194,10 +199,12 @@ class TaskDetailPanel(Vertical):
         self._timeline_page: TaskTimelinePageView | None = None
         self._timeline_worker: Worker[None] | None = None
         self._timeline_request_generation = 0
+        self._remove_motion_callback: Callable[[], None] | None = None
 
     def compose(self) -> ComposeResult:
-        with HorizontalScroll(id="task-detail-toolbar"):
-            yield Button("Home" if self._fixed else "Back", id=TASK_DETAIL_BACK_BUTTON)
+        with HorizontalScroll(id=TASK_DETAIL_TOOLBAR):
+            back_label = "Full view" if self._embedded else "Home" if self._fixed else "Back"
+            yield Button(back_label, id=TASK_DETAIL_BACK_BUTTON)
             yield Button("Task window", id=TASK_DETAIL_WINDOW_BUTTON)
             yield Button("Leader pane", id=TASK_DETAIL_LEADER_BUTTON)
             yield Button("Implementer pane", id=TASK_DETAIL_IMPLEMENTER_BUTTON)
@@ -290,6 +297,13 @@ class TaskDetailPanel(Vertical):
             yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section", markup=False)
 
     async def on_mount(self) -> None:
+        self.disabled = self._task_id is None
+        identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        identity.update(
+            f"{self._task_id} · loading selected task"
+            if self._task_id is not None
+            else "Select a task to inspect it."
+        )
         self._refresh_worker = self.run_worker(self._refresh(), group=TASK_DETAIL_WORKER_GROUP)
         self._change_worker = self.run_worker(
             self._widget_context.on_change(self._refresh),
@@ -298,6 +312,7 @@ class TaskDetailPanel(Vertical):
         self._timeline_worker = self.run_worker(
             self._watch_timeline(), group=TASK_DETAIL_WORKER_GROUP
         )
+        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_live)
 
     def on_unmount(self) -> None:
         if self._refresh_worker is not None:
@@ -306,6 +321,49 @@ class TaskDetailPanel(Vertical):
             self._change_worker.cancel()
         if self._timeline_worker is not None:
             self._timeline_worker.cancel()
+        if self._remove_motion_callback is not None:
+            self._remove_motion_callback()
+            self._remove_motion_callback = None
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        parent = event.widget.parent
+        while parent is not None:
+            if parent.id == TASK_DETAIL_TOOLBAR:
+                self.query_one(f"#{TASK_DETAIL_TOOLBAR}", HorizontalScroll).scroll_to_widget(
+                    event.widget,
+                    animate=False,
+                )
+                return
+            parent = parent.parent
+
+    def select_task(self, task_id: str | None) -> None:
+        if task_id == self._task_id:
+            return
+        self._task_id = task_id
+        self._relationship_offset = 0
+        self._relationships_expanded = False
+        self._timeline_cursors = [None]
+        self._timeline_following = True
+        self._timeline_role = None
+        self._timeline_turn = None
+        self._timeline_category = TaskTimelineCategory.ACTIVITY.value
+        self._timeline_selected_identity = None
+        self._timeline_selected_entry = None
+        self._timeline_page = None
+        self._timeline_request_generation += 1
+        self.disabled = task_id is None
+        if not self.is_mounted:
+            return
+        identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        identity.update(
+            f"{task_id} · loading selected task"
+            if task_id is not None
+            else "Select a task to inspect it."
+        )
+        if task_id is None:
+            return
+        self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).scroll_to(y=0, animate=False)
+        self._queue_refresh()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         handlers = {
@@ -343,12 +401,15 @@ class TaskDetailPanel(Vertical):
     async def _watch_timeline(self) -> None:
         while True:
             await self._widget_context.clock.sleep(self._widget_context.timeline_refresh_seconds)
-            if self._timeline_following and self._screen_is_active():
+            if self._task_id is not None and self._timeline_following and self._screen_is_active():
                 await self._refresh_timeline()
 
     async def _refresh_timeline(self) -> None:
         async with self._refresh_lock:
             if not self._screen_is_active():
+                return
+            task_id = self._task_id
+            if task_id is None:
                 return
             generation = self._timeline_request_generation
             cursor = None if self._timeline_following else self._timeline_cursors[-1]
@@ -357,7 +418,7 @@ class TaskDetailPanel(Vertical):
             category = self._timeline_category
             try:
                 page = await self._widget_context.views.task_timeline(
-                    self._task_id,
+                    task_id,
                     cursor=cursor,
                     role=role,
                     turn=turn,
@@ -369,11 +430,18 @@ class TaskDetailPanel(Vertical):
                         f"Evidence timeline refresh failed: {error}"
                     )
                 return
-            if self._screen_is_active() and generation == self._timeline_request_generation:
+            if (
+                self._screen_is_active()
+                and task_id == self._task_id
+                and generation == self._timeline_request_generation
+            ):
                 self._render_timeline(page)
 
     def _screen_is_active(self) -> bool:
-        return self.is_mounted and self.screen.is_current
+        if not self.is_mounted:
+            return False
+        app = cast("App[None]", self.app)
+        return app.is_running and self.screen.is_current
 
     def _pause_timeline_follow(self) -> None:
         if not self._timeline_following:
@@ -443,6 +511,10 @@ class TaskDetailPanel(Vertical):
         if self._fixed:
             await self._navigate_home()
             return
+        if self._embedded:
+            if self._task_id is not None and self._widget_context.open_task_detail is not None:
+                await self._widget_context.open_task_detail(self._task_id)
+            return
         if self._close_detail is not None:
             await self._close_detail()
 
@@ -452,6 +524,8 @@ class TaskDetailPanel(Vertical):
         *,
         action: str | None = None,
     ) -> None:
+        if self._task_id is None:
+            return
         callback = self._widget_context.open_palette_context
         if callback is not None:
             await callback(
@@ -473,6 +547,9 @@ class TaskDetailPanel(Vertical):
         await self._open_palette(role)
 
     async def _navigate_task_window(self) -> None:
+        if self._task_id is None:
+            await self._show_navigation_result("Select a task before opening its window.")
+            return
         callback = self._widget_context.navigate_task_window
         await self._show_navigation_result(
             await callback(self._task_id)
@@ -481,6 +558,9 @@ class TaskDetailPanel(Vertical):
         )
 
     async def _navigate_role_pane(self, role: Role) -> None:
+        if self._task_id is None:
+            await self._show_navigation_result("Select a task before opening a role pane.")
+            return
         callback = self._widget_context.navigate_role_pane
         await self._show_navigation_result(
             await callback(self._task_id, role.value)
@@ -499,14 +579,20 @@ class TaskDetailPanel(Vertical):
     async def _show_navigation_result(self, result: str) -> None:
         self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update(result)
 
-    async def _refresh(self) -> None:
+    async def _refresh(self, *, include_timeline: bool = True) -> None:
         async with self._refresh_lock:
             if not self._screen_is_active():
+                return
+            task_id = self._task_id
+            if task_id is None:
+                self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(
+                    "Select a task to inspect it."
+                )
                 return
             generation = self._timeline_request_generation
             try:
                 view = await self._widget_context.views.task_detail(
-                    self._task_id,
+                    task_id,
                     relationship_offset=self._relationship_offset,
                     timeline_cursor=(
                         None if self._timeline_following else self._timeline_cursors[-1]
@@ -514,6 +600,7 @@ class TaskDetailPanel(Vertical):
                     timeline_role=self._timeline_role,
                     timeline_turn=self._timeline_turn,
                     timeline_category=self._timeline_category,
+                    include_timeline=include_timeline,
                 )
             except (ShikiruError, OSError, ValueError, TypeError) as error:
                 if self._screen_is_active() and generation == self._timeline_request_generation:
@@ -523,9 +610,11 @@ class TaskDetailPanel(Vertical):
                 return
             if not self._screen_is_active():
                 return
+            if self._task_id != task_id:
+                return
             if view is None:
                 self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(
-                    f"{self._task_id} · task record is unavailable"
+                    f"{task_id} · task record is unavailable"
                 )
                 self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update(
                     "Task state could not be read."
@@ -533,17 +622,31 @@ class TaskDetailPanel(Vertical):
                 return
             self._render_view(
                 view,
-                render_timeline=generation == self._timeline_request_generation,
+                render_timeline=(
+                    include_timeline and generation == self._timeline_request_generation
+                ),
             )
 
+    async def _refresh_live(self) -> None:
+        if self._task_id is not None and self._screen_is_active():
+            await self._refresh(include_timeline=False)
+
     def _queue_refresh(self) -> None:
+        if self._task_id is None:
+            return
         self.run_worker(
             self._refresh(),
             group=TASK_DETAIL_WORKER_GROUP,
             exclusive=False,
         )
 
+    def refresh_after_resume(self) -> None:
+        """Refresh the current task after this detail screen becomes active again."""
+        self._queue_refresh()
+
     def _render_view(self, view: TaskDetailView, *, render_timeline: bool = True) -> None:
+        body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
+        scroll_y = body.scroll_y
         action_role = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
         action_role.prompt = f"Acting · {view.acting_role.title()}"
         identity = (
@@ -603,6 +706,11 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_FACTS}", Static).update(facts)
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(_workspace_text(view))
         self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
+        body.call_after_refresh(self._restore_body_scroll, body, scroll_y)
+
+    def _restore_body_scroll(self, body: TaskDetailBody, scroll_y: int) -> None:
+        if self._screen_is_active():
+            body.scroll_to(y=scroll_y, animate=False)
 
     def _render_timeline(self, page: TaskTimelinePageView | None) -> None:
         self._timeline_page = page

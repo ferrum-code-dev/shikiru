@@ -167,6 +167,8 @@ probe_stream_tail_lines = 20                    # stream lines shown when a prob
 | MCP `wait_for_events` max timeout | 300 s |
 | Dashboard motion cap | 4 Hz |
 
+The dashboard keeps this refresh cadence when `animations = false` and under `NO_COLOR` or `TERM=dumb`; those settings change presentation, not countdown or durable-state freshness. Motion work is limited to current projections, ages, countdowns and bounded normalized signal tails. Timeline pages keep their own interval. Report/facts files are cached by their file identities, escalation packet text by file identity, and parsed packet evidence by packet content, so an unrelated database revision does not reread or reparse those files on every motion tick. Layout limits remain named UI constants; no dashboard breakpoint setting is exposed.
+
 **Operational intervals** use the defaults below and can be set in the project config:
 
 | Setting | Default |

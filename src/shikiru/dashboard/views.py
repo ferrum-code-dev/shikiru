@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 from shikiru.agents.contracts import FailureKind
@@ -132,6 +132,14 @@ _QUOTA_TURN_LIFECYCLE = (
     EventKind.TURN_STOPPED,
     EventKind.RUNG_CHANGED,
 )
+StructuredEscalationEvidence = tuple[str, dict[ResolutionKind, str], tuple[str, ...]]
+
+
+@dataclass(frozen=True)
+class _StructuredEscalationCache:
+    packet: str | None
+    packet_error: str | None
+    evidence: StructuredEscalationEvidence
 
 
 class DashboardSources(Protocol):
@@ -187,6 +195,7 @@ class StateDashboardViews:
         self._task_usage_cache: dict[str, list[UsageView]] = {}
         self._escalation_version = -1
         self._escalation_cache: list[EscalationView] | None = None
+        self._structured_escalation_cache: dict[str, _StructuredEscalationCache] = {}
         self._fault_version = -1
         self._fault_cache: tuple[FaultStreak, ...] | None = None
 
@@ -534,22 +543,18 @@ class StateDashboardViews:
 
     def _decision_views(self, now: datetime) -> dict[str, EscalationPanelView]:
         items = self._cached_escalations()
+        open_ids = {item.escalation.id for item in items}
+        self._structured_escalation_cache = {
+            escalation_id: cached
+            for escalation_id, cached in self._structured_escalation_cache.items()
+            if escalation_id in open_ids
+        }
         pulse = self._motion.frames((), now, escalations_open=bool(items)).escalation_red
         tasks = {task.id: task for task in self._state.list_tasks()}
         result: dict[str, EscalationPanelView] = {}
         for item in items:
             escalation = item.escalation
-            question = ""
-            consequences: dict[ResolutionKind, str] = {}
-            evidence_errors = [item.packet_error] if item.packet_error is not None else []
-            if item.packet is not None:
-                packet = parse_escalation_packet(item.packet)
-                evidence_errors.extend(packet.errors)
-                if packet.agent_request is not None:
-                    question = packet.agent_request.question
-                elif packet.question is not None:
-                    question = packet.question
-                consequences = {item.kind: item.consequences for item in packet.resolutions}
+            question, consequences, evidence_errors = self._structured_escalation(item)
             task = tasks.get(escalation.task_id)
             result[escalation.id] = EscalationPanelView(
                 escalation_id=escalation.id,
@@ -569,6 +574,39 @@ class StateDashboardViews:
                 evidence_error="; ".join(evidence_errors) if evidence_errors else None,
             )
         return result
+
+    def _structured_escalation(
+        self,
+        item: EscalationView,
+    ) -> tuple[str, dict[ResolutionKind, str], tuple[str, ...]]:
+        escalation_id = item.escalation.id
+        cached = self._structured_escalation_cache.get(escalation_id)
+        if (
+            cached is not None
+            and cached.packet == item.packet
+            and cached.packet_error == item.packet_error
+        ):
+            return cached.evidence
+        question = ""
+        consequences: dict[ResolutionKind, str] = {}
+        errors = [item.packet_error] if item.packet_error is not None else []
+        if item.packet is not None:
+            packet = parse_escalation_packet(item.packet)
+            errors.extend(packet.errors)
+            if packet.agent_request is not None:
+                question = packet.agent_request.question
+            elif packet.question is not None:
+                question = packet.question
+            consequences = {
+                resolution.kind: resolution.consequences for resolution in packet.resolutions
+            }
+        cached = question, consequences, tuple(errors)
+        self._structured_escalation_cache[escalation_id] = _StructuredEscalationCache(
+            packet=item.packet,
+            packet_error=item.packet_error,
+            evidence=cached,
+        )
+        return cached
 
     def _dialogue_view(self, task_id: str | None = None) -> list[DialogueBubbleView]:
         now = self._clock.now()
@@ -673,23 +711,26 @@ class StateDashboardViews:
         timeline_role: str | None = None,
         timeline_turn: str | None = None,
         timeline_category: str = DEFAULT_TASK_TIMELINE_CATEGORY,
+        include_timeline: bool = True,
     ) -> TaskDetailView | None:
         """Project current task state and its bounded, recorded evidence for the detail view."""
         detail = await self._queries.get_task_detail(task_id)
         if detail is None:
             return None
-        try:
-            timeline_view = await self.task_timeline(
-                task_id,
-                cursor=timeline_cursor,
-                role=timeline_role,
-                turn=timeline_turn,
-                category=timeline_category,
-            )
-        except (ShikiruError, OSError, ValueError, TypeError) as error:
-            timeline_view = _timeline_read_error(error, role=timeline_role, turn=timeline_turn)
-        if timeline_view is None:
-            return None
+        timeline_view = None
+        if include_timeline:
+            try:
+                timeline_view = await self.task_timeline(
+                    task_id,
+                    cursor=timeline_cursor,
+                    role=timeline_role,
+                    turn=timeline_turn,
+                    category=timeline_category,
+                )
+            except (ShikiruError, OSError, ValueError, TypeError) as error:
+                timeline_view = _timeline_read_error(error, role=timeline_role, turn=timeline_turn)
+            if timeline_view is None:
+                return None
         task = detail.task
         now = self._clock.now()
         triage = next(

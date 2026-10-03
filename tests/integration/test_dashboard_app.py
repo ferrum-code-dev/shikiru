@@ -1,24 +1,35 @@
 from __future__ import annotations
 
+import errno
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from textual.containers import VerticalScroll
-from textual.widgets import Button, DataTable, Static, TextArea
+from textual.containers import Horizontal, VerticalScroll
+from textual.widgets import Button, DataTable, Input, ListView, Static, TextArea
 
 import shikiru.agents.registry as registry_module
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
+from shikiru.dashboard.detail import (
+    TASK_DETAIL_ACTIONS_BUTTON,
+    TASK_DETAIL_BODY,
+    TASK_DETAIL_OWNERSHIP,
+    TASK_DETAIL_TIMELINE_TURN,
+    TaskDetailScreen,
+)
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.commands import Prioritize, Stop
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, ReportKind
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import Hold, Mode, Status
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
+from shikiru.paths import turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.store.commands import CommandQueue
@@ -140,9 +151,38 @@ def _app(
     )
 
 
-def _motion_interval(project_dir: Path) -> float | None:
+def _motion_interval(project_dir: Path) -> float:
     dashboard = load_settings(project_dir).dashboard
-    return 1 / dashboard.motion.refresh_hz if dashboard.animations else None
+    return 1 / dashboard.motion.refresh_hz
+
+
+def _open_report_writer(writer_descriptors: dict[Path, int], report_path: Path) -> bool:
+    if report_path in writer_descriptors:
+        return True
+    try:
+        writer_descriptors[report_path] = os.open(report_path, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError as error:
+        if error.errno == errno.ENXIO:
+            return False
+        raise
+    return True
+
+
+def _finish_report_read(
+    report_path: Path,
+    writer_descriptors: dict[Path, int],
+    report_text: str,
+) -> None:
+    descriptor = writer_descriptors.pop(report_path, None)
+    if descriptor is None:
+        try:
+            descriptor = os.open(report_path, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as error:
+            if error.errno == errno.ENXIO:
+                return
+            raise
+    os.write(descriptor, report_text.encode())
+    os.close(descriptor)
 
 
 async def test_dashboard_app_rejects_an_unregistered_widget_name(
@@ -486,6 +526,263 @@ async def test_narrow_dashboard_keeps_command_controls_reachable(
             page = cast("Static", app.screen.query_one("#command-history-page"))
             assert "all statuses" in _rendered_text(page)
     finally:
+        reader.close()
+
+
+async def test_home_resizes_through_the_terminal_matrix_without_losing_selection_or_focus(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NO_COLOR", "1")
+    project_dir = write_minimal_project(tmp_path)
+    task = seed_task(
+        connection, SystemClock(), title="Responsive selected task", mode=Mode.IMPLEMENT
+    )
+    reader = StateReader(database, SystemClock())
+
+    try:
+        app = _app(reader, project_dir, widget_names=["queue"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            identity = app.query_one("#task-detail-identity", Static)
+            await wait_until(lambda: task.title in _rendered_text(identity), timeout=2)
+            home_layout = app.query_one("#home-browser-detail", Horizontal)
+            queue_panel = app.query_one("#queue")
+            detail_panel = app.query_one("#task-detail-panel")
+            assert queue_panel.region.right <= detail_panel.region.x
+            assert detail_panel.region.width > 0
+
+            search = app.query_one("#task-browser-search", Input)
+            search.value = task.id
+            search.focus()
+            list_view = app.query_one("#task-browser-list", ListView)
+            await wait_until(
+                lambda: (
+                    task.title in _rendered_text(identity)
+                    and f"task-row-{task.id}" in {item.id for item in list_view.children}
+                ),
+                timeout=2,
+            )
+            assert list_view.index == 0
+            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
+
+            for width, height in ((48, 20), (36, 20), (48, 14), (20, 8)):
+                await pilot.resize_terminal(width, height)
+                await pilot.pause()
+                assert app.focused is search
+                assert search.value == task.id
+                assert task.title in _rendered_text(identity)
+                assert home_layout.region.width <= width
+                assert detail_panel.region.width > 0
+                assert detail_panel.region.right <= width
+                assert detail_panel.region.y >= queue_panel.region.bottom
+                dashboard.scroll_to_widget(identity, animate=False)
+                await pilot.pause()
+                assert identity.region.overlaps(dashboard.region)
+                if (width, height) == (36, 20):
+                    controls = app.query_one("#workspace-footer-controls")
+                    assert controls.region.bottom <= height
+                    assert app.query_one("#workspace-footer-copy", Static).region.bottom <= height
+                if height <= 14:
+                    assert app.query_one("#workspace-summary").region.height <= 1
+    finally:
+        reader.close()
+
+
+async def test_home_help_works_with_mouse_and_keyboard_without_color(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NO_COLOR", "1")
+    project_dir = write_minimal_project(tmp_path)
+    seed_task(connection, SystemClock(), title="Help in compact Home")
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=["queue"])
+        async with app.run_test(size=(36, 20)) as pilot:
+            await pilot.click("#workspace-help")
+            await pilot.pause()
+            assert "Mouse: choose a section" in _rendered_text(
+                app.screen.query_one("#workspace-help-copy", Static)
+            )
+            await pilot.press("escape")
+            await pilot.pause()
+            assert await pilot.click("#workspace-help")
+            await pilot.pause()
+            assert app.screen.query_one("#workspace-help-copy", Static).display
+            await pilot.press("escape")
+    finally:
+        reader.close()
+
+
+async def test_task_detail_toolbar_and_timeline_form_remain_reachable_after_resize(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    task = seed_task(connection, SystemClock(), title="Accessible task detail")
+    reader = StateReader(database, SystemClock())
+    palette_requests: list[PaletteRequest] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        palette_requests.append(request)
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue"],
+            open_palette_context=open_palette_context,
+        )
+        async with app.run_test(size=(36, 20)) as pilot:
+            search = app.query_one("#task-browser-search", Input)
+            search.value = task.id
+            search.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+            action_button = app.screen.query_one(f"#{TASK_DETAIL_ACTIONS_BUTTON}", Button)
+            await _assert_task_detail_toolbar_controls_are_reachable(app, pilot)
+            timeline_turn = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
+            detail_body = app.screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+            timeline_turn.value = "3"
+            timeline_turn.focus()
+            await pilot.pause()
+            assert timeline_turn.region.overlaps(detail_body.region)
+            assert detail_body.scroll_y > 0
+            await pilot.resize_terminal(48, 14)
+            await pilot.pause()
+            assert app.focused is timeline_turn
+            assert timeline_turn.value == "3"
+            assert timeline_turn.region.overlaps(detail_body.region)
+            action_button.focus()
+            await pilot.pause()
+            reading_scroll = detail_body.scroll_y
+            await pilot.resize_terminal(36, 20)
+            await pilot.pause()
+            assert app.focused is action_button
+            assert detail_body.scroll_y == reading_scroll
+            assert action_button.region.x >= 0
+            assert action_button.region.right <= app.size.width
+            await pilot.press("enter")
+            assert palette_requests[-1].task_id == task.id
+    finally:
+        reader.close()
+
+
+async def _assert_task_detail_toolbar_controls_are_reachable(
+    app: DashboardApp,
+    pilot: Pilot[None],
+) -> None:
+    toolbar = app.screen.query_one("#task-detail-toolbar")
+    for control in toolbar.query(Button):
+        if control.disabled:
+            continue
+        control.focus()
+        await pilot.pause()
+        assert control.region.width > 0
+        assert control.region.x >= 0
+        assert control.region.right <= app.size.width
+        assert control.region.overlaps(toolbar.region)
+
+
+async def test_home_shared_detail_refreshes_after_task_detail_closes(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    task = seed_task(connection, SystemClock(), title="Home detail resumes fresh")
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=["queue"])
+        async with app.run_test(size=(48, 20)) as pilot:
+            search = app.query_one("#task-browser-search", Input)
+            identity = app.query_one("#task-detail-identity", Static)
+            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+            search.value = task.id
+            search.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+            TaskStore(connection, SystemClock()).set_holds(task.id, frozenset({Hold.PAUSED}))
+            assert Hold.PAUSED.value not in _rendered_text(ownership)
+            await pilot.press("escape")
+            await wait_until(
+                lambda: "Home detail resumes fresh" in _rendered_text(identity), timeout=2
+            )
+            await wait_until(
+                lambda: Hold.PAUSED.value in _rendered_text(ownership),
+                timeout=2,
+            )
+            assert search.value == task.id
+    finally:
+        reader.close()
+
+
+async def test_home_selection_discards_detail_result_from_an_in_flight_report_read(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    first = seed_task(connection, SystemClock(), title="First delayed report")
+    second = seed_task(connection, SystemClock(), title="Second delayed report")
+    report_text = (
+        '{"title":"Loaded report","mode":"implement","complexity":"normal",'
+        '"acceptance_criteria":[],"references":[]}'
+    )
+    report_paths = {
+        task.id: turns_dir(project_dir, task.id) / "01-triage-i0" / REPORT_FILENAME
+        for task in (first, second)
+    }
+    for report_path in report_paths.values():
+        report_path.parent.mkdir(parents=True)
+        (report_path.parent / REPORT_KIND_FILENAME).write_text(ReportKind.TRIAGE.value)
+        os.mkfifo(report_path)
+    writer_descriptors: dict[Path, int] = {}
+
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=["queue"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            identity = app.query_one("#task-detail-identity", Static)
+            await wait_until(
+                lambda: _open_report_writer(writer_descriptors, report_paths[first.id]), timeout=2
+            )
+            assert first.id in _rendered_text(identity)
+
+            search = app.query_one("#task-browser-search", Input)
+            search.value = second.id
+            list_view = app.query_one("#task-browser-list", ListView)
+            await wait_until(
+                lambda: f"task-row-{second.id}" in {item.id for item in list_view.children},
+                timeout=2,
+            )
+            list_view.focus()
+            await pilot.press("down")
+            await wait_until(
+                lambda: _rendered_text(identity) == f"{second.id} · loading selected task",
+                timeout=2,
+            )
+            _finish_report_read(report_paths[first.id], writer_descriptors, report_text)
+            await wait_until(
+                lambda: _open_report_writer(writer_descriptors, report_paths[second.id]), timeout=2
+            )
+            assert _rendered_text(identity) == f"{second.id} · loading selected task"
+
+            _finish_report_read(report_paths[second.id], writer_descriptors, report_text)
+            await wait_until(lambda: second.title in _rendered_text(identity), timeout=2)
+            assert first.title not in _rendered_text(identity)
+    finally:
+        for report_path in report_paths.values():
+            _finish_report_read(report_path, writer_descriptors, report_text)
         reader.close()
 
 

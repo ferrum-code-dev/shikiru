@@ -29,7 +29,14 @@ from shikiru.domain.commands import (
 from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
-from shikiru.domain.reports import FACTS_FILENAME, Report, ReportKind
+from shikiru.domain.reports import (
+    FACTS_FILENAME,
+    HELPER_REPORT_FILENAME,
+    REPORT_FILENAME,
+    REPORT_KIND_FILENAME,
+    Report,
+    ReportKind,
+)
 from shikiru.domain.runs import Run, RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import task_acting_role
@@ -68,6 +75,7 @@ from shikiru.store.escalations import Escalation
 from shikiru.telemetry.disk import directory_usage
 from shikiru.view_log import ordered_turn_dirs, read_tail_lines, view_log_path
 from shikiru.workspace.reports import (
+    ENGINE_VERDICT_FILENAME,
     InvalidTurnReportError,
     load_engine_verdict,
     load_turn_report,
@@ -254,6 +262,33 @@ class TaskDetail(OperatorView):
     sessions: list[Run] = Field(default_factory=list)
 
 
+type TaskStaticFileEvidence = tuple[
+    list[ReportRow],
+    str | None,
+    str | None,
+    list[str],
+]
+type FileIdentity = tuple[str, int | None, int | None, int | None, str | None]
+type TaskFileSignature = tuple[FileIdentity, ...]
+
+
+@dataclass(frozen=True)
+class TaskFileCache:
+    task_id: str
+    data_version: int
+    roles: tuple[str, ...]
+    signature: TaskFileSignature
+    static_files: TaskStaticFileEvidence
+
+
+@dataclass(frozen=True)
+class PacketFileCache:
+    modified_ns: int
+    changed_ns: int
+    size: int
+    text: str
+
+
 class EscalationView(OperatorView):
     """An escalation row and its packet text."""
 
@@ -363,6 +398,8 @@ class OperatorQueries:
         self._engine_up = engine_up
         self._max_parallel = max_parallel
         self._clock = clock
+        self._task_detail_file_cache: TaskFileCache | None = None
+        self._escalation_packet_cache: dict[Path, PacketFileCache] = {}
 
     def status(self, task_id: str | None = None) -> StatusView:
         """Return the global status view, optionally including one task's detail."""
@@ -528,12 +565,46 @@ class OperatorQueries:
             return None
         runs = self._reader.list_runs(task_id)
         events = self._reader.latest_events(TASK_DETAIL_EVENT_LIMIT, task_id=task_id)
-        files = await asyncio.to_thread(
-            self._task_files,
-            task_id,
-            tuple(dict.fromkeys(run.role.value for run in runs)),
-        )
-        reports, signals, recorded_facts, facts_turn, evidence_errors = files
+        roles = tuple(dict.fromkeys(run.role.value for run in runs))
+        data_version = self._reader.data_version()
+        cached = self._task_detail_file_cache
+        signature = cached.signature if cached is not None else ()
+        if cached is not None and cached.task_id == task_id and cached.roles == roles:
+            if cached.data_version != data_version:
+                signature = await asyncio.to_thread(self._task_file_signature, task_id)
+            if signature == cached.signature:
+                static_files = cached.static_files
+                self._task_detail_file_cache = TaskFileCache(
+                    task_id,
+                    data_version,
+                    roles,
+                    signature,
+                    static_files,
+                )
+            else:
+                signature, static_files = await asyncio.to_thread(
+                    self._task_static_files_with_signature, task_id
+                )
+                self._task_detail_file_cache = TaskFileCache(
+                    task_id,
+                    data_version,
+                    roles,
+                    signature,
+                    static_files,
+                )
+        else:
+            signature, static_files = await asyncio.to_thread(
+                self._task_static_files_with_signature, task_id
+            )
+            self._task_detail_file_cache = TaskFileCache(
+                task_id,
+                data_version,
+                roles,
+                signature,
+                static_files,
+            )
+        reports, recorded_facts, facts_turn, evidence_errors = static_files
+        signals, signal_errors = await asyncio.to_thread(self._task_signals, task_id, roles)
         return TaskDetail(
             task=task,
             events=events,
@@ -541,7 +612,7 @@ class OperatorQueries:
             signals=signals,
             recorded_facts=recorded_facts,
             facts_turn=facts_turn,
-            evidence_errors=evidence_errors,
+            evidence_errors=[*evidence_errors, *signal_errors],
             branches=[task.repo.branch] if task.repo is not None else [],
             sessions=runs,
         )
@@ -741,6 +812,12 @@ class OperatorQueries:
         """Return every durable open decision with packet text or its read error."""
         escalations = self._reader.list_open_escalations()
         escalations.sort(key=lambda item: (item.created_at, item.id))
+        packet_paths = {self._packet_path(item) for item in escalations}
+        self._escalation_packet_cache = {
+            path: cached
+            for path, cached in self._escalation_packet_cache.items()
+            if path in packet_paths
+        }
         return [self._escalation_view(escalation) for escalation in escalations]
 
     def get_escalation(self, escalation_id: str) -> EscalationView | None:
@@ -811,17 +888,39 @@ class OperatorQueries:
         return PeekView(task_id=task_id, panes=panes)
 
     def _packet_text(self, escalation: Escalation) -> str:
-        packet_path = Path(escalation.packet_path)
-        if not packet_path.is_absolute():
-            packet_path = self._project_root / packet_path
-        if not packet_path.is_file():
-            message = f"escalation packet is missing: {packet_path}"
-            raise OperatorQueryError(message)
+        packet_path = self._packet_path(escalation)
         try:
-            return packet_path.read_text()
+            info = packet_path.stat()
+        except FileNotFoundError:
+            message = f"escalation packet is missing: {packet_path}"
+            raise OperatorQueryError(message) from None
+        except OSError as error:
+            message = f"cannot inspect escalation packet {packet_path}: {error}"
+            raise OperatorQueryError(message) from error
+        cached = self._escalation_packet_cache.get(packet_path)
+        if (
+            cached is not None
+            and cached.modified_ns == info.st_mtime_ns
+            and cached.changed_ns == info.st_ctime_ns
+            and cached.size == info.st_size
+        ):
+            return cached.text
+        try:
+            packet = packet_path.read_text()
         except (OSError, UnicodeError) as error:
             message = f"cannot read escalation packet {packet_path}: {error}"
             raise OperatorQueryError(message) from error
+        self._escalation_packet_cache[packet_path] = PacketFileCache(
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+            info.st_size,
+            packet,
+        )
+        return packet
+
+    def _packet_path(self, escalation: Escalation) -> Path:
+        packet_path = Path(escalation.packet_path)
+        return packet_path if packet_path.is_absolute() else self._project_root / packet_path
 
     def _reports(self, task_id: str) -> list[ReportRow]:
         task_turns_dir = turns_dir(self._project_root, task_id)
@@ -840,24 +939,53 @@ class OperatorQueries:
                 )
         return reports
 
-    def _task_files(
+    def _task_static_files_with_signature(
         self,
         task_id: str,
-        roles: tuple[str, ...],
-    ) -> tuple[list[ReportRow], dict[str, list[str]], str | None, str | None, list[str]]:
+    ) -> tuple[TaskFileSignature, TaskStaticFileEvidence]:
+        return self._task_file_signature(task_id), self._task_static_files(task_id)
+
+    def _task_file_signature(self, task_id: str) -> TaskFileSignature:
+        task_turns_dir = turns_dir(self._project_root, task_id)
         turn_dirs, errors = self._task_turn_dirs(task_id)
-        signals, signal_errors = self._task_signals(task_id, roles)
         if turn_dirs is None:
-            return [], signals, None, None, [*errors, *signal_errors]
+            return ((str(task_turns_dir), None, None, None, "; ".join(errors)),)
+        filenames = (
+            FACTS_FILENAME,
+            REPORT_KIND_FILENAME,
+            REPORT_FILENAME,
+            HELPER_REPORT_FILENAME,
+            ENGINE_VERDICT_FILENAME,
+        )
+        signature: list[FileIdentity] = []
+        for turn_dir in turn_dirs:
+            for filename in filenames:
+                path = turn_dir / filename
+                try:
+                    info = path.stat()
+                except FileNotFoundError:
+                    signature.append((str(path), None, None, None, None))
+                except OSError as error:
+                    signature.append((str(path), None, None, None, str(error)))
+                else:
+                    signature.append(
+                        (
+                            str(path),
+                            info.st_mtime_ns,
+                            info.st_ctime_ns,
+                            info.st_size,
+                            None,
+                        )
+                    )
+        return tuple(signature)
+
+    def _task_static_files(self, task_id: str) -> TaskStaticFileEvidence:
+        turn_dirs, errors = self._task_turn_dirs(task_id)
+        if turn_dirs is None:
+            return [], None, None, errors
         reports, report_errors = self._task_reports(turn_dirs)
         recorded_facts, facts_turn, fact_errors = _task_facts(turn_dirs)
-        return (
-            reports,
-            signals,
-            recorded_facts,
-            facts_turn,
-            [*errors, *report_errors, *fact_errors, *signal_errors],
-        )
+        return reports, recorded_facts, facts_turn, [*errors, *report_errors, *fact_errors]
 
     def _task_turn_dirs(self, task_id: str) -> tuple[list[Path] | None, list[str]]:
         task_turns_dir = turns_dir(self._project_root, task_id)

@@ -838,11 +838,11 @@ Refs: Workspace §12, 01 D21/D23, 04 §1, 06 §5.4.
 
 ### Task 85: Responsive layouts and accessible refresh behaviour
 Refs: Workspace §7/§13–14, 06 §5.4/§6, 07 §3.
-- [ ] Choose wide browser/detail or compact list/detail from actual pane dimensions. At 48 and 36 columns keep task ID/title, state, hold/blocker and all action/result controls reachable; short panes collapse summaries and keep content scrollable.
-- [ ] Resizing preserves selection, focus, search and scroll; focused rows/forms remain visible. Footer/help, keyboard and mouse paths operate under `NO_COLOR` and disabled animation with textual state/ownership cues.
-- [ ] Preserve the signal-driven motion rules and 4 Hz cap; static motion settings still allow state/countdown refresh. No tmux split rearrangement or blank/clipped critical panels is introduced.
-- [ ] Document named layout limits, compact strip/row forms and terminal support in 05/06/07. Retain the snapshot limit and avoid operator breakpoint settings without a concrete need.
-- Tests: Textual size/interaction matrix for wide, 48-column, 36-column, short and very small panes, monochrome and static frames. Assert reachable critical content, stable identity/focus and width bounds; visually inspect representative home/task/form states and record findings.
+- [x] Choose wide browser/detail or compact list/detail from actual pane dimensions. At 48 and 36 columns keep task ID/title, state, hold/blocker and all action/result controls reachable; short panes collapse summaries and keep content scrollable.
+- [x] Resizing preserves selection, focus, search and scroll; focused rows/forms remain visible. Footer/help, keyboard and mouse paths operate under `NO_COLOR` and disabled animation with textual state/ownership cues.
+- [x] Preserve the signal-driven motion rules and 4 Hz cap; static motion settings still allow state/countdown refresh. No tmux split rearrangement or blank/clipped critical panels is introduced.
+- [x] Document named layout limits, compact strip/row forms and terminal support in 05/06/07. Retain the snapshot limit and avoid operator breakpoint settings without a concrete need.
+- [x] Tests: Textual size/interaction matrix for wide, 48-column, 36-column, short and very small panes, monochrome and static frames. Assert reachable critical content, stable identity/focus and width bounds; visually inspect representative home/task/form states and record findings.
 
 ### Task 86: Markdown and JSON evidence export
 Refs: Workspace §11/§15, 02 §2, 05 §3, 06 §5.5.

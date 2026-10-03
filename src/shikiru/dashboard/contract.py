@@ -61,7 +61,7 @@ DEFAULT_TASK_TIMELINE_CATEGORY = TaskTimelineCategory.ACTIVITY
 DEFAULT_TASK_TIMELINE_REFRESH_SECONDS = 1
 OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
-MotionRegistration = Callable[[OnChange], None]
+MotionRegistration = Callable[[OnChange], Callable[[], None]]
 
 
 @dataclass(frozen=True)
@@ -618,6 +618,7 @@ class DashboardViews(Protocol):
         timeline_role: str | None = None,
         timeline_turn: str | None = None,
         timeline_category: str = DEFAULT_TASK_TIMELINE_CATEGORY,
+        include_timeline: bool = True,
     ) -> TaskDetailView | None:
         """Return task state, recorded workspace evidence and one bounded timeline page."""
         ...
