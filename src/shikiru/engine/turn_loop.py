@@ -14,6 +14,8 @@ from shikiru.engine.turns import TurnHeld
 from shikiru.errors import InvariantError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from shikiru.domain.recovery import TurnCounters
     from shikiru.domain.reports import Report, ReportKind
     from shikiru.domain.tasks import Role, Step, Task
@@ -170,17 +172,22 @@ class TurnLoop:
                 usage_before=usage_before,
                 usage_after=usage_before,
             )
-        emit_turn_started(self._events, task, step, role, selection.rung)
+        turn_name: str | None = None
+
+        def on_start(turn_dir: Path) -> None:
+            nonlocal turn_name
+            turn_name = turn_dir.name
+            emit_turn_started(self._events, task, step, role, selection.rung, turn=turn_name)
 
         def on_nudge() -> None:
-            emit_nudge(self._events, task, step, role)
+            emit_nudge(self._events, task, step, role, turn=turn_name)
 
         try:
             result, turn_dir, selection = await self._turns.run(
-                task, role, selection, turn_request, on_nudge=on_nudge
+                task, role, selection, turn_request, on_start=on_start, on_nudge=on_nudge
             )
         except BaseException as stop:
-            emit_turn_stopped(self._events, task, step, role)
+            emit_turn_stopped(self._events, task, step, role, turn=turn_name)
             if isinstance(stop, TurnHeld):
                 return None
             raise

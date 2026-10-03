@@ -110,6 +110,8 @@ def widget_context(
         focus_task=None,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
+        clock=clock,
         on_change=reader.watch,
         on_motion=lambda _: None,
         open_palette=open_palette or ignore_palette_action,

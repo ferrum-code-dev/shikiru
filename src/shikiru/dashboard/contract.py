@@ -13,12 +13,52 @@ if TYPE_CHECKING:
     from textual.widget import Widget
 
     from shikiru.agents.contracts import CostBasis
+    from shikiru.clock import Clock
     from shikiru.domain.tasks import Role
     from shikiru.ui.strip import TaskStripData
+
+from shikiru.domain.timeline import (
+    TIMELINE_ACTIVITY_CATEGORY,
+    TIMELINE_ALL_CATEGORY,
+    TIMELINE_DECISION_CATEGORY,
+    TIMELINE_ENGINE_CATEGORY,
+    TIMELINE_MESSAGE_CATEGORY,
+    TIMELINE_SIGNAL_CATEGORY,
+    TIMELINE_SOURCE_AGENT,
+    TIMELINE_SOURCE_ENGINE,
+    TIMELINE_TOOL_CATEGORY,
+    TIMELINE_TRANSITION_CATEGORY,
+    TIMELINE_USAGE_CATEGORY,
+)
 
 WIDGET_ENTRY_POINT_GROUP = "shikiru.widgets"
 TASK_STATUS_QUEUED = "queued"
 TASK_TERMINAL_STATUSES = frozenset({"done", "cancelled"})
+
+
+class TaskTimelineCategory(StrEnum):
+    """A timeline category exposed by the dashboard contract."""
+
+    ACTIVITY = TIMELINE_ACTIVITY_CATEGORY
+    ALL = TIMELINE_ALL_CATEGORY
+    DECISION = TIMELINE_DECISION_CATEGORY
+    ENGINE = TIMELINE_ENGINE_CATEGORY
+    MESSAGE = TIMELINE_MESSAGE_CATEGORY
+    SIGNAL = TIMELINE_SIGNAL_CATEGORY
+    TOOL = TIMELINE_TOOL_CATEGORY
+    TRANSITION = TIMELINE_TRANSITION_CATEGORY
+    USAGE = TIMELINE_USAGE_CATEGORY
+
+
+class TaskTimelineSource(StrEnum):
+    """A persisted evidence source exposed by the dashboard contract."""
+
+    AGENT = TIMELINE_SOURCE_AGENT
+    ENGINE = TIMELINE_SOURCE_ENGINE
+
+
+DEFAULT_TASK_TIMELINE_CATEGORY = TaskTimelineCategory.ACTIVITY
+DEFAULT_TASK_TIMELINE_REFRESH_SECONDS = 1
 OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
 MotionRegistration = Callable[[OnChange], None]
@@ -233,6 +273,32 @@ class TaskSignalView:
 
 
 @dataclass(frozen=True)
+class TaskTimelineEntryView:
+    """One recorded engine event or normalized agent signal with stable identity."""
+
+    identity: str
+    timestamp: str | None
+    timestamp_error: str | None
+    source: str
+    category: str
+    summary: str
+    detail: str
+    role: str | None
+    turn: str | None
+    event_id: int | None
+    incomplete: bool
+
+
+@dataclass(frozen=True)
+class TaskTimelinePageView:
+    """A bounded newest-first task evidence page with an older-page cursor."""
+
+    entries: tuple[TaskTimelineEntryView, ...]
+    older_cursor: str | None
+    has_older: bool
+
+
+@dataclass(frozen=True)
 class GlobalAttentionView:
     """Compact project-wide counts displayed in task detail."""
 
@@ -307,6 +373,7 @@ class TaskDetailView:
     blocker: TaskBlockerView | None = None
     submitted_age: str = ""
     requeued_age: str | None = None
+    timeline: TaskTimelinePageView | None = None
 
 
 @dataclass(frozen=True)
@@ -496,9 +563,28 @@ class DashboardViews(Protocol):
         ...
 
     async def task_detail(
-        self, task_id: str, *, relationship_offset: int = 0
+        self,
+        task_id: str,
+        *,
+        relationship_offset: int = 0,
+        timeline_cursor: str | None = None,
+        timeline_role: str | None = None,
+        timeline_turn: str | None = None,
+        timeline_category: str = DEFAULT_TASK_TIMELINE_CATEGORY,
     ) -> TaskDetailView | None:
-        """Return task state and its recorded report, signal and workspace evidence."""
+        """Return task state, recorded workspace evidence and one bounded timeline page."""
+        ...
+
+    async def task_timeline(
+        self,
+        task_id: str,
+        *,
+        cursor: str | None,
+        role: str | None,
+        turn: str | None,
+        category: str,
+    ) -> TaskTimelinePageView | None:
+        """Return only a bounded timeline page for state and signal refreshes."""
         ...
 
     def escalations(self) -> list[EscalationPanelView]:
@@ -555,6 +641,8 @@ class WidgetContext:
     focus_task: str | None
     resources_refresh_seconds: float
     docker_refresh_seconds: float
+    timeline_refresh_seconds: float
+    clock: Clock
     on_change: OnChangeRegistration
     on_motion: MotionRegistration
     open_palette: OpenPalette

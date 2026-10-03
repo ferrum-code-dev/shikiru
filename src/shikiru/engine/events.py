@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from shikiru.engine.turn_execution import TurnExecution
     from shikiru.store.events import EventLog
 
+TURN_FIELD = "turn"
+
 
 def emit_step_started(events: EventLog, task: Task, settings: Settings) -> None:
     """Record the selected role and rung when a task step starts."""
@@ -48,7 +50,15 @@ def emit_step_started(events: EventLog, task: Task, settings: Settings) -> None:
     )
 
 
-def emit_turn_started(events: EventLog, task: Task, step: Step, role: Role, rung: Rung) -> None:
+def emit_turn_started(
+    events: EventLog,
+    task: Task,
+    step: Step,
+    role: Role,
+    rung: Rung,
+    *,
+    turn: str | None = None,
+) -> None:
     """Record that `role` started its `step` turn on `rung`."""
     events.append(
         EventKind.TURN_STARTED,
@@ -60,31 +70,48 @@ def emit_turn_started(events: EventLog, task: Task, step: Step, role: Role, rung
             "iteration": task.iteration,
             "agent": rung.agent,
             "model": rung.model,
+            **_turn_data(turn),
         },
     )
 
 
-def emit_turn_stopped(events: EventLog, task: Task, step: Step, role: Role) -> None:
+def emit_turn_stopped(
+    events: EventLog, task: Task, step: Step, role: Role, *, turn: str | None = None
+) -> None:
     """Record that `role`'s `step` turn ended without a result because the task was stopped."""
     events.append(
         EventKind.TURN_STOPPED,
         task_id=task.id,
         message=f"{task.id} {role.value} turn stopped",
-        data={"step": step.value, "role": role.value, "iteration": task.iteration},
+        data={
+            "step": step.value,
+            "role": role.value,
+            "iteration": task.iteration,
+            **_turn_data(turn),
+        },
     )
 
 
-def emit_nudge(events: EventLog, task: Task, step: Step, role: Role) -> None:
+def emit_nudge(
+    events: EventLog, task: Task, step: Step, role: Role, *, turn: str | None = None
+) -> None:
     """Record that the engine nudged `role`'s stalled `step` turn."""
     events.append(
         EventKind.NUDGE,
         task_id=task.id,
         message=f"{task.id} {role.value} nudge",
-        data={"step": step.value, "role": role.value},
+        data={"step": step.value, "role": role.value, **_turn_data(turn)},
     )
 
 
-def emit_turn_failed(events: EventLog, task: Task, step: Step, result: TurnResult) -> None:
+def emit_turn_failed(
+    events: EventLog,
+    task: Task,
+    step: Step,
+    result: TurnResult,
+    *,
+    turn: str | None = None,
+) -> None:
     """Record a turn that ended without a valid report."""
     if isinstance(result, Failed):
         message = result.message
@@ -98,7 +125,7 @@ def emit_turn_failed(events: EventLog, task: Task, step: Step, result: TurnResul
     else:
         message = type(result).__name__
         data = {}
-    data.update({"step": step.value, "result": type(result).__name__})
+    data.update({"step": step.value, "result": type(result).__name__, **_turn_data(turn)})
     events.append(EventKind.TURN_FAILED, task_id=task.id, message=message, data=data)
 
 
@@ -121,13 +148,21 @@ def emit_turn_completed(
             "summary": summary,
             "question": _turn_question(outcome),
             "usage_delta": _usage_delta(execution.usage_before, execution.usage_after),
+            **_turn_data(execution.turn_dir.name),
         },
     )
     if isinstance(outcome, Verdict):
-        emit_verdict(events, task, outcome, summary)
+        emit_verdict(events, task, outcome, summary, turn=execution.turn_dir.name)
 
 
-def emit_verdict(events: EventLog, task: Task, verdict: Verdict, summary: str) -> None:
+def emit_verdict(
+    events: EventLog,
+    task: Task,
+    verdict: Verdict,
+    summary: str,
+    *,
+    turn: str | None = None,
+) -> None:
     """Record the Leader's (or the engine's) verdict on a task."""
     events.append(
         EventKind.VERDICT,
@@ -138,8 +173,13 @@ def emit_verdict(events: EventLog, task: Task, verdict: Verdict, summary: str) -
             "summary": summary,
             "issues": [issue.model_dump() for issue in verdict.issues],
             "residual_risks": list(verdict.residual_risks),
+            **_turn_data(turn),
         },
     )
+
+
+def _turn_data(turn: str | None) -> dict[str, str]:
+    return {TURN_FIELD: turn} if turn is not None else {}
 
 
 def _turn_summary(outcome: Outcome) -> str:

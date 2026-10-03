@@ -50,6 +50,9 @@ animations = true
 docker_refresh_seconds = 5
 docker_timeout_seconds = 5
 repo_status_cache_seconds = 10
+timeline_page_size = 20
+timeline_scan_rows = 256
+timeline_refresh_seconds = 1
 
 [dashboard.motion]
 refresh_hz = 4

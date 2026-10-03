@@ -153,6 +153,7 @@ class TurnRunner:
         selection: SessionSelection,
         request: TurnRequest,
         *,
+        on_start: Callable[[Path], None] | None = None,
         on_nudge: Callable[[], None],
     ) -> tuple[TurnResult, Path, SessionSelection]:
         """Run one workflow turn and any resumed nudge turns to a normalized result.
@@ -163,6 +164,8 @@ class TurnRunner:
         turn_dir = self._prepare_turn_dir(
             run_dir(self._project_root, task.id), task.id, role, request
         )
+        if on_start is not None:
+            on_start(turn_dir)
         completed = False
         try:
             result, selection = await self._attempts(

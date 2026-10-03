@@ -364,6 +364,7 @@ async def run_dashboard(
             ),
             resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
             open_palette_context=open_palette_context,

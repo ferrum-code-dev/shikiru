@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from shikiru.agents.contracts import COST_BASIS_UNKNOWN, CostBasis, QuotaWindow, Usage
+from shikiru.config.settings import MAX_TIMELINE_PAGE_SIZE, MAX_TIMELINE_SIGNAL_SCAN_ROWS
 from shikiru.domain.commands import (
     Command,
     CommandStatus,
@@ -33,8 +34,35 @@ from shikiru.domain.runs import Run, RunStatus
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
+from shikiru.domain.timeline import (
+    TIMELINE_ACTIVITY_CATEGORY,
+    TIMELINE_ALL_CATEGORY,
+    TIMELINE_CATEGORIES,
+    TIMELINE_DECISION_CATEGORY,
+    TIMELINE_DECISION_KINDS,
+    TIMELINE_DEFAULT_CATEGORY,
+    TIMELINE_ENGINE_CATEGORY,
+    TIMELINE_JSON_INDENT,
+    TIMELINE_SOURCE_AGENT,
+    TIMELINE_SOURCE_ENGINE,
+    TIMELINE_TRANSITION_CATEGORY,
+    event_category,
+)
 from shikiru.errors import ShikiruError
+from shikiru.operator.timeline import (
+    SignalBatch,
+    TimelineCursor,
+    TimelineFilters,
+    TimelineItem,
+    decode_cursor,
+    encode_cursor,
+    event_category_is_requested,
+    initial_cursor,
+    read_signal_batch,
+    signal_category_is_requested,
+)
 from shikiru.paths import engine_output_path, run_dir, runs_root, task_root, turns_dir
+from shikiru.store.database import format_timestamp
 from shikiru.store.escalations import Escalation
 from shikiru.telemetry.disk import directory_usage
 from shikiru.view_log import ordered_turn_dirs, read_tail_lines, view_log_path
@@ -143,6 +171,31 @@ class CommandHistory(OperatorView):
     total_count: int
     has_more: bool
     status: CommandStatus | None
+
+
+class TaskTimelineEntry(OperatorView):
+    """One engine event or normalized agent signal on a task's recorded timeline."""
+
+    identity: str
+    timestamp: str | None
+    timestamp_error: str | None
+    source: str
+    category: str
+    summary: str
+    detail: str
+    role: str | None
+    turn: str | None
+    event_id: int | None
+    incomplete: bool
+
+
+class TaskTimelinePage(OperatorView):
+    """One bounded newest-first evidence page and its stable older-page cursor."""
+
+    entries: list[TaskTimelineEntry]
+    older_cursor: str | None
+    has_older: bool
+    filters: dict[str, str | None]
 
 
 class TaskSummary(OperatorView):
@@ -478,6 +531,118 @@ class OperatorQueries:
             branches=[task.repo.branch] if task.repo is not None else [],
             sessions=runs,
         )
+
+    async def task_timeline(
+        self,
+        task_id: str,
+        *,
+        limit: int,
+        cursor: str | None = None,
+        role: str | None = None,
+        turn: str | None = None,
+        category: str = TIMELINE_DEFAULT_CATEGORY,
+        scan_limit: int,
+    ) -> TaskTimelinePage | None:
+        """Read a bounded, stable page across task events and normalized signal files."""
+        if not 0 < limit <= MAX_TIMELINE_PAGE_SIZE:
+            message = f"task evidence page size must be between 1 and {MAX_TIMELINE_PAGE_SIZE}"
+            raise ValueError(message)
+        if not 0 < scan_limit <= MAX_TIMELINE_SIGNAL_SCAN_ROWS:
+            message = (
+                "task evidence source scan size must be between 1 and "
+                f"{MAX_TIMELINE_SIGNAL_SCAN_ROWS}"
+            )
+            raise ValueError(message)
+        if category not in TIMELINE_CATEGORIES:
+            message = f"unknown task evidence category: {category}"
+            raise ValueError(message)
+        task = self._reader.get_task(task_id)
+        if task is None:
+            return None
+        filters = TimelineFilters(role=role, turn=turn, category=category)
+        roles = _timeline_roles(self._reader.list_runs(task_id), role)
+        paths = {item: view_log_path(run_dir(self._project_root, task_id), item) for item in roles}
+        current = await self._timeline_cursor(cursor, filters, roles, paths)
+        if cursor is not None:
+            roles = tuple(sorted(current.signal_before))
+        event_rows = self._timeline_events(
+            task_id, limit, current, role=role, turn=turn, category=category
+        )
+        signal_batches = await self._timeline_signals(
+            paths=paths,
+            roles=roles,
+            limit=limit,
+            cursor=current,
+            filters=filters,
+            scan_limit=scan_limit,
+        )
+        return _build_timeline_page(
+            limit=limit,
+            current=current,
+            filters=filters,
+            event_rows=event_rows,
+            signal_batches=signal_batches,
+        )
+
+    async def _timeline_cursor(
+        self,
+        token: str | None,
+        filters: TimelineFilters,
+        roles: Sequence[str],
+        paths: dict[str, Path],
+    ) -> TimelineCursor:
+        if token is None:
+            return await asyncio.to_thread(initial_cursor, paths)
+        return decode_cursor(token, filters=filters, roles=roles)
+
+    def _timeline_events(
+        self,
+        task_id: str,
+        limit: int,
+        cursor: TimelineCursor,
+        *,
+        role: str | None,
+        turn: str | None,
+        category: str,
+    ) -> list[Event]:
+        if not event_category_is_requested(category):
+            return []
+        return self._reader.task_timeline_events(
+            task_id,
+            limit=limit + 1,
+            before=cursor.event_before,
+            kinds=_timeline_event_kinds(category),
+            role=role,
+            turn=turn,
+        )
+
+    async def _timeline_signals(
+        self,
+        *,
+        paths: dict[str, Path],
+        roles: Sequence[str],
+        limit: int,
+        cursor: TimelineCursor,
+        filters: TimelineFilters,
+        scan_limit: int,
+    ) -> dict[str, SignalBatch]:
+        if not signal_category_is_requested(filters.category):
+            return {}
+        loaded = await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    read_signal_batch,
+                    paths[item],
+                    role=item,
+                    before_offset=cursor.signal_before[item],
+                    filters=filters,
+                    limit=limit + 1,
+                    scan_limit=scan_limit,
+                )
+                for item in roles
+            )
+        )
+        return dict(zip(roles, loaded, strict=True))
 
     def get_task_state(self, task_id: str) -> Task | None:
         """Return current task state without loading report or signal files."""
@@ -829,6 +994,149 @@ def _signal_tail(path: Path) -> list[str]:
             raise TypeError(message)
         signals.append(json.dumps(row, ensure_ascii=False, sort_keys=True))
     return signals
+
+
+def _timeline_roles(runs: Sequence[Run], role: str | None) -> tuple[str, ...]:
+    if role is not None:
+        return (Role(role).value,)
+    return tuple(sorted({run.role.value for run in runs}))
+
+
+def _build_timeline_page(
+    *,
+    limit: int,
+    current: TimelineCursor,
+    filters: TimelineFilters,
+    event_rows: Sequence[Event],
+    signal_batches: dict[str, SignalBatch],
+) -> TaskTimelinePage:
+    streams: dict[str, list[TimelineItem]] = {}
+    if event_rows:
+        streams[TIMELINE_SOURCE_ENGINE] = [_event_timeline_item(event) for event in event_rows]
+    streams.update(
+        {
+            f"{TIMELINE_SOURCE_AGENT}:{role}": list(batch.items)
+            for role, batch in signal_batches.items()
+            if batch.items
+        }
+    )
+    merged = _merge_timeline_streams(streams, limit + 1)
+    entries = merged[:limit]
+    has_older = len(merged) > limit or any(batch.has_more for batch in signal_batches.values())
+    older_cursor = (
+        _next_timeline_cursor(current, entries, signal_batches, filters) if has_older else None
+    )
+    return TaskTimelinePage(
+        entries=[_timeline_entry(item) for item in entries],
+        older_cursor=older_cursor,
+        has_older=has_older,
+        filters={"role": filters.role, "turn": filters.turn, "category": filters.category},
+    )
+
+
+def _next_timeline_cursor(
+    current: TimelineCursor,
+    entries: Sequence[TimelineItem],
+    signal_batches: dict[str, SignalBatch],
+    filters: TimelineFilters,
+) -> str:
+    next_event = current.event_before
+    next_signals = dict(current.signal_before)
+    consumed_roles: set[str] = set()
+    for item in entries:
+        if item.event_id is not None and item.timestamp is not None:
+            next_event = (format_timestamp(item.timestamp), item.event_id)
+        elif item.role is not None:
+            consumed_roles.add(item.role)
+            next_signals[item.role] = (
+                -1 if item.identity.startswith("missing:") else item.signal_offset
+            )
+    for role, batch in signal_batches.items():
+        if role not in consumed_roles:
+            next_signals[role] = batch.replay_offset if batch.items else batch.scan_offset
+    return encode_cursor(
+        TimelineCursor(event_before=next_event, signal_before=next_signals), filters
+    )
+
+
+def _timeline_event_kinds(category: str) -> tuple[EventKind, ...] | None:
+    if category in {
+        TIMELINE_ACTIVITY_CATEGORY,
+        TIMELINE_ALL_CATEGORY,
+        TIMELINE_ENGINE_CATEGORY,
+    }:
+        return None
+    if category == TIMELINE_DECISION_CATEGORY:
+        return tuple(EventKind(kind) for kind in sorted(TIMELINE_DECISION_KINDS))
+    if category == TIMELINE_TRANSITION_CATEGORY:
+        return tuple(kind for kind in EventKind if kind.value not in TIMELINE_DECISION_KINDS)
+    return ()
+
+
+def _event_timeline_item(event: Event) -> TimelineItem:
+    role = event.data.get("role")
+    turn = event.data.get("turn")
+    return TimelineItem(
+        identity=f"engine:{event.id}",
+        timestamp=event.ts,
+        source=TIMELINE_SOURCE_ENGINE,
+        category=event_category(event.kind.value),
+        summary=event.message,
+        detail=json.dumps(
+            event.data, ensure_ascii=False, sort_keys=True, indent=TIMELINE_JSON_INDENT
+        ),
+        role=role if isinstance(role, str) else None,
+        turn=turn if isinstance(turn, str) else None,
+        event_id=event.id,
+    )
+
+
+def _merge_timeline_streams(
+    streams: dict[str, list[TimelineItem]], limit: int
+) -> list[TimelineItem]:
+    offsets = dict.fromkeys(streams, 0)
+    merged: list[TimelineItem] = []
+    while len(merged) < limit:
+        available = [
+            (source, items[offsets[source]])
+            for source, items in streams.items()
+            if offsets[source] < len(items)
+        ]
+        if not available:
+            break
+        dated = [item for _, item in available if item.timestamp is not None]
+        if dated:
+            newest = max(item.timestamp for item in dated if item.timestamp is not None)
+            tied = [pair for pair in available if pair[1].timestamp == newest]
+        else:
+            tied = available
+        source, item = min(tied, key=_timeline_tie_break)
+        merged.append(item)
+        offsets[source] += 1
+    return merged
+
+
+def _timeline_tie_break(pair: tuple[str, TimelineItem]) -> tuple[int, str, int]:
+    source, item = pair
+    source_rank = 0 if item.source == TIMELINE_SOURCE_ENGINE else 1
+    stable_position = -(item.event_id or item.signal_offset or 0)
+    return source_rank, item.role or source, stable_position
+
+
+def _timeline_entry(item: TimelineItem) -> TaskTimelineEntry:
+    return TaskTimelineEntry(
+        identity=item.identity,
+        timestamp=item.timestamp.isoformat() if item.timestamp is not None else None,
+        timestamp_error=item.timestamp_error,
+        source=item.source,
+        category=item.category,
+        summary=item.summary,
+        detail=item.detail,
+        role=item.role,
+        turn=item.turn,
+        event_id=item.event_id,
+        incomplete=item.incomplete,
+    )
 
 
 def _command_target(command: Command, project: str) -> str:

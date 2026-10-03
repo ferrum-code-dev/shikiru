@@ -75,8 +75,8 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `agents.sdk` | Plugin building blocks | `TurnParser`, `StreamingTurn`, `ResetTimeParser` |
 | `agents.registry` | Loads `AgentFactory` entry points plus factories registered by `bootstrap` (tests register the fake agent the same way through its own test-only package entry point) | `AgentRegistry` |
 | `agents.testing` | Contract test kit | `AgentContractSuite` |
-| `domain` | Pure rules and parsers, no I/O | `Task`, `Status`, `Step`, `Hold`, `Counters`, `EventKind`, command models, report models, `next_step()`, `pick_rung()`, `recovery.decide()`, `scheduling.pick_ready()`, `escalation.options_for()`, `escalation_evidence.parse_escalation_packet()`, `activity.is_stalled()` |
-| `store` | SQLite schema, migrations, stores per aggregate, read-only reader | `Database`, `TaskStore`, bounded `TaskBrowserPage` and task-relationship queries, paginated command-history queries, `RunStore`, `EscalationStore`, `QuotaStore`, `EventLog`, `CommandQueue`, `StateReader` |
+| `domain` | Pure rules and parsers, no I/O | `Task`, `Status`, `Step`, `Hold`, `Counters`, `EventKind`, command models, report models, normalized timeline parsing/classification, `next_step()`, `pick_rung()`, `recovery.decide()`, `scheduling.pick_ready()`, `escalation.options_for()`, `escalation_evidence.parse_escalation_packet()`, `activity.is_stalled()` |
+| `store` | SQLite schema, migrations, stores per aggregate, read-only reader | `Database`, `TaskStore`, bounded `TaskBrowserPage` and task-relationship queries, paginated command-history and task-event timeline queries, `RunStore`, `EscalationStore`, `QuotaStore`, `EventLog`, `CommandQueue`, `StateReader` |
 | `workspace` | Task roots, worktrees, caches, git facts, pull requests through `gh` | `TaskRootBuilder`, `CacheCloner`, `GitFacts`, `Git`, `GitHub` |
 | `tmux` | tmux client; session, windows, layout; pane decorations; pane respawn and liveness | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator` |
 | `prompts` | Jinja2 templates (packaged, overridable) | `PromptRenderer` |
@@ -84,8 +84,8 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `ui` | Semantic colors, Textual theme and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.theme`, `ui.glyphs`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
-| `operator` | Use cases for interfaces; current task-action and escalation-resolution applicability and disabled reasons; bounded task-target search and command history/status; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
-| `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract. `DashboardApp` groups configured widgets, composes the home summaries, opens shared detail from Home and opens the shared palette; palette and history screens observe durable command outcomes while mounted, and paginated history reads bounded pages through `StateReader` and operator queries; the compact workspace status line shows only the latest command summary; additive `WidgetContext` callbacks carry palette context, browser selection and Home navigation while existing callback fields remain available; `dashboard.views` composes bounded browser/detail data, labelled family context, recorded family relationships and blocker evidence; `TaskNavigation` selects current existing tmux targets. The operator layer prepares action availability, while the engine remains authoritative for command acceptance | `app`, `build_server()`, `DashboardApp`, `TaskDetailScreen`, `TaskNavigation`, `PaletteApp`, `DashboardWidget`, `DashboardViews`, `TaskBrowserView`, `TaskDetailView` |
+| `operator` | Use cases for interfaces; current task-action and escalation-resolution applicability and disabled reasons; bounded task-target search, command history/status and task-evidence pages over SQL events and recorded normalized signal files; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `EventFeed`, `detectors` |
+| `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract. `DashboardApp` groups configured widgets, composes the home summaries, opens shared detail from Home and opens the shared palette; palette and history screens observe durable command outcomes while mounted, and paginated history reads bounded pages through `StateReader` and operator queries; the compact workspace status line shows only the latest command summary; additive `WidgetContext` callbacks carry palette context, browser selection and Home navigation while existing callback fields remain available; `dashboard.views` composes bounded browser/detail data, retained task history, timeline filters/pages, labelled family context, recorded relationships and blocker evidence; periodic timeline refresh reads only its bounded page and preserves the selected evidence identity; `TaskNavigation` selects current existing tmux targets. The operator layer prepares action availability, while the engine remains authoritative for command acceptance | `app`, `build_server()`, `DashboardApp`, `TaskDetailScreen`, `TaskNavigation`, `PaletteApp`, `DashboardWidget`, `DashboardViews`, `TaskBrowserView`, `TaskDetailView`, `TaskTimelinePageView` |
 
 **Engine components**, each with one responsibility:
 
@@ -144,7 +144,7 @@ pyproject.toml
 src/shikiru/
   bootstrap.py  process.py  clock.py  errors.py  paths.py  private.py  view_log.py  __main__.py
   config/       settings.py loader.py defaults.toml
-  domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py runs.py fencing.py faults.py motion.py
+  domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py runs.py timeline.py fencing.py faults.py motion.py
   store/        database.py migrations/ tasks.py runs.py escalations.py quotas.py events.py commands.py reader.py retention.py notification_cursor.py
   agents/       contracts.py registry.py
     sdk/        turn.py reset_time.py
@@ -162,7 +162,7 @@ src/shikiru/
                 takeover.py integration.py integration_turns.py reconcile.py layout_guard.py titles.py cosmetic_decorator.py
                 notifier.py notification_delivery.py notification_feed.py pull_request_closing.py root_preparation.py retention.py
     handlers/   base.py tasks.py operator.py escalations.py engine.py
-  operator/     queries.py commands.py services.py events.py strip_views.py sessions.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py
+  operator/     queries.py timeline.py commands.py services.py events.py strip_views.py sessions.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py
   cli/          app.py context.py report.py view.py render.py
   mcp/          server.py
   dashboard/    app.py contract.py services.py views.py palette.py wizard.py activity.py motion.py session_picker.py

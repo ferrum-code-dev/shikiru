@@ -77,5 +77,5 @@ class AcceptanceGuard:
             execution.turn_dir / ENGINE_VERDICT_FILENAME,
             rejection.model_dump_json(indent=REPORT_JSON_INDENT),
         )
-        emit_verdict(self._events, task, rejection, rejection.summary)
+        emit_verdict(self._events, task, rejection, rejection.summary, turn=execution.turn_dir.name)
         return rejection

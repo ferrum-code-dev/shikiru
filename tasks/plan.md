@@ -822,10 +822,10 @@ Refs: Workspace §10.2–10.3, 03 §2/§6/§10, 06 §5.4.
 
 ### Task 83: Completion history and task evidence timeline
 Refs: Workspace §11, 05 §2–3, 06 §2/§5.4.
-- [ ] Make historical task detail usable after terminal cleanup; retain recorded cancellation/supersede reasons, reports, decisions and integration outcome without inventing terminal failure states for recovered turn errors.
-- [ ] Add bounded timeline/evidence queries and filters by role, turn and category. Distinguish engine events from normalized agent signals, preserve source ordering and identify missing timestamps/evidence or an incomplete live JSONL row.
-- [ ] Live evidence follows until the Operator scrolls away; provide an explicit Follow latest action. Updates and pagination preserve reading position and selected evidence identity.
-- [ ] Update 02/05/06 query, source-ordering and retained-evidence descriptions. Read recorded files without a second consumer of agent stdout or agent-specific parsing in the UI.
+- [x] Make historical task detail usable after terminal cleanup; retain recorded cancellation/supersede reasons, reports, decisions and integration outcome without inventing terminal failure states for recovered turn errors.
+- [x] Add bounded timeline/evidence queries and filters by role, turn and category. Distinguish engine events from normalized agent signals, preserve source ordering and identify missing timestamps/evidence or an incomplete live JSONL row.
+- [x] Live evidence follows until the Operator scrolls away; provide an explicit Follow latest action. Updates and pagination preserve reading position and selected evidence identity.
+- [x] Update 02/05/06 query, source-ordering and retained-evidence descriptions. Read recorded files without a second consumer of agent stdout or agent-specific parsing in the UI.
 - Tests: real SQLite and recorded normalized files: browse a closed task, page/filter a long timeline, receive a partial then complete live row, preserve selection while new events arrive, and resume following explicitly. Test ordering through public behaviour, not implementation helpers.
 
 ### Task 84: Honest usage and secondary diagnostics

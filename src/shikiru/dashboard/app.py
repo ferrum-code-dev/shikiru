@@ -11,6 +11,7 @@ from textual.widgets import Button, Input, Label, Select, Static
 
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
+    DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
     WIDGET_ENTRY_POINT_GROUP,
     CommandFeedbackEntryView,
     CommandFeedbackStatus,
@@ -522,6 +523,7 @@ class DashboardApp(App[None]):
         navigate_task_window: NavigateTaskWindow | None = None,
         navigate_role_pane: NavigateRolePane | None = None,
         navigate_home: NavigateHome | None = None,
+        timeline_refresh_seconds: float = DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
     ) -> None:
         """Build the home or task workspace with the configured widgets."""
         super().__init__()
@@ -533,6 +535,7 @@ class DashboardApp(App[None]):
         self._motion_interval_seconds = motion_interval_seconds
         self._resources_refresh_seconds = resources_refresh_seconds
         self._docker_refresh_seconds = docker_refresh_seconds
+        self._timeline_refresh_seconds = timeline_refresh_seconds
         self._open_palette = open_palette
         self._open_palette_context = open_palette_context
         self._selected_task_id = focus_task
@@ -626,6 +629,8 @@ class DashboardApp(App[None]):
             focus_task=self._focus_task,
             resources_refresh_seconds=self._resources_refresh_seconds,
             docker_refresh_seconds=self._docker_refresh_seconds,
+            timeline_refresh_seconds=self._timeline_refresh_seconds,
+            clock=self._clock,
             on_change=self._on_change,
             on_motion=self._motion_callbacks.append,
             open_palette=self._open_palette,

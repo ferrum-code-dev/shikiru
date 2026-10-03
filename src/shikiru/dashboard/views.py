@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from shikiru.agents.contracts import FailureKind
 from shikiru.dashboard.contract import (
+    DEFAULT_TASK_TIMELINE_CATEGORY,
     AgentUsageView,
     AttentionGroupView,
     AttentionView,
@@ -38,6 +39,8 @@ from shikiru.dashboard.contract import (
     TaskSessionView,
     TaskSignalView,
     TaskTestView,
+    TaskTimelineEntryView,
+    TaskTimelinePageView,
     WorkspaceSummaryView,
 )
 from shikiru.domain.commands import CommandStatus, ResolutionKind
@@ -639,10 +642,23 @@ class StateDashboardViews:
         task_id: str,
         *,
         relationship_offset: int = 0,
+        timeline_cursor: str | None = None,
+        timeline_role: str | None = None,
+        timeline_turn: str | None = None,
+        timeline_category: str = DEFAULT_TASK_TIMELINE_CATEGORY,
     ) -> TaskDetailView | None:
         """Project current task state and its bounded, recorded evidence for the detail view."""
         detail = await self._queries.get_task_detail(task_id)
         if detail is None:
+            return None
+        timeline_view = await self.task_timeline(
+            task_id,
+            cursor=timeline_cursor,
+            role=timeline_role,
+            turn=timeline_turn,
+            category=timeline_category,
+        )
+        if timeline_view is None:
             return None
         task = detail.task
         now = self._clock.now()
@@ -726,6 +742,49 @@ class StateDashboardViews:
             blocker=self._task_blocker(task, relationships, ownership, now),
             submitted_age=_age(now - task.created_at),
             requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
+            timeline=timeline_view,
+        )
+
+    async def task_timeline(
+        self,
+        task_id: str,
+        *,
+        cursor: str | None,
+        role: str | None,
+        turn: str | None,
+        category: str,
+    ) -> TaskTimelinePageView | None:
+        """Return the task's bounded normalized evidence page without loading other files."""
+        timeline = await self._queries.task_timeline(
+            task_id,
+            limit=self._settings.dashboard.timeline_page_size,
+            cursor=cursor,
+            role=role,
+            turn=turn,
+            category=category,
+            scan_limit=self._settings.dashboard.timeline_scan_rows,
+        )
+        if timeline is None:
+            return None
+        return TaskTimelinePageView(
+            entries=tuple(
+                TaskTimelineEntryView(
+                    identity=item.identity,
+                    timestamp=item.timestamp,
+                    timestamp_error=item.timestamp_error,
+                    source=item.source,
+                    category=item.category,
+                    summary=item.summary,
+                    detail=item.detail,
+                    role=item.role,
+                    turn=item.turn,
+                    event_id=item.event_id,
+                    incomplete=item.incomplete,
+                )
+                for item in timeline.entries
+            ),
+            older_cursor=timeline.older_cursor,
+            has_older=timeline.has_older,
         )
 
     def _task_blocker(

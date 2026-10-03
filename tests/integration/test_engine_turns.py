@@ -77,6 +77,16 @@ async def test_reportless_fake_turn_is_nudged_and_resumed_on_its_session(
     events = flow_env.events.since(0, task_id=task.id)
     nudges = [event for event in events if event.kind is EventKind.NUDGE]
     assert len(nudges) == 1
+    current = role_dir(run_dir(engine_env.project_root, task.id), Role.IMPLEMENTER.value)
+    turn_name = (current / "current_turn").resolve().name
+    turn_starts = [
+        event
+        for event in events
+        if event.kind is EventKind.TURN_STARTED and event.data["role"] == "implementer"
+    ]
+    assert len(turn_starts) == 1
+    assert turn_starts[0].data["turn"] == turn_name
+    assert nudges[0].data["turn"] == turn_name
     implementer_runs = [
         run for run in engine_env.runs.for_task(task.id) if run.role is Role.IMPLEMENTER
     ]
@@ -92,6 +102,7 @@ async def test_reportless_fake_turn_is_nudged_and_resumed_on_its_session(
     implementer_completion = next(
         event for event in completed if event.data["role"] == "implementer"
     )
+    assert implementer_completion.data["turn"] == turn_name
     assert implementer_completion.data["usage_delta"]["input_tokens"] == 240
 
 

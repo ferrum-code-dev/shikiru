@@ -10,9 +10,13 @@ from rich.console import Group
 from rich.text import Text
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
-from shikiru.dashboard.contract import PaletteRequest
+from shikiru.dashboard.contract import (
+    PaletteRequest,
+    TaskTimelineCategory,
+    TaskTimelineSource,
+)
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason
 from shikiru.errors import ShikiruError
 from shikiru.ui.strip import TaskStrip
@@ -26,6 +30,8 @@ if TYPE_CHECKING:
         TaskReferenceView,
         TaskRelationshipsView,
         TaskReportView,
+        TaskTimelineEntryView,
+        TaskTimelinePageView,
         WidgetContext,
     )
 
@@ -63,6 +69,27 @@ TASK_DETAIL_OPEN_RELATED = "task-detail-open-related"
 TASK_DETAIL_PREVIOUS_RELATIONSHIPS = "task-detail-previous-relationships"
 TASK_DETAIL_MORE_RELATIONSHIPS = "task-detail-more-relationships"
 TASK_DETAIL_RELATIONSHIP_PAGE = "task-detail-relationship-page"
+TASK_DETAIL_TIMELINE_ROLE = "task-detail-timeline-role"
+TASK_DETAIL_TIMELINE_TURN = "task-detail-timeline-turn"
+TASK_DETAIL_TIMELINE_CATEGORY = "task-detail-timeline-category"
+TASK_DETAIL_TIMELINE_FILTER = "task-detail-timeline-filter"
+TASK_DETAIL_TIMELINE_NEWER = "task-detail-timeline-newer"
+TASK_DETAIL_TIMELINE_OLDER = "task-detail-timeline-older"
+TASK_DETAIL_TIMELINE_FOLLOW = "task-detail-timeline-follow"
+TASK_DETAIL_TIMELINE_STATUS = "task-detail-timeline-status"
+TASK_DETAIL_TIMELINE_ENTRY = "task-detail-timeline-entry"
+TASK_DETAIL_TIMELINE_SELECTED = "task-detail-timeline-selected"
+TIMELINE_FILTER_OPTIONS = (
+    ("Decisions and transitions", TaskTimelineCategory.ACTIVITY),
+    ("All engine events", TaskTimelineCategory.ENGINE),
+    ("Decisions", TaskTimelineCategory.DECISION),
+    ("Transitions", TaskTimelineCategory.TRANSITION),
+    ("Agent signals", TaskTimelineCategory.SIGNAL),
+    ("Tools", TaskTimelineCategory.TOOL),
+    ("Messages", TaskTimelineCategory.MESSAGE),
+    ("Usage", TaskTimelineCategory.USAGE),
+    ("All evidence", TaskTimelineCategory.ALL),
+)
 NO_VALUE = "\N{EN DASH}"
 NO_REPORT = "No validated report is recorded."
 NO_VERDICT = "No validated verdict is recorded."
@@ -128,6 +155,15 @@ class TaskDetailPanel(Vertical):
         self._relationship_next_offset: int | None = None
         self._shown_related_references: tuple[TaskReferenceView, ...] = ()
         self._selected_related_reference: TaskReferenceView | None = None
+        self._timeline_cursors: list[str | None] = [None]
+        self._timeline_following = True
+        self._timeline_role: str | None = None
+        self._timeline_turn: str | None = None
+        self._timeline_category = TaskTimelineCategory.ACTIVITY.value
+        self._timeline_selected_identity: str | None = None
+        self._timeline_selected_entry: TaskTimelineEntryView | None = None
+        self._timeline_page: TaskTimelinePageView | None = None
+        self._timeline_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
         with HorizontalScroll(id="task-detail-toolbar"):
@@ -168,6 +204,45 @@ class TaskDetailPanel(Vertical):
                 with Horizontal():
                     yield Button("Prev", id=TASK_DETAIL_PREVIOUS_RELATIONSHIPS)
                     yield Button("More", id=TASK_DETAIL_MORE_RELATIONSHIPS)
+            yield Static("Evidence timeline", classes="task-detail-section", markup=False)
+            with HorizontalScroll(id="task-detail-timeline-filters"):
+                yield Select(
+                    TIMELINE_FILTER_OPTIONS,
+                    value=TaskTimelineCategory.ACTIVITY,
+                    id=TASK_DETAIL_TIMELINE_CATEGORY,
+                )
+                yield Select(
+                    (
+                        ("Any role", ""),
+                        ("Leader", Role.LEADER.value),
+                        ("Implementer", Role.IMPLEMENTER.value),
+                        ("Helper", Role.HELPER.value),
+                    ),
+                    prompt="Any role",
+                    allow_blank=True,
+                    value=Select.BLANK,
+                    id=TASK_DETAIL_TIMELINE_ROLE,
+                )
+                yield Input(placeholder="Any turn", id=TASK_DETAIL_TIMELINE_TURN)
+                yield Button("Apply filters", id=TASK_DETAIL_TIMELINE_FILTER)
+            with HorizontalScroll(id="task-detail-timeline-navigation"):
+                yield Button("Newer", id=TASK_DETAIL_TIMELINE_NEWER)
+                yield Button("Older", id=TASK_DETAIL_TIMELINE_OLDER)
+                yield Button("Follow latest", id=TASK_DETAIL_TIMELINE_FOLLOW)
+            yield Static("", id=TASK_DETAIL_TIMELINE_STATUS, markup=False)
+            yield Select(
+                (),
+                prompt="Recorded evidence",
+                allow_blank=True,
+                value=Select.BLANK,
+                id=TASK_DETAIL_TIMELINE_ENTRY,
+            )
+            yield Static(
+                "No evidence selected.",
+                id=TASK_DETAIL_TIMELINE_SELECTED,
+                classes="task-detail-section",
+                markup=False,
+            )
             yield Static(
                 "",
                 id=TASK_DETAIL_RELATIONSHIPS,
@@ -190,12 +265,17 @@ class TaskDetailPanel(Vertical):
             self._widget_context.on_change(self._refresh),
             group=TASK_DETAIL_WORKER_GROUP,
         )
+        self._timeline_worker = self.run_worker(
+            self._watch_timeline(), group=TASK_DETAIL_WORKER_GROUP
+        )
 
     def on_unmount(self) -> None:
         if self._refresh_worker is not None:
             self._refresh_worker.cancel()
         if self._change_worker is not None:
             self._change_worker.cancel()
+        if self._timeline_worker is not None:
+            self._timeline_worker.cancel()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         handlers = {
@@ -216,10 +296,84 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_OPEN_RELATED: self._open_related_task,
             TASK_DETAIL_PREVIOUS_RELATIONSHIPS: self._previous_relationship_page,
             TASK_DETAIL_MORE_RELATIONSHIPS: self._next_relationship_page,
+            TASK_DETAIL_TIMELINE_FILTER: self._apply_timeline_filters,
+            TASK_DETAIL_TIMELINE_NEWER: self._newer_timeline_page,
+            TASK_DETAIL_TIMELINE_OLDER: self._older_timeline_page,
+            TASK_DETAIL_TIMELINE_FOLLOW: self._follow_latest,
         }
         handler = handlers.get(event.button.id or "")
         if handler is not None:
             await handler()
+
+    async def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == TASK_DETAIL_TIMELINE_ENTRY:
+            identity = event.value if isinstance(event.value, str) else None
+            self._select_timeline_entry(identity)
+
+    async def _watch_timeline(self) -> None:
+        while True:
+            await self._widget_context.clock.sleep(self._widget_context.timeline_refresh_seconds)
+            if self._timeline_following:
+                await self._refresh_timeline()
+
+    async def _refresh_timeline(self) -> None:
+        try:
+            page = await self._widget_context.views.task_timeline(
+                self._task_id,
+                cursor=None if self._timeline_following else self._timeline_cursors[-1],
+                role=self._timeline_role,
+                turn=self._timeline_turn,
+                category=self._timeline_category,
+            )
+        except (ShikiruError, OSError, ValueError, TypeError) as error:
+            if self.is_mounted:
+                self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(
+                    f"Evidence timeline refresh failed: {error}"
+                )
+            return
+        if self.is_mounted:
+            self._render_timeline(page)
+
+    async def _apply_timeline_filters(self) -> None:
+        role_value = cast(
+            "Select[str]", self.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select)
+        ).value
+        category_value = cast(
+            "Select[str]", self.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
+        ).value
+        turn_value = self.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value.strip()
+        self._timeline_role = role_value or None if isinstance(role_value, str) else None
+        self._timeline_category = (
+            category_value
+            if isinstance(category_value, str)
+            else TaskTimelineCategory.ACTIVITY.value
+        )
+        self._timeline_turn = turn_value or None
+        self._timeline_cursors = [None]
+        self._timeline_following = True
+        self._timeline_selected_identity = None
+        self._timeline_selected_entry = None
+        await self._refresh()
+
+    async def _older_timeline_page(self) -> None:
+        page = self._timeline_page
+        if page is None or not page.has_older or page.older_cursor is None:
+            return
+        self._timeline_cursors.append(page.older_cursor)
+        self._timeline_following = False
+        await self._refresh()
+
+    async def _newer_timeline_page(self) -> None:
+        if len(self._timeline_cursors) <= 1:
+            return
+        self._timeline_cursors.pop()
+        self._timeline_following = len(self._timeline_cursors) == 1
+        await self._refresh()
+
+    async def _follow_latest(self) -> None:
+        self._timeline_cursors = [None]
+        self._timeline_following = True
+        await self._refresh()
 
     async def _toggle_relationships(self) -> None:
         self._relationships_expanded = not self._relationships_expanded
@@ -291,6 +445,12 @@ class TaskDetailPanel(Vertical):
                 view = await self._widget_context.views.task_detail(
                     self._task_id,
                     relationship_offset=self._relationship_offset,
+                    timeline_cursor=(
+                        None if self._timeline_following else self._timeline_cursors[-1]
+                    ),
+                    timeline_role=self._timeline_role,
+                    timeline_turn=self._timeline_turn,
+                    timeline_category=self._timeline_category,
                 )
             except (ShikiruError, OSError, ValueError, TypeError) as error:
                 if self.is_mounted:
@@ -360,6 +520,7 @@ class TaskDetailPanel(Vertical):
             _report_text("Latest validated verdict", view.latest_verdict, NO_VERDICT)
         )
         self.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static).update(_evidence_text(view))
+        self._render_timeline(view.timeline)
         facts = (
             f"Engine-computed git facts · {view.facts_turn}\n{view.recorded_facts}"
             if view.recorded_facts is not None
@@ -368,6 +529,88 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_FACTS}", Static).update(facts)
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(_workspace_text(view))
         self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
+
+    def _render_timeline(self, page: TaskTimelinePageView | None) -> None:
+        self._timeline_page = page
+        entry_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select))
+        page_entries = list(page.entries) if page is not None else []
+        current = next(
+            (item for item in page_entries if item.identity == self._timeline_selected_identity),
+            None,
+        )
+        if current is not None:
+            self._timeline_selected_entry = current
+        elif self._timeline_selected_identity is None and page_entries:
+            current = page_entries[0]
+            self._timeline_selected_identity = current.identity
+            self._timeline_selected_entry = current
+        options = [(_timeline_option(item), item.identity) for item in page_entries]
+        available = {identity for _, identity in options}
+        if (
+            self._timeline_selected_entry is not None
+            and self._timeline_selected_identity not in available
+        ):
+            selected = self._timeline_selected_entry
+            options.append(
+                (f"Selected outside page · {_timeline_option(selected)}", selected.identity)
+            )
+        entry_select.set_options(options)
+        entry_select.value = (
+            self._timeline_selected_identity
+            if self._timeline_selected_identity in {value for _, value in options}
+            else Select.BLANK
+        )
+        self._select_timeline_entry(self._timeline_selected_identity)
+        status = (
+            "Following latest"
+            if self._timeline_following
+            else "Follow paused while viewing older evidence"
+        )
+        if page is None:
+            status += " · evidence page unavailable"
+        elif page.has_older:
+            status += " · older evidence available"
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(status)
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_NEWER}", Button).disabled = (
+            len(self._timeline_cursors) <= 1
+        )
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_OLDER}", Button).disabled = (
+            page is None or not page.has_older
+        )
+        self.query_one(
+            f"#{TASK_DETAIL_TIMELINE_FOLLOW}", Button
+        ).disabled = self._timeline_following
+
+    def _select_timeline_entry(self, identity: str | None) -> None:
+        if identity is not None and self._timeline_page is not None:
+            entry = next(
+                (item for item in self._timeline_page.entries if item.identity == identity),
+                None,
+            )
+            if entry is not None:
+                self._timeline_selected_identity = identity
+                self._timeline_selected_entry = entry
+        selected = self._timeline_selected_entry
+        target = self.query_one(f"#{TASK_DETAIL_TIMELINE_SELECTED}", Static)
+        if selected is None:
+            target.update("No recorded evidence is available for this page.")
+            return
+        lines = [
+            f"{selected.source} · {selected.category}",
+            f"Timestamp · {selected.timestamp or NO_VALUE}",
+        ]
+        if selected.timestamp_error:
+            lines.append(f"Timestamp evidence · {selected.timestamp_error}")
+        if selected.role is not None:
+            lines.append(f"Role · {selected.role}")
+        if selected.turn is not None:
+            lines.append(f"Turn · {selected.turn}")
+        if selected.event_id is not None:
+            lines.append(f"Engine event ID · {selected.event_id}")
+        if selected.incomplete:
+            lines.append("Incomplete live JSONL row")
+        lines.extend((selected.summary, selected.detail))
+        target.update("\n".join(lines))
 
     async def _open_related_task(self) -> None:
         selected = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select)).value
@@ -705,6 +948,17 @@ def _evidence_text(view: TaskDetailView) -> str:
             "Evidence unavailable\n" + "\n".join(f"- {item}" for item in view.evidence_errors)
         )
     return "\n\n".join(sections)
+
+
+def _timeline_option(entry: TaskTimelineEntryView) -> str:
+    source = (
+        "Engine event" if entry.source == TaskTimelineSource.ENGINE else "Normalized agent signal"
+    )
+    timestamp = entry.timestamp or "Timestamp missing"
+    context = " · ".join(
+        item for item in (entry.role, entry.turn, entry.summary) if item is not None
+    )
+    return f"{timestamp} · {source} · {context}"
 
 
 def _workspace_text(view: TaskDetailView) -> str:

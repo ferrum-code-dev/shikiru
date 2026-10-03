@@ -24,7 +24,9 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
 
 _EVENT_ROLE_JSON_PATH = "$.role"
+_EVENT_TURN_JSON_PATH = "$.turn"
 _EVENT_COMMAND_JSON_PATH = f"$.{COMMAND_ID_KEY}"
+MAX_TIMELINE_EVENT_LIMIT = 50
 
 COMMAND_APPLIED_SQL = "SELECT 1 FROM events WHERE kind = ? AND json_extract(data, ?) = ? LIMIT 1"
 
@@ -99,6 +101,46 @@ def fetch_latest_events(
         [*params, limit],
     ).fetchall()
     return [_row_to_event(row) for row in reversed(rows)]
+
+
+def fetch_timeline_events(
+    connection: sqlite3.Connection,
+    task_id: str,
+    *,
+    limit: int,
+    before: tuple[str, int] | None = None,
+    kinds: Sequence[EventKind] | None = None,
+    role: str | None = None,
+    turn: str | None = None,
+) -> list[Event]:
+    """Read one newest-first, keyset-paginated task event page with SQL filters."""
+    if not 0 < limit <= MAX_TIMELINE_EVENT_LIMIT:
+        message = f"task timeline event limit must be between 1 and {MAX_TIMELINE_EVENT_LIMIT}"
+        raise ValueError(message)
+    if kinds is not None and not kinds:
+        return []
+    clauses = ["task_id = ?"]
+    params: list[object] = [task_id]
+    if before is not None:
+        clauses.append("(ts < ? OR (ts = ? AND id < ?))")
+        params.extend((before[0], before[0], before[1]))
+    if kinds is not None:
+        placeholders = ", ".join("?" for _ in kinds)
+        clauses.append(f"kind IN ({placeholders})")
+        params.extend(kind.value for kind in kinds)
+    if role is not None:
+        clauses.append("json_extract(data, ?) = ?")
+        params.extend((_EVENT_ROLE_JSON_PATH, role))
+    if turn is not None:
+        clauses.append("json_extract(data, ?) = ?")
+        params.extend((_EVENT_TURN_JSON_PATH, turn))
+    where = " AND ".join(clauses)
+    rows = connection.execute(
+        f"SELECT id, ts, task_id, kind, message, data FROM events WHERE {where} "
+        "ORDER BY ts DESC, id DESC LIMIT ?",
+        [*params, limit],
+    ).fetchall()
+    return [_row_to_event(row) for row in rows]
 
 
 class EventLog:

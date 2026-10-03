@@ -16,6 +16,8 @@ LayoutSplitAxis = Literal["h", "v"]
 PaneName = Literal["system", "leader", "implementer", "shell"]
 GIT_DEFAULT_REMOTE = "origin"
 MAX_MOTION_REFRESH_HZ = 4
+MAX_TIMELINE_PAGE_SIZE = 49
+MAX_TIMELINE_SIGNAL_SCAN_ROWS = 1024
 
 
 class ConfigModel(BaseModel):
@@ -188,6 +190,9 @@ class DashboardConfig(ConfigModel):
     docker_refresh_seconds: float = Field(gt=0)
     docker_timeout_seconds: float = Field(gt=0)
     repo_status_cache_seconds: float = Field(gt=0)
+    timeline_page_size: int = Field(gt=0, le=MAX_TIMELINE_PAGE_SIZE)
+    timeline_scan_rows: int = Field(gt=0, le=MAX_TIMELINE_SIGNAL_SCAN_ROWS)
+    timeline_refresh_seconds: float = Field(gt=0)
 
 
 class NotifyConfig(ConfigModel):

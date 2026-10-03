@@ -15,7 +15,12 @@ from shikiru.store.commands import (
     fetch_pending_command,
 )
 from shikiru.store.escalations import fetch_escalation, fetch_open_escalations
-from shikiru.store.events import fetch_events_since, fetch_latest_events
+from shikiru.store.events import (
+    MAX_TIMELINE_EVENT_LIMIT,
+    fetch_events_since,
+    fetch_latest_events,
+    fetch_timeline_events,
+)
 from shikiru.store.quotas import AgentBlock, fetch_agent_block, fetch_quota_agents, fetch_quotas
 from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task
 from shikiru.store.tasks import (
@@ -234,6 +239,34 @@ class StateReader:
             implementer_turns_only=implementer_turns_only,
             task_id=task_id,
         )
+
+    def task_timeline_events(
+        self,
+        task_id: str,
+        *,
+        limit: int,
+        before: tuple[str, int] | None = None,
+        kinds: Sequence[EventKind] | None = None,
+        role: str | None = None,
+        turn: str | None = None,
+    ) -> list[Event]:
+        """Read a bounded, newest-first task event page for the evidence timeline."""
+        if not 0 < limit <= MAX_TIMELINE_EVENT_LIMIT:
+            message = f"task timeline event limit must be between 1 and {MAX_TIMELINE_EVENT_LIMIT}"
+            raise ValueError(message)
+        try:
+            return fetch_timeline_events(
+                self._connection,
+                task_id,
+                limit=limit,
+                before=before,
+                kinds=kinds,
+                role=role,
+                turn=turn,
+            )
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
 
     def data_version(self) -> int:
         """Return SQLite's `data_version` counter, bumped by every other connection's commit."""
