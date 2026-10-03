@@ -1,56 +1,71 @@
-# Phase 8 workspace release readiness — partial
+# Phase 8 workspace release readiness — verified
 
-Date: 2026-10-03. **Task 88 is incomplete and remains unchecked.** Tasks 75–87 are delivered, but the required fresh real-agent E1–E6 run did not pass: Claude reported its weekly limit in every scenario. This record preserves the passing evidence and that blocking result; it does not make a release claim or close the older independent review gates.
+Date: 2026-10-03. **Task 88 is complete for Phase 8 on macOS.** The fresh real-agent E1–E6 run, both full code gates, and the clean-install/navigation smoke passed. GNU/Linux was not run and remains unverified. This evidence closes only Phase 8 verification; the independent historical review gates Tasks 59, 74h and 74p remain open.
 
 ## Delivery and design agreement
 
-The workspace code delivered by Tasks 75–86 is represented by application source `eed895f`; Task 87 reconciled the operator docs and recorded the walkthroughs. The quota-limited E2E attempt ran on `0734ef38810b4ec9ef14d54a030b3ab5b19da06d`. Commit `0734ef3` changes only test support: its E3 plan-child observer discovers windows independently of the parent completion waiter. The final normal and `TERM=dumb` gates also include test-only commit `2e93b58`, which settles the timeline's public scroll boundary before asserting focus visibility; no application source changed. The installed smoke harness change is commit `d09a6d7`; it adds an installed-package Textual boundary run and does not change Shikiru runtime behavior.
+Tasks 75–87 delivered the Operator Workspace and its documentation. Task 88's application fix is in `e5a7f24`: detail refresh restores the public intended scroll target and declines a stale restore if the target changed while refresh was queued. This preserves focused-control visibility during motion refresh and preserves a stable operator reading position. The integration regression checks the timeline input at 36×20 and 48×14, focus/value, follow state, and settled reading position across resize. It adds no retry or timeout increase.
 
-The Task 87 [walkthrough record](workspace-walkthroughs-2026-10-03.md) separates connected fake-agent workflows from seeded UI boundaries. Its five connected Textual/SQLite/Git/tmux fake-agent flows passed in 22.53 s after review corrections; the broader seeded UI set passed 21 tests, and the plan/tmux/CLI boundary set passed 5 tests in 1.69 s. The connected flows demonstrate title search to a verdict, contextual message application, escalation updates from a second operator, one-task takeover while another task progresses, durable pending-command recovery, and retained exports after task-window cleanup. Other walkthrough paths intentionally use seeded boundaries; they are not claimed as extra engine executions.
+The real-agent invocation ran on clean `01ab54e8748a56d8ee6310de5da3c18d214236e2`. It includes the E2E harness argument fix in `01ab54e`; the later `6e7a2ed` changes only the integration test's observation boundary to await Textual's scheduled animations before comparing the settled reading position. No application or E2E scenario source changed after the passing invocation. The final documentation/checklist update is also documentation-only.
 
-The observed `/` search → results → task detail → Escape route, contextual action, status words, and compact controls agree with [the workspace specification](tui-workspace.md) and the documented README paths. Task 88 introduced no production UI or workflow behavior. This is an implementation-to-design check from tests and docs, not an independent reviewer verdict.
+The verified behavior agrees with the [workspace specification](tui-workspace.md), [design 07 §5](design/07-engineering.md#5-e2e-scenarios-poe-e2e-shikiru_e2e1), and [Task 87 walkthrough record](workspace-walkthroughs-2026-10-03.md). The walkthrough record reports five connected fake-agent Textual/SQLite/Git/tmux flows passing in 22.53 s, 21 seeded UI-boundary tests passing, and five plan/tmux/CLI boundary tests passing in 1.69 s. It distinguishes these fixture runs from the real-agent E1–E6 release check.
 
 ## Full code gates
 
-The full gate includes formatting, lint, comments/literals rules, imports, type checks, architecture boundaries, and the coverage gate. Four pytest workers were used.
+Both gates ran with four pytest workers on the application/test tree at `6e7a2ed02dc35f8e215c8b8c3920db035c4e8383`. The final evidence-document/checklist delta was applied afterward; a final normal gate was run with that documentation-only delta staged.
 
-| Gate | Source/tree | Result |
-|---|---|---|
-| `PYTEST_XDIST_AUTO_NUM_WORKERS=4 uv run poe check` | `0734ef3`, clean | 1,082 passed, 15 skipped; 90.70% coverage; pytest 268.17 s; all static and boundary checks passed |
-| `TERM=dumb PYTEST_XDIST_AUTO_NUM_WORKERS=4 uv run poe check` | `0734ef3`, clean | 1,082 passed, 15 skipped; 90.72% coverage; pytest 266.05 s; all static and boundary checks passed |
-| Normal `poe check` recheck before `d09a6d7` | Same code plus the smoke-script working-tree delta later committed as `d09a6d7` | 1,082 passed, 15 skipped; 90.71% coverage; pytest 322.38 s; all static and boundary checks passed |
-| Normal `poe check` before the timeline test correction | Evidence docs in progress; test change not applied | 1,081 passed, 1 failed, 15 skipped; 90.56% coverage; pytest 267.12 s |
-| Normal `poe check` after the timeline test correction | Test-only change later committed as `2e93b58` | 1,082 passed, 15 skipped; 90.70% coverage; pytest 266.64 s; all static and boundary checks passed |
-| `TERM=dumb` `poe check` after the timeline test correction | Same tested tree as `2e93b58` | 1,082 passed, 15 skipped; 90.70% coverage; pytest 265.22 s; all static and boundary checks passed |
-| Final normal `poe check` after the timestamp correction | `2e93b58` plus this docs-only delta | 1,082 passed, 15 skipped; 90.69% coverage; pytest 266.41 s; all static and boundary checks passed |
+| Gate | Result |
+|---|---|
+| `PYTEST_XDIST_AUTO_NUM_WORKERS=4 uv run poe check` | 1,082 passed, 15 skipped; 90.71% coverage; pytest 345.41 s |
+| `TERM=dumb PYTEST_XDIST_AUTO_NUM_WORKERS=4 uv run poe check` | 1,082 passed, 15 skipped; 90.73% coverage; pytest 281.81 s |
+| Final normal gate with the staged evidence/checklist delta | Passed; 1,082 passed, 15 skipped; coverage above 80%; lint, types, architecture and other static checks passed |
 
-An earlier full run during the evidence correction failed in `test_detail_preserves_selection_while_following_and_pauses_on_older_page`: it checked that scroll position changed after `scroll_end` had only produced an intermediate `scroll_y > 0`. The isolated case passed both before and after the assertion update, confirming the full-suite observation could race final layout. Commit `2e93b58` waits for `scroll_y == max_scroll_y`, then asserts the focused Relationships control is fully visible inside the body viewport and the Follow state remains active. The timeout was not increased and no product behavior was changed. The subsequent normal and `TERM=dumb` full gates passed. The exact `0734ef3` revision had also passed normal and `TERM=dumb` gates before this test-only correction; application source remains unchanged.
+The full gate ran formatting, Ruff, comment/literal rules, import contracts, basedpyright, vulture, and the non-E2E suite. All five architecture contracts remained kept. The displayed coverage exceeds the required 80%.
 
-## Real-agent E1–E6
+## Fresh real-agent E1–E6
 
-The last full passing invocation remains the 2026-10-02 run at `159db49`, recorded in [E2E results](e2e-results.md). Two fresh invocations were made on 2026-10-03; neither meets Task 88's requirement that E1–E6 pass together on the resulting revision.
+One fresh `SHIKIRU_E2E=1 uv run poe e2e` invocation passed all six real scenarios together, plus the fake-agent boundary test. The artifact is `build/e2e/20261003T193209Z.json`, schema 5. It records `source_commit=01ab54e8748a56d8ee6310de5da3c18d214236e2`, `source_dirty=false`, exit status 0, seven passed tests and 1,097 deselected.
 
-The first run, `build/e2e/20261003T090653Z.json`, started at 09:06:53 UTC and ended at 09:24:07 UTC on clean `12cf19e`. E1, E2, E4, E5 and E6 passed; E3 failed both attempts (91.5 s and 121.9 s, $0.1371 and $0.1223 agent-reported). The investigation identified a race in the E3 test's child-window observer and independent variation in how the agent interpreted the phase-B decomposition request. The attempt JSON retains status, duration, cost and rerun reason, but the date/scenario diagnostic names were reused by the next run, so the old detailed text is not preserved. The observer race was fixed and covered at `0734ef3`; this did not turn the failed baseline run into a pass.
+| Scenario | Outcome | Duration | Attempts | Reported cost |
+|---|---|---:|---:|---|
+| E1 triage, implement, verify and merge | Passed | 83.93 s | 1 | Unknown |
+| E2 operator message reaches verify | Passed | 182.16 s | 1 | Unknown |
+| E3 plan, dependent tasks, two concurrent windows, conflict and merge | Passed | 346.33 s | 1 | Unknown |
+| E4 MCP operator resolves a product decision | Passed | 189.66 s | 1 | Unknown |
+| E5 engine restart resumes the interrupted turn | Passed | 167.27 s | 1 | Unknown |
+| E6 takeover holds only the selected task | Passed | 308.64 s | 1 | Unknown |
 
-The second run used `SHIKIRU_E2E=1 uv run poe e2e` on clean `0734ef38810b4ec9ef14d54a030b3ab5b19da06d`. It began at 10:03:58.389 UTC, ended at 10:20:58.371 UTC, and exited 1 (pytest reported 1,020.51 s). E1 and E4 exhausted the configured attempt plus one retry in 11.1 s and 11.2 s; E2, E3, E5 and E6 hit the watchdog after 246.8 s, 246.3 s, 251.9 s and 247.1 s. The harness labels E1/E4's `AssertionError` rerun reason as `an agent skipped a rule`, but their diagnostics show quota exhaustion, so that classification is incorrect; these are not evidence of an agent-rule violation. Each saved diagnostic shows `turn_failed: You've hit your weekly limit`, followed by `quota_exhausted`. The provider text reports a weekly reset at Oct 7, 08:00 Europe/Warsaw, while the engine separately recorded `quota_blocked` until 2026-10-03T14:01:00+00:00. These timestamps differ; the artifact does not explain the discrepancy or establish that the provider reset time was parsed correctly. Every reported scenario cost is null, so total cost is unknown, not zero. Diagnostics for this invocation are preserved under `build/e2e/diagnostics/20261003T100358Z/`.
+The run started at 2026-10-03 19:32:09.251 UTC and finished at 19:53:32.765 UTC (21 m 23.51 s wall time; pytest reported 1,284.00 s). Every scenario passed its first attempt. The artifact's agent-reported costs are null for all six scenarios, so the total cost is unknown, not zero.
 
-Both artifacts record Python 3.14.7, Claude Code 2.1.287, Codex CLI 0.160.0, tmux 3.7c and git 2.55.0. The second run's projects were under `/Users/pavel/.cache/shikiru-e2e`, outside `$TMPDIR`; the artifact records Codex `workspace-write` and `approvals_reviewer = auto_review`. No further paid rerun was made after the account reported its weekly limit. The exact scenario durations, attempts, costs and artifact paths are in [E2E results](e2e-results.md).
+The E2E-only ladders used Codex `gpt-6-luna` at low effort for Leader, Implementer and Helper. This was the already-authorized agent backend selection for this verification; no provider authentication or production default was changed. Tool versions recorded in the artifact: Python 3.14.7, Claude Code 2.1.287, Codex CLI 0.160.0, tmux 3.7c and git 2.55.0. The projects were under `/Users/pavel/.cache/shikiru-e2e`, outside `$TMPDIR`; the artifact records the Codex workspace-write sandbox and `approvals_reviewer=auto_review`.
+
+The E3 assertions passed for the requested plan, dependency execution, two simultaneous task windows, conflict resolution and integration. Its earlier test-observer race is fixed in the E2E harness; the passing run also records the agent's actual behavior, rather than treating a prior failed attempt as success.
+
+## Preserved earlier attempts
+
+The failed records remain useful context and are not counted as passing verification:
+
+- `build/e2e/20261003T090653Z.json` on `12cf19e`: E1, E2, E4, E5 and E6 passed; E3 failed both attempts. The invocation JSON preserves the attempts, but its date/scenario diagnostic names collided with the next invocation, so the original detailed E3 text was overwritten.
+- `build/e2e/20261003T100358Z.json` on `0734ef3`: every scenario hit the Claude weekly quota limit or the resulting watchdog stall. The harness classified the E1/E4 quota assertions as “agent skipped a rule”; that is a misclassification, not evidence of an agent-rule violation. The raw provider message says the limit resets Oct 7 at 08:00 Europe/Warsaw. Separately, the engine recorded `quota_blocked` until 2026-10-03T14:01:00+00:00. Those dates differ; the artifacts do not explain the discrepancy or establish that the provider reset was parsed correctly. Costs were null.
+- `build/e2e/20261003T183808Z.json` on `129ce0b`: all six scenarios failed in about 1.27 s before an agent turn because the test harness passed a duplicate `--set` flag before the role overrides. The correction is in `01ab54e`; the later fresh invocation above passed.
+- A clean-install smoke attempt on `01ab54e` found that the integration test compared a transient scroll sample (17.1879) with the settled position after resize (17). The focused timeline remained visible; the test now waits for scheduled animations before taking and comparing the reading position. The corrected test passed both full gates and the final clean-install smoke below.
+- An additional normal full-gate attempt was interrupted at about 19% when verification was reprioritized to run E1–E6 on the clean E2E revision. It is not reported as a passing or failing full gate; the final normal and `TERM=dumb` results above are the completed gates.
+
+The earlier quota-run diagnostics are preserved under `build/e2e/diagnostics/20261003T100358Z/`. Detailed scenario durations and the earlier passing baseline are retained in [E2E results](e2e-results.md).
 
 ## macOS clean-install and workspace smoke
 
-The final clean-install smoke passed on macOS on 2026-10-03. Its ignored artifact is `build/release-readiness/clean-install-20261003T104844Z-88939.json`; its captured terminal/log evidence is `build/release-readiness/clean-install-20261003T104844Z-88939.log`. It records code source `0734ef38810b4ec9ef14d54a030b3ab5b19da06d` and smoke-script diff fingerprint `2d74608d2eb7cf3806bf7f9688a70a6764880e5e62f9788bd0f2fdbb62deb09c`; that exact harness delta was subsequently committed as `d09a6d7`.
+The final smoke passed on clean `6e7a2ed02dc35f8e215c8b8c3920db035c4e8383` using `bash scripts/release-readiness-smoke.sh`. Its artifacts are `build/release-readiness/clean-install-20261003T200558Z-23347.json` and `build/release-readiness/clean-install-20261003T200558Z-23347.log`; the command completed in 25.54 s. The JSON records a fresh disposable HOME, XDG directories, uv tool/cache directories and private tmux socket, and reports `status=passed`.
 
-The existing script installed Shikiru into a disposable `HOME`, XDG directories and uv tool/cache directories, with a private tmux socket. The installed CLI passed interactive init and Doctor at 120×38 and 68×16, `init --yes`, Doctor, start/submit/status/ls, the attach picker at 120×38 and 68×16, named attach, and stop/cleanup. A fake-agent quickstart task T-1 merged on `main` and ticked A1; the log captures the live Home pane after merge and records no rendered traceback. The test-only fake agent reports no billed cost; cost is unknown.
+The smoke installed the package and verified defaults and entry points; interactive init/Doctor at 120×38 and 68×16; `init --yes`, Doctor, start, submit, status, ls, picker attach, named attach, stop and cleanup. Its fake-agent task T-1 merged on `main` and ticked A1. A test-only fake agent reports no billed cost; that cost is unknown.
 
-For installed-package navigation, the smoke invoked five existing integration tests with the disposable tool's package Python, `NO_COLOR=1`, real SQLite/Git fixtures, Textual `run_test`, and private test tmux. The tests covered `/` title search, Enter to results, arrow selection, Enter to detail, Escape restoring Home selection, `Ctrl+P` carrying task and Implementer context, a contextual message reaching Applied, Home at 120×40 down through 20×8, task detail at 36×20 and 48×14, reachable controls, and static countdown updates with color disabled. They passed (`5 passed in 7.09 s`, with one non-blocking pytest cache warning). The artifact labels these navigation checks as headless; the live private-tmux launch and attach-picker checks are separate evidence.
+Installed-package headless Textual navigation observed Home search (`/`), Enter to results, arrow selection, Enter to task detail, Escape returning to the selected Home row, and Ctrl+P carrying the selected task and Implementer role. A contextual message reached Applied. Home was checked at 120×40 down through 20×8; task detail at 36×20 and 48×14; NO_COLOR words/controls and static countdown behavior were checked. The same smoke separately launched the installed Home pane and attach picker in its private live tmux session. The artifact labels the Textual navigation probe as headless.
 
-The 10:23 run (`clean-install-20261003T102342Z-81689.json`) passed the original clean-install checks before navigation was added. The next four artifacts (`clean-install-20261003T103055Z-82810.json`, `clean-install-20261003T103407Z-84333.json`, `clean-install-20261003T103535Z-85813.json`, and `clean-install-20261003T103753Z-87331.json`) record failures in the added shell keystroke observer as it tried to time asynchronous focus transitions. Those checks were replaced with the existing installed-package Textual boundary tests above; the final run passed. Linux was not run and is not verified.
+GNU/Linux was not run. Its smoke and terminal-specific behavior are unverified.
 
-## Remaining limits and release status
+## Remaining limits
 
-- Task 88's real-agent AC is open: no fresh invocation on the resulting revision passed E1–E6 together. Provider quota prevented that verification; unknown costs must remain unknown.
-- Linux smoke is not verified. The evidence here is from this macOS host, Python 3.14.7, Claude Code 2.1.287, Codex CLI 0.160.0, tmux 3.7c and git 2.55.0.
-- The smoke's fake agent verifies packaging, CLI/workspace paths and recorded behaviors without a billed provider call. It does not substitute for E1–E6.
-- Historical Tasks 59, 74h and 74p remain independent review gates and are not closed by Phase 8 delivery or this partial verification record.
-
-Task 88 and Phase 8 release verification remain open. Do not tick Task 88 until its four acceptance criteria pass on the resulting revision.
+- This record verifies the Phase 8 workspace on the tested macOS environment and toolchain. It does not claim Linux verification, older tmux/git floor testing, or overall project release readiness.
+- Historical review gates Tasks 59, 74h and 74p remain independently open; Phase 8 success does not close them.
+- The E2E run is a measured sample using the recorded Codex model ladder. It does not make claims about untested providers, models or hosts.
+- The workspace exports only retained Shikiru evidence; it is not a complete agent transcript or a reconstruction of cleaned worktrees, as described in the specification.

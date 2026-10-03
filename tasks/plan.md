@@ -862,7 +862,7 @@ Refs: Workspace §16, 01–07, README.
 
 ### Task 88: Workspace release verification and evidence
 Refs: Workspace §16, 07 §5.
-- [ ] `uv run poe check` passes normally and with `TERM=dumb` on the resulting revision, preserving coverage ≥ 80% and architecture boundaries.
-- [ ] Real-agent E1–E6 pass in one `poe e2e` run on that revision; record date, scenarios, duration, source commit, CLI versions and reported cost or unknown cost as appropriate.
-- [ ] Clean-install smoke and the documented workspace entry/navigation paths pass on macOS; Linux is reported as verified only after an actual run. Record representative home/task pane sizes, monochrome/static operation and remaining limitations.
-- [ ] A new `docs/release-readiness-*.md` records Phase 8 delivery, fake-agent walkthrough evidence, final checks and design agreement. Tick Tasks 75–88 only after their own ACs are met; planning this phase does not count as implementation.
+- [x] `uv run poe check` passes normally and with `TERM=dumb` on the resulting revision, preserving coverage ≥ 80% and architecture boundaries.
+- [x] Real-agent E1–E6 pass in one `poe e2e` run on that revision; record date, scenarios, duration, source commit, CLI versions and reported cost or unknown cost as appropriate.
+- [x] Clean-install smoke and the documented workspace entry/navigation paths pass on macOS; Linux is reported as verified only after an actual run. Record representative home/task pane sizes, monochrome/static operation and remaining limitations.
+- [x] A new `docs/release-readiness-*.md` records Phase 8 delivery, fake-agent walkthrough evidence, final checks and design agreement. Tick Tasks 75–88 only after their own ACs are met; planning this phase does not count as implementation.

@@ -126,7 +126,7 @@ Tick a task when all its ACs in [plan.md](plan.md) are ticked.
 
 Target: [Operator Workspace](../docs/tui-workspace.md); acceptance criteria: [plan.md](plan.md#phase-8--operator-workspace). Implement after Phase 7b.
 
-Delivery order: task navigation and contextual control, attention and evidence views, then responsive behaviour, export, documentation and release verification. Tasks 75–87 are shipped. Task 88 has partial evidence (full code gates and the macOS clean-install/navigation smoke passed), but remains open because the fresh real-agent E1–E6 run stopped on the provider's weekly limit; Linux is unverified. See [the release record](../docs/release-readiness-2026-10-03-phase8.md).
+Delivery order: task navigation and contextual control, attention and evidence views, then responsive behaviour, export, documentation and release verification. Tasks 75–88 are delivered and verified for Phase 8 on macOS. The clean-install/navigation smoke, normal and `TERM=dumb` full gates, and a fresh E1–E6 invocation passed; GNU/Linux was not run and remains unverified. The older Task 59, 74h and 74p review gates remain independently open. See [the release record](../docs/release-readiness-2026-10-03-phase8.md).
 
 - [x] Task 75: Workspace design alignment and shared visual shell
 - [x] Task 76: Selectable task browser and search
@@ -141,4 +141,4 @@ Delivery order: task navigation and contextual control, attention and evidence v
 - [x] Task 85: Responsive layouts and accessible refresh behaviour
 - [x] Task 86: Markdown and JSON evidence export
 - [x] Task 87: Operator documentation and workflow walkthroughs
-- [ ] Task 88: Workspace release verification and evidence
+- [x] Task 88: Workspace release verification and evidence
