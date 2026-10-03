@@ -170,7 +170,7 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 **Usage**:
 - Tokens: `spec.usage` plus the turn's `result.usage`.
 - Cost: `result.total_cost_usd` (cumulative per session) only when `modelUsage.<m>.costBasis` is `"list"`; report it as `api_equivalent`, independent of how access is configured. For any other cost basis, where the list-price estimate does not represent a reliable provider price, report `None`, `unknown`.
-- Context: the last assistant message's input and cache tokens ÷ `modelUsage.<m>.contextWindow` only when the cost basis is `"list"`. A CLI-assumed 200000 default is not a reliable provider-reported context window.
+- Context: the last assistant message's complete nonnegative input, cache-read and cache-write token counts ÷ `modelUsage.<m>.contextWindow`. All three assistant counts and a positive reported context window are required; nullable or missing counts, and an absent window, yield `None`. Result usage is cumulative across tool calls and supplies session totals, never the current context numerator. Context is independent of cost basis; a CLI-assumed 200000 default is not a reliable provider-reported context window.
 
 **Compaction** (obligation 8), against the window Claude itself assumes for the model: 200,000 tokens, or 1,000,000 with a `[1m]` model suffix (protocol constants):
 - `claude -p` never compacts within a turn (verified with 2.1.282: none with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=20`, none by default up to 199,279 of 200,000 tokens), so the plugin drives it.

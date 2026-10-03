@@ -273,6 +273,8 @@ class TaskSessionView:
     cost_basis: CostBasis
     context_used_pct: float | None
     usage_reported: bool | None = None
+    legacy_token_totals: bool = False
+    legacy_cost_recorded: bool = False
 
 
 @dataclass(frozen=True)
@@ -497,10 +499,14 @@ class AgentUsageView:
     quotas: tuple[QuotaGaugeView, ...]
     run_count: int = 0
     usage_reported_runs: int = 0
+    legacy_token_runs: int = 0
+    legacy_unknown_token_runs: int = 0
     billed_cost_usd: float | None = None
     billed_cost_runs: int = 0
+    legacy_billed_cost_runs: int = 0
     api_equivalent_cost_usd: float | None = None
     api_equivalent_cost_runs: int = 0
+    legacy_api_equivalent_cost_runs: int = 0
     unknown_cost_runs: int = 0
 
 

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         TaskReferenceView,
         TaskRelationshipsView,
         TaskReportView,
+        TaskSessionView,
         TaskTimelineEntryView,
         TaskTimelinePageView,
         WidgetContext,
@@ -1051,25 +1052,14 @@ def _sessions_text(view: TaskDetailView) -> str:
     if not view.sessions:
         lines.append("No agent sessions are recorded.")
     for session in view.sessions:
-        cost = (
-            NO_VALUE
-            if not session.usage_reported or session.cost_usd is None
-            else f"${session.cost_usd:.2f} · {session.cost_basis}"
-        )
+        cost = _session_cost_text(session)
         context = _session_context_text(
             session.context_used_pct,
             session.status,
             usage_reported=session.usage_reported,
         )
         effort = f"/{session.effort}" if session.effort else ""
-        tokens = (
-            (
-                f"input {session.input_tokens} · output {session.output_tokens} · "
-                f"cache read {session.cache_read_tokens} · cache write {session.cache_write_tokens}"
-            )
-            if session.usage_reported is True
-            else _unknown_session_tokens(session.usage_reported)
-        )
+        tokens = _session_tokens_text(session)
         lines.extend(
             (
                 (
@@ -1084,17 +1074,40 @@ def _sessions_text(view: TaskDetailView) -> str:
     return "\n".join(lines)
 
 
+def _session_cost_text(session: TaskSessionView) -> str:
+    if session.cost_usd is None or session.usage_reported is False:
+        return NO_VALUE
+    value = f"${session.cost_usd:.2f} · {session.cost_basis}"
+    if session.legacy_cost_recorded:
+        value = f"{value} · legacy recorded"
+    return value
+
+
+def _session_tokens_text(session: TaskSessionView) -> str:
+    values = (
+        f"input {session.input_tokens} · output {session.output_tokens} · "
+        f"cache read {session.cache_read_tokens} · cache write {session.cache_write_tokens}"
+    )
+    if session.usage_reported is True:
+        return values
+    if session.legacy_token_totals:
+        return f"legacy recorded · {values}"
+    return _unknown_session_tokens(session.usage_reported)
+
+
 def _session_context_text(
     context_used_pct: float | None,
     status: str,
     *,
     usage_reported: bool | None,
 ) -> str:
-    if usage_reported is not True or context_used_pct is None:
+    if usage_reported is False or context_used_pct is None:
         return f"Context {NO_VALUE} · no reliable context provenance"
     age_label = "last reported context"
+    if usage_reported is None:
+        age_label = "legacy last reported context"
     if status == CLOSED_RUN_STATUS:
-        age_label = "last reported context for closed session"
+        age_label = f"{age_label} for closed session"
     return f"{age_label} · {context_used_pct:.0f}%"
 
 

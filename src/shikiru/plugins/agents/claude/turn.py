@@ -414,10 +414,13 @@ class ClaudeTurnParser:
             if self._latest_model_usage is not None
             else None
         )
-        context_tokens = _context_tokens(source)
+        context_tokens = _context_tokens(self._latest_assistant_usage)
         context_pct = (
             context_tokens / context_window * PERCENT
-            if isinstance(context_window, int | float) and context_window > 0
+            if context_tokens is not None
+            and isinstance(context_window, int | float)
+            and not isinstance(context_window, bool)
+            and context_window > 0
             else None
         )
         return Usage(
@@ -708,11 +711,20 @@ def _integer(payload: Mapping[str, Any] | None, key: str) -> int:
     return int(value) if isinstance(value, int | float) else 0
 
 
-def _context_tokens(usage: Mapping[str, Any] | None) -> int:
-    return sum(
-        _integer(usage, key)
-        for key in (_INPUT_TOKENS_FIELD, _CACHE_READ_TOKENS_FIELD, _CACHE_WRITE_TOKENS_FIELD)
+def _context_tokens(usage: Mapping[str, Any] | None) -> int | None:
+    if usage is None:
+        return None
+    token_counts = (
+        usage.get(_INPUT_TOKENS_FIELD),
+        usage.get(_CACHE_READ_TOKENS_FIELD),
+        usage.get(_CACHE_WRITE_TOKENS_FIELD),
     )
+    complete_counts: list[int] = []
+    for token_count in token_counts:
+        if type(token_count) is not int or token_count < 0:
+            return None
+        complete_counts.append(token_count)
+    return sum(complete_counts)
 
 
 def _select_model_usage(

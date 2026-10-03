@@ -43,6 +43,7 @@ class ResourceSampler:
         self._config = config
         self._host_cpu: deque[tuple[datetime, float]] = deque()
         self._last = ResourceSnapshot(0.0, 0.0, 0.0)
+        self._last_complete = ResourceSnapshot(0.0, 0.0, 0.0)
         self._sampled_at: datetime | None = None
         self._instance_sampled_at: datetime | None = None
         self._processes: dict[tuple[int, float], psutil.Process] = {}
@@ -94,7 +95,7 @@ class ResourceSampler:
             sampled_at is not None
             and (now - sampled_at).total_seconds() < self._config.sample_seconds
         ):
-            return self._last
+            return self._last_complete
         host_sample = self.sample_if_due()
         processes = self._process_tree(engine_pid, pane_pids)
         measurements = [
@@ -102,34 +103,32 @@ class ResourceSampler:
             for process in processes
             if (measurement := self._measure(process)) is not None
         ]
-        if not measurements:
-            self._last = ResourceSnapshot(
-                host_cpu_pct=host_sample.host_cpu_pct,
-                host_ram_used_pct=host_sample.host_ram_used_pct,
-                free_ram_gb=host_sample.free_ram_gb,
-                sampled_at=now,
-            )
-        else:
+        instance_cpu_pct: float | None = None
+        instance_rss_gb: float | None = None
+        if measurements:
             cpu_count = psutil.cpu_count(logical=True)
             if cpu_count is None or cpu_count < 1:
                 message = "psutil did not report a logical CPU count"
                 raise RuntimeError(message)
-            cpu_pct = sum(cpu for cpu, _ in measurements) / cpu_count
+            instance_cpu_pct = sum(cpu for cpu, _ in measurements) / cpu_count
             rss_bytes = sum(rss for _, rss in measurements)
-            self._last = ResourceSnapshot(
-                host_cpu_pct=host_sample.host_cpu_pct,
-                host_ram_used_pct=host_sample.host_ram_used_pct,
-                free_ram_gb=host_sample.free_ram_gb,
-                instance_cpu_pct=cpu_pct,
-                instance_rss_gb=rss_bytes / _BYTES_PER_GIB,
-                sampled_at=now,
-            )
+            instance_rss_gb = rss_bytes / _BYTES_PER_GIB
+        snapshot = ResourceSnapshot(
+            host_cpu_pct=host_sample.host_cpu_pct,
+            host_ram_used_pct=host_sample.host_ram_used_pct,
+            free_ram_gb=host_sample.free_ram_gb,
+            instance_cpu_pct=instance_cpu_pct,
+            instance_rss_gb=instance_rss_gb,
+            sampled_at=now,
+        )
+        self._last = snapshot
+        self._last_complete = snapshot
         self._instance_sampled_at = now
-        return self._last
+        return snapshot
 
     def latest(self) -> ResourceSnapshot:
         """Return the latest sample without starting a new observation."""
-        return self._last
+        return self._last_complete
 
     def _process_tree(
         self, engine_pid: int | None, pane_pids: Iterable[int]

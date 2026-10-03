@@ -1126,13 +1126,23 @@ class StateDashboardViews:
                     quotas=windows,
                     run_count=item.run_count if item is not None else 0,
                     usage_reported_runs=item.usage_reported_runs if item is not None else 0,
+                    legacy_token_runs=item.legacy_token_runs if item is not None else 0,
+                    legacy_unknown_token_runs=(
+                        item.legacy_unknown_token_runs if item is not None else 0
+                    ),
                     billed_cost_usd=item.billed_cost_usd if item is not None else None,
                     billed_cost_runs=item.billed_cost_runs if item is not None else 0,
+                    legacy_billed_cost_runs=(
+                        item.legacy_billed_cost_runs if item is not None else 0
+                    ),
                     api_equivalent_cost_usd=(
                         item.api_equivalent_cost_usd if item is not None else None
                     ),
                     api_equivalent_cost_runs=(
                         item.api_equivalent_cost_runs if item is not None else 0
+                    ),
+                    legacy_api_equivalent_cost_runs=(
+                        item.legacy_api_equivalent_cost_runs if item is not None else 0
                     ),
                     unknown_cost_runs=item.unknown_cost_runs if item is not None else 0,
                 )
@@ -1406,6 +1416,19 @@ def _task_session(run: Run) -> TaskSessionView:
         cost_basis=run.usage.cost_basis,
         context_used_pct=run.usage.context_used_pct,
         usage_reported=run.usage_reported,
+        legacy_token_totals=(
+            run.usage_reported is None
+            and any(
+                token > 0
+                for token in (
+                    run.usage.input_tokens,
+                    run.usage.output_tokens,
+                    run.usage.cache_read_tokens,
+                    run.usage.cache_write_tokens,
+                )
+            )
+        ),
+        legacy_cost_recorded=(run.usage_reported is None and run.usage.cost_usd is not None),
     )
 
 
@@ -1421,10 +1444,14 @@ def _agent_usage(item: UsageView, *, quotas: tuple[QuotaGaugeView, ...]) -> Agen
         quotas=quotas,
         run_count=item.run_count,
         usage_reported_runs=item.usage_reported_runs,
+        legacy_token_runs=item.legacy_token_runs,
+        legacy_unknown_token_runs=item.legacy_unknown_token_runs,
         billed_cost_usd=item.billed_cost_usd,
         billed_cost_runs=item.billed_cost_runs,
+        legacy_billed_cost_runs=item.legacy_billed_cost_runs,
         api_equivalent_cost_usd=item.api_equivalent_cost_usd,
         api_equivalent_cost_runs=item.api_equivalent_cost_runs,
+        legacy_api_equivalent_cost_runs=item.legacy_api_equivalent_cost_runs,
         unknown_cost_runs=item.unknown_cost_runs,
     )
 

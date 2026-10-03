@@ -82,6 +82,8 @@ def _dashboard_services(
     project_dir: Path,
     clock: Clock,
     tmux: Tmux,
+    *,
+    resource_pid: int | None = None,
 ) -> tuple[DashboardServices, Settings]:
     settings = load_settings(project_dir)
     runner = SubprocessRunner()
@@ -96,7 +98,7 @@ def _dashboard_services(
         clock=clock,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         engine_up=lambda: False,
-        engine_pid=lambda: None,
+        engine_pid=lambda: resource_pid,
         tmux=tmux,
         session_target=UNUSED_SESSION_TARGET,
         resources=ResourceSampler(clock, settings.orchestration.resources),
@@ -542,6 +544,48 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
         identity = app.screen.query_one("#task-detail-identity", Static)
         assert task.id in plain_text(identity.content)
+
+
+async def test_process_sampling_failure_retains_the_last_complete_tree_sample(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name)
+    sources, settings = _dashboard_services(
+        project_dir,
+        clock,
+        tmux,
+        resource_pid=os.getpid(),
+    )
+    try:
+        initial = await sources.resources()
+    except psutil.AccessDenied, PermissionError:
+        pytest.skip("host process enumeration is restricted")
+
+    assert initial.instance_cpu_pct is not None
+    assert initial.instance_rss_gb is not None
+    assert initial.sampled_at == START
+
+    clock.advance(settings.orchestration.resources.sample_seconds)
+    process_factory = psutil.Process
+
+    def deny_current_process(pid: int) -> psutil.Process:
+        if pid == os.getpid():
+            raise psutil.AccessDenied(pid=pid)
+        return process_factory(pid)
+
+    monkeypatch.setattr(psutil, "Process", deny_current_process)
+    stale = await sources.resources()
+
+    assert stale.state is DiagnosticSampleState.STALE
+    assert stale.sampled_at == initial.sampled_at
+    assert stale.sampled_ago is not None
+    assert stale.instance_cpu_pct == initial.instance_cpu_pct
+    assert stale.instance_rss_gb == initial.instance_rss_gb
+    assert stale.error is not None
 
 
 async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navigable(

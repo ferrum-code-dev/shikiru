@@ -20,19 +20,49 @@ API_EQUIVALENT_LABEL = "API-equivalent"
 
 
 def _agent_block(usage: AgentUsageView) -> Group:
-    if usage.usage_reported_runs:
+    known_token_runs = usage.usage_reported_runs + usage.legacy_token_runs
+    if known_token_runs:
         tokens = (
             f"input {usage.input_tokens:,} · output {usage.output_tokens:,} · "
             f"cache read {usage.cache_read_tokens:,} · cache write {usage.cache_write_tokens:,}"
         )
-        coverage = f"usage reported {usage.usage_reported_runs}/{usage.run_count} runs"
+        if usage.legacy_token_runs:
+            unknown_runs = usage.run_count - known_token_runs
+            coverage = (
+                f"usage reported {usage.usage_reported_runs} · legacy recorded "
+                f"{usage.legacy_token_runs} · token usage unknown "
+                f"{unknown_runs}/{usage.run_count} runs"
+            )
+            if usage.legacy_unknown_token_runs:
+                coverage += f" · legacy provenance unknown {usage.legacy_unknown_token_runs}"
+        elif usage.usage_reported_runs:
+            coverage = f"usage reported {usage.usage_reported_runs}/{usage.run_count} runs"
+            if usage.legacy_unknown_token_runs:
+                coverage += f" · legacy provenance unknown {usage.legacy_unknown_token_runs}"
+        elif usage.legacy_unknown_token_runs:
+            coverage = (
+                "legacy usage provenance unknown "
+                f"{usage.legacy_unknown_token_runs}/{usage.run_count} runs"
+            )
+        else:
+            coverage = (
+                f"usage not reported (0/{usage.run_count} runs)"
+                if usage.run_count
+                else "no session usage recorded"
+            )
     else:
         tokens = f"tokens {UNKNOWN_VALUE}"
-        coverage = (
-            f"usage not reported (0/{usage.run_count} runs)"
-            if usage.run_count
-            else "no session usage recorded"
-        )
+        if usage.legacy_unknown_token_runs:
+            coverage = (
+                "legacy usage provenance unknown "
+                f"{usage.legacy_unknown_token_runs}/{usage.run_count} runs"
+            )
+        else:
+            coverage = (
+                f"usage not reported (0/{usage.run_count} runs)"
+                if usage.run_count
+                else "no session usage recorded"
+            )
     lines = [Text(f"{usage.agent} · {tokens} · {coverage}", style="bold")]
     if usage.run_count:
         lines.extend(_cost_lines(usage))
@@ -54,6 +84,7 @@ def _cost_lines(usage: AgentUsageView) -> list[Text]:
                 "Billed",
                 usage.billed_cost_usd,
                 usage.billed_cost_runs,
+                usage.legacy_billed_cost_runs,
                 usage.run_count,
             )
         ),
@@ -62,6 +93,7 @@ def _cost_lines(usage: AgentUsageView) -> list[Text]:
                 API_EQUIVALENT_LABEL,
                 usage.api_equivalent_cost_usd,
                 usage.api_equivalent_cost_runs,
+                usage.legacy_api_equivalent_cost_runs,
                 usage.run_count,
             )
         ),
@@ -69,7 +101,13 @@ def _cost_lines(usage: AgentUsageView) -> list[Text]:
     ]
 
 
-def _basis_cost_text(label: str, cost: float | None, runs: int, total_runs: int) -> str:
+def _basis_cost_text(
+    label: str,
+    cost: float | None,
+    runs: int,
+    legacy_runs: int,
+    total_runs: int,
+) -> str:
     amount = UNKNOWN_VALUE if cost is None else f"${cost:.2f}"
     if total_runs == 0:
         coverage = "no runs"
@@ -77,7 +115,8 @@ def _basis_cost_text(label: str, cost: float | None, runs: int, total_runs: int)
         coverage = f"{runs}/{total_runs} runs"
         if runs < total_runs:
             coverage = f"partial · {coverage}"
-    return f"{label} subtotal · {amount} · {coverage}"
+    legacy = f" · legacy recorded {legacy_runs}" if legacy_runs else ""
+    return f"{label} subtotal · {amount} · {coverage}{legacy}"
 
 
 def _unknown_cost_text(usage: AgentUsageView) -> str:

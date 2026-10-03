@@ -477,6 +477,67 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     assert detail.evidence_errors
 
 
+async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Legacy usage remains inspectable")
+    runs = RunStore(connection, clock)
+    recorded = runs.start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
+    runs.record_usage(
+        recorded.id,
+        Usage(500, 50, 0, 0, 1.25, "billed", 10),
+    )
+    runs.start(task.id, Role.LEADER, IMPLEMENTER_RUNGS[0])
+    priced_zero = runs.start(task.id, Role.LEADER, IMPLEMENTER_RUNGS[0])
+    runs.record_usage(
+        priced_zero.id,
+        Usage(0, 0, 0, 0, 0.0, "api_equivalent", None),
+    )
+    connection.execute("ALTER TABLE runs DROP COLUMN usage_reported")
+    connection.execute("PRAGMA user_version = 7")
+    migrated_connection = database.connect()
+    migrated_connection.close()
+
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _dashboard_app(
+            reader,
+            project_root,
+            focus_task=task.id,
+            widget_names=TASK_DETAIL_WIDGETS,
+        )
+        async with app.run_test(size=(90, 42)) as pilot:
+            await pilot.pause()
+            usage_text = plain_text(app.query_one("#usage", Static).content)
+            sessions_text = plain_text(app.query_one("#task-detail-sessions", Static).content)
+
+            assert f"Task recorded usage · {task.id}" in usage_text
+            assert (
+                "usage reported 0 · legacy recorded 1 · token usage unknown 2/3 runs"
+                " · legacy provenance unknown 2" in usage_text
+            )
+            assert "Billed subtotal · $1.25 · partial · 1/3 runs · legacy recorded 1" in usage_text
+            assert (
+                "API-equivalent subtotal · $0.00 · partial · 1/3 runs · legacy recorded 1"
+                in usage_text
+            )
+            assert "Unknown cost · 1/3 runs" in usage_text
+            assert "legacy recorded · input 500 · output 50 · cache read 0 · cache write 0" in (
+                sessions_text
+            )
+            assert "$1.25 · billed · legacy recorded" in sessions_text
+            assert "$0.00 · api_equivalent · legacy recorded" in sessions_text
+            assert "legacy last reported context · 10%" in sessions_text
+            assert "legacy usage provenance unknown" in sessions_text
+            assert "no reliable context provenance" in sessions_text
+    finally:
+        reader.close()
+
+
 @pytest.mark.parametrize(
     "case",
     [
