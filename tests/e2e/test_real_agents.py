@@ -73,9 +73,16 @@ REAL_E2E_ENV_VAR = "SHIKIRU_E2E"
 REAL_E2E_ENABLED = "1"
 BASE_BRANCH = "main"
 TASK_ID = "T-1"
-DIAGNOSTICS_DIRECTORY = Path(__file__).parents[2] / "build" / "e2e" / "diagnostics"
 DIAGNOSTICS_DATE_FORMAT = "%Y-%m-%d"
+DIAGNOSTICS_INVOCATION_FORMAT = "%Y%m%dT%H%M%SZ"
 CLOCK = SystemClock()
+DIAGNOSTICS_DIRECTORY = (
+    Path(__file__).parents[2]
+    / "build"
+    / "e2e"
+    / "diagnostics"
+    / CLOCK.now().strftime(DIAGNOSTICS_INVOCATION_FORMAT)
+)
 INVOCATION = InvocationBudget(CLOCK, INVOCATION_BUDGET)
 INTEGRATION_WAIT_SECONDS = 60
 MAX_QUOTA_WAIT_SECONDS = 300

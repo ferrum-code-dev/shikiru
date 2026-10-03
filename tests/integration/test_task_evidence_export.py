@@ -448,6 +448,14 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
         assert overwrite_choice.value == "refuse"
         assert cast("Select[str]", screen.query_one("#export-signals", Select)).value == ("exclude")
         result_scroll = screen.query_one("#palette-result-scroll")
+        await pilot.pause()
+        await wait_until(
+            lambda: (
+                result_scroll.region.y >= form.region.y
+                and result_scroll.region.bottom <= screen.size.height
+            ),
+            timeout=EXPORT_WAIT_SECONDS,
+        )
         assert result_scroll.region.y >= form.region.y
         assert result_scroll.region.bottom <= screen.size.height
         assert result_scroll.max_scroll_y > 0
