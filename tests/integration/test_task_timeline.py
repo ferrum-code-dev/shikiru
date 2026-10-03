@@ -730,15 +730,22 @@ async def test_detail_preserves_selection_while_following_and_pauses_on_older_pa
             )
             body = panel.query_one("#task-detail-body", TaskDetailBody)
             body.scroll_end(animate=False, force=True)
+            await pilot.pause()
             await wait_until(
-                lambda: body.scroll_y > 0,
+                lambda: body.max_scroll_y > 0 and body.scroll_y == body.max_scroll_y,
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
+            await pilot.pause()
             bottom_position = body.scroll_y
             relationships_toggle = panel.query_one("#task-detail-relationships-toggle", Button)
             relationships_toggle.focus()
+            await pilot.pause()
             await wait_until(
-                lambda: app.focused is relationships_toggle and body.scroll_y < bottom_position,
+                lambda: (
+                    app.focused is relationships_toggle
+                    and body.scroll_y < bottom_position
+                    and body.scrollable_content_region.contains_region(relationships_toggle.region)
+                ),
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
             assert "Following latest" in _static_text(panel, TASK_DETAIL_TIMELINE_STATUS)
