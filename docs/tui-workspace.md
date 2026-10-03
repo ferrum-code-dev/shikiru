@@ -110,7 +110,7 @@ Every row keeps the task ID, title and meaningful state visible. Additional colu
 | History | `done`, `cancelled` | Latest finish time first, then sequence. |
 | All | Every task | Non-terminal tasks first, then history. |
 
-Search matches task ID and title case-insensitively and combines with the selected filter. The full request is available in detail. Display the active search/filter, matching count and a clear empty result. Clear search and switching filters are explicit operations.
+Search matches task ID and title case-insensitively and combines with the selected filter. Press `/` to focus search, type a title or task ID, then press Enter to move focus to the result list; Up/Down select a row there, and Enter opens its detail. While the search input has focus, Up/Down move its text cursor. The full request is available in detail. Display the active search/filter, matching count and a clear empty result. Clear search and switching filters are explicit operations.
 
 Queued rows use the same dispatch sort rule as the scheduler. A displayed position is an ordering aid, not a promised start time; eligibility can change and agent quota blocks can allow another task to proceed first.
 

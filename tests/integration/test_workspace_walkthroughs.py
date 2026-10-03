@@ -403,12 +403,14 @@ async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message
         app = runtime.app()
         async with app.run_test(size=HOME_SIZE) as pilot:
             search = app.query_one("#task-browser-search", Input)
+            await pilot.press("/")
+            assert app.focused is search
             search.value = title
             await pilot.pause()
             await runtime.wait_for(lambda: bool(app.query_one(f"#task-row-{task_id}")))
             task_list = app.query_one("#task-browser-list", ListView)
-            task_list.focus()
-            task_list.index = 0
+            await pilot.press("enter")
+            await runtime.wait_for(lambda: app.focused is task_list)
             await pilot.press("enter")
             await runtime.wait_for(lambda: isinstance(app.screen, TaskDetailScreen))
             detail_verdict = app.screen.query_one("#task-detail-verdict", Static)
@@ -474,7 +476,12 @@ async def test_fake_agent_escalation_updates_an_open_resolution_form_from_anothe
             answer.text = GUIDANCE_MESSAGE
             summary = _plain(palette.query_one("#palette-escalation-summary", Static))
             assert "decision_required" in summary.lower()
-            assert "question:" in summary.lower()
+            assert f"Question: {DECISION_QUESTION}" in summary
+            assert "No structured agent alternatives are recorded." in summary
+            assert (
+                "★ answer · Give the Leader guidance; the task continues from a consult turn."
+                in summary
+            )
             assert "cancel the task" in summary.lower()
             external_connection = Database(state_db_path(tmp_path)).connect()
             external_queue = CommandQueue(external_connection, runtime.clock)

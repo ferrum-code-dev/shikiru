@@ -38,10 +38,10 @@ before starting.
 ## Dashboard
 
 `shikiru start` creates the Home workspace in the project's `[shikiru] <name>` tmux session.
-From Home, press `/` to focus task search, enter a title or task ID, use Up/Down to select a row,
-and press Enter to open its detail. Escape returns to the same browser selection. Detail shows the
-latest validated verdict alongside the request, task state, relationships, blocker evidence and
-available history.
+From Home, press `/` to focus task search and enter a title or task ID. Press Enter once to move
+focus to the matching results; then use Up/Down to select a row and press Enter again to open its
+detail. Escape returns to the same browser selection. Detail shows the latest validated verdict
+alongside the request, task state, relationships, blocker evidence and available history.
 
 Press `Ctrl+P` in the dashboard to open the shared action palette with the selected task and role
 pre-filled. Inside a Shikiru tmux session, `prefix + Space` opens the same palette in a popup; a
