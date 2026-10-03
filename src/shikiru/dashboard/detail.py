@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from textual import events
     from textual.app import App, ComposeResult
     from textual.events import MouseScrollUp
+    from textual.widget import Widget
     from textual.worker import Worker
 
     from shikiru.dashboard.contract import (
@@ -206,6 +207,7 @@ class TaskDetailPanel(Vertical):
         self._timeline_worker: Worker[None] | None = None
         self._timeline_request_generation = 0
         self._body_focus_generation = 0
+        self._rendered_task_id: str | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
 
     def compose(self) -> ComposeResult:
@@ -730,6 +732,9 @@ class TaskDetailPanel(Vertical):
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         scroll_y = body.scroll_y
         focus_generation = self._body_focus_generation
+        focused = self.screen.focused
+        restore_scroll = self._rendered_task_id == view.task_id
+        self._rendered_task_id = view.task_id
         action_role = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
         action_role.prompt = f"Acting · {view.acting_role.title()}"
         identity = (
@@ -789,20 +794,27 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_FACTS}", Static).update(facts)
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(_workspace_text(view))
         self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
-        body.call_after_refresh(
-            self._restore_body_scroll,
-            body,
-            scroll_y,
-            focus_generation,
-        )
+        if restore_scroll:
+            body.call_after_refresh(
+                self._restore_body_scroll,
+                body,
+                scroll_y,
+                focus_generation,
+                focused,
+            )
 
     def _restore_body_scroll(
         self,
         body: TaskDetailBody,
         scroll_y: int,
         focus_generation: int,
+        focused: Widget | None,
     ) -> None:
-        if self._screen_is_active() and focus_generation == self._body_focus_generation:
+        if (
+            self._screen_is_active()
+            and focus_generation == self._body_focus_generation
+            and self.screen.focused is focused
+        ):
             body.scroll_to(y=scroll_y, animate=False)
 
     def _render_timeline(self, page: TaskTimelinePageView | None) -> None:
