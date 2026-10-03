@@ -41,6 +41,7 @@ SMOKE_STAGE="preflight"
 HOME_DASHBOARD_CHECK="not run"
 PICKER_CHECK="not run"
 SMALL_CLIENT_SIZE="not run"
+WORKSPACE_NAVIGATION_CHECK="not run"
 
 sha256() {
     if command -v sha256sum > /dev/null; then
@@ -89,7 +90,7 @@ finish() {
             done
         } | sha256 | awk '{print $1}'
     )"
-    SMOKE_EXIT_STATUS="$exit_status" "$PYTHON_BIN" - "$ARTIFACT" "$DATE" "$STARTED_AT" "$ARTIFACT_NAME" "$SOURCE_COMMIT" "$SOURCE_FINGERPRINT" "$SMOKE_STAGE" "$HOME_DASHBOARD_CHECK" "$PICKER_CHECK" "$SMALL_CLIENT_SIZE" <<'PY'
+    SMOKE_EXIT_STATUS="$exit_status" "$PYTHON_BIN" - "$ARTIFACT" "$DATE" "$STARTED_AT" "$ARTIFACT_NAME" "$SOURCE_COMMIT" "$SOURCE_FINGERPRINT" "$SMOKE_STAGE" "$HOME_DASHBOARD_CHECK" "$PICKER_CHECK" "$SMALL_CLIENT_SIZE" "$WORKSPACE_NAVIGATION_CHECK" <<'PY'
 import json
 import os
 import sys
@@ -103,14 +104,15 @@ data = {
     "source_diff_fingerprint": sys.argv[6],
     "failed_stage": sys.argv[7] if os.environ["SMOKE_EXIT_STATUS"] != "0" else None,
     "status": "passed" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "failed",
-    "installation": "uv tool install . --with tests/fake_agent --with pytest",
+    "installation": "uv tool install . --with tests/fake_agent --with pytest --with pytest-asyncio",
     "fresh_disposable_home": True,
     "runtime_isolation": ["HOME", "XDG directories", "uv cache/tools/bin", "private tmux socket"],
     "installed_package_data_and_entrypoints": "verified" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
-    "installed_cli_flows": ["interactive init wizard and Doctor", "init --yes", "doctor", "start", "submit", "status", "ls", "picker attach", "named attach", "stop and cleanup"],
+    "installed_cli_flows": ["interactive init wizard and Doctor", "init --yes", "doctor", "start", "submit", "status", "ls", "picker attach", "named attach", "installed-package Textual workspace boundary", "stop and cleanup"],
     "wizard_terminals": ["120x38", "68x16"],
     "picker_terminal": sys.argv[9],
     "small_picker_client_size": sys.argv[10],
+    "workspace_navigation": sys.argv[11],
     "home_dashboard_pane_after_merge": sys.argv[8],
     "task_result": "T-1 merged on main and A1 ticked from interactive quickstart" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
     "agent_cost": "unknown; test-only fake agent reports no billed cost",
@@ -232,7 +234,7 @@ record env -i \
     "UV_TOOL_DIR=$TOOL_DIR" \
     "UV_TOOL_BIN_DIR=$TOOL_BIN_DIR" \
     "PATH=$PATH" \
-    "$UV_BIN" tool install . --with "$ROOT/tests/fake_agent" --with pytest
+    "$UV_BIN" tool install . --with "$ROOT/tests/fake_agent" --with pytest --with pytest-asyncio
 
 TOOL_BIN="$TOOL_BIN_DIR/shikiru"
 PACKAGE_PYTHON="$(sed -n '1{s/^#!//;p;}' "$TOOL_BIN")"
@@ -359,7 +361,8 @@ SMOKE_STAGE="quickstart start and task merge"
 record app "$WORK_PROJECT" \
     --set orchestration.poll_seconds=1 \
     --set orchestration.resources.max_cpu_pct=100 \
-    --set orchestration.resources.min_free_ram_gb=0 start
+    --set orchestration.resources.min_free_ram_gb=0 \
+    --set dashboard.animations=false start
 SUBMIT_OUTPUT="$(app "$WORK_PROJECT" submit 'Implement task A1 from tasks/plan.md' 2>> "$LOG")"
 printf '%s\n' "$SUBMIT_OUTPUT" | tee -a "$LOG"
 [[ "$SUBMIT_OUTPUT" == T-1 ]]
@@ -381,6 +384,32 @@ if grep -E 'Traceback|ValueError|active but has no step recorded' "$RUN_ROOT/hom
 fi
 cat "$RUN_ROOT/home-dashboard.txt" >> "$LOG"
 HOME_DASHBOARD_CHECK="home pane alive without rendered traceback after merged task"
+
+SMOKE_STAGE="installed-package Textual workspace boundary"
+TEST_IMPORT_ROOT="$RUN_ROOT/test-import"
+TEST_TMUX_TMPDIR="$RUN_ROOT/test-tmux"
+TEST_PATH="$TOOL_BIN_DIR:$(dirname "$TMUX_BIN"):$(dirname "$GIT_BIN"):$(dirname "$PYTHON_BIN"):$(getconf PATH)"
+mkdir -p "$TEST_IMPORT_ROOT" "$TEST_TMUX_TMPDIR"
+ln -s "$ROOT/tests" "$TEST_IMPORT_ROOT/tests"
+cd "$RUN_ROOT"
+record env -i \
+    "HOME=$HOME_DIR" \
+    "PATH=$TEST_PATH" \
+    "UV_TOOL_DIR=$TOOL_DIR" \
+    "TMUX_TMPDIR=$TEST_TMUX_TMPDIR" \
+    "TMPDIR=$RUN_ROOT/tmp" \
+    "TERM=xterm-256color" \
+    "NO_COLOR=1" \
+    "PYTHONPATH=$TEST_IMPORT_ROOT" \
+    "$PACKAGE_PYTHON" -m pytest -q -c /dev/null --import-mode=importlib \
+    -o asyncio_mode=auto \
+    "$ROOT/tests/integration/test_workspace_walkthroughs.py::test_fake_agent_workspace_finds_verdict_and_applies_contextual_message" \
+    "$ROOT/tests/integration/test_dashboard_task_detail.py::test_enter_opens_shared_detail_and_escape_restores_browser_selection_and_scroll" \
+    "$ROOT/tests/integration/test_dashboard_app.py::test_home_resizes_through_the_terminal_matrix_without_losing_selection_or_focus" \
+    "$ROOT/tests/integration/test_dashboard_app.py::test_task_detail_toolbar_and_timeline_form_remain_reachable_after_resize" \
+    "$ROOT/tests/integration/test_dashboard_motion.py::test_disabled_animations_keep_countdowns_live_without_animating_frames"
+cd "$ROOT"
+WORKSPACE_NAVIGATION_CHECK="headless Textual run_test with installed package interpreter: Home / and title search, Enter focuses results, arrows change selection, Enter opens detail, Escape restores Home selection, Ctrl+P carries task and Implementer context, contextual message reaches Applied; Home 120x40 and through 20x8, task detail 36x20 and 48x14, NO_COLOR and static countdown behavior covered; live private-tmux Home launch and attach-picker checks are separate"
 
 SMOKE_STAGE="session listing and attach"
 record app "$SECONDARY_PROJECT" start
