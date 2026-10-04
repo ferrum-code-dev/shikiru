@@ -1,6 +1,6 @@
 # Focus terminal parity correction
 
-Status: Task 97 audit and target specification are complete; Tasks 98–102 are planned and no parity correction has shipped. Task 97 is recorded in [the implementation plan](../tasks/plan.md#phase-10-focus-terminal-parity-correction).
+Status: Tasks 97–98 are complete; Home frame/list implementation is recorded in [the implementation plan](../tasks/plan.md#phase-10-focus-terminal-parity-correction) and [Task 98 native Home review](task98-visual-review-2026-10-04.md). Tasks 99–102 and final native parity sign-off remain open.
 
 This specification is the normative visual and interaction target for Phase 10. It follows the approved [Focus Steel HTML reference](design/references/focus-steel-approved.html) and [736-pixel view](design/references/focus-steel-approved-736.png) one-to-one. Where the Phase 9 presentation prose in [Compact Operator TUI](tui-focus.md) describes a broader or looser layout or route, this specification takes precedence for composition and interaction. Phase 9 billing, evidence, plugin, engine, ownership, command and compatibility guarantees remain in force.
 

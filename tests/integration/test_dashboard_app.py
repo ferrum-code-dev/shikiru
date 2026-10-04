@@ -86,6 +86,7 @@ _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _WIDE_HOME_SIZE = (120, 40)
+_HOME_REVIEW_SIZES = ((100, 35), _WIDE_HOME_SIZE, (80, 24), (48, 20))
 _MIN_WIDE_TASK_LIST_ROWS = 9
 _API_INPUT_TOKENS = 1_000
 _API_OUTPUT_TOKENS = 500
@@ -404,10 +405,12 @@ async def test_dashboard_mounts_the_default_widgets(
         reader.close()
 
 
+@pytest.mark.parametrize("size", _HOME_REVIEW_SIZES)
 async def test_home_status_keeps_stopped_engine_fault_context_without_escalations_plugin(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
@@ -426,7 +429,7 @@ async def test_home_status_keeps_stopped_engine_fault_context_without_escalation
     reader = StateReader(database, SystemClock())
     try:
         app = _app(reader, project_dir, widget_names=["header"])
-        async with app.run_test(size=_WIDE_HOME_SIZE):
+        async with app.run_test(size=size):
             header = app.query_one("#header", Static)
             status = app.query_one("#escalations", Static)
             await wait_until(
@@ -437,11 +440,14 @@ async def test_home_status_keeps_stopped_engine_fault_context_without_escalation
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
             assert "host sample failed" not in _rendered_text(header)
+            visible_status = " ".join(" ".join(_rendered_widget_lines(status)).split())
+            assert "host sample failed" in visible_status
+            assert "Engine stopped" in visible_status
     finally:
         reader.close()
 
 
-@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, (48, 20)])
+@pytest.mark.parametrize("size", _HOME_REVIEW_SIZES)
 async def test_home_attention_tracks_owned_held_and_engine_state_changes(
     database: Database,
     connection: Connection,
@@ -722,6 +728,33 @@ async def test_home_task_list_keeps_a_recent_completed_history_row(
         reader.close()
 
 
+@pytest.mark.parametrize("size", _HOME_REVIEW_SIZES)
+async def test_home_quiet_status_reports_running_unblocked_engine(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    services = StubServices(engine_running=True)
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=["queue", "escalations"], services=services)
+        async with app.run_test(size=size):
+            attention = app.query_one("#escalations", EscalationsPanel)
+            status = _focus_attention_row(attention)
+            await wait_until(
+                lambda: "Automation continues" in _rendered_text(status),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            visible_status = " ".join(_rendered_widget_lines(status))
+            assert "No decisions needed" in visible_status
+            assert "Automation continues" in visible_status
+    finally:
+        reader.close()
+
+
 async def test_focus_operational_counts_and_contextual_task_filters(
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
@@ -775,8 +808,9 @@ async def test_focus_operational_counts_and_contextual_task_filters(
         reader.close()
 
 
+@pytest.mark.parametrize("size", _HOME_REVIEW_SIZES)
 async def test_focus_attention_opens_durable_decision_evidence(
-    database: Database, connection: Connection, tmp_path: Path
+    database: Database, connection: Connection, tmp_path: Path, size: tuple[int, int]
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
@@ -796,12 +830,16 @@ async def test_focus_attention_opens_durable_decision_evidence(
     reader = StateReader(database, clock)
     try:
         app = _app(reader, project_dir, widget_names=["escalations"])
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=size) as pilot:
             attention = app.query_one("#escalations", EscalationsPanel)
             await wait_until(lambda: attention.display, timeout=2)
             row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
             assert escalation.id in _rendered_text(row)
             assert "Enter inspect · r resolve · o evidence" in _rendered_text(row)
+            visible_status = " ".join(_rendered_widget_lines(row))
+            assert escalation.id in visible_status
+            assert "Enter inspect" in visible_status
+            assert "Engine stopped" in visible_status
 
             await _choose_focus_view(app, pilot, "Attention · decisions, stalls and faults")
             await wait_until(lambda: app.focused is attention, timeout=2)
