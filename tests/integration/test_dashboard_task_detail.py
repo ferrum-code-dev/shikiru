@@ -811,7 +811,7 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             assert "Used" in sessions_text
             assert "Current" not in sessions_text
             assert "codex/luna" in sessions_text
-            assert "session-wide 550 tokens" in sessions_text
+            assert "session-wide 550 tok" in sessions_text
             assert "billed $1.25" in sessions_text
             assert "legacy recorded" in sessions_text
             assert "input 500" in sessions_text
@@ -941,7 +941,7 @@ async def _assert_task_history_rendering(
         timeout=2,
     )
     sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
-    assert "13 tokens" in plain_text(sessions.content)
+    assert "session-wide 13 tok" in plain_text(sessions.content)
     await pilot.press("u")
     await wait_until(
         lambda: (
@@ -950,7 +950,7 @@ async def _assert_task_history_rendering(
         timeout=2,
     )
     usage_details = plain_text(sessions.content)
-    assert usage_details.count("13 tokens") == 1
+    assert usage_details.count("session-wide 13 tok") == 1
     assert "Session-wide cumulative totals · across models" in usage_details
     assert "codex/gpt-5" in usage_details
     assert "claude/sonnet" in usage_details

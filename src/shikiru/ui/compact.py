@@ -948,7 +948,7 @@ class AgentUsageRow:
         charge, charge_style = _compact_session_charge(session)
         details = Text.assemble(
             (identity, STEEL_BLUE),
-            (f" · {tokens}", SECONDARY_TEXT_COLOR),
+            (f": {tokens}", SECONDARY_TEXT_COLOR),
             (f" · {charge}", charge_style),
         )
         return Group(
@@ -962,9 +962,9 @@ def _session_token_summary(session: _TaskSession) -> str:
         return "session tokens unknown"
     total = _compact_count(session.input_tokens + session.output_tokens)
     if session.usage_reported is True:
-        return f"session-wide {total} tokens"
+        return f"session-wide {total} tok"
     if session.legacy_token_totals:
-        return f"session-wide {total} tokens legacy"
+        return f"session-wide {total} tok legacy"
     return "session tokens unknown"
 
 

@@ -1215,6 +1215,9 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
                 lambda: (
                     "Engine stopped" in _rendered_text(_focus_attention_row(attention))
                     and owned.id in _rendered_text(_focus_attention_row(attention))
+                    and paused.id in _rendered_text(_focus_attention_row(attention))
+                    and "intervention" in _rendered_text(_focus_attention_row(attention))
+                    and "paused" in _rendered_text(_focus_attention_row(attention))
                 ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
