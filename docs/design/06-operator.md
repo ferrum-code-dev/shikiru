@@ -104,7 +104,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 
 ### 5.4 Workspace shell and widgets
 
-Task 93 replaces Home's Phase 8 section/tab/card stack with the Focus composition specified in [Compact Operator TUI](../tui-focus.md). Task 94 converts the shared Home inspector and `dash --task` to one compact task detail with contextual evidence views and palette actions; Tasks 95–96 remain for responsive compatibility cleanup and release verification. Phase 8's operator service behavior remains in force: state changes still go through `OperatorCommands`, browser/detail queries remain bounded, the engine stays the single writer, and existing widgets and callbacks remain compatible.
+Tasks 93–96 ship Home's Focus composition, shared compact task detail, responsive compatibility and release verification as specified in [Compact Operator TUI](../tui-focus.md). Phase 8's operator service behavior remains in force: state changes still go through `OperatorCommands`, browser/detail queries remain bounded, the engine stays the single writer, and existing widgets and callbacks remain compatible. See the [Phase 9 release record](../release-readiness-2026-10-04-phase9.md).
 
 `shikiru dash --home | --task T-n` is a Textual app with one shared navigable shell. The permanent home window opens the Home workspace. A task window opens the same shell with its existing `focus_task` context and the shared task detail fixed to that task.
 

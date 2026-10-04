@@ -406,10 +406,12 @@ record env -i \
     "$ROOT/tests/integration/test_workspace_walkthroughs.py::test_fake_agent_workspace_finds_verdict_and_applies_contextual_message" \
     "$ROOT/tests/integration/test_dashboard_task_detail.py::test_enter_opens_shared_detail_and_escape_restores_browser_selection_and_scroll" \
     "$ROOT/tests/integration/test_dashboard_app.py::test_home_resizes_through_the_terminal_matrix_without_losing_selection_or_focus" \
-    "$ROOT/tests/integration/test_dashboard_app.py::test_task_detail_toolbar_and_timeline_form_remain_reachable_after_resize" \
+    "$ROOT/tests/integration/test_dashboard_app.py::test_task_detail_contextual_controls_are_reachable_at_narrow_width" \
+    "$ROOT/tests/integration/test_dashboard_task_detail.py::test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resize" \
+    "$ROOT/tests/integration/test_dashboard_task_detail.py::test_task_evidence_filter_and_reading_position_survive_resize_and_refresh" \
     "$ROOT/tests/integration/test_dashboard_motion.py::test_disabled_animations_keep_countdowns_live_without_animating_frames"
 cd "$ROOT"
-WORKSPACE_NAVIGATION_CHECK="headless Textual run_test with installed package interpreter: Home / and title search, Enter focuses results, arrows change selection, Enter opens detail, Escape restores Home selection, Ctrl+P carries task and Implementer context, contextual message reaches Applied; Home 120x40 and through 20x8, task detail 36x20 and 48x14, NO_COLOR and static countdown behavior covered; live private-tmux Home launch and attach-picker checks are separate"
+WORKSPACE_NAVIGATION_CHECK="headless Textual run_test with installed package interpreter: Home / and title search, Enter focuses results, arrows change selection, Enter opens detail, Escape restores Home selection, Ctrl+P carries task and Implementer context, contextual message reaches Applied; Home 120x40 and through 20x8, task detail and controls at 36x20, palette and evidence filter across 36x20/48x14 with cursor/focus/reading-position preservation, NO_COLOR and static countdown behavior covered; live private-tmux Home launch and attach-picker checks are separate"
 
 SMOKE_STAGE="session listing and attach"
 record app "$SECONDARY_PROJECT" start

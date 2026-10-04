@@ -2,6 +2,8 @@
 
 The shipped application source exercised here is baseline commit `eed895fda03fb04a548786cc7e8818d9070aa602`. The five connected Task 87 walkthroughs and original evidence record were added in commit `8dc061c924fb7b9048da39811d3dd8fc060f1718`, derived from that application baseline. After review corrections, the walkthrough module was rerun from the uncommitted working tree based at `8dc061c`; that pre-commit run includes the updated search-submit route and escalation-summary assertions below. The UI boundary, plan and tmux checks below are existing integration tests. No real-agent E1–E6 scenario was run.
 
+This is the historical Phase 8 walkthrough record. Task 96's additional Focus operator flows, mixed billing/model-history projections and release verification are recorded separately in the [2026-10-04 Phase 9 release record](release-readiness-2026-10-04-phase9.md).
+
 All commands used the project `.venv` through `uv`, isolated pytest temporary projects, real SQLite and Git where the fixture owns them, Textual `run_test`, `FakeClock` with `wait_until_advancing`, and `tests/support/tmux.py::tmux_server` on a unique private socket. The suite did not connect to the user's tmux server or cache. The Task 87 file uses the installed fake agent and a private Shikiru tmux session to run the engine for flows 1, 3, 5, 6 and 7.
 
 ## Connected fake-agent engine walkthroughs

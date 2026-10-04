@@ -2,7 +2,52 @@
 
 The release summary of full `SHIKIRU_E2E=1 uv run poe e2e` invocations (07 section 5). It is copied by hand from git-ignored artifacts under `build/e2e/` and refreshed with each release-readiness document. Agent costs are the agents' own estimates, not billing.
 
-## Latest full passing invocation
+## Latest fresh invocation — 2026-10-04 (passed)
+
+| | |
+|---|---|
+| Source commit / tree | `d49791c269ceef683c8a3155593d3f5ec9b5825d`, dirty (`source_dirty` true); pending delta contained documentation and the clean-install smoke selector update, with no application-code changes after the commit. The schema-5 artifact records no diff fingerprint. |
+| Started / finished (UTC) | 2026-10-04 11:49:36.516 / 12:12:48.020 (23 m 11.5 s; pytest reported 1,391.98 s) |
+| Exit status | 0; 7 passed (the scripted fake-agent boundary and real E1–E6), 1,156 deselected |
+| Attempts | E1–E5 passed at attempt 0. E6 failed once with a diagnosed agent-rule skip and passed on the one existing allowed retry. |
+| Artifact | `build/e2e/20261004T114936Z.json`, schema 5, keyed by invocation start |
+| E6 diagnostic | `build/e2e/diagnostics/20261004T114936Z/2026-10-04-e6-attempt-0.txt` |
+| Tools | Python 3.14.7, Claude Code 2.1.289, Codex CLI 0.160.0, tmux 3.7c, git 2.55.0 |
+| Agent ladders | E2E-only Codex `gpt-6-luna`, low effort for Leader, Implementer and Helper |
+| Sandbox | Codex `workspace-write`; projects under `/Users/pavel/.cache/shikiru-e2e`; `approvals_reviewer=auto_review` |
+| Cost | Every artifact cost is null (unknown), not zero |
+
+| Scenario | Result | Attempts | Duration | Cost |
+|---|---|---:|---:|---|
+| E1 triage, implement, verify and merge | passed | 1 | 101.67 s | unknown |
+| E2 operator message reaches verify | passed | 1 | 166.38 s | unknown |
+| E3 plan, dependent tasks, parallel progress and merge | passed | 1 | 313.81 s | unknown |
+| E4 scripted MCP operator resolves a product decision | passed | 1 | 182.17 s | unknown |
+| E5 engine restart resumes the interrupted turn | passed | 1 | 98.05 s | unknown |
+| E6 takeover holds only the selected task | passed | 2 | 523.92 s total (242.97 + 280.95) | unknown |
+
+The corrected-source run followed a separate 2026-10-04 zero-turn setup failure described below. Commit `d49791c` adds a bounded read-only lookup of the installed Codex CLI's bundled model catalog when the refreshed user cache omits the configured model. The earlier failure was a product setup failure, not an agent-flaky result and not an automatic retry. No user Codex cache, authentication or production defaults were changed.
+
+The first E6 attempt emitted no `engine_fault`; both tasks completed and the agent reported preserving tracker changes, while A2 remained unchecked after conflict resolution. Its assertion was diagnosed as the permitted “agent skipped a rule” case. The original diagnostic is retained, and the one configured rerun passed. E4's AIOperator is a scripted MCP client; this scenario exercises the MCP decision path and is not evidence of paid operator inference. All costs are null, which means unknown rather than zero.
+
+## Preserved corrected-source setup failure — 2026-10-04
+
+| | |
+|---|---|
+| Source commit / tree | `d751832d653f3c21f7e35db894aedd760fd8ee04`, dirty (`source_dirty` true); the artifact has no dirty-diff fingerprint |
+| Started / finished (UTC) | 2026-10-04 11:02:40.243 / 11:02:56.951 (16.71 s) |
+| Exit status | 1; all six E1–E6 tests failed during `shikiru start` preflight, before any model turn |
+| Attempts | One attempt per scenario; `ShikiruFailure`, attempt 0, no automatic retry |
+| Artifact | `build/e2e/20261004T110240Z.json`, schema 5 |
+| Diagnostics | `build/e2e/diagnostics/20261004T110239Z/2026-10-04-e{1,2,3,4,5,6}-attempt-0.txt` |
+| Tools | Python 3.14.7, Claude Code 2.1.289, Codex CLI 0.160.0, tmux 3.7c, git 2.55.0 |
+| Agent ladders | The configured test-only Codex `gpt-6-luna`, low effort for Leader, Implementer and Helper |
+| Sandbox | Codex `workspace-write`; projects under `/Users/pavel/.cache/shikiru-e2e`; `approvals_reviewer=auto_review` |
+| Cost | Every artifact cost is null (unknown); no agent turns began |
+
+Codex's `context_window` doctor check refused the configured model because the refreshed `$CODEX_HOME/models_cache.json` did not contain `gpt-6-luna`. A read-only `codex debug models --bundled` check against the same Codex CLI binary reports that exact model with a 272,000-token context window; the refreshed home cache was version 0.150.0 and omitted it. This confirms a local model-catalog mismatch, not an agent behavior failure. This invocation's E1–E6 gate failed and is not counted as evidence for the corrected source. The preserved diagnostics and artifact are the source of the scenario results; null cost is unknown, not zero.
+
+## Previous passing invocation — 2026-10-03
 
 | | |
 |---|---|
