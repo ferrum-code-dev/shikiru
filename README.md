@@ -48,7 +48,7 @@ pre-filled. Inside a Shikiru tmux session, `prefix + Space` opens the same palet
 popup opened from a role pane carries that pane's current task and role. Outside a Shikiru session,
 the tmux binding keeps its normal `next-layout` action. `?` opens workspace help.
 
-The current dashboard is the verified Phase 8 workspace. Phase 9's approved task-list/inspector layout, compact resource and usage readouts, and explicit subscription metadata are planned; the examples and values in the [Focus specification](docs/tui-focus.md) describe the target, not shipped behavior.
+The current dashboard is the verified Phase 8 workspace. Task 90 now records explicit per-session billing metadata and includes it in task details and evidence export. Phase 9's approved task-list/inspector layout and compact resource and usage readouts remain planned; the [Focus specification](docs/tui-focus.md) describes both the shipped metadata and the remaining target presentation.
 
 The dashboard labels command outcomes **Pending**, **Applied** or **Rejected**. Pending means the
 command is still in the durable queue; when the engine is stopped it can apply after the next

@@ -10,7 +10,12 @@ from textual.containers import HorizontalScroll, VerticalScroll
 from textual.widgets import Button, DataTable, ListView, Select, Static, TextArea
 
 import shikiru.agents.registry as registry_module
-from shikiru.agents.contracts import Usage
+from shikiru.agents.contracts import (
+    BILLING_MODE_SUBSCRIPTION,
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    BillingDeclaration,
+    Usage,
+)
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
@@ -85,6 +90,7 @@ TMUX_ACTIVE_WINDOW_FORMAT = "#{window_id} #{window_active}"
 TMUX_ACTIVE_PANE_FORMAT = "#{pane_id} #{pane_active}"
 LEADER_PANE_ID = "%1"
 IMPLEMENTER_PANE_ID = "%2"
+_COST_BASIS_BILLED = "billed"
 
 
 class _ExtensionWidget:
@@ -416,21 +422,7 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
         task.id,
         RepoState(base="main", base_ref="main", base_sha="base-sha", branch="shikiru/T-1-detail"),
     )
-    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
-    RunStore(connection, clock).set_session(run.id, "session-current", "resume-current")
-    RunStore(connection, clock).record_usage(
-        run.id,
-        Usage(
-            input_tokens=12,
-            output_tokens=7,
-            cache_read_tokens=3,
-            cache_write_tokens=1,
-            cost_usd=0.25,
-            cost_basis="billed",
-            context_used_pct=20,
-        ),
-    )
-    RunStore(connection, clock).mark_taken_over(run.id)
+    _record_subscribed_session(connection, clock, task.id)
     EventLog(connection, clock).append(
         EventKind.TURN_COMPLETED,
         task_id=task.id,
@@ -498,8 +490,59 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     assert detail.signals[0].role == Role.IMPLEMENTER.value
     assert detail.sessions[0].session_id == "session-current"
     assert detail.sessions[0].input_tokens == 12
+    assert detail.sessions[0].billing_mode == BILLING_MODE_SUBSCRIPTION
+    assert detail.sessions[0].billing_source == BILLING_SOURCE_OPERATOR_CONFIG
     assert detail.ownership == (Role.IMPLEMENTER.value,)
     assert detail.evidence_errors
+
+    await _assert_billing_details_are_visible(reader, project_root, task.id, clock)
+
+
+def _record_subscribed_session(connection: Connection, clock: Clock, task_id: str) -> None:
+    runs = RunStore(connection, clock)
+    run = runs.start(
+        task_id,
+        Role.IMPLEMENTER,
+        IMPLEMENTER_RUNGS[0],
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_SUBSCRIPTION,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    runs.set_session(run.id, "session-current", "resume-current")
+    runs.record_usage(
+        run.id,
+        Usage(
+            input_tokens=12,
+            output_tokens=7,
+            cache_read_tokens=3,
+            cache_write_tokens=1,
+            cost_usd=0.25,
+            cost_basis=_COST_BASIS_BILLED,
+            context_used_pct=20,
+        ),
+    )
+    runs.mark_taken_over(run.id)
+
+
+async def _assert_billing_details_are_visible(
+    reader: StateReader,
+    project_root: Path,
+    task_id: str,
+    clock: Clock,
+) -> None:
+    app = _dashboard_app(
+        reader,
+        project_root,
+        focus_task=task_id,
+        widget_names=TASK_DETAIL_WIDGETS,
+        clock=clock,
+    )
+    async with app.run_test(size=(90, 42)) as pilot:
+        await pilot.pause()
+        sessions_text = plain_text(app.query_one("#task-detail-sessions", Static).content)
+        assert "Billing mode · subscription · operator_config" in sessions_text
+        assert "$0.25 · billed" in sessions_text
 
 
 async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
@@ -523,6 +566,8 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
         Usage(0, 0, 0, 0, 0.0, "api_equivalent", None),
     )
     connection.execute("ALTER TABLE runs DROP COLUMN usage_reported")
+    connection.execute("ALTER TABLE runs DROP COLUMN billing_mode")
+    connection.execute("ALTER TABLE runs DROP COLUMN billing_source")
     connection.execute("PRAGMA user_version = 7")
     migrated_connection = database.connect()
     migrated_connection.close()

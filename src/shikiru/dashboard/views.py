@@ -1456,6 +1456,8 @@ def _task_session(run: Run) -> TaskSessionView:
         cost_usd=run.usage.cost_usd,
         cost_basis=run.usage.cost_basis,
         context_used_pct=run.usage.context_used_pct,
+        billing_mode=run.billing_mode,
+        billing_source=run.billing_source,
         usage_reported=run.usage_reported,
         legacy_token_totals=(run.usage_reported is None and has_positive_token_evidence(run)),
         legacy_cost_recorded=(run.usage_reported is None and run.usage.cost_usd is not None),

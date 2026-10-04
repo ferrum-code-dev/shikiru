@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import Agent, Rung
     from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Role, Task
+    from shikiru.engine.agents import AgentPool
     from shikiru.store.runs import RunStore
 
 
@@ -38,10 +39,12 @@ class SessionManager:
         self,
         *,
         runs: RunStore,
+        agents: AgentPool,
         project_root: Path,
         settings: Settings,
     ) -> None:
         self._runs = runs
+        self._agents = agents
         self._project_root = project_root
         self._settings = settings
 
@@ -60,7 +63,12 @@ class SessionManager:
         if current is not None:
             self._runs.close(current.id)
         history_exists = self._has_reports(task.id)
-        run = self._runs.start(task.id, role, rung)
+        run = self._runs.start(
+            task.id,
+            role,
+            rung,
+            billing_declaration=self._agents.billing_declaration(rung.agent),
+        )
         return SessionSelection(rung, None, history_exists, run)
 
     def record_session_started(

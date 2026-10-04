@@ -556,7 +556,12 @@ def build_engine(
     decorator = CosmeticDecorator(resolved_tmux)
     titles = TaskTitles(decorator, runs, resolved_settings)
 
-    sessions = SessionManager(runs=runs, project_root=project_root, settings=resolved_settings)
+    sessions = SessionManager(
+        runs=runs,
+        agents=agent_pool,
+        project_root=project_root,
+        settings=resolved_settings,
+    )
     turn_processes = TurnProcesses(
         runner=resolved_runner, clock=resolved_clock, project_root=project_root
     )

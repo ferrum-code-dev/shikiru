@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shikiru.agents.contracts import COST_BASIS_UNKNOWN, CostBasis, QuotaWindow, Usage
+from shikiru.agents.contracts import (
+    COST_BASIS_UNKNOWN,
+    CostBasis,
+    QuotaWindow,
+    Usage,
+)
 from shikiru.config.settings import MAX_TIMELINE_PAGE_SIZE, MAX_TIMELINE_SIGNAL_SCAN_ROWS
 from shikiru.domain.commands import (
     Command,

@@ -887,11 +887,11 @@ Refs: Focus §1–10; 01 D18/D21/D24, 02 §2/4, 04 §1, 05 §1–2, 06 §5–6, 
 
 ### Task 90: Explicit billing metadata and historical persistence
 Refs: Focus §5/§8; 04 §1/4–5, 05 §1–2; Task 89's additive contract.
-- [ ] Implement normalized subscription/API/unknown billing metadata with explicit source, preserving existing plugin contracts and old plugin behavior. Agent specifics and native access handling remain inside plugins; core never infers a billing mode from model, environment, missing cost or quota.
-- [ ] Claude and Codex factories validate their explicit optional billing declaration, defaulting to unknown, and expose it through the normalized contract. The fake agent supports the same boundary for integration verification. No credential, account-management or tariff-price feature is introduced.
-- [ ] Persist the declaration with the run/session it describes through the engine's single writer and a compatible SQLite migration. Old records remain unknown; current settings never retroactively reclassify historical runs. Keep billing mode independent of billed/API-equivalent/unknown monetary evidence.
-- [ ] Carry stored metadata through existing task/session usage, history and evidence export consumers as compatible additions. Avoid counting a subscription session's absent per-task charge as an unknown API charge or a measured zero.
-- [ ] Update the relevant design and configuration reference with actual fields and behavior.
+- [x] Implement normalized subscription/API/unknown billing metadata with explicit source, preserving existing plugin contracts and old plugin behavior. Agent specifics and native access handling remain inside plugins; core never infers a billing mode from model, environment, missing cost or quota.
+- [x] Claude and Codex factories validate their explicit optional billing declaration, defaulting to unknown, and expose it through the normalized contract. The fake agent supports the same boundary for integration verification. No credential, account-management or tariff-price feature is introduced.
+- [x] Persist the declaration with the run/session it describes through the engine's single writer and a compatible SQLite migration. Old records remain unknown; current settings never retroactively reclassify historical runs. Keep billing mode independent of billed/API-equivalent/unknown monetary evidence.
+- [x] Carry stored metadata through existing task/session usage, history and evidence export consumers as compatible additions. Avoid counting a subscription session's absent per-task charge as an unknown API charge or a measured zero.
+- [x] Update the relevant design and configuration reference with actual fields and behavior.
 - Tests: real SQLite migration and engine/fake-agent sessions demonstrate declared modes, unreported/zero amounts, mixed cost bases, unknown old records, restart persistence and changed configuration without rewriting prior session facts; plugin validation tests cover the real factory boundary.
 
 ### Task 91: Compact metrics and agent-history projections

@@ -148,7 +148,7 @@ Delivery order: task navigation and contextual control, attention and evidence v
 Target: [Compact Operator TUI](../docs/tui-focus.md); acceptance criteria: [plan.md](plan.md#phase-9-compact-operator-tui). Convert the Phase 8 presentation to the approved Focus layout and Flight deck palette, preserving its useful behavior and evidence. Execute Tasks 89–96 sequentially with architect review between tasks.
 
 - [x] Task 89: Compact TUI design alignment
-- [ ] Task 90: Explicit billing metadata and historical persistence
+- [x] Task 90: Explicit billing metadata and historical persistence
 - [ ] Task 91: Compact metrics and agent-history projections
 - [ ] Task 92: Shared compact visual language
 - [ ] Task 93: Focus Home dashboard and compact project readouts

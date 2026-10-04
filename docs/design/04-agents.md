@@ -76,7 +76,7 @@ def shikiru_command(*arguments: str) -> str: ...   # `<python> -P -m shikiru <ar
 def module_command(module: str, *arguments: str) -> str: ...   # the same for a plugin's own module, e.g. a hook
 ```
 
-**Phase 9 planned optional capability.** Billing is separate from monetary basis: `Usage.cost_basis` remains `billed`, `api_equivalent` or `unknown`. A plugin may additionally implement this additive capability; it is not a required member of `Agent`, so existing third-party plugins continue to load:
+**Optional billing declaration capability.** Billing is separate from monetary basis: `Usage.cost_basis` remains `billed`, `api_equivalent` or `unknown`. A plugin may additionally implement this additive capability; it is not a required member of `Agent`, so existing third-party plugins continue to load:
 
 ```python
 BillingMode = Literal["api", "subscription", "unknown"]
@@ -94,7 +94,7 @@ class BillingDeclarationProvider(Protocol):
     def billing_declaration(self) -> BillingDeclaration: ...
 ```
 
-If an agent does not implement the optional property, or has no reliable declaration, the normalized value is `unknown`/`unknown`. A plugin can obtain a known mode only from a trustworthy native report or an explicit plugin-owned `[agents.<name>.options]` value; it returns the matching source. An explicit `unknown` setting is valid and has source `operator_config`. Core does not inspect models, credentials, environment, login state, provider identity or quota to fill the declaration. Plugin factories validate plugin-specific options and return one normalized declaration. The value is captured with the run/session at start and is not changed by a later model rung or current configuration. This capability labels the access/billing mode only; it neither configures access nor supplies price, account or charge data. Tasks 89–96 are planned, so this contract is not yet implemented.
+If an agent does not implement the optional property, or has no reliable declaration, the normalized value is `unknown`/`unknown`. A plugin can obtain a known mode only from a trustworthy native report or an explicit plugin-owned `[agents.<name>.options]` value; it returns the matching source. An explicit `unknown` setting is valid and has source `operator_config`. Core does not inspect models, credentials, environment, login state, provider identity or quota to fill the declaration. Plugin factories validate plugin-specific options and return one normalized declaration. The value is captured with the run/session at start and is not changed by a later model rung or current configuration. This capability labels the access/billing mode only; it neither configures access nor supplies price, account or charge data. Task 90 implements the contract in Shikiru's Claude, Codex and fake-agent plugins; older third-party plugins remain `unknown`/`unknown` unless they add the optional capability.
 
 Prompts call Shikiru back only through `shikiru_command`. Agent shells may be login shells with their own `PATH`, so nothing agent-facing relies on `shikiru` being on it.
 
@@ -156,6 +156,7 @@ Claude reads access from the Operator's native Claude settings and environment. 
 |---|---|---|
 | `args` | `["--permission-mode", "bypassPermissions"]` | Extra CLI args; must keep the turn unattended |
 | `compact_at_pct` | `80` | Context use that triggers compaction (obligation 8) |
+| `billing_mode` | omitted | Optional `api`, `subscription` or `unknown` declaration; an explicit value has source `operator_config` |
 
 Trust: the default skips every permission prompt, so the agent can run any command and edit any file the Operator's user can. `--add-dir` only widens the working directories (the run directory); it confines nothing. See the trust boundary in 01 §6.
 
@@ -212,6 +213,7 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 |---|---|---|
 | `args` | `[]` | Extra CLI args |
 | `compact_at_pct` | `80` | Context use that triggers compaction (obligation 8) |
+| `billing_mode` | omitted | Optional `api`, `subscription` or `unknown` declaration; an explicit value has source `operator_config` |
 
 Codex reads access from the Operator's native Codex settings and environment. The plugin must not configure access modes, choose key variables, or remove variables.
 

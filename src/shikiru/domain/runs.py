@@ -5,7 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum, auto
 
-from shikiru.agents.contracts import Usage
+from shikiru.agents.contracts import (
+    BILLING_MODE_UNKNOWN,
+    BILLING_SOURCE_UNKNOWN,
+    BillingMode,
+    BillingSource,
+    Usage,
+)
 from shikiru.domain.tasks import DomainModel, Role
 
 NO_USAGE = Usage(
@@ -42,6 +48,8 @@ class Run(DomainModel):
     status: RunStatus
     usage: Usage = NO_USAGE
     usage_reported: bool | None = None
+    billing_mode: BillingMode = BILLING_MODE_UNKNOWN
+    billing_source: BillingSource = BILLING_SOURCE_UNKNOWN
     started_at: datetime
     ended_at: datetime | None = None
 

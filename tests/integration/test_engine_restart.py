@@ -17,7 +17,12 @@ import psutil
 import pytest
 from fake_agent.scripted import FAKE_CHANGE_FILENAME
 
-from shikiru.agents.contracts import role_dir
+from shikiru.agents.contracts import (
+    BILLING_MODE_API,
+    BILLING_MODE_SUBSCRIPTION,
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    role_dir,
+)
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import Cancel, Pause, Prioritize, Resume, Submit
@@ -230,12 +235,13 @@ def _release_lock_held_by_dead_engine(lock_path: Path) -> None:
             fcntl.flock(opened.fd, fcntl.LOCK_UN)
 
 
-def _settings() -> Settings:
+def _settings(billing_mode: str | None = None) -> Settings:
+    agent_options = {"billing_mode": billing_mode} if billing_mode is not None else {}
     settings = make_settings(
         leader_ladder=[FAKE_RUNG],
         implementer_ladder=[FAKE_RUNG],
         helper_ladder=[FAKE_RUNG],
-        agents={FAKE_RUNG.agent: AgentConfig()},
+        agents={FAKE_RUNG.agent: AgentConfig(options=agent_options)},
     )
     orchestration = settings.orchestration.model_copy(
         update={
@@ -455,16 +461,30 @@ async def _while_first_engine_down(project_root: Path, boundary: _Boundary) -> N
 class _Engines:
     """The engines one scenario starts in turn, each on its own fake clock."""
 
-    def __init__(self, project_root: Path, tmux: Tmux, tmux_server: TmuxServer) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        tmux: Tmux,
+        tmux_server: TmuxServer,
+        settings: Settings | None = None,
+    ) -> None:
         self._project_root = project_root
         self._tmux = tmux
         self.tmux_server = tmux_server
+        self._settings = settings if settings is not None else _settings()
         self._killable: list[_KillableEngine] = []
 
     def build(self, clock: FakeClock) -> Engine:
         return build_engine(
-            self._project_root, _settings(), clock=clock, tmux=self._tmux, registry=build_registry()
+            self._project_root,
+            self._settings,
+            clock=clock,
+            tmux=self._tmux,
+            registry=build_registry(),
         )
+
+    def update_settings(self, settings: Settings) -> None:
+        self._settings = settings
 
     def start_killable(self) -> _KillableEngine:
         clock = FakeClock(TASK_CREATED_AT)
@@ -571,6 +591,50 @@ async def test_a_restarted_engine_completes_the_task_it_lost_at_a_step_boundary(
         await _assert_resumed(project, task_id, boundary, interrupted, initial, tmux=tmux)
         if leftover_id is not None:
             await _assert_leftover_reclaimed_once(project, engines, leftover_id)
+    finally:
+        await engines.reap()
+        project.close()
+
+
+async def test_engine_restart_keeps_the_original_billing_declaration_after_options_change(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    await init_project_repo(tmp_path)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [dict(_STALL)])
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure(_PROJECT_NAME, tmp_path, home_command=("/bin/sh",))
+    project_clock = FakeClock(TASK_CREATED_AT)
+    project = _Project(tmp_path, project_clock)
+    engines = _Engines(
+        tmp_path,
+        tmux,
+        tmux_server,
+        settings=_settings(BILLING_MODE_SUBSCRIPTION),
+    )
+    try:
+        task_id, _ = await _kill_at(
+            project,
+            engines,
+            _Kill(Step.IMPLEMENT, Role.IMPLEMENTER),
+            None,
+        )
+        [before_restart] = [
+            run for run in project.runs.for_task(task_id) if run.role is Role.IMPLEMENTER
+        ]
+        assert before_restart.billing_mode == BILLING_MODE_SUBSCRIPTION
+        assert before_restart.billing_source == BILLING_SOURCE_OPERATOR_CONFIG
+
+        engines.update_settings(_settings(BILLING_MODE_API))
+        clock = FakeClock(TASK_CREATED_AT)
+        await _run_until_finished(project, task_id, Status.DONE, engines.build(clock), clock)
+
+        [after_restart] = [
+            run for run in project.runs.for_task(task_id) if run.role is Role.IMPLEMENTER
+        ]
+        assert after_restart.id == before_restart.id
+        assert after_restart.billing_mode == BILLING_MODE_SUBSCRIPTION
+        assert after_restart.billing_source == BILLING_SOURCE_OPERATOR_CONFIG
     finally:
         await engines.reap()
         project.close()

@@ -6,7 +6,7 @@ import shlex
 import sys
 from dataclasses import dataclass
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Protocol
 
 from pydantic import ConfigDict
 
@@ -63,6 +63,22 @@ def role_dir(run_dir: Path, role: str) -> Path:
 
 
 CostBasis = Literal["billed", "api_equivalent", "unknown"]
+BillingMode = Literal["api", "subscription", "unknown"]
+BillingSource = Literal["provider_reported", "operator_config", "unknown"]
+
+BILLING_MODE_API: Final = "api"
+BILLING_MODE_SUBSCRIPTION: Final = "subscription"
+BILLING_MODE_UNKNOWN: Final = "unknown"
+BILLING_SOURCE_PROVIDER_REPORTED: Final = "provider_reported"
+BILLING_SOURCE_OPERATOR_CONFIG: Final = "operator_config"
+BILLING_SOURCE_UNKNOWN: Final = "unknown"
+BILLING_MODES: Final = (BILLING_MODE_API, BILLING_MODE_SUBSCRIPTION, BILLING_MODE_UNKNOWN)
+BILLING_SOURCES: Final = (
+    BILLING_SOURCE_PROVIDER_REPORTED,
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    BILLING_SOURCE_UNKNOWN,
+)
+_MISSING_BILLING_DECLARATION = object()
 
 
 class FailureKind(StrEnum):
@@ -97,6 +113,20 @@ class Usage:
     cost_usd: float | None
     cost_basis: CostBasis
     context_used_pct: float | None
+
+
+@dataclass(frozen=True)
+class BillingDeclaration:
+    """A plugin's normalized billing mode and the source that established it (04 §1)."""
+
+    mode: BillingMode
+    source: BillingSource
+
+
+UNKNOWN_BILLING_DECLARATION = BillingDeclaration(
+    mode=BILLING_MODE_UNKNOWN,
+    source=BILLING_SOURCE_UNKNOWN,
+)
 
 
 @dataclass(frozen=True)
@@ -279,6 +309,27 @@ class Agent(Protocol):
     def headless(self) -> HeadlessAgent | None:
         """Return this agent's one-shot, schema-constrained caller when available."""
         ...
+
+
+class BillingDeclarationProvider(Protocol):
+    """Optional agent capability that supplies an explicit billing declaration."""
+
+    @property
+    def billing_declaration(self) -> BillingDeclaration: ...
+
+
+def billing_declaration_for(agent: Agent) -> BillingDeclaration:
+    """Return an agent's valid optional billing declaration, or unknown for old plugins."""
+    declaration = getattr(agent, "billing_declaration", _MISSING_BILLING_DECLARATION)
+    if declaration is _MISSING_BILLING_DECLARATION:
+        return UNKNOWN_BILLING_DECLARATION
+    if not isinstance(declaration, BillingDeclaration):
+        message = f"agent {agent.name!r} returned an invalid billing declaration"
+        raise ConfigError(message)
+    if declaration.mode not in BILLING_MODES or declaration.source not in BILLING_SOURCES:
+        message = f"agent {agent.name!r} returned an unsupported billing declaration"
+        raise ConfigError(message)
+    return declaration
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import AgentContext
+from shikiru.agents.contracts import AgentContext, BillingDeclaration, billing_declaration_for
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -55,3 +55,7 @@ class AgentPool:
         agent = self._create(name, context)
         self._agents[name] = agent
         return agent
+
+    def billing_declaration(self, name: str) -> BillingDeclaration:
+        """Return the configured plugin's optional declaration through the contract boundary."""
+        return billing_declaration_for(self.get(name))

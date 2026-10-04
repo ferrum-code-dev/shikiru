@@ -8,7 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fake_agent.headless import FakeHeadlessAgent
 from fake_agent.turns import FakeHeadlessTurnAgent, FakeTurnSequence
-from shikiru.agents.contracts import CheckResult
+from shikiru.agents.contracts import (
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    UNKNOWN_BILLING_DECLARATION,
+    BillingDeclaration,
+    BillingMode,
+    CheckResult,
+)
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -31,6 +37,7 @@ class FakeOptions(BaseModel):
     compact_at_pct: float = 80.0
     auth: Literal["none"] = "none"
     new_session_id: str | None = None
+    billing_mode: BillingMode | None = None
 
 
 class FakeAgent:
@@ -43,6 +50,16 @@ class FakeAgent:
             runner, options.asks, options.compact_at_pct, options.new_session_id
         )
         self._asks = options.asks
+        self._billing_declaration = (
+            BillingDeclaration(options.billing_mode, BILLING_SOURCE_OPERATOR_CONFIG)
+            if options.billing_mode is not None
+            else UNKNOWN_BILLING_DECLARATION
+        )
+
+    @property
+    def billing_declaration(self) -> BillingDeclaration:
+        """Return the configured declaration used by engine boundary integrations."""
+        return self._billing_declaration
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start a scripted per-turn fake CLI process."""

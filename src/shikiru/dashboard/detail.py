@@ -1280,6 +1280,7 @@ def _sessions_text(view: TaskDetailView) -> str:
                     f"{session.status}"
                 ),
                 f"Session ID · {session.session_id or NO_VALUE}",
+                f"Billing mode · {session.billing_mode} · {session.billing_source}",
                 f"Tokens · {tokens}",
                 f"Agent-reported cost · {cost} · {context}",
             )

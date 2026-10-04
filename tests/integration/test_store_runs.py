@@ -5,7 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import Rung, Usage
+from shikiru.agents.contracts import (
+    BILLING_MODE_UNKNOWN,
+    BILLING_SOURCE_UNKNOWN,
+    Rung,
+    Usage,
+)
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role
 from shikiru.store.runs import RunStore, fetch_runs_for_task
@@ -45,6 +50,8 @@ def test_a_fresh_run_reports_unknown_cost_basis_before_any_usage_is_recorded(
 
     assert run.usage.cost_basis == "unknown"
     assert run.usage_reported is False
+    assert run.billing_mode == BILLING_MODE_UNKNOWN
+    assert run.billing_source == BILLING_SOURCE_UNKNOWN
 
 
 def test_close_removes_a_run_from_get_live_and_marks_it_closed(connection: Connection) -> None:
@@ -109,6 +116,8 @@ def test_migrating_legacy_runs_preserves_unknown_usage_provenance(database: Data
     run = store.start(task.id, Role.IMPLEMENTER, RUNG)
     store.record_usage(run.id, Usage(0, 0, 0, 0, 0.0, "billed", None))
     connection.execute("ALTER TABLE runs DROP COLUMN usage_reported")
+    connection.execute("ALTER TABLE runs DROP COLUMN billing_mode")
+    connection.execute("ALTER TABLE runs DROP COLUMN billing_source")
     connection.execute("PRAGMA user_version = 7")
     connection.close()
 

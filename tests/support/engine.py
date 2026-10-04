@@ -215,13 +215,18 @@ def build_turn_system(
     quotas = QuotaStore(connection)
     decorator = build_decorator(tmux)
     titles = TaskTitles(decorator, runs, settings)
-    sessions = SessionManager(runs=runs, project_root=project_root, settings=settings)
     runner = SubprocessRunner()
     agents = AgentPool(
         (registry if registry is not None else build_registry()).create,
         runner,
         settings,
         clock,
+    )
+    sessions = SessionManager(
+        runs=runs,
+        agents=agents,
+        project_root=project_root,
+        settings=settings,
     )
     helper = Helper(agents.get(settings.roles.helper.ladder[0].agent))
 

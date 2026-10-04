@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.agents.contracts import BILLING_MODE_UNKNOWN, BILLING_SOURCE_UNKNOWN
 from shikiru.store.database import Database, format_timestamp
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
@@ -104,6 +105,8 @@ def test_headless_migration_keeps_sessions_and_removes_agent_state(
         assert run["resume_command"] == "codex resume session-1"
         assert run["status"] == "closed"
         assert run["cost_basis"] == "unknown"
+        assert run["billing_mode"] == BILLING_MODE_UNKNOWN
+        assert run["billing_source"] == BILLING_SOURCE_UNKNOWN
         with pytest.raises(sqlite3.IntegrityError):
             migrated.execute("UPDATE runs SET cost_basis = NULL WHERE id = 1")
     finally:

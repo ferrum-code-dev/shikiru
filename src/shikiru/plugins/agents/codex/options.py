@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shikiru.agents.contracts import PERCENT
+from shikiru.agents.contracts import PERCENT, BillingMode
 
 CODEX_HOME_ENV_VAR = "CODEX_HOME"
 CODEX_COMMAND = "codex"
@@ -39,6 +39,7 @@ class CodexOptions(BaseModel):
 
     args: list[str] = Field(default_factory=list)
     compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=PERCENT)
+    billing_mode: BillingMode | None = None
 
 
 TESTED_CODEX_VERSION = "0.159.2"

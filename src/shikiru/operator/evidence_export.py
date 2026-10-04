@@ -346,6 +346,7 @@ def _run_document(run: Run) -> dict[str, object]:
         "agent": run.agent,
         "model": run.model,
         "effort": run.effort,
+        "billing": {"mode": run.billing_mode, "source": run.billing_source},
         "session_id": run.session_id,
         "status": run.status.value,
         "started_at": run.started_at.isoformat(),

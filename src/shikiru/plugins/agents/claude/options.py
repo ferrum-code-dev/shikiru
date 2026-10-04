@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shikiru.agents.contracts import PERCENT
+from shikiru.agents.contracts import PERCENT, BillingMode
 
 CLAUDE_COMMAND = "claude"
 DEFAULT_COMPACT_AT_PCT = 80.0
@@ -31,3 +31,4 @@ class ClaudeOptions(BaseModel):
 
     args: list[str] = Field(default_factory=lambda: list(DEFAULT_ARGS))
     compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=PERCENT)
+    billing_mode: BillingMode | None = None

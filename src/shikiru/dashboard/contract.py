@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from shikiru.agents.contracts import BILLING_MODE_UNKNOWN, BILLING_SOURCE_UNKNOWN
+
 if TYPE_CHECKING:
     from datetime import datetime
 
     from textual.widget import Widget
 
-    from shikiru.agents.contracts import CostBasis
+    from shikiru.agents.contracts import BillingMode, BillingSource, CostBasis
     from shikiru.clock import Clock
     from shikiru.domain.tasks import Role
     from shikiru.ui.strip import TaskStripData
@@ -272,6 +274,8 @@ class TaskSessionView:
     cost_usd: float | None
     cost_basis: CostBasis
     context_used_pct: float | None
+    billing_mode: BillingMode = BILLING_MODE_UNKNOWN
+    billing_source: BillingSource = BILLING_SOURCE_UNKNOWN
     usage_reported: bool | None = None
     legacy_token_totals: bool = False
     legacy_cost_recorded: bool = False

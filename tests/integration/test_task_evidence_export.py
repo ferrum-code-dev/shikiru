@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from textual.widgets import Button, Input, Select, Static
 
-from shikiru.agents.contracts import COST_BASIS_UNKNOWN, Usage
+from shikiru.agents.contracts import (
+    BILLING_MODE_SUBSCRIPTION,
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    COST_BASIS_UNKNOWN,
+    BillingDeclaration,
+    Usage,
+)
 from shikiru.dashboard.contract import PaletteRequest
 from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.domain.events import EventKind
@@ -151,7 +157,15 @@ def _seed_export_task(
         implementer=IMPLEMENTER_RUNGS[1],
     )
     runs = RunStore(connection, clock)
-    measured_zero = runs.start(task.id, Role.LEADER, LEADER_RUNG)
+    measured_zero = runs.start(
+        task.id,
+        Role.LEADER,
+        LEADER_RUNG,
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_SUBSCRIPTION,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
     runs.set_session(measured_zero.id, "leader-session", "resume leader-session")
     runs.record_usage(
         measured_zero.id,
@@ -315,6 +329,12 @@ def _assert_usage_provenance(document: dict[str, Any]) -> None:
     sessions = {item["session_id"]: item for item in document["sessions"]}
     assert sessions["leader-session"]["tokens"]["input"] == 0
     assert sessions["leader-session"]["usage_provenance"]["tokens"] == "reported"
+    assert sessions["leader-session"]["billing"] == {
+        "mode": BILLING_MODE_SUBSCRIPTION,
+        "source": BILLING_SOURCE_OPERATOR_CONFIG,
+    }
+    assert sessions["leader-session"]["cost"]["usd"] is None
+    assert sessions["leader-session"]["cost"]["basis"] == COST_BASIS_UNKNOWN
     legacy_unknown = next(
         item
         for item in document["sessions"]

@@ -9,7 +9,13 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from shikiru.agents.contracts import DOCTOR_TIMEOUT_SECONDS, CheckResult
+from shikiru.agents.contracts import (
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    DOCTOR_TIMEOUT_SECONDS,
+    UNKNOWN_BILLING_DECLARATION,
+    BillingDeclaration,
+    CheckResult,
+)
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
@@ -46,6 +52,16 @@ class ClaudeAgent:
         self._clock = clock
         self._options = options
         self._reset_time = ResetTimeParser(clock)
+        self._billing_declaration = (
+            BillingDeclaration(options.billing_mode, BILLING_SOURCE_OPERATOR_CONFIG)
+            if options.billing_mode is not None
+            else UNKNOWN_BILLING_DECLARATION
+        )
+
+    @property
+    def billing_declaration(self) -> BillingDeclaration:
+        """Return the explicit plugin option or the unknown declaration (04 §1)."""
+        return self._billing_declaration
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one process-per-turn Claude Code exchange."""
