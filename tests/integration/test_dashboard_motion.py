@@ -396,9 +396,7 @@ async def test_focus_usage_details_refreshes_reported_cost_and_quota_on_motion(
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(180, 40)) as pilot:
-            await choose_focus_view(
-                pilot, "Usage details · subscriptions, costs, coverage and quota"
-            )
+            await choose_focus_view(pilot, "Usage details")
             usage = pilot.app.screen.query_one("#usage", UsagePanel)
             await wait_until(clock.has_pending_sleep, timeout=1)
             assert "$0.42" in plain_text(usage.content)
@@ -410,6 +408,76 @@ async def test_focus_usage_details_refreshes_reported_cost_and_quota_on_motion(
             )
             clock.advance(0.5)
             await wait_until(lambda: "$0.87" in plain_text(usage.content), timeout=1)
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("motion_enabled", [False, True], ids=("static", "normal"))
+async def test_task_usage_details_tick_quota_age_and_reset_without_motion_evidence_reads(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    motion_enabled: bool,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(project_dir)
+    task, _ = _seed_dashboard_state(connection, clock)
+    QuotaStore(connection).record(
+        "codex",
+        QuotaWindow(
+            "weekly",
+            50,
+            _START + timedelta(seconds=10),
+            _START - timedelta(seconds=59),
+        ),
+    )
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, task)
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        app = DashboardApp(
+            focus_task=task.id,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=(
+                1 / settings.dashboard.motion.refresh_hz if motion_enabled else None
+            ),
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+            timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
+        )
+        async with app.run_test(size=(90, 40)) as pilot:
+            await wait_until(
+                lambda: (
+                    task.title in plain_text(app.query_one("#task-detail-identity", Static).content)
+                ),
+                timeout=2,
+            )
+            await pilot.press("u")
+            sessions = app.query_one("#task-detail-sessions", Static)
+            await wait_until(
+                lambda: (
+                    "reset 10s" in plain_text(sessions.content)
+                    and "observed now" in plain_text(sessions.content)
+                ),
+                timeout=2,
+            )
+            await wait_until(clock.has_pending_sleep, timeout=2)
+            clock.advance(2)
+            await wait_until(
+                lambda: (
+                    "reset 8s" in plain_text(sessions.content)
+                    and "observed 1m ago" in plain_text(sessions.content)
+                ),
+                timeout=2,
+            )
     finally:
         reader.close()
 
@@ -996,9 +1064,7 @@ async def test_disabled_animations_keep_countdowns_live_without_animating_frames
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(180, 40)) as pilot:
-            await choose_focus_view(
-                pilot, "Usage details · subscriptions, costs, coverage and quota"
-            )
+            await choose_focus_view(pilot, "Usage details")
             usage = pilot.app.screen.query_one(UsagePanel)
             await wait_until(clock.has_pending_sleep, timeout=1)
             initial_usage = plain_text(usage.content)

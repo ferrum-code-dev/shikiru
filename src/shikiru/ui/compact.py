@@ -492,8 +492,8 @@ class AgentUsageRow:
         return Text.assemble(
             (f"{role} · {lineage} · ", SECONDARY_TEXT_COLOR),
             (f"{identity}", "bold"),
-            (f" · {tokens}", SECONDARY_TEXT_COLOR),
-            (f" · {billing} · {cost}", cost_style),
+            (f" · session {tokens}", SECONDARY_TEXT_COLOR),
+            (f" · {billing} · session {cost}", cost_style),
         )
 
 

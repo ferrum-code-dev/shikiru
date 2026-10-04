@@ -152,6 +152,6 @@ Target: [Compact Operator TUI](../docs/tui-focus.md); acceptance criteria: [plan
 - [x] Task 91: Compact metrics and agent-history projections
 - [x] Task 92: Shared compact visual language
 - [x] Task 93: Focus Home dashboard and compact project readouts
-- [ ] Task 94: Focus task detail and contextual operator control
+- [x] Task 94: Focus task detail and contextual operator control
 - [ ] Task 95: Responsive compatibility and obsolete presentation cleanup
 - [ ] Task 96: Compact TUI walkthroughs and release verification

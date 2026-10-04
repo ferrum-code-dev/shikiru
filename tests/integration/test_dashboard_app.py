@@ -26,9 +26,7 @@ from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
 from shikiru.dashboard.detail import (
-    TASK_DETAIL_ACTIONS_BUTTON,
     TASK_DETAIL_BLOCKER,
-    TASK_DETAIL_BODY,
     TASK_DETAIL_CRITERIA,
     TASK_DETAIL_EVIDENCE,
     TASK_DETAIL_FACTS,
@@ -38,7 +36,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_SESSIONS,
     TASK_DETAIL_SITUATION,
-    TASK_DETAIL_TIMELINE_TURN,
     TASK_DETAIL_VERDICT,
     TASK_DETAIL_WORKSPACE,
     TaskDetailPanel,
@@ -72,7 +69,6 @@ from tests.support.waiting import wait_until
 
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
-_SCROLL_SETTLE_TIMEOUT_SECONDS = 2
 _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _WIDE_HOME_SIZE = (120, 40)
@@ -1063,7 +1059,7 @@ async def test_home_help_works_with_mouse_and_keyboard_without_color(
         reader.close()
 
 
-async def test_task_detail_toolbar_and_timeline_form_remain_reachable_after_resize(
+async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1096,67 +1092,16 @@ async def test_task_detail_toolbar_and_timeline_form_remain_reachable_after_resi
                 lambda: task.title in str(identity.content),
                 timeout=2,
             )
-            action_button = app.screen.query_one(f"#{TASK_DETAIL_ACTIONS_BUTTON}", Button)
-            await _assert_task_detail_toolbar_controls_are_reachable(app, pilot)
-            timeline_turn = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
-            detail_body = app.screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
-
-            def timeline_visible() -> bool:
-                return (
-                    detail_body.scroll_y > 0
-                    and timeline_turn.region.y >= detail_body.region.y
-                    and timeline_turn.region.bottom <= detail_body.region.bottom
-                    and timeline_turn.region.y >= 0
-                    and timeline_turn.region.bottom <= app.size.height
-                )
-
-            timeline_turn.value = "3"
-            timeline_turn.focus()
-            await pilot.wait_for_scheduled_animations()
-            await wait_until(timeline_visible, timeout=2)
-            assert app.focused is timeline_turn
-            await pilot.resize_terminal(48, 14)
-            await pilot.wait_for_scheduled_animations()
-            await wait_until(timeline_visible, timeout=2)
-            assert app.focused is timeline_turn
-            assert timeline_turn.value == "3"
-            action_button.focus()
-            await pilot.wait_for_scheduled_animations()
+            await pilot.press("u")
+            sessions = app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
             await wait_until(
-                lambda: detail_body.scroll_y == detail_body.scroll_target_y,
-                timeout=_SCROLL_SETTLE_TIMEOUT_SECONDS,
+                lambda: "recorded usage" in plain_text(sessions.content),
+                timeout=2,
             )
-            reading_scroll = detail_body.scroll_y
-            await pilot.resize_terminal(36, 20)
-            await pilot.wait_for_scheduled_animations()
-            await wait_until(
-                lambda: detail_body.scroll_y == detail_body.scroll_target_y,
-                timeout=_SCROLL_SETTLE_TIMEOUT_SECONDS,
-            )
-            assert app.focused is action_button
-            assert detail_body.scroll_y == reading_scroll
-            assert action_button.region.x >= 0
-            assert action_button.region.right <= app.size.width
-            await pilot.press("enter")
+            await pilot.press("ctrl+p")
             assert palette_requests[-1].task_id == task.id
     finally:
         reader.close()
-
-
-async def _assert_task_detail_toolbar_controls_are_reachable(
-    app: DashboardApp,
-    pilot: Pilot[None],
-) -> None:
-    toolbar = app.screen.query_one("#task-detail-toolbar")
-    for control in toolbar.query(Button):
-        if control.disabled:
-            continue
-        control.focus()
-        await pilot.pause()
-        assert control.region.width > 0
-        assert control.region.x >= 0
-        assert control.region.right <= app.size.width
-        assert control.region.overlaps(toolbar.region)
 
 
 async def test_home_shared_detail_refreshes_after_task_detail_closes(
@@ -1198,9 +1143,7 @@ async def test_home_shared_detail_refreshes_after_task_detail_closes(
             await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
             task_screen = app.screen
             task_ownership = task_screen.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
-            actions = task_screen.query_one(f"#{TASK_DETAIL_ACTIONS_BUTTON}", Button)
-            actions.focus()
-            await pilot.press("enter")
+            await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
             assert Hold.PAUSED.value not in _rendered_text(ownership)
@@ -1495,9 +1438,7 @@ async def test_configured_usage_and_docker_views_remain_reachable(
         app = _app(reader, project_dir, widget_names=["usage", "docker"])
         async with app.run_test(size=(120, 40)) as pilot:
             home_screen = app.screen
-            await _choose_focus_view(
-                app, pilot, "Usage details · subscriptions, costs, coverage and quota"
-            )
+            await _choose_focus_view(app, pilot, "Usage details")
             usage = app.screen.query_one("#usage", Static)
             assert "Token values unknown" in plain_text(usage.content)
             await pilot.press("escape")

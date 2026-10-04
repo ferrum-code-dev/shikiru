@@ -14,7 +14,6 @@ from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.detail import (
-    TASK_DETAIL_EXPORT_BUTTON,
     TASK_DETAIL_OWNERSHIP,
     TaskDetailScreen,
 )
@@ -379,10 +378,11 @@ async def _export_terminal_task(
         await runtime.wait_for(
             lambda: task_id in _plain(identity) and status.value in _plain(identity)
         )
-        app.query_one(f"#{TASK_DETAIL_EXPORT_BUTTON}", Button).focus()
-        await pilot.press("enter")
+        await pilot.press("ctrl+p")
         await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
         palette = cast("PaletteScreen", app.screen)
+        cast("Select[str]", palette.query_one("#action", Select)).value = "export"
+        await runtime.wait_for(lambda: palette.query_one("#export-destination", Input).display)
         palette.query_one("#export-destination", Input).value = destination
         cast("Select[str]", palette.query_one("#export-format", Select)).value = EXPORT_FORMAT_JSON
         cast("Select[str]", palette.query_one("#export-overwrite", Select)).value = "refuse"

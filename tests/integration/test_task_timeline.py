@@ -15,12 +15,16 @@ from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import TaskTimelineCategory
 from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_ENTRY,
+    TASK_DETAIL_TIMELINE_FILTER,
     TASK_DETAIL_TIMELINE_FOLLOW,
     TASK_DETAIL_TIMELINE_OLDER,
     TASK_DETAIL_TIMELINE_SELECTED,
     TASK_DETAIL_TIMELINE_STATUS,
+    TASK_DETAIL_VIEWS_BUTTON,
+    TASK_VIEW_EVIDENCE,
     TaskDetailBody,
     TaskDetailPanel,
+    TaskDetailViewsScreen,
 )
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -73,6 +77,32 @@ TIMELINE_CATEGORY_ALL = "all"
 TIMELINE_CATEGORY_TOOL = "tool"
 TIMELINE_CATEGORY_EVIDENCE = "evidence"
 TIMELINE_CATEGORY_TRANSITION = "transition"
+
+
+async def _open_timeline_view(panel: TaskDetailPanel, pilot: Pilot[None]) -> None:
+    await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+    await wait_until(lambda: isinstance(pilot.app.screen, TaskDetailViewsScreen), timeout=2)
+    choice = cast("Select[str]", pilot.app.screen.query_one("#task-detail-view-choice", Select))
+    choice.value = TASK_VIEW_EVIDENCE
+    await pilot.press("tab", "enter")
+    await wait_until(lambda: panel.active_view == TASK_VIEW_EVIDENCE, timeout=2)
+
+
+async def _prepare_timeline_filter(
+    panel: TaskDetailPanel,
+    pilot: Pilot[None],
+) -> Select[str]:
+    await _open_timeline_view(panel, pilot)
+    entry_select = cast("Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select))
+    await wait_until(
+        lambda: entry_select.value is not Select.BLANK,
+        timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
+    )
+    panel.query_one("#task-detail-timeline-filter").scroll_visible(animate=False, force=True)
+    await pilot.pause()
+    return entry_select
+
+
 TIMELINE_MISSING_SUMMARY = "Normalized signal evidence is unavailable"
 TIMELINE_UI_REFRESH_TIMEOUT_SECONDS = 10
 TIMELINE_CONCURRENT_LEADER_MESSAGE = "timeline-concurrent-leader"
@@ -701,6 +731,7 @@ async def test_detail_preserves_selection_while_following_and_pauses_on_older_pa
 
     try:
         async with app.run_test(size=(100, 40)) as pilot:
+            await _open_timeline_view(panel, pilot)
             entry_select = cast(
                 "Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select)
             )
@@ -737,14 +768,14 @@ async def test_detail_preserves_selection_while_following_and_pauses_on_older_pa
             )
             await pilot.pause()
             bottom_position = body.scroll_y
-            relationships_toggle = panel.query_one("#task-detail-relationships-toggle", Button)
-            relationships_toggle.focus()
+            filter_button = panel.query_one(f"#{TASK_DETAIL_TIMELINE_FILTER}", Button)
+            filter_button.focus()
             await pilot.pause()
             await wait_until(
                 lambda: (
-                    app.focused is relationships_toggle
+                    app.focused is filter_button
                     and body.scroll_y < bottom_position
-                    and body.scrollable_content_region.contains_region(relationships_toggle.region)
+                    and body.scrollable_content_region.contains_region(filter_button.region)
                 ),
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
@@ -814,17 +845,7 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
 
     try:
         async with app.run_test(size=(100, 40)) as pilot:
-            entry_select = cast(
-                "Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select)
-            )
-            await wait_until(
-                lambda: entry_select.value is not Select.BLANK,
-                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-            )
-            panel.query_one("#task-detail-timeline-filter").scroll_visible(
-                animate=False, force=True
-            )
-            await pilot.pause()
+            entry_select = await _prepare_timeline_filter(panel, pilot)
             _append_timeline_events(
                 events,
                 task.id,

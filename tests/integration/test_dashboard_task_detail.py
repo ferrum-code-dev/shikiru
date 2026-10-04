@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from textual.containers import HorizontalScroll, VerticalScroll
+from textual.containers import VerticalScroll
 from textual.widgets import Button, DataTable, ListView, Select, Static, TextArea
 
 import shikiru.agents.registry as registry_module
@@ -31,19 +31,21 @@ from shikiru.dashboard.contract import (
     TaskHistoryGap,
 )
 from shikiru.dashboard.detail import (
-    TASK_DETAIL_ACTION_ROLE,
-    TASK_DETAIL_ACTIONS_BUTTON,
-    TASK_DETAIL_ATTENTION_BUTTON,
+    TASK_DETAIL_BACK_BUTTON,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BODY,
-    TASK_DETAIL_EXPORT_BUTTON,
-    TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON,
-    TASK_DETAIL_HAND_BACK_LEADER_BUTTON,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
-    TASK_DETAIL_RESUME_BUTTON,
+    TASK_DETAIL_PROGRESS,
+    TASK_DETAIL_REQUEST,
+    TASK_DETAIL_SESSIONS,
     TASK_DETAIL_SITUATION,
+    TASK_DETAIL_VIEWS_BUTTON,
+    TASK_VIEW_RELATIONSHIPS,
+    TASK_VIEW_USAGE,
+    TASK_VIEW_WORKSPACE,
     TaskDetailScreen,
+    TaskDetailViewsScreen,
 )
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.services import TaskNavigation
@@ -316,18 +318,97 @@ async def _submit_detail_command(
     app: DashboardApp,
     pilot: Pilot[None],
     queue: CommandQueue,
-    button_id: str,
+    action: str,
+    *,
+    role: Role | None = None,
 ) -> QueuedCommand:
     dashboard_screen = app.screen
-    app.query_one(f"#{button_id}", Button).focus()
-    await pilot.press("enter")
+    await pilot.press("ctrl+p")
     await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+    palette = cast("PaletteScreen", app.screen)
+    palette.query_one("#action", Select).value = action
+    if role is not None:
+        palette.query_one("#role", Select).value = role.value
+    await wait_until(lambda: not palette.query_one("#palette-submit", Button).disabled, timeout=2)
     await pilot.click("#palette-submit")
     await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
     command = queue.pending()[0]
     await pilot.press("escape")
     await wait_until(lambda: app.screen is dashboard_screen, timeout=2)
     return command
+
+
+async def _open_task_view(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    view_id: str,
+) -> None:
+    await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
+    choice.value = view_id
+    await wait_until(lambda: choice.value == view_id, timeout=2)
+    await pilot.press("tab", "enter")
+    await wait_until(lambda: not isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+
+
+async def _open_task_context_choice(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    choice_id: str,
+) -> None:
+    await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
+    choice.value = choice_id
+    await wait_until(lambda: choice.value == choice_id, timeout=2)
+    await pilot.press("tab", "enter")
+    await wait_until(lambda: not isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+    await wait_until(lambda: bool(app.screen.query("#context-widget-frame")), timeout=2)
+
+
+async def _assert_task_dialogue_is_scoped(
+    app: DashboardApp,
+    pilot: Pilot[None],
+) -> None:
+    await _open_task_context_choice(app, pilot, "widget-dialogue")
+    dialogue = cast("DataTable[object]", app.screen.query_one("#dialogue-table", DataTable))
+    assert dialogue.row_count == 2
+    dialogue_text = " ".join(
+        plain_text(cell) for row in range(dialogue.row_count) for cell in dialogue.get_row_at(row)
+    )
+    assert "Focused activity only" in dialogue_text
+    assert "recorded fault" in dialogue_text
+    assert "Unrelated activity" not in dialogue_text
+    await pilot.press("escape")
+
+
+async def _assert_task_usage_is_scoped(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task_id: str,
+    agent: str,
+    other_agent: str,
+) -> None:
+    await _open_task_context_choice(app, pilot, "usage")
+    usage_text = plain_text(app.screen.query_one("#usage", Static).content)
+    assert f"Task {task_id}" in usage_text
+    assert agent in usage_text
+    assert "4" in usage_text
+    assert other_agent not in usage_text
+    assert "900" not in usage_text
+    await pilot.press("escape")
+
+
+async def _assert_task_context_extensions_and_workspace_are_available(
+    app: DashboardApp,
+    pilot: Pilot[None],
+) -> None:
+    await _open_task_context_choice(app, pilot, f"widget-{EXTENSION_WIDGET}")
+    assert app.screen.query_one("#task-view-extension-panel", Static).region.width > 0
+    await pilot.press("escape")
+    await _open_task_view(app, pilot, TASK_VIEW_WORKSPACE)
+    assert app.query_one("#task-detail-window", Button).region.width > 0
 
 
 def _write_report_turn(
@@ -561,7 +642,8 @@ async def _assert_billing_details_are_visible(
         widget_names=TASK_DETAIL_WIDGETS,
         clock=clock,
     )
-    async with app.run_test(size=(90, 42)):
+    async with app.run_test(size=(90, 42)) as pilot:
+        await _open_task_view(app, pilot, TASK_VIEW_USAGE)
         sessions_widget = app.query_one("#task-detail-sessions", Static)
         await wait_until(
             lambda: _has_billing_evidence(sessions_widget),
@@ -624,14 +706,19 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
         )
         async with app.run_test(size=(90, 42)) as pilot:
             await pilot.pause()
-            usage_text = plain_text(app.query_one("#usage", Static).content)
-            sessions_text = plain_text(app.query_one("#task-detail-sessions", Static).content)
+            await _open_task_view(app, pilot, TASK_VIEW_USAGE)
+            sessions = app.query_one("#task-detail-sessions", Static)
+            await wait_until(
+                lambda: "Billing declaration" in plain_text(sessions.content),
+                timeout=2,
+            )
+            sessions_text = plain_text(sessions.content)
 
-            assert f"Task {task.id}" in usage_text
-            assert "1 legacy" in usage_text
-            assert "2 unknown" in usage_text
-            assert "$1.25" in usage_text
-            assert "3 billing modes unknown" in usage_text
+            assert f"Task {task.id}" in sessions_text
+            assert "1 legacy" in sessions_text
+            assert "2 unknown" in sessions_text
+            assert "$1.25" in sessions_text
+            assert "Billing declaration · unknown · source unknown" in sessions_text
             assert "$1.25" in sessions_text
             assert "$0.00" in sessions_text
             assert "Implementer" in sessions_text
@@ -642,7 +729,7 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             assert "legacy recorded" in sessions_text
             assert "input 500" in sessions_text
             assert "cache read 0" in sessions_text
-            assert "legacy provenance unknown" in usage_text
+            assert "legacy provenance unknown" in sessions_text
             assert "Cost basis" in sessions_text
             assert "Billing declaration" in sessions_text
             assert "legacy" in sessions_text
@@ -745,6 +832,44 @@ async def test_task_history_keeps_closed_lineages_and_observed_model_deltas(
     )
     assert taken_over_view.current_lineage is True
     assert taken_over_view.status == "taken_over"
+
+    app = _dashboard_app(
+        reader,
+        project_root,
+        focus_task=task.id,
+        widget_names=TASK_DETAIL_WIDGETS,
+        clock=clock,
+    )
+    async with app.run_test(size=(90, 42)) as pilot:
+        await _assert_task_history_rendering(app, pilot, task)
+
+
+async def _assert_task_history_rendering(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+) -> None:
+    await wait_until(
+        lambda: task.title in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+        timeout=2,
+    )
+    sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
+    assert "session 13 input+output" in plain_text(sessions.content)
+    await pilot.press("u")
+    await wait_until(
+        lambda: (
+            "Recorded model turn observations · not model totals" in plain_text(sessions.content)
+        ),
+        timeout=2,
+    )
+    usage_details = plain_text(sessions.content)
+    assert usage_details.count("session 13 input+output") == 1
+    assert "Session-wide cumulative totals · across models" in usage_details
+    assert "codex/gpt-5" in usage_details
+    assert "claude/sonnet" in usage_details
+    assert "claude/opus" in usage_details
+    assert "per-turn observation · input 4" in usage_details
+    assert "per-turn observation · input 7" in usage_details
 
 
 async def test_legacy_turn_without_effort_does_not_inherit_latest_run_effort(
@@ -1400,7 +1525,7 @@ async def test_enter_opens_shared_detail_and_escape_restores_browser_selection_a
         reader.close()
 
 
-async def test_explicit_detail_role_survives_implementation_step_change(
+async def test_detail_palette_carries_the_selected_task_role_context(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -1417,6 +1542,12 @@ async def test_explicit_detail_role_survives_implementation_step_change(
         task.id,
         Transition.stay(task, step=Step.IMPLEMENT, status=Status.RUNNING),
     )
+    current_task = TaskStore(connection, clock).get(task.id)
+    assert current_task is not None
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(current_task, step=Step.VERIFY, status=Status.RUNNING),
+    )
     reader = StateReader(database, SystemClock())
     opened: list[PaletteRequest] = []
 
@@ -1432,29 +1563,22 @@ async def test_explicit_detail_role_survives_implementation_step_change(
             open_palette_context=open_palette_context,
         )
         async with app.run_test(size=(80, 40)) as pilot:
-            await pilot.pause()
-            action_role = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
-            action_role.value = Role.IMPLEMENTER.value
-            current_task = reader.get_task(task.id)
-            assert current_task is not None
-            TaskStore(connection, clock).apply_transition(
-                task.id,
-                Transition.stay(current_task, step=Step.VERIFY, status=Status.RUNNING),
-            )
             await wait_until(
-                lambda: "verify" in _text(app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)),
+                lambda: (
+                    "Verify"
+                    in plain_text(app.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).content)
+                ),
                 timeout=2,
             )
-            assert action_role.value == Role.IMPLEMENTER.value
             await pilot.press("ctrl+p")
             await wait_until(lambda: bool(opened), timeout=2)
 
-        assert opened == [PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)]
+        assert opened == [PaletteRequest(task_id=task.id, role=Role.LEADER.value)]
     finally:
         reader.close()
 
 
-async def test_pushed_task_detail_ctrl_p_carries_selected_role(
+async def test_pushed_task_detail_ctrl_p_carries_task_context(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -1489,84 +1613,62 @@ async def test_pushed_task_detail_ctrl_p_carries_selected_role(
                 ),
                 timeout=2,
             )
-            detail.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select).value = Role.IMPLEMENTER.value
             await pilot.press("ctrl+p")
             await wait_until(lambda: bool(opened), timeout=2)
 
-        assert opened == [PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)]
+        assert opened == [PaletteRequest(task_id=task.id, role=Role.LEADER.value)]
     finally:
         reader.close()
 
 
-async def test_implicit_detail_role_tracks_step_change_at_palette_activation(
+async def test_task_usage_details_are_contextual_and_return_to_compact_summary(
     connection: Connection,
     database: Database,
     tmp_path: Path,
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    task = seed_task(
-        connection,
-        clock,
-        title="Implementation role default",
-        mode=Mode.IMPLEMENT,
-    )
-    TaskStore(connection, clock).apply_transition(
-        task.id,
-        Transition.stay(task, step=Step.IMPLEMENT, status=Status.RUNNING),
+    task = seed_task(connection, clock, title="Task usage details")
+    run = RunStore(connection, clock).start(task.id, Role.LEADER, LEADER_RUNG)
+    RunStore(connection, clock).record_usage(
+        run.id,
+        Usage(12, 7, 3, 1, 0.25, COST_BASIS_BILLED, 20),
     )
     reader = StateReader(database, SystemClock())
-    opened: list[PaletteRequest] = []
-
-    async def open_palette_context(request: PaletteRequest) -> None:
-        opened.append(request)
 
     try:
-        detail_view = await state_views(reader, project_root, clock, StubServices()).task_detail(
-            task.id
-        )
-        assert detail_view is not None
-        assert detail_view.acting_role == Role.IMPLEMENTER.value
         app = _dashboard_app(
             reader,
             project_root,
             focus_task=task.id,
             widget_names=TASK_DETAIL_WIDGETS,
-            open_palette_context=open_palette_context,
         )
         async with app.run_test(size=(80, 40)) as pilot:
             await wait_until(
                 lambda: (
-                    "Implementation role default"
-                    in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                    "Task usage details" in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
                 ),
                 timeout=2,
             )
-            action_role = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_ACTION_ROLE}", Select))
-            assert action_role.value is Select.BLANK
-            assert Role.IMPLEMENTER.value.title() in action_role.prompt
-            current_task = reader.get_task(task.id)
-            assert current_task is not None
-            TaskStore(connection, clock).apply_transition(
-                task.id,
-                Transition.stay(current_task, step=Step.VERIFY, status=Status.RUNNING),
-            )
+            assert app.query_one(f"#{TASK_DETAIL_REQUEST}", Static).display is False
+            assert app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).display
+            sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
+            assert "Session-wide cumulative totals" not in plain_text(sessions.content)
+            await pilot.press("u")
             await wait_until(
-                lambda: (
-                    "verify" in _text(app.query_one(f"#{TASK_DETAIL_SITUATION}", Static))
-                    and Role.LEADER.value.title() in action_role.prompt
-                ),
+                lambda: "Session-wide cumulative totals" in plain_text(sessions.content),
                 timeout=2,
             )
-            await pilot.press("ctrl+p")
-            await wait_until(lambda: bool(opened), timeout=2)
-
-        assert opened == [PaletteRequest(task_id=task.id)]
+            await pilot.press("escape")
+            await wait_until(
+                lambda: "Session-wide cumulative totals" not in plain_text(sessions.content),
+                timeout=2,
+            )
     finally:
         reader.close()
 
 
-async def test_detail_export_button_opens_contextual_export_action(
+async def test_task_palette_exposes_contextual_export_action(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -1575,25 +1677,19 @@ async def test_detail_export_button_opens_contextual_export_action(
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Detail export target")
     reader = StateReader(database, SystemClock())
-    opened: list[PaletteRequest] = []
-
-    async def open_palette_context(request: PaletteRequest) -> None:
-        opened.append(request)
-
     try:
-        app = _dashboard_app(
-            reader,
-            project_root,
-            focus_task=task.id,
-            widget_names=TASK_DETAIL_WIDGETS,
-            open_palette_context=open_palette_context,
-        )
+        queue = CommandQueue(connection, clock)
+        app = _operator_task_app(reader, project_root, task.id, queue, clock)
         async with app.run_test(size=(80, 40)) as pilot:
-            app.query_one(f"#{TASK_DETAIL_EXPORT_BUTTON}", Button).focus()
-            await pilot.press("enter")
-            await wait_until(lambda: bool(opened), timeout=2)
-
-        assert opened == [PaletteRequest(action="export", task_id=task.id)]
+            await pilot.press("ctrl+p")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            palette = cast("PaletteScreen", app.screen)
+            actions = cast("Select[str]", palette.query_one("#action", Select))
+            actions.value = "export"
+            await wait_until(
+                lambda: palette.query_one("#field-export-destination").display,
+                timeout=2,
+            )
     finally:
         reader.close()
 
@@ -1614,8 +1710,7 @@ async def test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resi
         app = _operator_task_app(reader, project_root, task.id, queue, clock)
         async with app.run_test(size=(36, 20)) as pilot:
             await wait_until(clock.has_pending_sleep, timeout=2)
-            app.query_one(f"#{TASK_DETAIL_ACTIONS_BUTTON}", Button).focus()
-            await pilot.press("enter")
+            await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
             palette.query_one("#action", Select).value = "submit"
@@ -1669,8 +1764,7 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
             await wait_until(lambda: task.title in _text(identity), timeout=2)
             await wait_until(clock.has_pending_sleep, timeout=2)
 
-            app.query_one(f"#{TASK_DETAIL_ACTIONS_BUTTON}", Button).focus()
-            await pilot.press("enter")
+            await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
             assert Hold.PAUSED.value not in _text(ownership)
@@ -1685,13 +1779,13 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
             assert task.id in _text(identity)
             assert task.title in _text(identity)
             situation = app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)
-            assert "queued" in _text(situation)
-            assert Hold.PAUSED.value in _text(situation)
-            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
+            assert "queued" in _text(identity)
+            assert Hold.PAUSED.value in _text(ownership)
+            assert "Global attention" in _text(situation)
             body = app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+            await _open_task_view(app, pilot, TASK_VIEW_RELATIONSHIPS)
             blocker = app.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
             body.scroll_to_widget(blocker, animate=False)
-            dashboard.scroll_to_widget(body, animate=False)
             await pilot.pause()
             assert blocker.display
             assert "Pause hold" in _text(blocker)
@@ -1729,7 +1823,8 @@ async def test_hand_back_and_resume_remain_explicit_while_other_holds_survive(
                 app,
                 pilot,
                 queue,
-                TASK_DETAIL_HAND_BACK_LEADER_BUTTON,
+                "hand-back",
+                role=Role.LEADER,
             )
             assert isinstance(first_command.command, HandBack)
             assert first_command.command.role is Role.LEADER
@@ -1745,15 +1840,13 @@ async def test_hand_back_and_resume_remain_explicit_while_other_holds_survive(
                 ),
                 timeout=2,
             )
-            assert app.query_one(f"#{TASK_DETAIL_HAND_BACK_LEADER_BUTTON}", Button).disabled
-            assert not app.query_one(
-                f"#{TASK_DETAIL_HAND_BACK_IMPLEMENTER_BUTTON}", Button
-            ).disabled
-            assert not app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
-            app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).focus()
-            await pilot.press("enter")
+            await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
+            palette.query_one("#action", Select).value = "resume"
+            await wait_until(
+                lambda: palette.query_one("#palette-submit", Button).disabled, timeout=2
+            )
             assert palette.query_one("#palette-submit", Button).disabled
             assert "hand back all taken-over roles" in _text(
                 palette.query_one("#palette-action-state", Static)
@@ -1796,11 +1889,13 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
                 ),
                 timeout=2,
             )
-            assert not app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
-            app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).focus()
-            await pilot.press("enter")
+            await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
+            palette.query_one("#action", Select).value = "resume"
+            await wait_until(
+                lambda: palette.query_one("#palette-submit", Button).disabled, timeout=2
+            )
             assert palette.query_one("#palette-submit", Button).disabled
             assert "hand back all taken-over roles" in _text(
                 palette.query_one("#palette-action-state", Static)
@@ -1811,7 +1906,8 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
                 app,
                 pilot,
                 queue,
-                TASK_DETAIL_HAND_BACK_LEADER_BUTTON,
+                "hand-back",
+                role=Role.LEADER,
             )
             assert isinstance(hand_back.command, HandBack)
             assert hand_back.command.role is Role.LEADER
@@ -1819,10 +1915,7 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
             tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
             queue.mark_done(hand_back.id, {"role": Role.LEADER.value})
             await wait_until(
-                lambda: (
-                    "Remaining holds · paused" in _text(ownership)
-                    and not app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button).disabled
-                ),
+                lambda: "Remaining holds · paused" in _text(ownership),
                 timeout=2,
             )
             paused_task = tasks.get(task.id)
@@ -1833,7 +1926,7 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
                 app,
                 pilot,
                 queue,
-                TASK_DETAIL_RESUME_BUTTON,
+                "resume",
             )
             assert isinstance(resume_command.command, Resume)
             assert resume_command.command.task_id == task.id
@@ -1868,12 +1961,13 @@ async def test_resume_availability_includes_an_intervention_only_hold(
         async with app.run_test(size=(80, 40)) as pilot:
             ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
             await wait_until(lambda: Hold.INTERVENTION.value in _text(ownership), timeout=2)
-            resume_button = app.query_one(f"#{TASK_DETAIL_RESUME_BUTTON}", Button)
-            assert not resume_button.disabled
-            resume_button.focus()
-            await pilot.press("enter")
+            await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
+            palette.query_one("#action", Select).value = "resume"
+            await wait_until(
+                lambda: not palette.query_one("#palette-submit", Button).disabled, timeout=2
+            )
             assert not palette.query_one("#palette-submit", Button).disabled
             await pilot.click("#palette-submit")
             await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
@@ -1949,33 +2043,26 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
             focus_task=focused.id,
             widget_names=["queue", "dialogue", "usage", EXTENSION_WIDGET],
         )
-        async with app.run_test(size=(36, 24)):
+        async with app.run_test(size=(36, 24)) as pilot:
             identity = app.query_one("#task-detail-identity", Static)
             await wait_until(lambda: focused.title in _text(identity), timeout=2)
             assert identity.region.width > 0
             assert focused.id in _text(identity)
             situation = _text(app.query_one("#task-detail-situation", Static))
             assert "Global attention · 1 decisions · 1 engine faults" in situation
-            dialogue = cast("DataTable[object]", app.query_one("#dialogue-table", DataTable))
-            assert dialogue.row_count == 2
-            dialogue_text = " ".join(
-                plain_text(cell)
-                for row in range(dialogue.row_count)
-                for cell in dialogue.get_row_at(row)
-            )
-            assert "Focused activity only" in dialogue_text
-            assert "recorded fault" in dialogue_text
-            assert "Unrelated activity" not in dialogue_text
-            usage_text = plain_text(app.query_one("#usage", Static).content)
-            assert f"Task {focused.id}" in usage_text
-            assert "Tokens" in usage_text
-            assert focused_run.agent in usage_text
-            assert "4" in usage_text
-            assert other_run.agent not in usage_text
-            assert "900" not in usage_text
-            assert app.query_one("#task-view-extension-panel", Static).region.width > 0
+            assert not app.query("#dialogue-table")
+            assert not app.query("#usage")
+            assert not app.query("#task-view-extension-panel")
             assert len(app.query("#task-browser-list")) == 0
-            assert app.query_one("#task-detail-window", Button).region.width > 0
+            await _assert_task_dialogue_is_scoped(app, pilot)
+            await _assert_task_usage_is_scoped(
+                app,
+                pilot,
+                focused.id,
+                focused_run.agent,
+                other_run.agent,
+            )
+            await _assert_task_context_extensions_and_workspace_are_available(app, pilot)
     finally:
         reader.close()
 
@@ -2006,13 +2093,7 @@ async def test_task_window_global_attention_uses_injected_home_navigation(
         async with app.run_test(size=(100, 30)) as pilot:
             identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
             await wait_until(lambda: task.title in _text(identity), timeout=2)
-            toolbar = app.query_one("#task-detail-toolbar", HorizontalScroll)
-            toolbar.scroll_to_widget(
-                app.query_one(f"#{TASK_DETAIL_ATTENTION_BUTTON}", Button),
-                animate=False,
-            )
-            await pilot.pause()
-            await pilot.click(f"#{TASK_DETAIL_ATTENTION_BUTTON}")
+            await pilot.click(f"#{TASK_DETAIL_BACK_BUTTON}")
             feedback = app.query_one("#task-detail-feedback", Static)
             await wait_until(
                 lambda: "opened existing home window" in _text(feedback),

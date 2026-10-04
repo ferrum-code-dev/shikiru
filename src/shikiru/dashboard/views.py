@@ -820,6 +820,11 @@ class StateDashboardViews:
             if stored_relationships is not None
             else None
         )
+        task_agents = {session.agent for session in detail.sessions}
+        task_agent_usage = tuple(self.usage(task_id))
+        quota_observations = tuple(
+            item for item in self.usage() if item.agent in task_agents and item.quotas
+        )
         task_frame = self._motion.frames((task,), now).tasks[0]
         return TaskDetailView(
             task_id=task.id,
@@ -877,6 +882,8 @@ class StateDashboardViews:
             timeline=timeline_view,
             usage=_recorded_usage(detail.sessions),
             signal_observed=task_frame.spinner_visible,
+            quota_observations=quota_observations,
+            agent_usage=task_agent_usage,
         )
 
     async def task_timeline(
