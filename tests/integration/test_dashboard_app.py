@@ -859,7 +859,7 @@ async def test_focus_keeps_selected_task_and_reading_position_after_reorder(
                 ),
                 timeout=2,
             )
-            await pilot.pause()
+            await wait_until(lambda: visible_anchor() == anchor_before, timeout=2)
             anchor_after = visible_anchor()
             assert anchor_after == anchor_before, (
                 anchor_before,

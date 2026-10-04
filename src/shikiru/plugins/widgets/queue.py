@@ -540,13 +540,20 @@ class QueuePanel(Vertical):
             recent_rows = tuple(
                 row for row in recent_page.rows if row.status in TASK_TERMINAL_STATUSES
             )
+            recent_by_id = {row.task_id: row for row in recent_rows}
             matched_ids.update(row.task_id for row in recent_rows)
             for ancestor in recent_page.ancestor_context:
                 if ancestor.task_id not in matched_ids:
                     ancestors[ancestor.task_id] = ancestor
-            active_rows = tuple(row for row in rows if row.status not in TASK_TERMINAL_STATUSES)
+            active_rows = tuple(
+                row
+                for row in rows
+                if row.status not in TASK_TERMINAL_STATUSES and row.task_id not in recent_by_id
+            )
             rows = (*active_rows, *recent_rows)
-            if selected_task is None:
+            if selected_task is not None and selected_task.task_id in recent_by_id:
+                selected_task = recent_by_id[selected_task.task_id]
+            elif selected_task is None:
                 selected_task = recent_page.selected_task
         return replace(
             view,
@@ -576,6 +583,17 @@ class QueuePanel(Vertical):
         recent_task_id = self._recent_task_id(rows)
         desired_ids = tuple(row.task_id for row in rows)
         wanted_ids = set(desired_ids)
+        if self._has_current_list_order(list_view, rows, items, heading, recent_task_id):
+            anchor, anchor_offset = self._visible_anchor(list_view, tuple(items.values()))
+            changed = self._update_browser_items(items, rows)
+            self._sync_selection(list_view, rows)
+            if changed:
+                self._restore_list_position_after_refresh(
+                    list_view,
+                    anchor,
+                    anchor_offset,
+                )
+            return
         anchor, anchor_offset = self._visible_anchor(
             list_view,
             tuple(item for task_id, item in items.items() if task_id in wanted_ids),
@@ -600,6 +618,25 @@ class QueuePanel(Vertical):
             anchor,
             anchor_offset,
         )
+
+    def _has_current_list_order(
+        self,
+        list_view: ListView,
+        rows: tuple[TaskBrowserRow, ...],
+        items: dict[str, _BrowserListItem],
+        heading: _RecentHeading | None,
+        recent_task_id: str | None,
+    ) -> bool:
+        if tuple(items) != tuple(row.task_id for row in rows):
+            return False
+        if recent_task_id is None:
+            return heading is None and len(list_view.children) == len(rows)
+        if heading is None:
+            return False
+        recent_index = next(
+            index for index, row in enumerate(rows) if row.task_id == recent_task_id
+        )
+        return list_view.children[recent_index] is heading
 
     def _recent_task_id(self, rows: tuple[TaskBrowserRow, ...]) -> str | None:
         if (
@@ -636,11 +673,14 @@ class QueuePanel(Vertical):
         self,
         items: dict[str, _BrowserListItem],
         rows: tuple[TaskBrowserRow, ...],
-    ) -> None:
+    ) -> bool:
+        changed = False
         for row in rows:
             if row.task_id not in items:
                 items[row.task_id] = _BrowserListItem(row, focus_layout=self._focus_layout)
-            items[row.task_id].update_row(row)
+                changed = True
+            changed = items[row.task_id].update_row(row) or changed
+        return changed
 
     def _ordered_list_items(
         self,
@@ -694,6 +734,7 @@ class QueuePanel(Vertical):
             anchor,
             anchor_offset,
             self._list_render_version,
+            False,
         )
         if self._focus_layout:
             cast("App[object]", self.app).call_after_refresh(
@@ -709,14 +750,17 @@ class QueuePanel(Vertical):
         anchor: _BrowserListItem | None,
         anchor_offset: int,
         render_version: int,
+        settled: bool,
     ) -> None:
-        if self._focus_layout and self._apply_reference_row_spacing(list_view):
+        changed = self._focus_layout and self._apply_reference_row_spacing(list_view)
+        if changed:
             cast("App[object]", self.app).call_after_refresh(
                 self._restore_list_position,
                 list_view,
                 anchor,
                 anchor_offset,
                 render_version,
+                False,
             )
             return
         if render_version != self._list_render_version:
@@ -752,6 +796,16 @@ class QueuePanel(Vertical):
             and not selected_item.region.overlaps(list_view.scrollable_content_region)
         ):
             list_view.scroll_to_widget(selected_item, animate=False, immediate=True)
+        if self._focus_layout and not settled:
+            cast("App[object]", self.app).call_after_refresh(
+                self._restore_list_position,
+                list_view,
+                anchor,
+                anchor_offset,
+                render_version,
+                True,
+            )
+            list_view.refresh(layout=True)
 
     def _apply_reference_row_spacing(self, list_view: ListView) -> bool:
         if self._view is None or self._view.filter is not TaskBrowserFilter.ALL or self._search:
