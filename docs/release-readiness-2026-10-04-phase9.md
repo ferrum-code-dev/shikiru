@@ -33,12 +33,14 @@ The five connected fake-agent flows exercised verdict/decision review, contextua
 
 ## Full code gates
 
-Both gates used four pytest workers and `UV_CACHE_DIR=/private/tmp/shikiru-phase9-uv-cache`. The normal gate was green before the reviewed `d49791c` commit; the TERM=dumb gate ran after that commit. Both ran the same application/test implementation; the remaining tree delta was documentation and the smoke-test selector.
+All gates used four pytest workers and `UV_CACHE_DIR=/private/tmp/shikiru-phase9-uv-cache`. The first normal run checked the Codex metadata fix in the working tree immediately before it became `d49791c`; the TERM=dumb run used `d49791c` plus the Task 96 documentation and smoke-selector delta. A final normal pre-commit gate then checked `HEAD=d49791c` with the completed documentation/checklist delta that was subsequently committed as `7245af0`. The application and test implementation was unchanged across these evidence-only deltas.
 
 | Gate | Result |
 |---|---|
 | `PYTEST_XDIST_AUTO_NUM_WORKERS=4 UV_CACHE_DIR=/private/tmp/shikiru-phase9-uv-cache uv run poe check` | 1,142 passed, 14 skipped; 90.15% coverage; pytest 248.80 s |
 | `TERM=dumb PYTEST_XDIST_AUTO_NUM_WORKERS=4 UV_CACHE_DIR=/private/tmp/shikiru-phase9-uv-cache uv run poe check` | 1,142 passed, 14 skipped; 90.16% coverage; pytest 332.84 s |
+| Final normal pre-commit gate on the docs/checklist delta later committed as `7245af0` | 1,142 passed, 14 skipped; 90.16% coverage; pytest 253.77 s |
+| Follow-up normal gate for this attribution/provenance correction (`HEAD=7245af0` plus the pending release-record-only delta) | 1,142 passed, 14 skipped; 90.08% coverage; pytest 254.64 s |
 
 Formatting, Ruff, comment/literal checks, type checking, import contracts, vulture and architecture checks passed. Five architecture contracts remained kept. The gate is above the required 80% coverage.
 
@@ -71,7 +73,7 @@ The earlier same-day run at `d751832` is preserved at [`20261004T110240Z.json`](
 
 ## Visual review and limits
 
-The accepted Task 95 manual review remains in [`task95-visual-review-2026-10-04.md`](task95-visual-review-2026-10-04.md) with native Textual SVGs at Home 120×40, 48×20, 36×14 and 20×8; task decision, usage/subscription, Views and actions at 36×20; Views/actions at 20×8; and stale resources at 120×40. It records readable focus/state/charge colors, responsive clipping and scrolling, visible task identity/holds, reachable on-demand controls, stale-resource age/error and known size limits. The color assessment is supported by the original normal-color captures; several later tiny-pane recaptures are monochrome and are not used as palette evidence. The review added no screenshot dependency or product harness. The Owner reviewed the native artifacts and accepted Task 95's visual review record, while separately reporting the substantial real-project parity gap stated above.
+The Task 95 manual review remains in [`task95-visual-review-2026-10-04.md`](task95-visual-review-2026-10-04.md) with native Textual SVGs at Home 120×40, 48×20, 36×14 and 20×8; task decision, usage/subscription, Views and actions at 36×20; Views/actions at 20×8; and stale resources at 120×40. It records readable focus/state/charge colors, responsive clipping and scrolling, visible task identity/holds, reachable on-demand controls, stale-resource age/error and known size limits. The color assessment is supported by the original normal-color captures; several later tiny-pane recaptures are monochrome and are not used as palette evidence. The review added no screenshot dependency or product harness. The orchestrator reviewed the native artifacts and accepted Task 95's visual review record. The user separately reports the substantial real-project parity gap stated above; that feedback is not an acceptance of exact visual/UX parity.
 
 Ordinary cleanup still limits the evidence export to retained Shikiru rows and events; it is not a complete agent transcript or reconstruction of removed worktrees. Session totals are cumulative, model history is bounded by retained events, and missing event pairs remain gaps. Widths below 20 columns and ambiguous-width CJK settings remain unverified. No Linux claim is made.
 
