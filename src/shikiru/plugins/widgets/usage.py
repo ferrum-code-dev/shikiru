@@ -8,18 +8,21 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 from textual.widgets import Static
 
+from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui import Gauge
 from shikiru.ui.compact import ProjectAgentUsageDetails, ProjectUsageDetails, ProjectUsageMetric
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from textual import events
     from textual.app import App
     from textual.widget import Widget
 
     from shikiru.dashboard.contract import AgentUsageView, WidgetContext
 
 UNKNOWN_VALUE = "\N{EN DASH}"
+ENTER_KEY = "enter"
 
 
 def _agent_block(usage: AgentUsageView) -> Group:
@@ -38,6 +41,8 @@ def _agent_block(usage: AgentUsageView) -> Group:
 class UsagePanel(Static):
     """Show token totals and quota gauges for every known agent."""
 
+    can_focus = True
+
     def __init__(self, context: WidgetContext) -> None:
         """Hold `context`; usage refreshes after state changes and for live countdowns."""
         super().__init__(id="usage")
@@ -48,14 +53,35 @@ class UsagePanel(Static):
         """Render current usage, subscribe to state and tick quota age/countdowns."""
         await self._refresh()
         self.run_worker(self._widget_context.on_change(self._refresh_if_active), exclusive=True)
-        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_on_motion)
+        if self._widget_context.placement is not WidgetPlacement.PROJECT_USAGE:
+            self._remove_motion_callback = self._widget_context.on_motion(self._refresh_on_motion)
 
     def on_unmount(self) -> None:
         if self._remove_motion_callback is not None:
             self._remove_motion_callback()
             self._remove_motion_callback = None
 
+    async def on_click(self, event: events.Click) -> None:
+        if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
+            open_view = self._widget_context.open_contextual_view
+            if open_view is not None:
+                await open_view("usage")
+                event.stop()
+
+    async def on_key(self, event: events.Key) -> None:
+        if (
+            event.key == ENTER_KEY
+            and self._widget_context.placement is WidgetPlacement.PROJECT_USAGE
+            and self._widget_context.open_contextual_view is not None
+        ):
+            await self._widget_context.open_contextual_view("usage")
+            event.stop()
+
     async def _refresh(self) -> None:
+        if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
+            project_usage = self._widget_context.views.project_usage()
+            self.update(ProjectUsageMetric(project_usage, "Project").render())
+            return
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
         lines: list[RenderableType] = []
         if self._widget_context.focus_task is None:
@@ -104,6 +130,7 @@ class UsageWidget:
     """The `usage` dashboard widget plugin (06 §5.4)."""
 
     name = "usage"
+    placement = WidgetPlacement.PROJECT_USAGE
 
     def create(self, context: WidgetContext) -> Widget:
         """Build the usage panel for `context`."""

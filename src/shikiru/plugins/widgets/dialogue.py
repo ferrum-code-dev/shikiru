@@ -8,6 +8,7 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Static
 
+from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui import SpeechBubble
 
 if TYPE_CHECKING:
@@ -99,6 +100,7 @@ class DialogueWidget:
     """The `dialogue` dashboard widget plugin (06 §5.4, §6.3)."""
 
     name = "dialogue"
+    placement = WidgetPlacement.ACTIVITY
 
     def create(self, context: WidgetContext) -> Widget:
         """Build the dialogue panel for `context`."""

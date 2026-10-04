@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 from rich.text import Text
 from textual.widgets import Static
 
+from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui.strip import STRIP_WIDE_MIN_COLUMNS, TaskStrip
 
 if TYPE_CHECKING:
@@ -64,6 +65,7 @@ class StripsWidget:
     """The `strips` dashboard widget plugin (06 §5.4, §6.2)."""
 
     name = "strips"
+    placement = WidgetPlacement.WORKFLOW
 
     def create(self, context: WidgetContext) -> Widget:
         """Build the `StripsPanel` for `context`."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
+from textual.widgets import Label, ListItem, ListView
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
@@ -13,10 +14,13 @@ from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.operator.queries import OperatorQueries
 from shikiru.ui.theme import install_theme
+from tests.support.render import plain_text
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from textual.pilot import Pilot
     from textual.widget import Widget
 
     from shikiru.clock import Clock
@@ -27,6 +31,7 @@ if TYPE_CHECKING:
 
 REPO_AHEAD = 1
 REPO_DIRTY = 2
+FOCUS_VIEW_WAIT_SECONDS = 2
 RESOURCES = ResourceView(10.0, 40.0, 4.0, 2.0, 0.2)
 
 
@@ -76,6 +81,29 @@ class WidgetHostApp(App[None]):
 
 async def ignore_palette_action(action: str) -> None:
     del action
+
+
+async def choose_focus_view(pilot: Pilot[None], label: str) -> None:
+    await pilot.press("v")
+    await wait_until(
+        lambda: bool(pilot.app.screen.query("#focus-views-list")),
+        timeout=FOCUS_VIEW_WAIT_SECONDS,
+    )
+    menu = pilot.app.screen
+    view_list = menu.query_one("#focus-views-list", ListView)
+    items = [item for item in view_list.children if isinstance(item, ListItem)]
+    view_list.index = next(
+        index
+        for index, item in enumerate(items)
+        if plain_text(item.query_one(Label).render()) == label
+    )
+    view_list.focus()
+    await pilot.press("enter")
+    await wait_until(
+        lambda: pilot.app.screen is not menu,
+        timeout=FOCUS_VIEW_WAIT_SECONDS,
+    )
+    await pilot.pause()
 
 
 def state_views(

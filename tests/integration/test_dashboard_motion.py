@@ -5,10 +5,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from rich.text import Text
 from textual.containers import VerticalScroll
-from textual.geometry import Region
-from textual.widgets import Button, Static
+from textual.widgets import Static
 
 from shikiru.agents.contracts import (
     QuotaWindow,
@@ -38,7 +36,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.ui.compact import StageActivity
 from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
-from shikiru.ui.tokens import STYLE_BOLD, STYLE_DIM, STYLE_REVERSE
+from shikiru.ui.tokens import STYLE_REVERSE
 from shikiru.view_log import (
     VIEW_SESSION_STARTED_SIGNAL,
     VIEW_SIGNAL_KEY,
@@ -51,7 +49,7 @@ from shikiru.view_log import (
 )
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, state_views
+from tests.support.dashboard import StubServices, choose_focus_view, state_views
 from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
@@ -60,7 +58,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from rich.console import Group
+    from rich.text import Text
 
     from shikiru.config.settings import Settings
     from shikiru.dashboard.views import StateDashboardViews
@@ -237,25 +235,6 @@ def _open_escalation(
     )
 
 
-def _escalation_border_styles(panel: EscalationsPanel) -> set[str]:
-    content = panel.query_one("#escalation-panels", VerticalScroll).query_one(Static).content
-    group = cast("Group", content)
-    panels = (item for item in group.renderables if isinstance(item, Text))
-    return {str(span.style) for panel_content in panels for span in panel_content.spans}
-
-
-def _text_line_is_visible(scroll: VerticalScroll, card: Static, text: str) -> bool:
-    lines = card.render_lines(Region(0, 0, card.size.width, card.size.height))
-    selected_line = next(
-        (index for index, line in enumerate(lines) if text in line.text),
-        None,
-    )
-    if selected_line is None:
-        return False
-    visible_y = card.region.y - scroll.region.y + scroll.scroll_y + selected_line
-    return 0 <= visible_y < scroll.size.height
-
-
 def test_role_view_tail_recovers_a_new_turn_consumed_under_the_old_turn_name(
     tmp_path: Path,
 ) -> None:
@@ -322,7 +301,7 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_START)
     settings = _motion_settings(project_dir)
-    task, task_run = _seed_dashboard_state(connection, clock)
+    task, _ = _seed_dashboard_state(connection, clock)
 
     reader = StateReader(database, clock)
     try:
@@ -355,17 +334,18 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
         )
-        async with app.run_test(size=(180, 40)):
-            strips = app.query_one(StripsPanel)
-            usage = app.query_one("#usage", UsagePanel)
+        async with app.run_test(size=(180, 40)) as pilot:
+            await choose_focus_view(pilot, "Workflow · Strips")
+            strips = pilot.app.screen.query_one(StripsPanel)
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert "10s" in plain_text(usage.content)
 
             previous_frame = cast("Text", strips.content).plain
             clock.advance(1)
             await wait_until(lambda: all(item.stamp is None for item in views.strips()), timeout=1)
-            await wait_until(lambda: "9s" in plain_text(usage.content), timeout=1)
-            assert cast("Text", strips.content).plain != previous_frame
+            await wait_until(
+                lambda: cast("Text", strips.content).plain != previous_frame,
+                timeout=1,
+            )
             clock.advance(2)
             await wait_until(
                 lambda: (
@@ -380,20 +360,56 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
             assert "$0.42" in current_strip.panels[1].detail
             assert GLYPH_STALLED not in cast("Text", strips.content).plain
 
+            with log_path.open("a") as handle:
+                handle.write(f"{_row(clock.now(), _TURN_NAME, VIEW_TOOL_FINISHED_SIGNAL)}\n")
+            clock.advance(2.5)
+            await wait_until(lambda: GLYPH_STALLED in cast("Text", strips.content).plain, timeout=1)
+    finally:
+        reader.close()
+
+
+async def test_focus_usage_details_refreshes_reported_cost_and_quota_on_motion(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(project_dir)
+    task, task_run = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, task)
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        app = DashboardApp(
+            focus_task=None,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        async with app.run_test(size=(180, 40)) as pilot:
+            await choose_focus_view(
+                pilot, "Usage details · subscriptions, costs, coverage and quota"
+            )
+            usage = pilot.app.screen.query_one("#usage", UsagePanel)
+            await wait_until(clock.has_pending_sleep, timeout=1)
+            assert "$0.42" in plain_text(usage.content)
+            assert "10s" in plain_text(usage.content)
+
             RunStore(connection, clock).record_usage(
                 task_run.id,
                 Usage(200, 40, 0, 0, 0.87, "billed", None),
             )
             clock.advance(0.5)
-            await wait_until(
-                lambda: "$0.87" in plain_text(usage.content),
-                timeout=1,
-            )
-
-            with log_path.open("a") as handle:
-                handle.write(f"{_row(clock.now(), _TURN_NAME, VIEW_TOOL_FINISHED_SIGNAL)}\n")
-            clock.advance(2.5)
-            await wait_until(lambda: GLYPH_STALLED in cast("Text", strips.content).plain, timeout=1)
+            await wait_until(lambda: "$0.87" in plain_text(usage.content), timeout=1)
     finally:
         reader.close()
 
@@ -520,7 +536,11 @@ async def test_home_attention_count_updates_from_motion_without_database_changes
     clock = FakeClock(_START)
     base_settings = _motion_settings(project_dir)
     settings = base_settings.model_copy(
-        update={"dashboard": base_settings.dashboard.model_copy(update={"widgets": ["strips"]})}
+        update={
+            "dashboard": base_settings.dashboard.model_copy(
+                update={"widgets": ["header", "strips"]}
+            )
+        }
     )
     task, _ = _seed_dashboard_state(connection, clock)
     reader = StateReader(database, clock)
@@ -543,12 +563,12 @@ async def test_home_attention_count_updates_from_motion_without_database_changes
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(100, 30)):
-            attention_button = app.query_one("#workspace-summary-attention", Button)
+            header = app.query_one("#header", Static)
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert plain_text(attention_button.label) == "Attention 0"
+            assert "Attention 0" in plain_text(header.content)
             clock.advance(3)
             await wait_until(
-                lambda: plain_text(attention_button.label) == "Attention 1",
+                lambda: "Attention 1" in plain_text(header.content),
                 timeout=1,
             )
             assert views.attention().stalls == 1
@@ -556,7 +576,7 @@ async def test_home_attention_count_updates_from_motion_without_database_changes
         reader.close()
 
 
-async def test_summary_motion_waits_for_home_when_modal_opens_and_closes(
+async def test_focus_header_motion_waits_for_home_when_modal_opens_and_closes(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -565,7 +585,11 @@ async def test_summary_motion_waits_for_home_when_modal_opens_and_closes(
     clock = FakeClock(_START)
     base_settings = _motion_settings(project_dir)
     settings = base_settings.model_copy(
-        update={"dashboard": base_settings.dashboard.model_copy(update={"widgets": ["strips"]})}
+        update={
+            "dashboard": base_settings.dashboard.model_copy(
+                update={"widgets": ["header", "strips"]}
+            )
+        }
     )
     task, _ = _seed_dashboard_state(connection, clock)
     reader = StateReader(database, clock)
@@ -588,23 +612,22 @@ async def test_summary_motion_waits_for_home_when_modal_opens_and_closes(
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(100, 30)) as pilot:
-            summary_button = app.query_one("#workspace-summary-attention", Button)
+            header = app.query_one("#header", Static)
             home_screen = pilot.app.screen
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert plain_text(summary_button.label) == "Attention 0"
+            assert "Attention 0" in plain_text(header.content)
 
-            app.query_one("#workspace-command-history", Button).focus()
-            await pilot.press("enter")
+            await pilot.press("?")
             await wait_until(lambda: pilot.app.screen is not home_screen, timeout=1)
             clock.advance(3)
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert plain_text(summary_button.label) == "Attention 0"
+            assert "Attention 0" in plain_text(header.content)
 
             await pilot.press("escape")
             await wait_until(lambda: pilot.app.screen is home_screen, timeout=1)
             clock.advance(1)
             await wait_until(
-                lambda: plain_text(summary_button.label) == "Attention 1",
+                lambda: "Attention 1" in plain_text(header.content),
                 timeout=1,
             )
             assert views.attention().stalls == 1
@@ -785,7 +808,7 @@ def test_retry_turn_ignores_signal_evidence_from_the_previous_same_step_turn(
         reader.close()
 
 
-async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
+async def test_focus_attention_selects_groups_and_reappears_after_resolution(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -824,32 +847,20 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             panel = app.query_one(EscalationsPanel)
             scroll = panel.query_one("#escalation-panels", VerticalScroll)
             await wait_until(lambda: len(list(scroll.query(Static))) == 1, timeout=1)
+            row = scroll.query_one(Static)
+            assert "Attention 1" in plain_text(row.content)
+            assert "3 decisions" in plain_text(row.content)
             panel.focus()
             await pilot.press("right")
             await wait_until(
-                lambda: "▶ E-2 · Second packet" in plain_text(scroll.query(Static)[0].content),
+                lambda: (
+                    "E-2 ·" in plain_text(scroll.query(Static)[0].content)
+                    and "Second packet" in plain_text(scroll.query(Static)[0].content)
+                ),
                 timeout=1,
             )
-            assert _text_line_is_visible(scroll, scroll.query_one(Static), "E-2 · Second packet")
-            scroll.scroll_end(animate=False)
-            await wait_until(lambda: scroll.max_scroll_y > 0, timeout=1)
-            scroll.scroll_to(y=scroll.max_scroll_y, animate=False)
-            await wait_until(lambda: scroll.scroll_y > 0, timeout=1)
-            cards = list(scroll.query(Static))
-            scroll_y = scroll.scroll_y
-            styles_before = _escalation_border_styles(panel)
-            assert any(STYLE_BOLD in style for style in styles_before)
-
-            clock.advance(0.5)
-            await wait_until(
-                lambda: any(STYLE_DIM in style for style in _escalation_border_styles(panel)),
-                timeout=1,
-            )
-
-            assert list(scroll.query(Static)) == cards
-            assert scroll.scroll_y == scroll_y
             assert pilot.app.focused is panel
-            assert "▶ E-2 · Second packet" in plain_text(scroll.query(Static)[0].content)
+            assert len(list(scroll.query(Static))) == 1
 
             store = EscalationStore(connection, clock)
             store.resolve(first.id, "retry")
@@ -859,12 +870,13 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
             await wait_until(
                 lambda: (
                     panel.display
-                    and len(list(scroll.query(Static))) == 1
-                    and "No open decisions" in plain_text(scroll.query(Static)[0].content)
+                    and "No current attention." in plain_text(scroll.query(Static)[0].content)
                 ),
                 timeout=1,
             )
             assert pilot.app.focused is panel
+            app.query_one("#focus-views").focus()
+            await wait_until(lambda: not panel.display, timeout=1)
 
             reopened = _open_escalation(connection, clock, project_dir, task.id, "Reopened packet")
             clock.advance(0.5)
@@ -880,7 +892,7 @@ async def test_escalation_pulse_updates_in_place_and_empty_panel_can_reopen(
         reader.close()
 
 
-async def test_attention_keyboard_scrolls_the_selected_group_into_view(
+async def test_focus_attention_keyboard_selects_late_groups_in_the_compact_row(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -925,32 +937,22 @@ async def test_attention_keyboard_scrolls_the_selected_group_into_view(
             widget_names=settings.dashboard.widgets,
         )
         selected_group = views.attention().groups[8]
+        selected_task_id = selected_group.task_id
+        assert selected_task_id is not None
         async with app.run_test(size=(100, 32)) as pilot:
             panel = app.query_one(EscalationsPanel)
             scroll = panel.query_one("#escalation-panels", VerticalScroll)
-            await wait_until(lambda: len(list(scroll.query(Static))) == 10, timeout=1)
             panel.focus()
             await pilot.press(*("down" for _ in range(8)))
-            await pilot.pause()
-
-            selected_card = next(
-                card
-                for card in scroll.query(Static)
-                if f"▶ {selected_group.task_id} · {selected_group.title}"
-                in plain_text(card.content)
-            )
             await wait_until(
                 lambda: (
-                    selected_card.region.y < scroll.region.bottom
-                    and selected_card.region.bottom > scroll.region.y
+                    selected_task_id in plain_text(scroll.query_one(Static).content)
+                    and selected_group.escalations[0].escalation_id
+                    in plain_text(scroll.query_one(Static).content)
                 ),
                 timeout=1,
             )
-            selected_text = plain_text(selected_card.content)
-            assert f"▶ {selected_group.task_id} · {selected_group.title}" in selected_text
-            assert selected_card.region.y < scroll.region.bottom
-            assert selected_card.region.bottom > scroll.region.y
-            assert scroll.scroll_y > 0
+            assert "Attention 10" in plain_text(scroll.query_one(Static).content)
     finally:
         reader.close()
 
@@ -993,17 +995,17 @@ async def test_disabled_animations_keep_countdowns_live_without_animating_frames
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
         )
-        async with app.run_test(size=(180, 40)):
-            panel = app.query_one(StripsPanel)
-            usage = app.query_one(UsagePanel)
+        async with app.run_test(size=(180, 40)) as pilot:
+            await choose_focus_view(
+                pilot, "Usage details · subscriptions, costs, coverage and quota"
+            )
+            usage = pilot.app.screen.query_one(UsagePanel)
             await wait_until(clock.has_pending_sleep, timeout=1)
-            initial = cast("Text", panel.content).plain
             initial_usage = plain_text(usage.content)
             assert "$0.42" in initial_usage
             assert "10s" in initial_usage
             clock.advance(2)
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert cast("Text", panel.content).plain != initial
             assert "8s" in plain_text(usage.content)
             assert plain_text(usage.content) != initial_usage
 
@@ -1013,5 +1015,20 @@ async def test_disabled_animations_keep_countdowns_live_without_animating_frames
             )
             clock.advance(0.5)
             await wait_until(lambda: "$0.87" in plain_text(usage.content), timeout=1)
+
+            usage_screen = pilot.app.screen
+            await pilot.press("escape")
+            await wait_until(lambda: pilot.app.screen is not usage_screen, timeout=1)
+            await choose_focus_view(pilot, "Workflow · Strips")
+            assert pilot.app.screen.query_one(StripsPanel).is_mounted
+            initial_frames = tuple(
+                panel_view.spinner_frame for item in views.strips() for panel_view in item.panels
+            )
+            clock.advance(2)
+            await wait_until(clock.has_pending_sleep, timeout=1)
+            current_frames = tuple(
+                panel_view.spinner_frame for item in views.strips() for panel_view in item.panels
+            )
+            assert current_frames == initial_frames
     finally:
         reader.close()

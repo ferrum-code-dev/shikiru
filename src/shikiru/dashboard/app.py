@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 from textual.app import App
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Select, Static
+from textual.widget import Widget
+from textual.widgets import Button, Input, Label, ListItem, ListView, Select, Static
 
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
@@ -19,6 +21,7 @@ from shikiru.dashboard.contract import (
     PaletteRequest,
     TaskBrowserFilter,
     WidgetContext,
+    WidgetPlacement,
 )
 from shikiru.dashboard.detail import TaskDetailPanel, TaskDetailScreen
 from shikiru.errors import ConfigError
@@ -30,7 +33,6 @@ if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
     from textual.binding import BindingType
-    from textual.widget import Widget
     from textual.worker import Worker
 
     from shikiru.clock import Clock
@@ -55,8 +57,15 @@ _SECTION_EXTENSIONS = "extensions"
 _WIDGET_DIALOGUE = "dialogue"
 _WIDGET_ESCALATIONS = "escalations"
 _WIDGET_QUEUE = "queue"
-_TASK_VIEW_OMITTED_WIDGETS = frozenset(
-    {"header", _WIDGET_ESCALATIONS, "strips", _WIDGET_QUEUE, "resources", "docker", "faults"}
+_TASK_VIEW_OMITTED_PLACEMENTS = frozenset(
+    {
+        WidgetPlacement.IDENTITY,
+        WidgetPlacement.TASK_LIST,
+        WidgetPlacement.ATTENTION,
+        WidgetPlacement.RESOURCES,
+        WidgetPlacement.WORKFLOW,
+        WidgetPlacement.DIAGNOSTICS,
+    }
 )
 _SECTION_LABELS = (
     (_SECTION_WORKSPACE, "Workspace"),
@@ -66,17 +75,6 @@ _SECTION_LABELS = (
     (_SECTION_EXTENSIONS, "Extensions"),
 )
 _SECTION_BY_ID = dict(_SECTION_LABELS)
-_BUILTIN_SECTIONS = {
-    "header": _SECTION_WORKSPACE,
-    _WIDGET_ESCALATIONS: _SECTION_WORKSPACE,
-    "strips": _SECTION_WORKSPACE,
-    _WIDGET_QUEUE: _SECTION_WORKSPACE,
-    _WIDGET_DIALOGUE: _SECTION_ACTIVITY,
-    "usage": _SECTION_USAGE,
-    "resources": _SECTION_DIAGNOSTICS,
-    "docker": _SECTION_DIAGNOSTICS,
-    "faults": _SECTION_DIAGNOSTICS,
-}
 _TAB_PREFIX = "section-tab-"
 _SECTION_PREFIX = "section-"
 _SECTION_HEADING_PREFIX = "section-heading-"
@@ -104,90 +102,41 @@ _SEARCH_KEY = "slash"
 _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
-_SUMMARY_BAR_HEIGHT = 3
 HOME_SPLIT_MIN_COLUMNS = 100
-HOME_SPLIT_MAX_ROWS = 32
-HOME_SPLIT_MIN_ROWS = 8
-HOME_LAYOUT_RESERVED_ROWS = 12
 SHORT_PANE_MAX_ROWS = 18
-COMPACT_LAYOUT_MAX_COLUMNS = 59
 VERY_SMALL_MAX_COLUMNS = 23
 VERY_SMALL_MAX_ROWS = 9
 FOOTER_COMPACT_MAX_COLUMNS = 40
 COMPACT_FOOTER_HEIGHT = 4
 COMPACT_FOOTER_CONTROLS_HEIGHT = 2
-COMPACT_DETAIL_PANEL_HEIGHT = 24
 WORKSPACE_NAVIGATION_HEIGHT = 3
 VERY_SMALL_NAVIGATION_HEIGHT = 1
-_SUMMARY_BUTTONS = (
-    (_SUMMARY_ATTENTION, "Attention", "workspace-summary-attention"),
-    (_SUMMARY_RUNNING, "Running", "workspace-summary-running"),
-    (_SUMMARY_WAITING, "Waiting", "workspace-summary-waiting"),
-)
-_SUMMARY_BY_BUTTON = {button_id: name for name, _, button_id in _SUMMARY_BUTTONS}
+FOCUS_SUMMARY_MAX_ROWS = 8
+FOCUS_SHORT_SUMMARY_MAX_ROWS = 3
+FOCUS_COMPACT_LIST_ROWS = 9
+FOCUS_FOOTER_HEIGHT = 2
+FOCUS_VIEWS_BUTTON = "focus-views"
+FOCUS_HELP_BUTTON = "focus-help"
+FOCUS_HINTS = "focus-hints"
+FOCUS_VIEWS_LIST = "focus-views-list"
+FOCUS_VIEW_PREFIX = "focus-view-"
+FOCUS_COMMAND_HISTORY = "commands"
+FOCUS_ATTENTION = "attention"
+FOCUS_REVEAL_TASK = "reveal-task"
+FOCUS_USAGE_DETAILS = "usage"
+FOCUS_TASK_FILTER_PREFIX = "filter:"
+FOCUS_CONTEXT_VIEW_WORKER = "focus-context-view"
+EMPTY_CONTEXT_CHOICE = ""
 
 
 class _TaskBrowserNavigation(Protocol):
     async def activate_filter(self, task_filter: TaskBrowserFilter) -> None: ...
 
+    async def reveal_selected_task(self) -> None: ...
+
 
 class _AttentionPanelNavigation(Protocol):
     def activate_attention(self) -> None: ...
-
-
-class WorkspaceSummaryBar(Horizontal):
-    """Show bounded home counts with direct navigation to each content list."""
-
-    DEFAULT_CSS = f"""
-    WorkspaceSummaryBar {{ height: {_SUMMARY_BAR_HEIGHT}; width: 100%; padding: 0 1; }}
-    WorkspaceSummaryBar Button {{
-        width: 1fr; min-width: 1; height: {_SUMMARY_BAR_HEIGHT}; padding: 0; margin: 0;
-        border: round $neutral-border; background: $surface; color: $muted-text;
-    }}
-    WorkspaceSummaryBar Button:focus {{
-        border: round $focus; color: $primary-text; text-style: bold reverse;
-    }}
-    """
-
-    def __init__(self, context: WidgetContext) -> None:
-        super().__init__(id="workspace-summary")
-        self._widget_context = context
-        self._remove_motion_callback: Callable[[], None] | None = None
-
-    def compose(self) -> ComposeResult:
-        for _, label, button_id in _SUMMARY_BUTTONS:
-            yield Button(label, id=button_id)
-
-    async def on_mount(self) -> None:
-        await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh_while_mounted), exclusive=True)
-        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_mounted)
-
-    def on_unmount(self) -> None:
-        if self._remove_motion_callback is not None:
-            self._remove_motion_callback()
-            self._remove_motion_callback = None
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        name = _SUMMARY_BY_BUTTON.get(event.button.id or "")
-        callback = self._widget_context.activate_home_summary
-        if name is not None and callback is not None:
-            await callback(name)
-
-    async def _refresh(self) -> None:
-        view = self._widget_context.views.workspace_summary()
-        counts = {
-            _SUMMARY_ATTENTION: view.attention,
-            _SUMMARY_RUNNING: view.running,
-            _SUMMARY_WAITING: view.waiting,
-        }
-        for name, label, button_id in _SUMMARY_BUTTONS:
-            self.query_one(f"#{button_id}", Button).label = f"{label} {counts[name]}"
-
-    async def _refresh_while_mounted(self) -> None:
-        app = cast("App[None]", self.app)
-        if app.is_running and self.is_mounted and self.is_on_screen and self.screen.is_active:
-            await self._refresh()
 
 
 class WidgetPluginError(ConfigError):
@@ -199,11 +148,137 @@ def _load_widget(name: str) -> DashboardWidget:
         WIDGET_ENTRY_POINT_GROUP, name, WidgetPluginError, _WIDGET_PLUGIN_KIND
     )
     widget_class = cast("type[DashboardWidget]", loaded)
-    return widget_class()
+    try:
+        plugin = widget_class()
+    except Exception as error:
+        message = f"configured dashboard widget {name!r} failed to initialize: {error}"
+        raise WidgetPluginError(message) from error
+    if not callable(getattr(plugin, "create", None)):
+        message = f"configured dashboard widget {name!r} has no create(context) entry point"
+        raise WidgetPluginError(message)
+    return plugin
 
 
-def _section_for_widget(name: str) -> str:
-    return _BUILTIN_SECTIONS.get(name, _SECTION_EXTENSIONS)
+def _placement_for_widget(name: str, plugin: DashboardWidget) -> WidgetPlacement:
+    configured = getattr(plugin, "placement", None)
+    if configured is None:
+        return WidgetPlacement.EXTENSIONS
+    try:
+        return WidgetPlacement(configured)
+    except (TypeError, ValueError) as error:
+        message = (
+            f"configured dashboard widget {name!r} has an unsupported placement {configured!r}"
+        )
+        raise WidgetPluginError(message) from error
+
+
+def _legacy_section_for_placement(placement: WidgetPlacement) -> str:
+    if placement in {
+        WidgetPlacement.IDENTITY,
+        WidgetPlacement.TASK_LIST,
+        WidgetPlacement.ATTENTION,
+        WidgetPlacement.RESOURCES,
+        WidgetPlacement.WORKFLOW,
+    }:
+        return _SECTION_WORKSPACE
+    if placement is WidgetPlacement.ACTIVITY:
+        return _SECTION_ACTIVITY
+    if placement in {WidgetPlacement.PROJECT_USAGE, WidgetPlacement.DETAILED_USAGE}:
+        return _SECTION_USAGE
+    if placement is WidgetPlacement.DIAGNOSTICS:
+        return _SECTION_DIAGNOSTICS
+    return _SECTION_EXTENSIONS
+
+
+def _contextual_widget_label(name: str, placement: WidgetPlacement) -> str:
+    category = {
+        WidgetPlacement.ACTIVITY: "Activity",
+        WidgetPlacement.DETAILED_USAGE: "Usage",
+        WidgetPlacement.DIAGNOSTICS: "Diagnostics",
+        WidgetPlacement.WORKFLOW: "Workflow",
+        WidgetPlacement.EXTENSIONS: "Extensions",
+    }.get(placement)
+    label = name.replace("_", " ").title()
+    return f"{category} · {label}" if category is not None else label
+
+
+@dataclass(frozen=True)
+class _ContextChoice:
+    choice_id: str
+    label: str
+    task_filter: TaskBrowserFilter | None = None
+    widget_name: str | None = None
+    placement: WidgetPlacement | None = None
+    command_history: bool = False
+    attention: bool = False
+    reveal_task: bool = False
+
+
+class _ContextViewsScreen(ModalScreen[str]):
+    BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
+    DEFAULT_CSS = """
+    _ContextViewsScreen { align: center middle; background: $background; }
+    #context-views-frame {
+        width: 60%; max-width: 76; height: 70%; max-height: 24;
+        padding: 1; border: solid $neutral-border; background: $surface;
+    }
+    #context-views-title { height: 1; color: $primary-text; text-style: bold; }
+    #focus-views-list { height: 1fr; border: none; background: $surface; }
+    #context-views-hint { height: 1; color: $secondary-text; }
+    """
+
+    def __init__(self, choices: tuple[_ContextChoice, ...]) -> None:
+        super().__init__()
+        self._choices = {
+            f"{FOCUS_VIEW_PREFIX}{index}": choice for index, choice in enumerate(choices)
+        }
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="context-views-frame"):
+            yield Label("Views and filters", id="context-views-title")
+            items = [
+                ListItem(Label(choice.label), id=choice_id)
+                for choice_id, choice in self._choices.items()
+            ]
+            yield ListView(*items, id=FOCUS_VIEWS_LIST)
+            yield Static("↑↓ select · Enter open · Esc back", id="context-views-hint")
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        choice_id = event.item.id
+        if choice_id is not None and choice_id in self._choices:
+            self.dismiss(self._choices[choice_id].choice_id)
+
+    async def action_close(self) -> None:
+        self.dismiss("")
+
+
+class _ContextWidgetScreen(ModalScreen[None]):
+    BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
+    DEFAULT_CSS = """
+    _ContextWidgetScreen { background: $background; }
+    #context-widget-frame { height: 100%; padding: 0 1; }
+    #context-widget-title {
+        height: 1; padding: 0 1; color: $primary-text;
+        border-bottom: solid $neutral-border;
+    }
+    #context-widget-content { height: 1fr; padding: 1 0; }
+    #context-widget-hint { height: 1; color: $secondary-text; }
+    """
+
+    def __init__(self, label: str, widget: Widget) -> None:
+        super().__init__()
+        self._label = label
+        self._widget = widget
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="context-widget-frame"):
+            yield Label(self._label, id="context-widget-title")
+            with VerticalScroll(id="context-widget-content"):
+                yield self._widget
+            yield Static("Esc back to Focus", id="context-widget-hint")
+
+    async def action_close(self) -> None:
+        self.dismiss()
 
 
 def _command_history_text(history: CommandHistoryView) -> str:
@@ -274,30 +349,51 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
         task_id: str | None,
         expanded: bool,
         widget_names: Sequence[str],
+        *,
+        compact_focus: bool = False,
     ) -> None:
         super().__init__()
         self._current_section = current_section
         self._task_id = task_id
         self._expanded = expanded
         self._widget_names = tuple(widget_names)
+        self._compact_focus = compact_focus
 
     def compose(self) -> ComposeResult:
         """Render help for the current workspace section and its available keys."""
         view = f"Task workspace {self._task_id}" if self._task_id else "Home workspace"
-        lines = [
-            "Tab / Shift+Tab: move between sections",
-            "Mouse: choose a section",
-            "z: expand the focused section",
-            "Escape returns to the section list." if self._expanded else "Escape closes this help.",
-            "Ctrl+P: open operator actions",
-            "?: show this help",
-        ]
+        if self._compact_focus:
+            lines = [
+                "Up/Down: select a task",
+                "Enter: inspect selected task",
+                "Escape: return from detail or close this view",
+                "Ctrl+P: open contextual operator actions",
+                "/: search task ID or title",
+                "v: open filters, history and configured secondary views",
+                "Mouse: select or open a task; Views and Help are clickable",
+                "?: show this help",
+            ]
+        else:
+            lines = [
+                "Tab / Shift+Tab: move between sections",
+                "Mouse: choose a section",
+                "z: expand the focused section",
+                "Escape returns to the section list."
+                if self._expanded
+                else "Escape closes this help.",
+                "Ctrl+P: open operator actions",
+                "?: show this help",
+            ]
         if _WIDGET_ESCALATIONS in self._widget_names:
             lines.append("Escalations: Up/Down select, o opens evidence, r opens resolution")
         if _WIDGET_DIALOGUE in self._widget_names:
             lines.append("Dialogue: Enter opens full text")
         if _WIDGET_QUEUE in self._widget_names:
-            lines.append("Task browser: / search, Up/Down select, filters and Clear search")
+            lines.append(
+                "Task browser: / search, Up/Down select, v opens filters, Escape clears search"
+                if self._compact_focus
+                else "Task browser: / search, Up/Down select, filters and Clear search"
+            )
         with Vertical(id="workspace-help-frame"):
             yield Label(f"Help · {view} · {self._current_section}", id=_HELP_CONTEXT)
             with VerticalScroll(id="workspace-help-scroll"):
@@ -466,12 +562,51 @@ class DashboardApp(App[None]):
     ENABLE_COMMAND_PALETTE = False
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+p", "open_palette", "Palette"),
+        ("v", "open_views", "Views"),
         ("z", "expand_section", "Expand section"),
         ("escape", "return_from_section", "Back"),
         ("question_mark", "show_help", "Help"),
     ]
     CSS = """
     Screen { background: $background; color: $primary-text; }
+    #focus-root { height: 100%; }
+    #focus-readouts {
+        height: auto; padding: 0 1;
+        border-bottom: solid $neutral-border; background: $background;
+    }
+    #header { height: auto; padding: 1 1 0 1; }
+    #usage { height: auto; padding: 0 1; }
+    #resources { height: auto; padding: 0 1; }
+    #escalations { height: auto; padding: 0 1; }
+    #focus-main { height: 1fr; min-height: 3; padding: 0 1; }
+    #focus-main.wide { layout: horizontal; }
+    #focus-main.compact { layout: vertical; overflow-y: auto; }
+    #focus-main.wide #queue {
+        width: 42; min-width: 30; height: 100%; padding-right: 1;
+        border-right: solid $neutral-border;
+    }
+    #focus-main.wide #task-browser-list { height: 1fr; min-height: 3; }
+    #focus-main.wide #task-detail-panel {
+        width: 1fr; min-width: 45; height: 100%; padding-left: 1;
+        border-left: solid $neutral-border;
+    }
+    #focus-main.wide #task-detail-body { height: 1fr; max-height: 1fr; }
+    #focus-main.compact #queue { width: 100%; height: auto; }
+    #focus-main.compact #task-browser-list { height: auto; min-height: 3; }
+    #focus-main.compact #task-detail-panel { width: 100%; height: auto; }
+    #focus-main.compact #task-detail-body { max-height: 12; }
+    #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
+    #focus-footer {
+        height: 1; padding: 0 1; border-top: solid $neutral-border;
+        background: $panel;
+    }
+    #focus-hints { width: 1fr; height: 1; color: $secondary-text; }
+    #focus-footer Button {
+        width: auto; min-width: 1; height: 1; margin: 0 1 0 0; padding: 0;
+        border: none; background: $panel; color: $steel-blue;
+    }
+    #focus-footer Button:focus { text-style: bold reverse; }
+    #workspace-command-status { height: 1; padding: 0 1; color: $secondary-text; }
     #workspace-root { height: 100%; }
     #workspace-header {
         height: auto;
@@ -525,14 +660,6 @@ class DashboardApp(App[None]):
     #workspace-root.expanded #workspace-navigation { display: none; }
     #workspace-root.expanded #workspace-expand { display: none; }
     #workspace-root.expanded #workspace-return { display: block; }
-    #workspace-root.pane-short #workspace-summary { height: 1; }
-    #workspace-root.pane-short #workspace-summary Button {
-        height: 1; border: none; text-style: bold;
-    }
-    #workspace-summary.compact { height: 1; }
-    #workspace-summary.compact Button {
-        height: 1; border: none; padding: 0; text-style: bold;
-    }
     #workspace-root.pane-tiny #workspace-command-status { display: none; }
     #workspace-root.pane-tiny #workspace-header { height: 1; padding: 0; }
     #workspace-root.pane-tiny #workspace-navigation {
@@ -563,6 +690,9 @@ class DashboardApp(App[None]):
     #workspace-root.pane-tiny #home-browser-detail.compact #task-browser-list {
         height: 3; min-height: 2;
     }
+    #workspace-root.pane-tiny #workspace-navigation Button { min-width: 1; }
+    #workspace-root.pane-short #workspace-footer { height: 4; }
+    #workspace-root.pane-short #workspace-footer-controls { height: 2; }
     """
 
     def __init__(
@@ -600,44 +730,111 @@ class DashboardApp(App[None]):
         self._navigate_task_window = navigate_task_window
         self._navigate_role_pane = navigate_role_pane
         self._navigate_home = navigate_home
-        self._widget_names = tuple(widget_names)
+        self._configured_widget_names = tuple(widget_names)
+        self._widget_names = self._configured_widget_names
         self._motion_callbacks: list[OnChange] = []
         self._home_detail_panel: TaskDetailPanel | None = None
+        self._widget_plugins: dict[str, DashboardWidget] = {}
+        self._widget_placements: dict[str, WidgetPlacement] = {}
+        self._widget_names_by_placement: dict[WidgetPlacement, list[str]] = {}
+        self._widgets_configured = False
         self._widget_names_by_section: dict[str, list[str]] = {
             section_id: [] for section_id, _ in _SECTION_LABELS
         }
-        for name in self._widget_names:
-            self._widget_names_by_section[_section_for_widget(name)].append(name)
-        if self._focus_task is not None:
-            for section_widgets in self._widget_names_by_section.values():
-                section_widgets[:] = [
-                    name for name in section_widgets if name not in _TASK_VIEW_OMITTED_WIDGETS
-                ]
-        self._widget_names = tuple(
-            name
-            for section_widgets in self._widget_names_by_section.values()
-            for name in section_widgets
-        )
-        self._widget_instances: dict[str, object] = {}
-        self._section_ids = tuple(
-            section_id
-            for section_id, _ in _SECTION_LABELS
-            if self._widget_names_by_section[section_id]
-            or (self._focus_task is not None and section_id == _SECTION_WORKSPACE)
-        ) or (_SECTION_WORKSPACE,)
-        self._selected_section = self._section_ids[0]
+        self._widget_instances: dict[str, Widget] = {}
+        self._section_ids: tuple[str, ...] = ()
+        self._selected_section = _SECTION_WORKSPACE
         self._expanded_section: str | None = None
         self._return_focus: Widget | None = None
         self._return_scroll_position = (0, 0)
 
     def compose(self) -> ComposeResult:
-        """Mount every configured widget within its documented workspace section."""
+        """Mount configured primary content and keep other widgets behind contextual views."""
+        self._configure_widgets()
+        if self._focus_task is None:
+            yield from self._compose_focus()
+        else:
+            yield from self._compose_task_workspace()
+
+    def _configure_widgets(self) -> None:
+        if self._widgets_configured:
+            return
+        for name in self._configured_widget_names:
+            if name in self._widget_plugins:
+                message = f"configured dashboard widget {name!r} appears more than once"
+                raise WidgetPluginError(message)
+            plugin = _load_widget(name)
+            placement = _placement_for_widget(name, plugin)
+            self._widget_plugins[name] = plugin
+            self._widget_placements[name] = placement
+            self._widget_names_by_placement.setdefault(placement, []).append(name)
+        if self._focus_task is None:
+            self._section_ids = ()
+            self._widget_names = self._configured_widget_names
+        else:
+            for name in self._configured_widget_names:
+                placement = self._widget_placements[name]
+                if placement not in _TASK_VIEW_OMITTED_PLACEMENTS:
+                    self._widget_names_by_section[_legacy_section_for_placement(placement)].append(
+                        name
+                    )
+            self._widget_names = tuple(
+                name
+                for section_widgets in self._widget_names_by_section.values()
+                for name in section_widgets
+            )
+            self._section_ids = tuple(
+                section_id
+                for section_id, _ in _SECTION_LABELS
+                if self._widget_names_by_section[section_id] or section_id == _SECTION_WORKSPACE
+            )
+        self._selected_section = self._section_ids[0] if self._section_ids else _SECTION_WORKSPACE
+        self._widgets_configured = True
+
+    def _compose_focus(self) -> ComposeResult:
         context = self._widget_context()
-        view_label = (
-            f"Task workspace · {self._focus_task}"
-            if self._focus_task is not None
-            else "Home workspace"
-        )
+        with Vertical(id="focus-root"):
+            with VerticalScroll(id="focus-readouts"):
+                for placement in (
+                    WidgetPlacement.IDENTITY,
+                    WidgetPlacement.PROJECT_USAGE,
+                    WidgetPlacement.RESOURCES,
+                    WidgetPlacement.ATTENTION,
+                ):
+                    for name in self._widget_names_by_placement.get(placement, ()):
+                        widget = self._create_widget(name)
+                        self._widget_instances[name] = widget
+                        yield widget
+            with Horizontal(id="focus-main"):
+                task_list_names = self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST, ())
+                if task_list_names:
+                    with Vertical(id="focus-task-list-column"):
+                        for name in task_list_names:
+                            widget = self._create_widget(name)
+                            self._widget_instances[name] = widget
+                            yield widget
+                    self._home_detail_panel = TaskDetailPanel(
+                        context,
+                        self._selected_task_id,
+                        fixed=False,
+                        embedded=True,
+                    )
+                    yield self._home_detail_panel
+                else:
+                    yield Static("Task list is not configured.", id="focus-empty", markup=False)
+            yield _CommandStatusLine(self._views, self._on_change)
+            with Horizontal(id="focus-footer"):
+                yield Static(
+                    "↑↓ select · Enter inspect · Ctrl+P actions · / search · v views · ? help",
+                    id=FOCUS_HINTS,
+                    markup=False,
+                )
+                yield Button("Views", id=FOCUS_VIEWS_BUTTON)
+                yield Button("Help", id=FOCUS_HELP_BUTTON)
+
+    def _compose_task_workspace(self) -> ComposeResult:
+        context = self._widget_context()
+        view_label = f"Task workspace · {self._focus_task}"
         with Vertical(id="workspace-root"):
             with Horizontal(id="workspace-header"):
                 yield Label(f"Shikiru · {view_label}", id="workspace-title")
@@ -660,28 +857,16 @@ class DashboardApp(App[None]):
                                     self._focus_task,
                                     fixed=True,
                                 )
-                            elif section_id == _SECTION_WORKSPACE:
-                                yield WorkspaceSummaryBar(context)
                             names = self._widget_names_by_section[section_id]
                             if not names and not (
                                 section_id == _SECTION_WORKSPACE and self._focus_task is not None
                             ):
                                 yield Static("No configured widgets.", markup=False)
                             for name in names:
-                                widget = _load_widget(name).create(context)
+                                placement = self._task_widget_placement(name)
+                                widget = self._create_widget(name, placement=placement)
                                 self._widget_instances[name] = widget
-                                if name == _WIDGET_QUEUE and self._focus_task is None:
-                                    with Horizontal(id="home-browser-detail"):
-                                        yield widget
-                                        self._home_detail_panel = TaskDetailPanel(
-                                            context,
-                                            self._selected_task_id,
-                                            fixed=False,
-                                            embedded=True,
-                                        )
-                                        yield self._home_detail_panel
-                                else:
-                                    yield widget
+                                yield widget
             with Vertical(id="workspace-footer"):
                 yield Static(self._footer_text(), id="workspace-footer-copy", markup=False)
                 with HorizontalScroll(id="workspace-footer-controls"):
@@ -690,7 +875,37 @@ class DashboardApp(App[None]):
                     yield Button("Help", id=_HELP_BUTTON)
                     yield Button("Commands", id=_COMMAND_HISTORY_BUTTON)
 
-    def _widget_context(self) -> WidgetContext:
+    def _task_widget_placement(self, name: str) -> WidgetPlacement:
+        placement = self._widget_placements[name]
+        if placement is WidgetPlacement.PROJECT_USAGE:
+            return WidgetPlacement.DETAILED_USAGE
+        return placement
+
+    def _create_widget(
+        self,
+        name: str,
+        *,
+        placement: WidgetPlacement | None = None,
+    ) -> Widget:
+        plugin = self._widget_plugins[name]
+        selected_placement = placement or self._widget_placements[name]
+        try:
+            widget = cast("object", plugin.create(self._widget_context(selected_placement)))
+        except Exception as error:
+            message = f"configured dashboard widget {name!r} failed to create: {error}"
+            raise WidgetPluginError(message) from error
+        if not isinstance(widget, Widget):
+            message = (
+                f"configured dashboard widget {name!r} returned {type(widget).__name__}, "
+                "expected a Textual Widget"
+            )
+            raise WidgetPluginError(message)
+        return widget
+
+    def _widget_context(
+        self,
+        placement: WidgetPlacement = WidgetPlacement.EXTENSIONS,
+    ) -> WidgetContext:
         async def open_task_detail(task_id: str) -> None:
             def refresh_resumed_detail(_: None) -> None:
                 self.refresh_task_detail_after_resume()
@@ -717,16 +932,17 @@ class DashboardApp(App[None]):
             navigate_home=self._navigate_home,
             on_task_selected=self._select_task_context,
             activate_home_summary=self._activate_home_summary,
+            placement=placement,
+            open_contextual_view=self._open_contextual_view,
         )
 
     async def _activate_home_summary(self, summary: str) -> None:
-        self._select_section(_SECTION_WORKSPACE)
+        if self._focus_task is not None:
+            return
         if summary == _SUMMARY_ATTENTION:
             panel = self._widget_instances.get(_WIDGET_ESCALATIONS)
             if panel is None:
-                self.query_one("#workspace-footer-copy", Static).update(
-                    "Attention content is not configured."
-                )
+                self._show_navigation_feedback("Attention is not configured.")
                 return
             attention_panel = cast("_AttentionPanelNavigation", panel)
             attention_panel.activate_attention()
@@ -740,11 +956,136 @@ class DashboardApp(App[None]):
             raise ValueError(message)
         browser = self._widget_instances.get(_WIDGET_QUEUE)
         if browser is None:
-            self.query_one("#workspace-footer-copy", Static).update(
-                "Task browser content is not configured."
-            )
+            self._show_navigation_feedback("Task browser is not configured.")
             return
         await cast("_TaskBrowserNavigation", browser).activate_filter(task_filter)
+
+    def _show_navigation_feedback(self, message: str) -> None:
+        if self._focus_task is None:
+            status = self.query_one("#workspace-command-status", Static)
+        else:
+            status = self.query_one("#workspace-footer-copy", Static)
+        status.update(message)
+        status.display = True
+
+    def _context_choices(self) -> tuple[_ContextChoice, ...]:
+        choices: list[_ContextChoice] = []
+        if _WIDGET_QUEUE in self._widget_plugins:
+            choices.extend(
+                _ContextChoice(
+                    f"{FOCUS_TASK_FILTER_PREFIX}{task_filter.value}",
+                    f"Task filter · {task_filter.value.title()}",
+                    task_filter=task_filter,
+                )
+                for task_filter in TaskBrowserFilter
+            )
+            queue = self._widget_instances.get(_WIDGET_QUEUE)
+            if queue is not None and getattr(queue, "selected_task_missing", False):
+                choices.append(
+                    _ContextChoice(
+                        FOCUS_REVEAL_TASK,
+                        "Reveal selected task in its matching filter",
+                        reveal_task=True,
+                    )
+                )
+        choices.append(
+            _ContextChoice(
+                FOCUS_COMMAND_HISTORY,
+                "Command history · Pending, Applied and Rejected",
+                command_history=True,
+            )
+        )
+        if _WIDGET_ESCALATIONS in self._widget_plugins:
+            choices.append(
+                _ContextChoice(
+                    FOCUS_ATTENTION,
+                    "Attention · decisions, stalls and faults",
+                    attention=True,
+                )
+            )
+        for name in self._configured_widget_names:
+            placement = self._widget_placements[name]
+            if placement is WidgetPlacement.PROJECT_USAGE:
+                choices.append(
+                    _ContextChoice(
+                        FOCUS_USAGE_DETAILS,
+                        "Usage details · subscriptions, costs, coverage and quota",
+                        widget_name=name,
+                        placement=WidgetPlacement.DETAILED_USAGE,
+                    )
+                )
+            elif placement in {
+                WidgetPlacement.ACTIVITY,
+                WidgetPlacement.DETAILED_USAGE,
+                WidgetPlacement.DIAGNOSTICS,
+                WidgetPlacement.WORKFLOW,
+                WidgetPlacement.EXTENSIONS,
+            }:
+                label = _contextual_widget_label(name, placement)
+                choices.append(
+                    _ContextChoice(
+                        f"widget-{name}",
+                        label,
+                        widget_name=name,
+                        placement=placement,
+                    )
+                )
+        return tuple(choices)
+
+    async def _open_contextual_view(self, choice_id: str) -> None:
+        if choice_id == EMPTY_CONTEXT_CHOICE:
+            return
+        choice = self._find_context_choice(choice_id)
+        if choice is None:
+            message = f"unknown contextual dashboard view {choice_id!r}"
+            raise ValueError(message)
+        await self._run_context_choice(choice)
+
+    def _find_context_choice(self, choice_id: str) -> _ContextChoice | None:
+        return next(
+            (item for item in self._context_choices() if item.choice_id == choice_id),
+            None,
+        )
+
+    async def _run_context_choice(self, choice: _ContextChoice) -> None:
+        if choice.task_filter is not None:
+            queue = self._widget_instances.get(_WIDGET_QUEUE)
+            if queue is not None:
+                await cast("_TaskBrowserNavigation", queue).activate_filter(choice.task_filter)
+            return
+        if choice.command_history:
+            await self.push_screen(_CommandHistoryScreen(self._views, self._on_change))
+            return
+        if choice.attention:
+            panel = self._widget_instances.get(_WIDGET_ESCALATIONS)
+            if panel is not None:
+                cast("_AttentionPanelNavigation", panel).activate_attention()
+            return
+        if choice.reveal_task:
+            queue = self._widget_instances.get(_WIDGET_QUEUE)
+            if queue is not None:
+                await cast("_TaskBrowserNavigation", queue).reveal_selected_task()
+            return
+        await self._show_context_widget(choice)
+
+    async def _show_context_widget(self, choice: _ContextChoice) -> None:
+        if choice.widget_name is None or choice.placement is None:
+            message = f"contextual dashboard view {choice.choice_id!r} has no target"
+            raise WidgetPluginError(message)
+        widget = self._create_widget(choice.widget_name, placement=choice.placement)
+        await self.push_screen(
+            _ContextWidgetScreen(
+                _contextual_widget_label(choice.widget_name, choice.placement),
+                widget,
+            )
+        )
+
+    def _context_view_selected(self, choice_id: str | None) -> None:
+        if choice_id is not None and choice_id != EMPTY_CONTEXT_CHOICE:
+            self.run_worker(
+                self._open_contextual_view(choice_id),
+                group=FOCUS_CONTEXT_VIEW_WORKER,
+            )
 
     def _select_task_context(self, task_id: str | None) -> None:
         self._selected_task_id = task_id
@@ -752,9 +1093,16 @@ class DashboardApp(App[None]):
             self._home_detail_panel.select_task(task_id)
 
     async def on_mount(self) -> None:
-        """Focus section navigation and start the signal-driven motion refresh."""
-        self.set_focus(self.query_one(f"#{_TAB_PREFIX}{self._selected_section}", Button))
+        """Focus the task browser or task view and start signal-driven refresh."""
         self._apply_layout(self.size.width, self.size.height)
+        if self._focus_task is None:
+            task_list = self.query("#task-browser-list")
+            target = (
+                task_list.first() if task_list else self.query_one(f"#{FOCUS_VIEWS_BUTTON}", Button)
+            )
+            self.set_focus(target)
+        else:
+            self.set_focus(self.query_one(f"#{_TAB_PREFIX}{self._selected_section}", Button))
         if self._motion_interval_seconds is not None:
             self.run_worker(self._motion_loop(), group="dashboard-motion", exclusive=True)
 
@@ -771,6 +1119,8 @@ class DashboardApp(App[None]):
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keep the visible section marker synchronized with keyboard focus."""
+        if self._focus_task is None:
+            return
         section_id = self._section_for_tab(event.widget.id)
         if section_id is not None:
             self._select_section(section_id)
@@ -787,6 +1137,13 @@ class DashboardApp(App[None]):
             or _WIDGET_QUEUE not in self._widget_names
         ):
             return
+        if self._focus_task is None:
+            queue = self._widget_instances.get(_WIDGET_QUEUE)
+            open_search = getattr(queue, "open_search", None)
+            if callable(open_search):
+                open_search()
+                event.stop()
+            return
         if self._expanded_section is not None:
             self._return_to_sections()
         self._select_section(_SECTION_WORKSPACE)
@@ -796,6 +1153,12 @@ class DashboardApp(App[None]):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Apply navigation, expansion, return and help button activations."""
         button_id = event.button.id or ""
+        if self._focus_task is None:
+            if button_id == FOCUS_VIEWS_BUTTON:
+                await self.action_open_views()
+            elif button_id == FOCUS_HELP_BUTTON:
+                await self.action_show_help()
+            return
         section_id = self._section_for_tab(button_id)
         if section_id is not None:
             self._select_section(section_id)
@@ -827,6 +1190,28 @@ class DashboardApp(App[None]):
         return unsubscribe
 
     def _apply_layout(self, width: int, height: int) -> None:
+        if self._focus_task is None:
+            main = self.query_one("#focus-main", Horizontal)
+            was_wide = main.has_class("wide")
+            wide = width >= HOME_SPLIT_MIN_COLUMNS and height > SHORT_PANE_MAX_ROWS
+            main.set_class(wide, "wide")
+            main.set_class(not wide, "compact")
+            readouts = self.query_one("#focus-readouts", VerticalScroll)
+            self.query_one("#focus-footer").styles.height = FOCUS_FOOTER_HEIGHT
+            readouts.styles.max_height = (
+                FOCUS_SHORT_SUMMARY_MAX_ROWS
+                if height <= SHORT_PANE_MAX_ROWS
+                else FOCUS_SUMMARY_MAX_ROWS
+            )
+            task_list = self.query("#task-browser-list")
+            if task_list:
+                task_list.first().styles.height = "1fr" if wide else FOCUS_COMPACT_LIST_ROWS
+            if self._home_detail_panel is not None:
+                self._home_detail_panel.display = wide
+                self._home_detail_panel.styles.height = "100%" if wide else "auto"
+                if wide != was_wide:
+                    self._home_detail_panel.refresh_after_resume()
+            return
         root = self.query_one("#workspace-root")
         short = height <= SHORT_PANE_MAX_ROWS
         tiny = width <= VERY_SMALL_MAX_COLUMNS or height <= VERY_SMALL_MAX_ROWS
@@ -840,32 +1225,6 @@ class DashboardApp(App[None]):
         root.set_class(tiny, "pane-tiny")
         root.set_class(wide, "layout-wide")
         root.set_class(not wide, "layout-compact")
-        home_layout = self.query("#home-browser-detail")
-        if home_layout:
-            home = cast("Horizontal", home_layout.first())
-            was_wide = home.has_class("wide")
-            home.set_class(wide, "wide")
-            home.set_class(not wide, "compact")
-            if self._home_detail_panel is not None:
-                self._home_detail_panel.styles.height = (
-                    "100%" if wide else COMPACT_DETAIL_PANEL_HEIGHT
-                )
-                if wide != was_wide:
-                    self._home_detail_panel.refresh_after_resume()
-            home.styles.height = (
-                max(
-                    HOME_SPLIT_MIN_ROWS,
-                    min(HOME_SPLIT_MAX_ROWS, height - HOME_LAYOUT_RESERVED_ROWS),
-                )
-                if wide
-                else "auto"
-            )
-        summary = self.query("#workspace-summary")
-        if summary:
-            summary.first().set_class(
-                short or width <= COMPACT_LAYOUT_MAX_COLUMNS,
-                "compact",
-            )
         commands = self.query_one(f"#{_COMMAND_HISTORY_BUTTON}", Button)
         commands.label = "Cmds" if width <= FOOTER_COMPACT_MAX_COLUMNS else "Commands"
 
@@ -958,6 +1317,17 @@ class DashboardApp(App[None]):
 
     async def action_show_help(self) -> None:
         """Show the bindings and current home or task workspace context."""
+        if self._focus_task is None:
+            await self.push_screen(
+                _WorkspaceHelpScreen(
+                    "Focus",
+                    None,
+                    False,
+                    self._widget_names,
+                    compact_focus=True,
+                )
+            )
+            return
         await self.push_screen(
             _WorkspaceHelpScreen(
                 self._section_label(self._selected_section),
@@ -965,6 +1335,15 @@ class DashboardApp(App[None]):
                 self._expanded_section is not None,
                 self._widget_names_by_section[self._selected_section],
             )
+        )
+
+    async def action_open_views(self) -> None:
+        """Open configured filters, history and secondary dashboard widgets."""
+        if self._focus_task is not None:
+            return
+        self.push_screen(
+            _ContextViewsScreen(self._context_choices()),
+            callback=self._context_view_selected,
         )
 
     async def action_open_palette(self) -> None:

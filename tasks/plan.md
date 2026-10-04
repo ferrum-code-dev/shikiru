@@ -914,12 +914,12 @@ Refs: Focus §2/§6–7; 06 §6, 07 §2–3; Tasks 89–91.
 
 ### Task 93: Focus Home dashboard and compact project readouts
 Refs: Focus §2–4/§6–8; 06 §5.4, 02 §4; Tasks 89–92.
-- [ ] Replace Home's default section/tab/card/button stack with the compact header, totals/resource lines, actionable attention row and selectable task list plus focused inspector at usable wide sizes. Preserve the approved B/A composition; remove obsolete default shell composition instead of maintaining two default TUIs.
-- [ ] Show project token/cost coverage, declared subscription summary, current-engine uptime and host/instance CPU/RAM. Do not show a separate agents resource tile, an API-equivalent estimate as spend, or invented subscription/account counts.
-- [ ] Preserve task ordering/search/filter/history, stable ID selection, reading position and updates. Search/filter controls become contextual keyboard/menu interactions rather than permanent button rows; recent finished tasks and long lists remain reachable.
-- [ ] Integrate the existing queue/header/escalation/usage/resources plugins as compact primary content when configured. Activity, Docker, faults, command history, detailed usage, explicitly configured strips and external extensions remain reachable through contextual views; every configured plugin is accounted for.
-- [ ] Preserve honest durable attention, faults, missing packets, engine-stop state and command feedback. Navigation/refresh must never dispatch a workflow command.
-- [ ] Update configuration/default placement and the affected operator design; preserve existing configuration compatibility with clear validation and no silent plugin loss.
+- [x] Replace Home's default section/tab/card/button stack with the compact header, totals/resource lines, actionable attention row and selectable task list plus focused inspector at usable wide sizes. Preserve the approved B/A composition; remove obsolete default shell composition instead of maintaining two default TUIs.
+- [x] Show project token/cost coverage, declared subscription summary, current-engine uptime and host/instance CPU/RAM. Do not show a separate agents resource tile, an API-equivalent estimate as spend, or invented subscription/account counts.
+- [x] Preserve task ordering/search/filter/history, stable ID selection, reading position and updates. Search/filter controls become contextual keyboard/menu interactions rather than permanent button rows; recent finished tasks and long lists remain reachable.
+- [x] Integrate the existing queue/header/escalation/usage/resources plugins as compact primary content when configured. Activity, Docker, faults, command history, detailed usage, explicitly configured strips and external extensions remain reachable through contextual views; every configured plugin is accounted for.
+- [x] Preserve honest durable attention, faults, missing packets, engine-stop state and command feedback. Navigation/refresh must never dispatch a workflow command.
+- [x] Update configuration/default placement and the affected operator design; preserve existing configuration compatibility with clear validation and no silent plugin loss.
 - Tests: Textual over real SQLite verifies Home composition through navigation behavior, changed task order without lost selection, search/history access, decision/fault inspection, stopped engine and configured built-in/external plugin reachability.
 
 ### Task 94: Focus task detail and contextual operator control

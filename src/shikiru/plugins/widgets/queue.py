@@ -16,6 +16,7 @@ from shikiru.dashboard.contract import (
     TaskBrowserFilter,
     TaskBrowserRow,
     TaskBrowserView,
+    WidgetPlacement,
 )
 
 if TYPE_CHECKING:
@@ -115,6 +116,7 @@ class QueuePanel(Vertical):
     def __init__(self, context: WidgetContext) -> None:
         super().__init__(id="queue")
         self._widget_context = context
+        self._focus_layout = context.placement is WidgetPlacement.TASK_LIST
         self._filter = TaskBrowserFilter.ALL
         self._search = ""
         self._selected_task_id = context.focus_task
@@ -126,19 +128,36 @@ class QueuePanel(Vertical):
         self._remove_motion_callback: Callable[[], None] | None = None
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="task-browser-tools"):
-            yield Input(placeholder="Search task ID or title", id=SEARCH_INPUT_ID)
-            yield Button("Clear", id=CLEAR_BUTTON_ID)
-        with HorizontalScroll(id="task-browser-filters"):
-            for _, button_id, label in FILTER_BUTTONS:
-                yield Button(label, id=button_id)
+        search = Input(placeholder="Search task ID or title", id=SEARCH_INPUT_ID)
+        if self._focus_layout:
+            search.display = False
+            yield search
+        else:
+            with Horizontal(id="task-browser-tools"):
+                yield search
+                yield Button("Clear", id=CLEAR_BUTTON_ID)
+            with HorizontalScroll(id="task-browser-filters"):
+                for _, button_id, label in FILTER_BUTTONS:
+                    yield Button(label, id=button_id)
         yield Static("", id=COUNT_ID, markup=False)
         yield Static("", id=EMPTY_ID, markup=False)
         yield Static("", id=FAMILY_CONTEXT_ID, markup=False)
         yield ListView(id=TASK_LIST_ID)
-        yield Button("Load more", id=MORE_BUTTON_ID)
-        yield Static("Select a task to keep its context here.", id=TASK_PREVIEW_ID, markup=False)
-        yield Button("Reveal selected task", id=REVEAL_BUTTON_ID)
+        more = Button("Load more", id=MORE_BUTTON_ID)
+        if self._focus_layout:
+            more.display = False
+            yield more
+            preview = Static("", id=TASK_PREVIEW_ID, markup=False)
+            preview.display = False
+            yield preview
+        else:
+            yield more
+            yield Static(
+                "Select a task to keep its context here.",
+                id=TASK_PREVIEW_ID,
+                markup=False,
+            )
+            yield Button("Reveal selected task", id=REVEAL_BUTTON_ID)
 
     async def on_mount(self) -> None:
         await self._refresh()
@@ -169,6 +188,16 @@ class QueuePanel(Vertical):
         if event.input.id == SEARCH_INPUT_ID:
             self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
 
+    def open_search(self) -> None:
+        """Focus the task search from contextual keyboard navigation."""
+        search = self.query_one(f"#{SEARCH_INPUT_ID}", Input)
+        search.display = True
+        search.focus()
+
+    @property
+    def selected_task_missing(self) -> bool:
+        return self._view is not None and self._view.selected_task_missing
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
         selected_filter = FILTER_BY_BUTTON_ID.get(button_id)
@@ -191,6 +220,14 @@ class QueuePanel(Vertical):
         """Navigate to a task category while retaining search and selected identity."""
         await self._refresh(task_filter=task_filter, reset_pages=True)
         self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
+
+    async def load_more(self) -> None:
+        """Append the next bounded browser page."""
+        await self._refresh(append_page=True)
+
+    async def reveal_selected_task(self) -> None:
+        """Reveal the selected task in its matching filter and clear the search."""
+        await self._reveal_selected_task()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id != TASK_LIST_ID or self._refreshing:
@@ -216,6 +253,8 @@ class QueuePanel(Vertical):
         if search.value:
             search.value = ""
         else:
+            if self._focus_layout:
+                search.display = False
             self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
 
     def _select_task(self, task_id: str) -> None:
@@ -436,12 +475,17 @@ class QueuePanel(Vertical):
         count = f"{FILTER_LABELS[view.filter]} · {len(view.rows)} of {view.matching_count}"
         if view.search:
             count += f" · Search: {view.search}"
+        if view.selected_task_missing and view.selected_task is not None:
+            count += f" · selected {view.selected_task.task_id} remains outside this view"
         self.query_one(f"#{COUNT_ID}", Static).update(count)
-        self.query_one(f"#{CLEAR_BUTTON_ID}", Button).disabled = not bool(view.search)
-        self.query_one(f"#{MORE_BUTTON_ID}", Button).disabled = not view.has_more
-        for task_filter, button_id, label in FILTER_BUTTONS:
-            button = self.query_one(f"#{button_id}", Button)
-            button.label = f"> {label}" if task_filter is view.filter else label
+        if not self._focus_layout:
+            self.query_one(f"#{CLEAR_BUTTON_ID}", Button).disabled = not bool(view.search)
+            for task_filter, button_id, label in FILTER_BUTTONS:
+                button = self.query_one(f"#{button_id}", Button)
+                button.label = f"> {label}" if task_filter is view.filter else label
+        more = self.query_one(f"#{MORE_BUTTON_ID}", Button)
+        more.disabled = not view.has_more
+        more.display = view.has_more if self._focus_layout else True
         empty = self.query_one(f"#{EMPTY_ID}", Static)
         empty.display = not view.rows
         if view.rows:
@@ -465,7 +509,8 @@ class QueuePanel(Vertical):
             )
         else:
             context.update("")
-        self._render_preview(view)
+        if not self._focus_layout:
+            self._render_preview(view)
 
     def _render_preview(self, view: TaskBrowserView) -> None:
         preview = self.query_one(f"#{TASK_PREVIEW_ID}", Static)
@@ -523,6 +568,7 @@ class QueueWidget:
     """The `queue` dashboard widget plugin (06 §5.4)."""
 
     name = "queue"
+    placement = WidgetPlacement.TASK_LIST
 
     def create(self, context: WidgetContext) -> Widget:
         """Build the task browser for `context` while retaining the `queue` entry point."""

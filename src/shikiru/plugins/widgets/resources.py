@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from textual.widgets import Static
 
+from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui.compact import render_resource_metric
 
 if TYPE_CHECKING:
@@ -36,6 +37,7 @@ class ResourcesWidget:
     """The `resources` dashboard widget plugin (06 §5.4)."""
 
     name = "resources"
+    placement = WidgetPlacement.RESOURCES
 
     def create(self, context: WidgetContext) -> Widget:
         """Build the resource panel for `context`."""

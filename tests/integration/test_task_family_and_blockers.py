@@ -607,7 +607,7 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
         await pilot.pause()
 
         assert search.value == root.title
-        assert root.id in _static_text(app.query_one("#task-browser-preview", Static))
+        assert root.id in _static_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
 
 
 def test_family_context_keeps_interleaved_priority_matches_in_dispatch_order(
@@ -742,7 +742,7 @@ async def test_blocked_dependency_navigation_returns_to_the_original_browser_sel
         await pilot.press("escape")
         await pilot.pause()
 
-        assert blocked.id in _static_text(app.query_one("#task-browser-preview", Static))
+        assert blocked.id in _static_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
         assert app.query_one("#task-browser-search", Input).value == blocked.title
         detail = await state_views(reader, project_dir, clock, services).task_detail(blocked.id)
         assert detail is not None

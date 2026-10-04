@@ -62,7 +62,9 @@ async def test_header_shows_project_name_engine_state_and_slots(
         await pilot.pause()
         text = cast("str", widget.content)
         assert "demo" in text
-        assert "engine up" in text
+        assert "Engine running" in text
+        assert "uptime unknown" in text
+        assert "Running 1 · Waiting 0 · Attention 0" in text
         assert "slots 1/2" in text
         assert "integration merge" in text
         assert "+1/-0" in text

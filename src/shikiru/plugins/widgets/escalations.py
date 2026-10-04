@@ -10,7 +10,12 @@ from textual.geometry import Region
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-from shikiru.dashboard.contract import AttentionGroupView, AttentionView, EscalationPanelView
+from shikiru.dashboard.contract import (
+    AttentionGroupView,
+    AttentionView,
+    EscalationPanelView,
+    WidgetPlacement,
+)
 from shikiru.ui import SplashPanel
 
 if TYPE_CHECKING:
@@ -68,13 +73,16 @@ class EscalationsPanel(Static):
     DEFAULT_CSS = f"""
     EscalationsPanel {{ height: auto; }}
     #escalation-panels {{ height: auto; max-height: {MAX_ESCALATION_PANEL_HEIGHT}; }}
+    EscalationsPanel.focus-row #escalation-panels {{ height: auto; max-height: 2; }}
     """
     can_focus = True
 
     def __init__(self, context: WidgetContext) -> None:
         """Hold `context`; views are read on mount and on each state change."""
-        super().__init__(id="escalations")
+        classes = "focus-row" if context.placement is WidgetPlacement.ATTENTION else ""
+        super().__init__(id="escalations", classes=classes)
         self._widget_context = context
+        self._focus_row = context.placement is WidgetPlacement.ATTENTION
         self._attention = AttentionView((), decisions=0, stalls=0, faults=0)
         self._selected = 0
         self._selected_escalation_id: str | None = None
@@ -100,6 +108,13 @@ class EscalationsPanel(Static):
     def on_focus(self, event: events.Focus) -> None:
         del event
         self._keep_empty_visible = True
+
+    def on_blur(self, event: events.Blur) -> None:
+        del event
+        if self._focus_row:
+            self._keep_empty_visible = False
+            if not self._attention.groups:
+                self.display = False
 
     async def _refresh_while_active(self) -> None:
         if not self.is_mounted:
@@ -130,6 +145,21 @@ class EscalationsPanel(Static):
             self._open_evidence(event)
         elif event.key == _RESOLVE_KEY:
             await self._resolve_decision(event)
+
+    async def on_click(self, event: events.Click) -> None:
+        if not self._focus_row or not self._attention.groups:
+            return
+        self.focus()
+        group = self._attention.groups[self._selected]
+        if group.task_id is not None and self._widget_context.open_task_detail is not None:
+            if self._widget_context.on_task_selected is not None:
+                self._widget_context.on_task_selected(group.task_id)
+            await self._widget_context.open_task_detail(group.task_id)
+        else:
+            decision = self._selected_decision()
+            if decision is not None:
+                cast("App[None]", self.app).push_screen(PacketScreen(_packet_copy(decision)))
+        event.stop()
 
     async def _move_group(self, step: int) -> None:
         self._selected = (self._selected + step) % len(self._attention.groups)
@@ -245,6 +275,10 @@ class EscalationsPanel(Static):
     async def _render_panels(self, *, reveal_selection: bool = False) -> None:
         panels = self.query_one("#escalation-panels", VerticalScroll)
         scroll_x, scroll_y = panels.scroll_x, panels.scroll_y
+        if self._focus_row:
+            await panels.remove_children()
+            await panels.mount(Static(self._render_compact_attention(), markup=False))
+            return
         if not self._attention.groups:
             children = list(panels.query(Static))
             if len(children) == 1:
@@ -279,6 +313,22 @@ class EscalationsPanel(Static):
             self._reveal_selection(panels, cards[self._selected])
         else:
             panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+
+    def _render_compact_attention(self) -> str:
+        if not self._attention.groups:
+            return "No current attention."
+        group = self._attention.groups[self._selected]
+        decision = self._selected_decision()
+        selected = (
+            f"{decision.escalation_id} · {group.task_id} · {decision.headline}"
+            if decision is not None
+            else f"{group.task_id or 'Project'} · {' · '.join(group.reasons)}"
+        )
+        return (
+            f"! Attention {len(self._attention.groups)} · {self._attention.decisions} decisions · "
+            f"{self._attention.stalls} stalls · {self._attention.faults} faults · {selected} · "
+            "Enter inspect · r resolve · o evidence"
+        )
 
     def _reveal_selection(self, panels: VerticalScroll, card: Static) -> None:
         decision_id = self._selected_escalation_id
@@ -345,6 +395,7 @@ class EscalationsWidget:
     """The `escalations` dashboard widget plugin (06 §5.4, §6.4)."""
 
     name = "escalations"
+    placement = WidgetPlacement.ATTENTION
 
     def create(self, context: WidgetContext) -> Widget:
         """Build the escalation panel for `context`."""

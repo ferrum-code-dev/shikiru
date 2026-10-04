@@ -538,20 +538,17 @@ async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(
     async with app.run_test(size=(90, 60)) as pilot:
         await pilot.pause()
         search = app.query_one("#task-browser-search", Input)
-        await pilot.click("#section-tab-usage")
-        await pilot.click("#workspace-expand")
-        await pilot.pause()
-        assert not app.query_one("#section-workspace").display
+        assert not search.display
         await pilot.press("slash")
         await pilot.pause()
-        assert app.query_one("#section-workspace").display
+        assert search.display
         assert search.has_focus
         assert search.is_on_screen
         assert search.value == ""
         await pilot.press("slash")
 
         assert search.value == "/"
-        await pilot.click("#workspace-help")
+        await pilot.click("#focus-help")
         await pilot.pause()
         await pilot.press("slash")
         assert not search.has_focus

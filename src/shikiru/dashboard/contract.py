@@ -86,6 +86,7 @@ OpenTaskDetail = Callable[[str], Awaitable[None]]
 NavigateTaskWindow = Callable[[str], Awaitable[str]]
 NavigateRolePane = Callable[[str, str], Awaitable[str]]
 NavigateHome = Callable[[], Awaitable[str]]
+OpenContextualView = Callable[[str], Awaitable[None]]
 
 
 class TaskBrowserFilter(StrEnum):
@@ -95,6 +96,21 @@ class TaskBrowserFilter(StrEnum):
     WAITING = "waiting"
     HISTORY = "history"
     ALL = "all"
+
+
+class WidgetPlacement(StrEnum):
+    """A compatible optional placement for a configured dashboard widget."""
+
+    IDENTITY = "identity"
+    TASK_LIST = "task_list"
+    ATTENTION = "attention"
+    PROJECT_USAGE = "project_usage"
+    RESOURCES = "resources"
+    ACTIVITY = "activity"
+    DETAILED_USAGE = "detailed_usage"
+    DIAGNOSTICS = "diagnostics"
+    WORKFLOW = "workflow"
+    EXTENSIONS = "extensions"
 
 
 class CommandFeedbackStatus(StrEnum):
@@ -789,3 +805,5 @@ class WidgetContext:
     navigate_home: NavigateHome | None = None
     on_task_selected: SelectTaskContext | None = None
     activate_home_summary: Callable[[str], Awaitable[None]] | None = None
+    placement: WidgetPlacement = WidgetPlacement.EXTENSIONS
+    open_contextual_view: OpenContextualView | None = None

@@ -8,6 +8,8 @@ from rich.console import Group
 from rich.text import Text
 from textual.widgets import Static
 
+from shikiru.dashboard.contract import WidgetPlacement
+
 if TYPE_CHECKING:
     from textual.widget import Widget
 
@@ -51,6 +53,7 @@ class FaultsWidget:
     """The `faults` dashboard widget plugin (06 §5.4)."""
 
     name = "faults"
+    placement = WidgetPlacement.DIAGNOSTICS
 
     def create(self, context: WidgetContext) -> Widget:
         """Build the fault diagnostics panel for `context`."""

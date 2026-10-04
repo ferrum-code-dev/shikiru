@@ -11,7 +11,7 @@ import psutil
 import pytest
 from rich.cells import cell_len
 from textual.geometry import Region
-from textual.widgets import DataTable, ListView, Static
+from textual.widgets import DataTable, Label, ListItem, ListView, Static
 
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
@@ -889,7 +889,22 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         widget_names=["queue", "docker"],
     )
     async with app.run_test(size=(100, 50)) as pilot:
-        docker_panel = app.query_one("#docker", Static)
+        home_screen = app.screen
+        await pilot.press("v")
+        await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
+        view_list = app.screen.query_one("#focus-views-list", ListView)
+        choices = [item for item in view_list.children if isinstance(item, ListItem)]
+        docker_index = next(
+            index
+            for index, item in enumerate(choices)
+            if plain_text(item.query_one(Label).render()) == "Diagnostics · Docker"
+        )
+        view_list.focus()
+        view_list.index = docker_index
+        await pilot.press("enter")
+        await wait_until(lambda: app.screen is not home_screen, timeout=2)
+        await wait_until(lambda: bool(app.screen.query("#docker")), timeout=2)
+        docker_panel = app.screen.query_one("#docker", Static)
         await wait_until(
             lambda: "failed" in plain_text(docker_panel.content),
             timeout=2,
@@ -898,6 +913,8 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         task_row = app.query_one(f"#task-row-{task.id} > Static", Static)
         assert task.title in plain_text(task_row.content)
 
+        await pilot.press("escape")
+        await wait_until(lambda: app.screen is home_screen, timeout=2)
         task_list = app.query_one("#task-browser-list", ListView)
         task_list.focus()
         task_list.index = 0

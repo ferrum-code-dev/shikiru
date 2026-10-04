@@ -51,7 +51,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.session import SessionView
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices
+from tests.support.dashboard import StubServices, choose_focus_view
 from tests.support.engine import (
     build_registry,
     build_tmux,
@@ -655,7 +655,7 @@ async def test_dashboard_queued_submit_survives_engine_and_dashboard_restarts_on
         async with restarted.run_test(size=HOME_SIZE) as pilot:
             status = restarted.query_one("#workspace-command-status", Static)
             await runtime.wait_for(lambda: f"#{pending.id} · Applied" in _plain(status))
-            await pilot.click("#workspace-command-history")
+            await choose_focus_view(pilot, "Command history · Pending, Applied and Rejected")
             history = restarted.screen.query_one("#command-history-copy", Static)
             await runtime.wait_for(lambda: f"#{pending.id} · Applied" in _plain(history))
     finally:

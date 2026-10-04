@@ -13,6 +13,8 @@ The full configuration reference (the wizard writes the values the operator sele
 
 Plugin option tables remain owned by their agent factory. The optional billing declaration is configured only under `[agents.<name>.options]`, for example `billing_mode = "subscription"`; the Claude and Codex factories validate `api`, `subscription` and `unknown`, and normalize an explicit value with source `operator_config`. Without a plugin option or trustworthy native report the mode and source remain unknown. No core billing/access table or credential setting is added.
 
+Task 93 leaves the ordered `[dashboard].widgets` setting and its shipped default unchanged. Home placement is an optional widget capability declared as `placement: WidgetPlacement` in `dashboard.contract`, not a new TOML layout option. Built-ins declare their Focus identity, task-list, attention, project-usage, resource, activity, detailed-usage, diagnostics or workflow placement; a plugin that omits placement remains reachable in Extensions. Missing or broken configured entries, and unsupported placements, fail validation with the configured widget name.
+
 ```toml
 [project]
 name = "ferrum"                                 # tmux session "[shikiru] ferrum"; default: folder name

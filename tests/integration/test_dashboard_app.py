@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, DataTable, Input, ListView, Static, TextArea
+from textual.widgets import Button, DataTable, Input, Label, ListItem, ListView, Static, TextArea
 
 import shikiru.agents.registry as registry_module
 from shikiru.clock import SystemClock
@@ -35,16 +35,18 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.commands import Prioritize, Stop
+from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, ReportKind
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import Hold, Mode, Status
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Status
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.store.commands import CommandQueue
+from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
@@ -76,6 +78,23 @@ class _ExternalEntryPoint:
 
     def load(self) -> type[_ExternalWidget]:
         return _ExternalWidget
+
+
+class _InvalidPlacementWidget:
+    name = "invalid-placement-widget"
+    placement = "unmapped"
+
+    def create(self, context: WidgetContext) -> Widget:
+        del context
+        return Static(id="invalid-placement-widget-panel")
+
+
+class _InvalidPlacementEntryPoint:
+    name = _InvalidPlacementWidget.name
+    dist = FakeDistribution("invalid-placement-extension")
+
+    def load(self) -> type[_InvalidPlacementWidget]:
+        return _InvalidPlacementWidget
 
 
 def _rendered_text(widget: Static) -> str:
@@ -163,36 +182,6 @@ def _palette_screen_for_app(
     )
 
 
-async def _focus_activity_table(
-    app: DashboardApp, pilot: Pilot[None]
-) -> tuple[Static, VerticalScroll, DataTable[object]]:
-    await pilot.press("tab")
-    await pilot.pause()
-    activity_tab = app.query_one("#section-tab-activity", Button)
-    footer = app.query_one("#workspace-footer-copy", Static)
-    footer_controls = app.query_one("#workspace-footer-controls")
-    dashboard = app.query_one("#dashboard-panels", VerticalScroll)
-    dialogue_table = cast("DataTable[object]", app.query_one("#dialogue-table", DataTable))
-    assert app.focused is activity_tab
-    assert _rendered_text(footer) == "> Activity"
-    assert footer_controls.region.bottom <= app.size.height
-    assert dashboard.size.height >= 7
-    assert dialogue_table.region.height > 0
-    assert dialogue_table.region.y >= dashboard.region.y
-    assert dialogue_table.region.bottom <= dashboard.region.bottom
-
-    dashboard.scroll_to(y=dashboard.scroll_y + 1, animate=False)
-    await pilot.pause()
-    section_scroll = dashboard.scroll_y
-    assert await pilot.click("#dialogue-table")
-    await pilot.pause()
-    assert app.focused is dialogue_table
-    assert dashboard.scroll_y == section_scroll
-    assert _rendered_text(footer) == "> Activity"
-    assert _rendered_text(app.query_one("#section-heading-activity", Static)) == "> Activity"
-    return footer, dashboard, dialogue_table
-
-
 def _app(
     reader: StateReader,
     project_dir: Path,
@@ -219,6 +208,33 @@ def _app(
 def _motion_interval(project_dir: Path) -> float:
     dashboard = load_settings(project_dir).dashboard
     return 1 / dashboard.motion.refresh_hz
+
+
+async def _choose_focus_view(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    label: str,
+    *,
+    mouse: bool = False,
+) -> None:
+    if not app.screen.query("#focus-views-list"):
+        await pilot.press("v")
+        await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
+    views_screen = app.screen
+    view_list = app.screen.query_one("#focus-views-list", ListView)
+    items = [item for item in view_list.children if isinstance(item, ListItem)]
+    selected = next(
+        index
+        for index, item in enumerate(items)
+        if plain_text(item.query_one(Label).render()) == label
+    )
+    if mouse:
+        await pilot.click(items[selected])
+    else:
+        view_list.focus()
+        view_list.index = selected
+        await pilot.press("enter")
+    await wait_until(lambda: app.screen is not views_screen, timeout=2)
 
 
 def _open_report_writer(writer_descriptors: dict[Path, int], report_path: Path) -> bool:
@@ -265,6 +281,30 @@ async def test_dashboard_app_rejects_an_unregistered_widget_name(
         reader.close()
 
 
+async def test_dashboard_app_names_a_widget_with_an_unsupported_placement(
+    database: Database, connection: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del connection
+    entry_points = registry_module.entry_points
+
+    def entry_points_with_extension(*, group: str) -> list[object]:
+        registered = entry_points(group=group)
+        if group == WIDGET_ENTRY_POINT_GROUP:
+            return [*registered, _InvalidPlacementEntryPoint()]
+        return list(registered)
+
+    monkeypatch.setattr(registry_module, "entry_points", entry_points_with_extension)
+    project_dir = write_minimal_project(tmp_path)
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=[_InvalidPlacementWidget.name])
+        with pytest.raises(WidgetPluginError, match=_InvalidPlacementWidget.name):
+            async with app.run_test():
+                pass
+    finally:
+        reader.close()
+
+
 async def test_dashboard_mounts_the_default_widgets(
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
@@ -288,74 +328,184 @@ async def test_dashboard_mounts_the_default_widgets(
     settings = load_settings(project_dir)
     try:
         app = _app(reader, project_dir, widget_names=settings.dashboard.widgets)
-        async with app.run_test(size=(72, 64)) as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
-            strips = app.query_one(StripsPanel)
-            docker = app.query_one("#docker")
-            faults = app.query_one("#faults", Static)
-            assert docker.region.width > 0
-            assert app.query_one("#section-tab-diagnostics", Button).region.width > 0
-            assert "host sample failed" in plain_text(faults.content)
+            header = plain_text(app.query_one("#header", Static).content)
+            assert "Engine stopped" in header
+            assert "Running 1" in header
+            assert "Waiting 0" in header
+            assert app.query_one("#usage", Static).region.width > 0
+            assert app.query_one("#resources", Static).region.width > 0
+            queue_panel = app.query_one("#queue")
+            detail_panel = app.query_one("#task-detail-panel")
+            assert queue_panel.region.right <= detail_panel.region.x
+            assert task.id in _rendered_text(app.query_one("#task-detail-identity", Static))
+
+            home_screen = app.screen
+            attention = app.query_one("#escalations", EscalationsPanel)
+            await wait_until(lambda: attention.display, timeout=2)
+            await _choose_focus_view(app, pilot, "Attention · decisions, stalls and faults")
+            attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(
+                Static
+            )
+            await wait_until(
+                lambda: (
+                    app.focused is attention
+                    and "1 faults" in _rendered_text(attention_row)
+                    and task.id in _rendered_text(attention_row)
+                ),
+                timeout=2,
+            )
+
+            await _choose_focus_view(app, pilot, "Diagnostics · Faults")
+            faults = app.screen.query_one("#faults", Static)
+            await wait_until(lambda: "host sample failed" in plain_text(faults.content), timeout=2)
             assert "repeats 2" in plain_text(faults.content)
-            assert dashboard.scroll_y == 0
-            assert strips.region.y < app.size.height
-            assert task.id in cast("Text", strips.content).plain
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
     finally:
         reader.close()
 
 
-async def test_home_summary_buttons_navigate_to_their_task_content(
+async def test_focus_keeps_selected_task_and_reading_position_after_reorder(
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    tasks = [
+        seed_task(connection, clock, title=f"Queued task {index}", priority=0)
+        for index in range(21)
+    ]
+    reader = StateReader(database, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=["queue"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            list_view = app.query_one("#task-browser-list", ListView)
+            await wait_until(lambda: len(list_view.children) == len(tasks), timeout=2)
+            list_view.scroll_to(y=8, animate=False)
+            list_view.index = 7
+            selected = tasks[7]
+            identity = app.query_one("#task-detail-identity", Static)
+            await wait_until(lambda: selected.title in _rendered_text(identity), timeout=2)
+            await pilot.pause()
+
+            def visible_anchor() -> tuple[str, int]:
+                visible = [
+                    item
+                    for item in list_view.children
+                    if item.region.overlaps(list_view.scrollable_content_region)
+                ]
+                anchor = min(visible, key=lambda item: item.region.y)
+                return (
+                    anchor.id or "",
+                    anchor.region.y - list_view.scrollable_content_region.y,
+                )
+
+            anchor_before = visible_anchor()
+            moved = tasks[5]
+            writer = database.connect()
+            try:
+                TaskStore(writer, clock).set_priority(moved.id, 9)
+            finally:
+                writer.close()
+            await wait_until(
+                lambda: (
+                    list_view.children[0].id == f"task-row-{moved.id}"
+                    and list_view.index == 7
+                    and selected.title in _rendered_text(identity)
+                ),
+                timeout=2,
+            )
+            await pilot.pause()
+            assert visible_anchor() == anchor_before
+    finally:
+        reader.close()
+
+
+async def test_focus_operational_counts_and_contextual_task_filters(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    active = seed_task(connection, clock, title="Active focus task", mode=Mode.IMPLEMENT)
+    TaskStore(connection, clock).set_slot(active.id, 0)
+    TaskStore(connection, clock).apply_transition(active.id, first_step(active))
+    waiting = seed_task(connection, clock, title="Waiting focus task")
     reader = StateReader(database, SystemClock())
     try:
         app = _app(reader, project_dir, widget_names=load_settings(project_dir).dashboard.widgets)
-        async with app.run_test(size=(72, 40)) as pilot:
-            active_screen = pilot.app.screen
-            app.query_one("#workspace-summary-running", Button).focus()
-            await pilot.press("enter")
+        async with app.run_test(size=(120, 40)) as pilot:
+            header = app.query_one("#header", Static)
             await wait_until(
-                lambda: cast(
-                    "Text", app.query_one("#task-filter-active", Button).label
-                ).plain.startswith(">"),
+                lambda: "Running 1 · Waiting 1" in plain_text(header.content),
                 timeout=2,
             )
-            assert app.focused is app.query_one("#task-browser-list")
-
-            app.query_one("#workspace-summary-waiting", Button).focus()
-            await pilot.press("enter")
+            assert app.query_one("#escalations").display is False
+            await _choose_focus_view(app, pilot, "Task filter · Waiting")
+            count = app.query_one("#task-browser-count", Static)
             await wait_until(
-                lambda: cast(
-                    "Text", app.query_one("#task-filter-waiting", Button).label
-                ).plain.startswith(">"),
+                lambda: plain_text(count.content).startswith("Waiting · 1 of 1"),
                 timeout=2,
             )
-            assert app.focused is app.query_one("#task-browser-list")
-
-            app.query_one("#workspace-summary-attention", Button).focus()
-            await pilot.press("enter")
-            assert app.focused is app.query_one("#escalations")
-            assert app.screen is active_screen
-            panel = app.query_one(EscalationsPanel)
-            assert panel.display
-            assert "No open decisions" in _rendered_text(
-                panel.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            assert waiting.title in plain_text(
+                app.query_one("#task-browser-list", ListView).children[0].query_one(Static).content
             )
-
-            seed_task(connection, SystemClock(), title="Waiting after attention navigation")
+            await pilot.press("/")
+            search = app.query_one("#task-browser-search", Input)
+            assert app.focused is search
+            await pilot.press("v")
+            assert search.value == "v"
+            await pilot.press("escape")
             await wait_until(
-                lambda: cast(
-                    "Text", app.query_one("#workspace-summary-waiting", Button).label
-                ).plain.endswith("1"),
+                lambda: search.value == "",
                 timeout=2,
             )
-            assert panel.display
-            assert app.focused is panel
-            assert "No open decisions" in _rendered_text(
-                panel.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-            )
+            await pilot.press("escape")
+            assert search.display is False
+    finally:
+        reader.close()
+
+
+async def test_focus_attention_opens_durable_decision_evidence(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Choose retry behavior")
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=task.step, status=Status.ESCALATED),
+    )
+    escalation = EscalationStore(connection, clock).open(
+        task.id,
+        step=task.step,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="Choose whether to retry",
+        packet_path=".shikiru/escalations/missing-packet.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+    reader = StateReader(database, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=["escalations"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            attention = app.query_one("#escalations", EscalationsPanel)
+            await wait_until(lambda: attention.display, timeout=2)
+            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            assert escalation.id in _rendered_text(row)
+            assert "Enter inspect · r resolve · o evidence" in _rendered_text(row)
+
+            await _choose_focus_view(app, pilot, "Attention · decisions, stalls and faults")
+            await wait_until(lambda: app.focused is attention, timeout=2)
+            await pilot.press("o")
+            await wait_until(lambda: bool(app.screen.query("#escalation-packet")), timeout=2)
+            packet = app.screen.query_one("#escalation-packet", Static)
+            packet_text = _rendered_text(packet)
+            assert escalation.id in packet_text
+            assert "Choose whether to retry" in packet_text
+            assert "Evidence error" in packet_text
+            opened = EscalationStore(connection, clock).get(escalation.id)
+            assert opened is not None
+            assert opened.status is EscalationStatus.OPEN
     finally:
         reader.close()
 
@@ -427,8 +577,12 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
                 ),
                 timeout=2,
             )
-            await pilot.click("#workspace-command-history")
-            await wait_until(lambda: first_app.screen is not dashboard_screen, timeout=2)
+            await _choose_focus_view(
+                first_app, pilot, "Command history · Pending, Applied and Rejected"
+            )
+            await wait_until(
+                lambda: bool(first_app.screen.query("#command-history-page")), timeout=2
+            )
             history_screen = first_app.screen
             history_copy = history_screen.query_one("#command-history-copy", Static)
             await pilot.pause()
@@ -512,7 +666,12 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
                 ),
                 timeout=2,
             )
-            await pilot.click("#workspace-command-history")
+            await _choose_focus_view(
+                restarted_app, pilot, "Command history · Pending, Applied and Rejected"
+            )
+            await wait_until(
+                lambda: bool(restarted_app.screen.query("#command-history-page")), timeout=2
+            )
             history_screen = restarted_app.screen
             history_copy = history_screen.query_one("#command-history-copy", Static)
             await wait_until(
@@ -549,7 +708,8 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
         app = _app(reader, project_dir, widget_names=[])
         async with app.run_test(size=(100, 34)) as pilot:
             home_screen = app.screen
-            await pilot.click("#workspace-command-history")
+            await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
+            await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
             history_screen = app.screen
             history_copy = history_screen.query_one("#command-history-copy", Static)
             history_scroll = history_screen.query_one("#command-history-scroll", VerticalScroll)
@@ -615,17 +775,19 @@ async def test_narrow_dashboard_keeps_command_controls_reachable(
         async with app.run_test(size=(width, 20)) as pilot:
             await pilot.pause()
             status = app.query_one("#workspace-command-status", Static)
-            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
-            commands_button = app.query_one("#workspace-command-history", Button)
             assert status.size.height == 1
-            assert dashboard.size.height >= 8
-            commands_button.focus()
-            await pilot.pause()
-            assert commands_button.region.bottom <= app.size.height
-            assert commands_button.region.x < app.size.width
+            views_button = app.query_one("#focus-views", Button)
+            help_button = app.query_one("#focus-help", Button)
+            assert views_button.region.bottom <= 20
+            assert views_button.region.right <= width
+            assert help_button.region.bottom <= 20
+            assert help_button.region.right <= width
             home_screen = app.screen
-            await pilot.press("enter")
+            await pilot.click(views_button)
             await wait_until(lambda: app.screen is not home_screen, timeout=2)
+            await pilot.pause()
+            await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
+            await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
             page = cast("Static", app.screen.query_one("#command-history-page"))
             assert "all statuses" in _rendered_text(page)
     finally:
@@ -650,13 +812,14 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
         async with app.run_test(size=(120, 40)) as pilot:
             identity = app.query_one("#task-detail-identity", Static)
             await wait_until(lambda: task.title in _rendered_text(identity), timeout=2)
-            home_layout = app.query_one("#home-browser-detail", Horizontal)
+            home_layout = app.query_one("#focus-main", Horizontal)
             queue_panel = app.query_one("#queue")
             detail_panel = app.query_one("#task-detail-panel")
             assert queue_panel.region.right <= detail_panel.region.x
             assert detail_panel.region.width > 0
 
             search = app.query_one("#task-browser-search", Input)
+            await pilot.press("/")
             search.value = task.id
             search.focus()
             list_view = app.query_one("#task-browser-list", ListView)
@@ -668,7 +831,6 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
                 timeout=2,
             )
             assert list_view.index == 0
-            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
 
             for width, height in ((48, 20), (36, 20), (48, 14), (20, 8)):
                 await pilot.resize_terminal(width, height)
@@ -677,26 +839,17 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
                 assert search.value == task.id
                 assert task.title in _rendered_text(identity)
                 assert home_layout.region.width <= width
-                assert detail_panel.region.width > 0
-                assert detail_panel.region.right <= width
-                assert detail_panel.region.y >= queue_panel.region.bottom
-                dashboard.scroll_to_widget(identity, animate=False)
-                await pilot.pause()
-                assert identity.region.overlaps(dashboard.region)
-                if (width, height) == (36, 20):
-                    controls = app.query_one("#workspace-footer-controls")
-                    assert controls.region.bottom <= height
-                    assert app.query_one("#workspace-footer-copy", Static).region.bottom <= height
-                    progress = plain_text(
-                        app.query_one("#task-detail-progress", Static).content,
-                        width=width,
-                    )
-                    assert "Stage" in progress
-                    assert "Not Started" in progress
-                    assert "Queued" in progress
-                    assert "no live turn" in progress
-                if height <= 14:
-                    assert app.query_one("#workspace-summary").region.height <= 1
+                assert detail_panel.display is False
+                assert app.query_one("#focus-footer").region.bottom <= height
+                assert app.query_one("#focus-views", Button).region.right <= width
+                assert app.query_one("#focus-help", Button).region.right <= width
+
+            home_screen = app.screen
+            await pilot.press("enter")
+            await pilot.press("enter")
+            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
     finally:
         reader.close()
 
@@ -714,14 +867,14 @@ async def test_home_help_works_with_mouse_and_keyboard_without_color(
     try:
         app = _app(reader, project_dir, widget_names=["queue"])
         async with app.run_test(size=(36, 20)) as pilot:
-            await pilot.click("#workspace-help")
+            await pilot.click("#focus-help")
             await pilot.pause()
-            assert "Mouse: choose a section" in _rendered_text(
+            assert "Mouse: select or open a task" in _rendered_text(
                 app.screen.query_one("#workspace-help-copy", Static)
             )
             await pilot.press("escape")
             await pilot.pause()
-            assert await pilot.click("#workspace-help")
+            assert await pilot.click("#focus-help")
             await pilot.pause()
             assert app.screen.query_one("#workspace-help-copy", Static).display
             await pilot.press("escape")
@@ -1044,19 +1197,19 @@ async def test_default_dashboard_widgets_fit_a_narrow_system_pane(
         app = _app(reader, project_dir, widget_names=settings.dashboard.widgets)
         async with app.run_test(size=(30, 24)) as pilot:
             await pilot.pause()
-            dashboard = app.query_one("#dashboard-panels", VerticalScroll)
-            assert dashboard.size.height > 0
-            strips = app.query_one(StripsPanel)
+            main = app.query_one("#focus-main")
+            assert main.size.height > 0
+            queue = app.query_one("#queue")
             usage = app.query_one("#usage")
             resources = app.query_one("#resources")
-            assert dashboard.scroll_y == 0
-            assert strips.region.y < app.size.height
-            assert task.id in cast("Text", strips.content).plain
-            dashboard.scroll_to_widget(usage, animate=False)
-            dashboard.scroll_to_widget(resources, animate=False)
-            await pilot.pause()
-            assert resources.region.y < dashboard.region.bottom
-            assert resources.region.bottom > dashboard.region.y
+            assert queue.region.y >= main.region.y
+            assert usage.region.width > 0
+            assert resources.region.width > 0
+            identity = app.query_one("#task-detail-identity", Static)
+            await wait_until(lambda: task.id in _rendered_text(identity), timeout=2)
+            await _choose_focus_view(app, pilot, "Workflow · Strips")
+            strips = app.screen.query_one(StripsPanel)
+            assert task.id in _rendered_text(strips)
     finally:
         reader.close()
 
@@ -1077,44 +1230,33 @@ async def test_dashboard_compact_footer_and_persisted_state_are_readable_without
         app = _app(reader, project_dir, widget_names=["strips"])
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
-            footer = app.query_one("#workspace-footer-copy", Static)
-            footer_controls = app.query_one("#workspace-footer-controls")
-            help_button = app.query_one("#workspace-help", Button)
-            expand_button = app.query_one("#workspace-expand", Button)
-            strips = app.query_one(StripsPanel)
-            assert app.focused is app.query_one("#section-tab-workspace", Button)
-            assert _rendered_text(footer) == "> Workspace"
-            assert footer.region.height == 1
+            footer = app.query_one("#focus-footer")
+            views_button = app.query_one("#focus-views", Button)
+            help_button = app.query_one("#focus-help", Button)
+            assert app.focused is app.query_one("#focus-views", Button)
+            assert footer.region.height >= 2
             assert footer.region.bottom <= app.size.height
-            assert footer_controls.region.bottom <= app.size.height
+            assert views_button.region.right <= app.size.width
             assert help_button.region.right <= app.size.width
             assert help_button.region.bottom <= app.size.height
-            assert expand_button.region.right <= app.size.width
+            await _choose_focus_view(app, pilot, "Workflow · Strips")
+            strips = app.screen.query_one(StripsPanel)
             strip_text = _rendered_text(strips)
             assert task_id in strip_text
             assert "Escalated" in strip_text
-            if size[0] > 36:
-                assert "PAUSED" in strip_text
-
-            workspace_screen = app.screen
-            assert await pilot.click("#workspace-help")
+            workflow_screen = app.screen
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is not workflow_screen, timeout=2)
+            home_screen = app.screen
+            assert await pilot.click("#focus-help")
             await pilot.pause()
-            assert app.screen is not workspace_screen
-            assert "Workspace" in _rendered_text(
+            assert app.screen is not home_screen
+            assert "Focus" in _rendered_text(
                 app.screen.query_one("#workspace-help-context", Static)
             )
             await pilot.press("escape")
             await pilot.pause()
-            assert app.screen is workspace_screen
-
-            assert await pilot.click("#workspace-expand")
-            await pilot.pause()
-            back_button = app.query_one("#workspace-return", Button)
-            assert back_button.region.right <= app.size.width
-            assert back_button.region.bottom <= app.size.height
-            assert await pilot.click("#workspace-return")
-            await pilot.pause()
-            assert app.focused is expand_button
+            assert app.screen is home_screen
             assert app.is_running
             app.exit()
             await wait_until(
@@ -1125,7 +1267,7 @@ async def test_dashboard_compact_footer_and_persisted_state_are_readable_without
         reader.close()
 
 
-async def test_dashboard_activity_widget_focus_expands_and_restores_scroll(
+async def test_dashboard_activity_widget_is_openable_by_keyboard_and_back(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1138,41 +1280,57 @@ async def test_dashboard_activity_widget_focus_expands_and_restores_scroll(
     try:
         app = _app(reader, project_dir, widget_names=["header", "dialogue", "usage"])
         async with app.run_test(size=(36, 20)) as pilot:
-            footer, dashboard, dialogue_table = await _focus_activity_table(app, pilot)
-            section_scroll = dashboard.scroll_y
-
-            await pilot.press("z")
-            await pilot.pause()
-            assert app.query_one("#section-activity").display
-            assert not app.query_one("#section-workspace").display
-            assert not app.query_one("#section-usage").display
-            assert app.focused is app.query_one("#workspace-return", Button)
-            assert _rendered_text(footer) == "Activity expanded"
+            home_screen = app.screen
+            await _choose_focus_view(app, pilot, "Activity · Dialogue")
+            assert app.screen is not home_screen
+            dialogue_table = cast(
+                "DataTable[object]", app.screen.query_one("#dialogue-table", DataTable)
+            )
             assert dialogue_table.region.height > 0
-
             await pilot.press("escape")
-            await pilot.pause()
-            assert app.focused is dialogue_table
-            assert app.query_one("#section-usage").display
-            assert dashboard.scroll_y == section_scroll
-            assert _rendered_text(footer) == "> Activity"
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
 
-            workspace_screen = app.screen
             await pilot.press("?")
             await pilot.pause()
-            assert app.screen is not workspace_screen
+            assert app.screen is not home_screen
             assert app.screen.query_one("#workspace-help-copy", Static).region.height > 0
-            assert "Activity" in _rendered_text(
+            assert "Focus" in _rendered_text(
                 app.screen.query_one("#workspace-help-context", Static)
             )
             await pilot.press("escape")
             await pilot.pause()
-            assert app.screen is workspace_screen
+            assert app.screen is home_screen
     finally:
         reader.close()
 
 
-async def test_dashboard_mouse_navigation_expands_and_restores_external_widget(
+async def test_configured_usage_and_docker_views_remain_reachable(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=["usage", "docker"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            home_screen = app.screen
+            await _choose_focus_view(
+                app, pilot, "Usage details · subscriptions, costs, coverage and quota"
+            )
+            usage = app.screen.query_one("#usage", Static)
+            assert "Token values unknown" in plain_text(usage.content)
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
+
+            await _choose_focus_view(app, pilot, "Diagnostics · Docker")
+            docker = app.screen.query_one("#docker", Static)
+            assert docker.region.width > 0
+            assert _rendered_text(docker)
+    finally:
+        reader.close()
+
+
+async def test_dashboard_mouse_navigation_opens_external_widget(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1193,39 +1351,23 @@ async def test_dashboard_mouse_navigation_expands_and_restores_external_widget(
     try:
         app = _app(reader, project_dir, widget_names=["usage", _EXTERNAL_WIDGET_NAME])
         async with app.run_test(size=(72, 30)) as pilot:
-            assert await pilot.click("#section-tab-extensions", offset=(7, 1))
-            await pilot.pause()
-            extension_tab = app.query_one("#section-tab-extensions", Button)
-            assert app.focused is extension_tab
-            footer = app.query_one("#workspace-footer-copy", Static)
-            footer_text = _rendered_text(footer)
-            assert footer_text.startswith(">")
-            assert "Extensions" in footer_text
-
             workspace_screen = app.screen
-            assert await pilot.click("#workspace-help", offset=(4, 1))
+            await pilot.click("#focus-views")
+            await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
+            await _choose_focus_view(app, pilot, "Extensions · Outside-Widget", mouse=True)
+            assert app.screen is not workspace_screen
+            extension_panel = app.screen.query_one("#external-widget-panel", Static)
+            assert extension_panel.region.width > 0
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is workspace_screen, timeout=2)
+
+            assert await pilot.click("#focus-help")
             await pilot.pause()
             assert app.screen is not workspace_screen
             assert app.screen.query_one("#workspace-help-copy", Static).region.height > 0
             assert await pilot.click("#workspace-help-close", offset=(6, 1))
             await pilot.pause()
             assert app.screen is workspace_screen
-            assert app.focused is app.query_one("#workspace-help", Button)
-
-            assert await pilot.click("#workspace-expand", offset=(5, 1))
-            await pilot.pause()
-            assert not app.query_one("#section-usage").display
-            assert app.query_one("#section-extensions").display
-            extension_panel = app.query_one("#section-extensions").query_one(
-                "#external-widget-panel", Static
-            )
-            assert extension_panel.region.width > 0
-
-            assert await pilot.click("#workspace-return", offset=(3, 1))
-            await pilot.pause()
-            assert app.focused is app.query_one("#workspace-expand", Button)
-            assert app.query_one("#section-usage").display
-            assert app.query_one("#section-extensions").display
     finally:
         reader.close()
 
