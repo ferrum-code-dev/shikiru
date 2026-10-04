@@ -14,7 +14,7 @@ It escalates to the Operator only when something critical comes up.
 - **Live role views** in tmux panes show each headless turn; Operators can take over a role in its native TUI when needed.
 - **Parallel tasks**: each task gets its own git worktree and branch, with instant copy-on-write build caches, a dependency graph, priorities and resource-aware scheduling.
 - **Resilient**: model ladders, a wait for quota resets followed by a real session resume, and recovery after crashes or restarts.
-- **Operator workspace**: Home combines task search, task detail, attention and progress summaries. Task detail keeps reports, verdicts, blockers, relationships and retained timeline evidence available after ordinary window cleanup. A shared palette handles contextual actions, and configured widgets stay grouped in navigable Workspace, Activity, Usage, Diagnostics and Extensions sections.
+- **Operator workspace**: the current Home combines task search, task detail, attention and progress summaries. Task detail keeps reports, verdicts, blockers, relationships and retained timeline evidence available after ordinary window cleanup. A shared palette handles contextual actions, and configured widgets stay grouped in navigable Workspace, Activity, Usage, Diagnostics and Extensions sections. The approved compact Focus layout and subscription-aware usage summary are planned for Phase 9; see [`docs/tui-focus.md`](docs/tui-focus.md).
 - **Operators everywhere**: a dashboard with a command palette for humans, an MCP server for AI Operators, a small CLI (`--json`) for scripts, and `ls`/`attach` across machines over SSH.
 - **Works with your setup**: your CLAUDE.md/AGENTS.md, skills, plugins, plan and todo files; one git repository per project.
 
@@ -47,6 +47,8 @@ Press `Ctrl+P` in the dashboard to open the shared action palette with the selec
 pre-filled. Inside a Shikiru tmux session, `prefix + Space` opens the same palette in a popup; a
 popup opened from a role pane carries that pane's current task and role. Outside a Shikiru session,
 the tmux binding keeps its normal `next-layout` action. `?` opens workspace help.
+
+The current dashboard is the verified Phase 8 workspace. Phase 9's approved task-list/inspector layout, compact resource and usage readouts, and explicit subscription metadata are planned; the examples and values in the [Focus specification](docs/tui-focus.md) describe the target, not shipped behavior.
 
 The dashboard labels command outcomes **Pending**, **Applied** or **Rejected**. Pending means the
 command is still in the durable queue; when the engine is stopped it can apply after the next
@@ -93,6 +95,7 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 
 - Design: [`docs/design`](docs/design/README.md)
 - Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — Phase 8 interaction and evidence specification. Tasks 75–88 are verified on macOS; a fresh Codex gpt-6-luna E1–E6 run, the normal and `TERM=dumb` full gates, and the clean-install/navigation smoke passed. GNU/Linux was not run and remains unverified. The older Task 59, 74h and 74p review gates remain open. See the [2026-10-03 release record](docs/release-readiness-2026-10-03-phase8.md).
+- Compact Operator TUI: [`docs/tui-focus.md`](docs/tui-focus.md) — approved Phase 9 target; behavior remains planned until Tasks 89–96 ship. The [approved standalone mockup](docs/design/references/focus-steel-approved.html) and [selected 736-pixel view](docs/design/references/focus-steel-approved-736.png) are durable references.
 - Workspace walkthrough evidence: [`docs/workspace-walkthroughs-2026-10-03.md`](docs/workspace-walkthroughs-2026-10-03.md) — executed flows, fixtures and observed limits.
 - Implementation plan: [`tasks/plan.md`](tasks/plan.md), progress: [`tasks/todo.md`](tasks/todo.md)
 

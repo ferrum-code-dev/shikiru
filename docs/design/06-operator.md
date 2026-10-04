@@ -104,6 +104,8 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 
 ### 5.4 Workspace shell and widgets
 
+This section describes the Phase 8 workspace currently implemented and verified. The approved Phase 9 replacement is planned in [Compact Operator TUI](../tui-focus.md); its task-list/inspector composition supersedes the default presentation here only as Tasks 89–96 ship. Phase 8's operator service behavior remains in force: state changes still go through `OperatorCommands`, browser/detail queries remain bounded, the engine stays the single writer, and existing widgets and callbacks remain compatible.
+
 `shikiru dash --home | --task T-n` is a Textual app with one shared navigable shell. The permanent home window opens the Home workspace. A task window opens the same shell with its existing `focus_task` context and the shared task detail fixed to that task.
 
 Home chooses its browser/detail composition from the actual pane size: at 100 columns or more and over 18 rows it shows the browser and one shared detail panel side by side; otherwise it stacks them in a scrollable compact view. The detail panel stays mounted through resize and task selection, preserving browser identity and its local form, timeline and scroll state. Its initial detail result is discarded if selection changes while file evidence is loading. A compact palette keeps the focused form field and Run control reachable by scrolling; three-row text areas retain one editable row between borders at 18 rows or less.
@@ -265,6 +267,8 @@ launchd agent, `~/Library/LaunchAgents/dev.shikiru.myproject.plist`:
 `Restart=on-failure` and `SuccessfulExit=false` restart the engine after a fault stop (non-zero exit) but not after `shikiru stop`, `systemctl stop` or `launchctl bootout` (exit 0).
 
 ## 6. Visual design: comic strips with a semantic visual language
+
+The comic strip and palette below describe Phase 8's shipped visual presentation and remain available for CLI and explicitly opened workflow detail. For the planned Phase 9 default Home and task view, [Compact Operator TUI](../tui-focus.md#2-composition-and-palette) supersedes the expanded strip composition and role colors with the graphite/steel/sage/amber/dusty-rose Focus palette. The meaning of task state, role, hold, ownership and signal-driven activity remains; the compact view must keep text and glyph alternatives, motion limits and monochrome access.
 
 Shikiru's look comes from **structure and meaning**:
 - tasks are 4-panel comic strips (*yonkoma*);

@@ -76,6 +76,26 @@ def shikiru_command(*arguments: str) -> str: ...   # `<python> -P -m shikiru <ar
 def module_command(module: str, *arguments: str) -> str: ...   # the same for a plugin's own module, e.g. a hook
 ```
 
+**Phase 9 planned optional capability.** Billing is separate from monetary basis: `Usage.cost_basis` remains `billed`, `api_equivalent` or `unknown`. A plugin may additionally implement this additive capability; it is not a required member of `Agent`, so existing third-party plugins continue to load:
+
+```python
+BillingMode = Literal["api", "subscription", "unknown"]
+BillingSource = Literal["provider_reported", "operator_config", "unknown"]
+
+
+@dataclass(frozen=True)
+class BillingDeclaration:
+    mode: BillingMode
+    source: BillingSource
+
+
+class BillingDeclarationProvider(Protocol):
+    @property
+    def billing_declaration(self) -> BillingDeclaration: ...
+```
+
+If an agent does not implement the optional property, or has no reliable declaration, the normalized value is `unknown`/`unknown`. A plugin can obtain a known mode only from a trustworthy native report or an explicit plugin-owned `[agents.<name>.options]` value; it returns the matching source. An explicit `unknown` setting is valid and has source `operator_config`. Core does not inspect models, credentials, environment, login state, provider identity or quota to fill the declaration. Plugin factories validate plugin-specific options and return one normalized declaration. The value is captured with the run/session at start and is not changed by a later model rung or current configuration. This capability labels the access/billing mode only; it neither configures access nor supplies price, account or charge data. Tasks 89–96 are planned, so this contract is not yet implemented.
+
 Prompts call Shikiru back only through `shikiru_command`. Agent shells may be login shells with their own `PATH`, so nothing agent-facing relies on `shikiru` being on it.
 
 **Obligations**, checked by the contract kit:
@@ -84,6 +104,7 @@ Prompts call Shikiru back only through `shikiru_command`. Agent shells may be lo
 3. Every stream ends with exactly one `TurnEnded` or `TurnFailed`, and then the process has exited. A process that exits without a structured result yields `TurnFailed(UNKNOWN)` with the exit status and the stderr tail.
 4. `UsageReported` carries session totals; its token counts never decrease (`context_used_pct` drops after `Compacted`).
 5. **Usage is only what the agent reports** (D21): tokens always; `cost_usd` only when the agent marks its cost as priced, else `None` with `cost_basis = "unknown"`; `context_used_pct` only from a context window the agent reports reliably, else `None`; `QuotaReported` only when the agent reports windows. A provider's list-price estimate has `cost_basis = "api_equivalent"`; `billed` requires a provider-reported charge; otherwise use `unknown`. Plugins must not derive the basis from how access was configured.
+   Billing declaration mode is an independent optional fact. A subscription does not imply a zero amount or an API-equivalent amount; `unknown` mode does not convert missing monetary evidence into an API charge.
 6. The process never waits for input: stdin is closed and no flag it is given can open a dialog.
 7. `stop()` ends the process and every descendant it started within `TURN_STOP_GRACE` (SIGTERM to the turn's process group, then SIGKILL) and returns within a bounded time even when a descendant holds the output pipes; a process that exits on its own while a descendant holds the output pipes ends the signal stream within `STDOUT_DRAIN_TIMEOUT` of the exit, the group killed (03 §4.2); the next turn on the same `session_id` resumes the session.
 8. **Compaction.** The plugin prevents context overflow by compacting proactively at its `compact_at_pct` option (default 80), including while a single turn is running. Core Shikiru knows nothing of this beyond displaying `Compacted`:

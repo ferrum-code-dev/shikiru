@@ -4,6 +4,8 @@ Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`
 
 Phase 8 target specification: [Operator Workspace](../docs/tui-workspace.md). Its tasks update the normative design as each slice ships.
 
+Phase 9 target specification: [Compact Operator TUI](../docs/tui-focus.md). It converts the Phase 8 presentation to the approved Focus layout and Flight deck palette while preserving operator behavior.
+
 **Rules**:
 - Follow `CLAUDE.md`/`AGENTS.md` and 07 §2–3.
 - Work on one task at a time.
@@ -19,6 +21,7 @@ Phase 8 target specification: [Operator Workspace](../docs/tui-workspace.md). It
 - Phase 7 (Tasks 41–59) remediates the 2026-09-29 review. Task 41 comes first because it makes the gate reliable; then follow the listed order, since high-severity work and operator-control fixes precede the rest.
 - Phase 7b (Tasks 60–74) completes the independent-review remediation before Phase 8 relies on its operator-control and work-preservation behaviour.
 - Phase 8 (Tasks 75–88) delivers the Operator Workspace: navigation and task actions first, then attention/evidence views, responsive behaviour, exports and final documentation/verification. Follow the listed order and keep refactorings in separate commits.
+- Phase 9 (Tasks 89–96) delivers the approved compact TUI. Execute these tasks sequentially, review each completed task before advancing, and keep necessary refactorings in separate commits. Phase 8 completion and older independently open review gates remain historical facts.
 
 ---
 
@@ -866,3 +869,82 @@ Refs: Workspace §16, 07 §5.
 - [x] Real-agent E1–E6 pass in one `poe e2e` run on that revision; record date, scenarios, duration, source commit, CLI versions and reported cost or unknown cost as appropriate.
 - [x] Clean-install smoke and the documented workspace entry/navigation paths pass on macOS; Linux is reported as verified only after an actual run. Record representative home/task pane sizes, monochrome/static operation and remaining limitations.
 - [x] A new `docs/release-readiness-*.md` records Phase 8 delivery, fake-agent walkthrough evidence, final checks and design agreement. Tick Tasks 75–88 only after their own ACs are met; planning this phase does not count as implementation.
+
+## Phase 9 — Compact Operator TUI
+
+Specification: [Compact Operator TUI](../docs/tui-focus.md), approved direction 2026-10-04: option B's task list and inspector with option A's graphite, steel blue, sage and amber palette. Compact project totals, host and instance resources, task agent/usage rows, explicit coverage and subscription-aware presentation replace the overloaded primary workspace. Preserve the services, commands, queries, evidence, plugin boundaries and regressions delivered in Phase 8; do not revert it.
+
+Delivery is sequential: design, billing facts, projections, shared visuals, Home, task detail/actions, responsive compatibility and verification. Each task uses one GPT-6-Luna sub-agent at xhigh effort, with architect review and fixes by that same agent before the next task. Every commit requires a green `uv run poe check` and ends with `Co-Authored-By: Codex <codex@openai.com>`. Tick a task only after every AC is implemented and verified. Inspect and clean only task-owned test processes, private tmux servers/sockets and disposable directories; preserve the user's servers, files and required evidence.
+
+### Task 89: Compact TUI design alignment
+Refs: Focus §1–10; 01 D18/D21/D24, 02 §2/4, 04 §1, 05 §1–2, 06 §5–6, 07 §2–3.
+- [x] Reconcile the normative design with Focus's approved composition, palette, information hierarchy and keyboard contract. Explicitly identify the Phase 8 presentation sections being superseded and retain its shipped behavioral guarantees and historical evidence.
+- [x] Define the smallest additive billing metadata contract, its plugin-owned explicit configuration/reporting, compatible absence behavior, persistence scope and provenance; subscription mode never implies zero cost or an API-equivalent charge.
+- [x] Define honest task session/model history and attribution, project scope/coverage, current-engine uptime and resource sample meanings. Existing historical session totals must not be assigned to a model without evidence.
+- [x] Preserve widget entry points and callbacks; specify where every configured built-in and external widget remains reachable, including the comic-strip plugin outside the default primary composition.
+- [x] Preserve a durable copy of the approved mockup and link it from Focus. Link the new phase/specification from the design index and README, marking not-yet-shipped behavior as planned.
+- Verification: review links, design cross-references, task dependencies and migration boundaries. No prose, token-inventory or mockup snapshot tests.
+
+### Task 90: Explicit billing metadata and historical persistence
+Refs: Focus §5/§8; 04 §1/4–5, 05 §1–2; Task 89's additive contract.
+- [ ] Implement normalized subscription/API/unknown billing metadata with explicit source, preserving existing plugin contracts and old plugin behavior. Agent specifics and native access handling remain inside plugins; core never infers a billing mode from model, environment, missing cost or quota.
+- [ ] Claude and Codex factories validate their explicit optional billing declaration, defaulting to unknown, and expose it through the normalized contract. The fake agent supports the same boundary for integration verification. No credential, account-management or tariff-price feature is introduced.
+- [ ] Persist the declaration with the run/session it describes through the engine's single writer and a compatible SQLite migration. Old records remain unknown; current settings never retroactively reclassify historical runs. Keep billing mode independent of billed/API-equivalent/unknown monetary evidence.
+- [ ] Carry stored metadata through existing task/session usage, history and evidence export consumers as compatible additions. Avoid counting a subscription session's absent per-task charge as an unknown API charge or a measured zero.
+- [ ] Update the relevant design and configuration reference with actual fields and behavior.
+- Tests: real SQLite migration and engine/fake-agent sessions demonstrate declared modes, unreported/zero amounts, mixed cost bases, unknown old records, restart persistence and changed configuration without rewriting prior session facts; plugin validation tests cover the real factory boundary.
+
+### Task 91: Compact metrics and agent-history projections
+Refs: Focus §3–5/§8; 02 §2, 05 §2–3, 06 §5.4; Tasks 89–90.
+- [ ] Add consumed project projections for recorded token totals, explicit reported/unknown session coverage, reported API charge coverage, separate API-equivalent evidence and distinct declared subscription agents. Do not invent account identities or sum charges with subscription fees.
+- [ ] Project engine uptime from current lock liveness, recorded engine-start evidence and injected Clock. A stopped engine never shows an advancing uptime; a previous run duration requires its recorded stop, and absent timing remains unknown.
+- [ ] Project compact host and instance resources from the existing timestamped sampler; the instance includes its agent/process trees. Preserve empty, unavailable, stale and failed meanings without another sampler or motion-triggered expensive reads.
+- [ ] Project task agent/usage rows from persisted session lineages, preserving role, agent, model/effort, billing mode/source, observed token/cost coverage and current/previous state. Expose recorded earlier models through bounded existing evidence; show history gaps explicitly and never duplicate cumulative session totals across models.
+- [ ] Add only compatible widget view fields/capabilities with consumers in the upcoming Home and task views; update the relevant design contracts.
+- Tests: real SQLite and FakeClock verify mixed modes and coverage, model/agent changes and closed-task history, no cumulative double-counting, run restart/stop uptime and stale/missing timing/resource observations. Domain unit tables only for genuine new projection invariants.
+
+### Task 92: Shared compact visual language
+Refs: Focus §2/§6–7; 06 §6, 07 §2–3; Tasks 89–91.
+- [ ] Implement the approved graphite/steel blue/sage/amber palette with quiet borders, readable primary/secondary text and dusty rose for errors. Role names and state words/glyphs carry meaning; no mandatory neon role coloring or kanji decoration in primary content.
+- [ ] Introduce consumed compact project metric, resource and combined agent/usage renderables. Replace vague `partial` labels with explicit coverage and show subscription, actual reported charges, estimates and unknown values distinctly.
+- [ ] Provide a lightweight textual stage/activity projection for actual implement/plan/setup/consult/rework/integration states, with holds and ownership distinct from signal activity. Preserve existing public strip/renderable contracts for CLI or explicitly configured plugins.
+- [ ] Apply the shared theme to shell, task view, palette and evidence forms; preserve width-safe glyphs, monochrome cues and the existing signal-driven motion cap. Use shared rendering rather than duplicate Home and task formatting.
+- [ ] Update visual design sections to actual tokens/renderables without adding theme or breakpoint configuration without an Operator need.
+- Tests: behavior-focused Rich/Textual integration verifies meaningful hold/state/coverage rendering and narrow/monochrome readability. No theme token listings or new golden-snapshot catalogue.
+
+### Task 93: Focus Home dashboard and compact project readouts
+Refs: Focus §2–4/§6–8; 06 §5.4, 02 §4; Tasks 89–92.
+- [ ] Replace Home's default section/tab/card/button stack with the compact header, totals/resource lines, actionable attention row and selectable task list plus focused inspector at usable wide sizes. Preserve the approved B/A composition; remove obsolete default shell composition instead of maintaining two default TUIs.
+- [ ] Show project token/cost coverage, declared subscription summary, current-engine uptime and host/instance CPU/RAM. Do not show a separate agents resource tile, an API-equivalent estimate as spend, or invented subscription/account counts.
+- [ ] Preserve task ordering/search/filter/history, stable ID selection, reading position and updates. Search/filter controls become contextual keyboard/menu interactions rather than permanent button rows; recent finished tasks and long lists remain reachable.
+- [ ] Integrate the existing queue/header/escalation/usage/resources plugins as compact primary content when configured. Activity, Docker, faults, command history, detailed usage, explicitly configured strips and external extensions remain reachable through contextual views; every configured plugin is accounted for.
+- [ ] Preserve honest durable attention, faults, missing packets, engine-stop state and command feedback. Navigation/refresh must never dispatch a workflow command.
+- [ ] Update configuration/default placement and the affected operator design; preserve existing configuration compatibility with clear validation and no silent plugin loss.
+- Tests: Textual over real SQLite verifies Home composition through navigation behavior, changed task order without lost selection, search/history access, decision/fault inspection, stopped engine and configured built-in/external plugin reachability.
+
+### Task 94: Focus task detail and contextual operator control
+Refs: Focus §4–6/§8; Workspace §6–11/§15 retained guarantees; 03 §8–9, 06 §5.5; Tasks 89–93.
+- [ ] Convert the shared inline inspector and `dash --task` view to compact identity/situation, actual stage/activity and one combined usage item per role/session. Display current and previously used agents/models with honest session-level attribution; remove separate bulky Task Usage/Agents panels and the permanent action-button toolbar.
+- [ ] Keep tokens and declared subscription/API/unknown mode beside agent/model identity; actual API charges and unreported cost remain distinguishable. Details retain input/output/cache, source/coverage, model history and provider-reported quota/reset observations. Subscription fees remain account-level and outside task charges.
+- [ ] Reuse the existing palette/forms for contextual actions, exposing only applicable operations with timing/consequences, typed command dispatch and durable Pending/Applied/Rejected outcomes. All existing actions, including submit/prioritize/pause/resume/cancel/rung changes/stop/export, remain discoverable.
+- [ ] Preserve reports/verdicts, request/ACs, facts/signals/timeline, relationships/blockers, retained completed-task evidence and existing task/role-window navigation through on-demand views. Display all ownership/holds and stale escalation rejection without discarding entered guidance.
+- [ ] Preserve `Enter` inspection, `Escape` return, selected-task context, role context from tmux, keyboard/mouse access and live refresh without unsolicited focus or form changes; update operator documentation for actual behavior.
+- Tests: connected Textual/SQLite/git/private-tmux/fake-agent boundaries verify task inspection and retained history, an escalation answer, message delivery timing, takeover/hand-back with another task progressing, engine-down pending command recovery and export. Reuse existing scenario fixtures rather than duplicate a test catalogue.
+
+### Task 95: Responsive compatibility and obsolete presentation cleanup
+Refs: Focus §6–10; Workspace §14–16 retained guarantees, 07 §3; Tasks 89–94.
+- [ ] At representative wide, 48-column, 36-column, short and very small panes, keep task identity/title, critical decision/hold, usage details and action/result controls reachable. Compact Home becomes list then task detail; no compressed unreadable side-by-side inspector.
+- [ ] Preserve ID selection, search/filter/history, focus, entered forms and reading position across resize, row reordering and state refresh. Monochrome, `TERM=dumb` and disabled animation retain textual state and timely data refresh.
+- [ ] Verify every configured plugin remains reachable and legacy public fields/callbacks still work. Remove superseded private panels/navigation/styling and unused new code without deleting useful CLI/plugin contracts or preserving a second default shell.
+- [ ] Render real Textual wide/compact Home, task, usage/subscription, action and stale/error states for visual comparison with the approved mockup; fix density/clipping/contrast findings and retain a concise artifact/evidence record.
+- [ ] Audit task-owned processes, private tmux sockets and scratch outputs after checks; remove disposable leftovers while retaining review artifacts and diagnostic evidence. Update design support limits and actual known limitations.
+- Tests: focused integration size/interaction matrix asserts observable reachability and preservation. Inspect rendered artifacts manually; no framework tests, theme snapshots or coverage-for-coverage additions.
+
+### Task 96: Compact TUI walkthroughs and release verification
+Refs: Focus §10; 07 §3/5; Tasks 89–95.
+- [ ] Reconcile README, normative design/configuration/plugin docs and walkthroughs with shipped compact behavior. Preserve Phase 8's historical verification and independently open review gates; document billing declaration, coverage, subscription/estimate meanings, model attribution and retained evidence limits accurately.
+- [ ] Execute and record connected fake-agent operator walkthroughs for decision/message/control, takeover with parallel progress, engine-down command recovery and completed-task evidence, plus a seeded usage scenario covering mixed billing, model history, unknown values and stale resources. Record source revision, commands and outcomes.
+- [ ] Run green `uv run poe check` normally and with `TERM=dumb`, with coverage at least 80%, and the existing clean-install/navigation smoke on macOS. Claim another platform only after an actual run; preserve failed attempt evidence.
+- [ ] Run the existing bounded real-agent E1–E6 in one invocation on the resulting source, recording date, revision, versions, duration and reported/unknown cost. Do not add speculative paid scenarios; fix product failures and follow the established retry policy.
+- [ ] Record Phase 9 release evidence, actual visual review sizes/states, walkthrough and gate results, remaining limits and final task-owned process/socket/directory cleanup. Close Tasks 89–96 only after their respective ACs genuinely pass.
+- Verification: behavior gates, real-agent existing scenarios, clean-install smoke, visual review, documentation audit and a read-only host hygiene audit with targeted cleanup of owned leftovers.

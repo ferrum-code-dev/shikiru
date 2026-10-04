@@ -1,0 +1,1472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Shikiru Focus Steel</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Shikiru Focus Steel" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Shikiru Focus Steel&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, var(--background));
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 14px);
+  --blue: light-dark(rgb(51 156 255), rgb(51 156 255));
+  --orange: light-dark(rgb(226 85 7), rgb(251 106 34));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --red: light-dark(rgb(224 46 42), rgb(255 103 100));
+  --purple: light-dark(rgb(146 79 247), rgb(173 123 249));
+  --yellow: light-dark(rgb(255 195 0), rgb(255 210 64));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: var(--border-radius-lg, 12.5px);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans) !important;
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--font-weight-medium, 500);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead th {
+  padding-block: 8px;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 6px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card, .progress) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress {
+  display: flex;
+  height: 6px;
+  margin-block: calc((var(--line-height-normal, 1.5em) - 6px) / 2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+}
+
+.progress-bar {
+  height: 100%;
+  flex-shrink: 0;
+  border: 0;
+  background: var(--viz-series-1);
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+  [aria-pressed=&quot;true&quot;],
+  [aria-selected=&quot;true&quot;],
+  .is-selected
+) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+/* Model-authored chart rules can otherwise stretch icons after these styles load. */
+svg.lucide {
+  display: block;
+  width: 16px !important;
+  height: 16px !important;
+  flex: none;
+  margin: 0 !important;
+  stroke-width: 1.6;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div id=&quot;shikiru-focus-steel&quot;&gt;
+  &lt;div class=&quot;viz-controls&quot;&gt;
+    &lt;label class=&quot;form-label&quot; for=&quot;shk-scene&quot;&gt;Situation
+      &lt;select class=&quot;form-select&quot; id=&quot;shk-scene&quot;&gt;
+        &lt;option value=&quot;decision&quot;&gt;One decision needed&lt;/option&gt;
+        &lt;option value=&quot;quiet&quot;&gt;Working normally&lt;/option&gt;
+        &lt;option value=&quot;owned&quot;&gt;Operator takeover&lt;/option&gt;
+        &lt;option value=&quot;stopped&quot;&gt;Engine stopped&lt;/option&gt;
+      &lt;/select&gt;
+    &lt;/label&gt;
+    &lt;label class=&quot;form-label&quot; for=&quot;shk-width&quot;&gt;Terminal
+      &lt;select class=&quot;form-select&quot; id=&quot;shk-width&quot;&gt;
+        &lt;option value=&quot;wide&quot;&gt;Wide&lt;/option&gt;
+        &lt;option value=&quot;compact&quot;&gt;Compact pane&lt;/option&gt;
+      &lt;/select&gt;
+    &lt;/label&gt;
+    &lt;label class=&quot;form-check&quot; for=&quot;shk-mono&quot;&gt;&lt;input class=&quot;form-check-input&quot; type=&quot;checkbox&quot; id=&quot;shk-mono&quot;&gt;&lt;span class=&quot;form-check-label&quot;&gt;No color&lt;/span&gt;&lt;/label&gt;
+    &lt;button class=&quot;btn&quot; type=&quot;button&quot; id=&quot;shk-signal&quot;&gt;Next demo signal&lt;/button&gt;
+  &lt;/div&gt;
+  &lt;div class=&quot;text-small text-muted&quot; id=&quot;shk-sample&quot; aria-live=&quot;polite&quot;&gt;B layout · A palette · sample workload&lt;/div&gt;
+  &lt;div id=&quot;shk-concepts&quot;&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;style&gt;
+#shikiru-focus-steel { width:100%; }
+#shikiru-focus-steel .shk-concept { margin-top:24px; }
+#shikiru-focus-steel .shk-titlebar { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-bottom:9px; }
+#shikiru-focus-steel .shk-titlebar h3 { margin:0; }
+#shikiru-focus-steel .shk-colors { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px; }
+#shikiru-focus-steel .shk-color { display:inline-flex; align-items:center; gap:5px; }
+#shikiru-focus-steel .shk-chip { width:11px; height:11px; background:var(--swatch); }
+#shikiru-focus-steel .shk-terminal { --shk-bg:#11151b; --shk-surface:#171d25; --shk-edge:#3d4654; --shk-ink:#dce2e9; --shk-dim:#9aa5b5; --shk-accent:#83bddd; --shk-good:#90cba6; --shk-wait:#dfb16c; --shk-bad:#e3a0a0; --shk-selected:#233340; color:var(--shk-ink); background:var(--shk-bg); font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,&quot;Liberation Mono&quot;,monospace; padding:14px 16px 0; position:relative; color-scheme:dark; min-width:0; border:1px solid var(--shk-edge); }
+#shikiru-focus-steel .shk-terminal[data-layout=&quot;stream&quot;] { --shk-bg:#151420; --shk-surface:#211f30; --shk-edge:#49435e; --shk-ink:#e5e1f0; --shk-dim:#afa8c4; --shk-accent:#b9a9f5; --shk-good:#a2d7ba; --shk-wait:#ecc08e; --shk-bad:#eea5b9; --shk-selected:#332b49; }
+#shikiru-focus-steel .shk-terminal[data-layout=&quot;board&quot;] { --shk-bg:#191816; --shk-surface:#23211d; --shk-edge:#4d493f; --shk-ink:#e8e2d6; --shk-dim:#b6ac99; --shk-accent:#deb97e; --shk-good:#b3ce99; --shk-wait:#edc789; --shk-bad:#e4a498; --shk-selected:#393125; }
+#shikiru-focus-steel .shk-terminal.shk-mono { --shk-bg:#141414; --shk-surface:#202020; --shk-edge:#747474; --shk-ink:#efefef; --shk-dim:#b8b8b8; --shk-accent:#efefef; --shk-good:#efefef; --shk-wait:#efefef; --shk-bad:#efefef; --shk-selected:#373737; }
+#shikiru-focus-steel .shk-terminal * { box-sizing:border-box; }
+#shikiru-focus-steel .shk-terminal button { font:inherit; color:inherit; border:0; border-radius:0; background:transparent; cursor:pointer; text-align:left; padding:0; }
+#shikiru-focus-steel .shk-terminal button:hover { background:var(--shk-selected); }
+#shikiru-focus-steel .shk-terminal button:disabled { color:var(--shk-dim); cursor:default; }
+#shikiru-focus-steel .shk-terminal input,
+#shikiru-focus-steel .shk-terminal textarea,
+#shikiru-focus-steel .shk-terminal select { font:inherit; color:var(--shk-ink); background:var(--shk-bg); border:1px solid var(--shk-edge); border-radius:0; padding:5px 7px; width:100%; min-width:0; }
+#shikiru-focus-steel .shk-terminal textarea { resize:vertical; }
+#shikiru-focus-steel .shk-top { display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px; margin-bottom:9px; }
+#shikiru-focus-steel .shk-brand { color:var(--shk-accent); font-weight:500; letter-spacing:1px; }
+#shikiru-focus-steel .shk-dim { color:var(--shk-dim); }
+#shikiru-focus-steel .shk-accent { color:var(--shk-accent); }
+#shikiru-focus-steel .shk-good { color:var(--shk-good); }
+#shikiru-focus-steel .shk-wait { color:var(--shk-wait); }
+#shikiru-focus-steel .shk-bad { color:var(--shk-bad); }
+#shikiru-focus-steel .shk-rule { border-top:1px solid var(--shk-edge); margin:12px 0; }
+#shikiru-focus-steel .shk-summary { display:flex; flex-wrap:wrap; gap:5px 22px; padding:9px 0 12px; }
+#shikiru-focus-steel .shk-usage-strip { display:flex; flex-wrap:wrap; gap:3px 16px; margin-bottom:10px; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-resources { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px 14px; width:100%; padding:7px 0 !important; border-top:1px solid var(--shk-edge) !important; }
+#shikiru-focus-steel .shk-resource { min-width:0; }
+#shikiru-focus-steel .shk-resource span { display:block; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-observation { color:var(--shk-dim); margin:0 0 12px; }
+#shikiru-focus-steel .shk-task-usage { margin:10px 0; border-top:1px solid var(--shk-edge); padding-top:7px; }
+#shikiru-focus-steel .shk-agent { margin:5px 0; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-agent span { display:block; }
+#shikiru-focus-steel .shk-attention { display:flex; flex-wrap:wrap; gap:4px 12px; color:var(--shk-wait); background:var(--shk-surface); padding:8px 10px; margin-bottom:15px; }
+#shikiru-focus-steel .shk-attention button { color:var(--shk-wait); }
+#shikiru-focus-steel .shk-attention .shk-quiet { color:var(--shk-good); }
+#shikiru-focus-steel .shk-space { margin-left:auto; }
+#shikiru-focus-steel .shk-panel { border:1px solid var(--shk-edge); padding:10px 11px; min-width:0; }
+#shikiru-focus-steel .shk-heading { display:flex; flex-wrap:wrap; gap:6px 15px; color:var(--shk-accent); margin-bottom:8px; font-weight:500; }
+#shikiru-focus-steel .shk-deck-row { display:grid; grid-template-columns:54px minmax(0,1fr) auto; gap:4px 9px; padding:5px 7px; width:100%; }
+#shikiru-focus-steel .shk-task-row { width:100%; display:block; padding:6px 7px !important; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-task-row[aria-pressed=&quot;true&quot;],
+#shikiru-focus-steel .shk-deck-row[aria-pressed=&quot;true&quot;],
+#shikiru-focus-steel .shk-event[aria-pressed=&quot;true&quot;],
+#shikiru-focus-steel .shk-board-task[aria-pressed=&quot;true&quot;] { background:var(--shk-selected); }
+#shikiru-focus-steel .shk-row-title { display:block; }
+#shikiru-focus-steel .shk-row-state { display:block; color:var(--shk-dim); padding-left:18px; }
+#shikiru-focus-steel .shk-subline { padding-left:7px; color:var(--shk-dim); margin-bottom:9px; }
+#shikiru-focus-steel .shk-stages { display:flex; flex-wrap:wrap; gap:5px 10px; margin:6px 0; }
+#shikiru-focus-steel .shk-footer { display:flex; flex-wrap:wrap; align-items:center; gap:5px 17px; padding:9px 0; border-top:1px solid var(--shk-edge); margin-top:15px; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-key { color:var(--shk-accent); }
+#shikiru-focus-steel .shk-deck-bottom { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+#shikiru-focus-steel .shk-minirow { display:flex; flex-wrap:wrap; gap:4px 8px; padding:4px 0; }
+#shikiru-focus-steel .shk-focus-grid { display:grid; grid-template-columns:minmax(0,42%) minmax(0,58%); }
+#shikiru-focus-steel .shk-focus-list { padding-right:13px; border-right:1px solid var(--shk-edge); min-width:0; }
+#shikiru-focus-steel .shk-focus-detail { padding-left:16px; min-width:0; }
+#shikiru-focus-steel .shk-insight { margin:12px 0; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-inline-action { color:var(--shk-accent) !important; }
+#shikiru-focus-steel .shk-signal { display:flex; flex-wrap:wrap; gap:5px 12px; margin:10px 0; }
+#shikiru-focus-steel .shk-event { display:grid; grid-template-columns:40px 40px minmax(0,1fr); gap:7px; padding:8px 7px !important; width:100%; border-bottom:1px solid var(--shk-edge) !important; }
+#shikiru-focus-steel .shk-event-copy { min-width:0; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-event-copy small { display:block; color:var(--shk-dim); font:inherit; }
+#shikiru-focus-steel .shk-stream-now { border-top:1px solid var(--shk-edge); padding:10px 7px 0; }
+#shikiru-focus-steel .shk-board { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+#shikiru-focus-steel .shk-lane { min-width:0; padding-right:8px; border-right:1px solid var(--shk-edge); }
+#shikiru-focus-steel .shk-lane:last-child { border-right:0; padding-right:0; }
+#shikiru-focus-steel .shk-board-task { display:block; width:100%; padding:9px 7px !important; margin-bottom:7px; background:var(--shk-surface) !important; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-board-task[aria-pressed=&quot;true&quot;] { background:var(--shk-selected) !important; }
+#shikiru-focus-steel .shk-board-task span { display:block; }
+#shikiru-focus-steel .shk-board-caption { margin-top:16px; border-top:1px solid var(--shk-edge); padding-top:9px; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-modal-wrap { position:absolute; inset:0; background:rgb(0 0 0 / 55%); display:flex; align-items:center; justify-content:center; padding:14px; z-index:5; }
+#shikiru-focus-steel .shk-modal { width:100%; max-width:460px; background:var(--shk-surface); color:var(--shk-ink); border:1px solid var(--shk-accent); padding:14px 16px; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-modal-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 15px; margin-bottom:10px; }
+#shikiru-focus-steel .shk-modal-head button { margin-left:auto; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-modal h4 { font:inherit; font-weight:500; color:var(--shk-accent); margin:0; }
+#shikiru-focus-steel .shk-menu-item { display:flex; flex-wrap:wrap; gap:5px 12px; padding:6px 7px !important; width:100%; }
+#shikiru-focus-steel .shk-menu-item:first-child { background:var(--shk-selected); }
+#shikiru-focus-steel .shk-modal label { display:block; color:var(--shk-dim); margin:9px 0 4px; }
+#shikiru-focus-steel .shk-modal-controls { display:flex; flex-wrap:wrap; gap:8px 18px; border-top:1px solid var(--shk-edge); padding-top:8px; margin-top:12px; }
+#shikiru-focus-steel .shk-feedback { margin:8px 0; color:var(--shk-good); }
+#shikiru-focus-steel .shk-terminal.shk-compact { max-width:380px; margin:0 auto; padding:12px 12px 0; }
+#shikiru-focus-steel .shk-compact .shk-deck-bottom,
+#shikiru-focus-steel .shk-compact .shk-focus-grid { grid-template-columns:1fr; }
+#shikiru-focus-steel .shk-compact .shk-focus-detail { display:none; }
+#shikiru-focus-steel .shk-compact .shk-resources { grid-template-columns:1fr; }
+#shikiru-focus-steel .shk-compact .shk-focus-list { border:0; padding:0; }
+#shikiru-focus-steel .shk-compact .shk-board { grid-template-columns:repeat(2,minmax(0,1fr)); }
+#shikiru-focus-steel .shk-compact .shk-lane:nth-child(2) { border-right:0; }
+#shikiru-focus-steel .shk-compact .shk-modal-wrap { position:relative; margin:12px -12px 0; padding:12px; }
+#shikiru-focus-steel .shk-compact .shk-modal { padding:12px; }
+@media(max-width:520px) {
+  #shikiru-focus-steel .shk-terminal { padding:12px 12px 0; }
+  #shikiru-focus-steel .shk-deck-bottom,#shikiru-focus-steel .shk-focus-grid { grid-template-columns:1fr; }
+  #shikiru-focus-steel .shk-focus-detail { display:none; }
+  #shikiru-focus-steel .shk-resources { grid-template-columns:1fr; }
+  #shikiru-focus-steel .shk-focus-list { border:0; padding:0; }
+  #shikiru-focus-steel .shk-board { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #shikiru-focus-steel .shk-lane:nth-child(2) { border-right:0; }
+  #shikiru-focus-steel .shk-modal-wrap { position:relative; margin:12px -12px 0; padding:12px; }
+  #shikiru-focus-steel .shk-modal { padding:12px; }
+}
+&lt;/style&gt;
+&lt;script&gt;
+(() =&gt; {
+  const root = document.getElementById(&#x27;shikiru-focus-steel&#x27;);
+  const mount = root.querySelector(&#x27;#shk-concepts&#x27;);
+  const scene = root.querySelector(&#x27;#shk-scene&#x27;);
+  const width = root.querySelector(&#x27;#shk-width&#x27;);
+  const mono = root.querySelector(&#x27;#shk-mono&#x27;);
+  const sample = root.querySelector(&#x27;#shk-sample&#x27;);
+  const concepts = [
+    { id:&#x27;B&#x27;, name:&#x27;Focus&#x27;, subtitle:&#x27;B layout · A palette&#x27;, layout:&#x27;focus&#x27;, palette:[[&#x27;Graphite&#x27;,&#x27;#11151b&#x27;],[&#x27;Steel blue&#x27;,&#x27;#83bddd&#x27;],[&#x27;Sage&#x27;,&#x27;#90cba6&#x27;],[&#x27;Amber&#x27;,&#x27;#dfb16c&#x27;]] }
+  ];
+  const tasks = [
+    { id:&#x27;T-42&#x27;, title:&#x27;Add retry to parser&#x27;, state:&#x27;Decision needed&#x27;, tone:&#x27;wait&#x27;, step:&#x27;Verify&#x27;, role:&#x27;Leader&#x27;, age:&#x27;12m&#x27;, note:&#x27;Which failures should the parser retry?&#x27;, detail:&#x27;The Leader needs a product decision before verification can continue.&#x27;, evidence:&#x27;Leader verdict · turn 3 · decision_required. Engine git facts: 3 committed files; worktree clean.&#x27;, lane:&#x27;Review&#x27; },
+    { id:&#x27;T-43&#x27;, title:&#x27;Fix login redirect&#x27;, state:&#x27;Verifying&#x27;, tone:&#x27;accent&#x27;, step:&#x27;Verify&#x27;, role:&#x27;Leader&#x27;, age:&#x27;8m&#x27;, note:&#x27;Reviewing redirect edge cases&#x27;, detail:&#x27;Implementation is complete. The Leader is checking the acceptance criteria.&#x27;, evidence:&#x27;Implementer report · turn 2: 18 tests passed (agent-reported). Engine git facts: 2 commits; 4 changed files; worktree clean.&#x27;, lane:&#x27;Review&#x27; },
+    { id:&#x27;T-44&#x27;, title:&#x27;Preserve work on cancel&#x27;, state:&#x27;Implementing&#x27;, tone:&#x27;accent&#x27;, step:&#x27;Implement&#x27;, role:&#x27;Implementer&#x27;, age:&#x27;5m&#x27;, note:&#x27;Updating cancellation handling&#x27;, detail:&#x27;The Implementer is preserving uncommitted work when cancellation is requested.&#x27;, evidence:&#x27;Recorded role signal · ToolStarted: edit cancellation.py. Latest engine event: implement turn started.&#x27;, lane:&#x27;Build&#x27; },
+    { id:&#x27;T-45&#x27;, title:&#x27;Add parser edge cases&#x27;, state:&#x27;Waiting on T-42&#x27;, tone:&#x27;dim&#x27;, step:&#x27;Queued&#x27;, role:&#x27;—&#x27;, age:&#x27;4m&#x27;, note:&#x27;Dependency: T-42 must finish&#x27;, detail:&#x27;Queued. The stored scheduler reason is dependency T-42. It has no active turn.&#x27;, evidence:&#x27;Engine scheduler reason · dependency T-42. Waiting is informational; no operator decision is open for this task.&#x27;, lane:&#x27;Next&#x27; },
+    { id:&#x27;T-46&#x27;, title:&#x27;Refresh operator docs&#x27;, state:&#x27;Queued · ready&#x27;, tone:&#x27;dim&#x27;, step:&#x27;Queued&#x27;, role:&#x27;—&#x27;, age:&#x27;3m&#x27;, note:&#x27;Next eligible task in dispatch order&#x27;, detail:&#x27;Queued. Dispatch order is shown without a promised start time.&#x27;, evidence:&#x27;Engine queue · eligible for the next scheduler dispatch. No agent report exists yet.&#x27;, lane:&#x27;Next&#x27; },
+    { id:&#x27;T-47&#x27;, title:&#x27;Improve report output&#x27;, state:&#x27;Paused&#x27;, tone:&#x27;wait&#x27;, step:&#x27;Implement&#x27;, role:&#x27;Implementer&#x27;, age:&#x27;16m&#x27;, note:&#x27;Operator pause · still occupies a slot&#x27;, detail:&#x27;Paused at Implement. This task keeps its slot and will not start another turn until resumed.&#x27;, evidence:&#x27;Engine event · pause applied. No recent signal is treated as inactivity rather than a new escalation.&#x27;, lane:&#x27;Build&#x27; },
+    { id:&#x27;T-41&#x27;, title:&#x27;Recover queued messages&#x27;, state:&#x27;Done&#x27;, tone:&#x27;good&#x27;, step:&#x27;Merged&#x27;, role:&#x27;—&#x27;, age:&#x27;6m ago&#x27;, note:&#x27;Merged into main&#x27;, detail:&#x27;Completed and merged. Retained reports remain accessible after the task window closes.&#x27;, evidence:&#x27;Leader verdict: accepted. Engine event: task_done; integration recorded on main.&#x27;, lane:&#x27;Done&#x27; },
+    { id:&#x27;T-40&#x27;, title:&#x27;Clarify quota waits&#x27;, state:&#x27;Done&#x27;, tone:&#x27;good&#x27;, step:&#x27;Merged&#x27;, role:&#x27;—&#x27;, age:&#x27;19m ago&#x27;, note:&#x27;Merged into main&#x27;, detail:&#x27;Completed and merged. Task evidence is retained independently of its tmux window.&#x27;, evidence:&#x27;Leader verdict: accepted. Engine event: task_done; integration recorded on main.&#x27;, lane:&#x27;Done&#x27; }
+  ];
+  const selections = Object.fromEntries(concepts.map(c =&gt; [c.id,&#x27;T-43&#x27;]));
+  const overlays = {};
+  let signal = 0;
+  let chosen = &#x27;&#x27;;
+  const signals = [&#x27;Reviewing redirect edge cases&#x27;,&#x27;Running redirect tests&#x27;,&#x27;Implementation report inspected&#x27;,&#x27;Verdict: changes requested · missing URL edge case&#x27;];
+  const esc = value =&gt; String(value).replace(/[&amp;&lt;&gt;&quot;&#x27;]/g, character =&gt; ({&#x27;&amp;&#x27;:&#x27;&amp;amp;&#x27;,&#x27;&lt;&#x27;:&#x27;&amp;lt;&#x27;,&#x27;&gt;&#x27;:&#x27;&amp;gt;&#x27;,&#x27;&quot;&#x27;:&#x27;&amp;quot;&#x27;,&quot;&#x27;&quot;:&#x27;&amp;#39;&#x27;}[character]));
+  const effective = task =&gt; {
+    if (task.id === &#x27;T-42&#x27; &amp;&amp; scene.value === &#x27;quiet&#x27;) return {...task,state:&#x27;Verifying&#x27;,tone:&#x27;accent&#x27;,note:&#x27;Decision answered · verification resumed&#x27;,detail:&#x27;The Operator answered the earlier question. Verification has resumed.&#x27;};
+    if (task.id === &#x27;T-43&#x27; &amp;&amp; scene.value === &#x27;owned&#x27;) return {...task,state:&#x27;Operator owns Leader&#x27;,tone:&#x27;wait&#x27;,note:&#x27;Automation held · Leader taken over&#x27;,detail:&#x27;You own the Leader session. Automation is held for this task. Hand back the Leader to continue.&#x27;,evidence:&#x27;Engine event · take_over applied for Leader. Intervention hold is active; no headless turn is running beside the interactive session.&#x27;};
+    if (task.id === &#x27;T-43&#x27; &amp;&amp; signal === signals.length - 1 &amp;&amp; scene.value !== &#x27;owned&#x27;) return {...task,state:&#x27;Reworking&#x27;,step:&#x27;Implement&#x27;,role:&#x27;Implementer&#x27;,note:&#x27;Leader requested a URL edge case&#x27;,detail:&#x27;The Leader requested changes. The next Implementer turn adds the missing redirect case.&#x27;,evidence:&#x27;Leader verdict · changes_requested: add a test for the missing URL edge case. This is ordinary rework.&#x27;,lane:&#x27;Build&#x27;};
+    if (task.id === &#x27;T-43&#x27;) return {...task,note:signals[signal]};
+    return task;
+  };
+  const getTask = id =&gt; effective(tasks.find(task =&gt; task.id === id));
+  const marker = task =&gt; task.state === &#x27;Done&#x27; ? &#x27;✓&#x27; : task.id === &#x27;T-42&#x27; &amp;&amp; scene.value !== &#x27;quiet&#x27; ? &#x27;!&#x27; : task.state.includes(&#x27;Paused&#x27;) ? &#x27;=&#x27; : task.state.includes(&#x27;Operator&#x27;) ? &#x27;@&#x27; : task.step === &#x27;Queued&#x27; ? &#x27;·&#x27; : scene.value === &#x27;stopped&#x27; ? &#x27;○&#x27; : [&#x27;⠋&#x27;,&#x27;⠙&#x27;,&#x27;⠹&#x27;,&#x27;⠸&#x27;][signal];
+  const stateText = task =&gt; scene.value === &#x27;stopped&#x27; &amp;&amp; [&#x27;T-43&#x27;,&#x27;T-44&#x27;].includes(task.id) ? &#x27;Stopped · resume on engine start&#x27; : task.state;
+  const stateClass = task =&gt; scene.value === &#x27;stopped&#x27; &amp;&amp; [&#x27;T-43&#x27;,&#x27;T-44&#x27;].includes(task.id) ? &#x27;wait&#x27; : task.tone;
+  const buttonRow = (task, id) =&gt; `&lt;button type=&quot;button&quot; class=&quot;shk-task-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-row-title&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${marker(task)}&lt;/span&gt; ${task.id} ${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-row-state shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`;
+  const stages = task =&gt; {
+    if (task.step === &#x27;Queued&#x27;) return &#x27;&lt;div class=&quot;shk-stages shk-dim&quot;&gt;Triage · Implement · Verify · Merge&lt;/div&gt;&#x27;;
+    return `&lt;div class=&quot;shk-stages&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;✓ Triage&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Implement&#x27; ? &#x27;shk-accent&#x27; : &#x27;shk-good&#x27;}&quot;&gt;${task.step === &#x27;Implement&#x27; ? &#x27;›&#x27; : &#x27;✓&#x27;} Implement&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Verify&#x27; ? &#x27;shk-accent&#x27; : &#x27;shk-dim&#x27;}&quot;&gt;${task.step === &#x27;Verify&#x27; ? &#x27;›&#x27; : task.step === &#x27;Merged&#x27; ? &#x27;✓&#x27; : &#x27;·&#x27;} Verify&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Merged&#x27; ? &#x27;shk-good&#x27; : &#x27;shk-dim&#x27;}&quot;&gt;${task.step === &#x27;Merged&#x27; ? &#x27;✓&#x27; : &#x27;·&#x27;} Merge&lt;/span&gt;&lt;/div&gt;`;
+  };
+  const attention = () =&gt; scene.value === &#x27;quiet&#x27; ? &#x27;&lt;div class=&quot;shk-attention&quot;&gt;&lt;span class=&quot;shk-quiet&quot;&gt;✓ No decisions needed&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Automation continues&lt;/span&gt;&lt;/div&gt;&#x27; : &#x27;&lt;div class=&quot;shk-attention&quot;&gt;&lt;button type=&quot;button&quot; data-task=&quot;T-42&quot; data-open=&quot;resolve&quot;&gt;! 1 decision · T-42 · Which failures should be retried?&lt;/button&gt;&lt;span class=&quot;shk-space&quot;&gt;Enter answer ↵&lt;/span&gt;&lt;/div&gt;&#x27;;
+  const top = () =&gt; `&lt;div class=&quot;shk-top&quot;&gt;&lt;span class=&quot;shk-brand&quot;&gt;SHIKIRU&lt;/span&gt;&lt;span&gt;shikiru &lt;span class=&quot;shk-dim&quot;&gt;/ main&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;shk-space shk-${scene.value === &#x27;stopped&#x27; ? &#x27;wait&#x27; : &#x27;good&#x27;}&quot;&gt;${scene.value === &#x27;stopped&#x27; ? &#x27;○ Engine stopped&#x27; : &#x27;● Engine running&#x27;}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;${scene.value===&#x27;stopped&#x27;?&#x27;Last run 1h 23m&#x27;:&#x27;Uptime 1h 23m&#x27;}&lt;/span&gt;&lt;/div&gt;`;
+  const metadata = () =&gt; `&lt;div class=&quot;shk-summary&quot;&gt;&lt;span&gt;Slots &lt;span class=&quot;shk-accent&quot;&gt;${scene.value === &#x27;quiet&#x27; ? &#x27;4/4&#x27; : &#x27;3/4&#x27;}&lt;/span&gt;&lt;/span&gt;&lt;span&gt;${scene.value === &#x27;stopped&#x27; ? &#x27;Running turns 0&#x27; : scene.value === &#x27;owned&#x27; ? &#x27;Running 1&#x27; : scene.value === &#x27;quiet&#x27; ? &#x27;Running 3&#x27; : &#x27;Running 2&#x27;}&lt;/span&gt;&lt;span&gt;Waiting ${scene.value === &#x27;quiet&#x27; ? &#x27;3&#x27; : scene.value === &#x27;owned&#x27; ? &#x27;5&#x27; : &#x27;4&#x27;}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Local merge · clean checkout&lt;/span&gt;&lt;/div&gt;`;
+  const sampleUsage = {
+    &#x27;T-42&#x27;:{tokens:&#x27;41k&#x27;,cost:&#x27;API $0.72&#x27;,sessions:[{role:&#x27;Leader&#x27;,agent:&#x27;Claude&#x27;,model:&#x27;Opus&#x27;,tokens:&#x27;15k&#x27;,billing:&#x27;Subscription&#x27;},{role:&#x27;Implementer&#x27;,agent:&#x27;Codex&#x27;,model:&#x27;gpt-6-luna&#x27;,tokens:&#x27;26k&#x27;,billing:&#x27;API $0.72&#x27;}]},
+    &#x27;T-43&#x27;:{tokens:&#x27;32k&#x27;,cost:&#x27;API $0.46&#x27;,sessions:[{role:&#x27;Leader&#x27;,agent:&#x27;Claude&#x27;,model:&#x27;Opus&#x27;,tokens:&#x27;11k&#x27;,billing:&#x27;Subscription&#x27;},{role:&#x27;Implementer&#x27;,agent:&#x27;Codex&#x27;,model:&#x27;gpt-6-luna&#x27;,tokens:&#x27;21k&#x27;,billing:&#x27;API $0.46&#x27;}]},
+    &#x27;T-44&#x27;:{tokens:&#x27;14k&#x27;,cost:&#x27;API cost unreported&#x27;,sessions:[{role:&#x27;Leader&#x27;,agent:&#x27;Codex&#x27;,model:&#x27;gpt-6-luna&#x27;,tokens:&#x27;4k&#x27;,billing:&#x27;API · cost unreported&#x27;},{role:&#x27;Implementer&#x27;,agent:&#x27;Codex&#x27;,model:&#x27;gpt-6-luna&#x27;,tokens:&#x27;10k&#x27;,billing:&#x27;API · cost unreported&#x27;}]},
+    &#x27;T-45&#x27;:{tokens:&#x27;—&#x27;,cost:&#x27;—&#x27;,coverage:&#x27;No sessions yet&#x27;,sessions:[]},
+    &#x27;T-46&#x27;:{tokens:&#x27;—&#x27;,cost:&#x27;—&#x27;,coverage:&#x27;No sessions yet&#x27;,sessions:[]},
+    &#x27;T-47&#x27;:{tokens:&#x27;26k&#x27;,cost:&#x27;Subscription&#x27;,sessions:[{role:&#x27;Leader&#x27;,agent:&#x27;Claude&#x27;,model:&#x27;Opus&#x27;,tokens:&#x27;9k&#x27;,billing:&#x27;Subscription&#x27;},{role:&#x27;Implementer&#x27;,agent:&#x27;Claude&#x27;,model:&#x27;Sonnet&#x27;,tokens:&#x27;17k&#x27;,billing:&#x27;Subscription&#x27;}]},
+    &#x27;T-41&#x27;:{tokens:&#x27;57k&#x27;,cost:&#x27;API $1.28&#x27;,sessions:[{role:&#x27;Leader&#x27;,agent:&#x27;Claude&#x27;,model:&#x27;Opus&#x27;,tokens:&#x27;17k&#x27;,billing:&#x27;Subscription&#x27;},{role:&#x27;Implementer&#x27;,agent:&#x27;Claude&#x27;,model:&#x27;Sonnet&#x27;,tokens:&#x27;10k&#x27;,billing:&#x27;Subscription&#x27;},{role:&#x27;Implementer&#x27;,agent:&#x27;Codex&#x27;,model:&#x27;gpt-6-luna&#x27;,tokens:&#x27;30k&#x27;,billing:&#x27;API $1.28&#x27;}]},
+    &#x27;T-40&#x27;:{tokens:&#x27;18k&#x27;,cost:&#x27;API $0.38&#x27;,sessions:[{role:&#x27;Leader&#x27;,agent:&#x27;Claude&#x27;,model:&#x27;Opus&#x27;,tokens:&#x27;6k&#x27;,billing:&#x27;API $0.10&#x27;},{role:&#x27;Implementer&#x27;,agent:&#x27;Claude&#x27;,model:&#x27;Sonnet&#x27;,tokens:&#x27;12k&#x27;,billing:&#x27;API $0.28&#x27;}]}
+  };
+  const agentState = (session, task) =&gt; {
+    if(task.step===&#x27;Merged&#x27;)return &#x27;Used&#x27;;
+    if(session.role!==task.role)return &#x27;Used&#x27;;
+    if(scene.value===&#x27;stopped&#x27;)return &#x27;Stopped&#x27;;
+    if(task.state.includes(&#x27;Paused&#x27;))return &#x27;Paused&#x27;;
+    if(task.state.includes(&#x27;Operator&#x27;))return &#x27;Operator owns&#x27;;
+    if(task.state.includes(&#x27;Decision&#x27;))return &#x27;Waiting for answer&#x27;;
+    return &#x27;Current&#x27;;
+  };
+  const taskUsage = task =&gt; {
+    const usage=sampleUsage[task.id];
+    return `&lt;div class=&quot;shk-task-usage&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;&lt;span&gt;${usage.tokens===&#x27;—&#x27;?&#x27;No sessions yet&#x27;:`${usage.tokens} tokens · ${usage.cost}`}&lt;/span&gt;&lt;button type=&quot;button&quot; class=&quot;shk-space shk-inline-action&quot; data-open=&quot;usage&quot;&gt;u Details&lt;/button&gt;&lt;/div&gt;${usage.sessions.length?usage.sessions.map(session=&gt;`&lt;div class=&quot;shk-agent&quot;&gt;&lt;span&gt;&lt;span class=&quot;shk-dim&quot; style=&quot;display:inline&quot;&gt;${session.role} · ${agentState(session,task)}&lt;/span&gt;&lt;/span&gt;&lt;span&gt;&lt;span class=&quot;shk-accent&quot; style=&quot;display:inline&quot;&gt;${session.agent}/${session.model}&lt;/span&gt; · ${session.tokens} tokens · &lt;span class=&quot;shk-good&quot; style=&quot;display:inline&quot;&gt;${session.billing}&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;):&#x27;&lt;div class=&quot;shk-dim&quot;&gt;Not started&lt;/div&gt;&#x27;}&lt;/div&gt;`;
+  };
+  const projectUsage = () =&gt; `&lt;div class=&quot;shk-usage-strip&quot;&gt;&lt;button type=&quot;button&quot; data-open=&quot;projectusage&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;412k tokens&lt;/span&gt; · 12/14 sessions&lt;/button&gt;&lt;button type=&quot;button&quot; data-open=&quot;projectusage&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;API $4.82&lt;/span&gt; · 2 costs unreported&lt;/button&gt;&lt;button type=&quot;button&quot; data-open=&quot;projectusage&quot; class=&quot;shk-inline-action&quot;&gt;2 subscriptions ↵&lt;/button&gt;&lt;/div&gt;`;
+  const resourceMetrics = () =&gt; {
+    const stopped=scene.value===&#x27;stopped&#x27;;
+    const own=scene.value===&#x27;owned&#x27;;
+    return `&lt;button type=&quot;button&quot; class=&quot;shk-resources&quot; data-open=&quot;diagnostics&quot; aria-label=&quot;Inspect host and Shikiru resource usage&quot;&gt;&lt;span class=&quot;shk-resource&quot;&gt;&lt;span&gt;&lt;span class=&quot;shk-dim&quot; style=&quot;display:inline&quot;&gt;Host&lt;/span&gt; · CPU &lt;span class=&quot;shk-accent&quot; style=&quot;display:inline&quot;&gt;22%&lt;/span&gt; · RAM 5.1/16 GiB&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;shk-resource&quot;&gt;&lt;span&gt;&lt;span class=&quot;shk-dim&quot; style=&quot;display:inline&quot;&gt;Shikiru + agents&lt;/span&gt; · CPU &lt;span class=&quot;shk-accent&quot; style=&quot;display:inline&quot;&gt;${stopped?&#x27;0.2%&#x27;:own?&#x27;9%&#x27;:&#x27;12%&#x27;}&lt;/span&gt; · RAM ${stopped?&#x27;0.2&#x27;:own?&#x27;1.1&#x27;:&#x27;1.4&#x27;} GiB&lt;/span&gt;&lt;/span&gt;&lt;/button&gt;`;
+  };
+  const focusedDetail = task =&gt; `&lt;div class=&quot;shk-heading&quot;&gt;${task.id} · ${esc(task.title)}&lt;/div&gt;&lt;div class=&quot;shk-${stateClass(task)}&quot;&gt;${marker(task)} ${esc(stateText(task))}&lt;/div&gt;${stages(task)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${esc(task.role)} · ${esc(task.step)} · ${esc(task.age)}&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;${esc(task.detail)}&lt;/div&gt;&lt;div class=&quot;shk-signal&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;›&lt;/span&gt;&lt;span&gt;${esc(task.note)}&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id === &#x27;T-43&#x27; ? &#x27;Last recorded signal · just now&#x27; : &#x27;Evidence available in detail&#x27;}&lt;/div&gt;${taskUsage(task)}`;
+  const deck = id =&gt; {
+    const active = (scene.value===&#x27;quiet&#x27;?[&#x27;T-42&#x27;,&#x27;T-43&#x27;,&#x27;T-44&#x27;]:[&#x27;T-43&#x27;,&#x27;T-44&#x27;]).map(getTask);
+    return `&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;IN FLIGHT &lt;span class=&quot;shk-space shk-dim&quot;&gt;Role / elapsed&lt;/span&gt;&lt;/div&gt;${active.map(task=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-deck-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${marker(task)} ${task.id}&lt;/span&gt;&lt;span&gt;${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;${esc(task.age)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))} · ${esc(task.role)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-heading&quot;&gt;${selections[id]} · ${esc(getTask(selections[id]).title)}&lt;/div&gt;${stages(getTask(selections[id]))}&lt;div class=&quot;shk-subline&quot;&gt;› ${esc(getTask(selections[id]).note)}&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-deck-bottom&quot;&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;WAITING&lt;/div&gt;${[&#x27;T-45&#x27;,&#x27;T-46&#x27;,&#x27;T-47&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;RECENTLY FINISHED&lt;/div&gt;${[&#x27;T-41&#x27;,&#x27;T-40&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Reports retained after merge&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;`;
+  };
+  const focus = id =&gt; `&lt;div class=&quot;shk-focus-grid&quot;&gt;&lt;div class=&quot;shk-focus-list&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;TASKS &lt;span class=&quot;shk-space shk-dim&quot;&gt;${scene.value === &#x27;quiet&#x27; ? &#x27;Active 6&#x27; : &#x27;Decision first&#x27;}&lt;/span&gt;&lt;/div&gt;${tasks.slice(0,6).map(task=&gt;buttonRow(effective(task),id)).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Recent&lt;/div&gt;${buttonRow(getTask(&#x27;T-41&#x27;),id)}&lt;/div&gt;&lt;div class=&quot;shk-focus-detail&quot;&gt;${focusedDetail(getTask(selections[id]))}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;button class=&quot;shk-inline-action&quot; type=&quot;button&quot; data-open=&quot;evidence&quot;&gt;e Evidence&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;`;
+  const stream = id =&gt; {
+    const events = [
+      [&#x27;now&#x27;,&#x27;T-43&#x27;,getTask(&#x27;T-43&#x27;).note,`${getTask(&#x27;T-43&#x27;).role} · ${getTask(&#x27;T-43&#x27;).step}`,&#x27;accent&#x27;],
+      [&#x27;1m&#x27;,&#x27;T-44&#x27;,&#x27;Preserving changes before cancellation&#x27;,&#x27;Implementer · Implement&#x27;,&#x27;accent&#x27;],
+      [&#x27;3m&#x27;,&#x27;T-42&#x27;,scene.value === &#x27;quiet&#x27; ? &#x27;Retry question answered; verification resumed&#x27; : &#x27;A product decision is needed&#x27;,&#x27;Leader · Verify&#x27;,scene.value === &#x27;quiet&#x27; ? &#x27;good&#x27; : &#x27;wait&#x27;],
+      [&#x27;4m&#x27;,&#x27;T-45&#x27;,&#x27;Waiting on parser task T-42&#x27;,&#x27;Engine · Dependency&#x27;,&#x27;dim&#x27;],
+      [&#x27;6m&#x27;,&#x27;T-41&#x27;,&#x27;Queued messages recovered; merged into main&#x27;,&#x27;Engine · Done&#x27;,&#x27;good&#x27;],
+      [&#x27;16m&#x27;,&#x27;T-47&#x27;,&#x27;Paused by Operator; no new turn will start&#x27;,&#x27;Engine · Hold&#x27;,&#x27;wait&#x27;]
+    ];
+    return `&lt;div class=&quot;shk-heading&quot;&gt;PROJECT ACTIVITY &lt;span class=&quot;shk-space shk-dim&quot;&gt;Workflow events&lt;/span&gt;&lt;/div&gt;${events.map(([age,taskId,text,source,tone])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-event&quot; data-task=&quot;${taskId}&quot; aria-pressed=&quot;${selections[id] === taskId}&quot;&gt;&lt;span class=&quot;shk-dim&quot;&gt;${age}&lt;/span&gt;&lt;span class=&quot;shk-${tone}&quot;&gt;${taskId}&lt;/span&gt;&lt;span class=&quot;shk-event-copy&quot;&gt;${esc(text)}&lt;small&gt;${esc(source)}&lt;/small&gt;&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;shk-stream-now&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;SELECTED&lt;/span&gt; ${selections[id]} · ${esc(getTask(selections[id]).title)}&lt;div class=&quot;shk-dim&quot;&gt;${esc(stateText(getTask(selections[id])))}&lt;/div&gt;&lt;/div&gt;`;
+  };
+  const board = id =&gt; `&lt;div class=&quot;shk-board&quot;&gt;${[&#x27;Next&#x27;,&#x27;Build&#x27;,&#x27;Review&#x27;,&#x27;Done&#x27;].map(lane=&gt;{const list=tasks.map(effective).filter(task=&gt;task.lane===lane);return `&lt;div class=&quot;shk-lane&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;${lane.toUpperCase()} &lt;span class=&quot;shk-dim&quot;&gt;${list.length}&lt;/span&gt;&lt;/div&gt;${list.map(task=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-board-task&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id]===task.id}&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${marker(task)} ${task.id}&lt;/span&gt;&lt;span&gt;${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;}).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-board-caption&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;› ${selections[id]}&lt;/span&gt; ${esc(getTask(selections[id]).note)}&lt;span class=&quot;shk-dim&quot;&gt; · ${esc(getTask(selections[id]).role)}&lt;/span&gt;&lt;/div&gt;`;
+  const menu = task =&gt; {
+    const items = [[&#x27;Inspect task&#x27;,&#x27;inspect&#x27;,&#x27;Read situation and stage&#x27;],[&#x27;Evidence &amp; reports&#x27;,&#x27;evidence&#x27;,&#x27;Reports, verdicts and engine facts&#x27;]];
+    if (task.id === &#x27;T-42&#x27; &amp;&amp; scene.value !== &#x27;quiet&#x27;) items.unshift([&#x27;Answer decision&#x27;,&#x27;resolve&#x27;,&#x27;Answer the Leader; consult next&#x27;]);
+    if (![&#x27;Queued&#x27;,&#x27;Merged&#x27;].includes(task.step)) items.push([&#x27;Message a role&#x27;,&#x27;message&#x27;,&#x27;Delivered on the next role turn&#x27;]);
+    if (task.id === &#x27;T-43&#x27; &amp;&amp; scene.value === &#x27;owned&#x27;) items.push([&#x27;Hand back Leader&#x27;,&#x27;handback&#x27;,&#x27;Release this role; remaining holds apply&#x27;]);
+    else if (![&#x27;Queued&#x27;,&#x27;Merged&#x27;].includes(task.step)) items.push([&#x27;Take over a role&#x27;,&#x27;takeover&#x27;,&#x27;Stop the turn; hold this task&#x27;]);
+    items.push([&#x27;Usage&#x27;,&#x27;usage&#x27;,&#x27;Recorded session values&#x27;],[&#x27;Commands&#x27;,&#x27;commands&#x27;,&#x27;Durable outcomes&#x27;],[&#x27;Project diagnostics&#x27;,&#x27;diagnostics&#x27;,&#x27;Secondary observations&#x27;]);
+    return `&lt;div&gt;${items.map(([label,action,meaning])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-menu-item&quot; data-open=&quot;${action}&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;› ${label}&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;${meaning}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
+  };
+  const modal = (id, task) =&gt; {
+    const kind=overlays[id];
+    if (!kind) return &#x27;&#x27;;
+    const headings={menu:&#x27;ACTIONS&#x27;,inspect:&#x27;TASK&#x27;,evidence:&#x27;EVIDENCE&#x27;,resolve:&#x27;ANSWER DECISION · E-7&#x27;,message:&#x27;MESSAGE&#x27;,takeover:&#x27;TAKE OVER&#x27;,handback:&#x27;HAND BACK&#x27;,usage:&#x27;TASK USAGE&#x27;,projectusage:&#x27;PROJECT TOTALS&#x27;,commands:&#x27;COMMAND HISTORY&#x27;,diagnostics:&#x27;PROJECT DIAGNOSTICS&#x27;,submitted:&#x27;PREVIEW RESULT&#x27;,help:&#x27;KEYS&#x27;};
+    let content=&#x27;&#x27;;
+    if (kind===&#x27;menu&#x27;) content=menu(task);
+    if (kind===&#x27;inspect&#x27;) content=focusedDetail(task)+`&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-open=&quot;menu&quot; class=&quot;shk-inline-action&quot;&gt;Ctrl+P actions&lt;/button&gt;&lt;button type=&quot;button&quot; data-open=&quot;evidence&quot;&gt;e evidence&lt;/button&gt;&lt;/div&gt;`;
+    if (kind===&#x27;evidence&#x27;) content=`&lt;div class=&quot;shk-insight&quot;&gt;${esc(task.evidence)}&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Recorded sources · sample data&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-open=&quot;inspect&quot;&gt;← Situation&lt;/button&gt;&lt;/div&gt;`;
+    if (kind===&#x27;resolve&#x27;) content=&#x27;&lt;div class=&quot;shk-wait&quot;&gt;Which failures should the parser retry?&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;Leader suggests: retry transient I/O errors. Syntax errors should fail immediately.&lt;/div&gt;&lt;label for=&quot;shk-answer-&#x27;+id+&#x27;&quot;&gt;Answer · guidance for the Leader&lt;/label&gt;&lt;textarea id=&quot;shk-answer-&#x27;+id+&#x27;&quot; rows=&quot;2&quot; placeholder=&quot;Retry transient I/O errors only.&quot;&gt;&lt;/textarea&gt;&lt;div class=&quot;shk-dim&quot;&gt;Answer → consult → continue implementation&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;answer&quot; class=&quot;shk-inline-action&quot;&gt;Enter submit answer&lt;/button&gt;&lt;button type=&quot;button&quot; data-open=&quot;evidence&quot;&gt;e evidence&lt;/button&gt;&lt;/div&gt;&#x27;;
+    if (kind===&#x27;message&#x27;) content=`&lt;label for=&quot;shk-role-${id}&quot;&gt;Role&lt;/label&gt;&lt;select id=&quot;shk-role-${id}&quot;&gt;&lt;option&gt;Leader&lt;/option&gt;&lt;option&gt;Implementer&lt;/option&gt;&lt;/select&gt;&lt;label for=&quot;shk-message-${id}&quot;&gt;Guidance&lt;/label&gt;&lt;textarea id=&quot;shk-message-${id}&quot; rows=&quot;2&quot; placeholder=&quot;Add the missing redirect edge case.&quot;&gt;&lt;/textarea&gt;&lt;div class=&quot;shk-dim&quot;&gt;Queued for this role&#x27;s next turn&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;message&quot; class=&quot;shk-inline-action&quot;&gt;Enter queue message&lt;/button&gt;&lt;/div&gt;`;
+    if (kind===&#x27;takeover&#x27;) content=`&lt;label for=&quot;shk-take-role-${id}&quot;&gt;Role&lt;/label&gt;&lt;select id=&quot;shk-take-role-${id}&quot;&gt;&lt;option&gt;${esc(task.role)}&lt;/option&gt;&lt;option&gt;${task.role===&#x27;Leader&#x27;?&#x27;Implementer&#x27;:&#x27;Leader&#x27;}&lt;/option&gt;&lt;/select&gt;&lt;div class=&quot;shk-insight&quot;&gt;Stop this task&#x27;s current turn and open the role session interactively. This task stays held until you hand back every role.&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;takeover&quot; class=&quot;shk-inline-action&quot;&gt;Enter take over&lt;/button&gt;&lt;/div&gt;`;
+    if (kind===&#x27;handback&#x27;) content=&#x27;&lt;div class=&quot;shk-insight&quot;&gt;Hand the Leader session back to automation. Another role ownership or pause would still hold this task.&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;handback&quot; class=&quot;shk-inline-action&quot;&gt;Enter hand back&lt;/button&gt;&lt;/div&gt;&#x27;;
+    if (kind===&#x27;usage&#x27;) content=taskUsage(task)+`&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id===&#x27;T-43&#x27;?&#x27;Claude: 9k input / 2k output · subscription&lt;br&gt;Codex: 18k input / 3k output · $0.46 reported API charge&#x27;:&#x27;Recorded usage grouped by role, agent and model&#x27;}&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Subscription fees belong to the account. No per-task subscription charge is reported.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Billing mode: explicitly configured · sample accounts&lt;/div&gt;`;
+    if (kind===&#x27;projectusage&#x27;) content=&#x27;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Recorded tokens&lt;/span&gt;&lt;span class=&quot;shk-space shk-accent&quot;&gt;412k&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;12 of 14 sessions reported usage; 2 not reported&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Reported API charges&lt;/span&gt;&lt;span class=&quot;shk-space shk-good&quot;&gt;$4.82&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;5 API sessions reported charges; 2 not reported&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-heading&quot;&gt;SUBSCRIPTIONS · 2 ACCOUNTS&lt;/div&gt;&lt;div class=&quot;shk-agent&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;Claude · subscription&lt;/span&gt;&lt;span&gt;5h window 38% used · resets in 1h 40m&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-agent&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;Codex · subscription&lt;/span&gt;&lt;span&gt;5h window 62% used · resets in 2h 15m&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Quota observed 2m ago · account usage across projects&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Subscription fees&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Not recorded · account level&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Billing modes explicitly configured · sample accounts&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Project retained runs · includes previous engine runs&lt;/div&gt;&#x27;;
+    if (kind===&#x27;commands&#x27;) content=&#x27;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;✓ Applied&lt;/span&gt;&lt;span&gt;Pause · T-47&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;✓ Applied&lt;/span&gt;&lt;span&gt;Message · T-43 Leader&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Message applied = queued for the next role turn&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span class=&quot;shk-bad&quot;&gt;× Rejected&lt;/span&gt;&lt;span&gt;Answer · E-6 already resolved&lt;/span&gt;&lt;/div&gt;&#x27;;
+    if (kind===&#x27;diagnostics&#x27;) content=resourceMetrics()+&#x27;&lt;div class=&quot;shk-observation&quot;&gt;Sample 4s ago · CPU % of host capacity · instance RAM is summed process RSS&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Engine lock&lt;/span&gt;&lt;span class=&quot;shk-space&quot;&gt;&#x27;+(scene.value===&#x27;stopped&#x27;?&#x27;Not held&#x27;:&#x27;Held&#x27;)+&#x27;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Open engine faults&lt;/span&gt;&lt;span class=&quot;shk-space&quot;&gt;0 recorded&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Docker plugin&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Unavailable&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Instance = engine, project views and owned process trees. Agents are included in this total.&lt;/div&gt;&#x27;;
+    if (kind===&#x27;submitted&#x27;) content=&#x27;&lt;div class=&quot;shk-feedback&quot;&gt;✓ Local preview complete&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;A real command result appears here as Pending, Applied or Rejected.&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Esc return&lt;/button&gt;&lt;/div&gt;&#x27;;
+    if (kind===&#x27;help&#x27;) content=&#x27;&lt;div&gt;↑ ↓ Select task&lt;/div&gt;&lt;div&gt;Enter Inspect selected task&lt;/div&gt;&lt;div&gt;Ctrl+P Contextual actions&lt;/div&gt;&lt;div&gt;e Evidence&lt;/div&gt;&lt;div&gt;Esc Back&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;! Decision · = Paused · @ Operator owns role&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;✓ Done · ○ Stopped · · Queued&lt;/div&gt;&#x27;;
+    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]} · ${[&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;].includes(kind)?&#x27;shikiru&#x27;:task.id}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Close panel&quot;&gt;Esc ×&lt;/button&gt;&lt;/div&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;`;
+  };
+  const render = () =&gt; {
+    mount.innerHTML=concepts.map(concept=&gt;`&lt;section class=&quot;shk-concept&quot; data-concept=&quot;${concept.id}&quot;&gt;&lt;div class=&quot;shk-titlebar&quot;&gt;&lt;h3&gt;${concept.id} · ${concept.name}&lt;/h3&gt;&lt;span class=&quot;text-small text-muted&quot;&gt;${concept.subtitle}&lt;/span&gt;&lt;span class=&quot;text-small text-muted&quot;&gt;Selected direction&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-colors text-small text-muted&quot;&gt;${concept.palette.map(([name,color])=&gt;`&lt;span class=&quot;shk-color&quot;&gt;&lt;span class=&quot;shk-chip&quot; style=&quot;--swatch:${color}&quot; aria-hidden=&quot;true&quot;&gt;&lt;/span&gt;${name}&lt;/span&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-terminal ${width.value===&#x27;compact&#x27;?&#x27;shk-compact&#x27;:&#x27;&#x27;} ${mono.checked?&#x27;shk-mono&#x27;:&#x27;&#x27;}&quot; data-layout=&quot;${concept.layout}&quot;&gt;${top()}${metadata()}${projectUsage()}${resourceMetrics()}${attention()}${({deck,focus,stream,board}[concept.layout])(concept.id)}&lt;div class=&quot;shk-footer&quot;&gt;&lt;span&gt;&lt;span class=&quot;shk-key&quot;&gt;↑↓&lt;/span&gt; select&lt;/span&gt;&lt;button type=&quot;button&quot; data-open=&quot;inspect&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;Enter&lt;/span&gt; inspect&lt;/button&gt;&lt;button type=&quot;button&quot; data-open=&quot;menu&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;Ctrl+P&lt;/span&gt; actions&lt;/button&gt;&lt;button type=&quot;button&quot; data-open=&quot;help&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;?&lt;/span&gt; help&lt;/button&gt;&lt;/div&gt;${modal(concept.id,getTask(selections[concept.id]))}&lt;/div&gt;&lt;/section&gt;`).join(&#x27;&#x27;);
+  };
+  root.addEventListener(&#x27;click&#x27;, event =&gt; {
+    const button=event.target.closest(&#x27;button&#x27;);
+    if (!button || !root.contains(button)) return;
+    if (button.dataset.choose) {
+      chosen=button.dataset.choose;
+      sample.textContent=`Preferred: ${chosen} · ${concepts.find(concept=&gt;concept.id===chosen).name} · sample workload`;
+      render();
+      root.querySelector(`[data-choose=&quot;${chosen}&quot;]`).focus();
+      return;
+    }
+    const concept=button.closest(&#x27;[data-concept]&#x27;);
+    if (!concept) return;
+    const id=concept.dataset.concept;
+    if (button.dataset.task) selections[id]=button.dataset.task;
+    if (button.dataset.open) overlays[id]=button.dataset.open;
+    if (button.dataset.close) delete overlays[id];
+    if (button.dataset.submit) {
+      const field=concept.querySelector(&#x27;textarea&#x27;);
+      if (field &amp;&amp; !field.value.trim()) {
+        concept.querySelector(&#x27;.shk-validation&#x27;).textContent=&#x27;Enter guidance before submitting.&#x27;;
+        field.focus();
+        return;
+      }
+      overlays[id]=&#x27;submitted&#x27;;
+    }
+    render();
+    const updated=root.querySelector(`[data-concept=&quot;${id}&quot;]`);
+    const focusTarget=overlays[id]?updated.querySelector(&#x27;.shk-modal textarea, .shk-modal select, .shk-menu-item, .shk-modal button&#x27;):updated.querySelector(`[data-task=&quot;${selections[id]}&quot;]`);
+    if (focusTarget) focusTarget.focus();
+  });
+  root.addEventListener(&#x27;keydown&#x27;, event =&gt; {
+    const concept=event.target.closest(&#x27;[data-concept]&#x27;);
+    if (!concept) return;
+    const id=concept.dataset.concept;
+    const editing=[&#x27;INPUT&#x27;,&#x27;TEXTAREA&#x27;,&#x27;SELECT&#x27;].includes(event.target.tagName);
+    let handled=true;
+    if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]) delete overlays[id];
+    else if (editing) return;
+    else if (event.ctrlKey &amp;&amp; event.key.toLowerCase()===&#x27;p&#x27;) overlays[id]=&#x27;menu&#x27;;
+    else if (event.key.toLowerCase()===&#x27;e&#x27;) overlays[id]=&#x27;evidence&#x27;;
+    else if (event.key.toLowerCase()===&#x27;u&#x27;) overlays[id]=&#x27;usage&#x27;;
+    else if (event.key===&#x27;?&#x27;) overlays[id]=&#x27;help&#x27;;
+    else if (event.key===&#x27;Enter&#x27; &amp;&amp; event.target.matches(&#x27;button[data-task]:not([data-open])&#x27;) &amp;&amp; !overlays[id]) {
+      selections[id]=event.target.dataset.task;
+      overlays[id]=&#x27;inspect&#x27;;
+    }
+    else if (event.key===&#x27;Enter&#x27;) return;
+    else if (!overlays[id] &amp;&amp; [&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;].includes(event.key)) {
+      const rows=Array.from(concept.querySelectorAll(&#x27;button[data-task]&#x27;)).filter(button=&gt;!button.dataset.open);
+      const current=rows.findIndex(button=&gt;button.dataset.task===selections[id]);
+      const next=(current+(event.key===&#x27;ArrowDown&#x27;?1:-1)+rows.length)%rows.length;
+      selections[id]=rows[next].dataset.task;
+    } else handled=false;
+    if (!handled) return;
+    event.preventDefault();
+    render();
+    const updated=root.querySelector(`[data-concept=&quot;${id}&quot;]`);
+    const target=overlays[id]?updated.querySelector(&#x27;.shk-modal textarea, .shk-menu-item, .shk-modal button&#x27;):updated.querySelector(`[data-task=&quot;${selections[id]}&quot;]`);
+    if (target) target.focus();
+  });
+  scene.addEventListener(&#x27;change&#x27;,()=&gt;{for(const id of Object.keys(overlays))delete overlays[id];render();});
+  width.addEventListener(&#x27;change&#x27;,render);
+  mono.addEventListener(&#x27;change&#x27;,render);
+  root.querySelector(&#x27;#shk-signal&#x27;).addEventListener(&#x27;click&#x27;,()=&gt;{signal=(signal+1)%signals.length;sample.textContent=`Demo signal: ${signals[signal]} · sample workload`;render();});
+  render();
+})();
+&lt;/script&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>
