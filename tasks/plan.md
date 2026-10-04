@@ -948,3 +948,58 @@ Refs: Focus §10; 07 §3/5; Tasks 89–95.
 - [x] Run the existing bounded real-agent E1–E6 in one invocation on the resulting source, recording date, revision, versions, duration and reported/unknown cost. Do not add speculative paid scenarios; fix product failures and follow the established retry policy.
 - [x] Record Phase 9 release evidence, actual visual review sizes/states, walkthrough and gate results, remaining limits and final task-owned process/socket/directory cleanup. Close Tasks 89–96 only after their respective ACs genuinely pass.
 - Verification: behavior gates, real-agent existing scenarios, clean-install smoke, visual review, documentation audit and a read-only host hygiene audit with targeted cleanup of owned leftovers.
+
+## Phase 10 — Focus terminal parity correction
+
+Specification: [Focus terminal parity correction](../docs/tui-parity.md). Phase 9 Tasks 89–96 remain accepted and historically complete. The approved screenshot and embedded interaction source are immutable; Phase 10 corrects the real native TUI to that reference. Task 97 is the audit/specification task and is complete. Tasks 98–102 are planned only. The Phase 10 specification takes precedence over broader Phase 9 visual and interaction interpretations while preserving its engine, operator, billing, evidence, plugin and CLI guarantees.
+
+Execute Tasks 98–102 sequentially with architect review between tasks. Each implementation task requires observable native Textual comparison or interaction proof for its scope and a green normal `uv run poe check` before every commit. Do not add wording, style-inventory, framework or screenshot-golden tests. Use existing SQLite/Textual fixture support and `App.export_screenshot()` for manual review as needed; do not add a screenshot dependency, harness or golden catalogue. Preserve source revision and actual terminal geometry in review records. No new paid scenario is authorized or needed for presentation-only changes; Task 102 inherits the accepted Phase 9 E1–E6 evidence unless an engine or agent behavior change establishes a reason to rerun it. Keep Tasks 59, 74h and 74p independently open.
+
+### Task 97: Approved reference parity audit and target specification
+Refs: [Parity specification §1–6](../docs/tui-parity.md); Focus §1–10; approved HTML/PNG reference; 02 §2/4, 06 §5–6, 07 §2–3; Tasks 89–96.
+- [x] Record the audited application revision and compare the immutable approved terminal composition and embedded interaction handlers with current wide and compact native Textual states. Identify artifact source revisions and provenance limits; do not treat browser-prototype selectors or its palette legend as product controls.
+- [x] Write a concrete gap-to-fix matrix naming current and target behavior, evidence, affected existing modules and consumed data facts. Record the missing host RAM used/total observation and timestamped latest-signal projection without proposing new sampling, storage or framework infrastructure.
+- [x] Define exact terminal hierarchy, working cell geometry, spacing, quiet borders, normal font weights, colors including selected surface `#233340`, status glyphs, task rows and `Recent`, primary data wording and conditional attention behavior.
+- [x] Define keyboard/mouse behavior, contextual action menus, forms and direct routes. Preserve read-only navigation, native input keys, selection/focus/scroll/role context, engine revalidation, durable command outcomes, holds and all existing operation routes.
+- [x] Add sequential, compact Tasks 98–102 with specific refs, files/facts, dependencies and review proof. Keep Tasks 98–102 unchecked. Reconcile normative indexes and Phase 9 status without changing historical release facts.
+- Verification: inspect the approved PNG and decoded iframe `srcdoc` CSS/JS; inspect native current-session preview and retained Textual exports; review link targets, source/provenance notes, task boundaries and check state. No product changes or prose/style tests.
+
+### Task 98: Reference-aligned Home frame and task list
+Refs: parity spec §2–4/6; Focus §2–3/8; 02 §2/4, 06 §5.4/§6; Task 97.
+- [ ] Compose Home as the approved identity/engine line, concise operations summary, project usage line, Host/Shikiru resource line, conditional attention row, decision-first task list with `Recent`, selected inspector and quiet footer. Keep the split by reference-matched width, not a height-only breakpoint.
+- [ ] Match the 42/58 list/inspector split at the measured wide grid, one separator, unframed normal-weight task rows, `#233340` selection surface with steel outline, and actual completed-task `Recent` group. Preserve bounded queries, search, ordering, selection and configured widget contracts.
+- [ ] Carry observed host RAM used and total through the existing cached resource snapshot/view from the same single host observation. Preserve sample cadence, timestamp/error/stale handling, process-tree deduplication and scheduler threshold inputs; do not infer from percent/available or sample again. Keep project costs, tokens, subscription-agent counts, branch and uptime evidence-backed and concise.
+- [ ] Preserve fault/escalation/engine-stop visibility with one conditional actionable row and no duplicate attention summary. Keep quiet Home free of a permanent attention panel.
+- Proof: real SQLite/Textual Home behavior at 100×35, 120×40, 80×24 and 48×20; capture native renders for review. Full normal gate before every commit.
+
+### Task 99: Compact shared task inspector and factual stage/signal rows
+Refs: parity spec §2/3/4/6; Focus §4/8; Workspace §6–11/§15 retained guarantees; 03 §2–3/§8–9, 06 §5.4–5; Tasks 97–98.
+- [ ] Convert the shared Home inspector and `dash --task` to the exact identity, state, milestone, acting-role/stage/elapsed, situation, latest-signal, task-usage, role-row and Evidence order. Use compact wrapping and avoid duplicate section headings or large blank blocks.
+- [ ] Derive milestones and elapsed/signal details only from workflow transitions, reports and retained observations. Represent bypassed stages, rework, stale/unknown time, missing signals and history gaps truthfully; never invent progress or “just now.”
+- [ ] Show `Current` for the role actually acting or owned in the current task state and `Used` for earlier role use. Keep session lineage, previous agent/model identities, session-wide totals and per-turn evidence distinct in Details; preserve ownership and every hold.
+- [ ] Add only the bounded compatible latest-signal text/time projection required by the view, reusing existing event/signal/timeline reads. Preserve missing/truncated/unreadable evidence without adding a stream consumer or persistence schema.
+- Proof: real task state at wide and compact cells plus connected detail/evidence/usage navigation; capture native renders for review. Full normal gate before every commit.
+
+### Task 100: Contextual actions, direct attention routes and forms
+Refs: parity spec §2/5/6; Focus §6; Workspace §6–11/§15; 03 §8–9, 06 §5.4–5; Tasks 97–99.
+- [ ] Implement cyclic Up/Down task selection, Enter inspection, Ctrl+P contextual actions, `e` Evidence, `u` Usage Details, `?` Help and Escape close/return. Keep mouse selection and direct clicks on the same routes.
+- [ ] Clicking primary attention selects its affected task and opens the applicable answer form. Project token/billing/subscription summaries open Project Totals; resource summaries open Diagnostics; task inline `u` and `e` links open task Usage Details and Evidence.
+- [ ] Present a centered quiet contextual action surface with only applicable actions, accessible project-level operations and forms with only relevant Role inputs, guidance and consequences. Opening or navigating never queues a command; submitting still uses existing typed commands and Pending/Applied/Rejected results.
+- [ ] Preserve native input editing keys, entered guidance, selected task, role context, search, focus, scroll and reading position on Escape, route changes and resize. Engine validation, ownership, holds, stale escalation handling and all existing actions remain authoritative.
+- Proof: connected Textual/SQLite/operator flows for direct attention answer, applicable task actions, global Submit/Stop, durable outcomes and preservation on return; capture menu/form renders. Full normal gate before every commit.
+
+### Task 101: Responsive and compatibility parity review
+Refs: parity spec §1–6; Focus §6–10; Workspace §14–16 retained guarantees; 06 §6, 07 §3; Tasks 97–100.
+- [ ] Measure the 736-pixel reference frame and CSS breakpoints against native cell width. Verify one reference composition at measured wide geometry, 120×40 and 80×24/short-wide; then compact Home and detail at 48×20, 36×14/20 and 20×8. Keep identity, decision/hold, task list and routes reachable with cell wrapping/scrolling; preserve selection, search, focus, forms and reading position on resize and refresh. A short pane does not switch to list-only solely because of height.
+- [ ] Verify `NO_COLOR`, `TERM=dumb`, disabled motion, configured built-in and external plugins, legacy widget callbacks, CLI outputs and tmux role-pane navigation. Do not hide configured extensions, reorder their configured relative order or recreate a second shell.
+- [ ] Render matched actual native states/populations from real SQLite data with `App.export_screenshot()`. Record exact implementation source revision, reference/native dimensions, artifact paths and cell-level findings. Resolve each applicable mismatch in §2; do not accept a qualitative “direction matches” statement or copy reference sample metrics.
+- [ ] Update only actual support limits and known gaps. Preserve approved artifacts and existing Phase 8/9 evidence; no screenshot harness, rendering dependency or golden catalogue.
+- Proof: manual review of native wide, compact, detail, usage, action, stale/error and mono states plus observable route checks. Full normal gate before every commit.
+
+### Task 102: Connected correction walkthroughs and final evidence
+Refs: parity spec §6; Focus §9–10; 07 §3/5; Phase 8 release record; Tasks 97–101.
+- [ ] Reconcile README, normative design indexes, Focus/parity status, plugin/configuration notes and walkthroughs to the shipped correction. Keep Phase 9 acceptance and its visual gap history accurate; retain Tasks 59, 74h and 74p as separate open gates.
+- [ ] Run connected fake-agent/Textual walkthroughs through Home selection, direct decision answer, task usage/evidence, contextual action form, role takeover/hand-back, command outcomes and compact return/resizing. Record observed results, source revision, actual matched-grid parity review and artifact paths.
+- [ ] Run normal and `TERM=dumb` full gates, the existing macOS clean-install/navigation smoke, and the final native parity review. Do not claim Linux or another host without a run. Reuse the existing Phase 9 E1–E6 record for a presentation-only change; no speculative paid scenario.
+- [ ] Record remaining unverified floors and final task-owned process/socket/scratch cleanup. Preserve existing user projects, tmux servers, auth/configuration and all useful prior evidence.
+- Proof: release evidence identifies each required geometry/behavior state, source revision, gate and smoke outcomes, limits, and host-hygiene comparison. Close Phase 10 only when the actual reference-aligned native routes and cells have been reviewed.

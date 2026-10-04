@@ -155,3 +155,14 @@ Target: [Compact Operator TUI](../docs/tui-focus.md); acceptance criteria: [plan
 - [x] Task 94: Focus task detail and contextual operator control
 - [x] Task 95: Responsive compatibility and obsolete presentation cleanup
 - [x] Task 96: Compact TUI walkthroughs and release verification
+
+## Phase 10 — Focus terminal parity correction
+
+Target: [Focus terminal parity correction](../docs/tui-parity.md); acceptance criteria: [plan.md](plan.md#phase-10-focus-terminal-parity-correction). Phase 9 remains accepted complete; exact native screenshot and interaction parity is the planned correction. Tasks 98–102 remain unchecked pending sequential implementation and architect review.
+
+- [x] Task 97: Approved reference parity audit and target specification
+- [ ] Task 98: Reference-aligned Home frame and task list
+- [ ] Task 99: Compact shared task inspector and factual stage/signal rows
+- [ ] Task 100: Contextual actions, direct attention routes and forms
+- [ ] Task 101: Responsive and compatibility parity review
+- [ ] Task 102: Connected correction walkthroughs and final evidence
