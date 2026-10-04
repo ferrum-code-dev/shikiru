@@ -561,9 +561,11 @@ class DashboardApp(App[None]):
     #focus-main { height: 1fr; min-height: 3; padding: 0 1; }
     #focus-main.wide { layout: horizontal; }
     #focus-main.compact { layout: vertical; overflow-y: auto; }
+    #focus-main.wide #focus-task-list-column {
+        width: 48; min-width: 30; height: 100%;
+    }
     #focus-main.wide #queue {
-        width: 42; min-width: 30; height: 100%; padding-right: 1;
-        border-right: solid $neutral-border;
+        width: 100%; min-width: 0; height: 100%;
     }
     #focus-main.wide #task-browser-list { height: 1fr; min-height: 3; }
     #focus-main.wide #task-detail-panel {

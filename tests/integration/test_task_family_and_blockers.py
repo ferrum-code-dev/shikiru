@@ -418,6 +418,7 @@ async def _exercise_paged_relationship_navigation(
         more_button = app.screen.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
         assert not more_button.disabled
         more_button.focus()
+        await pilot.wait_for_scheduled_animations()
         await wait_until(
             lambda: more_button.region.y >= 0 and more_button.region.bottom <= app.size.height,
             timeout=2.0,

@@ -485,6 +485,7 @@ class TaskDetailView:
     signal_observed: bool = False
     quota_observations: tuple[AgentUsageView, ...] = ()
     agent_usage: tuple[AgentUsageView, ...] = ()
+    priority: int | None = None
 
 
 @dataclass(frozen=True)

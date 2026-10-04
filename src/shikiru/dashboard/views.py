@@ -884,6 +884,7 @@ class StateDashboardViews:
             signal_observed=task_frame.spinner_visible,
             quota_observations=quota_observations,
             agent_usage=task_agent_usage,
+            priority=task.priority,
         )
 
     async def task_timeline(

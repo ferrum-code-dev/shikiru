@@ -596,7 +596,21 @@ async def test_focus_keeps_selected_task_and_reading_position_after_reorder(
                 timeout=2,
             )
             await pilot.pause()
-            assert visible_anchor() == anchor_before
+            anchor_after = visible_anchor()
+            assert anchor_after == anchor_before, (
+                anchor_before,
+                anchor_after,
+                list_view.scroll_y,
+                list_view.scroll_target_y,
+                [
+                    (
+                        item.id,
+                        item.region.y - list_view.scrollable_content_region.y,
+                        item.region.height,
+                    )
+                    for item in list_view.children[:8]
+                ],
+            )
     finally:
         reader.close()
 
@@ -1019,6 +1033,9 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
                 timeout=2,
             )
             assert list_view.index == 0
+            row_text = _rendered_text(list_view.children[0].query_one(Static))
+            assert task.id in row_text
+            assert task.title in row_text
 
             for width, height in ((48, 20), (36, 20), (48, 14), (20, 8)):
                 await pilot.resize_terminal(width, height)
@@ -1036,8 +1053,14 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
             await pilot.press("enter")
             await pilot.press("enter")
             await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+            detail_identity = app.screen.query_one("#task-detail-identity", Static)
+            assert task.id in _rendered_text(detail_identity)
+            assert task.title in _rendered_text(detail_identity)
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
+            assert app.focused is list_view
+            assert search.value == task.id
+            assert list_view.index == 0
     finally:
         reader.close()
 

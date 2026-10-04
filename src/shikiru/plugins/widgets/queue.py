@@ -64,13 +64,16 @@ class _BrowserListItem(ListItem):
 
 
 def _row_text(row: TaskBrowserRow) -> str:
-    group = f"{row.group_label} · " if row.group_label else ""
     state = row.status.replace("_", " ")
-    step = f" · {row.step}" if row.step else ""
-    role = f" · {row.acting_role}" if row.acting_role else ""
-    state_line = f"{group}{state}{step} · iteration {row.iteration}{role} · submitted {row.age}"
-    if row.requeued_age is not None:
-        state_line += f" · requeued {row.requeued_age}"
+    identity = [row.task_id]
+    if row.priority != 0:
+        identity.append(f"priority {row.priority}")
+    identity.append(row.title)
+    state_details = [state]
+    if row.step:
+        state_details.append(row.step)
+    if row.acting_role:
+        state_details.append(row.acting_role)
     signals: list[str] = []
     if row.open_decision:
         signals.append("decision")
@@ -78,14 +81,9 @@ def _row_text(row: TaskBrowserRow) -> str:
         signals.append("stalled")
     if row.holds:
         signals.extend(row.holds)
-    if row.wait_reason:
+    if row.wait_reason and row.wait_reason not in signals:
         signals.append(row.wait_reason)
-    if row.status == TASK_STATUS_QUEUED:
-        signals.append(f"priority {row.priority}")
-    if row.dependencies:
-        signals.append(f"depends on {', '.join(row.dependencies)}")
-    blocker = f" · {' · '.join(signals)}" if signals else ""
-    return f"{row.task_id} · {row.title}\n{state_line}{blocker}"
+    return f"{' · '.join(identity)}\n{' · '.join((*state_details, *signals))}"
 
 
 class QueuePanel(Vertical):
@@ -106,6 +104,8 @@ class QueuePanel(Vertical):
     }
     #task-browser-count { height: 1; color: $primary-text; }
     #task-browser-list { height: 12; min-height: 3; border: solid $neutral-border; }
+    #task-browser-list ListItem > Static { text-wrap: nowrap; text-overflow: ellipsis; }
+    #task-browser-list ListItem:last-child { margin-bottom: 1; }
     #task-browser-empty { height: auto; padding: 1; color: $muted-text; }
     #task-browser-family-context { height: auto; padding: 0 1; color: $secondary-text; }
     #task-browser-more { width: auto; min-width: 1; }
@@ -372,7 +372,6 @@ class QueuePanel(Vertical):
             if changed:
                 self._restore_list_position_after_refresh(
                     list_view,
-                    tuple(items.values()),
                     anchor,
                     anchor_offset,
                 )
@@ -400,7 +399,6 @@ class QueuePanel(Vertical):
                 list_view.move_child(item, before=index)
         self._restore_list_position_after_refresh(
             list_view,
-            tuple(items.values()),
             anchor,
             anchor_offset,
         )
@@ -420,19 +418,13 @@ class QueuePanel(Vertical):
     def _restore_list_position_after_refresh(
         self,
         list_view: ListView,
-        items: tuple[_BrowserListItem, ...],
-        anchor: _BrowserListItem | None = None,
-        anchor_offset: int = 0,
+        anchor: _BrowserListItem | None,
+        anchor_offset: int,
     ) -> None:
         self._list_render_version += 1
-        selected_item = next(
-            (item for item in items if item.task_id == self._selected_task_id),
-            None,
-        )
         list_view.call_after_refresh(
             self._restore_list_position,
             list_view,
-            selected_item,
             anchor,
             anchor_offset,
             self._list_render_version,
@@ -441,23 +433,31 @@ class QueuePanel(Vertical):
     def _restore_list_position(
         self,
         list_view: ListView,
-        selected_item: _BrowserListItem | None,
         anchor: _BrowserListItem | None,
         anchor_offset: int,
         render_version: int,
     ) -> None:
         if render_version != self._list_render_version:
             return
-        content_region = list_view.scrollable_content_region
         if anchor is not None and anchor.parent is list_view:
-            anchor_offset_now = anchor.region.y - content_region.y
+            anchor_index = list_view.children.index(anchor)
+            anchor_position = sum(item.region.height for item in list_view.children[:anchor_index])
             list_view.scroll_to(
-                y=list_view.scroll_y + anchor_offset_now - anchor_offset,
+                y=anchor_position - anchor_offset,
                 animate=False,
                 immediate=True,
             )
+        selected_item = next(
+            (
+                item
+                for item in list_view.children
+                if isinstance(item, _BrowserListItem) and item.task_id == self._selected_task_id
+            ),
+            None,
+        )
         if (
-            selected_item is not None
+            anchor is None
+            and selected_item is not None
             and selected_item.parent is list_view
             and not selected_item.region.overlaps(list_view.scrollable_content_region)
         ):

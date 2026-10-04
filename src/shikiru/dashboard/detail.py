@@ -72,12 +72,10 @@ TASK_DETAIL_SESSIONS = "task-detail-sessions"
 TASK_DETAIL_FEEDBACK = "task-detail-feedback"
 TASK_DETAIL_BODY = "task-detail-body"
 TASK_DETAIL_CONTEXT = "task-detail-context"
+TASK_DETAIL_CONTEXT_INFO = "task-detail-context-info"
 TASK_DETAIL_HINTS = "task-detail-hints"
 TASK_DETAIL_VIEWS_BUTTON = "task-detail-views"
 TASK_DETAIL_VIEWS_OPEN_BUTTON = "task-detail-views-open"
-TASK_DETAIL_VIEWS_ACTIONS_BUTTON = "task-detail-views-open-actions"
-TASK_DETAIL_VIEWS_HELP_BUTTON = "task-detail-views-help"
-TASK_DETAIL_VIEWS_CANCEL_BUTTON = "task-detail-views-cancel"
 TASK_DETAIL_VIEWS_KEY = "v"
 TASK_USAGE_KEY = "u"
 TASK_DETAIL_HELP_KEY = "question_mark"
@@ -104,6 +102,7 @@ TASK_DETAIL_TIMELINE_TITLE = "task-detail-timeline-title"
 TASK_DETAIL_TIMELINE_ENTRY = "task-detail-timeline-entry"
 TASK_DETAIL_TIMELINE_SELECTED = "task-detail-timeline-selected"
 TASK_VIEW_SUMMARY = "task-summary"
+TASK_VIEW_CONTEXT = "task-context"
 TASK_VIEW_ACTIONS = "task-actions"
 TASK_VIEW_HELP = "task-help"
 TASK_VIEW_USAGE = "task-usage"
@@ -115,12 +114,15 @@ TASK_VIEW_FACTS = "task-facts"
 TASK_VIEW_WORKSPACE = "task-workspace"
 TASK_VIEW_CHOICES = (
     ("Usage details", TASK_VIEW_USAGE),
+    ("Task details", TASK_VIEW_CONTEXT),
     ("Reports and decisions", TASK_VIEW_REPORTS),
     ("Request and criteria", TASK_VIEW_REQUEST),
     ("Evidence timeline and signals", TASK_VIEW_EVIDENCE),
     ("Blockers and relationships", TASK_VIEW_RELATIONSHIPS),
     ("Engine facts", TASK_VIEW_FACTS),
     ("Workspace targets", TASK_VIEW_WORKSPACE),
+    ("Operator actions", TASK_VIEW_ACTIONS),
+    ("Help", TASK_VIEW_HELP),
 )
 TASK_VIEW_WIDGETS = {
     TASK_VIEW_SUMMARY: (
@@ -129,6 +131,7 @@ TASK_VIEW_WIDGETS = {
         TASK_DETAIL_SESSIONS,
     ),
     TASK_VIEW_USAGE: (TASK_DETAIL_SESSIONS,),
+    TASK_VIEW_CONTEXT: (TASK_DETAIL_CONTEXT_INFO,),
     TASK_VIEW_REPORTS: (TASK_DETAIL_REPORT, TASK_DETAIL_VERDICT),
     TASK_VIEW_REQUEST: (TASK_DETAIL_REQUEST, TASK_DETAIL_CRITERIA),
     TASK_VIEW_EVIDENCE: (
@@ -221,6 +224,7 @@ class TaskDetailPanel(Vertical):
     #task-detail-identity {
         height: auto; padding: 1 1 0 1; color: $primary-text; text-style: bold;
     }
+    #task-detail-context-info { height: auto; color: $primary-text; }
     #task-detail-ownership { height: auto; padding: 0 1; color: $amber; }
     #task-detail-feedback { height: auto; min-height: 1; color: $secondary-text; }
     #task-detail-body { height: auto; max-height: 32; padding: 0 1; }
@@ -284,11 +288,14 @@ class TaskDetailPanel(Vertical):
             yield Button(back_label, id=TASK_DETAIL_BACK_BUTTON)
             yield Button("Views", id=TASK_DETAIL_VIEWS_BUTTON)
             yield Static("v views · u usage · Ctrl+P actions · ? help", id=TASK_DETAIL_HINTS)
-        yield Static("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
-        yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
-        yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
         with TaskDetailBody(self._pause_timeline_follow):
+            yield Static("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
+            yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
+            yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
             yield Static("", id=TASK_DETAIL_SITUATION, classes="task-detail-section", markup=False)
+            yield Static(
+                "", id=TASK_DETAIL_CONTEXT_INFO, classes="task-detail-section", markup=False
+            )
             yield Static("", id=TASK_DETAIL_PROGRESS, classes="task-detail-section")
             yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section")
             yield Static("", id=TASK_DETAIL_BLOCKER, classes="task-detail-section", markup=False)
@@ -771,6 +778,7 @@ class TaskDetailPanel(Vertical):
         target_id = {
             TASK_VIEW_SUMMARY: TASK_DETAIL_SITUATION,
             TASK_VIEW_USAGE: TASK_DETAIL_SESSIONS,
+            TASK_VIEW_CONTEXT: TASK_DETAIL_CONTEXT_INFO,
             TASK_VIEW_REPORTS: TASK_DETAIL_REPORT,
             TASK_VIEW_REQUEST: TASK_DETAIL_REQUEST,
             TASK_VIEW_EVIDENCE: TASK_DETAIL_TIMELINE_ENTRY,
@@ -905,22 +913,14 @@ class TaskDetailPanel(Vertical):
         situation = ["Situation"]
         if view.status_reason is not None:
             situation.append(f"Status reason · {view.status_reason}")
-        if view.mode is not None:
-            situation.append(f"Mode · {view.mode}")
         if view.wait_reason is not None:
             situation.append(f"Waiting · {view.wait_reason}")
-        situation.append(f"Submitted age · {view.submitted_age}")
-        if view.requeued_age is not None:
-            situation.append(f"Recorded requeued age · {view.requeued_age}")
         decision = _critical_decision(view)
         if decision is not None:
             situation.append(decision)
         self._render_ownership(view)
-        attention = view.attention
-        situation.append(
-            f"Global attention · {attention.decisions} decisions · {attention.faults} engine faults"
-        )
         self.query_one(f"#{TASK_DETAIL_SITUATION}", Static).update("\n".join(situation))
+        self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(_task_context_text(view))
         blocker_lines = list(view.blocker.lines) if view.blocker is not None else []
         blocker = self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
         blocker.update("Blocker evidence\n" + "\n".join(blocker_lines) if blocker_lines else "")
@@ -998,7 +998,7 @@ class TaskDetailPanel(Vertical):
             and self.screen.focused is focused
             and body.scroll_target_y == scroll_y
         ):
-            body.scroll_to(y=scroll_y, animate=False)
+            body.scroll_to(y=scroll_y, animate=False, immediate=True)
 
     def _render_timeline(self, page: TaskTimelinePageView | None) -> None:
         self._timeline_page = page
@@ -1191,12 +1191,11 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
     DEFAULT_CSS = """
     TaskDetailViewsScreen { align: center middle; }
     #task-detail-views-frame {
-        width: 80%; height: auto; max-width: 80; padding: 1 2;
-        border: round $neutral-border; background: $surface; color: $primary-text;
+        width: 100%; height: auto; max-height: 100%; max-width: 80; padding: 0 1;
+        border: solid $neutral-border; background: $surface; color: $primary-text;
     }
     #task-detail-views-frame Select { width: 100%; }
-    #task-detail-views-actions { width: 100%; height: 3; }
-    #task-detail-views-actions Button { width: 1fr; margin-right: 1; }
+    #task-detail-views-open { width: 100%; height: auto; min-width: 1; padding: 0; }
     """
 
     def __init__(self, task_id: str, extra_choices: tuple[tuple[str, str], ...]) -> None:
@@ -1205,14 +1204,10 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
         self._choices = (*TASK_VIEW_CHOICES, *extra_choices)
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="task-detail-views-frame"):
+        with VerticalScroll(id="task-detail-views-frame"):
             yield Static(f"Task views · {self._task_id}", markup=False)
             yield Select(self._choices, value=TASK_VIEW_USAGE, id="task-detail-view-choice")
-            with Horizontal(id="task-detail-views-actions"):
-                yield Button("Open view", id=TASK_DETAIL_VIEWS_OPEN_BUTTON)
-                yield Button("Actions", id=TASK_DETAIL_VIEWS_ACTIONS_BUTTON)
-                yield Button("Help", id=TASK_DETAIL_VIEWS_HELP_BUTTON)
-                yield Button("Cancel", id=TASK_DETAIL_VIEWS_CANCEL_BUTTON)
+            yield Button("Open", id=TASK_DETAIL_VIEWS_OPEN_BUTTON)
 
     async def on_mount(self) -> None:
         self.set_focus(cast("Select[str]", self.query_one("#task-detail-view-choice", Select)))
@@ -1221,12 +1216,6 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
         if event.button.id == TASK_DETAIL_VIEWS_OPEN_BUTTON:
             selected = cast("Select[str]", self.query_one("#task-detail-view-choice", Select)).value
             self.dismiss(selected if isinstance(selected, str) else None)
-        elif event.button.id == TASK_DETAIL_VIEWS_ACTIONS_BUTTON:
-            self.dismiss(TASK_VIEW_ACTIONS)
-        elif event.button.id == TASK_DETAIL_VIEWS_HELP_BUTTON:
-            self.dismiss(TASK_VIEW_HELP)
-        elif event.button.id == TASK_DETAIL_VIEWS_CANCEL_BUTTON:
-            self.dismiss(None)
 
     async def action_close(self) -> None:
         self.dismiss(None)
@@ -1322,6 +1311,24 @@ def _report_text(label: str, report: TaskReportView | None, missing: str) -> str
                 for item in report.tests
             )
         )
+    return "\n".join(lines)
+
+
+def _task_context_text(view: TaskDetailView) -> str:
+    lines = ["Task details"]
+    if view.mode is not None:
+        lines.append(f"Mode · {view.mode}")
+    lines.append(f"Submitted · {view.submitted_age}")
+    if view.requeued_age is not None:
+        lines.append(f"Recorded requeued · {view.requeued_age}")
+    if view.status_reason is not None:
+        lines.append(f"Status reason · {view.status_reason}")
+    if view.priority is not None:
+        lines.append(f"Dispatch priority · {view.priority}")
+    attention = view.attention
+    lines.append(
+        f"Project attention · {attention.decisions} decisions · {attention.faults} engine faults"
+    )
     return "\n".join(lines)
 
 

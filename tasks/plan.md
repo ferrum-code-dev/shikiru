@@ -933,11 +933,11 @@ Refs: Focus §4–6/§8; Workspace §6–11/§15 retained guarantees; 03 §8–9
 
 ### Task 95: Responsive compatibility and obsolete presentation cleanup
 Refs: Focus §6–10; Workspace §14–16 retained guarantees, 07 §3; Tasks 89–94.
-- [ ] At representative wide, 48-column, 36-column, short and very small panes, keep task identity/title, critical decision/hold, usage details and action/result controls reachable. Compact Home becomes list then task detail; no compressed unreadable side-by-side inspector.
-- [ ] Preserve ID selection, search/filter/history, focus, entered forms and reading position across resize, row reordering and state refresh. Monochrome, `TERM=dumb` and disabled animation retain textual state and timely data refresh.
-- [ ] Verify every configured plugin remains reachable and legacy public fields/callbacks still work. Remove superseded private panels/navigation/styling and unused new code without deleting useful CLI/plugin contracts or preserving a second default shell.
-- [ ] Render real Textual wide/compact Home, task, usage/subscription, action and stale/error states for visual comparison with the approved mockup; fix density/clipping/contrast findings and retain a concise artifact/evidence record.
-- [ ] Audit task-owned processes, private tmux sockets and scratch outputs after checks; remove disposable leftovers while retaining review artifacts and diagnostic evidence. Update design support limits and actual known limitations.
+- [x] At representative wide, 48-column, 36-column, short and very small panes, keep task identity/title, critical decision/hold, usage details and action/result controls reachable. Compact Home becomes list then task detail; no compressed unreadable side-by-side inspector.
+- [x] Preserve ID selection, search/filter/history, focus, entered forms and reading position across resize, row reordering and state refresh. Monochrome, `TERM=dumb` and disabled animation retain textual state and timely data refresh.
+- [x] Verify every configured plugin remains reachable and legacy public fields/callbacks still work. Remove superseded private panels/navigation/styling and unused new code without deleting useful CLI/plugin contracts or preserving a second default shell.
+- [x] Render real Textual wide/compact Home, task, usage/subscription, action and stale/error states for visual comparison with the approved mockup; fix density/clipping/contrast findings and retain a concise artifact/evidence record.
+- [x] Audit task-owned processes, private tmux sockets and scratch outputs after checks; remove disposable leftovers while retaining review artifacts and diagnostic evidence. Update design support limits and actual known limitations.
 - Tests: focused integration size/interaction matrix asserts observable reachability and preservation. Inspect rendered artifacts manually; no framework tests, theme snapshots or coverage-for-coverage additions.
 
 ### Task 96: Compact TUI walkthroughs and release verification
