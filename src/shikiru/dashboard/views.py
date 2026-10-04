@@ -820,6 +820,7 @@ class StateDashboardViews:
             if stored_relationships is not None
             else None
         )
+        task_frame = self._motion.frames((task,), now).tasks[0]
         return TaskDetailView(
             task_id=task.id,
             title=task.title,
@@ -834,7 +835,7 @@ class StateDashboardViews:
             ownership=ownership,
             request=task.request,
             acceptance_criteria=tuple(triage.acceptance_criteria) if triage is not None else (),
-            progress=task_strip_data(task, self._settings),
+            progress=self._strip_with_motion(task, task_frame, self._motion.current_cost(task)),
             latest_report=latest_report,
             latest_verdict=verdict,
             events=tuple(

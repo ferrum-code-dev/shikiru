@@ -81,7 +81,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `tmux` | tmux client; session, windows, layout; pane decorations; pane respawn and liveness | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator` |
 | `prompts` | Jinja2 templates (packaged, overridable) | `PromptRenderer` |
 | `helper` | Joshu calls | `Helper` |
-| `ui` | Semantic colors, Textual theme and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.theme`, `ui.glyphs`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
+| `ui` | Semantic colors, Textual theme and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.theme`, `ui.glyphs`, `ui.compact`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
 | `operator` | Use cases for interfaces; current task-action and escalation-resolution applicability and disabled reasons; bounded task-target search, command history/status and task-evidence pages over SQL events and recorded normalized signal files; paginated read-only evidence export with an injected atomic local file writer; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `TaskEvidenceExporter`, `LocalEvidenceWriter`, `EventFeed`, `detectors` |

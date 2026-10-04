@@ -164,6 +164,8 @@ class DashboardViews(Protocol):
 
 Task 91 adds `DashboardViews.project_usage()` over every retained run row, including closed-task rows, and `TaskDetailView.usage` over one task's recorded lineages. Their `RecordedUsageView` separates token coverage, actual billed amounts, API-only missing-charge coverage, API-equivalent evidence and distinct declared subscription agents. `HeaderView` appends current and previous engine durations; the current duration requires a recorded start matching the verified lock-holder identity, and previous duration requires a matching recorded stop. `TaskSessionView` appends persisted run ID, current/live/taken-over status, bounded model/effort observations, attributed per-turn deltas only when identity is complete, and semantic history-gap reasons. Turn cost basis is known only for comparable same-basis cumulative observations; legacy numeric deltas without basis remain unknown and never borrow the run's latest cumulative basis. `DashboardViews.resource_sample()` exposes the last timestamped `ResourceView` without starting a sample. These are consumed widget API additions; the compact Phase 9 layout is implemented by its later presentation tasks.
 
+Task 92 ships shared Rich renderables in `ui.compact`: `ProjectUsageMetric` formats project and task coverage, `ResourceMetric` formats Host and Shikiru-including-agents samples, `AgentUsageRow` combines role, model, session-wide usage and declared cost evidence, and `StageActivity` shows the task's actual stage separately from signal activity. The existing usage, resource and task-detail boundaries consume them. Explicit API-charge gaps exclude subscription and unknown-mode sessions; actual billed amounts, API-equivalent estimates, subscription declarations and unknowns keep separate labels. Session totals remain session-wide. The current task-detail stage view uses the existing `DashboardMotion` signal and stall projection; it does not add a second activity timer. The legacy `TaskStrip` remains available to CLI and configured widgets.
+
 `WidgetContext.open_palette` remains available for existing widgets. `open_palette_context` carries an optional action, task ID and role to the shared screen; `on_task_selected` reports browser identity to the dashboard. The dashboard owns current navigation state and exposes no services or typed workflow commands to widgets.
 
 Widgets re-read their view when `on_change` fires. Samplers such as resources and docker have their own interval.
@@ -281,30 +283,25 @@ Every colour, glyph and movement answers one of three questions: *who acts*, *wh
 
 ### 6.1 Tokens and glyphs
 
-**Colours**: Rich renderables keep the existing semantic role/state palette; the Textual shell, palette and evidence modals share named `background`, `surface`, `neutral-border`, `primary-text`, `secondary-text` and `focus` tokens. Truecolor, with 256/16 fallback; `NO_COLOR` switches to monochrome with bold, dim and reverse. Role and state colors keep their existing meanings.
+**Colours**: the Textual shell, palette, task detail and evidence forms share one named palette. Focus and activity use steel blue; successful reported charges use sage; holds and decisions use amber; errors use dusty rose. Role and state words carry meaning without role-specific neon colors. Truecolor has 256/16 terminal fallbacks; `NO_COLOR` retains readable words and the existing bold, dim and reverse cues.
 
 | Token | Colour | Meaning |
 |---|---|---|
-| `leader` | violet `#a78bfa` | The Leader acts |
-| `implementer` | cyan `#22d3ee` | The Implementer acts |
-| `helper` | sand `#e0b872` | The Helper acts |
-| `operator` | magenta `#f472b6` | Operator input or intervention |
-| `engine` | silver `#cbd5e1` | Engine decisions |
-| `success` | green `#4ade80` | Accepted, merged, done |
-| `rework` | orange `#fb923c` | Changes requested, retries |
-| `hold` | yellow `#facc15` | Paused, quota, waiting |
-| `alert` | red `#f87171` | Escalation, failure |
-| `idle` | grey `#64748b` | Pending, queued |
-| `background` | dark navy | Application background |
-| `surface` | blue-grey | Ordinary panel surface |
-| `neutral-border` | slate | Section and modal edges |
-| `primary-text` | pale grey | Main text |
-| `secondary-text` | muted grey | Supporting text |
-| `focus` | near-white | Keyboard and mouse focus |
+| `background` | `#11151b` | Application background |
+| `surface` | `#171d25` | Ordinary panel surface |
+| `neutral-border` | `#3d4654` | Section and modal edges |
+| `primary-text` | `#dce2e9` | Main text |
+| `secondary-text` | `#9aa5b5` | Supporting text |
+| `focus` / `steel-blue` | `#83bddd` | Keyboard focus and observed activity |
+| `success` / `sage` | `#90cba6` | Successful state and reported billed amount |
+| `hold` / `amber` | `#dfb16c` | Holds, decisions, subscriptions and estimates |
+| `alert` / `dusty-rose` | `#e3a0a0` | Errors and diagnosed stalls |
 
-Gauges (context, quota, CPU, RAM) are green below 70%, yellow below 90%, red above.
+Gauges (context, quota, CPU, RAM) use sage below 70%, amber below 90%, and dusty rose from 90% upward. All roles share the quiet steel accent where color helps; text and glyphs identify each role.
 
 **Glyphs**: one set, registered in `ui.glyphs`. A unit test rejects wide and emoji-presentation characters. Ambiguous-width characters are allowed and drawn one cell wide, as Textual assumes; terminals set to CJK ambiguous-wide are unsupported. Glyphs that have an emoji variant carry U+FE0E (`⚖︎ ⚙︎ ⏸︎ ⚠︎`).
+
+The compact task readout uses English stage and state words and the registered one-cell activity glyph. Kanji remain decorative only in the retained `TaskStrip` renderable, which stays available for CLI output and configured strip plugins; compact task content does not require kanji or color to explain workflow state.
 
 | Meaning | Glyphs |
 |---|---|

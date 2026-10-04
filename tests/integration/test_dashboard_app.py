@@ -687,6 +687,13 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
                     controls = app.query_one("#workspace-footer-controls")
                     assert controls.region.bottom <= height
                     assert app.query_one("#workspace-footer-copy", Static).region.bottom <= height
+                    progress = plain_text(
+                        app.query_one("#task-detail-progress", Static).content,
+                        width=width,
+                    )
+                    assert "Stage · Not Started · Queued" in progress
+                    assert "Activity · no live turn" in progress
+                    assert "起" not in progress
                 if height <= 14:
                     assert app.query_one("#workspace-summary").region.height <= 1
     finally:

@@ -4,49 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from rich.console import Group
-from rich.text import Text
 from textual.widgets import Static
 
-from shikiru.dashboard.contract import DiagnosticSampleState
-from shikiru.ui import Gauge
+from shikiru.ui.compact import render_resource_metric
 
 if TYPE_CHECKING:
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import ResourceView, WidgetContext
-
-GIB_FORMAT = ".1f"
-INSTANCE_RSS_FORMAT = ".2f"
-UNKNOWN_VALUE = "\N{EN DASH}"
-
-
-def _resource_lines(snapshot: ResourceView) -> Group:
-    state = snapshot.state or DiagnosticSampleState.AVAILABLE
-    if state in (DiagnosticSampleState.FAILED, DiagnosticSampleState.UNAVAILABLE):
-        detail = f" · {snapshot.error}" if snapshot.error else ""
-        return Group(Text(f"Host and process sample {state.value}{detail}"))
-    host = Text.assemble(
-        Gauge("host CPU", snapshot.host_cpu_pct).render(),
-        " · ",
-        Gauge("host RAM", snapshot.host_ram_used_pct).render(),
-        f" · free {snapshot.free_ram_gb:{GIB_FORMAT}} GiB",
-    )
-    if state is DiagnosticSampleState.STALE:
-        host = Text.assemble("Stale · ", host)
-    if snapshot.instance_cpu_pct is None or snapshot.instance_rss_gb is None:
-        instance = Text("Shikiru process trees · empty")
-    else:
-        instance = Text.assemble(
-            Gauge("Shikiru CPU", snapshot.instance_cpu_pct).render(),
-            f" · RSS {snapshot.instance_rss_gb:{INSTANCE_RSS_FORMAT}} GiB",
-        )
-    lines = [host, instance]
-    if snapshot.sampled_ago is not None:
-        lines.append(Text(f"Observed {snapshot.sampled_ago} ago"))
-    if snapshot.error is not None:
-        lines.append(Text(f"Latest sample failed · {snapshot.error}"))
-    return Group(*lines)
+    from shikiru.dashboard.contract import WidgetContext
 
 
 class ResourcesPanel(Static):
@@ -63,7 +28,8 @@ class ResourcesPanel(Static):
         self.set_interval(self._widget_context.resources_refresh_seconds, self._refresh)
 
     async def _refresh(self) -> None:
-        self.update(_resource_lines(await self._widget_context.views.resources()))
+        sample = await self._widget_context.views.resources()
+        self.update(render_resource_metric(sample))
 
 
 class ResourcesWidget:

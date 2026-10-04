@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from rich.console import Group
+from rich.console import Group, RenderableType
 from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.ui import Gauge
+from shikiru.ui.compact import ProjectUsageMetric
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,7 +20,6 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import AgentUsageView, WidgetContext
 
 UNKNOWN_VALUE = "\N{EN DASH}"
-API_EQUIVALENT_LABEL = "API-equivalent"
 
 
 def _agent_block(usage: AgentUsageView) -> Group:
@@ -56,8 +56,6 @@ def _agent_block(usage: AgentUsageView) -> Group:
                 else "no session usage recorded"
             )
     lines = [Text(f"{usage.agent} · {tokens} · {coverage}", style="bold")]
-    if usage.run_count:
-        lines.extend(_cost_lines(usage))
     lines.extend(
         Text.assemble(
             "  ",
@@ -67,54 +65,6 @@ def _agent_block(usage: AgentUsageView) -> Group:
         for quota in usage.quotas
     )
     return Group(*lines)
-
-
-def _cost_lines(usage: AgentUsageView) -> list[Text]:
-    return [
-        Text(
-            _basis_cost_text(
-                "Billed",
-                usage.billed_cost_usd,
-                usage.billed_cost_runs,
-                usage.legacy_billed_cost_runs,
-                usage.run_count,
-            )
-        ),
-        Text(
-            _basis_cost_text(
-                API_EQUIVALENT_LABEL,
-                usage.api_equivalent_cost_usd,
-                usage.api_equivalent_cost_runs,
-                usage.legacy_api_equivalent_cost_runs,
-                usage.run_count,
-            )
-        ),
-        Text(_unknown_cost_text(usage)),
-    ]
-
-
-def _basis_cost_text(
-    label: str,
-    cost: float | None,
-    runs: int,
-    legacy_runs: int,
-    total_runs: int,
-) -> str:
-    amount = UNKNOWN_VALUE if cost is None else f"${cost:.2f}"
-    if total_runs == 0:
-        coverage = "no runs"
-    else:
-        coverage = f"{runs}/{total_runs} runs"
-        if runs < total_runs:
-            coverage = f"partial · {coverage}"
-    legacy = f" · legacy recorded {legacy_runs}" if legacy_runs else ""
-    return f"{label} subtotal · {amount} · {coverage}{legacy}"
-
-
-def _unknown_cost_text(usage: AgentUsageView) -> str:
-    if usage.run_count == 0:
-        return "No session runs recorded."
-    return f"Unknown cost · {usage.unknown_cost_runs}/{usage.run_count} runs"
 
 
 class UsagePanel(Static):
@@ -144,11 +94,17 @@ class UsagePanel(Static):
             if self._widget_context.focus_task is not None
             else "Project recorded usage · all retained runs"
         )
-        self.update(
-            Group(Text(scope, style="bold"), *[_agent_block(item) for item in usage])
-            if usage
-            else Group(Text(scope, style="bold"), Text("No runs or quota windows recorded."))
-        )
+        lines: list[RenderableType] = []
+        if self._widget_context.focus_task is None:
+            lines.insert(
+                0, ProjectUsageMetric(self._widget_context.views.project_usage(), scope).render()
+            )
+        else:
+            lines.append(Text(scope, style="bold"))
+        lines.extend(_agent_block(item) for item in usage)
+        if not usage:
+            lines.append(Text("No runs or quota windows recorded."))
+        self.update(Group(*lines))
 
     async def _refresh_while_active(self) -> None:
         if not self.is_mounted:

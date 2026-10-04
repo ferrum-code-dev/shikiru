@@ -6,18 +6,30 @@ from typing import TYPE_CHECKING
 
 from textual.theme import Theme
 
-from shikiru.ui.tokens import ALERT_COLOR, HOLD_COLOR, SUCCESS_COLOR
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    AMBER,
+    BACKGROUND_COLOR,
+    HOLD_COLOR,
+    NEUTRAL_BORDER_COLOR,
+    PRIMARY_TEXT_COLOR,
+    RAISED_SURFACE_COLOR,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+    SUCCESS_COLOR,
+    SURFACE_COLOR,
+)
 
 if TYPE_CHECKING:
     from textual.app import App
 
-BACKGROUND = "#0b111b"
-SURFACE = "#121c2b"
-RAISED_SURFACE = "#1b293a"
-NEUTRAL_BORDER = "#39495d"
-PRIMARY_TEXT = "#e5ebf2"
-SECONDARY_TEXT = "#a2afbf"
-FOCUS = "#f8fafc"
+BACKGROUND = BACKGROUND_COLOR
+SURFACE = SURFACE_COLOR
+RAISED_SURFACE = RAISED_SURFACE_COLOR
+NEUTRAL_BORDER = NEUTRAL_BORDER_COLOR
+PRIMARY_TEXT = PRIMARY_TEXT_COLOR
+SECONDARY_TEXT = SECONDARY_TEXT_COLOR
+FOCUS = STEEL_BLUE
 THEME_NAME = "shikiru"
 
 SHIKIRU_THEME = Theme(
@@ -35,11 +47,15 @@ SHIKIRU_THEME = Theme(
     variables={
         "border": NEUTRAL_BORDER,
         "accent": FOCUS,
+        "amber": AMBER,
+        "dusty-rose": ALERT_COLOR,
         "neutral-border": NEUTRAL_BORDER,
         "focus": FOCUS,
         "muted-text": SECONDARY_TEXT,
         "primary-text": PRIMARY_TEXT,
+        "sage": SUCCESS_COLOR,
         "secondary-text": SECONDARY_TEXT,
+        "steel-blue": STEEL_BLUE,
     },
 )
 

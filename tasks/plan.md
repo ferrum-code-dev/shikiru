@@ -905,11 +905,11 @@ Refs: Focus §3–5/§8; 02 §2, 05 §2–3, 06 §5.4; Tasks 89–90.
 
 ### Task 92: Shared compact visual language
 Refs: Focus §2/§6–7; 06 §6, 07 §2–3; Tasks 89–91.
-- [ ] Implement the approved graphite/steel blue/sage/amber palette with quiet borders, readable primary/secondary text and dusty rose for errors. Role names and state words/glyphs carry meaning; no mandatory neon role coloring or kanji decoration in primary content.
-- [ ] Introduce consumed compact project metric, resource and combined agent/usage renderables. Replace vague `partial` labels with explicit coverage and show subscription, actual reported charges, estimates and unknown values distinctly.
-- [ ] Provide a lightweight textual stage/activity projection for actual implement/plan/setup/consult/rework/integration states, with holds and ownership distinct from signal activity. Preserve existing public strip/renderable contracts for CLI or explicitly configured plugins.
-- [ ] Apply the shared theme to shell, task view, palette and evidence forms; preserve width-safe glyphs, monochrome cues and the existing signal-driven motion cap. Use shared rendering rather than duplicate Home and task formatting.
-- [ ] Update visual design sections to actual tokens/renderables without adding theme or breakpoint configuration without an Operator need.
+- [x] Implement the approved graphite/steel blue/sage/amber palette with quiet borders, readable primary/secondary text and dusty rose for errors. Role names and state words/glyphs carry meaning; no mandatory neon role coloring or kanji decoration in primary content.
+- [x] Introduce consumed compact project metric, resource and combined agent/usage renderables. Replace vague `partial` labels with explicit coverage and show subscription, actual reported charges, estimates and unknown values distinctly.
+- [x] Provide a lightweight textual stage/activity projection for actual implement/plan/setup/consult/rework/integration states, with holds and ownership distinct from signal activity. Preserve existing public strip/renderable contracts for CLI or explicitly configured plugins.
+- [x] Apply the shared theme to shell, task view, palette and evidence forms; preserve width-safe glyphs, monochrome cues and the existing signal-driven motion cap. Use shared rendering rather than duplicate Home and task formatting.
+- [x] Update visual design sections to actual tokens/renderables without adding theme or breakpoint configuration without an Operator need.
 - Tests: behavior-focused Rich/Textual integration verifies meaningful hold/state/coverage rendering and narrow/monochrome readability. No theme token listings or new golden-snapshot catalogue.
 
 ### Task 93: Focus Home dashboard and compact project readouts

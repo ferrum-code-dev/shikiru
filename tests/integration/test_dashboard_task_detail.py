@@ -632,17 +632,14 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
                 "usage reported 0 · legacy recorded 1 · token usage unknown 2/3 runs"
                 " · legacy provenance unknown 2" in usage_text
             )
-            assert "Billed subtotal · $1.25 · partial · 1/3 runs · legacy recorded 1" in usage_text
-            assert (
-                "API-equivalent subtotal · $0.00 · partial · 1/3 runs · legacy recorded 1"
-                in usage_text
-            )
-            assert "Unknown cost · 1/3 runs" in usage_text
+            assert "billed $1.25 across 1 session" in sessions_text
+            assert "API-equivalent estimate $0.00 across 1 session" in sessions_text
+            assert "billing mode unknown for 3 sessions" in sessions_text
             assert "legacy recorded · input 500 · output 50 · cache read 0 · cache write 0" in (
                 sessions_text
             )
-            assert "$1.25 · billed · legacy recorded" in sessions_text
-            assert "$0.00 · api_equivalent · legacy recorded" in sessions_text
+            assert "billed $1.25 · legacy recorded" in sessions_text
+            assert "API-equivalent estimate $0.00 · legacy recorded" in sessions_text
             assert "legacy last reported context · 10%" in sessions_text
             assert "legacy usage provenance unknown" in sessions_text
             assert "no reliable context provenance" in sessions_text

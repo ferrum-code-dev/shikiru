@@ -38,6 +38,7 @@ from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import run_dir
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
+from shikiru.plugins.widgets.resources import ResourcesPanel, ResourcesWidget
 from shikiru.plugins.widgets.usage import UNKNOWN_VALUE, UsagePanel, UsageWidget
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import EscalationStore
@@ -71,6 +72,7 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import BillingMode
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.dashboard.contract import WidgetContext
     from shikiru.dashboard.views import DashboardSources
     from shikiru.store.database import Database
     from shikiru.store.reader import StateReader
@@ -178,6 +180,25 @@ def _populate_usage_records(connection: Connection, clock: FakeClock) -> str:
     runs.start(task.id, Role.LEADER, Rung("unknown-agent", "model", "low"))
     clock.advance(2 * 60 * 60)
     return task.id
+
+
+async def _assert_compact_readouts(context: WidgetContext) -> None:
+    usage_widget = cast("UsagePanel", UsageWidget().create(context))
+    async with WidgetHostApp(usage_widget).run_test(size=(72, 20)):
+        text = plain_text(usage_widget.content)
+        assert "5 reported · 1 legacy positive · 1 unknown / 7 sessions" in text
+        assert "billed $2.50 across 2 sessions" in text
+        assert "API billed $0.00 across 1 session; API charges unreported for 1 session" in text
+        assert "API-equivalent estimate $1.50 across 1 session" in text
+        assert "Subscription 2 sessions · agents claude" in text
+        assert "billing mode unknown for 3 sessions" in text
+
+    resource_widget = cast("ResourcesPanel", ResourcesWidget().create(context))
+    async with WidgetHostApp(resource_widget).run_test(size=(48, 8)):
+        text = plain_text(resource_widget.content)
+        assert "Host · CPU" in text
+        assert "Shikiru including agents · CPU" in text
+        assert "RAM" in text
 
 
 async def test_escalations_open_full_packet_and_route_resolution_action(
@@ -493,9 +514,9 @@ async def test_usage_panel_separates_cost_bases_and_marks_unknown_usage_and_cost
         text = plain_text(widget.content)
         assert "codex" in text
         assert "Project recorded usage" in text
-        assert "API-equivalent subtotal · $0.42 · partial · 1/5 runs" in text
-        assert "Billed subtotal · $0.00 · partial · 1/5 runs" in text
-        assert "Unknown cost · 3/5 runs" in text
+        assert "API-equivalent estimate $0.42 across 1 session" in text
+        assert "billed $0.00 across 2 sessions" in text
+        assert "billing mode unknown for 7 sessions" in text
         assert "input 1,040" in text
         assert "weekly" in text
         assert "reset " in text
@@ -572,7 +593,8 @@ async def test_project_usage_projects_persisted_coverage_without_inventing_api_s
     (disposable_run_data / "temporary-evidence").write_text("removed by ordinary cleanup")
     shutil.rmtree(disposable_run_data)
 
-    projection = widget_context(reader, project_dir, clock).views.project_usage()
+    context = widget_context(reader, project_dir, clock)
+    projection = context.views.project_usage()
 
     assert projection.session_count == 7
     assert projection.input_tokens == 210
@@ -589,6 +611,8 @@ async def test_project_usage_projects_persisted_coverage_without_inventing_api_s
     assert projection.unknown_billing_sessions == 3
     assert projection.subscription_sessions == 2
     assert projection.subscription_agents == ("claude",)
+
+    await _assert_compact_readouts(context)
 
 
 async def test_resource_sampling_failure_is_stale_and_task_navigation_still_works(
@@ -632,7 +656,11 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
     async with app.run_test(size=(100, 50)) as pilot:
         resource_panel = app.query_one("#resources", Static)
         await wait_until(lambda: "Stale" in plain_text(resource_panel.content), timeout=2)
-        assert "Latest sample failed" in plain_text(resource_panel.content)
+        resource_text = plain_text(resource_panel.content)
+        assert "Latest sample failed" in resource_text
+        assert "Host · CPU" in resource_text
+        assert "Shikiru including agents · CPU" in resource_text
+        assert "observed" in resource_text
         task_row = app.query_one(f"#task-row-{task.id} > Static", Static)
         assert task.title in plain_text(task_row.content)
 

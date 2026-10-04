@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from rich.console import Group
+from rich.console import Group, RenderableType
 from rich.text import Text
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -19,7 +19,7 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason
 from shikiru.errors import ShikiruError
-from shikiru.ui.strip import TaskStrip
+from shikiru.ui.compact import AgentUsageRow, ProjectUsageMetric, StageActivity
 
 if TYPE_CHECKING:
     from textual import events
@@ -33,7 +33,6 @@ if TYPE_CHECKING:
         TaskReferenceView,
         TaskRelationshipsView,
         TaskReportView,
-        TaskSessionView,
         TaskTimelineEntryView,
         TaskTimelinePageView,
         WidgetContext,
@@ -104,7 +103,6 @@ NO_CRITERIA = "No validated acceptance criteria are recorded."
 NO_EVIDENCE = "No recorded agent signals or task events are available."
 NO_FACTS = "No engine-computed git facts are recorded."
 CLOSED_RUN_STATUS = "closed"
-PANEL_WIDTH_PADDING = 4
 
 
 class TaskDetailBody(VerticalScroll):
@@ -765,11 +763,7 @@ class TaskDetailPanel(Vertical):
         blocker.display = bool(blocker_lines)
         blocker.update("Blocker evidence\n" + "\n".join(blocker_lines) if blocker_lines else "")
         self._render_relationships(view)
-        progress_width = max(self.size.width - PANEL_WIDTH_PADDING, 1)
-        progress = TaskStrip(view.progress).render(progress_width)
-        self.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).update(
-            Group(Text("Progress · actual task mode"), progress)
-        )
+        self.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).update(StageActivity(view).render())
         self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(f"Request\n{view.request}")
         criteria = "\n".join(f"- {item}" for item in view.acceptance_criteria)
         self.query_one(f"#{TASK_DETAIL_CRITERIA}", Static).update(
@@ -1260,53 +1254,29 @@ def _workspace_text(view: TaskDetailView) -> str:
     return "\n".join(lines)
 
 
-def _sessions_text(view: TaskDetailView) -> str:
-    lines = ["Task-scoped usage and session metadata"]
+def _sessions_text(view: TaskDetailView) -> Group:
+    lines: list[RenderableType] = []
+    if view.usage is None:
+        lines.append(Text("Task usage coverage unavailable", style="bold"))
+    else:
+        lines.append(ProjectUsageMetric(view.usage, f"Task usage · {view.task_id}").render())
     if not view.sessions:
-        lines.append("No agent sessions are recorded.")
+        lines.append(Text("No agent sessions are recorded."))
     for session in view.sessions:
-        cost = _session_cost_text(session)
         context = _session_context_text(
             session.context_used_pct,
             session.status,
             usage_reported=session.usage_reported,
         )
-        effort = f"/{session.effort}" if session.effort else ""
-        tokens = _session_tokens_text(session)
         lines.extend(
             (
-                (
-                    f"{session.role.title()} · {session.agent}:{session.model}{effort} · "
-                    f"{session.status}"
-                ),
-                f"Session ID · {session.session_id or NO_VALUE}",
-                f"Billing mode · {session.billing_mode} · {session.billing_source}",
-                f"Tokens · {tokens}",
-                f"Agent-reported cost · {cost} · {context}",
+                AgentUsageRow(session).render(),
+                Text(f"Session ID · {session.session_id or NO_VALUE}"),
+                Text(f"Billing declaration · {session.billing_mode} · {session.billing_source}"),
+                Text(f"{context}"),
             )
         )
-    return "\n".join(lines)
-
-
-def _session_cost_text(session: TaskSessionView) -> str:
-    if session.cost_usd is None or session.usage_reported is False:
-        return NO_VALUE
-    value = f"${session.cost_usd:.2f} · {session.cost_basis}"
-    if session.legacy_cost_recorded:
-        value = f"{value} · legacy recorded"
-    return value
-
-
-def _session_tokens_text(session: TaskSessionView) -> str:
-    values = (
-        f"input {session.input_tokens} · output {session.output_tokens} · "
-        f"cache read {session.cache_read_tokens} · cache write {session.cache_write_tokens}"
-    )
-    if session.usage_reported is True:
-        return values
-    if session.legacy_token_totals:
-        return f"legacy recorded · {values}"
-    return _unknown_session_tokens(session.usage_reported)
+    return Group(*lines)
 
 
 def _session_context_text(
@@ -1323,11 +1293,3 @@ def _session_context_text(
     if status == CLOSED_RUN_STATUS:
         age_label = f"{age_label} for closed session"
     return f"{age_label} · {context_used_pct:.0f}%"
-
-
-def _unknown_session_tokens(usage_reported: bool | None) -> str:
-    if usage_reported is None:
-        reason = "legacy usage provenance unknown"
-    else:
-        reason = "usage was not reported"
-    return f"{NO_VALUE} · {reason}; token values are unknown"
