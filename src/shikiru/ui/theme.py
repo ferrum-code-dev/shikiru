@@ -15,6 +15,7 @@ from shikiru.ui.tokens import (
     PRIMARY_TEXT_COLOR,
     RAISED_SURFACE_COLOR,
     SECONDARY_TEXT_COLOR,
+    SELECTED_SURFACE_COLOR,
     STEEL_BLUE,
     SUCCESS_COLOR,
     SURFACE_COLOR,
@@ -55,6 +56,7 @@ SHIKIRU_THEME = Theme(
         "primary-text": PRIMARY_TEXT,
         "sage": SUCCESS_COLOR,
         "secondary-text": SECONDARY_TEXT,
+        "selected-surface": SELECTED_SURFACE_COLOR,
         "steel-blue": STEEL_BLUE,
     },
 )

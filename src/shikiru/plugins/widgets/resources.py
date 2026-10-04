@@ -30,7 +30,7 @@ class ResourcesPanel(Static):
 
     async def _refresh(self) -> None:
         sample = await self._widget_context.views.resources()
-        self.update(render_resource_metric(sample))
+        self.update(render_resource_metric(sample, width=self.size.width))
 
 
 class ResourcesWidget:

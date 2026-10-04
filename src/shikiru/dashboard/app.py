@@ -95,11 +95,14 @@ _SUMMARY_WAITING = "waiting"
 HOME_SPLIT_MIN_COLUMNS = 73
 FOCUS_SUMMARY_MAX_ROWS = 12
 FOCUS_MAIN_MIN_ROWS = 3
+FOCUS_COMPACT_MAIN_ROWS = 7
+FOCUS_COMPACT_TASK_LIST_ROWS = 6
 FOCUS_MIN_TASK_LIST_ROWS = 9
 FOCUS_COMMAND_STATUS_ROWS = 1
 FOCUS_FRAME_BORDER_ROWS = 2
-FOCUS_FOOTER_HEIGHT = 4
-FOCUS_COMPACT_FOOTER_HEIGHT = 5
+FOCUS_FOOTER_MIN_HEIGHT = 9
+FOCUS_FOOTER_HEIGHT = 2
+FOCUS_COMPACT_FOOTER_HEIGHT = 3
 FOCUS_ATTENTION_HEIGHT = 3
 FOCUS_VIEWS_LIST = "focus-views-list"
 FOCUS_VIEW_PREFIX = "focus-view-"
@@ -572,15 +575,15 @@ class DashboardApp(App[None]):
     CSS = """
     Screen { background: $background; color: $primary-text; }
     #focus-root {
-        height: 100%; border: solid $neutral-border; padding: 0 2;
-        background: $background;
+        height: 100%; border: solid $neutral-border; padding: 0 1;
+        background: $background; scrollbar-size-vertical: 0;
     }
     #focus-readouts {
-        height: auto; max-height: 12; padding: 1 0 0 0; background: $background;
+        height: auto; max-height: 12; padding: 0; background: $background;
         scrollbar-size-vertical: 0;
     }
-    #header { height: auto; margin-bottom: 1; text-wrap: wrap; text-overflow: clip; }
-    #usage { height: auto; margin-bottom: 1; }
+    #header { height: auto; margin-bottom: 0; text-wrap: wrap; text-overflow: clip; }
+    #usage { height: auto; margin-bottom: 0; }
     #resources {
         height: auto; border-top: solid $neutral-border;
     }
@@ -612,7 +615,7 @@ class DashboardApp(App[None]):
     #task-view-root #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
     #focus-footer {
-        height: auto; padding: 1 0 0 0; margin-top: 1; border-top: solid $neutral-border;
+        height: auto; padding: 0; margin-top: 0; border-top: solid $neutral-border;
         background: $background; color: $secondary-text;
     }
     #workspace-command-status { height: 1; padding: 0 1; color: $secondary-text; }
@@ -688,7 +691,7 @@ class DashboardApp(App[None]):
 
     def _compose_focus(self) -> ComposeResult:
         context = self._widget_context()
-        with Vertical(id="focus-root"):
+        with VerticalScroll(id="focus-root"):
             with VerticalScroll(id="focus-readouts"):
                 for placement in (
                     WidgetPlacement.IDENTITY,
@@ -1088,18 +1091,32 @@ class DashboardApp(App[None]):
             main.set_class(wide, "wide")
             main.set_class(not wide, "compact")
             readouts = self.query_one("#focus-readouts", VerticalScroll)
+            task_list_configured = bool(
+                self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST)
+            )
             minimum_main_height = (
                 FOCUS_MIN_TASK_LIST_ROWS
-                if wide and self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST)
+                if wide and task_list_configured
+                else FOCUS_COMPACT_MAIN_ROWS
+                if not wide and task_list_configured
                 else FOCUS_MAIN_MIN_ROWS
             )
+            main.styles.min_height = minimum_main_height
+            footer = self.query_one("#focus-footer", Static)
+            footer.display = height >= FOCUS_FOOTER_MIN_HEIGHT
             readouts.styles.max_height = max(
                 1,
                 min(
                     FOCUS_SUMMARY_MAX_ROWS,
                     height
                     - minimum_main_height
-                    - (FOCUS_FOOTER_HEIGHT if wide else FOCUS_COMPACT_FOOTER_HEIGHT)
+                    - (
+                        FOCUS_FOOTER_HEIGHT
+                        if wide
+                        else FOCUS_COMPACT_FOOTER_HEIGHT
+                        if height >= FOCUS_FOOTER_MIN_HEIGHT
+                        else 0
+                    )
                     - FOCUS_ATTENTION_HEIGHT
                     - FOCUS_COMMAND_STATUS_ROWS
                     - FOCUS_FRAME_BORDER_ROWS,
@@ -1107,7 +1124,7 @@ class DashboardApp(App[None]):
             )
             task_list = self.query("#task-browser-list")
             if task_list:
-                task_list.first().styles.height = "1fr" if wide else FOCUS_MIN_TASK_LIST_ROWS
+                task_list.first().styles.height = "1fr" if wide else FOCUS_COMPACT_TASK_LIST_ROWS
             if self._home_detail_panel is not None:
                 self._home_detail_panel.display = wide
                 self._home_detail_panel.styles.height = "100%" if wide else "auto"

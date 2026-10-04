@@ -80,7 +80,7 @@ class UsagePanel(Static):
     async def _refresh(self) -> None:
         if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
             project_usage = self._widget_context.views.project_usage()
-            self.update(ProjectUsageMetric(project_usage, "Project").render())
+            self.update(ProjectUsageMetric(project_usage, "Project").render(home=True))
             return
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
         lines: list[RenderableType] = []

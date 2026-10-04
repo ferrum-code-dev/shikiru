@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.text import Text
 
@@ -25,13 +26,15 @@ SESSION_COST_FORMAT = ".2f"
 COUNT_SHORT_SCALE = 1_000
 COUNT_SHORT_MILLION = COUNT_SHORT_SCALE * COUNT_SHORT_SCALE
 COUNT_SHORT_PRECISION = 1
-FOCUS_ATTENTION_MAX_HEIGHT = 3
+FOCUS_ATTENTION_MAX_HEIGHT = 2
+RESOURCE_WIDE_ALIGNMENT_MIN_WIDTH = 73
 RESOURCE_FAILED = "failed"
 RESOURCE_UNAVAILABLE = "unavailable"
 RESOURCE_STALE = "stale"
 RESOURCE_EMPTY = "empty"
 RESOURCE_AVAILABLE = "available"
 RESOURCE_STATE_UNKNOWN = "sample state unknown"
+RESOURCE_GROUP_MIN_GAP = 3
 UNSTARTED_STEP = "not started"
 SETUP_STEP = "setup"
 ROLE_LABELS = {
@@ -203,6 +206,17 @@ class _AttentionGroup(Protocol):
     def escalations(self) -> tuple[_AttentionDecision, ...]: ...
 
 
+class _HeldTaskState(Protocol):
+    @property
+    def task_id(self) -> str: ...
+
+    @property
+    def holds(self) -> tuple[str, ...]: ...
+
+    @property
+    def operator_owned_roles(self) -> tuple[str, ...]: ...
+
+
 class _AttentionSummary(Protocol):
     @property
     def engine_up(self) -> bool | None: ...
@@ -215,6 +229,9 @@ class _AttentionSummary(Protocol):
 
     @property
     def operator_owned(self) -> tuple[str, ...] | None: ...
+
+    @property
+    def held_task_states(self) -> tuple[_HeldTaskState, ...] | None: ...
 
 
 class _Attention(Protocol):
@@ -309,7 +326,9 @@ class ProjectUsageMetric:
     usage: _RecordedUsage
     scope: str
 
-    def render(self) -> Group:
+    def render(self, *, home: bool = False) -> Group | Text:
+        if home:
+            return _home_project_usage_text(self.usage)
         usage = self.usage
         known_token_sessions = usage.reported_sessions + usage.legacy_token_sessions
         tokens = (
@@ -331,6 +350,36 @@ class ProjectUsageMetric:
         if billing:
             lines.append(Text(billing, style=SECONDARY_TEXT_COLOR))
         return Group(*lines)
+
+
+def _home_project_usage_text(usage: _RecordedUsage) -> Text:
+    known_token_sessions = usage.reported_sessions + usage.legacy_token_sessions
+    tokens = (
+        f"{_compact_count(usage.input_tokens + usage.output_tokens)} tok"
+        if known_token_sessions
+        else "tokens unknown"
+    )
+    coverage = "/".join(
+        f"{count} {label}"
+        for count, label in (
+            (usage.reported_sessions, "rep"),
+            (usage.legacy_token_sessions, "legacy"),
+            (usage.unknown_token_sessions, "unknown"),
+        )
+        if count
+    )
+    text = Text(tokens, style=STEEL_BLUE if known_token_sessions else SECONDARY_TEXT_COLOR)
+    if coverage:
+        text.append(f" · {coverage}", style=SECONDARY_TEXT_COLOR)
+    billing = _primary_billing_summary(usage, home=True)
+    if billing:
+        text.append(f" · {billing}", style=SECONDARY_TEXT_COLOR)
+    if usage.api_equivalent_cost_sessions and usage.api_equivalent_cost_usd is not None:
+        text.append(
+            f" · API-equiv. est. ${usage.api_equivalent_cost_usd:{SESSION_COST_FORMAT}}",
+            style=AMBER,
+        )
+    return text
 
 
 @dataclass(frozen=True)
@@ -410,7 +459,7 @@ class ProjectUsageDetails:
         return Group(*lines)
 
 
-def _primary_billing_summary(usage: _RecordedUsage) -> str:
+def _primary_billing_summary(usage: _RecordedUsage, *, home: bool = False) -> str:
     parts: list[str] = []
     all_amount = usage.billed_cost_usd
     api_amount = usage.api_billed_cost_usd
@@ -424,11 +473,17 @@ def _primary_billing_summary(usage: _RecordedUsage) -> str:
         )
     if usage.api_billed_cost_sessions and api_amount is not None:
         parts.append(
-            f"API billed ${api_amount:{SESSION_COST_FORMAT}} · "
+            f"API billed ${api_amount:{SESSION_COST_FORMAT}}"
+            if home
+            else f"API billed ${api_amount:{SESSION_COST_FORMAT}} · "
             f"{_session_count(usage.api_billed_cost_sessions)}"
         )
     if usage.api_cost_unreported_sessions:
-        parts.append(f"{_count_label(usage.api_cost_unreported_sessions, 'API charge')} unreported")
+        parts.append(
+            f"API unreported {usage.api_cost_unreported_sessions}"
+            if home
+            else f"{_count_label(usage.api_cost_unreported_sessions, 'API charge')} unreported"
+        )
     if usage.subscription_agents:
         parts.append(f"{_count_label(len(usage.subscription_agents), 'subscription agent')}")
     if usage.unknown_billing_sessions:
@@ -464,7 +519,7 @@ class ResourceMetric:
 
     sample: _ResourceSample | None
 
-    def render(self) -> Text:
+    def render(self, *, width: int | None = None) -> Text:
         if self.sample is None:
             return Text("Host and Shikiru resources unavailable · no sample recorded")
         state = self.sample.state
@@ -475,14 +530,18 @@ class ResourceMetric:
         state_style = AMBER if state == RESOURCE_STALE else SECONDARY_TEXT_COLOR
         if state == RESOURCE_STALE:
             state_label = "Stale · "
-        elif state == RESOURCE_AVAILABLE:
-            state_label = "Available · "
         elif state is None:
             state_label = f"{RESOURCE_STATE_UNKNOWN} · "
         else:
             state_label = ""
+        host = _host_resource_text(self.sample)
         instance = _instance_resource_text(self.sample)
-        host_ram = _host_ram_text(self.sample)
+        group_gap = " · "
+        if width is not None and width >= RESOURCE_WIDE_ALIGNMENT_MIN_WIDTH:
+            group_gap = " " * max(
+                RESOURCE_GROUP_MIN_GAP,
+                width - cell_len(host.plain) - cell_len(instance.plain),
+            )
         age = (
             f" · observed {self.sample.sampled_ago} ago"
             if self.sample.sampled_ago and state != RESOURCE_AVAILABLE
@@ -491,11 +550,8 @@ class ResourceMetric:
         error = f" · {self.sample.error}" if self.sample.error else ""
         return Text.assemble(
             (state_label, state_style),
-            ("Host ", "bold"),
-            (f"CPU {self.sample.host_cpu_pct:.0f}%", STEEL_BLUE),
-            f" · {host_ram}",
-            " · ",
-            ("Shikiru + agents ", "bold"),
+            host,
+            group_gap,
             instance,
             (age, SECONDARY_TEXT_COLOR),
             (error, AMBER if state == RESOURCE_STALE else ALERT_COLOR),
@@ -512,11 +568,20 @@ def _resource_state_line(state: str, sample: _ResourceSample) -> Text:
 def _instance_resource_text(sample: _ResourceSample) -> Text:
     if sample.instance_cpu_pct is None or sample.instance_rss_gb is None:
         if sample.state == RESOURCE_EMPTY:
-            return Text("process tree empty", style=SECONDARY_TEXT_COLOR)
-        return Text("CPU/RAM unavailable", style=SECONDARY_TEXT_COLOR)
+            return Text("Shikiru + agents · process tree empty", style=SECONDARY_TEXT_COLOR)
+        return Text("Shikiru + agents · CPU/RAM unavailable", style=SECONDARY_TEXT_COLOR)
     return Text.assemble(
+        ("Shikiru + agents ", SECONDARY_TEXT_COLOR),
         (f"CPU {sample.instance_cpu_pct:.0f}%", STEEL_BLUE),
-        f" · RAM {sample.instance_rss_gb:{GIB_FORMAT}} GiB",
+        (f" · RAM {sample.instance_rss_gb:{GIB_FORMAT}} GiB", SECONDARY_TEXT_COLOR),
+    )
+
+
+def _host_resource_text(sample: _ResourceSample) -> Text:
+    return Text.assemble(
+        ("Host ", SECONDARY_TEXT_COLOR),
+        (f"CPU {sample.host_cpu_pct:.0f}%", STEEL_BLUE),
+        (f" · {_host_ram_text(sample)}", SECONDARY_TEXT_COLOR),
     )
 
 
@@ -528,9 +593,9 @@ def _host_ram_text(sample: _ResourceSample) -> str:
     return f"RAM {used / BYTES_PER_GIB:{GIB_FORMAT}}/{total / BYTES_PER_GIB:{GIB_FORMAT}} GiB"
 
 
-def render_resource_metric(sample: _ResourceSample | None) -> Text:
+def render_resource_metric(sample: _ResourceSample | None, *, width: int | None = None) -> Text:
     """Render `sample` without starting another resource observation."""
-    return ResourceMetric(sample).render()
+    return ResourceMetric(sample).render(width=width)
 
 
 def attention_status_text(
@@ -540,44 +605,44 @@ def attention_status_text(
     action_hint: str,
     selected_group_index: int = 0,
     selected_escalation_id: str | None = None,
-) -> str:
+) -> Text:
     """Render the Home status strip from current attention and observed workspace state."""
     if attention.groups:
-        return _attention_group_status(
-            attention.groups[selected_group_index],
-            summary,
+        group = attention.groups[selected_group_index]
+        status = _attention_group_status(
+            group,
             action_hint=action_hint,
             selected_escalation_id=selected_escalation_id,
         )
-    if summary.operator_owned:
-        owners = ", ".join(summary.operator_owned)
-        status = f"@ Operator owns {owners} · automation held"
-        return _append_operational_facts(status, summary, include_held_state=False)
-    if summary.held_tasks:
-        status = f"= Automation held · {summary.held_tasks} tasks"
-        return _append_operational_facts(status, summary, include_held_state=False)
-    if summary.engine_up is False:
-        return _append_operational_facts("✓ No decisions needed", summary)
+        _append_engine_state(status, summary)
+        _append_held_task_states(status, summary)
+        return status
+    status = Text("✓ No decisions needed", style=SAGE)
     if summary.engine_up is True and summary.held_tasks == 0 and summary.holds == ():
-        return "✓ No decisions needed · Automation continues"
-    return "✓ No decisions needed · Automation status unavailable"
+        status.append(" · Automation continues", style=SAGE)
+    else:
+        _append_engine_state(status, summary, inline=True)
+        _append_held_task_states(status, summary, inline=True)
+        if summary.engine_up is None and not summary.held_task_states and not summary.held_tasks:
+            status.append(" · Automation status unavailable", style=SECONDARY_TEXT_COLOR)
+    return status
 
 
 def _attention_group_status(
     group: _AttentionGroup,
-    summary: _AttentionSummary,
     *,
     action_hint: str,
     selected_escalation_id: str | None,
-) -> str:
+) -> Text:
     if group.escalations:
         decision = next(
             (item for item in group.escalations if item.escalation_id == selected_escalation_id),
             group.escalations[0],
         )
-        status = (
-            f"! {decision.escalation_id} · {group.task_id or 'Project'} · "
-            f"{decision.headline} · {action_hint}"
+        status = Text.assemble(
+            ("! ", AMBER),
+            (decision.escalation_id, AMBER),
+            f" · {group.task_id or 'Project'} · {decision.headline} · {action_hint}",
         )
     else:
         fault = next(
@@ -585,30 +650,97 @@ def _attention_group_status(
             None,
         )
         if fault is not None:
-            status = f"! {group.task_id or 'Project'} · {fault} · Ctrl+P actions"
+            status = Text.assemble(
+                ("! ", ALERT_COLOR),
+                (f"{group.task_id or 'Project'} · {fault} · Ctrl+P actions", ALERT_COLOR),
+            )
         else:
-            status = f"! {group.task_id or 'Project'} · {' · '.join(group.reasons)} · {action_hint}"
-    return _append_operational_facts(status, summary)
+            status = Text.assemble(
+                ("! ", AMBER),
+                (
+                    f"{group.task_id or 'Project'} · {' · '.join(group.reasons)} · {action_hint}",
+                    AMBER,
+                ),
+            )
+    return status
 
 
-def _append_operational_facts(
-    status: str,
+def _append_held_task_states(
+    status: Text,
     summary: _AttentionSummary,
     *,
-    include_held_state: bool = True,
-) -> str:
-    facts: list[str] = []
-    if include_held_state and (summary.operator_owned or summary.held_tasks):
-        facts.append("automation held")
-    if summary.holds:
-        facts.append(f"holds {', '.join(summary.holds)}")
-    elif summary.holds is None or summary.held_tasks:
-        facts.append("hold state unavailable")
+    inline: bool = False,
+) -> None:
+    held_task_states = summary.held_task_states
+    if held_task_states is None:
+        if summary.operator_owned:
+            _append_status_line(
+                status,
+                f"@ Operator owns {', '.join(summary.operator_owned)}",
+                STEEL_BLUE,
+                inline=inline,
+            )
+        if summary.held_tasks:
+            _append_status_line(
+                status,
+                f"= Hold details unavailable for {summary.held_tasks} tasks",
+                AMBER,
+                inline=inline,
+            )
+        return
+    if summary.held_tasks and not held_task_states:
+        _append_status_line(status, "= Hold details unavailable", AMBER, inline=inline)
+    if summary.operator_owned and not held_task_states:
+        _append_status_line(
+            status,
+            "@ Operator-owned task details unavailable",
+            STEEL_BLUE,
+            inline=inline,
+        )
+    for held_task in held_task_states:
+        _append_task_hold_state(status, held_task, inline=inline)
+
+
+def _append_task_hold_state(
+    status: Text,
+    held_task: _HeldTaskState,
+    *,
+    inline: bool,
+) -> None:
+    owner = (
+        f"Operator owns {', '.join(role.title() for role in held_task.operator_owned_roles)}"
+        if held_task.operator_owned_roles
+        else "held"
+    )
+    holds = ", ".join(held_task.holds) if held_task.holds else "hold details unavailable"
+    _append_status_line(
+        status,
+        f"{'@' if held_task.operator_owned_roles else '='} {held_task.task_id} · {owner} · {holds}",
+        STEEL_BLUE if held_task.operator_owned_roles else AMBER,
+        inline=inline,
+    )
+
+
+def _append_engine_state(
+    status: Text,
+    summary: _AttentionSummary,
+    *,
+    inline: bool = False,
+) -> None:
     if summary.engine_up is False:
-        facts.append("○ Engine stopped")
+        _append_status_line(status, "○ Engine stopped", SECONDARY_TEXT_COLOR, inline=inline)
     elif summary.engine_up is None:
-        facts.append("engine status unavailable")
-    return f"{status} · {' · '.join(facts)}" if facts else status
+        _append_status_line(
+            status,
+            "○ Engine status unavailable",
+            SECONDARY_TEXT_COLOR,
+            inline=inline,
+        )
+
+
+def _append_status_line(status: Text, line: str, style: str, *, inline: bool = False) -> None:
+    status.append(" · " if inline else "\n")
+    status.append(line, style=style)
 
 
 @dataclass(frozen=True)

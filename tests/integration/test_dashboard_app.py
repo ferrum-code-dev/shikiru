@@ -3,6 +3,7 @@ from __future__ import annotations
 import errno
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -25,6 +26,7 @@ from shikiru.agents.contracts import (
     BILLING_MODE_API,
     BILLING_MODE_SUBSCRIPTION,
     BILLING_SOURCE_OPERATOR_CONFIG,
+    COST_BASIS_API_EQUIVALENT,
     COST_BASIS_BILLED,
     COST_BASIS_UNKNOWN,
     BillingDeclaration,
@@ -36,7 +38,9 @@ from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import (
     WIDGET_ENTRY_POINT_GROUP,
+    DiagnosticSampleState,
     PaletteRequest,
+    ResourceView,
 )
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
@@ -60,8 +64,9 @@ from shikiru.domain.commands import Prioritize, Stop
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, ReportKind
-from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
+from shikiru.domain.scheduling import WaitReason
+from shikiru.domain.steps import Step, Transition, first_step
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Task
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import turns_dir
@@ -73,6 +78,7 @@ from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.telemetry.resources import ResourceSampler
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
@@ -86,13 +92,21 @@ _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _WIDE_HOME_SIZE = (120, 40)
-_HOME_REVIEW_SIZES = ((100, 35), _WIDE_HOME_SIZE, (80, 24), (48, 20))
+_STANDARD_HOME_SIZE = (100, 35)
+_COMPACT_HOME_SIZE = (48, 20)
+_TINY_HOME_SIZE = (20, 8)
+_HOME_REVIEW_SIZES = (_STANDARD_HOME_SIZE, _WIDE_HOME_SIZE, (80, 24), _COMPACT_HOME_SIZE)
 _MIN_WIDE_TASK_LIST_ROWS = 9
 _API_INPUT_TOKENS = 1_000
 _API_OUTPUT_TOKENS = 500
 _SUBSCRIPTION_INPUT_TOKENS = 400
 _SUBSCRIPTION_OUTPUT_TOKENS = 200
+_UNREPORTED_INPUT_TOKENS = 200
+_UNREPORTED_OUTPUT_TOKENS = 100
+_ESTIMATED_INPUT_TOKENS = 200
+_ESTIMATED_OUTPUT_TOKENS = 100
 _API_BILLED_COST_USD = 0.42
+_API_EQUIVALENT_ESTIMATE_USD = 0.11
 
 
 class _ExternalWidget:
@@ -173,8 +187,6 @@ def _seed_paused_escalated_task(connection: Connection) -> str:
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from rich.text import Text
     from textual.pilot import Pilot
     from textual.widget import Widget
@@ -468,12 +480,11 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
     reader = StateReader(database, clock)
     try:
         app = _app(reader, project_dir, widget_names=["queue", "escalations"], services=services)
-        async with app.run_test(size=size):
+        async with app.run_test(size=size) as pilot:
             attention = app.query_one("#escalations", EscalationsPanel)
             await wait_until(
                 lambda: (
                     "Operator owns" in _rendered_text(_focus_attention_row(attention))
-                    and "automation held" in _rendered_text(_focus_attention_row(attention))
                     and "intervention" in _rendered_text(_focus_attention_row(attention))
                     and "paused" in _rendered_text(_focus_attention_row(attention))
                 ),
@@ -483,6 +494,9 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
             assert "Operator owns" in visible_status
             assert "intervention" in visible_status
             assert "paused" in visible_status
+            assert owned.id in visible_status
+            assert paused.id in visible_status
+            assert "automation held" not in visible_status
             attention.activate_attention()
             app.query_one("#task-browser-list", ListView).focus()
             assert attention.display
@@ -492,17 +506,25 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
             await wait_until(
                 lambda: (
                     "Engine stopped" in _rendered_text(_focus_attention_row(attention))
-                    and "automation held" in _rendered_text(_focus_attention_row(attention))
+                    and owned.id in _rendered_text(_focus_attention_row(attention))
                 ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
             visible_status = " ".join(_rendered_widget_lines(_focus_attention_row(attention)))
-            assert "automation held" in visible_status
             assert "intervention" in visible_status
             assert "paused" in visible_status
+            assert owned.id in visible_status
+            assert paused.id in visible_status
+            assert "automation held" not in visible_status
             assert "Engine stopped" in visible_status
             assert "Automation continues" not in _rendered_text(_focus_attention_row(attention))
             assert attention.display
+            if size == _COMPACT_HOME_SIZE:
+                panels = attention.query_one("#escalation-panels", VerticalScroll)
+                attention.focus()
+                await wait_until(lambda: panels.max_scroll_y > 0, timeout=2)
+                await pilot.press("down")
+                await wait_until(lambda: panels.scroll_y > 0, timeout=2)
     finally:
         reader.close()
 
@@ -511,17 +533,25 @@ def _focus_attention_row(attention: EscalationsPanel) -> Static:
     return attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
 
 
-async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_task_list(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    task = seed_task(connection, clock, title="Visible attention and usage")
+def _seed_primary_usage(connection: Connection, clock: SystemClock) -> tuple[str, RunStore]:
+    primary = seed_task(
+        connection,
+        clock,
+        title="Visible attention and usage",
+        mode=Mode.IMPLEMENT,
+    )
+    TaskStore(connection, clock).apply_transition(
+        primary.id,
+        Transition.stay(primary, step=Step.IMPLEMENT, status=Status.RUNNING),
+    )
     runs = RunStore(connection, clock)
+    _record_mixed_billing(runs, primary.id)
+    return primary.id, runs
+
+
+def _record_mixed_billing(runs: RunStore, task_id: str) -> None:
     api_run = runs.start(
-        task.id,
+        task_id,
         Role.IMPLEMENTER,
         Rung("codex", "gpt-6", "high"),
         billing_declaration=BillingDeclaration(
@@ -542,7 +572,7 @@ async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_t
         ),
     )
     subscription_run = runs.start(
-        task.id,
+        task_id,
         Role.LEADER,
         Rung("claude", "sonnet", "medium"),
         billing_declaration=BillingDeclaration(
@@ -562,63 +592,220 @@ async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_t
             None,
         ),
     )
-    EventLog(connection, clock).append(
-        EventKind.ENGINE_FAULT,
-        task_id=task.id,
-        message="recorded resource failure",
-        data={
-            "scope": "resource sample",
-            "error": "host sample failed",
-            "recoverable": True,
-            "repeat": 2,
-        },
+    unreported_run = runs.start(
+        task_id,
+        Role.HELPER,
+        Rung("codex", "gpt-6-luna", "medium"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_API,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
     )
+    runs.record_usage(
+        unreported_run.id,
+        Usage(
+            _UNREPORTED_INPUT_TOKENS,
+            _UNREPORTED_OUTPUT_TOKENS,
+            0,
+            0,
+            None,
+            COST_BASIS_UNKNOWN,
+            None,
+        ),
+    )
+    estimated_run = runs.start(
+        task_id,
+        Role.IMPLEMENTER,
+        Rung("codex", "gpt-6-luna", "medium"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_API,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    runs.record_usage(
+        estimated_run.id,
+        Usage(
+            _ESTIMATED_INPUT_TOKENS,
+            _ESTIMATED_OUTPUT_TOKENS,
+            0,
+            0,
+            _API_EQUIVALENT_ESTIMATE_USD,
+            COST_BASIS_API_EQUIVALENT,
+            None,
+        ),
+    )
+
+
+def _seed_home_task_rows(
+    connection: Connection,
+    clock: SystemClock,
+    primary_task_id: str,
+    runs: RunStore,
+) -> tuple[tuple[str, ...], str, str, str]:
+    tasks = TaskStore(connection, clock)
+    verifying = seed_task(connection, clock, title="Verify the implementation", mode=Mode.IMPLEMENT)
+    tasks.apply_transition(
+        verifying.id,
+        Transition.stay(verifying, step=Step.VERIFY, status=Status.RUNNING),
+    )
+    waiting = seed_task(connection, clock, title="Wait for dependency", mode=Mode.IMPLEMENT)
+    tasks.set_depends_on(waiting.id, (primary_task_id,))
+    tasks.set_wait_reason(waiting.id, WaitReason.DEPENDENCY)
+    paused = seed_task(connection, clock, title="Paused follow-up", mode=Mode.IMPLEMENT)
+    tasks.set_holds(paused.id, frozenset({Hold.PAUSED}))
+    owned = seed_task(connection, clock, title="Operator-owned follow-up", mode=Mode.IMPLEMENT)
+    owned_run = runs.start(
+        owned.id,
+        Role.LEADER,
+        Rung("claude", "sonnet", "medium"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_SUBSCRIPTION,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    runs.mark_taken_over(owned_run.id)
+    tasks.set_holds(owned.id, frozenset({Hold.INTERVENTION}))
+    queued = seed_task(connection, clock, title="Queued follow-up")
+    completed = seed_task(connection, clock, title="Completed follow-up")
+    tasks.apply_transition(
+        completed.id,
+        Transition.stay(completed, step=None, status=Status.DONE),
+    )
+    active_task_ids = (primary_task_id, verifying.id, waiting.id, paused.id, owned.id, queued.id)
+    return active_task_ids, completed.id, paused.id, owned.id
+
+
+def _home_review_services(project_dir: Path, clock: SystemClock) -> StubServices:
+    settings = load_settings(project_dir)
+    resource_snapshot = ResourceSampler(
+        clock,
+        settings.orchestration.resources,
+    ).sample_process_trees(None, ())
+    services = StubServices(engine_running=True)
+    services.resource_observation = ResourceView(
+        host_cpu_pct=resource_snapshot.host_cpu_pct,
+        host_ram_used_pct=resource_snapshot.host_ram_used_pct,
+        free_ram_gb=resource_snapshot.free_ram_gb,
+        instance_cpu_pct=resource_snapshot.instance_cpu_pct,
+        instance_rss_gb=resource_snapshot.instance_rss_gb,
+        sampled_at=resource_snapshot.sampled_at,
+        state=DiagnosticSampleState.EMPTY,
+        host_ram_used_bytes=resource_snapshot.host_ram_used_bytes,
+        host_ram_total_bytes=resource_snapshot.host_ram_total_bytes,
+    )
+    return services
+
+
+async def _assert_mixed_home_readouts(app: DashboardApp, size: tuple[int, int]) -> None:
+    readouts = app.query_one("#focus-readouts", VerticalScroll)
+    identity = app.query_one("#header", Static)
+    usage = app.query_one("#usage", Static)
+    resources = app.query_one("#resources", Static)
+    attention = app.query_one("#escalations", EscalationsPanel)
+    attention_rows = attention.query_one("#escalation-panels", VerticalScroll)
+    await wait_until(
+        lambda: (
+            "2.7k tok" in " ".join(_rendered_widget_lines(usage))
+            and attention.display
+            and "Operator owns" in _rendered_text(attention_rows.query_one(Static))
+            and "paused" in _rendered_text(attention_rows.query_one(Static))
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    primary = (identity, usage, resources)
+    assert readouts.scroll_y == 0
+    assert all(widget.is_on_screen for widget in primary)
+    assert all(widget.region.y >= readouts.region.y for widget in primary)
+    assert all(widget.region.bottom <= readouts.region.bottom for widget in primary)
+    assert attention.region.bottom <= app.query_one("#focus-main", Horizontal).region.y
+    assert app.query_one("#task-browser-list", ListView).region.height >= _MIN_WIDE_TASK_LIST_ROWS
+
+    identity_text = " ".join(_rendered_widget_lines(identity))
+    usage_text = " ".join(_rendered_widget_lines(usage))
+    resource_text = " ".join(_rendered_widget_lines(resources))
+    attention_text = " ".join(_rendered_widget_lines(attention_rows.query_one(Static)))
+    assert "Engine running" in identity_text
+    assert "2.7k tok" in usage_text
+    assert "API billed $0.42" in usage_text
+    assert "API unreported 2" in usage_text
+    assert "API-equiv. est. $0.11" in usage_text
+    assert "1 subscription agent" in usage_text
+    if size[0] == _WIDE_HOME_SIZE[0]:
+        assert usage.region.height == 1
+    assert "Host" in resource_text
+    assert "Shikiru + agents" in resource_text
+    assert "Operator owns" in attention_text
+
+
+def _capture_home_screenshot(app: DashboardApp, size: tuple[int, int]) -> None:
+    capture_dir = Path("build/review/task98")
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    color_mode = "mono" if os.environ.get("NO_COLOR") else "color"
+    capture_path = capture_dir / f"mixed-home-{size[0]}x{size[1]}-{color_mode}.svg"
+    capture_path.write_text(app.export_screenshot(), encoding="utf-8")
+
+
+async def _assert_mixed_home_task_rows(
+    app: DashboardApp,
+    row_ids: tuple[tuple[str, ...], str, str, str],
+    size: tuple[int, int],
+) -> None:
+    active_task_ids, completed_task_id, paused_task_id, owned_task_id = row_ids
+    task_list = app.query_one("#task-browser-list", ListView)
+    await wait_until(
+        lambda: task_list.children[1].region.y > task_list.children[0].region.bottom,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    children = tuple(task_list.children)
+    recent_heading = app.query_one("#task-browser-recent-heading", ListItem)
+    recent_task = app.query_one(f"#task-row-{completed_task_id}", ListItem)
+    assert recent_heading.disabled
+    assert children.index(recent_heading) < children.index(recent_task)
+    item_ids = {item.id for item in children}
+    assert all(f"task-row-{task_id}" in item_ids for task_id in active_task_ids)
+    assert all(item.region.overlaps(task_list.scrollable_content_region) for item in children)
+    assert recent_task.region.bottom <= task_list.scrollable_content_region.bottom
+    _capture_home_screenshot(app, size)
+    attention = app.query_one("#escalations", EscalationsPanel)
+    attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+    attention_text = " ".join(_rendered_widget_lines(attention_row))
+    assert "Operator owns" in attention_text
+    assert owned_task_id in attention_text
+    assert paused_task_id in attention_text
+
+
+@pytest.mark.parametrize("size", [_STANDARD_HOME_SIZE, _WIDE_HOME_SIZE])
+async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_task_list(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    primary_task_id, runs = _seed_primary_usage(connection, clock)
+    active_task_ids, completed_task_id, paused_task_id, owned_task_id = _seed_home_task_rows(
+        connection,
+        clock,
+        primary_task_id,
+        runs,
+    )
+    services = _home_review_services(project_dir, clock)
     reader = StateReader(database, clock)
     try:
         app = _app(
             reader,
             project_dir,
             widget_names=["header", "queue", "escalations", "usage", "resources"],
+            services=services,
         )
-        async with app.run_test(size=_WIDE_HOME_SIZE):
-            readouts = app.query_one("#focus-readouts", VerticalScroll)
-            identity = app.query_one("#header", Static)
-            usage = app.query_one("#usage", Static)
-            resources = app.query_one("#resources", Static)
-            attention = app.query_one("#escalations", EscalationsPanel)
-            attention_rows = attention.query_one("#escalation-panels", VerticalScroll)
-            await wait_until(
-                lambda: (
-                    "2.1k input+output" in " ".join(_rendered_widget_lines(usage))
-                    and attention.display
-                    and bool(attention_rows.query(Static))
-                ),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        async with app.run_test(size=size):
+            await _assert_mixed_home_readouts(app, size)
+            await _assert_mixed_home_task_rows(
+                app,
+                (active_task_ids, completed_task_id, paused_task_id, owned_task_id),
+                size,
             )
-            primary = (identity, usage, resources)
-            assert readouts.scroll_y == 0
-            assert all(widget.is_on_screen for widget in primary)
-            assert all(widget.region.y >= readouts.region.y for widget in primary)
-            assert all(widget.region.bottom <= readouts.region.bottom for widget in primary)
-            assert attention.region.bottom <= app.query_one("#focus-main", Horizontal).region.y
-            assert app.query_one("#task-browser-list", ListView).region.height >= (
-                _MIN_WIDE_TASK_LIST_ROWS
-            )
-
-            identity_text = " ".join(_rendered_widget_lines(identity))
-            usage_text = " ".join(_rendered_widget_lines(usage))
-            resource_text = " ".join(_rendered_widget_lines(resources))
-            attention_row = attention_rows.query_one(Static)
-            attention_text = " ".join(_rendered_widget_lines(attention_row))
-            assert "Engine stopped" in identity_text
-            assert "2.1k input+output" in usage_text
-            assert "API billed $0.42" in usage_text
-            assert "1 subscription agent" in usage_text
-            assert "Host" in resource_text
-            assert "Shikiru + agents" in resource_text
-            assert "engine fault" in attention_text
-            assert task.id in attention_text
-            assert "host sample failed" not in identity_text
     finally:
         reader.close()
 
@@ -721,8 +908,15 @@ async def test_home_task_list_keeps_a_recent_completed_history_row(
             )
             active_row = next(index for index, row in enumerate(rows) if active.id in row)
             recent_row = next(index for index, row in enumerate(rows) if completed.id in row)
+            recent_heading = next(
+                index
+                for index, item in enumerate(task_list.children)
+                if item.id == "task-browser-recent-heading"
+            )
             assert active_row < recent_row
-            assert rows[recent_row].startswith("Recent\n")
+            assert active_row < recent_heading < recent_row
+            assert task_list.children[recent_heading].disabled
+            assert rows[recent_row].startswith("✓ ")
             assert "done" in rows[recent_row]
     finally:
         reader.close()
@@ -819,6 +1013,8 @@ async def test_focus_attention_opens_durable_decision_evidence(
         task.id,
         Transition.stay(task, step=task.step, status=Status.ESCALATED),
     )
+    unrelated_held = seed_task(connection, clock, title="Unrelated paused task")
+    TaskStore(connection, clock).set_holds(unrelated_held.id, frozenset({Hold.PAUSED}))
     escalation = EscalationStore(connection, clock).open(
         task.id,
         step=task.step,
@@ -840,6 +1036,9 @@ async def test_focus_attention_opens_durable_decision_evidence(
             assert escalation.id in visible_status
             assert "Enter inspect" in visible_status
             assert "Engine stopped" in visible_status
+            status_lines = _rendered_text(row).splitlines()
+            assert "paused" not in status_lines[0]
+            assert any(unrelated_held.id in line and "paused" in line for line in status_lines)
 
             await _choose_focus_view(app, pilot, "Attention · decisions, stalls and faults")
             await wait_until(lambda: app.focused is attention, timeout=2)
@@ -1138,6 +1337,101 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
         reader.close()
 
 
+async def _assert_home_resize_matrix(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+) -> None:
+    identity = app.query_one("#task-detail-identity", Static)
+    await wait_until(lambda: task.title in _rendered_text(identity), timeout=2)
+    home_layout = app.query_one("#focus-main", Horizontal)
+    queue_panel = app.query_one("#queue")
+    detail_panel = app.query_one("#task-detail-panel")
+    assert queue_panel.region.right <= detail_panel.region.x
+    assert detail_panel.region.width > 0
+
+    search = app.query_one("#task-browser-search", Input)
+    await pilot.press("/")
+    search.value = task.id
+    search.focus()
+    list_view = app.query_one("#task-browser-list", ListView)
+    await wait_until(
+        lambda: (
+            task.title in _rendered_text(identity)
+            and f"task-row-{task.id}" in {item.id for item in list_view.children}
+        ),
+        timeout=2,
+    )
+    assert list_view.index == 0
+    row_text = _rendered_text(list_view.children[0].query_one(Static))
+    assert task.id in row_text
+    assert task.title in row_text
+
+    for width, height in (
+        _COMPACT_HOME_SIZE,
+        (36, 20),
+        (48, 14),
+        _TINY_HOME_SIZE,
+    ):
+        await pilot.resize_terminal(width, height)
+        await pilot.pause()
+        assert app.focused is search
+        assert search.value == task.id
+        assert task.title in _rendered_text(identity)
+        assert home_layout.region.width <= width
+        assert detail_panel.display is False
+        _assert_home_navigation_fits(app, width, height)
+        if (width, height) == _COMPACT_HOME_SIZE:
+            selected_item = app.query_one(f"#task-row-{task.id}", ListItem)
+            assert selected_item.region.height <= list_view.scrollable_content_region.height
+            assert selected_item.region.y >= home_layout.region.y
+            assert selected_item.region.bottom <= home_layout.region.bottom
+
+
+async def _assert_tiny_home_task_routes(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+    palette_requests: list[PaletteRequest],
+) -> None:
+    home_screen = app.screen
+    root = app.query_one("#focus-root", VerticalScroll)
+    list_view = app.query_one("#task-browser-list", ListView)
+    selected_item = app.query_one(f"#task-row-{task.id}", ListItem)
+    list_view.focus()
+    await wait_until(
+        lambda: (
+            task.id in _rendered_text(selected_item.query_one(Static))
+            and task.title in _rendered_text(selected_item.query_one(Static))
+            and "Implementing" in _rendered_text(selected_item.query_one(Static))
+        ),
+        timeout=2,
+    )
+    assert root.max_scroll_y > 0
+    root.focus()
+    await pilot.press("end")
+    await wait_until(lambda: root.scroll_y == root.max_scroll_y, timeout=2)
+    assert selected_item.region.y >= root.scrollable_content_region.y
+    assert selected_item.region.bottom <= root.scrollable_content_region.bottom
+    assert selected_item.region.height <= root.scrollable_content_region.height
+    assert "Implementing" in _rendered_text(selected_item.query_one(Static))
+    await pilot.press("ctrl+p")
+    await wait_until(lambda: bool(palette_requests), timeout=2)
+    assert palette_requests[0].task_id == task.id
+    assert app.screen is home_screen
+    list_view.focus()
+    await pilot.press("enter")
+    await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+    detail_identity = app.screen.query_one("#task-detail-identity", Static)
+    assert task.id in _rendered_text(detail_identity)
+    assert task.title in _rendered_text(detail_identity)
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home_screen, timeout=2)
+    assert app.focused is list_view
+    assert app.query_one("#task-browser-search", Input).value == task.id
+    assert list_view.index == 0
+
+
 async def test_home_resizes_through_the_terminal_matrix_without_losing_selection_or_focus(
     database: Database,
     connection: Connection,
@@ -1149,68 +1443,39 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
     task = seed_task(
         connection, SystemClock(), title="Responsive selected task", mode=Mode.IMPLEMENT
     )
+    stored_task = TaskStore(connection, SystemClock()).require(task.id)
+    TaskStore(connection, SystemClock()).apply_transition(
+        task.id,
+        Transition.stay(stored_task, step=Step.IMPLEMENT, status=Status.RUNNING),
+    )
     reader = StateReader(database, SystemClock())
 
     try:
-        app = _app(reader, project_dir, widget_names=["queue"])
-        async with app.run_test(size=(120, 40)) as pilot:
-            identity = app.query_one("#task-detail-identity", Static)
-            await wait_until(lambda: task.title in _rendered_text(identity), timeout=2)
-            home_layout = app.query_one("#focus-main", Horizontal)
-            queue_panel = app.query_one("#queue")
-            detail_panel = app.query_one("#task-detail-panel")
-            assert queue_panel.region.right <= detail_panel.region.x
-            assert detail_panel.region.width > 0
+        palette_requests: list[PaletteRequest] = []
 
-            search = app.query_one("#task-browser-search", Input)
-            await pilot.press("/")
-            search.value = task.id
-            search.focus()
-            list_view = app.query_one("#task-browser-list", ListView)
-            await wait_until(
-                lambda: (
-                    task.title in _rendered_text(identity)
-                    and f"task-row-{task.id}" in {item.id for item in list_view.children}
-                ),
-                timeout=2,
-            )
-            assert list_view.index == 0
-            row_text = _rendered_text(list_view.children[0].query_one(Static))
-            assert task.id in row_text
-            assert task.title in row_text
+        async def open_palette_context(request: PaletteRequest) -> None:
+            palette_requests.append(request)
 
-            for width, height in ((48, 20), (36, 20), (48, 14)):
-                await pilot.resize_terminal(width, height)
-                await pilot.pause()
-                assert app.focused is search
-                assert search.value == task.id
-                assert task.title in _rendered_text(identity)
-                assert home_layout.region.width <= width
-                assert detail_panel.display is False
-                _assert_home_navigation_fits(app, width, height)
-
-            home_screen = app.screen
-            await pilot.press("enter")
-            await pilot.press("enter")
-            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
-            detail_identity = app.screen.query_one("#task-detail-identity", Static)
-            assert task.id in _rendered_text(detail_identity)
-            assert task.title in _rendered_text(detail_identity)
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is home_screen, timeout=2)
-            assert app.focused is list_view
-            assert search.value == task.id
-            assert list_view.index == 0
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue"],
+            open_palette_context=open_palette_context,
+        )
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            await _assert_home_resize_matrix(app, pilot, task)
+            await _assert_tiny_home_task_routes(app, pilot, task, palette_requests)
     finally:
         reader.close()
 
 
 def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> None:
     footer = app.query_one("#focus-footer", Static)
+    root = app.query_one("#focus-root", VerticalScroll)
     assert footer.region.x >= 0
     assert footer.region.right <= width
     assert footer.region.y >= 0
-    assert footer.region.bottom <= height
+    assert not footer.display or footer.region.bottom <= height or root.max_scroll_y > 0
 
 
 async def test_home_help_works_with_keyboard_without_color(

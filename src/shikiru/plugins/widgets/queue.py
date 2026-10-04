@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from math import floor
 from typing import TYPE_CHECKING, cast
 
+from rich.text import Text
 from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.widgets import Button, Input, ListItem, ListView, Static
 
@@ -18,6 +20,14 @@ from shikiru.dashboard.contract import (
     TaskBrowserView,
     WidgetPlacement,
 )
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    AMBER,
+    PRIMARY_TEXT_COLOR,
+    SAGE,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,7 +39,19 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import WidgetContext
 
 BROWSER_PAGE_SIZE = 24
-RECENT_TASK_LIMIT = 3
+RECENT_TASK_LIMIT = 1
+REFERENCE_FONT_SIZE_PIXELS = 12
+REFERENCE_LINE_HEIGHT_RATIO = 1.65
+REFERENCE_LINE_HEIGHT_PIXELS = REFERENCE_FONT_SIZE_PIXELS * REFERENCE_LINE_HEIGHT_RATIO
+TASK_ROW_VERTICAL_PADDING_PIXELS = 12
+RECENT_RULE_MARGIN_PIXELS = 12
+RECENT_RULE_BORDER_PIXELS = 1
+RECENT_RULE_VERTICAL_MARGINS = 2
+HALF_CELL_ROUNDING = 0.5
+TASK_STATE_DECISION_NEEDED = "decision needed"
+WAIT_REASON_DEPENDENCY = "dependency"
+REFERENCE_ROW_GAP_CLASS = "reference-row-gap"
+FOCUS_LIST_CLASS = "focus-list"
 TASK_STATUS_DONE = "done"
 TASK_STATUS_CANCELLED = "cancelled"
 TASK_HOLD_PAUSED = "paused"
@@ -41,6 +63,28 @@ TASK_MARKER_DONE = "✓"
 TASK_MARKER_CANCELLED = "○"
 TASK_MARKER_QUEUED = "·"
 TASK_MARKER_CURRENT = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}"
+TASK_STATUS_RUNNING = "running"
+TASK_STATUS_INTEGRATING = "integrating"
+TASK_STATUS_ESCALATED = "escalated"
+TASK_MARKER_STALL = "!"
+TASK_MARKER_RECENT = "Recent"
+TASK_RECENT_HEADING_ID = "task-browser-recent-heading"
+STEP_LABELS = {
+    "triage": "Triaging",
+    "plan": "Planning",
+    "implement": "Implementing",
+    "consult": "Consulting",
+    "verify": "Verifying",
+    "integrate": "Integrating",
+}
+WAIT_REASON_LABELS = {
+    "paused": "paused",
+    WAIT_REASON_DEPENDENCY: "dependency",
+    "slot": "slot",
+    "resources": "resources",
+    "quota": "quota",
+    "PR open": "PR open",
+}
 SEARCH_INPUT_ID = "task-browser-search"
 TASK_LIST_ID = "task-browser-list"
 TASK_PREVIEW_ID = "task-browser-preview"
@@ -67,23 +111,30 @@ class _BrowserListItem(ListItem):
         row: TaskBrowserRow,
         *,
         focus_layout: bool,
-        recent: bool,
     ) -> None:
-        render = _focus_row_text(row, recent=recent) if focus_layout else _row_text(row)
+        render = _focus_row_text(row) if focus_layout else _row_text(row)
         super().__init__(Static(render, markup=False), id=f"task-row-{row.task_id}")
         self.task_id = row.task_id
         self.row = row
         self.focus_layout = focus_layout
-        self.recent = recent
 
-    def update_row(self, row: TaskBrowserRow, *, recent: bool) -> bool:
-        if row == self.row and recent == self.recent:
+    def update_row(self, row: TaskBrowserRow) -> bool:
+        if row == self.row:
             return False
         self.row = row
-        self.recent = recent
-        render = _focus_row_text(row, recent=recent) if self.focus_layout else _row_text(row)
+        render = _focus_row_text(row) if self.focus_layout else _row_text(row)
         self.query_one(Static).update(render)
         return True
+
+
+class _RecentHeading(ListItem):
+    def __init__(self) -> None:
+        super().__init__(
+            Static(TASK_MARKER_RECENT, markup=False),
+            id=TASK_RECENT_HEADING_ID,
+            classes="recent-heading",
+            disabled=True,
+        )
 
 
 def _row_text(row: TaskBrowserRow) -> str:
@@ -109,28 +160,85 @@ def _row_text(row: TaskBrowserRow) -> str:
     return f"{' · '.join(identity)}\n{' · '.join((*state_details, *signals))}"
 
 
-def _focus_row_text(row: TaskBrowserRow, *, recent: bool) -> str:
+def _focus_row_text(row: TaskBrowserRow) -> Text:
+    marker, marker_style = _focus_row_marker(row)
+    stage = STEP_LABELS.get(row.step or "")
+    state = _focus_row_state(row, stage)
+    details = _focus_row_details(row, stage, state)
+    content = Text.assemble(
+        (f"{marker} ", marker_style),
+        (f"{row.task_id} · {row.title}", STEEL_BLUE if row.open_decision else PRIMARY_TEXT_COLOR),
+        "\n  ",
+    )
+    for index, (detail, style) in enumerate(details):
+        if index:
+            content.append(" · ", style=SECONDARY_TEXT_COLOR)
+        content.append(detail, style=style)
+    return content
+
+
+def _focus_row_marker(row: TaskBrowserRow) -> tuple[str, str]:
+    marker = TASK_MARKER_CURRENT
+    style = STEEL_BLUE
     if row.open_decision:
-        marker = TASK_MARKER_DECISION
+        marker, style = TASK_MARKER_DECISION, AMBER
+    elif row.diagnosed_stall:
+        marker, style = TASK_MARKER_STALL, ALERT_COLOR
     elif TASK_HOLD_INTERVENTION in row.holds:
         marker = TASK_MARKER_OPERATOR
     elif TASK_HOLD_PAUSED in row.holds:
-        marker = TASK_MARKER_PAUSED
+        marker, style = TASK_MARKER_PAUSED, AMBER
     elif row.status == TASK_STATUS_DONE:
-        marker = TASK_MARKER_DONE
+        marker, style = TASK_MARKER_DONE, SAGE
     elif row.status == TASK_STATUS_CANCELLED:
-        marker = TASK_MARKER_CANCELLED
+        marker, style = TASK_MARKER_CANCELLED, SECONDARY_TEXT_COLOR
     elif row.status == TASK_STATUS_QUEUED:
-        marker = TASK_MARKER_QUEUED
-    else:
-        marker = TASK_MARKER_CURRENT
-    state = row.status.replace("_", " ")
-    details = [state]
-    details.extend(row.holds)
-    if row.open_decision:
-        details.append("decision needed")
-    content = f"{marker} {row.task_id} · {row.title}\n  {' · '.join(details)}"
-    return f"Recent\n{content}" if recent else content
+        marker, style = TASK_MARKER_QUEUED, SECONDARY_TEXT_COLOR
+    return marker, style
+
+
+def _focus_row_state(row: TaskBrowserRow, stage: str | None) -> str:
+    if row.wait_reason:
+        wait_reason = WAIT_REASON_LABELS.get(row.wait_reason, row.wait_reason)
+        if row.wait_reason == WAIT_REASON_DEPENDENCY and row.dependencies:
+            waiting = f"waiting on dependency {', '.join(row.dependencies)}"
+        else:
+            waiting = f"waiting on {wait_reason}"
+        return f"{stage} · {waiting}" if stage else waiting
+    state = stage or row.status.replace("_", " ")
+    if row.status == TASK_STATUS_QUEUED:
+        state = "queued"
+    elif row.status == TASK_STATUS_DONE:
+        state = "done"
+    elif row.status == TASK_STATUS_CANCELLED:
+        state = "cancelled"
+    elif row.status == TASK_STATUS_ESCALATED:
+        state = TASK_STATE_DECISION_NEEDED if row.open_decision else "escalated"
+    elif row.status == TASK_STATUS_RUNNING:
+        state = stage or "running"
+    elif row.status == TASK_STATUS_INTEGRATING:
+        state = stage or "integrating"
+    return state
+
+
+def _focus_row_details(
+    row: TaskBrowserRow,
+    stage: str | None,
+    state: str,
+) -> list[tuple[str, str]]:
+    details: list[tuple[str, str]] = [
+        (state, AMBER if row.wait_reason or row.holds else STEEL_BLUE),
+    ]
+    if row.acting_role and not stage:
+        details.append((row.acting_role.title(), SECONDARY_TEXT_COLOR))
+    if row.dependencies and row.wait_reason != WAIT_REASON_DEPENDENCY:
+        details.append((f"depends on {', '.join(row.dependencies)}", SECONDARY_TEXT_COLOR))
+    details.extend((hold, AMBER) for hold in row.holds)
+    if row.diagnosed_stall:
+        details.append(("stalled", ALERT_COLOR))
+    if row.open_decision and TASK_STATE_DECISION_NEEDED not in state:
+        details.append((TASK_STATE_DECISION_NEEDED, AMBER))
+    return details
 
 
 class QueuePanel(Vertical):
@@ -158,18 +266,27 @@ class QueuePanel(Vertical):
         height: auto; min-height: 2; margin-bottom: 1; padding: 0;
         border: none; background: $background; color: $primary-text;
     }
+    #task-browser-list.focus-list > ListItem { margin-bottom: 0; }
     #task-browser-list > ListItem > Static {
         height: auto; padding: 0; color: $primary-text;
         text-wrap: wrap; text-overflow: clip;
     }
     #task-browser-list > ListItem.-highlight {
-        border: solid $steel-blue; background: #233340; color: $primary-text;
+        outline: solid $steel-blue; background: $selected-surface; color: $primary-text;
         text-style: none;
     }
     #task-browser-list > ListItem.-highlight > Static {
-        background: #233340; color: $primary-text; text-style: none;
+        background: $selected-surface; color: $primary-text; text-style: none;
+    }
+    #task-browser-list > ListItem.recent-heading {
+        height: 2; min-height: 2; margin: 0; border-top: solid $neutral-border;
+        padding: 0; color: $muted-text;
+    }
+    #task-browser-list > ListItem.recent-heading > Static {
+        height: 1; padding: 0; color: $muted-text; text-style: none;
     }
     #task-browser-list > ListItem:last-child { margin-bottom: 0; }
+    #task-browser-list.focus-list > ListItem.reference-row-gap { margin-bottom: 1; }
     #task-browser-list:focus { background-tint: transparent; }
     #task-browser-empty { height: auto; padding: 1; color: $muted-text; }
     #task-browser-family-context { height: auto; padding: 0 1; color: $secondary-text; }
@@ -207,7 +324,10 @@ class QueuePanel(Vertical):
         yield Static("", id=COUNT_ID, markup=False)
         yield Static("", id=EMPTY_ID, markup=False)
         yield Static("", id=FAMILY_CONTEXT_ID, markup=False)
-        yield ListView(id=TASK_LIST_ID)
+        task_list = ListView(id=TASK_LIST_ID)
+        if self._focus_layout:
+            task_list.add_class(FOCUS_LIST_CLASS)
+        yield task_list
         more = Button("Load more", id=MORE_BUTTON_ID)
         if self._focus_layout:
             more.display = False
@@ -408,7 +528,7 @@ class QueuePanel(Vertical):
                     ancestors[ancestor.task_id] = ancestor
         view = pages[-1]
         selected_task = view.selected_task
-        if self._focus_layout and self._filter is TaskBrowserFilter.ALL:
+        if self._focus_layout and self._filter is TaskBrowserFilter.ALL and not self._search:
             recent_pages = self._widget_context.views.task_browser_pages(
                 task_filter=TaskBrowserFilter.HISTORY,
                 search=self._search,
@@ -449,72 +569,106 @@ class QueuePanel(Vertical):
         items = {
             item.task_id: item for item in list_view.children if isinstance(item, _BrowserListItem)
         }
-        recent_task_id = None
-        if (
-            self._focus_layout
-            and self._view is not None
-            and self._view.filter is TaskBrowserFilter.ALL
-        ):
-            recent_task_id = next(
-                (row.task_id for row in rows if row.status in TASK_TERMINAL_STATUSES),
-                None,
-            )
-        current_ids = tuple(items)
+        heading = next(
+            (item for item in list_view.children if isinstance(item, _RecentHeading)),
+            None,
+        )
+        recent_task_id = self._recent_task_id(rows)
         desired_ids = tuple(row.task_id for row in rows)
-        if current_ids == desired_ids:
-            anchor, anchor_offset = self._visible_anchor(list_view, tuple(items.values()))
-            changed = False
-            for row in rows:
-                changed = (
-                    items[row.task_id].update_row(
-                        row,
-                        recent=row.task_id == recent_task_id,
-                    )
-                    or changed
-                )
-            self._sync_selection(list_view, rows)
-            if changed:
-                self._restore_list_position_after_refresh(
-                    list_view,
-                    anchor,
-                    anchor_offset,
-                )
-            return
-
         wanted_ids = set(desired_ids)
         anchor, anchor_offset = self._visible_anchor(
             list_view,
             tuple(item for task_id, item in items.items() if task_id in wanted_ids),
         )
-        removed = [item for task_id, item in items.items() if task_id not in wanted_ids]
-        if removed:
-            await asyncio.gather(*(item.remove() for item in removed))
-            items = {task_id: item for task_id, item in items.items() if task_id in wanted_ids}
-
-        new_items = [
-            _BrowserListItem(
-                row,
-                focus_layout=self._focus_layout,
-                recent=row.task_id == recent_task_id,
-            )
-            for row in rows
-            if row.task_id not in items
-        ]
-        items.update({item.task_id: item for item in new_items})
-        for row in rows:
-            items[row.task_id].update_row(row, recent=row.task_id == recent_task_id)
-        if new_items:
-            await list_view.extend(new_items)
-        for index, row in enumerate(rows):
-            item = items[row.task_id]
-            if list_view.children[index] is not item:
-                list_view.move_child(item, before=index)
+        heading = await self._remove_stale_list_items(
+            items,
+            heading,
+            wanted_ids,
+            recent_task_id,
+        )
+        self._update_browser_items(items, rows)
+        desired_children, heading = self._ordered_list_items(
+            rows,
+            items,
+            heading,
+            recent_task_id,
+        )
+        await self._place_list_items(list_view, desired_children)
         self._sync_selection(list_view, rows)
         self._restore_list_position_after_refresh(
             list_view,
             anchor,
             anchor_offset,
         )
+
+    def _recent_task_id(self, rows: tuple[TaskBrowserRow, ...]) -> str | None:
+        if (
+            not self._focus_layout
+            or self._view is None
+            or self._view.filter is not TaskBrowserFilter.ALL
+            or self._search
+        ):
+            return None
+        return next((row.task_id for row in rows if row.status in TASK_TERMINAL_STATUSES), None)
+
+    async def _remove_stale_list_items(
+        self,
+        items: dict[str, _BrowserListItem],
+        heading: _RecentHeading | None,
+        wanted_ids: set[str],
+        recent_task_id: str | None,
+    ) -> _RecentHeading | None:
+        removed: list[ListItem] = [
+            item for task_id, item in items.items() if task_id not in wanted_ids
+        ]
+        if heading is not None and recent_task_id is None:
+            removed.append(heading)
+        if removed:
+            await asyncio.gather(*(item.remove() for item in removed))
+            retained = {task_id: item for task_id, item in items.items() if task_id in wanted_ids}
+            items.clear()
+            items.update(retained)
+            if recent_task_id is None:
+                heading = None
+        return heading
+
+    def _update_browser_items(
+        self,
+        items: dict[str, _BrowserListItem],
+        rows: tuple[TaskBrowserRow, ...],
+    ) -> None:
+        for row in rows:
+            if row.task_id not in items:
+                items[row.task_id] = _BrowserListItem(row, focus_layout=self._focus_layout)
+            items[row.task_id].update_row(row)
+
+    def _ordered_list_items(
+        self,
+        rows: tuple[TaskBrowserRow, ...],
+        items: dict[str, _BrowserListItem],
+        heading: _RecentHeading | None,
+        recent_task_id: str | None,
+    ) -> tuple[list[ListItem], _RecentHeading | None]:
+        if recent_task_id is not None and heading is None:
+            heading = _RecentHeading()
+        desired_children: list[ListItem] = []
+        for row in rows:
+            if row.task_id == recent_task_id and heading is not None:
+                desired_children.append(heading)
+            desired_children.append(items[row.task_id])
+        return desired_children, heading
+
+    async def _place_list_items(
+        self,
+        list_view: ListView,
+        desired_children: list[ListItem],
+    ) -> None:
+        additions = [child for child in desired_children if child.parent is None]
+        if additions:
+            await list_view.extend(additions)
+        for index, child in enumerate(desired_children):
+            if list_view.children[index] is not child:
+                list_view.move_child(child, before=index)
 
     def _visible_anchor(
         self,
@@ -535,13 +689,19 @@ class QueuePanel(Vertical):
         anchor_offset: int,
     ) -> None:
         self._list_render_version += 1
-        list_view.call_after_refresh(
-            self._restore_list_position,
+        callback_args = (
             list_view,
             anchor,
             anchor_offset,
             self._list_render_version,
         )
+        if self._focus_layout:
+            cast("App[object]", self.app).call_after_refresh(
+                self._restore_list_position,
+                *callback_args,
+            )
+        else:
+            list_view.call_after_refresh(self._restore_list_position, *callback_args)
 
     def _restore_list_position(
         self,
@@ -550,12 +710,27 @@ class QueuePanel(Vertical):
         anchor_offset: int,
         render_version: int,
     ) -> None:
+        if self._focus_layout and self._apply_reference_row_spacing(list_view):
+            cast("App[object]", self.app).call_after_refresh(
+                self._restore_list_position,
+                list_view,
+                anchor,
+                anchor_offset,
+                render_version,
+            )
+            return
         if render_version != self._list_render_version:
             return
         if anchor is not None and anchor.parent is list_view:
             anchor_index = list_view.children.index(anchor)
             anchor_position = sum(
-                item.region.height + 1 for item in list_view.children[:anchor_index]
+                item.region.height
+                + (
+                    int(item.has_class(REFERENCE_ROW_GAP_CLASS))
+                    if list_view.has_class(FOCUS_LIST_CLASS)
+                    else 1
+                )
+                for item in list_view.children[:anchor_index]
             )
             list_view.scroll_to(
                 y=anchor_position - anchor_offset,
@@ -578,11 +753,60 @@ class QueuePanel(Vertical):
         ):
             list_view.scroll_to_widget(selected_item, animate=False, immediate=True)
 
+    def _apply_reference_row_spacing(self, list_view: ListView) -> bool:
+        if self._view is None or self._view.filter is not TaskBrowserFilter.ALL or self._search:
+            changed = False
+            for item in list_view.children:
+                changed = item.has_class(REFERENCE_ROW_GAP_CLASS) or changed
+                item.remove_class(REFERENCE_ROW_GAP_CLASS)
+            return changed
+        source_height_pixels = 0.0
+        native_height_cells = 0
+        changed = False
+        for index, item in enumerate(list_view.children):
+            if isinstance(item, _BrowserListItem):
+                line_count = item.query_one(Static).region.height
+                source_height_pixels += (
+                    line_count * REFERENCE_LINE_HEIGHT_PIXELS + TASK_ROW_VERTICAL_PADDING_PIXELS
+                )
+            elif isinstance(item, _RecentHeading):
+                source_height_pixels += (
+                    RECENT_RULE_MARGIN_PIXELS * RECENT_RULE_VERTICAL_MARGINS
+                    + RECENT_RULE_BORDER_PIXELS
+                    + REFERENCE_LINE_HEIGHT_PIXELS
+                )
+                line_count = item.region.height
+            else:
+                raise TypeError(type(item).__name__)
+            target_height_cells = floor(
+                source_height_pixels / REFERENCE_LINE_HEIGHT_PIXELS + HALF_CELL_ROUNDING
+            )
+            gap_cells = target_height_cells - native_height_cells - line_count
+            has_gap = gap_cells > 0 and index < len(list_view.children) - 1
+            changed = item.has_class(REFERENCE_ROW_GAP_CLASS) != has_gap or changed
+            item.set_class(has_gap, REFERENCE_ROW_GAP_CLASS)
+            native_height_cells = target_height_cells
+        return changed
+
     def _sync_selection(self, list_view: ListView, rows: tuple[TaskBrowserRow, ...]) -> None:
         selected_index = next(
             (index for index, row in enumerate(rows) if row.task_id == self._selected_task_id),
             None,
         )
+        recent_index = next(
+            (index for index, row in enumerate(rows) if row.status in TASK_TERMINAL_STATUSES),
+            None,
+        )
+        if (
+            self._focus_layout
+            and self._view is not None
+            and self._view.filter is TaskBrowserFilter.ALL
+            and not self._search
+            and selected_index is not None
+            and recent_index is not None
+            and selected_index >= recent_index
+        ):
+            selected_index += 1
         if list_view.index != selected_index:
             list_view.index = selected_index
 

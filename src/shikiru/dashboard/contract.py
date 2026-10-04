@@ -210,11 +210,21 @@ class WorkspaceSummaryView:
     held_tasks: int | None = None
     holds: tuple[str, ...] | None = None
     operator_owned: tuple[str, ...] | None = None
+    held_task_states: tuple[HeldTaskStateView, ...] | None = None
 
     @property
     def attention(self) -> int:
         """Count grouped attention rows, which may overlap waiting tasks."""
         return self.attention_groups
+
+
+@dataclass(frozen=True)
+class HeldTaskStateView:
+    """The observed holds and operator-owned roles for one task."""
+
+    task_id: str
+    holds: tuple[str, ...]
+    operator_owned_roles: tuple[str, ...]
 
 
 @dataclass(frozen=True)

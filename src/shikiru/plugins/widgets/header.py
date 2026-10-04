@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
+from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.dashboard.contract import WidgetPlacement
+from shikiru.ui.tokens import ALERT_COLOR, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -71,6 +73,52 @@ def _header_text(
     return "\n".join(lines)
 
 
+def _home_header_text(
+    view: HeaderView,
+    summary: WorkspaceSummaryView,
+    *,
+    include_alerts: bool,
+    width: int,
+) -> Text:
+    uptime = (
+        f"Uptime {_duration_text(view.engine_uptime_seconds)}"
+        if view.engine_uptime_seconds is not None
+        else "Uptime unknown"
+    )
+    engine = "Engine running" if view.engine_up else "Engine stopped"
+    if not view.engine_up and view.previous_engine_run_seconds is not None:
+        engine = f"{engine} · previous {_duration_text(view.previous_engine_run_seconds)}"
+    identity = f"SHIKIRU  {view.project} / {view.repo.branch}"
+    engine_metadata = f"{engine} · {uptime}"
+    gap = " " * max(MIN_HEADER_GAP, width - cell_len(identity) - cell_len(engine_metadata))
+    repo = view.repo
+    checkout = "clean checkout" if repo.dirty == 0 else f"{repo.dirty} dirty"
+    if repo.ahead or repo.behind:
+        checkout = f"{checkout} · +{repo.ahead}/-{repo.behind}"
+    operations = Text.assemble(
+        ("Slots ", SECONDARY_TEXT_COLOR),
+        f"{view.occupied_slots}/{view.maximum_slots} · ",
+        ("Running ", SECONDARY_TEXT_COLOR),
+        f"{summary.running} · ",
+        ("Waiting ", SECONDARY_TEXT_COLOR),
+        f"{summary.waiting} · {_integration_label(view.integration_mode)} · {checkout}",
+    )
+    rendered = Text.assemble(
+        ("SHIKIRU", STEEL_BLUE),
+        (f"  {view.project} / {view.repo.branch}", SECONDARY_TEXT_COLOR),
+        gap,
+        (engine, SAGE if view.engine_up else ALERT_COLOR),
+        (f" · {uptime}", SECONDARY_TEXT_COLOR),
+        "\n\n",
+        operations,
+    )
+    if include_alerts:
+        for alert in view.alerts:
+            rendered.append("\n")
+            rendered.append(alert, style=ALERT_COLOR)
+    return rendered
+
+
 def _integration_label(value: str) -> str:
     if value == MERGE_INTEGRATION:
         return "Local merge"
@@ -102,14 +150,25 @@ class HeaderPanel(Static):
     async def _refresh(self) -> None:
         view = await self._widget_context.views.header()
         summary = self._widget_context.views.workspace_summary()
+        include_alerts = (
+            self._widget_context.placement is not WidgetPlacement.IDENTITY
+            or not self._widget_context.home_attention_present
+        )
+        if self._widget_context.placement is WidgetPlacement.IDENTITY:
+            self.update(
+                _home_header_text(
+                    view,
+                    summary,
+                    include_alerts=include_alerts,
+                    width=self.size.width,
+                )
+            )
+            return
         self.update(
             _header_text(
                 view,
                 summary,
-                include_alerts=(
-                    self._widget_context.placement is not WidgetPlacement.IDENTITY
-                    or not self._widget_context.home_attention_present
-                ),
+                include_alerts=include_alerts,
                 width=self.size.width,
             )
         )

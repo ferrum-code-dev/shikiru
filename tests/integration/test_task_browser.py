@@ -11,13 +11,14 @@ from textual.widgets import Button, Input, ListView, Static
 from shikiru.agents.contracts import role_dir
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
-from shikiru.dashboard.contract import TaskBrowserFilter
+from shikiru.dashboard.contract import TaskBrowserFilter, WidgetPlacement
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import EscalationOption
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME
+from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step
 from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.store.escalations import EscalationStore
@@ -58,6 +59,8 @@ STALL_SECONDS = 2
 STALL_TURN_NAME = "001-implement-i1"
 READING_INDEX = 10
 READING_SCROLL_POSITION = 20
+MATCHING_TERMINAL_COUNT = PAGE_SIZE + 1
+TERMINAL_SEARCH_QUERY = "Matching terminal result"
 
 
 def _start_task(connection: Connection, clock: FakeClock, task_id: str) -> None:
@@ -240,6 +243,64 @@ async def test_active_browser_places_a_diagnosed_stall_before_older_active_rows(
     assert page.matching_count == 2
     assert page.rows[0].diagnosed_stall
 
+    context = replace(
+        widget_context(reader, project_dir, clock, services=StubServices()),
+        views=views,
+        placement=WidgetPlacement.TASK_LIST,
+    )
+    widget = cast("QueuePanel", QueueWidget().create(context))
+    async with WidgetHostApp(widget).run_test(size=(90, 35)):
+        row = widget.query_one(f"#task-row-{stalled.id} > Static", Static)
+        await wait_until(lambda: "stalled" in _static_text(row), timeout=5.0)
+        row_text = _static_text(row)
+        assert "Implementing" in row_text
+        assert "stalled" in row_text
+
+
+async def test_home_rows_preserve_stage_and_recorded_wait_state(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tasks = TaskStore(connection, clock)
+    implementing = seed_task(connection, clock, title="Implement request", mode=Mode.IMPLEMENT)
+    verifying = seed_task(connection, clock, title="Verify request", mode=Mode.IMPLEMENT)
+    waiting = seed_task(connection, clock, title="Wait for dependency", mode=Mode.IMPLEMENT)
+    queued = seed_task(connection, clock, title="Queued without a blocker")
+    for task, step in ((implementing, Step.IMPLEMENT), (verifying, Step.VERIFY)):
+        tasks.apply_transition(
+            task.id,
+            Transition.stay(task, step=step, status=Status.RUNNING),
+        )
+    tasks.set_depends_on(waiting.id, (implementing.id,))
+    tasks.set_wait_reason(waiting.id, WaitReason.DEPENDENCY)
+    context = replace(
+        widget_context(reader, project_dir, clock),
+        placement=WidgetPlacement.TASK_LIST,
+    )
+    widget = cast("QueuePanel", QueueWidget().create(context))
+
+    async with WidgetHostApp(widget).run_test(size=(90, 35)):
+        list_view = widget.query_one("#task-browser-list", ListView)
+        await wait_until(
+            lambda: all(
+                f"task-row-{task_id}" in {item.id for item in list_view.children}
+                for task_id in (implementing.id, verifying.id, waiting.id, queued.id)
+            ),
+            timeout=5.0,
+        )
+        rendered_rows = {
+            task_id: _static_text(widget.query_one(f"#task-row-{task_id} > Static", Static))
+            for task_id in (implementing.id, verifying.id, waiting.id, queued.id)
+        }
+
+        assert "Implementing" in rendered_rows[implementing.id]
+        assert "Verifying" in rendered_rows[verifying.id]
+        assert "waiting on dependency" in rendered_rows[waiting.id]
+        assert implementing.id in rendered_rows[waiting.id]
+        assert "queued" in rendered_rows[queued.id]
+        assert "ready" not in rendered_rows[queued.id]
+
 
 async def test_browser_keeps_selection_while_search_filter_state_and_history_change(
     connection: Connection, reader: StateReader, tmp_path: Path
@@ -357,6 +418,85 @@ async def test_history_load_more_keeps_the_selected_task(
         assert widget.query_one("#task-browser-more", Button).disabled
         assert task_list.children[-1].id == f"task-row-{selected.id}"
         assert selected.id in _static_text(widget.query_one("#task-browser-preview", Static))
+
+
+async def test_home_search_preserves_matching_terminal_tasks_across_loaded_pages(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tasks: list[Task] = []
+    for index in range(PAGE_SIZE):
+        task = seed_task(
+            connection,
+            clock,
+            title=f"{TERMINAL_SEARCH_QUERY} {index}",
+            mode=Mode.IMPLEMENT,
+        )
+        tasks.append(task)
+        _finish_task(connection, clock, task.id)
+        clock.advance(1)
+    cancelled = seed_task(
+        connection,
+        clock,
+        title=f"{TERMINAL_SEARCH_QUERY} cancelled",
+        mode=Mode.IMPLEMENT,
+    )
+    tasks.append(cancelled)
+    task = TaskStore(connection, clock).require(cancelled.id)
+    TaskStore(connection, clock).apply_transition(
+        cancelled.id,
+        Transition.stay(task, step=None, status=Status.CANCELLED),
+    )
+    opened_task_ids: list[str] = []
+
+    async def open_task_detail(task_id: str) -> None:
+        opened_task_ids.append(task_id)
+
+    context = replace(
+        widget_context(reader, project_dir, clock),
+        placement=WidgetPlacement.TASK_LIST,
+        open_task_detail=open_task_detail,
+    )
+    widget = cast("QueuePanel", QueueWidget().create(context))
+
+    async with WidgetHostApp(widget).run_test(size=(100, 35)) as pilot:
+        widget.open_search()
+        widget.query_one("#task-browser-search", Input).value = TERMINAL_SEARCH_QUERY
+        task_list = widget.query_one("#task-browser-list", ListView)
+        count = widget.query_one("#task-browser-count", Static)
+        await wait_until(
+            lambda: f"of {MATCHING_TERMINAL_COUNT}" in _static_text(count),
+            timeout=5.0,
+        )
+        await wait_until(lambda: len(task_list.children) == PAGE_SIZE, timeout=5.0)
+        first_page_ids = tuple(
+            item.id.removeprefix("task-row-") for item in task_list.children if item.id
+        )
+        assert len(first_page_ids) == PAGE_SIZE
+
+        task_list.focus()
+        task_list.index = 0
+        first_task_id = first_page_ids[0]
+        await pilot.press("enter")
+        await wait_until(lambda: first_task_id in opened_task_ids, timeout=5.0)
+
+        await widget.load_more()
+        await wait_until(
+            lambda: len(task_list.children) == MATCHING_TERMINAL_COUNT,
+            timeout=5.0,
+        )
+        matched_ids = {item.id.removeprefix("task-row-") for item in task_list.children if item.id}
+        assert matched_ids == {task.id for task in tasks}
+        last_item = task_list.children[-1]
+        assert last_item.id is not None
+        last_task_id = last_item.id.removeprefix("task-row-")
+        assert last_task_id != first_task_id
+        task_list.index = len(task_list.children) - 1
+        await pilot.press("enter")
+        await wait_until(lambda: last_task_id in opened_task_ids, timeout=5.0)
 
 
 async def test_history_load_more_reconciles_a_new_task_before_watch_poll(

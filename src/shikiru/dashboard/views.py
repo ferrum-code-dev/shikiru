@@ -27,6 +27,7 @@ from shikiru.dashboard.contract import (
     EscalationPanelView,
     GlobalAttentionView,
     HeaderView,
+    HeldTaskStateView,
     QueueRow,
     QuotaGaugeView,
     RecordedUsageView,
@@ -287,11 +288,23 @@ class StateDashboardViews:
         )
         held_tasks = [task for task in active_tasks if task.held]
         engine_up = self._sources.engine_up()
-        operator_owned = tuple(
-            f"{task.id} {role.value}"
+        operator_owned_roles = {
+            task.id: tuple(role.value for role in self._state.list_taken_over_roles(task.id))
             for task in held_tasks
             if Hold.INTERVENTION in task.holds
-            for role in self._state.list_taken_over_roles(task.id)
+        }
+        operator_owned = tuple(
+            f"{task.id} {role}"
+            for task in held_tasks
+            for role in operator_owned_roles.get(task.id, ())
+        )
+        held_task_states = tuple(
+            HeldTaskStateView(
+                task_id=task.id,
+                holds=tuple(sorted(hold.value for hold in task.holds)),
+                operator_owned_roles=operator_owned_roles.get(task.id, ()),
+            )
+            for task in held_tasks
         )
         return WorkspaceSummaryView(
             attention_groups=len(attention.groups),
@@ -304,6 +317,7 @@ class StateDashboardViews:
             held_tasks=len(held_tasks),
             holds=tuple(sorted({hold.value for task in held_tasks for hold in task.holds})),
             operator_owned=operator_owned,
+            held_task_states=held_task_states,
         )
 
     def _alerts(self) -> tuple[str, ...]:

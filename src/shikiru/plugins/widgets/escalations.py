@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.console import Group, RenderableType
+from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.geometry import Region
 from textual.screen import ModalScreen
@@ -19,6 +20,7 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.ui import SplashPanel
 from shikiru.ui.compact import FOCUS_ATTENTION_MAX_HEIGHT, attention_status_text
+from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -135,6 +137,14 @@ class EscalationsPanel(Static):
     async def on_key(self, event: events.Key) -> None:
         """Select a group, open its task or evidence, or request the first decision's resolution."""
         if not self._attention.groups:
+            if self._focus_row and event.key in _MOVE_STEPS:
+                panels = self.query_one("#escalation-panels", VerticalScroll)
+                panels.scroll_to(
+                    y=panels.scroll_y + _MOVE_STEPS[event.key],
+                    animate=False,
+                    immediate=True,
+                )
+                event.stop()
             return
         if event.key in _MOVE_STEPS:
             await self._move_group(_MOVE_STEPS[event.key])
@@ -330,9 +340,9 @@ class EscalationsPanel(Static):
         else:
             panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
 
-    def _render_compact_attention(self) -> str:
+    def _render_compact_attention(self) -> Text:
         if self._summary is None:
-            return "○ Engine status unavailable"
+            return Text("○ Engine status unavailable", style=SECONDARY_TEXT_COLOR)
         return attention_status_text(
             self._attention,
             self._summary,
@@ -398,6 +408,7 @@ def _attention_status_state(
         summary.held_tasks,
         summary.holds,
         summary.operator_owned,
+        summary.held_task_states,
     )
 
 

@@ -58,7 +58,7 @@ class StubServices:
         return self._engine_process_identity
 
     async def resources(self) -> ResourceView:
-        return RESOURCES
+        return self.resource_observation or RESOURCES
 
     def resource_sample(self) -> ResourceView | None:
         return self.resource_observation
