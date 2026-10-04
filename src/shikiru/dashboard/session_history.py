@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard, cast
 
+from shikiru.agents.contracts import (
+    COST_BASIS_API_EQUIVALENT,
+    COST_BASIS_BILLED,
+    COST_BASIS_UNKNOWN,
+)
 from shikiru.dashboard.contract import (
+    TaskHistoryGap,
     TaskModelHistoryView,
     TaskSessionView,
     TaskTurnUsageDeltaView,
@@ -16,23 +22,17 @@ from shikiru.domain.runs import Run, RunStatus, has_positive_token_evidence
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-TASK_MODEL_HISTORY_TRUNCATED = "earlier turn history may be omitted by the event limit"
-TASK_MODEL_HISTORY_UNLINKED = "turn evidence could not be linked to a session lineage"
-TASK_MODEL_HISTORY_MISSING = "no retained turn history is available"
-TASK_MODEL_HISTORY_INCOMPLETE = "turn has no recorded end event"
-TASK_MODEL_HISTORY_START_MISSING = "turn start is not in retained history"
-TASK_MODEL_HISTORY_EFFORT_MISSING = "recorded turn effort is unavailable"
-TASK_MODEL_HISTORY_DELTA_MISSING = "per-turn usage delta is unavailable"
-TASK_MODEL_HISTORY_IDENTITY_CHANGED = (
-    "turn identity is incomplete or inconsistent; per-turn usage delta was not attributed"
-)
-TASK_MODEL_HISTORY_READ_FAILED = "turn history could not be read"
 EFFORT_FIELD = "effort"
 TURN_IDENTITY_EFFORT_RECORDED_INDEX = 3
 MODEL_HISTORY_STATUS_COMPLETED = "completed"
 MODEL_HISTORY_STATUS_FAILED = "failed"
 MODEL_HISTORY_STATUS_INTERRUPTED = "interrupted"
 MODEL_HISTORY_STATUS_IDENTITY_UNCERTAIN = "identity uncertain"
+TURN_COST_BASES = (
+    COST_BASIS_BILLED,
+    COST_BASIS_API_EQUIVALENT,
+    COST_BASIS_UNKNOWN,
+)
 _HISTORY_EVENTS = {
     EventKind.TURN_COMPLETED: MODEL_HISTORY_STATUS_COMPLETED,
     EventKind.TURN_FAILED: MODEL_HISTORY_STATUS_FAILED,
@@ -49,6 +49,7 @@ class _TurnHistory:
     turn: str | None
     status: str
     started: bool
+    ended: bool
     usage_delta: TaskTurnUsageDeltaView | None
     identity_complete: bool
 
@@ -66,7 +67,7 @@ class _TaskSessionHistory:
         self._history_truncated = history_truncated
         self._history_error = history_error
         self._history: dict[int, list[_TurnHistory]] = {run.id: [] for run in runs}
-        self._gaps: dict[int, list[str]] = {run.id: [] for run in runs}
+        self._gaps: dict[int, list[TaskHistoryGap]] = {run.id: [] for run in runs}
         self._unlinked_roles: set[str] = set()
         self._turns: dict[tuple[str, str], _TurnHistory] = {}
 
@@ -110,6 +111,7 @@ class _TaskSessionHistory:
             turn=turn,
             status=MODEL_HISTORY_STATUS_INTERRUPTED,
             started=True,
+            ended=False,
             usage_delta=None,
             identity_complete=effort_recorded,
         )
@@ -117,7 +119,7 @@ class _TaskSessionHistory:
         if turn is not None:
             self._turns[(role or "", turn)] = history
         if not effort_recorded:
-            self._gaps[run.id].append(TASK_MODEL_HISTORY_EFFORT_MISSING)
+            self._gaps[run.id].append(TaskHistoryGap.MISSING_RECORDED_EFFORT)
 
     def _end(
         self,
@@ -139,9 +141,10 @@ class _TaskSessionHistory:
         identity: tuple[str, str, str | None, bool] | None,
     ) -> None:
         end_state = _HISTORY_EVENTS[event.kind]
+        paired.ended = True
         if identity is not None and not _identity_matches(paired, identity):
             paired.status = MODEL_HISTORY_STATUS_IDENTITY_UNCERTAIN
-            self._gaps[paired.run_id].append(TASK_MODEL_HISTORY_IDENTITY_CHANGED)
+            self._gaps[paired.run_id].append(TaskHistoryGap.INCONSISTENT_IDENTITY)
             self._record_end_identity(event, identity, end_state)
             return
         paired.status = end_state
@@ -151,11 +154,11 @@ class _TaskSessionHistory:
                 or identity is None
                 or not identity[TURN_IDENTITY_EFFORT_RECORDED_INDEX]
             ):
-                self._gaps[paired.run_id].append(TASK_MODEL_HISTORY_IDENTITY_CHANGED)
+                self._gaps[paired.run_id].append(TaskHistoryGap.INCOMPLETE_IDENTITY)
             else:
                 paired.usage_delta = _turn_usage_delta(event)
             if paired.usage_delta is None:
-                self._gaps[paired.run_id].append(TASK_MODEL_HISTORY_DELTA_MISSING)
+                self._gaps[paired.run_id].append(TaskHistoryGap.MISSING_USAGE_DELTA)
 
     def _record_end_identity(
         self,
@@ -176,11 +179,12 @@ class _TaskSessionHistory:
                 turn=_event_string(event, "turn"),
                 status=status,
                 started=False,
+                ended=True,
                 usage_delta=None,
                 identity_complete=effort_recorded,
             )
         )
-        self._gaps[run.id].append(TASK_MODEL_HISTORY_IDENTITY_CHANGED)
+        self._gaps[run.id].append(TaskHistoryGap.INCONSISTENT_IDENTITY)
 
     def _finish_unpaired(
         self,
@@ -204,15 +208,16 @@ class _TaskSessionHistory:
                 turn=turn,
                 status=_HISTORY_EVENTS[event.kind],
                 started=False,
+                ended=True,
                 usage_delta=delta,
                 identity_complete=effort_recorded,
             )
         )
-        self._gaps[run.id].append(TASK_MODEL_HISTORY_START_MISSING)
+        self._gaps[run.id].append(TaskHistoryGap.MISSING_TURN_START)
         if not effort_recorded:
-            self._gaps[run.id].append(TASK_MODEL_HISTORY_EFFORT_MISSING)
+            self._gaps[run.id].append(TaskHistoryGap.MISSING_RECORDED_EFFORT)
         if event.kind is EventKind.TURN_COMPLETED and delta is None:
-            self._gaps[run.id].append(TASK_MODEL_HISTORY_DELTA_MISSING)
+            self._gaps[run.id].append(TaskHistoryGap.MISSING_USAGE_DELTA)
 
     def _run_for(
         self,
@@ -246,16 +251,16 @@ class _TaskSessionHistory:
         for run in self._runs:
             gaps = self._gaps[run.id]
             if self._history_truncated:
-                gaps.append(TASK_MODEL_HISTORY_TRUNCATED)
+                gaps.append(TaskHistoryGap.TRUNCATED)
             if self._history_error:
-                gaps.append(TASK_MODEL_HISTORY_READ_FAILED)
+                gaps.append(TaskHistoryGap.READ_FAILED)
             if run.role.value in self._unlinked_roles:
-                gaps.append(TASK_MODEL_HISTORY_UNLINKED)
+                gaps.append(TaskHistoryGap.UNLINKED_TURN)
             for history in self._history[run.id]:
-                if history.started and history.status == MODEL_HISTORY_STATUS_INTERRUPTED:
-                    gaps.append(TASK_MODEL_HISTORY_INCOMPLETE)
+                if history.started and not history.ended:
+                    gaps.append(TaskHistoryGap.UNENDED_TURN)
             if not self._history[run.id] and _run_has_turn_evidence(run):
-                gaps.append(TASK_MODEL_HISTORY_MISSING)
+                gaps.append(TaskHistoryGap.MISSING_HISTORY)
 
     def _session_view(self, run: Run, current_lineage: bool) -> TaskSessionView:
         return TaskSessionView(
@@ -362,12 +367,16 @@ def _turn_usage_delta(event: Event) -> TaskTurnUsageDeltaView | None:
     cost = usage_data.get("cost_usd")
     if cost is not None and (isinstance(cost, bool) or not isinstance(cost, int | float)):
         return None
+    cost_basis = usage_data.get("cost_basis", COST_BASIS_UNKNOWN)
+    if not isinstance(cost_basis, str) or cost_basis not in TURN_COST_BASES:
+        cost_basis = COST_BASIS_UNKNOWN
     return TaskTurnUsageDeltaView(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
         cost_usd=float(cost) if cost is not None else None,
+        cost_basis=cost_basis,
     )
 
 

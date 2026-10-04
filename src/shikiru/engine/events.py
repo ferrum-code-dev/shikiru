@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from shikiru.agents.contracts import COST_BASIS_UNKNOWN
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.recovery import Failed, ProtocolError, Stalled
@@ -254,17 +255,25 @@ def _turn_outcome(outcome: Outcome) -> str:
     return outcome.decision
 
 
-def _usage_delta(before: Usage, after: Usage) -> dict[str, int | float | None]:
-    if after.cost_usd is None:
-        cost_delta = None
-    elif before.cost_usd is None:
-        cost_delta = after.cost_usd
-    else:
-        cost_delta = after.cost_usd - before.cost_usd
+def _usage_delta(before: Usage, after: Usage) -> dict[str, int | float | str | None]:
+    cost_delta, cost_basis = _comparable_cost_delta(before, after)
     return {
         "input_tokens": after.input_tokens - before.input_tokens,
         "output_tokens": after.output_tokens - before.output_tokens,
         "cache_read_tokens": after.cache_read_tokens - before.cache_read_tokens,
         "cache_write_tokens": after.cache_write_tokens - before.cache_write_tokens,
         "cost_usd": cost_delta,
+        "cost_basis": cost_basis,
     }
+
+
+def _comparable_cost_delta(before: Usage, after: Usage) -> tuple[float | None, str]:
+    if (
+        before.cost_usd is None
+        or after.cost_usd is None
+        or before.cost_basis != after.cost_basis
+        or after.cost_basis == COST_BASIS_UNKNOWN
+        or after.cost_usd < before.cost_usd
+    ):
+        return None, COST_BASIS_UNKNOWN
+    return after.cost_usd - before.cost_usd, after.cost_basis

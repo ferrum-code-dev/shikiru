@@ -14,6 +14,9 @@ import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import (
     BILLING_MODE_SUBSCRIPTION,
     BILLING_SOURCE_OPERATOR_CONFIG,
+    COST_BASIS_API_EQUIVALENT,
+    COST_BASIS_BILLED,
+    COST_BASIS_UNKNOWN,
     BillingDeclaration,
     Rung,
     Usage,
@@ -22,7 +25,11 @@ from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.app import DashboardApp
-from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
+from shikiru.dashboard.contract import (
+    WIDGET_ENTRY_POINT_GROUP,
+    PaletteRequest,
+    TaskHistoryGap,
+)
 from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_ROLE,
     TASK_DETAIL_ACTIONS_BUTTON,
@@ -42,12 +49,14 @@ from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.services import TaskNavigation
 from shikiru.domain.commands import HandBack, Resume
 from shikiru.domain.events import EventKind
+from shikiru.domain.recovery import Completed
 from shikiru.domain.reports import (
     FACTS_FILENAME,
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
     ImplementationReport,
     Issue,
+    PlanReport,
     ReportKind,
     TriageReport,
     Verdict,
@@ -55,6 +64,8 @@ from shikiru.domain.reports import (
 from shikiru.domain.reports import TestRun as AgentTestRun
 from shikiru.domain.steps import Step, Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, RepoState, Role, Status, Task
+from shikiru.engine.events import emit_turn_completed, emit_turn_started
+from shikiru.engine.turn_execution import TurnExecution
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import run_dir, task_root
@@ -163,6 +174,14 @@ class _VerdictCase:
     expected_verdict: str
     expected_verdict_source: str
     expected_verdict_turn: str
+
+
+@dataclass(frozen=True)
+class _TurnCostCase:
+    before: Usage
+    after: Usage
+    expected_cost: float | None
+    expected_basis: str
 
 
 def _dashboard_app(
@@ -739,7 +758,9 @@ async def test_legacy_turn_without_effort_does_not_inherit_latest_run_effort(
         Role.IMPLEMENTER,
         Rung("codex", "gpt-6", "high"),
     )
-    RunStore(connection, clock).record_usage(run.id, Usage(30, 2, 0, 0, None, "unknown", None))
+    RunStore(connection, clock).record_usage(
+        run.id, Usage(30, 2, 0, 0, 0.8, COST_BASIS_BILLED, None)
+    )
     events = EventLog(connection, clock)
     turn_data = {
         "role": Role.IMPLEMENTER.value,
@@ -780,7 +801,229 @@ async def test_legacy_turn_without_effort_does_not_inherit_latest_run_effort(
     assert history.effort is None
     assert history.identity_complete is False
     assert history.usage_delta is None
-    assert "per-turn usage delta is unavailable" in session.history_gaps
+    assert TaskHistoryGap.MISSING_RECORDED_EFFORT in session.history_gaps
+    assert TaskHistoryGap.INCOMPLETE_IDENTITY in session.history_gaps
+    assert TaskHistoryGap.MISSING_USAGE_DELTA in session.history_gaps
+
+
+async def test_legacy_numeric_turn_cost_does_not_inherit_run_cost_basis(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Legacy turn cost provenance")
+    rung = Rung("codex", "gpt-6", "high")
+    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, rung)
+    RunStore(connection, clock).record_usage(
+        run.id, Usage(30, 2, 0, 0, 0.8, COST_BASIS_BILLED, None)
+    )
+    events = EventLog(connection, clock)
+    turn_data = {
+        "role": Role.IMPLEMENTER.value,
+        "agent": rung.agent,
+        "model": rung.model,
+        "effort": rung.effort,
+        "run_id": run.id,
+        "turn": "legacy-cost-turn",
+    }
+    events.append(
+        EventKind.TURN_STARTED,
+        task_id=task.id,
+        message="turn started",
+        data=turn_data,
+    )
+    events.append(
+        EventKind.TURN_COMPLETED,
+        task_id=task.id,
+        message="turn completed",
+        data={
+            **turn_data,
+            "usage_delta": {
+                "input_tokens": 5,
+                "output_tokens": 2,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.03,
+            },
+        },
+    )
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    [session] = detail.sessions
+    [history] = session.model_history
+    assert history.usage_delta is not None
+    assert history.usage_delta.cost_usd == 0.03
+    assert history.usage_delta.cost_basis == COST_BASIS_UNKNOWN
+
+
+async def test_recorded_stop_is_complete_but_unended_turn_has_a_history_gap(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Stopped and unended turns")
+    runs = RunStore(connection, clock)
+    rung = Rung("codex", "gpt-6", "high")
+    stopped_run = runs.start(task.id, Role.IMPLEMENTER, rung)
+    unended_run = runs.start(task.id, Role.IMPLEMENTER, rung)
+    events = EventLog(connection, clock)
+    stopped_data = {
+        "role": Role.IMPLEMENTER.value,
+        "agent": rung.agent,
+        "model": rung.model,
+        "effort": rung.effort,
+        "run_id": stopped_run.id,
+        "turn": "stopped-turn",
+    }
+    events.append(
+        EventKind.TURN_STARTED,
+        task_id=task.id,
+        message="turn started",
+        data=stopped_data,
+    )
+    events.append(
+        EventKind.TURN_STOPPED,
+        task_id=task.id,
+        message="turn stopped",
+        data=stopped_data,
+    )
+    unended_data = {
+        **stopped_data,
+        "run_id": unended_run.id,
+        "turn": "unended-turn",
+    }
+    events.append(
+        EventKind.TURN_STARTED,
+        task_id=task.id,
+        message="turn started",
+        data=unended_data,
+    )
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    stopped = next(session for session in detail.sessions if session.run_id == stopped_run.id)
+    unended = next(session for session in detail.sessions if session.run_id == unended_run.id)
+    assert stopped.model_history[0].status == "interrupted"
+    assert TaskHistoryGap.UNENDED_TURN not in stopped.history_gaps
+    assert unended.model_history[0].status == "interrupted"
+    assert TaskHistoryGap.UNENDED_TURN in unended.history_gaps
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            _TurnCostCase(
+                Usage(2, 1, 0, 0, 0.1, COST_BASIS_BILLED, None),
+                Usage(5, 3, 0, 0, 0.12, COST_BASIS_BILLED, None),
+                0.02,
+                COST_BASIS_BILLED,
+            ),
+            id="comparable-billed-cost",
+        ),
+        pytest.param(
+            _TurnCostCase(
+                Usage(2, 1, 0, 0, 0.1, COST_BASIS_API_EQUIVALENT, None),
+                Usage(5, 3, 0, 0, 0.12, COST_BASIS_API_EQUIVALENT, None),
+                0.02,
+                COST_BASIS_API_EQUIVALENT,
+            ),
+            id="comparable-estimate",
+        ),
+        pytest.param(
+            _TurnCostCase(
+                Usage(2, 1, 0, 0, 0.1, COST_BASIS_BILLED, None),
+                Usage(5, 3, 0, 0, 0.12, COST_BASIS_API_EQUIVALENT, None),
+                None,
+                COST_BASIS_UNKNOWN,
+            ),
+            id="basis-changed",
+        ),
+        pytest.param(
+            _TurnCostCase(
+                Usage(2, 1, 0, 0, None, COST_BASIS_UNKNOWN, None),
+                Usage(5, 3, 0, 0, 0.12, COST_BASIS_BILLED, None),
+                None,
+                COST_BASIS_UNKNOWN,
+            ),
+            id="baseline-unavailable",
+        ),
+        pytest.param(
+            _TurnCostCase(
+                Usage(2, 1, 0, 0, 0.1, COST_BASIS_BILLED, None),
+                Usage(5, 3, 0, 0, None, COST_BASIS_BILLED, None),
+                None,
+                COST_BASIS_UNKNOWN,
+            ),
+            id="latest-amount-unavailable",
+        ),
+        pytest.param(
+            _TurnCostCase(
+                Usage(5, 3, 0, 0, 0.12, COST_BASIS_BILLED, None),
+                Usage(8, 5, 0, 0, 0.1, COST_BASIS_BILLED, None),
+                None,
+                COST_BASIS_UNKNOWN,
+            ),
+            id="cumulative-amount-decreased",
+        ),
+    ],
+)
+async def test_turn_cost_basis_requires_comparable_recorded_cumulative_amounts(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    case: _TurnCostCase,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Comparable turn cost")
+    rung = Rung("claude", "opus", "high")
+    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, rung)
+    RunStore(connection, clock).record_usage(run.id, case.after)
+    events = EventLog(connection, clock)
+    turn = "01-implement-i1"
+    emit_turn_started(
+        events,
+        task,
+        Step.IMPLEMENT,
+        Role.IMPLEMENTER,
+        rung,
+        run_id=run.id,
+        turn=turn,
+    )
+    report = PlanReport(summary="Turn complete", commits=[])
+    execution = TurnExecution(
+        result=Completed(report),
+        task_id=task.id,
+        role=Role.IMPLEMENTER,
+        turn_dir=tmp_path / turn,
+        rung=rung,
+        run_id=run.id,
+        usage_before=case.before,
+        usage_after=case.after,
+    )
+    emit_turn_completed(events, task, report, execution)
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    [session] = detail.sessions
+    [history] = session.model_history
+    assert history.usage_delta is not None
+    assert history.usage_delta.input_tokens == 3
+    assert history.usage_delta.output_tokens == 2
+    if case.expected_cost is None:
+        assert history.usage_delta.cost_usd is None
+    else:
+        assert history.usage_delta.cost_usd == pytest.approx(case.expected_cost)
+    assert history.usage_delta.cost_basis == case.expected_basis
 
 
 async def test_header_uptime_tracks_recorded_engine_restarts_and_stopped_duration(
@@ -915,10 +1158,7 @@ async def test_ambiguous_legacy_turn_evidence_is_not_assigned_to_multiple_lineag
     assert detail is not None
     assert len(detail.sessions) == 2
     assert all(not session.model_history for session in detail.sessions)
-    assert all(
-        "turn evidence could not be linked to a session lineage" in session.history_gaps
-        for session in detail.sessions
-    )
+    assert all(TaskHistoryGap.UNLINKED_TURN in session.history_gaps for session in detail.sessions)
 
 
 def _record_history_turn(

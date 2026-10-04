@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from shikiru.agents.contracts import BILLING_MODE_UNKNOWN, BILLING_SOURCE_UNKNOWN
+from shikiru.agents.contracts import (
+    BILLING_MODE_UNKNOWN,
+    BILLING_SOURCE_UNKNOWN,
+    COST_BASIS_UNKNOWN,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -109,6 +113,21 @@ class DiagnosticSampleState(StrEnum):
     UNAVAILABLE = "unavailable"
     STALE = "stale"
     FAILED = "failed"
+
+
+class TaskHistoryGap(StrEnum):
+    """A semantic reason that retained task turn history is incomplete."""
+
+    TRUNCATED = "history_truncated"
+    UNLINKED_TURN = "unlinked_turn"
+    MISSING_HISTORY = "missing_history"
+    UNENDED_TURN = "unended_turn"
+    MISSING_TURN_START = "missing_turn_start"
+    MISSING_RECORDED_EFFORT = "missing_recorded_effort"
+    MISSING_USAGE_DELTA = "missing_usage_delta"
+    INCOMPLETE_IDENTITY = "incomplete_turn_identity"
+    INCONSISTENT_IDENTITY = "inconsistent_turn_identity"
+    READ_FAILED = "history_read_failed"
 
 
 @dataclass(frozen=True)
@@ -308,7 +327,7 @@ class TaskSessionView:
     run_id: int | None = None
     current_lineage: bool = True
     model_history: tuple[TaskModelHistoryView, ...] = ()
-    history_gaps: tuple[str, ...] = ()
+    history_gaps: tuple[TaskHistoryGap, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -320,6 +339,7 @@ class TaskTurnUsageDeltaView:
     cache_read_tokens: int
     cache_write_tokens: int
     cost_usd: float | None
+    cost_basis: CostBasis = COST_BASIS_UNKNOWN
 
 
 @dataclass(frozen=True)
