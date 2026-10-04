@@ -111,9 +111,12 @@ COMPACT_FOOTER_HEIGHT = 4
 COMPACT_FOOTER_CONTROLS_HEIGHT = 2
 WORKSPACE_NAVIGATION_HEIGHT = 3
 VERY_SMALL_NAVIGATION_HEIGHT = 1
-FOCUS_SUMMARY_MAX_ROWS = 8
+FOCUS_SUMMARY_MAX_ROWS = 12
 FOCUS_SHORT_SUMMARY_MAX_ROWS = 3
-FOCUS_COMPACT_LIST_ROWS = 9
+FOCUS_MAIN_MIN_ROWS = 3
+FOCUS_MIN_TASK_LIST_ROWS = 9
+FOCUS_COMMAND_STATUS_ROWS = 1
+FOCUS_READOUT_BORDER_ROWS = 1
 FOCUS_FOOTER_HEIGHT = 2
 FOCUS_VIEWS_BUTTON = "focus-views"
 FOCUS_HELP_BUTTON = "focus-help"
@@ -933,6 +936,10 @@ class DashboardApp(App[None]):
             on_task_selected=self._select_task_context,
             activate_home_summary=self._activate_home_summary,
             placement=placement,
+            home_attention_present=(
+                self._focus_task is None
+                and bool(self._widget_names_by_placement.get(WidgetPlacement.ATTENTION))
+            ),
             open_contextual_view=self._open_contextual_view,
         )
 
@@ -1198,14 +1205,25 @@ class DashboardApp(App[None]):
             main.set_class(not wide, "compact")
             readouts = self.query_one("#focus-readouts", VerticalScroll)
             self.query_one("#focus-footer").styles.height = FOCUS_FOOTER_HEIGHT
-            readouts.styles.max_height = (
-                FOCUS_SHORT_SUMMARY_MAX_ROWS
-                if height <= SHORT_PANE_MAX_ROWS
-                else FOCUS_SUMMARY_MAX_ROWS
-            )
+            if height <= SHORT_PANE_MAX_ROWS:
+                readouts.styles.max_height = FOCUS_SHORT_SUMMARY_MAX_ROWS
+            else:
+                minimum_main_height = (
+                    FOCUS_MIN_TASK_LIST_ROWS
+                    if self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST)
+                    else FOCUS_MAIN_MIN_ROWS
+                )
+                readouts.styles.max_height = min(
+                    FOCUS_SUMMARY_MAX_ROWS,
+                    height
+                    - minimum_main_height
+                    - FOCUS_FOOTER_HEIGHT
+                    - FOCUS_COMMAND_STATUS_ROWS
+                    - FOCUS_READOUT_BORDER_ROWS,
+                )
             task_list = self.query("#task-browser-list")
             if task_list:
-                task_list.first().styles.height = "1fr" if wide else FOCUS_COMPACT_LIST_ROWS
+                task_list.first().styles.height = "1fr" if wide else FOCUS_MIN_TASK_LIST_ROWS
             if self._home_detail_panel is not None:
                 self._home_detail_panel.display = wide
                 self._home_detail_panel.styles.height = "100%" if wide else "auto"
@@ -1309,6 +1327,8 @@ class DashboardApp(App[None]):
 
     async def action_expand_section(self) -> None:
         """Expand the focused section to the available body area."""
+        if self._focus_task is None:
+            return
         self._expand_selected_section()
 
     async def action_return_from_section(self) -> None:

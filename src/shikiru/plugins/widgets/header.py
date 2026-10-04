@@ -90,7 +90,10 @@ class HeaderPanel(Static):
             _header_text(
                 view,
                 summary,
-                include_alerts=self._widget_context.placement is not WidgetPlacement.IDENTITY,
+                include_alerts=(
+                    self._widget_context.placement is not WidgetPlacement.IDENTITY
+                    or not self._widget_context.home_attention_present
+                ),
             )
         )
 

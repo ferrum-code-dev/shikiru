@@ -7,9 +7,20 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import Horizontal, VerticalScroll
+from textual.geometry import Region
 from textual.widgets import Button, DataTable, Input, Label, ListItem, ListView, Static, TextArea
 
 import shikiru.agents.registry as registry_module
+from shikiru.agents.contracts import (
+    BILLING_MODE_API,
+    BILLING_MODE_SUBSCRIPTION,
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    COST_BASIS_BILLED,
+    COST_BASIS_UNKNOWN,
+    BillingDeclaration,
+    Rung,
+    Usage,
+)
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
@@ -39,7 +50,7 @@ from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, ReportKind
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import EscalationReason, Hold, Mode, Status
+from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import turns_dir
@@ -49,6 +60,7 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
+from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -61,7 +73,15 @@ from tests.support.waiting import wait_until
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _SCROLL_SETTLE_TIMEOUT_SECONDS = 2
+_DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
 _EXTERNAL_WIDGET_NAME = "outside-widget"
+_WIDE_HOME_SIZE = (120, 40)
+_MIN_WIDE_TASK_LIST_ROWS = 9
+_API_INPUT_TOKENS = 1_000
+_API_OUTPUT_TOKENS = 500
+_SUBSCRIPTION_INPUT_TOKENS = 400
+_SUBSCRIPTION_OUTPUT_TOKENS = 200
+_API_BILLED_COST_USD = 0.42
 
 
 class _ExternalWidget:
@@ -99,6 +119,11 @@ class _InvalidPlacementEntryPoint:
 
 def _rendered_text(widget: Static) -> str:
     return cast("Text", widget.render()).plain
+
+
+def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
+    lines = widget.render_lines(Region(0, 0, widget.region.width, widget.region.height))
+    return tuple(line.text.rstrip() for line in lines if line.text.strip())
 
 
 _TASK_DETAIL_SECTION_IDS = (
@@ -332,6 +357,7 @@ async def test_dashboard_mounts_the_default_widgets(
             await pilot.pause()
             header = plain_text(app.query_one("#header", Static).content)
             assert "Engine stopped" in header
+            assert "host sample failed" not in header
             assert "Running 1" in header
             assert "Waiting 0" in header
             assert app.query_one("#usage", Static).region.width > 0
@@ -363,6 +389,152 @@ async def test_dashboard_mounts_the_default_widgets(
             assert "repeats 2" in plain_text(faults.content)
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
+    finally:
+        reader.close()
+
+
+async def test_header_without_home_attention_keeps_stopped_engine_fault_context(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Fault remains visible")
+    EventLog(connection, clock).append(
+        EventKind.ENGINE_FAULT,
+        task_id=task.id,
+        message="recorded host sampling failure",
+        data={
+            "scope": "resource sample",
+            "error": "host sample failed",
+            "recoverable": True,
+            "repeat": 2,
+        },
+    )
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=["header"])
+        async with app.run_test(size=_WIDE_HOME_SIZE):
+            header = app.query_one("#header", Static)
+            await wait_until(
+                lambda: "Engine stopped" in " ".join(_rendered_widget_lines(header)),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            text = " ".join(_rendered_widget_lines(header))
+            assert "Engine stopped" in text
+            assert "host sample failed x2" in text
+    finally:
+        reader.close()
+
+
+async def test_wide_focus_renders_mixed_billing_and_attention_inside_visible_readout_area(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Visible attention and usage")
+    runs = RunStore(connection, clock)
+    api_run = runs.start(
+        task.id,
+        Role.IMPLEMENTER,
+        Rung("codex", "gpt-6", "high"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_API,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    runs.record_usage(
+        api_run.id,
+        Usage(
+            _API_INPUT_TOKENS,
+            _API_OUTPUT_TOKENS,
+            0,
+            0,
+            _API_BILLED_COST_USD,
+            COST_BASIS_BILLED,
+            None,
+        ),
+    )
+    subscription_run = runs.start(
+        task.id,
+        Role.LEADER,
+        Rung("claude", "sonnet", "medium"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_SUBSCRIPTION,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    runs.record_usage(
+        subscription_run.id,
+        Usage(
+            _SUBSCRIPTION_INPUT_TOKENS,
+            _SUBSCRIPTION_OUTPUT_TOKENS,
+            0,
+            0,
+            None,
+            COST_BASIS_UNKNOWN,
+            None,
+        ),
+    )
+    EventLog(connection, clock).append(
+        EventKind.ENGINE_FAULT,
+        task_id=task.id,
+        message="recorded resource failure",
+        data={
+            "scope": "resource sample",
+            "error": "host sample failed",
+            "recoverable": True,
+            "repeat": 2,
+        },
+    )
+    reader = StateReader(database, clock)
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["header", "queue", "escalations", "usage", "resources"],
+        )
+        async with app.run_test(size=_WIDE_HOME_SIZE):
+            readouts = app.query_one("#focus-readouts", VerticalScroll)
+            identity = app.query_one("#header", Static)
+            usage = app.query_one("#usage", Static)
+            resources = app.query_one("#resources", Static)
+            attention = app.query_one("#escalations", EscalationsPanel)
+            attention_rows = attention.query_one("#escalation-panels", VerticalScroll)
+            await wait_until(
+                lambda: (
+                    "2.1k input+output" in " ".join(_rendered_widget_lines(usage))
+                    and attention.display
+                    and bool(attention_rows.query(Static))
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            primary = (identity, usage, resources, attention)
+            assert readouts.scroll_y == 0
+            assert all(widget.is_on_screen for widget in primary)
+            assert all(widget.region.y >= readouts.region.y for widget in primary)
+            assert all(widget.region.bottom <= readouts.region.bottom for widget in primary)
+            assert app.query_one("#task-browser-list", ListView).region.height >= (
+                _MIN_WIDE_TASK_LIST_ROWS
+            )
+
+            identity_text = " ".join(_rendered_widget_lines(identity))
+            usage_text = " ".join(_rendered_widget_lines(usage))
+            resource_text = " ".join(_rendered_widget_lines(resources))
+            attention_row = attention_rows.query_one(Static)
+            attention_text = " ".join(_rendered_widget_lines(attention_row))
+            assert "Engine stopped" in identity_text
+            assert "2.1k input+output" in usage_text
+            assert "API billed $0.42" in usage_text
+            assert "1 subscription agent" in usage_text
+            assert "Host" in resource_text
+            assert "Shikiru including agents" in resource_text
+            assert "1 faults" in attention_text
+            assert task.id in attention_text
+            assert "host sample failed" not in identity_text
     finally:
         reader.close()
 
@@ -435,6 +607,13 @@ async def test_focus_operational_counts_and_contextual_task_filters(
     try:
         app = _app(reader, project_dir, widget_names=load_settings(project_dir).dashboard.widgets)
         async with app.run_test(size=(120, 40)) as pilot:
+            home_screen = app.screen
+            await pilot.press("z")
+            await pilot.pause()
+            assert app.screen is home_screen
+            assert app.query_one("#focus-main")
+            assert not app.query("#dashboard-panels")
+
             header = app.query_one("#header", Static)
             await wait_until(
                 lambda: "Running 1 · Waiting 1" in plain_text(header.content),
@@ -453,8 +632,10 @@ async def test_focus_operational_counts_and_contextual_task_filters(
             await pilot.press("/")
             search = app.query_one("#task-browser-search", Input)
             assert app.focused is search
+            await pilot.press("z")
+            assert search.value == "z"
             await pilot.press("v")
-            assert search.value == "v"
+            assert search.value == "zv"
             await pilot.press("escape")
             await wait_until(
                 lambda: search.value == "",

@@ -126,7 +126,7 @@ The shared detail refreshes basic task and ownership state after an overlay clos
 
 `dash --task T-n` fixes the detail to `T-n`. Its Activity and Usage sections are scoped to that task and its situation includes a compact global decision/fault count. The task view omits project-wide header, queue, escalations, strips and diagnostics panels. Configured third-party widgets remain in Extensions. Detail actions select only existing task windows or role panes through activation-time state reads; missing and terminal targets are reported without creating workflow resources. The actions button opens the shared palette with the task and selected role. Home browser selection and `Ctrl+P` carry their current task identity through the additive `WidgetContext` callbacks; old callback fields remain available.
 
-The `DashboardWidget` protocol stays compatible; a plugin may additionally expose `placement: WidgetPlacement` from `dashboard.contract`. `WidgetContext` receives the resolved placement and optional `open_contextual_view` callback.
+The `DashboardWidget` protocol stays compatible; a plugin may additionally expose `placement: WidgetPlacement` from `dashboard.contract`. `WidgetContext` receives the resolved placement, a `home_attention_present` flag so identity widgets can avoid duplicating the actionable Home attention row while retaining legacy alerts when that row is absent, and the optional `open_contextual_view` callback.
 
 ```python
 class DashboardWidget(Protocol):
