@@ -22,7 +22,9 @@ from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.codex.headless import CodexHeadless
 from shikiru.plugins.agents.codex.home import codex_home
+from shikiru.plugins.agents.codex.model_catalog import parse_bundled_context_windows
 from shikiru.plugins.agents.codex.options import (
+    CODEX_BUNDLED_MODELS_ARGV,
     CODEX_COMMAND,
     CODEX_HOME_ENV_VAR,
     GIT_DIRS_ARGV,
@@ -55,9 +57,21 @@ _PROFILE_FIELD = "profile"
 _CONTEXT_WINDOW_CHECK = "context_window"
 _UNTESTED_VERSION_DETAIL = "{version} (warning: verified with {tested}; re-check the sandbox probe)"
 _UNKNOWN_WINDOW_DETAIL = (
-    "no known context window for {models} in Codex's model list; "
-    "compaction at compact_at_pct cannot be applied"
+    "no positive context window for {models} in models_cache.json or Codex CLI's bundled "
+    "model catalog; compaction at compact_at_pct cannot be applied"
 )
+_BUNDLED_CATALOG_COMMAND_FAILED_DETAIL = (
+    "could not read Codex CLI's bundled model catalog for {models}: {detail}"
+)
+_BUNDLED_CATALOG_INVALID_DETAIL = (
+    "could not parse Codex CLI's bundled model catalog for {models}: {detail}"
+)
+_BUNDLED_CATALOG_EXIT_DETAIL = (
+    "Codex CLI's bundled model catalog command failed for {models} with exit code "
+    "{returncode}: {detail}"
+)
+_MODELS_CACHE_SOURCE = "models_cache.json"
+_BUNDLED_CATALOG_SOURCE = "Codex CLI bundled model catalog"
 _CUSTOM_PROVIDER_ACCESS_DETAIL = (
     "custom provider configured; provider credentials are not verified by doctor"
 )
@@ -80,6 +94,7 @@ class CodexAgent:
         )
         self._codex_home = codex_home()
         self._sandbox_probe = CodexSandboxProbe(runner)
+        self._bundled_context_windows: dict[str, int] = {}
 
     @property
     def billing_declaration(self) -> BillingDeclaration:
@@ -88,11 +103,20 @@ class CodexAgent:
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Codex process-per-turn exchange."""
+        model_context_windows = await self._context_windows_for_turn(spec)
         git_dirs = await self._git_dirs_for_turn(spec)
-        sequence = self.process_sequence(spec, git_dirs=git_dirs)
+        sequence = self.process_sequence(
+            spec, git_dirs=git_dirs, model_context_windows=model_context_windows
+        )
         return await StreamingTurn.start(spec, self._runner, sequence)
 
-    def process_sequence(self, spec: TurnSpec, *, git_dirs: Sequence[Path]) -> CodexTurnSequence:
+    def process_sequence(
+        self,
+        spec: TurnSpec,
+        *,
+        git_dirs: Sequence[Path],
+        model_context_windows: Mapping[str, int] | None = None,
+    ) -> CodexTurnSequence:
         """Build Codex's prompt and context-failure retry sequence for `spec`."""
         home = Path(spec.env.get(CODEX_HOME_ENV_VAR, str(self._codex_home)))
         return CodexTurnSequence(
@@ -104,6 +128,11 @@ class CodexAgent:
             home=home,
             git_dirs=git_dirs,
             compact_at_pct=self._options.compact_at_pct,
+            model_context_windows=(
+                self._bundled_context_windows
+                if model_context_windows is None
+                else model_context_windows
+            ),
         )
 
     def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
@@ -134,11 +163,23 @@ class CodexAgent:
             await self._sandbox_probe.check(),
         ]
         if models:
-            checks.append(self._check_context_windows(models))
+            checks.append(await self._check_context_windows(models))
         return checks
 
-    def _check_context_windows(self, models: Sequence[str]) -> CheckResult:
-        windows = {model: context_window(self._codex_home, model) for model in models}
+    async def _check_context_windows(self, models: Sequence[str]) -> CheckResult:
+        cached_windows = {model: context_window(self._codex_home, model) for model in models}
+        missing_from_cache = [model for model, window in cached_windows.items() if window is None]
+        if missing_from_cache:
+            catalog_result = await self._read_bundled_model_catalog(missing_from_cache)
+            if isinstance(catalog_result, CheckResult):
+                return catalog_result
+            self._bundled_context_windows = catalog_result
+        windows = {
+            model: cached_windows[model]
+            if cached_windows[model] is not None
+            else self._bundled_context_windows.get(model)
+            for model in models
+        }
         unknown = [model for model, window in windows.items() if window is None]
         if unknown:
             return CheckResult(
@@ -146,8 +187,73 @@ class CodexAgent:
                 False,
                 _UNKNOWN_WINDOW_DETAIL.format(models=", ".join(unknown)),
             )
-        known = ", ".join(f"{model}: {window}" for model, window in windows.items())
+        known_parts: list[str] = []
+        for model, window in windows.items():
+            source = (
+                _MODELS_CACHE_SOURCE
+                if cached_windows[model] is not None
+                else _BUNDLED_CATALOG_SOURCE
+            )
+            known_parts.append(f"{model}: {window} ({source})")
+        known = ", ".join(known_parts)
         return CheckResult(_CONTEXT_WINDOW_CHECK, True, known)
+
+    async def _read_bundled_model_catalog(
+        self,
+        models: Sequence[str],
+        *,
+        environment: Mapping[str, str] | None = None,
+    ) -> dict[str, int] | CheckResult:
+        model_names = ", ".join(models)
+        try:
+            result = await self._runner.run(
+                CODEX_BUNDLED_MODELS_ARGV,
+                timeout=DOCTOR_TIMEOUT_SECONDS,
+                env=(self._subprocess_environment() if environment is None else environment),
+                check=False,
+            )
+        except (FileNotFoundError, ShikiruError) as error:
+            return CheckResult(
+                _CONTEXT_WINDOW_CHECK,
+                False,
+                _BUNDLED_CATALOG_COMMAND_FAILED_DETAIL.format(models=model_names, detail=error),
+            )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            return CheckResult(
+                _CONTEXT_WINDOW_CHECK,
+                False,
+                _BUNDLED_CATALOG_EXIT_DETAIL.format(
+                    models=model_names,
+                    returncode=result.returncode,
+                    detail=detail or "no diagnostic output",
+                ),
+            )
+        try:
+            return parse_bundled_context_windows(result.stdout)
+        except TypeError as error:
+            return CheckResult(
+                _CONTEXT_WINDOW_CHECK,
+                False,
+                _BUNDLED_CATALOG_INVALID_DETAIL.format(models=model_names, detail=error),
+            )
+
+    async def _context_windows_for_turn(self, spec: TurnSpec) -> Mapping[str, int]:
+        home = Path(spec.env.get(CODEX_HOME_ENV_VAR, str(self._codex_home)))
+        model = spec.rung.model
+        if context_window(home, model, spec.session_id) is not None:
+            return self._bundled_context_windows
+        if model in self._bundled_context_windows:
+            return self._bundled_context_windows
+        catalog = await self._read_bundled_model_catalog(
+            (model,), environment=self._turn_environment(spec)
+        )
+        if isinstance(catalog, CheckResult):
+            raise ConfigError(catalog.detail)
+        self._bundled_context_windows = catalog
+        if model not in catalog:
+            raise ConfigError(_UNKNOWN_WINDOW_DETAIL.format(models=model))
+        return catalog
 
     def headless(self) -> HeadlessAgent | None:
         """Return Codex's schema-constrained headless client."""

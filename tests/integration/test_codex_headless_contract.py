@@ -131,11 +131,15 @@ _CONTEXT_WINDOW = 258_400
 _USAGE_FIRST = Usage(55_675, 330, 52_096, 0, None, "unknown", 5.506578947368421)
 _USAGE_RESUMED = Usage(129_393, 608, 105_344, 0, None, "unknown", 7.201238390092879)
 _OPENROUTER_LIVE_CONTEXT_WINDOW = 997_500
+_BUNDLED_CONTEXT_WINDOW = 272_000
 _OPENROUTER_LIVE_INPUT_TOKENS = 12_340
 _OPENROUTER_LIVE_OUTPUT_TOKENS = 5
 _OPENROUTER_LIVE_CACHE_WRITE_TOKENS = 12_272
 _OPENROUTER_LIVE_MESSAGE = "OK"
 _CODEX_ENV_CAPTURE = "SHIKIRU_CODEX_ENV_CAPTURE"
+_CODEX_BUNDLED_MODELS_JSON_ENV = "SHIKIRU_CODEX_BUNDLED_MODELS_JSON"
+_CODEX_BUNDLED_MODELS_EXIT_CODE_ENV = "SHIKIRU_CODEX_BUNDLED_MODELS_EXIT_CODE"
+_FAKE_TURN_SESSION_ID = "bundled-catalog-session"
 _SYNTHETIC_OPENAI_KEY = "synthetic-openai-key"
 _SYNTHETIC_CODEX_KEY = "synthetic-codex-key"
 _SYNTHETIC_PROVIDER_KEY = "synthetic-provider-key"
@@ -767,6 +771,88 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert "unlisted-model" in window.detail
         assert _MODEL not in window.detail
 
+    @pytest.mark.asyncio
+    async def test_doctor_and_turn_use_the_cli_bundled_window_when_home_cache_omits_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_codex_home: Path
+    ) -> None:
+        _write_model_cache(operator_codex_home, [(_MODEL, _TEST_CONTEXT_WINDOW)])
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "doctor-environment.txt"))
+        monkeypatch.setenv(
+            _CODEX_BUNDLED_MODELS_JSON_ENV,
+            json.dumps(
+                {"models": [{"slug": _LIVE_MODEL, "context_window": _BUNDLED_CONTEXT_WINDOW}]}
+            ),
+        )
+        spec = _with_model(self.build_spec(tmp_path, resume_session_id=None), _LIVE_MODEL)
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+        checks = await agent.doctor((_LIVE_MODEL,))
+        context_check = next(check for check in checks if check.name == "context_window")
+        command = agent.process_sequence(spec, git_dirs=_fake_git_dirs(spec)).start(spec)
+
+        assert context_check.ok
+        assert "Codex CLI bundled model catalog" in context_check.detail
+        assert f"{AUTO_COMPACT_LIMIT_CONFIG}={_limit_for(_BUNDLED_CONTEXT_WINDOW)}" in command.argv
+
+    @pytest.mark.asyncio
+    async def test_new_engine_agent_resolves_bundled_window_when_starting_a_turn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        capture_path = tmp_path / "turn-environment.txt"
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
+        monkeypatch.setenv(
+            _CODEX_BUNDLED_MODELS_JSON_ENV,
+            json.dumps(
+                {"models": [{"slug": _LIVE_MODEL, "context_window": _BUNDLED_CONTEXT_WINDOW}]}
+            ),
+        )
+        spec = _with_model(self.build_spec(tmp_path, resume_session_id=None), _LIVE_MODEL)
+        await _init_live_repo(spec.cwd)
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+        turn = await agent.start_turn(spec)
+        signals = [signal async for signal in turn.signals()]
+        invocations = capture_path.read_text(encoding="utf-8").splitlines()[::5]
+
+        assert invocations[0] == "debug models --bundled"
+        assert (
+            f"{AUTO_COMPACT_LIMIT_CONFIG}={_limit_for(_BUNDLED_CONTEXT_WINDOW)}" in invocations[1]
+        )
+        assert any(isinstance(signal, TurnEnded) for signal in signals)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("catalog_output", "exit_code"),
+        [("not-json", 0), ('{"models": []}', 1)],
+        ids=["invalid-json", "command-failed"],
+    )
+    async def test_doctor_reports_bundled_catalog_errors_without_accepting_unknown_window(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        operator_codex_home: Path,
+        catalog_output: str,
+        exit_code: int,
+    ) -> None:
+        _write_model_cache(operator_codex_home, [])
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "doctor-environment.txt"))
+        monkeypatch.setenv(_CODEX_BUNDLED_MODELS_JSON_ENV, catalog_output)
+        monkeypatch.setenv(_CODEX_BUNDLED_MODELS_EXIT_CODE_ENV, str(exit_code))
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+        checks = await agent.doctor((_LIVE_MODEL,))
+        context_check = next(check for check in checks if check.name == "context_window")
+
+        assert not context_check.ok
+        assert "bundled model catalog" in context_check.detail
+        assert _LIVE_MODEL in context_check.detail
+
     def _require_live(self) -> None:
         super()._require_live()
         self._live = True
@@ -1097,6 +1183,17 @@ def _install_fake_codex(directory: Path) -> None:
             "item": {"type": "agent_message", "text": json.dumps({"ok": True})},
         }
     )
+    turn_response = "\n".join(
+        json.dumps(event)
+        for event in (
+            {"type": "thread.started", "thread_id": _FAKE_TURN_SESSION_ID},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "fake turn complete"},
+            },
+            {"type": "turn.completed"},
+        )
+    )
     executable.write_text(
         "#!/bin/sh\n"
         f'printf \'%s\\n\' "$*" "$CODEX_HOME" "$OPENAI_API_KEY" '
@@ -1114,6 +1211,18 @@ def _install_fake_codex(directory: Path) -> None:
         'if [ "$1" = "login" ]; then\n'
         "  printf '%s\\n' 'Not logged in'\n"
         "  exit 1\n"
+        "fi\n"
+        'if [ "$1" = "debug" ] && [ "$2" = "models" ] && [ "$3" = "--bundled" ]; then\n'
+        '  catalog="${SHIKIRU_CODEX_BUNDLED_MODELS_JSON}"\n'
+        '  if [ -z "$catalog" ]; then catalog=\'{"models":[]}\'; fi\n'
+        '  printf "%s\\n" "$catalog"\n'
+        '  exit "${SHIKIRU_CODEX_BUNDLED_MODELS_EXIT_CODE:-0}"\n'
+        "fi\n"
+        'if [ "$1" = "exec" ] && [ "$2" != "--ephemeral" ]; then\n'
+        "  cat <<'SHIKIRU_TURN_EVENTS'\n"
+        f"{turn_response}\n"
+        "SHIKIRU_TURN_EVENTS\n"
+        "  exit 0\n"
         "fi\n"
         f"printf '%s\\n' '{response}'\n",
         encoding="utf-8",

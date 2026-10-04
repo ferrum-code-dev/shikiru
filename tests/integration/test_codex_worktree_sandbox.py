@@ -20,8 +20,16 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.asyncio
 
 ARGV_CAPTURE_ENV = "FAKE_CODEX_ARGV_CAPTURE"
+_BUNDLED_CONTEXT_WINDOW = 100_000
+_BUNDLED_CATALOG = json.dumps(
+    {"models": [{"slug": "model-x", "context_window": _BUNDLED_CONTEXT_WINDOW}]}
+)
 FAKE_CODEX = f"""#!/bin/sh
 for arg in "$@"; do printf '%s\\n' "$arg"; done > "${ARGV_CAPTURE_ENV}"
+if [ "$1" = "debug" ] && [ "$2" = "models" ] && [ "$3" = "--bundled" ]; then
+  printf '%s\\n' '{_BUNDLED_CATALOG}'
+  exit 0
+fi
 """
 RESUMED_SESSION = "session-resumed"
 

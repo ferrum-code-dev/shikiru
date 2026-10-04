@@ -8,6 +8,16 @@ from shikiru.agents.contracts import PERCENT, BillingMode
 
 CODEX_HOME_ENV_VAR = "CODEX_HOME"
 CODEX_COMMAND = "codex"
+DEBUG_SUBCOMMAND = "debug"
+MODELS_SUBCOMMAND = "models"
+MODELS_BUNDLED_FLAG = "--bundled"
+MODELS_CACHE_FILENAME = "models_cache.json"
+CODEX_BUNDLED_MODELS_ARGV = (
+    CODEX_COMMAND,
+    DEBUG_SUBCOMMAND,
+    MODELS_SUBCOMMAND,
+    MODELS_BUNDLED_FLAG,
+)
 RESUME_SUBCOMMAND = "resume"
 NO_DAEMON_FLAG = "--no-daemon"
 MODEL_FLAG = "-m"
@@ -24,7 +34,6 @@ READ_ONLY_SANDBOX = "read-only"
 WORKSPACE_WRITE_SANDBOX = "workspace-write"
 SKIP_GIT_REPO_CHECK_FLAG = "--skip-git-repo-check"
 AUTO_COMPACT_LIMIT_CONFIG = "model_auto_compact_token_limit"
-MODELS_CACHE_FILENAME = "models_cache.json"
 VERSION_ARGV = (CODEX_COMMAND, "--version")
 LOGIN_STATUS_ARGV = (CODEX_COMMAND, "login", "status")
 DEFAULT_COMPACT_AT_PCT = 80.0

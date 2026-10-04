@@ -318,6 +318,7 @@ class CodexTurnSequence(TurnProcessSequence):
         home: Path | None = None,
         git_dirs: Sequence[Path],
         compact_at_pct: float,
+        model_context_windows: Mapping[str, int] | None = None,
     ) -> None:
         self._spec = spec
         self._args = tuple(args)
@@ -331,7 +332,12 @@ class CodexTurnSequence(TurnProcessSequence):
         self._phase = _PHASE_START
         self._usage = spec.usage
         self._parser: CodexTurnParser | None = None
-        self._context_window = context_window(self._home, spec.rung.model, spec.session_id)
+        self._context_window = context_window(
+            self._home,
+            spec.rung.model,
+            spec.session_id,
+            fallback_context_windows=model_context_windows,
+        )
 
     def start(self, spec: TurnSpec) -> TurnProcess:
         self._phase = _PHASE_PROMPT
@@ -391,10 +397,21 @@ class CodexTurnSequence(TurnProcessSequence):
             self._usage = usages[-1]
 
 
-def context_window(home: Path, model: str, session_id: str | None = None) -> int | None:
-    """Return the window observed for this model in the session, else the model cache."""
+def context_window(
+    home: Path,
+    model: str,
+    session_id: str | None = None,
+    *,
+    fallback_context_windows: Mapping[str, int] | None = None,
+) -> int | None:
+    """Return the observed or cached window, then a validated bundled-catalog window."""
     observed = _observed_window(_read_rollout(_rollout_path(home, session_id)), model)
-    return observed if observed is not None else _cached_context_window(home, model)
+    if observed is not None:
+        return observed
+    cached = _cached_context_window(home, model)
+    if cached is not None:
+        return cached
+    return None if fallback_context_windows is None else fallback_context_windows.get(model)
 
 
 def _observed_window(entries: Sequence[Mapping[str, Any]], model: str) -> int | None:
