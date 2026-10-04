@@ -585,7 +585,7 @@ class DashboardApp(App[None]):
         height: auto; border-top: solid $neutral-border;
     }
     #escalations {
-        height: auto; max-height: 2; padding: 0 1; margin-bottom: 1;
+        height: auto; max-height: 3; padding: 0 1; margin-bottom: 1;
         background: $surface;
     }
     #focus-main { height: 1fr; min-height: 3; }

@@ -18,7 +18,7 @@ from shikiru.dashboard.contract import (
     WorkspaceSummaryView,
 )
 from shikiru.ui import SplashPanel
-from shikiru.ui.compact import attention_status_text
+from shikiru.ui.compact import FOCUS_ATTENTION_MAX_HEIGHT, attention_status_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -75,7 +75,9 @@ class EscalationsPanel(Static):
     DEFAULT_CSS = f"""
     EscalationsPanel {{ height: auto; }}
     #escalation-panels {{ height: auto; max-height: {MAX_ESCALATION_PANEL_HEIGHT}; }}
-    EscalationsPanel.focus-row #escalation-panels {{ height: auto; max-height: 2; }}
+    EscalationsPanel.focus-row #escalation-panels {{
+        height: auto; max-height: {FOCUS_ATTENTION_MAX_HEIGHT};
+    }}
     """
     can_focus = True
 
@@ -285,8 +287,13 @@ class EscalationsPanel(Static):
         panels = self.query_one("#escalation-panels", VerticalScroll)
         scroll_x, scroll_y = panels.scroll_x, panels.scroll_y
         if self._focus_row:
+            status = self._render_compact_attention()
+            children = list(panels.query(Static))
+            if len(children) == 1:
+                children[0].update(status)
+                return
             await panels.remove_children()
-            await panels.mount(Static(self._render_compact_attention(), markup=False))
+            await panels.mount(Static(status, markup=False))
             return
         if not self._attention.groups:
             children = list(panels.query(Static))

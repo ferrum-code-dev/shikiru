@@ -441,10 +441,12 @@ async def test_home_status_keeps_stopped_engine_fault_context_without_escalation
         reader.close()
 
 
+@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, (48, 20)])
 async def test_home_attention_tracks_owned_held_and_engine_state_changes(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
@@ -460,7 +462,7 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
     reader = StateReader(database, clock)
     try:
         app = _app(reader, project_dir, widget_names=["queue", "escalations"], services=services)
-        async with app.run_test(size=_WIDE_HOME_SIZE):
+        async with app.run_test(size=size):
             attention = app.query_one("#escalations", EscalationsPanel)
             await wait_until(
                 lambda: (
@@ -471,6 +473,10 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
                 ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            visible_status = " ".join(_rendered_widget_lines(_focus_attention_row(attention)))
+            assert "Operator owns" in visible_status
+            assert "intervention" in visible_status
+            assert "paused" in visible_status
             attention.activate_attention()
             app.query_one("#task-browser-list", ListView).focus()
             assert attention.display
@@ -484,6 +490,11 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
                 ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            visible_status = " ".join(_rendered_widget_lines(_focus_attention_row(attention)))
+            assert "automation held" in visible_status
+            assert "intervention" in visible_status
+            assert "paused" in visible_status
+            assert "Engine stopped" in visible_status
             assert "Automation continues" not in _rendered_text(_focus_attention_row(attention))
             assert attention.display
     finally:
