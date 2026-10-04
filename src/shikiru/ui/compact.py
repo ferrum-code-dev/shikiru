@@ -11,19 +11,27 @@ from rich.text import Text
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
     BILLING_MODE_SUBSCRIPTION,
+    BILLING_MODE_UNKNOWN,
     COST_BASIS_API_EQUIVALENT,
     COST_BASIS_BILLED,
 )
-from shikiru.domain.tasks import Role
+from shikiru.domain.tasks import Role, Status
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import ALERT_COLOR, AMBER, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 GIB_FORMAT = ".1f"
 SESSION_COST_FORMAT = ".2f"
+COUNT_SHORT_SCALE = 1_000
+COUNT_SHORT_MILLION = COUNT_SHORT_SCALE * COUNT_SHORT_SCALE
+COUNT_SHORT_PRECISION = 1
 RESOURCE_FAILED = "failed"
 RESOURCE_UNAVAILABLE = "unavailable"
 RESOURCE_STALE = "stale"
 RESOURCE_EMPTY = "empty"
+RESOURCE_AVAILABLE = "available"
+RESOURCE_STATE_UNKNOWN = "sample state unknown"
+UNSTARTED_STEP = "not started"
+SETUP_STEP = "setup"
 ROLE_LABELS = {
     Role.LEADER.value: "Leader",
     Role.IMPLEMENTER.value: "Implementer",
@@ -31,7 +39,8 @@ ROLE_LABELS = {
 }
 MODE_LABELS = {
     BILLING_MODE_API: "API",
-    BILLING_MODE_SUBSCRIPTION: "Subscription",
+    BILLING_MODE_SUBSCRIPTION: "subscription",
+    BILLING_MODE_UNKNOWN: "billing unknown",
 }
 
 
@@ -44,6 +53,12 @@ class _RecordedUsage(Protocol):
 
     @property
     def output_tokens(self) -> int: ...
+
+    @property
+    def cache_read_tokens(self) -> int: ...
+
+    @property
+    def cache_write_tokens(self) -> int: ...
 
     @property
     def reported_sessions(self) -> int: ...
@@ -83,6 +98,56 @@ class _RecordedUsage(Protocol):
 
     @property
     def subscription_agents(self) -> tuple[str, ...]: ...
+
+
+class _AgentUsageSummary(Protocol):
+    @property
+    def agent(self) -> str: ...
+
+    @property
+    def input_tokens(self) -> int: ...
+
+    @property
+    def output_tokens(self) -> int: ...
+
+    @property
+    def cache_read_tokens(self) -> int: ...
+
+    @property
+    def cache_write_tokens(self) -> int: ...
+
+    @property
+    def run_count(self) -> int: ...
+
+    @property
+    def usage_reported_runs(self) -> int: ...
+
+    @property
+    def legacy_token_runs(self) -> int: ...
+
+    @property
+    def legacy_unknown_token_runs(self) -> int: ...
+
+    @property
+    def billed_cost_usd(self) -> float | None: ...
+
+    @property
+    def billed_cost_runs(self) -> int: ...
+
+    @property
+    def legacy_billed_cost_runs(self) -> int: ...
+
+    @property
+    def api_equivalent_cost_usd(self) -> float | None: ...
+
+    @property
+    def api_equivalent_cost_runs(self) -> int: ...
+
+    @property
+    def legacy_api_equivalent_cost_runs(self) -> int: ...
+
+    @property
+    def unknown_cost_runs(self) -> int: ...
 
 
 class _ResourceSample(Protocol):
@@ -126,9 +191,6 @@ class _TaskSession(Protocol):
 
     @property
     def current_lineage(self) -> bool: ...
-
-    @property
-    def status(self) -> str: ...
 
     @property
     def input_tokens(self) -> int: ...
@@ -190,87 +252,154 @@ class _TaskDetail(Protocol):
     @property
     def acting_role(self) -> str: ...
 
+    @property
+    def signal_observed(self) -> bool: ...
+
 
 @dataclass(frozen=True)
 class ProjectUsageMetric:
-    """Render explicit token and monetary coverage for retained session lineages."""
+    """Render compact recorded token and billing coverage."""
 
     usage: _RecordedUsage
     scope: str
 
     def render(self) -> Group:
-        token_line = Text.assemble(
-            (f"{self.scope} · ", "bold"),
-            ("tokens ", SECONDARY_TEXT_COLOR),
-            f"input {self.usage.input_tokens:,} · output {self.usage.output_tokens:,}",
-            (" · coverage ", SECONDARY_TEXT_COLOR),
-            (
-                (
-                    f"{self.usage.reported_sessions} reported · "
-                    f"{self.usage.legacy_token_sessions} legacy positive · "
-                    f"{self.usage.unknown_token_sessions} unknown / "
-                    f"{_session_count(self.usage.session_count)}"
-                ),
-                STEEL_BLUE,
-            ),
+        usage = self.usage
+        known_token_sessions = usage.reported_sessions + usage.legacy_token_sessions
+        tokens = (
+            f"{_compact_count(usage.input_tokens + usage.output_tokens)} input+output"
+            if known_token_sessions
+            else "unknown"
         )
-        billed = _billed_total(self.usage)
-        api = _api_billed_total(self.usage)
-        estimate = _api_equivalent_total(self.usage)
-        subscriptions = _subscription_summary(self.usage)
-        lines = [
-            token_line,
-            Text.assemble(
-                ("Charges · ", SECONDARY_TEXT_COLOR),
-                (billed, SAGE),
-                (" · ", SECONDARY_TEXT_COLOR),
-                (api, SAGE),
-                (" · ", SECONDARY_TEXT_COLOR),
-                (estimate, AMBER),
-                (" · ", SECONDARY_TEXT_COLOR),
-                (subscriptions, AMBER),
-                (" · ", SECONDARY_TEXT_COLOR),
-                (
-                    (
-                        f"billing mode unknown for "
-                        f"{_session_count(self.usage.unknown_billing_sessions)}"
-                    ),
-                    SECONDARY_TEXT_COLOR,
-                ),
-            ),
-        ]
+        token_coverage = _nonzero_coverage(
+            (usage.reported_sessions, "reported"),
+            (usage.legacy_token_sessions, "legacy"),
+            (usage.unknown_token_sessions, "unknown"),
+        )
+        token_suffix = f" · {token_coverage}" if token_coverage else ""
+        lines = [Text.assemble((f"{self.scope} · Tokens ", "bold"), (tokens, STEEL_BLUE))]
+        if token_suffix:
+            lines[0].append(token_suffix, style=SECONDARY_TEXT_COLOR)
+
+        billing = _primary_billing_summary(usage)
+        if billing:
+            lines.append(Text(billing, style=SECONDARY_TEXT_COLOR))
         return Group(*lines)
 
 
-def _billed_total(usage: _RecordedUsage) -> str:
-    if usage.billed_cost_sessions == 0 or usage.billed_cost_usd is None:
-        return "no billed amount reported"
-    amount = f"${usage.billed_cost_usd:{SESSION_COST_FORMAT}}"
-    return f"billed {amount} across {_session_count(usage.billed_cost_sessions)}"
+@dataclass(frozen=True)
+class ProjectUsageDetails:
+    """Render detailed token, cost-basis and billing-mode evidence."""
+
+    usage: _RecordedUsage
+
+    def render(self) -> Group:
+        usage = self.usage
+        token_known = usage.reported_sessions + usage.legacy_token_sessions > 0
+        if token_known:
+            tokens = Text.assemble(
+                ("Tokens · ", SECONDARY_TEXT_COLOR),
+                f"input {usage.input_tokens:,} · output {usage.output_tokens:,} · "
+                f"cache read {usage.cache_read_tokens:,} · "
+                f"cache write {usage.cache_write_tokens:,}",
+            )
+        else:
+            tokens = Text("Token values unknown")
+        coverage = Text(
+            f"Coverage · {usage.reported_sessions} reported · "
+            f"{usage.legacy_token_sessions} legacy positive · "
+            f"{usage.unknown_token_sessions} unknown / {_session_count(usage.session_count)}",
+            style=SECONDARY_TEXT_COLOR,
+        )
+        lines: list[RenderableType] = [tokens, coverage]
+        if usage.billed_cost_sessions and usage.billed_cost_usd is not None:
+            lines.append(
+                Text(
+                    f"All-mode billed · ${usage.billed_cost_usd:{SESSION_COST_FORMAT}} · "
+                    f"{_session_count(usage.billed_cost_sessions)}",
+                    style=SAGE,
+                )
+            )
+        if usage.api_billed_cost_sessions and usage.api_billed_cost_usd is not None:
+            lines.append(
+                Text(
+                    f"API billed · ${usage.api_billed_cost_usd:{SESSION_COST_FORMAT}} · "
+                    f"{_session_count(usage.api_billed_cost_sessions)}",
+                    style=SAGE,
+                )
+            )
+        if usage.api_cost_unreported_sessions:
+            lines.append(
+                Text(
+                    f"API charges unreported · "
+                    f"{_session_count(usage.api_cost_unreported_sessions)}",
+                    style=SECONDARY_TEXT_COLOR,
+                )
+            )
+        if usage.api_equivalent_cost_sessions and usage.api_equivalent_cost_usd is not None:
+            lines.append(
+                Text(
+                    f"API-equivalent estimate · "
+                    f"${usage.api_equivalent_cost_usd:{SESSION_COST_FORMAT}} · "
+                    f"{_session_count(usage.api_equivalent_cost_sessions)}",
+                    style=AMBER,
+                )
+            )
+        if usage.subscription_sessions:
+            agents = ", ".join(usage.subscription_agents)
+            lines.append(
+                Text(
+                    f"Subscription · {_session_count(usage.subscription_sessions)} · "
+                    f"declared agents {agents}",
+                    style=AMBER,
+                )
+            )
+        if usage.unknown_billing_sessions:
+            lines.append(
+                Text(
+                    f"Billing mode unknown · {_session_count(usage.unknown_billing_sessions)}",
+                    style=SECONDARY_TEXT_COLOR,
+                )
+            )
+        return Group(*lines)
 
 
-def _api_billed_total(usage: _RecordedUsage) -> str:
-    if usage.api_billed_cost_sessions == 0 or usage.api_billed_cost_usd is None:
-        amount = "no API billed amount reported"
-    else:
-        amount = (
-            f"API billed ${usage.api_billed_cost_usd:{SESSION_COST_FORMAT}} across "
+def _primary_billing_summary(usage: _RecordedUsage) -> str:
+    parts: list[str] = []
+    all_amount = usage.billed_cost_usd
+    api_amount = usage.api_billed_cost_usd
+    all_mode_differs = (
+        usage.billed_cost_sessions != usage.api_billed_cost_sessions or all_amount != api_amount
+    )
+    if all_mode_differs and usage.billed_cost_sessions and all_amount is not None:
+        parts.append(
+            f"All billed ${all_amount:{SESSION_COST_FORMAT}} · "
+            f"{_session_count(usage.billed_cost_sessions)}"
+        )
+    if usage.api_billed_cost_sessions and api_amount is not None:
+        parts.append(
+            f"API billed ${api_amount:{SESSION_COST_FORMAT}} · "
             f"{_session_count(usage.api_billed_cost_sessions)}"
         )
-    missing = usage.api_cost_unreported_sessions
-    if missing:
-        return f"{amount}; API charges unreported for {_session_count(missing)}"
-    return amount
+    if usage.api_cost_unreported_sessions:
+        parts.append(f"{_count_label(usage.api_cost_unreported_sessions, 'API charge')} unreported")
+    if usage.subscription_agents:
+        parts.append(f"{_count_label(len(usage.subscription_agents), 'subscription agent')}")
+    if usage.unknown_billing_sessions:
+        parts.append(f"{usage.unknown_billing_sessions} billing modes unknown")
+    return " · ".join(parts)
 
 
-def _api_equivalent_total(usage: _RecordedUsage) -> str:
-    if usage.api_equivalent_cost_sessions == 0 or usage.api_equivalent_cost_usd is None:
-        return "no API-equivalent estimate reported"
-    amount = f"${usage.api_equivalent_cost_usd:{SESSION_COST_FORMAT}}"
-    return (
-        f"API-equivalent estimate {amount} across "
-        f"{_session_count(usage.api_equivalent_cost_sessions)}"
-    )
+def _nonzero_coverage(*counts: tuple[int, str]) -> str:
+    return " · ".join(f"{count} {label}" for count, label in counts if count)
+
+
+def _compact_count(count: int) -> str:
+    if count >= COUNT_SHORT_MILLION:
+        return f"{count / COUNT_SHORT_MILLION:.{COUNT_SHORT_PRECISION}f}M"
+    if count >= COUNT_SHORT_SCALE:
+        return f"{count / COUNT_SHORT_SCALE:.{COUNT_SHORT_PRECISION}f}k"
+    return f"{count:,}"
 
 
 def _session_count(count: int) -> str:
@@ -278,71 +407,77 @@ def _session_count(count: int) -> str:
     return f"{count} {noun}"
 
 
-def _subscription_summary(usage: _RecordedUsage) -> str:
-    if usage.subscription_sessions == 0:
-        return "no subscription sessions"
-    agents = ", ".join(usage.subscription_agents) or "declared agents unavailable"
-    return f"Subscription {_session_count(usage.subscription_sessions)} · agents {agents}"
+def _count_label(count: int, noun: str) -> str:
+    plural = noun if count == 1 else f"{noun}s"
+    return f"{count} {plural}"
 
 
 @dataclass(frozen=True)
 class ResourceMetric:
-    """Render the latest host and Shikiru-including-agents resource observation."""
+    """Render one width-wrapping host and Shikiru process-tree observation."""
 
     sample: _ResourceSample | None
 
-    def render(self) -> RenderableType:
+    def render(self) -> Text:
         if self.sample is None:
             return Text("Host and Shikiru resources unavailable · no sample recorded")
         state = self.sample.state
         if state == RESOURCE_FAILED:
-            detail = f" · {self.sample.error}" if self.sample.error else ""
-            return Text(f"Host and Shikiru resources failed{detail}", style=ALERT_COLOR)
+            return _resource_state_line(RESOURCE_FAILED, self.sample)
         if state == RESOURCE_UNAVAILABLE:
-            detail = f" · {self.sample.error}" if self.sample.error else ""
-            return Text(
-                f"Host and Shikiru resources unavailable{detail}", style=SECONDARY_TEXT_COLOR
-            )
-        host = Text.assemble(
-            ("Host · ", "bold"),
+            return _resource_state_line(RESOURCE_UNAVAILABLE, self.sample)
+        state_style = AMBER if state == RESOURCE_STALE else SECONDARY_TEXT_COLOR
+        if state == RESOURCE_STALE:
+            state_label = "Stale · "
+        elif state == RESOURCE_AVAILABLE:
+            state_label = "Available · "
+        elif state is None:
+            state_label = f"{RESOURCE_STATE_UNKNOWN} · "
+        else:
+            state_label = ""
+        instance = _instance_resource_text(self.sample)
+        age = f" · observed {self.sample.sampled_ago} ago" if self.sample.sampled_ago else ""
+        error = f" · {self.sample.error}" if self.sample.error else ""
+        return Text.assemble(
+            (state_label, state_style),
+            ("Host ", "bold"),
             (f"CPU {self.sample.host_cpu_pct:.0f}%", STEEL_BLUE),
             f" · RAM {self.sample.host_ram_used_pct:.0f}%",
             f" · free {self.sample.free_ram_gb:{GIB_FORMAT}} GiB",
+            " · ",
+            ("Shikiru including agents ", "bold"),
+            instance,
+            (age, SECONDARY_TEXT_COLOR),
+            (error, AMBER if state == RESOURCE_STALE else ALERT_COLOR),
         )
-        if state == RESOURCE_STALE:
-            host = Text.assemble(("Stale · ", AMBER), host)
-        if self.sample.instance_cpu_pct is None or self.sample.instance_rss_gb is None:
-            instance = Text.assemble(
-                ("Shikiru including agents · ", "bold"),
-                (
-                    "process tree empty" if state == RESOURCE_EMPTY else "CPU/RAM unavailable",
-                    SECONDARY_TEXT_COLOR,
-                ),
-            )
-        else:
-            instance = Text.assemble(
-                ("Shikiru including agents · ", "bold"),
-                (f"CPU {self.sample.instance_cpu_pct:.0f}%", STEEL_BLUE),
-                f" · RAM {self.sample.instance_rss_gb:{GIB_FORMAT}} GiB",
-            )
-        if self.sample.sampled_ago is not None:
-            instance.append(
-                f" · observed {self.sample.sampled_ago} ago", style=SECONDARY_TEXT_COLOR
-            )
-        lines: list[RenderableType] = [host, instance]
-        if self.sample.error is not None:
-            lines.append(Text(f"Latest sample failed · {self.sample.error}", style=AMBER))
-        return Group(*lines)
 
 
-def render_resource_metric(sample: _ResourceSample | None) -> RenderableType:
+def _resource_state_line(state: str, sample: _ResourceSample) -> Text:
+    error = f" · {sample.error}" if sample.error else ""
+    age = f" · observed {sample.sampled_ago} ago" if sample.sampled_ago else ""
+    style = ALERT_COLOR if state == RESOURCE_FAILED else SECONDARY_TEXT_COLOR
+    return Text(f"Resources {state}{error}{age}", style=style)
+
+
+def _instance_resource_text(sample: _ResourceSample) -> Text:
+    if sample.instance_cpu_pct is None or sample.instance_rss_gb is None:
+        if sample.state == RESOURCE_EMPTY:
+            return Text("process tree empty", style=SECONDARY_TEXT_COLOR)
+        return Text("CPU/RAM unavailable", style=SECONDARY_TEXT_COLOR)
+    return Text.assemble(
+        (f"CPU {sample.instance_cpu_pct:.0f}%", STEEL_BLUE),
+        f" · RAM {sample.instance_rss_gb:{GIB_FORMAT}} GiB",
+    )
+
+
+def render_resource_metric(sample: _ResourceSample | None) -> Text:
     """Render `sample` without starting another resource observation."""
     return ResourceMetric(sample).render()
 
 
 @dataclass(frozen=True)
 class AgentUsageRow:
-    """Render one role, model and session-wide usage record together."""
+    """Render a compact role, lineage, model, token and charge row."""
 
     session: _TaskSession
 
@@ -350,33 +485,27 @@ class AgentUsageRow:
         session = self.session
         role = ROLE_LABELS.get(session.role, session.role.title())
         identity = f"{session.agent}/{session.model}"
-        if session.effort:
-            identity = f"{identity}/{session.effort}"
         lineage = "current" if session.current_lineage else "previous"
-        status = session.status.replace("_", " ").title()
-        tokens = _session_token_text(session)
+        tokens = _session_token_summary(session)
         cost, cost_style = _session_cost_text(session)
-        billing = MODE_LABELS.get(session.billing_mode, "Billing mode unknown")
+        billing = MODE_LABELS.get(session.billing_mode, MODE_LABELS[BILLING_MODE_UNKNOWN])
         return Text.assemble(
-            (f"{role} · {lineage} · {status} · ", SECONDARY_TEXT_COLOR),
+            (f"{role} · {lineage} · ", SECONDARY_TEXT_COLOR),
             (f"{identity}", "bold"),
-            (f" · session totals {tokens}", SECONDARY_TEXT_COLOR),
+            (f" · {tokens}", SECONDARY_TEXT_COLOR),
             (f" · {billing} · {cost}", cost_style),
         )
 
 
-def _session_token_text(session: _TaskSession) -> str:
+def _session_token_summary(session: _TaskSession) -> str:
     if session.usage_reported is False:
         return "tokens unknown"
-    values = (
-        f"input {session.input_tokens:,} · output {session.output_tokens:,}"
-        f" · cache read {session.cache_read_tokens:,} · cache write {session.cache_write_tokens:,}"
-    )
+    total = _compact_count(session.input_tokens + session.output_tokens)
     if session.usage_reported is True:
-        return values
+        return f"{total} input+output"
     if session.legacy_token_totals:
-        return f"legacy recorded · {values}"
-    return "legacy usage provenance unknown"
+        return f"{total} input+output legacy"
+    return "tokens unknown"
 
 
 def _session_cost_text(session: _TaskSession) -> tuple[str, str]:
@@ -391,14 +520,109 @@ def _session_cost_text(session: _TaskSession) -> tuple[str, str]:
         label = f"billed {amount}"
         style = SAGE
     elif session.cost_basis == COST_BASIS_API_EQUIVALENT:
-        label = f"API-equivalent estimate {amount}"
+        label = f"estimate {amount}"
         style = AMBER
     else:
         label = f"amount {amount} · basis unknown"
         style = SECONDARY_TEXT_COLOR
-    if session.legacy_cost_recorded:
-        label = f"{label} · legacy recorded"
     return label, style
+
+
+@dataclass(frozen=True)
+class ProjectAgentUsageDetails:
+    """Render one agent's token and monetary evidence in the detailed usage view."""
+
+    usage: _AgentUsageSummary
+
+    def render(self) -> Group:
+        usage = self.usage
+        token_runs = usage.usage_reported_runs + usage.legacy_token_runs
+        lines: list[RenderableType] = [Text(f"{usage.agent} · tokens unknown", style="bold")]
+        if token_runs:
+            lines[0] = Text.assemble(
+                (f"{usage.agent} · ", "bold"),
+                f"input {usage.input_tokens:,} · output {usage.output_tokens:,} · "
+                f"cache read {usage.cache_read_tokens:,} · "
+                f"cache write {usage.cache_write_tokens:,}",
+            )
+        unknown_tokens = usage.run_count - usage.usage_reported_runs - usage.legacy_token_runs
+        lines.append(
+            Text(
+                f"Token coverage · {usage.usage_reported_runs} reported · "
+                f"{usage.legacy_token_runs} legacy positive · "
+                f"{unknown_tokens} unknown / {_count_label(usage.run_count, 'run')}"
+                f"{_legacy_unknown_tokens(usage.legacy_unknown_token_runs)}",
+                style=SECONDARY_TEXT_COLOR,
+            )
+        )
+        if usage.billed_cost_runs and usage.billed_cost_usd is not None:
+            legacy = _legacy_count(usage.legacy_billed_cost_runs)
+            lines.append(
+                Text(
+                    f"Billed ${usage.billed_cost_usd:{SESSION_COST_FORMAT}} · "
+                    f"{_count_label(usage.billed_cost_runs, 'run')}{legacy}",
+                    style=SAGE,
+                )
+            )
+        if usage.api_equivalent_cost_runs and usage.api_equivalent_cost_usd is not None:
+            legacy = _legacy_count(usage.legacy_api_equivalent_cost_runs)
+            lines.append(
+                Text(
+                    f"API-equivalent estimate "
+                    f"${usage.api_equivalent_cost_usd:{SESSION_COST_FORMAT}} · "
+                    f"{_count_label(usage.api_equivalent_cost_runs, 'run')}{legacy}",
+                    style=AMBER,
+                )
+            )
+        if usage.unknown_cost_runs:
+            lines.append(
+                Text(
+                    f"Cost unknown · {usage.unknown_cost_runs}/"
+                    f"{_count_label(usage.run_count, 'run')}",
+                    style=SECONDARY_TEXT_COLOR,
+                )
+            )
+        return Group(*lines)
+
+
+def _legacy_count(count: int) -> str:
+    return f" · {count} legacy" if count else ""
+
+
+def _legacy_unknown_tokens(count: int) -> str:
+    return f" · {count} legacy provenance unknown" if count else ""
+
+
+@dataclass(frozen=True)
+class AgentUsageDetails:
+    """Render session token, cost basis and source evidence below a compact row."""
+
+    session: _TaskSession
+
+    def render(self) -> Group:
+        session = self.session
+        if session.usage_reported is False:
+            tokens = "Token values unknown"
+        elif session.usage_reported is None and not session.legacy_token_totals:
+            tokens = "Token provenance unknown"
+        else:
+            provenance = "legacy recorded · " if session.legacy_token_totals else "reported · "
+            tokens = (
+                f"{provenance}input {session.input_tokens:,} · output {session.output_tokens:,} · "
+                f"cache read {session.cache_read_tokens:,} · "
+                f"cache write {session.cache_write_tokens:,}"
+            )
+        cost = _session_cost_text(session)[0]
+        cost_basis = f"Cost basis · {session.cost_basis} · {cost}"
+        if session.legacy_cost_recorded:
+            cost_basis = f"{cost_basis} · legacy record"
+        lines = [
+            Text(f"Tokens · {tokens}", style=SECONDARY_TEXT_COLOR),
+            Text(cost_basis, style=SECONDARY_TEXT_COLOR),
+        ]
+        if session.effort:
+            lines.append(Text(f"Effort · {session.effort}", style=SECONDARY_TEXT_COLOR))
+        return Group(*lines)
 
 
 @dataclass(frozen=True)
@@ -410,6 +634,8 @@ class StageActivity:
     def render(self) -> Group:
         task = self.task
         stage = task.step.replace("_", " ").title()
+        if stage == UNSTARTED_STEP.title() and task.status == Status.RUNNING.value:
+            stage = SETUP_STEP.title()
         stage_line = Text.assemble(
             ("Stage · ", SECONDARY_TEXT_COLOR),
             (stage, STEEL_BLUE),
@@ -420,8 +646,10 @@ class StageActivity:
             (panel for panel in task.progress.panels if panel.state is PanelState.ACTIVE),
             None,
         )
-        if active is not None:
-            spinner = f" {active.spinner_frame}" if active.spinner_frame else ""
+        if task.signal_observed:
+            spinner = (
+                f" {active.spinner_frame}" if active is not None and active.spinner_frame else ""
+            )
             activity = Text.assemble(
                 ("Activity · ", SECONDARY_TEXT_COLOR),
                 (f"signal observed{spinner}", STEEL_BLUE),
@@ -429,6 +657,11 @@ class StageActivity:
             )
         elif any(panel.state is PanelState.STALLED for panel in task.progress.panels):
             activity = Text.assemble(("Activity · stalled", ALERT_COLOR))
+        elif active is not None:
+            activity = Text.assemble(
+                ("Activity · no current signal", SECONDARY_TEXT_COLOR),
+                f" · {task.acting_role.title()}",
+            )
         else:
             activity = Text.assemble(("Activity · no live turn", SECONDARY_TEXT_COLOR))
         return Group(stage_line, activity)

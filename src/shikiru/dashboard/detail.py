@@ -19,7 +19,13 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason
 from shikiru.errors import ShikiruError
-from shikiru.ui.compact import AgentUsageRow, ProjectUsageMetric, StageActivity
+from shikiru.ui.compact import (
+    AgentUsageDetails,
+    AgentUsageRow,
+    ProjectUsageDetails,
+    ProjectUsageMetric,
+    StageActivity,
+)
 
 if TYPE_CHECKING:
     from textual import events
@@ -1259,7 +1265,12 @@ def _sessions_text(view: TaskDetailView) -> Group:
     if view.usage is None:
         lines.append(Text("Task usage coverage unavailable", style="bold"))
     else:
-        lines.append(ProjectUsageMetric(view.usage, f"Task usage · {view.task_id}").render())
+        lines.extend(
+            (
+                ProjectUsageMetric(view.usage, "Task").render(),
+                ProjectUsageDetails(view.usage).render(),
+            )
+        )
     if not view.sessions:
         lines.append(Text("No agent sessions are recorded."))
     for session in view.sessions:
@@ -1271,6 +1282,7 @@ def _sessions_text(view: TaskDetailView) -> Group:
         lines.extend(
             (
                 AgentUsageRow(session).render(),
+                AgentUsageDetails(session).render(),
                 Text(f"Session ID · {session.session_id or NO_VALUE}"),
                 Text(f"Billing declaration · {session.billing_mode} · {session.billing_source}"),
                 Text(f"{context}"),

@@ -876,6 +876,7 @@ class StateDashboardViews:
             requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
             timeline=timeline_view,
             usage=_recorded_usage(detail.sessions),
+            signal_observed=task_frame.spinner_visible,
         )
 
     async def task_timeline(

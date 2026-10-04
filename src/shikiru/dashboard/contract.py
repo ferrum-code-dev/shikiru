@@ -466,6 +466,7 @@ class TaskDetailView:
     requeued_age: str | None = None
     timeline: TaskTimelinePageView | None = None
     usage: RecordedUsageView | None = None
+    signal_observed: bool = False
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.ui import Gauge
-from shikiru.ui.compact import ProjectUsageMetric
+from shikiru.ui.compact import ProjectAgentUsageDetails, ProjectUsageDetails, ProjectUsageMetric
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,39 +23,7 @@ UNKNOWN_VALUE = "\N{EN DASH}"
 
 
 def _agent_block(usage: AgentUsageView) -> Group:
-    known_token_runs = usage.usage_reported_runs + usage.legacy_token_runs
-    if known_token_runs:
-        tokens = (
-            f"input {usage.input_tokens:,} · output {usage.output_tokens:,} · "
-            f"cache read {usage.cache_read_tokens:,} · cache write {usage.cache_write_tokens:,}"
-        )
-        if usage.legacy_token_runs:
-            unknown_runs = usage.run_count - known_token_runs
-            coverage = (
-                f"usage reported {usage.usage_reported_runs} · legacy recorded "
-                f"{usage.legacy_token_runs} · token usage unknown "
-                f"{unknown_runs}/{usage.run_count} runs"
-            )
-            if usage.legacy_unknown_token_runs:
-                coverage += f" · legacy provenance unknown {usage.legacy_unknown_token_runs}"
-        else:
-            coverage = f"usage reported {usage.usage_reported_runs}/{usage.run_count} runs"
-            if usage.legacy_unknown_token_runs:
-                coverage += f" · legacy provenance unknown {usage.legacy_unknown_token_runs}"
-    else:
-        tokens = f"tokens {UNKNOWN_VALUE}"
-        if usage.legacy_unknown_token_runs:
-            coverage = (
-                "legacy usage provenance unknown "
-                f"{usage.legacy_unknown_token_runs}/{usage.run_count} runs"
-            )
-        else:
-            coverage = (
-                f"usage not reported (0/{usage.run_count} runs)"
-                if usage.run_count
-                else "no session usage recorded"
-            )
-    lines = [Text(f"{usage.agent} · {tokens} · {coverage}", style="bold")]
+    lines: list[RenderableType] = [ProjectAgentUsageDetails(usage).render()]
     lines.extend(
         Text.assemble(
             "  ",
@@ -79,8 +47,8 @@ class UsagePanel(Static):
     async def on_mount(self) -> None:
         """Render current usage, subscribe to state and tick quota age/countdowns."""
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh_while_active), exclusive=True)
-        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_active)
+        self.run_worker(self._widget_context.on_change(self._refresh_if_active), exclusive=True)
+        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_on_motion)
 
     def on_unmount(self) -> None:
         if self._remove_motion_callback is not None:
@@ -89,29 +57,47 @@ class UsagePanel(Static):
 
     async def _refresh(self) -> None:
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
-        scope = (
-            f"Task recorded usage · {self._widget_context.focus_task}"
-            if self._widget_context.focus_task is not None
-            else "Project recorded usage · all retained runs"
-        )
         lines: list[RenderableType] = []
         if self._widget_context.focus_task is None:
-            lines.insert(
-                0, ProjectUsageMetric(self._widget_context.views.project_usage(), scope).render()
+            project_usage = self._widget_context.views.project_usage()
+            lines.extend(
+                (
+                    ProjectUsageMetric(project_usage, "Project").render(),
+                    ProjectUsageDetails(project_usage).render(),
+                )
             )
         else:
-            lines.append(Text(scope, style="bold"))
+            detail = await self._widget_context.views.task_detail(
+                self._widget_context.focus_task,
+                include_timeline=False,
+            )
+            if detail is None or detail.usage is None:
+                lines.append(Text("Task usage coverage unavailable", style="bold"))
+            else:
+                lines.extend(
+                    (
+                        ProjectUsageMetric(
+                            detail.usage,
+                            f"Task {self._widget_context.focus_task}",
+                        ).render(),
+                        ProjectUsageDetails(detail.usage).render(),
+                    )
+                )
         lines.extend(_agent_block(item) for item in usage)
         if not usage:
             lines.append(Text("No runs or quota windows recorded."))
         self.update(Group(*lines))
 
-    async def _refresh_while_active(self) -> None:
+    async def _refresh_if_active(self) -> None:
         if not self.is_mounted:
             return
         app = cast("App[None]", self.app)
         if app.is_running and self.screen.is_current:
             await self._refresh()
+
+    async def _refresh_on_motion(self) -> None:
+        if self._widget_context.focus_task is None:
+            await self._refresh_if_active()
 
 
 class UsageWidget:

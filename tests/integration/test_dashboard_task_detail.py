@@ -627,21 +627,26 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             usage_text = plain_text(app.query_one("#usage", Static).content)
             sessions_text = plain_text(app.query_one("#task-detail-sessions", Static).content)
 
-            assert f"Task recorded usage · {task.id}" in usage_text
-            assert (
-                "usage reported 0 · legacy recorded 1 · token usage unknown 2/3 runs"
-                " · legacy provenance unknown 2" in usage_text
-            )
-            assert "billed $1.25 across 1 session" in sessions_text
-            assert "API-equivalent estimate $0.00 across 1 session" in sessions_text
-            assert "billing mode unknown for 3 sessions" in sessions_text
-            assert "legacy recorded · input 500 · output 50 · cache read 0 · cache write 0" in (
-                sessions_text
-            )
-            assert "billed $1.25 · legacy recorded" in sessions_text
-            assert "API-equivalent estimate $0.00 · legacy recorded" in sessions_text
-            assert "legacy last reported context · 10%" in sessions_text
-            assert "legacy usage provenance unknown" in sessions_text
+            assert f"Task {task.id}" in usage_text
+            assert "1 legacy" in usage_text
+            assert "2 unknown" in usage_text
+            assert "$1.25" in usage_text
+            assert "3 billing modes unknown" in usage_text
+            assert "$1.25" in sessions_text
+            assert "$0.00" in sessions_text
+            assert "Implementer" in sessions_text
+            assert "current" in sessions_text
+            assert "codex/luna" in sessions_text
+            assert "550 input+output" in sessions_text
+            assert "billed $1.25" in sessions_text
+            assert "legacy recorded" in sessions_text
+            assert "input 500" in sessions_text
+            assert "cache read 0" in sessions_text
+            assert "legacy provenance unknown" in usage_text
+            assert "Cost basis" in sessions_text
+            assert "Billing declaration" in sessions_text
+            assert "legacy" in sessions_text
+            assert "10%" in sessions_text
             assert "no reliable context provenance" in sessions_text
     finally:
         reader.close()
@@ -1962,7 +1967,8 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
             assert "recorded fault" in dialogue_text
             assert "Unrelated activity" not in dialogue_text
             usage_text = plain_text(app.query_one("#usage", Static).content)
-            assert f"Task recorded usage · {focused.id}" in usage_text
+            assert f"Task {focused.id}" in usage_text
+            assert "Tokens" in usage_text
             assert focused_run.agent in usage_text
             assert "4" in usage_text
             assert other_run.agent not in usage_text

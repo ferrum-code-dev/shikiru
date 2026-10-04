@@ -113,11 +113,18 @@ def widget_context(
     *,
     services: StubServices | None = None,
     open_palette: OpenPalette | None = None,
+    focus_task: str | None = None,
 ) -> WidgetContext:
     settings = load_settings(project_dir)
     return WidgetContext(
-        views=state_views(reader, project_dir, clock, services or StubServices()),
-        focus_task=None,
+        views=state_views(
+            reader,
+            project_dir,
+            clock,
+            services or StubServices(),
+            focus_task=focus_task,
+        ),
+        focus_task=focus_task,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,

@@ -35,6 +35,7 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.ui.compact import StageActivity
 from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
 from shikiru.ui.tokens import STYLE_BOLD, STYLE_DIM, STYLE_REVERSE
@@ -56,6 +57,7 @@ from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from rich.console import Group
@@ -143,6 +145,31 @@ def _build_views(
     return state_views(
         reader, project_dir, clock, StubServices(), focus_task=task.id, settings=settings
     )
+
+
+@pytest.fixture
+def task_activity_environment(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> Iterator[tuple[Connection, Path, FakeClock, Settings, Task, StateReader, StateDashboardViews]]:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(project_dir)
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        yield (
+            connection,
+            project_dir,
+            clock,
+            settings,
+            task,
+            reader,
+            _build_views(reader, project_dir, settings, clock, task),
+        )
+    finally:
+        reader.close()
 
 
 def _write_current_turn_log(project_dir: Path, task: Task, views: StateDashboardViews) -> Path:
@@ -369,6 +396,119 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
             await wait_until(lambda: GLYPH_STALLED in cast("Text", strips.content).plain, timeout=1)
     finally:
         reader.close()
+
+
+async def test_task_activity_distinguishes_setup_from_a_missing_signal(
+    task_activity_environment: tuple[
+        Connection, Path, FakeClock, Settings, Task, StateReader, StateDashboardViews
+    ],
+) -> None:
+    connection, project_dir, clock, settings, task, reader, views = task_activity_environment
+    no_signal = await views.task_detail(task.id, include_timeline=False)
+    assert no_signal is not None
+    assert not no_signal.signal_observed
+    no_signal_text = plain_text(StageActivity(no_signal).render())
+    assert "no current signal" in no_signal_text
+    assert "signal observed" not in no_signal_text
+
+    setup = seed_task(connection, clock, title="Setup stage", mode=Mode.IMPLEMENT)
+    TaskStore(connection, clock).apply_transition(
+        setup.id,
+        Transition.stay(setup, step=None, status=Status.RUNNING),
+    )
+    setup = TaskStore(connection, clock).get(setup.id)
+    assert setup is not None
+    setup_views = _build_views(reader, project_dir, settings, clock, setup)
+    setup_detail = await setup_views.task_detail(setup.id, include_timeline=False)
+    assert setup_detail is not None
+    setup_text = plain_text(StageActivity(setup_detail).render())
+    assert "Setup" in setup_text
+    assert "Not Started" not in setup_text
+
+
+async def test_task_activity_requires_current_turn_signal_and_stays_still_without_motion(
+    task_activity_environment: tuple[
+        Connection, Path, FakeClock, Settings, Task, StateReader, StateDashboardViews
+    ],
+) -> None:
+    _, project_dir, clock, settings, task, reader, views = task_activity_environment
+    _write_current_turn_log(project_dir, task, views)
+    observed = await views.task_detail(task.id, include_timeline=False)
+    assert observed is not None
+    assert observed.signal_observed
+    assert "signal observed" in plain_text(StageActivity(observed).render())
+
+    static_settings = settings.model_copy(
+        update={"dashboard": settings.dashboard.model_copy(update={"animations": False})}
+    )
+    static_views = _build_views(reader, project_dir, static_settings, clock, task)
+    static_observed = await static_views.task_detail(task.id, include_timeline=False)
+    assert static_observed is not None
+    assert static_observed.signal_observed
+    static_spinner = static_observed.progress.panels[1].spinner_frame
+    clock.advance(1)
+    static_after_tick = await static_views.task_detail(task.id, include_timeline=False)
+    assert static_after_tick is not None
+    assert static_after_tick.progress.panels[1].spinner_frame == static_spinner
+
+
+async def test_task_activity_does_not_claim_a_signal_during_a_hold(
+    task_activity_environment: tuple[
+        Connection, Path, FakeClock, Settings, Task, StateReader, StateDashboardViews
+    ],
+) -> None:
+    connection, project_dir, clock, _, task, _, views = task_activity_environment
+    _write_current_turn_log(project_dir, task, views)
+    TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
+
+    held = await views.task_detail(task.id, include_timeline=False)
+    assert held is not None
+    assert Hold.PAUSED.value in held.holds
+    assert not held.signal_observed
+    assert "signal observed" not in plain_text(StageActivity(held).render())
+
+
+async def test_task_activity_does_not_claim_a_signal_after_stop_or_completion(
+    task_activity_environment: tuple[
+        Connection, Path, FakeClock, Settings, Task, StateReader, StateDashboardViews
+    ],
+) -> None:
+    connection, project_dir, clock, _, task, _, views = task_activity_environment
+    _write_current_turn_log(project_dir, task, views)
+    tasks = TaskStore(connection, clock)
+    current = tasks.get(task.id)
+    assert current is not None
+    step = current.step
+    assert step is not None
+    EventLog(connection, clock).append(
+        EventKind.TURN_STOPPED,
+        task_id=task.id,
+        message="turn stopped",
+        data={
+            "step": step.value,
+            "role": Role.IMPLEMENTER.value,
+            "iteration": current.iteration,
+        },
+    )
+    stopped = await views.task_detail(task.id, include_timeline=False)
+    assert stopped is not None
+    assert not stopped.signal_observed
+    assert "signal observed" not in plain_text(StageActivity(stopped).render())
+
+    current = tasks.get(task.id)
+    assert current is not None
+    tasks.finish(
+        task.id,
+        Transition.stay(current, step=current.step, status=Status.DONE),
+        EventKind.TASK_DONE,
+        message="task completed",
+        data={"summary": "completed"},
+    )
+    completed = await views.task_detail(task.id, include_timeline=False)
+    assert completed is not None
+    assert completed.status == Status.DONE.value
+    assert not completed.signal_observed
+    assert "signal observed" not in plain_text(StageActivity(completed).render())
 
 
 async def test_home_attention_count_updates_from_motion_without_database_changes(

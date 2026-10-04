@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, cast
 
 import psutil
 import pytest
+from rich.cells import cell_len
+from textual.geometry import Region
 from textual.widgets import DataTable, ListView, Static
 
 from shikiru.agents.contracts import (
@@ -39,7 +41,7 @@ from shikiru.paths import run_dir
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
 from shikiru.plugins.widgets.resources import ResourcesPanel, ResourcesWidget
-from shikiru.plugins.widgets.usage import UNKNOWN_VALUE, UsagePanel, UsageWidget
+from shikiru.plugins.widgets.usage import UsagePanel, UsageWidget
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
@@ -90,6 +92,12 @@ CPU_PERCENT_MINIMUM_TOLERANCE = 5.0
 CPU_PERCENT_RELATIVE_TOLERANCE = 0.25
 EXECUTABLE_MODE = 0o755
 UNUSED_SESSION_TARGET = "=shikiru-task84-test"
+RESOURCE_SAMPLE_FAILURE = "CPU unavailable"
+COMPACT_READOUT_WIDTH = 72
+RESOURCE_READOUT_WIDTH = 48
+COMPACT_READOUT_HEIGHT = 20
+RESOURCE_READOUT_HEIGHT = 8
+USAGE_DETAIL_HEIGHT = 30
 
 
 def _dashboard_services(
@@ -182,23 +190,55 @@ def _populate_usage_records(connection: Connection, clock: FakeClock) -> str:
     return task.id
 
 
+@pytest.fixture
+def populated_usage_environment(
+    connection: Connection,
+    tmp_path: Path,
+) -> tuple[Path, FakeClock, str]:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id = _populate_usage_records(connection, clock)
+    return project_dir, clock, task_id
+
+
 async def _assert_compact_readouts(context: WidgetContext) -> None:
     usage_widget = cast("UsagePanel", UsageWidget().create(context))
-    async with WidgetHostApp(usage_widget).run_test(size=(72, 20)):
-        text = plain_text(usage_widget.content)
-        assert "5 reported · 1 legacy positive · 1 unknown / 7 sessions" in text
-        assert "billed $2.50 across 2 sessions" in text
-        assert "API billed $0.00 across 1 session; API charges unreported for 1 session" in text
-        assert "API-equivalent estimate $1.50 across 1 session" in text
-        assert "Subscription 2 sessions · agents claude" in text
-        assert "billing mode unknown for 3 sessions" in text
+    async with WidgetHostApp(usage_widget).run_test(
+        size=(COMPACT_READOUT_WIDTH, COMPACT_READOUT_HEIGHT)
+    ):
+        usage_lines = _rendered_widget_lines(usage_widget)
+        usage_text = "\n".join(usage_lines)
+        assert "210 input+output" in usage_text
+        assert "5 reported" in usage_text
+        assert "1 legacy" in usage_text
+        assert "1 unknown" in usage_text
+        assert "$2.50" in usage_text
+        assert "$0.00" in usage_text
+        assert "API charges" in usage_text
+        assert "unreported" in usage_text
+        assert "API-equivalent estimate" in usage_text
+        assert "$1.50" in usage_text
+        assert "1 subscription agent" in usage_text
+        assert "claude" in usage_text
+        assert "3 billing modes unknown" in usage_text
+        assert all(cell_len(line) <= COMPACT_READOUT_WIDTH for line in usage_lines)
 
     resource_widget = cast("ResourcesPanel", ResourcesWidget().create(context))
-    async with WidgetHostApp(resource_widget).run_test(size=(48, 8)):
-        text = plain_text(resource_widget.content)
-        assert "Host · CPU" in text
-        assert "Shikiru including agents · CPU" in text
+    async with WidgetHostApp(resource_widget).run_test(
+        size=(RESOURCE_READOUT_WIDTH, RESOURCE_READOUT_HEIGHT)
+    ):
+        resource_lines = _rendered_widget_lines(resource_widget)
+        text = "\n".join(resource_lines)
+        assert "Host" in text
+        assert "CPU" in text
+        assert "Shikiru including agents" in text
         assert "RAM" in text
+        assert all(cell_len(line) <= RESOURCE_READOUT_WIDTH for line in resource_lines)
+
+
+def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
+    lines = widget.render_lines(Region(0, 0, widget.size.width, widget.size.height))
+    return tuple(line.text.rstrip() for line in lines if line.text.strip())
 
 
 async def test_escalations_open_full_packet_and_route_resolution_action(
@@ -479,15 +519,13 @@ async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(
         assert cast("str", full_text.content) == bubbles[-2].text
 
 
-async def test_usage_panel_separates_cost_bases_and_marks_unknown_usage_and_costs(
+async def test_usage_projection_keeps_project_and_task_scope_and_cost_evidence_separate(
     connection: Connection,
     reader: StateReader,
-    tmp_path: Path,
+    populated_usage_environment: tuple[Path, FakeClock, str],
 ) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task_id = _populate_usage_records(connection, clock)
-
+    del connection
+    project_dir, clock, task_id = populated_usage_environment
     context = widget_context(reader, project_dir, clock)
     usage = context.views.usage()
     codex_usage = next(item for item in usage if item.agent == "codex")
@@ -508,22 +546,79 @@ async def test_usage_panel_separates_cost_bases_and_marks_unknown_usage_and_cost
     quota_only_usage = next(item for item in usage if item.agent == "quota-only")
     assert quota_only_usage.run_count == 0
     assert quota_only_usage.usage_reported_runs == 0
+
+
+async def test_project_usage_widget_keeps_detailed_monetary_and_token_evidence(
+    connection: Connection,
+    reader: StateReader,
+    populated_usage_environment: tuple[Path, FakeClock, str],
+) -> None:
+    del connection
+    project_dir, clock, _ = populated_usage_environment
+    context = widget_context(reader, project_dir, clock)
     widget = cast("UsagePanel", UsageWidget().create(context))
-    async with WidgetHostApp(widget).run_test() as pilot:
+    async with WidgetHostApp(widget).run_test(
+        size=(COMPACT_READOUT_WIDTH, USAGE_DETAIL_HEIGHT)
+    ) as pilot:
         await pilot.pause()
-        text = plain_text(widget.content)
+        text = "\n".join(_rendered_widget_lines(widget))
         assert "codex" in text
-        assert "Project recorded usage" in text
-        assert "API-equivalent estimate $0.42 across 1 session" in text
-        assert "billed $0.00 across 2 sessions" in text
-        assert "billing mode unknown for 7 sessions" in text
+        assert "Project" in text
+        assert "$0.42" in text
+        assert "API-equivalent estimate" in text
+        assert "$0.00" in text
+        assert "Billed" in text
+        assert "estimate" in text
+        assert "Cost unknown" in text
+        assert "7 billing modes unknown" in text
         assert "input 1,040" in text
         assert "weekly" in text
         assert "reset " in text
         assert "observed 2h" in text
-        assert f"quota-only · tokens {UNKNOWN_VALUE} · no session usage recorded" in text
-        assert "zero-agent · input 0 · output 0 · cache read 0 · cache write 0" in text
-        assert f"unknown-agent · tokens {UNKNOWN_VALUE} · usage not reported (0/1 runs)" in text
+        assert "quota-only" in text
+        assert "zero-agent · input 0 · output 0" in text
+        codex_detail = text.split("codex ·", maxsplit=1)[1].split("quota-only", maxsplit=1)[0]
+        assert "Billed $0.00" in codex_detail
+        assert "API-equivalent estimate $0.42" in codex_detail
+        assert "Cost unknown" in codex_detail
+        unknown_agent = text.split("unknown-agent", maxsplit=1)[1].split("zero-agent", maxsplit=1)[
+            0
+        ]
+        assert "tokens unknown" in unknown_agent
+        assert "input 0" not in unknown_agent
+
+
+async def test_task_usage_widget_shows_aggregate_charge_and_unknown_token_state(
+    connection: Connection,
+    reader: StateReader,
+    populated_usage_environment: tuple[Path, FakeClock, str],
+) -> None:
+    project_dir, clock, task_id = populated_usage_environment
+    task_context = widget_context(reader, project_dir, clock, focus_task=task_id)
+    task_widget = cast("UsagePanel", UsageWidget().create(task_context))
+    async with WidgetHostApp(task_widget).run_test(
+        size=(COMPACT_READOUT_WIDTH, USAGE_DETAIL_HEIGHT)
+    ):
+        task_text = "\n".join(_rendered_widget_lines(task_widget))
+        assert f"Task {task_id}" in task_text
+        assert "$0.42" in task_text
+        assert "API-equivalent estimate" in task_text
+        assert "unknown" in task_text
+        assert "input 1,040" not in task_text
+
+    unknown_task = seed_task(connection, clock, title="No reported tokens")
+    RunStore(connection, clock).start(
+        unknown_task.id, Role.IMPLEMENTER, Rung("codex", "model", "low")
+    )
+    unknown_context = widget_context(reader, project_dir, clock, focus_task=unknown_task.id)
+    unknown_widget = cast("UsagePanel", UsageWidget().create(unknown_context))
+    async with WidgetHostApp(unknown_widget).run_test(
+        size=(COMPACT_READOUT_WIDTH, USAGE_DETAIL_HEIGHT)
+    ):
+        unknown_text = "\n".join(_rendered_widget_lines(unknown_widget))
+        assert f"Task {unknown_task.id}" in unknown_text
+        assert "unknown" in unknown_text
+        assert "input 0" not in unknown_text
 
 
 async def test_project_usage_projects_persisted_coverage_without_inventing_api_spend(
@@ -634,7 +729,7 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
 
     def fail_cpu_sample(*, interval: float | None = None, percpu: bool = False) -> float:
         del interval, percpu
-        raise psutil.Error
+        raise OSError(RESOURCE_SAMPLE_FAILURE)
 
     monkeypatch.setattr(psutil, "cpu_percent", fail_cpu_sample)
     views = _dashboard_views(reader, project_dir, clock, settings, sources)
@@ -656,11 +751,16 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
     async with app.run_test(size=(100, 50)) as pilot:
         resource_panel = app.query_one("#resources", Static)
         await wait_until(lambda: "Stale" in plain_text(resource_panel.content), timeout=2)
-        resource_text = plain_text(resource_panel.content)
-        assert "Latest sample failed" in resource_text
-        assert "Host · CPU" in resource_text
-        assert "Shikiru including agents · CPU" in resource_text
+        resource_lines = _rendered_widget_lines(resource_panel)
+        resource_text = "\n".join(resource_lines)
+        assert "Stale" in resource_text
+        assert "Host" in resource_text
+        assert "Shikiru including agents" in resource_text
+        assert "CPU" in resource_text
+        assert "RAM" in resource_text
         assert "observed" in resource_text
+        assert "CPU unavailable" in resource_text
+        assert all(cell_len(line) <= resource_panel.size.width for line in resource_lines)
         task_row = app.query_one(f"#task-row-{task.id} > Static", Static)
         assert task.title in plain_text(task_row.content)
 
