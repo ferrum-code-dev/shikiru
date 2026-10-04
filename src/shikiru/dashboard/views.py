@@ -63,19 +63,18 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.reports import (
-    DECISION_CHANGES_REQUESTED,
     ConsultAnswer,
     ImplementationReport,
     PlanReport,
-    ReportKind,
     TriageReport,
     Verdict,
 )
 from shikiru.domain.runs import RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
-from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Mode, Role, Status, Task
+from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
 from shikiru.domain.timeline import TIMELINE_EVIDENCE_CATEGORY
+from shikiru.domain.workflow import WorkflowProgress, WorkflowReport, project_workflow
 from shikiru.errors import ShikiruError
 from shikiru.operator.queries import (
     AGENT_REPORT_SOURCE,
@@ -877,6 +876,7 @@ class StateDashboardViews:
             item for item in self.usage() if item.agent in task_agents and item.quotas
         )
         task_frame = self._motion.frames((task,), now).tasks[0]
+        workflow = _task_workflow(task, detail.events, detail.reports)
         return TaskDetailView(
             task_id=task.id,
             title=task.title,
@@ -939,8 +939,8 @@ class StateDashboardViews:
             actual_stage=task.step.value if task.step is not None else None,
             actual_stage_started_at=task_frame.actual_step_started_at,
             stage_ended_at=task.finished_at,
-            milestones=_task_milestones(task, detail.events, detail.reports),
-            workflow_history_complete=_workflow_history_complete(detail.events),
+            milestones=_task_milestone_views(workflow),
+            workflow_history_complete=workflow.history_complete,
             latest_signal=(latest_signal.summary if latest_signal is not None else None),
             latest_signal_identity=(latest_signal.identity if latest_signal is not None else None),
             latest_signal_at=(
@@ -1516,14 +1516,6 @@ def _age(duration: timedelta) -> str:
     return f"{hours // HOURS_PER_DAY}d"
 
 
-def _workflow_history_complete(events: Sequence[Event]) -> bool:
-    return (
-        len(events) < TASK_DETAIL_EVENT_LIMIT
-        and bool(events)
-        and events[0].kind is EventKind.TASK_QUEUED
-    )
-
-
 def _latest_signal_observation(
     page: TaskTimelinePageView,
 ) -> tuple[TaskTimelineEntryView | None, bool]:
@@ -1563,189 +1555,29 @@ def _timeline_timestamp(value: str | None) -> datetime | None:
     return timestamp if timestamp.tzinfo is not None else None
 
 
-def _task_milestones(
+def _task_workflow(
     task: Task,
     events: Sequence[Event],
     reports: Sequence[ReportRow],
-) -> tuple[TaskMilestoneView, ...]:
-    entered = [
-        (
-            index,
-            Step(str(event.data["step"])),
-            event.data.get("iteration") if type(event.data.get("iteration")) is int else None,
-        )
-        for index, event in enumerate(events)
-        if event.kind is EventKind.STEP_STARTED
-        and isinstance(event.data.get("step"), str)
-        and event.data["step"] in {step.value for step in Step}
-    ]
-    entered_steps = {step for _, step, _ in entered}
-    first_entered_step = entered[0][1] if entered else None
-    reported_steps = {
-        step
+) -> WorkflowProgress:
+    agent_reports = tuple(
+        WorkflowReport(turn=report.turn, kind=report.kind, data=report.data)
         for report in reports
         if report.source == AGENT_REPORT_SOURCE
-        if (step := _report_stage(report.kind)) is not None
-    }
-    turn_iterations = {
-        event.data["turn"]: (Step(str(event.data["step"])), event.data.get("iteration"))
-        for event in events
-        if event.kind is EventKind.TURN_STARTED
-        and isinstance(event.data.get("turn"), str)
-        and isinstance(event.data.get("step"), str)
-        and event.data["step"] in {step.value for step in Step}
-        and type(event.data.get("iteration")) is int
-    }
-    completed_reports = {
-        (step, turn_iterations[report.turn][1] if report.turn in turn_iterations else None)
-        for report in reports
-        if report.source == AGENT_REPORT_SOURCE and _report_completes_stage(report)
-        if (step := _report_stage(report.kind)) is not None
-        if report.turn not in turn_iterations or turn_iterations[report.turn][0] is step
-    }
-    stages = _workflow_stages(task, entered_steps | reported_steps)
-    if not stages:
-        return ()
-    history_complete = _workflow_history_complete(events)
-    current = task.step
-    stage_positions = {step: index for index, step in enumerate(stages)}
-    current_position = stage_positions.get(current) if current is not None else None
-    last_entry_indexes = {
-        step: max(index for index, entered_step, _ in entered if entered_step is step)
-        for step in entered_steps
-    }
-    last_entries = {
-        step: next(
-            (iteration for _, entered_step, iteration in reversed(entered) if entered_step is step),
-            None,
-        )
-        for step in entered_steps
-    }
-    completed_after: dict[Step, set[Step]] = {
-        Step.TRIAGE: {Step.PLAN, Step.IMPLEMENT},
-        Step.PLAN: {Step.INTEGRATE},
-        Step.IMPLEMENT: {Step.VERIFY},
-        Step.CONSULT: {Step.IMPLEMENT, Step.INTEGRATE},
-        Step.VERIFY: {Step.INTEGRATE},
-        Step.INTEGRATE: set(),
-    }
-    verdicts = [
-        (index, event.data.get("decision"))
-        for index, event in enumerate(events)
-        if event.kind is EventKind.VERDICT
-    ]
-    milestones: list[TaskMilestoneView] = []
-    for step in stages:
-        if step is current:
-            state = "current"
-        elif (
-            step is Step.TRIAGE
-            and history_complete
-            and first_entered_step in {Step.PLAN, Step.IMPLEMENT}
-        ):
-            state = "skipped"
-        elif step in entered_steps | reported_steps:
-            latest_entry = last_entry_indexes.get(step, -1)
-            latest_iteration = last_entries.get(step)
-            later_steps: set[Step] = (
-                {entered_step for index, entered_step, _ in entered if index > latest_entry}
-                if step in last_entry_indexes
-                else set()
-            )
-            rework_requested = step is Step.VERIFY and any(
-                index > latest_entry and decision == DECISION_CHANGES_REQUESTED
-                for index, decision in verdicts
-            )
-            if rework_requested:
-                state = "rework"
-            elif (
-                (step is Step.INTEGRATE and task.status is Status.DONE)
-                or later_steps & completed_after[step]
-                or _report_completes_entered_stage(
-                    step,
-                    latest_iteration,
-                    task.iteration,
-                    completed_reports,
-                )
-            ):
-                state = "done"
-            else:
-                state = "unknown"
-        elif current_position is not None and stage_positions[step] > current_position:
-            state = "later"
-        else:
-            state = "unknown"
-        milestones.append(TaskMilestoneView(stage=_stage_label(step), state=state))
-    return tuple(milestones)
+    )
+    return project_workflow(
+        task,
+        events,
+        agent_reports,
+        event_window_complete=len(events) < TASK_DETAIL_EVENT_LIMIT,
+    )
 
 
-def _workflow_stages(task: Task, entered_steps: set[Step]) -> tuple[Step, ...]:
-    if task.mode is Mode.PLAN or task.step is Step.PLAN or Step.PLAN in entered_steps:
-        stages = [Step.TRIAGE, Step.PLAN, Step.INTEGRATE]
-    elif (
-        task.mode is Mode.IMPLEMENT
-        or task.step
-        in {
-            Step.IMPLEMENT,
-            Step.CONSULT,
-            Step.VERIFY,
-            Step.INTEGRATE,
-        }
-        or entered_steps & {Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE}
-    ):
-        stages = [Step.TRIAGE, Step.IMPLEMENT, Step.VERIFY, Step.INTEGRATE]
-    elif task.step is Step.TRIAGE:
-        stages = [Step.TRIAGE]
-    else:
-        return ()
-    if Step.CONSULT in entered_steps or task.step is Step.CONSULT:
-        insert_after = (
-            Step.INTEGRATE
-            if Step.INTEGRATE in entered_steps and Step.VERIFY not in entered_steps
-            else Step.IMPLEMENT
-        )
-        stages.insert(stages.index(insert_after) + 1, Step.CONSULT)
-    return tuple(stages)
-
-
-def _report_stage(kind: ReportKind) -> Step | None:
-    return {
-        ReportKind.TRIAGE: Step.TRIAGE,
-        ReportKind.PLAN: Step.PLAN,
-        ReportKind.IMPLEMENTATION: Step.IMPLEMENT,
-        ReportKind.CONSULT: Step.CONSULT,
-        ReportKind.VERDICT: Step.VERIFY,
-    }[kind]
-
-
-def _report_completes_stage(report: ReportRow) -> bool:
-    match report.data:
-        case TriageReport() | PlanReport():
-            return True
-        case ImplementationReport(status="completed"):
-            return True
-        case ConsultAnswer(decision="answer"):
-            return True
-        case Verdict(decision="accept"):
-            return True
-        case _:
-            return False
-
-
-def _report_completes_entered_stage(
-    stage: Step,
-    entered_iteration: int | None,
-    task_iteration: int,
-    completed_reports: set[tuple[Step, int | None]],
-) -> bool:
-    iterations = {
-        iteration for report_stage, iteration in completed_reports if report_stage is stage
-    }
-    if entered_iteration is not None:
-        return entered_iteration in iterations
-    if stage in {Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE}:
-        return task_iteration in iterations
-    return bool(iterations)
+def _task_milestone_views(workflow: WorkflowProgress) -> tuple[TaskMilestoneView, ...]:
+    return tuple(
+        TaskMilestoneView(stage=_stage_label(item.stage), state=item.state.value)
+        for item in workflow.milestones
+    )
 
 
 def _stage_label(step: Step) -> str:

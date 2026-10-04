@@ -1,0 +1,301 @@
+"""Pure recorded workflow history projection (03 §§2-3/8-9)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum, auto
+from typing import TYPE_CHECKING
+
+from shikiru.domain.events import Event, EventKind
+from shikiru.domain.reports import (
+    DECISION_ACCEPT,
+    DECISION_ANSWER,
+    DECISION_CHANGES_REQUESTED,
+    STATUS_COMPLETED,
+    ConsultAnswer,
+    ImplementationReport,
+    PlanReport,
+    Report,
+    ReportKind,
+    TriageReport,
+    Verdict,
+)
+from shikiru.domain.tasks import Mode, Status, Step, Task
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+WORKFLOW_STEP_KEY = "step"
+WORKFLOW_ITERATION_KEY = "iteration"
+WORKFLOW_TURN_KEY = "turn"
+WORKFLOW_DECISION_KEY = "decision"
+
+
+class WorkflowMilestoneState(StrEnum):
+    """Recorded semantic outcome for one workflow stage."""
+
+    DONE = auto()
+    CURRENT = auto()
+    LATER = auto()
+    SKIPPED = auto()
+    REWORK = auto()
+    UNKNOWN = auto()
+
+
+@dataclass(frozen=True)
+class WorkflowReport:
+    """One already-validated agent report with its retained turn identity."""
+
+    turn: str
+    kind: ReportKind
+    data: Report
+
+
+@dataclass(frozen=True)
+class WorkflowMilestone:
+    """One stage and its recorded workflow outcome."""
+
+    stage: Step
+    state: WorkflowMilestoneState
+
+
+@dataclass(frozen=True)
+class WorkflowProgress:
+    """Milestones projected from bounded task history and its completeness signal."""
+
+    milestones: tuple[WorkflowMilestone, ...]
+    history_complete: bool
+
+
+def project_workflow(
+    task: Task,
+    events: Sequence[Event],
+    reports: Sequence[WorkflowReport],
+    *,
+    event_window_complete: bool,
+) -> WorkflowProgress:
+    """Project factual milestones from retained transitions and validated agent reports."""
+    history_complete = (
+        event_window_complete and bool(events) and events[0].kind is EventKind.TASK_QUEUED
+    )
+    entries = _step_entries(events)
+    entered_steps = {step for _, step, _ in entries}
+    first_entered_step = entries[0][1] if entries else None
+    reported_steps = {
+        step for report in reports if (step := _report_stage(report.kind)) is not None
+    }
+    turn_iterations = _turn_iterations(events)
+    completed_reports = _completed_reports(reports, turn_iterations)
+    stages = _workflow_stages(task, entered_steps | reported_steps)
+    if not stages:
+        return WorkflowProgress((), history_complete)
+    stage_positions = {step: index for index, step in enumerate(stages)}
+    current_position = stage_positions.get(task.step) if task.step is not None else None
+    last_entries = _last_step_entries(entries)
+    verdicts = _verdicts(events)
+
+    def milestone_state(step: Step) -> WorkflowMilestoneState:
+        if step is task.step:
+            state = WorkflowMilestoneState.CURRENT
+        elif (
+            step is Step.TRIAGE
+            and history_complete
+            and first_entered_step in {Step.PLAN, Step.IMPLEMENT}
+        ):
+            state = WorkflowMilestoneState.SKIPPED
+        elif step in entered_steps | reported_steps:
+            latest_entry, latest_iteration = last_entries.get(step, (-1, None))
+            later_steps = {
+                entered_step
+                for index, entered_step, _ in entries
+                if step in last_entries and index > latest_entry
+            }
+            rework_requested = step is Step.VERIFY and any(
+                index > latest_entry and decision == DECISION_CHANGES_REQUESTED
+                for index, decision in verdicts
+            )
+            if rework_requested:
+                state = WorkflowMilestoneState.REWORK
+            elif (
+                (step is Step.INTEGRATE and task.status is Status.DONE)
+                or _completed_by_later_step(step, later_steps)
+                or _report_completes_entered_stage(
+                    step,
+                    latest_iteration,
+                    task.iteration,
+                    completed_reports,
+                )
+            ):
+                state = WorkflowMilestoneState.DONE
+            else:
+                state = WorkflowMilestoneState.UNKNOWN
+        elif current_position is not None and stage_positions[step] > current_position:
+            state = WorkflowMilestoneState.LATER
+        else:
+            state = WorkflowMilestoneState.UNKNOWN
+        return state
+
+    milestones = tuple(
+        WorkflowMilestone(
+            stage=step,
+            state=milestone_state(step),
+        )
+        for step in stages
+    )
+    return WorkflowProgress(milestones, history_complete)
+
+
+def _step_entries(events: Sequence[Event]) -> list[tuple[int, Step, int | None]]:
+    entries: list[tuple[int, Step, int | None]] = []
+    for index, event in enumerate(events):
+        value = event.data.get(WORKFLOW_STEP_KEY)
+        if event.kind is not EventKind.STEP_STARTED or not isinstance(value, str):
+            continue
+        try:
+            step = Step(value)
+        except ValueError:
+            continue
+        iteration = event.data.get(WORKFLOW_ITERATION_KEY)
+        entries.append((index, step, iteration if type(iteration) is int else None))
+    return entries
+
+
+def _turn_iterations(events: Sequence[Event]) -> dict[str, tuple[Step, int]]:
+    turn_iterations: dict[str, tuple[Step, int]] = {}
+    for event in events:
+        turn = event.data.get(WORKFLOW_TURN_KEY)
+        step_value = event.data.get(WORKFLOW_STEP_KEY)
+        iteration = event.data.get(WORKFLOW_ITERATION_KEY)
+        if (
+            event.kind is EventKind.TURN_STARTED
+            and isinstance(turn, str)
+            and isinstance(step_value, str)
+            and type(iteration) is int
+        ):
+            try:
+                step = Step(step_value)
+            except ValueError:
+                continue
+            turn_iterations[turn] = (step, iteration)
+    return turn_iterations
+
+
+def _completed_reports(
+    reports: Sequence[WorkflowReport], turn_iterations: dict[str, tuple[Step, int]]
+) -> set[tuple[Step, int | None]]:
+    completed: set[tuple[Step, int | None]] = set()
+    for report in reports:
+        stage = _report_stage(report.kind)
+        if stage is None or not _report_completes_stage(report.data):
+            continue
+        report_turn = turn_iterations.get(report.turn)
+        if report_turn is not None and report_turn[0] is not stage:
+            continue
+        completed.add((stage, report_turn[1] if report_turn is not None else None))
+    return completed
+
+
+def _last_step_entries(
+    entries: list[tuple[int, Step, int | None]],
+) -> dict[Step, tuple[int, int | None]]:
+    last_entries: dict[Step, tuple[int, int | None]] = {}
+    for index, step, iteration in entries:
+        last_entries[step] = (index, iteration)
+    return last_entries
+
+
+def _verdicts(events: Sequence[Event]) -> list[tuple[int, object]]:
+    return [
+        (index, event.data.get(WORKFLOW_DECISION_KEY))
+        for index, event in enumerate(events)
+        if event.kind is EventKind.VERDICT
+    ]
+
+
+def _workflow_stages(task: Task, entered_steps: set[Step]) -> tuple[Step, ...]:
+    if task.mode is Mode.PLAN or task.step is Step.PLAN or Step.PLAN in entered_steps:
+        stages = [Step.TRIAGE, Step.PLAN, Step.INTEGRATE]
+    elif (
+        task.mode is Mode.IMPLEMENT
+        or task.step
+        in {
+            Step.IMPLEMENT,
+            Step.CONSULT,
+            Step.VERIFY,
+            Step.INTEGRATE,
+        }
+        or entered_steps & {Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE}
+    ):
+        stages = [Step.TRIAGE, Step.IMPLEMENT, Step.VERIFY, Step.INTEGRATE]
+    elif task.step is Step.TRIAGE:
+        stages = [Step.TRIAGE]
+    else:
+        return ()
+    if Step.CONSULT in entered_steps or task.step is Step.CONSULT:
+        insert_after = (
+            Step.INTEGRATE
+            if Step.INTEGRATE in entered_steps and Step.VERIFY not in entered_steps
+            else Step.IMPLEMENT
+        )
+        stages.insert(stages.index(insert_after) + 1, Step.CONSULT)
+    return tuple(stages)
+
+
+def _completed_by_later_step(stage: Step, later_steps: set[Step]) -> bool:
+    match stage:
+        case Step.TRIAGE:
+            return bool(later_steps & {Step.PLAN, Step.IMPLEMENT})
+        case Step.PLAN:
+            return Step.INTEGRATE in later_steps
+        case Step.IMPLEMENT:
+            return Step.VERIFY in later_steps
+        case Step.CONSULT:
+            return bool(later_steps & {Step.IMPLEMENT, Step.INTEGRATE})
+        case Step.VERIFY:
+            return Step.INTEGRATE in later_steps
+        case Step.INTEGRATE:
+            return False
+
+
+def _report_stage(kind: ReportKind) -> Step | None:
+    match kind:
+        case ReportKind.TRIAGE:
+            return Step.TRIAGE
+        case ReportKind.PLAN:
+            return Step.PLAN
+        case ReportKind.IMPLEMENTATION:
+            return Step.IMPLEMENT
+        case ReportKind.CONSULT:
+            return Step.CONSULT
+        case ReportKind.VERDICT:
+            return Step.VERIFY
+
+
+def _report_completes_stage(report: Report) -> bool:
+    match report:
+        case TriageReport() | PlanReport():
+            return True
+        case ImplementationReport(status=status) if status == STATUS_COMPLETED:
+            return True
+        case ConsultAnswer(decision=decision) if decision == DECISION_ANSWER:
+            return True
+        case Verdict(decision=decision) if decision == DECISION_ACCEPT:
+            return True
+        case _:
+            return False
+
+
+def _report_completes_entered_stage(
+    stage: Step,
+    entered_iteration: int | None,
+    task_iteration: int,
+    completed_reports: set[tuple[Step, int | None]],
+) -> bool:
+    iterations = {
+        iteration for report_stage, iteration in completed_reports if report_stage is stage
+    }
+    if entered_iteration is not None:
+        return entered_iteration in iterations
+    if stage in {Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE}:
+        return task_iteration in iterations
+    return bool(iterations)
