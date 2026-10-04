@@ -231,7 +231,7 @@ async def _assert_compact_readouts(context: WidgetContext) -> None:
         text = "\n".join(resource_lines)
         assert "Host" in text
         assert "CPU" in text
-        assert "Shikiru including agents" in text
+        assert "Shikiru + agents" in text
         assert "RAM" in text
         assert all(cell_len(line) <= RESOURCE_READOUT_WIDTH for line in resource_lines)
 
@@ -755,11 +755,11 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         resource_text = "\n".join(resource_lines)
         assert "Stale" in resource_text
         assert "Host" in resource_text
-        assert "Shikiru including agents" in resource_text
+        assert "Shikiru + agents" in resource_text
         assert "CPU" in resource_text
         assert "RAM" in resource_text
         assert "observed" in resource_text
-        assert "CPU unavailable" in resource_text
+        assert "CPU/RAM unavailable" in resource_text
         assert all(cell_len(line) <= resource_panel.size.width for line in resource_lines)
         task_row = app.query_one(f"#task-row-{task.id} > Static", Static)
         assert task.title in plain_text(task_row.content)

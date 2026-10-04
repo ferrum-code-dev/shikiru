@@ -20,6 +20,7 @@ from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import ALERT_COLOR, AMBER, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 GIB_FORMAT = ".1f"
+BYTES_PER_GIB = 1024**3
 SESSION_COST_FORMAT = ".2f"
 COUNT_SHORT_SCALE = 1_000
 COUNT_SHORT_MILLION = COUNT_SHORT_SCALE * COUNT_SHORT_SCALE
@@ -164,6 +165,12 @@ class _ResourceSample(Protocol):
     def free_ram_gb(self) -> float: ...
 
     @property
+    def host_ram_used_bytes(self) -> int | None: ...
+
+    @property
+    def host_ram_total_bytes(self) -> int | None: ...
+
+    @property
     def instance_cpu_pct(self) -> float | None: ...
 
     @property
@@ -174,6 +181,44 @@ class _ResourceSample(Protocol):
 
     @property
     def error(self) -> str | None: ...
+
+
+class _AttentionDecision(Protocol):
+    @property
+    def escalation_id(self) -> str: ...
+
+    @property
+    def headline(self) -> str: ...
+
+
+class _AttentionGroup(Protocol):
+    @property
+    def task_id(self) -> str | None: ...
+
+    @property
+    def reasons(self) -> tuple[str, ...]: ...
+
+    @property
+    def escalations(self) -> tuple[_AttentionDecision, ...]: ...
+
+
+class _AttentionSummary(Protocol):
+    @property
+    def engine_up(self) -> bool | None: ...
+
+    @property
+    def held_tasks(self) -> int | None: ...
+
+    @property
+    def holds(self) -> tuple[str, ...] | None: ...
+
+    @property
+    def operator_owned(self) -> tuple[str, ...] | None: ...
+
+
+class _Attention(Protocol):
+    @property
+    def groups(self) -> tuple[_AttentionGroup, ...]: ...
 
 
 class _TaskSession(Protocol):
@@ -436,16 +481,20 @@ class ResourceMetric:
         else:
             state_label = ""
         instance = _instance_resource_text(self.sample)
-        age = f" · observed {self.sample.sampled_ago} ago" if self.sample.sampled_ago else ""
+        host_ram = _host_ram_text(self.sample)
+        age = (
+            f" · observed {self.sample.sampled_ago} ago"
+            if self.sample.sampled_ago and state != RESOURCE_AVAILABLE
+            else ""
+        )
         error = f" · {self.sample.error}" if self.sample.error else ""
         return Text.assemble(
             (state_label, state_style),
             ("Host ", "bold"),
             (f"CPU {self.sample.host_cpu_pct:.0f}%", STEEL_BLUE),
-            f" · RAM {self.sample.host_ram_used_pct:.0f}%",
-            f" · free {self.sample.free_ram_gb:{GIB_FORMAT}} GiB",
+            f" · {host_ram}",
             " · ",
-            ("Shikiru including agents ", "bold"),
+            ("Shikiru + agents ", "bold"),
             instance,
             (age, SECONDARY_TEXT_COLOR),
             (error, AMBER if state == RESOURCE_STALE else ALERT_COLOR),
@@ -470,9 +519,95 @@ def _instance_resource_text(sample: _ResourceSample) -> Text:
     )
 
 
+def _host_ram_text(sample: _ResourceSample) -> str:
+    used = sample.host_ram_used_bytes
+    total = sample.host_ram_total_bytes
+    if used is None or total is None:
+        return "RAM used/total unavailable"
+    return f"RAM {used / BYTES_PER_GIB:{GIB_FORMAT}}/{total / BYTES_PER_GIB:{GIB_FORMAT}} GiB"
+
+
 def render_resource_metric(sample: _ResourceSample | None) -> Text:
     """Render `sample` without starting another resource observation."""
     return ResourceMetric(sample).render()
+
+
+def attention_status_text(
+    attention: _Attention,
+    summary: _AttentionSummary,
+    *,
+    action_hint: str,
+    selected_group_index: int = 0,
+    selected_escalation_id: str | None = None,
+) -> str:
+    """Render the Home status strip from current attention and observed workspace state."""
+    if attention.groups:
+        return _attention_group_status(
+            attention.groups[selected_group_index],
+            summary,
+            action_hint=action_hint,
+            selected_escalation_id=selected_escalation_id,
+        )
+    if summary.operator_owned:
+        owners = ", ".join(summary.operator_owned)
+        status = f"@ Operator owns {owners} · automation held"
+        return _append_operational_facts(status, summary, include_held_state=False)
+    if summary.held_tasks:
+        status = f"= Automation held · {summary.held_tasks} tasks"
+        return _append_operational_facts(status, summary, include_held_state=False)
+    if summary.engine_up is False:
+        return _append_operational_facts("✓ No decisions needed", summary)
+    if summary.engine_up is True and summary.held_tasks == 0 and summary.holds == ():
+        return "✓ No decisions needed · Automation continues"
+    return "✓ No decisions needed · Automation status unavailable"
+
+
+def _attention_group_status(
+    group: _AttentionGroup,
+    summary: _AttentionSummary,
+    *,
+    action_hint: str,
+    selected_escalation_id: str | None,
+) -> str:
+    if group.escalations:
+        decision = next(
+            (item for item in group.escalations if item.escalation_id == selected_escalation_id),
+            group.escalations[0],
+        )
+        status = (
+            f"! {decision.escalation_id} · {group.task_id or 'Project'} · "
+            f"{decision.headline} · {action_hint}"
+        )
+    else:
+        fault = next(
+            (reason for reason in group.reasons if reason.startswith("engine fault")),
+            None,
+        )
+        if fault is not None:
+            status = f"! {group.task_id or 'Project'} · {fault} · Ctrl+P actions"
+        else:
+            status = f"! {group.task_id or 'Project'} · {' · '.join(group.reasons)} · {action_hint}"
+    return _append_operational_facts(status, summary)
+
+
+def _append_operational_facts(
+    status: str,
+    summary: _AttentionSummary,
+    *,
+    include_held_state: bool = True,
+) -> str:
+    facts: list[str] = []
+    if include_held_state and (summary.operator_owned or summary.held_tasks):
+        facts.append("automation held")
+    if summary.holds:
+        facts.append(f"holds {', '.join(summary.holds)}")
+    elif summary.holds is None or summary.held_tasks:
+        facts.append("hold state unavailable")
+    if summary.engine_up is False:
+        facts.append("○ Engine stopped")
+    elif summary.engine_up is None:
+        facts.append("engine status unavailable")
+    return f"{status} · {' · '.join(facts)}" if facts else status
 
 
 @dataclass(frozen=True)

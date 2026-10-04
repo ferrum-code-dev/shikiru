@@ -28,6 +28,8 @@ class ResourceSnapshot:
     instance_cpu_pct: float | None = None
     instance_rss_gb: float | None = None
     sampled_at: datetime | None = None
+    host_ram_used_bytes: int | None = None
+    host_ram_total_bytes: int | None = None
 
 
 class ResourceSampleError(RuntimeError):
@@ -63,6 +65,8 @@ class ResourceSampler:
             host_ram_used_pct=virtual_memory.percent,
             free_ram_gb=virtual_memory.available / _BYTES_PER_GIB,
             sampled_at=now,
+            host_ram_used_bytes=virtual_memory.used,
+            host_ram_total_bytes=virtual_memory.total,
         )
         self._sampled_at = now
         return self._last
@@ -120,6 +124,8 @@ class ResourceSampler:
             instance_cpu_pct=instance_cpu_pct,
             instance_rss_gb=instance_rss_gb,
             sampled_at=now,
+            host_ram_used_bytes=host_sample.host_ram_used_bytes,
+            host_ram_total_bytes=host_sample.host_ram_total_bytes,
         )
         self._last = snapshot
         self._last_complete = snapshot

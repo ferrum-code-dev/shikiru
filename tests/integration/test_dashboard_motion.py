@@ -716,12 +716,13 @@ async def test_home_attention_count_updates_from_motion_without_database_changes
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(100, 30)):
-            header = app.query_one("#header", Static)
+            status = app.query_one("#escalations", Static)
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert "Attention 0" in plain_text(header.content)
+            assert "No decisions needed" in plain_text(status.content)
+            assert "Engine stopped" in plain_text(status.content)
             clock.advance(3)
             await wait_until(
-                lambda: "Attention 1" in plain_text(header.content),
+                lambda: task.id in plain_text(status.content),
                 timeout=1,
             )
             assert views.attention().stalls == 1
@@ -765,22 +766,22 @@ async def test_focus_header_motion_waits_for_home_when_modal_opens_and_closes(
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(100, 30)) as pilot:
-            header = app.query_one("#header", Static)
+            status = app.query_one("#escalations", Static)
             home_screen = pilot.app.screen
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert "Attention 0" in plain_text(header.content)
+            assert "No decisions needed" in plain_text(status.content)
 
             await pilot.press("?")
             await wait_until(lambda: pilot.app.screen is not home_screen, timeout=1)
             clock.advance(3)
             await wait_until(clock.has_pending_sleep, timeout=1)
-            assert "Attention 0" in plain_text(header.content)
+            assert "No decisions needed" in plain_text(status.content)
 
             await pilot.press("escape")
             await wait_until(lambda: pilot.app.screen is home_screen, timeout=1)
             clock.advance(1)
             await wait_until(
-                lambda: "Attention 1" in plain_text(header.content),
+                lambda: task.id in plain_text(status.content),
                 timeout=1,
             )
             assert views.attention().stalls == 1
@@ -1001,8 +1002,8 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
             scroll = panel.query_one("#escalation-panels", VerticalScroll)
             await wait_until(lambda: len(list(scroll.query(Static))) == 1, timeout=1)
             row = scroll.query_one(Static)
-            assert "Attention 1" in plain_text(row.content)
-            assert "3 decisions" in plain_text(row.content)
+            assert first.id in plain_text(row.content)
+            assert "Enter inspect" in plain_text(row.content)
             panel.focus()
             await pilot.press("right")
             await wait_until(
@@ -1023,13 +1024,13 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
             await wait_until(
                 lambda: (
                     panel.display
-                    and "No current attention." in plain_text(scroll.query(Static)[0].content)
+                    and "No decisions needed" in plain_text(scroll.query(Static)[0].content)
                 ),
                 timeout=1,
             )
             assert pilot.app.focused is panel
-            app.query_one("#focus-views").focus()
-            await wait_until(lambda: not panel.display, timeout=1)
+            app.query_one("#focus-footer").focus()
+            await wait_until(lambda: panel.display, timeout=1)
 
             reopened = _open_escalation(connection, clock, project_dir, task.id, "Reopened packet")
             clock.advance(0.5)
@@ -1105,7 +1106,7 @@ async def test_focus_attention_keyboard_selects_late_groups_in_the_compact_row(
                 ),
                 timeout=1,
             )
-            assert "Attention 10" in plain_text(scroll.query_one(Static).content)
+            assert "Enter inspect" in plain_text(scroll.query_one(Static).content)
     finally:
         reader.close()
 

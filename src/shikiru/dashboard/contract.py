@@ -206,6 +206,10 @@ class WorkspaceSummaryView:
     faults: int
     running: int
     waiting: int
+    engine_up: bool | None = None
+    held_tasks: int | None = None
+    holds: tuple[str, ...] | None = None
+    operator_owned: tuple[str, ...] | None = None
 
     @property
     def attention(self) -> int:
@@ -622,6 +626,8 @@ class ResourceView:
     state: DiagnosticSampleState | None = None
     sampled_ago: str | None = None
     error: str | None = None
+    host_ram_used_bytes: int | None = None
+    host_ram_total_bytes: int | None = None
 
 
 @dataclass(frozen=True)

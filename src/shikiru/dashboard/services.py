@@ -326,6 +326,8 @@ def _resource_view(
         state=state,
         sampled_ago=_sampled_ago(snapshot.sampled_at, clock),
         error=error,
+        host_ram_used_bytes=snapshot.host_ram_used_bytes,
+        host_ram_total_bytes=snapshot.host_ram_total_bytes,
     )
 
 

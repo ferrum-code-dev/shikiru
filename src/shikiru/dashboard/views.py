@@ -261,6 +261,9 @@ class StateDashboardViews:
         """Count home categories without treating them as disjoint task totals."""
         attention = self.attention()
         tasks = self._state.list_tasks()
+        active_tasks = [
+            task for task in tasks if task.status not in (Status.DONE, Status.CANCELLED)
+        ]
         now = self._clock.now()
         quota_wait_ids = {
             task.id for task in tasks if self._running_quota_evidence(task, now) is not None
@@ -282,6 +285,14 @@ class StateDashboardViews:
             )
             for task in tasks
         )
+        held_tasks = [task for task in active_tasks if task.held]
+        engine_up = self._sources.engine_up()
+        operator_owned = tuple(
+            f"{task.id} {role.value}"
+            for task in held_tasks
+            if Hold.INTERVENTION in task.holds
+            for role in self._state.list_taken_over_roles(task.id)
+        )
         return WorkspaceSummaryView(
             attention_groups=len(attention.groups),
             decisions=attention.decisions,
@@ -289,6 +300,10 @@ class StateDashboardViews:
             faults=attention.faults,
             running=running,
             waiting=waiting,
+            engine_up=engine_up,
+            held_tasks=len(held_tasks),
+            holds=tuple(sorted({hold.value for task in held_tasks for hold in task.holds})),
+            operator_owned=operator_owned,
         )
 
     def _alerts(self) -> tuple[str, ...]:

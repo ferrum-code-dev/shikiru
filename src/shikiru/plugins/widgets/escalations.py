@@ -15,8 +15,10 @@ from shikiru.dashboard.contract import (
     AttentionView,
     EscalationPanelView,
     WidgetPlacement,
+    WorkspaceSummaryView,
 )
 from shikiru.ui import SplashPanel
+from shikiru.ui.compact import attention_status_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -84,6 +86,7 @@ class EscalationsPanel(Static):
         self._widget_context = context
         self._focus_row = context.placement is WidgetPlacement.ATTENTION
         self._attention = AttentionView((), decisions=0, stalls=0, faults=0)
+        self._summary: WorkspaceSummaryView | None = None
         self._selected = 0
         self._selected_escalation_id: str | None = None
         self._has_rendered = False
@@ -112,9 +115,7 @@ class EscalationsPanel(Static):
     def on_blur(self, event: events.Blur) -> None:
         del event
         if self._focus_row:
-            self._keep_empty_visible = False
-            if not self._attention.groups:
-                self.display = False
+            self.display = True
 
     async def _refresh_while_active(self) -> None:
         if not self.is_mounted:
@@ -211,12 +212,20 @@ class EscalationsPanel(Static):
 
     async def _refresh(self) -> None:
         attention = self._widget_context.views.attention()
+        summary = self._widget_context.views.workspace_summary()
+        current_status = _attention_status_state(attention, summary)
+        previous_status = (
+            _attention_status_state(self._attention, self._summary)
+            if self._summary is not None
+            else None
+        )
         groups_unchanged = attention == self._attention
         had_selection = bool(self._attention.groups)
         selected_id = self._selected_group_id()
         selected_escalation_id = self._selected_escalation_id
         self._attention = attention
-        self.display = bool(attention.groups) or self._keep_empty_visible
+        self._summary = summary
+        self.display = self._focus_row or bool(attention.groups) or self._keep_empty_visible
         if not attention.groups:
             self._selected = 0
         elif had_selection:
@@ -249,7 +258,7 @@ class EscalationsPanel(Static):
             )
         else:
             self._selected_escalation_id = None
-        if groups_unchanged and self._has_rendered:
+        if groups_unchanged and current_status == previous_status and self._has_rendered:
             return
         await self._render_panels()
         self._has_rendered = True
@@ -315,19 +324,14 @@ class EscalationsPanel(Static):
             panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
 
     def _render_compact_attention(self) -> str:
-        if not self._attention.groups:
-            return "No current attention."
-        group = self._attention.groups[self._selected]
-        decision = self._selected_decision()
-        selected = (
-            f"{decision.escalation_id} · {group.task_id} · {decision.headline}"
-            if decision is not None
-            else f"{group.task_id or 'Project'} · {' · '.join(group.reasons)}"
-        )
-        return (
-            f"! Attention {len(self._attention.groups)} · {self._attention.decisions} decisions · "
-            f"{self._attention.stalls} stalls · {self._attention.faults} faults · {selected} · "
-            "Enter inspect · r resolve · o evidence"
+        if self._summary is None:
+            return "○ Engine status unavailable"
+        return attention_status_text(
+            self._attention,
+            self._summary,
+            action_hint="Enter inspect · r resolve · o evidence",
+            selected_group_index=self._selected,
+            selected_escalation_id=self._selected_escalation_id,
         )
 
     def _reveal_selection(self, panels: VerticalScroll, card: Static) -> None:
@@ -375,6 +379,19 @@ class EscalationsPanel(Static):
         if group.escalations:
             content.append("  o: evidence   r: resolve")
         return Group(*content)
+
+
+def _attention_status_state(
+    attention: AttentionView,
+    summary: WorkspaceSummaryView,
+) -> tuple[object, ...]:
+    return (
+        attention,
+        summary.engine_up,
+        summary.held_tasks,
+        summary.holds,
+        summary.operator_owned,
+    )
 
 
 def _packet_copy(item: EscalationPanelView) -> str:

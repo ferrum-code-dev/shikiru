@@ -22,7 +22,7 @@ from shikiru.store.events import (
     fetch_timeline_events,
 )
 from shikiru.store.quotas import AgentBlock, fetch_agent_block, fetch_quota_agents, fetch_quotas
-from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task
+from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task, fetch_taken_over_roles_for_task
 from shikiru.store.tasks import (
     fetch_task,
     fetch_task_browser_page,
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.events import Event, EventKind
     from shikiru.domain.runs import Run
-    from shikiru.domain.tasks import Status, Task
+    from shikiru.domain.tasks import Role, Status, Task
     from shikiru.store.database import Database
     from shikiru.store.tasks import TaskBrowserPage, TaskRelationships
 
@@ -151,6 +151,10 @@ class StateReader:
     def list_runs(self, task_id: str) -> list[Run]:
         """See `shikiru.store.runs.fetch_runs_for_task`."""
         return fetch_runs_for_task(self._connection, task_id)
+
+    def list_taken_over_roles(self, task_id: str) -> tuple[Role, ...]:
+        """Return the bounded set of roles currently taken over for `task_id`."""
+        return fetch_taken_over_roles_for_task(self._connection, task_id)
 
     def list_all_runs(self) -> list[Run]:
         """See `shikiru.store.runs.fetch_all_runs`."""

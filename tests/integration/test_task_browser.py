@@ -57,7 +57,7 @@ PAGE_SELECT_STATEMENTS = 3
 STALL_SECONDS = 2
 STALL_TURN_NAME = "001-implement-i1"
 READING_INDEX = 10
-READING_SCROLL_POSITION = 12
+READING_SCROLL_POSITION = 20
 
 
 def _start_task(connection: Connection, clock: FakeClock, task_id: str) -> None:
@@ -548,8 +548,11 @@ async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(
         await pilot.press("slash")
 
         assert search.value == "/"
-        await pilot.click("#focus-help")
+        await pilot.press("escape")
+        assert search.value == ""
+        assert search.has_focus
+        await pilot.press("escape")
+        assert not search.display
+        await pilot.press("?")
         await pilot.pause()
-        await pilot.press("slash")
-        assert not search.has_focus
         assert app.screen.query_one("#workspace-help-frame")

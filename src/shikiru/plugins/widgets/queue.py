@@ -29,6 +29,18 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import WidgetContext
 
 BROWSER_PAGE_SIZE = 24
+RECENT_TASK_LIMIT = 3
+TASK_STATUS_DONE = "done"
+TASK_STATUS_CANCELLED = "cancelled"
+TASK_HOLD_PAUSED = "paused"
+TASK_HOLD_INTERVENTION = "intervention"
+TASK_MARKER_DECISION = "!"
+TASK_MARKER_OPERATOR = "@"
+TASK_MARKER_PAUSED = "="
+TASK_MARKER_DONE = "✓"
+TASK_MARKER_CANCELLED = "○"
+TASK_MARKER_QUEUED = "·"
+TASK_MARKER_CURRENT = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}"
 SEARCH_INPUT_ID = "task-browser-search"
 TASK_LIST_ID = "task-browser-list"
 TASK_PREVIEW_ID = "task-browser-preview"
@@ -50,16 +62,27 @@ FILTER_LABELS = {task_filter: label for task_filter, _, label in FILTER_BUTTONS}
 
 
 class _BrowserListItem(ListItem):
-    def __init__(self, row: TaskBrowserRow) -> None:
-        super().__init__(Static(_row_text(row), markup=False), id=f"task-row-{row.task_id}")
+    def __init__(
+        self,
+        row: TaskBrowserRow,
+        *,
+        focus_layout: bool,
+        recent: bool,
+    ) -> None:
+        render = _focus_row_text(row, recent=recent) if focus_layout else _row_text(row)
+        super().__init__(Static(render, markup=False), id=f"task-row-{row.task_id}")
         self.task_id = row.task_id
         self.row = row
+        self.focus_layout = focus_layout
+        self.recent = recent
 
-    def update_row(self, row: TaskBrowserRow) -> bool:
-        if row == self.row:
+    def update_row(self, row: TaskBrowserRow, *, recent: bool) -> bool:
+        if row == self.row and recent == self.recent:
             return False
         self.row = row
-        self.query_one(Static).update(_row_text(row))
+        self.recent = recent
+        render = _focus_row_text(row, recent=recent) if self.focus_layout else _row_text(row)
+        self.query_one(Static).update(render)
         return True
 
 
@@ -86,6 +109,30 @@ def _row_text(row: TaskBrowserRow) -> str:
     return f"{' · '.join(identity)}\n{' · '.join((*state_details, *signals))}"
 
 
+def _focus_row_text(row: TaskBrowserRow, *, recent: bool) -> str:
+    if row.open_decision:
+        marker = TASK_MARKER_DECISION
+    elif TASK_HOLD_INTERVENTION in row.holds:
+        marker = TASK_MARKER_OPERATOR
+    elif TASK_HOLD_PAUSED in row.holds:
+        marker = TASK_MARKER_PAUSED
+    elif row.status == TASK_STATUS_DONE:
+        marker = TASK_MARKER_DONE
+    elif row.status == TASK_STATUS_CANCELLED:
+        marker = TASK_MARKER_CANCELLED
+    elif row.status == TASK_STATUS_QUEUED:
+        marker = TASK_MARKER_QUEUED
+    else:
+        marker = TASK_MARKER_CURRENT
+    state = row.status.replace("_", " ")
+    details = [state]
+    details.extend(row.holds)
+    if row.open_decision:
+        details.append("decision needed")
+    content = f"{marker} {row.task_id} · {row.title}\n  {' · '.join(details)}"
+    return f"Recent\n{content}" if recent else content
+
+
 class QueuePanel(Vertical):
     """Render task search, filters, selection and a compact retained task preview."""
 
@@ -102,10 +149,28 @@ class QueuePanel(Vertical):
     #task-browser-filters Button:focus {
         border: round $focus; color: $primary-text; text-style: bold reverse;
     }
-    #task-browser-count { height: 1; color: $primary-text; }
-    #task-browser-list { height: 12; min-height: 3; border: solid $neutral-border; }
-    #task-browser-list ListItem > Static { text-wrap: nowrap; text-overflow: ellipsis; }
-    #task-browser-list ListItem:last-child { margin-bottom: 1; }
+    #task-browser-count { height: 1; color: $steel-blue; }
+    #task-browser-list {
+        height: 12; min-height: 3; border: none; padding: 0; background: $background;
+        scrollbar-size-vertical: 0;
+    }
+    #task-browser-list > ListItem {
+        height: auto; min-height: 2; margin-bottom: 1; padding: 0;
+        border: none; background: $background; color: $primary-text;
+    }
+    #task-browser-list > ListItem > Static {
+        height: auto; padding: 0; color: $primary-text;
+        text-wrap: wrap; text-overflow: clip;
+    }
+    #task-browser-list > ListItem.-highlight {
+        border: solid $steel-blue; background: #233340; color: $primary-text;
+        text-style: none;
+    }
+    #task-browser-list > ListItem.-highlight > Static {
+        background: #233340; color: $primary-text; text-style: none;
+    }
+    #task-browser-list > ListItem:last-child { margin-bottom: 0; }
+    #task-browser-list:focus { background-tint: transparent; }
     #task-browser-empty { height: auto; padding: 1; color: $muted-text; }
     #task-browser-family-context { height: auto; padding: 0 1; color: $secondary-text; }
     #task-browser-more { width: auto; min-width: 1; }
@@ -320,7 +385,6 @@ class QueuePanel(Vertical):
                     callback(self._selected_task_id)
                 list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
                 await self._sync_list_rows(list_view, view.rows)
-                self._sync_selection(list_view, view.rows)
                 self._render_view(view)
             finally:
                 self._refreshing = False
@@ -342,9 +406,32 @@ class QueuePanel(Vertical):
             for ancestor in page.ancestor_context:
                 if ancestor.task_id not in matched_ids:
                     ancestors[ancestor.task_id] = ancestor
+        view = pages[-1]
+        selected_task = view.selected_task
+        if self._focus_layout and self._filter is TaskBrowserFilter.ALL:
+            recent_pages = self._widget_context.views.task_browser_pages(
+                task_filter=TaskBrowserFilter.HISTORY,
+                search=self._search,
+                limit=RECENT_TASK_LIMIT,
+                page_count=1,
+                selected_task_id=self._selected_task_id,
+            )
+            recent_page = recent_pages[0]
+            recent_rows = tuple(
+                row for row in recent_page.rows if row.status in TASK_TERMINAL_STATUSES
+            )
+            matched_ids.update(row.task_id for row in recent_rows)
+            for ancestor in recent_page.ancestor_context:
+                if ancestor.task_id not in matched_ids:
+                    ancestors[ancestor.task_id] = ancestor
+            active_rows = tuple(row for row in rows if row.status not in TASK_TERMINAL_STATUSES)
+            rows = (*active_rows, *recent_rows)
+            if selected_task is None:
+                selected_task = recent_page.selected_task
         return replace(
-            pages[-1],
+            view,
             rows=rows,
+            selected_task=selected_task,
             ancestor_context=tuple(ancestors.values()),
         )
 
@@ -362,13 +449,30 @@ class QueuePanel(Vertical):
         items = {
             item.task_id: item for item in list_view.children if isinstance(item, _BrowserListItem)
         }
+        recent_task_id = None
+        if (
+            self._focus_layout
+            and self._view is not None
+            and self._view.filter is TaskBrowserFilter.ALL
+        ):
+            recent_task_id = next(
+                (row.task_id for row in rows if row.status in TASK_TERMINAL_STATUSES),
+                None,
+            )
         current_ids = tuple(items)
         desired_ids = tuple(row.task_id for row in rows)
         if current_ids == desired_ids:
             anchor, anchor_offset = self._visible_anchor(list_view, tuple(items.values()))
             changed = False
             for row in rows:
-                changed = items[row.task_id].update_row(row) or changed
+                changed = (
+                    items[row.task_id].update_row(
+                        row,
+                        recent=row.task_id == recent_task_id,
+                    )
+                    or changed
+                )
+            self._sync_selection(list_view, rows)
             if changed:
                 self._restore_list_position_after_refresh(
                     list_view,
@@ -387,16 +491,25 @@ class QueuePanel(Vertical):
             await asyncio.gather(*(item.remove() for item in removed))
             items = {task_id: item for task_id, item in items.items() if task_id in wanted_ids}
 
-        new_items = [_BrowserListItem(row) for row in rows if row.task_id not in items]
+        new_items = [
+            _BrowserListItem(
+                row,
+                focus_layout=self._focus_layout,
+                recent=row.task_id == recent_task_id,
+            )
+            for row in rows
+            if row.task_id not in items
+        ]
         items.update({item.task_id: item for item in new_items})
         for row in rows:
-            items[row.task_id].update_row(row)
+            items[row.task_id].update_row(row, recent=row.task_id == recent_task_id)
         if new_items:
             await list_view.extend(new_items)
         for index, row in enumerate(rows):
             item = items[row.task_id]
             if list_view.children[index] is not item:
                 list_view.move_child(item, before=index)
+        self._sync_selection(list_view, rows)
         self._restore_list_position_after_refresh(
             list_view,
             anchor,
@@ -441,7 +554,9 @@ class QueuePanel(Vertical):
             return
         if anchor is not None and anchor.parent is list_view:
             anchor_index = list_view.children.index(anchor)
-            anchor_position = sum(item.region.height for item in list_view.children[:anchor_index])
+            anchor_position = sum(
+                item.region.height + 1 for item in list_view.children[:anchor_index]
+            )
             list_view.scroll_to(
                 y=anchor_position - anchor_offset,
                 animate=False,
@@ -472,7 +587,11 @@ class QueuePanel(Vertical):
             list_view.index = selected_index
 
     def _render_view(self, view: TaskBrowserView) -> None:
-        count = f"{FILTER_LABELS[view.filter]} · {len(view.rows)} of {view.matching_count}"
+        count = (
+            "TASKS · Decision first"
+            if self._focus_layout and view.filter is TaskBrowserFilter.ALL and not view.search
+            else f"TASKS · {FILTER_LABELS[view.filter]} · {len(view.rows)} of {view.matching_count}"
+        )
         if view.search:
             count += f" · Search: {view.search}"
         if view.selected_task_missing and view.selected_task is not None:

@@ -34,7 +34,10 @@ from shikiru.agents.contracts import (
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
-from shikiru.dashboard.contract import WIDGET_ENTRY_POINT_GROUP, PaletteRequest
+from shikiru.dashboard.contract import (
+    WIDGET_ENTRY_POINT_GROUP,
+    PaletteRequest,
+)
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_CRITERIA,
@@ -219,13 +222,14 @@ def _app(
     project_dir: Path,
     *,
     widget_names: list[str],
+    services: StubServices | None = None,
     open_palette: OpenPalette = ignore_palette_action,
     open_palette_context: OpenPaletteContext | None = None,
 ) -> DashboardApp:
     settings = load_settings(project_dir)
     return DashboardApp(
         focus_task=None,
-        views=state_views(reader, project_dir, SystemClock(), StubServices()),
+        views=state_views(reader, project_dir, SystemClock(), services or StubServices()),
         on_change=reader.watch,
         clock=SystemClock(),
         motion_interval_seconds=_motion_interval(project_dir),
@@ -384,7 +388,7 @@ async def test_dashboard_mounts_the_default_widgets(
             await wait_until(
                 lambda: (
                     app.focused is attention
-                    and "1 faults" in _rendered_text(attention_row)
+                    and "engine fault" in _rendered_text(attention_row)
                     and task.id in _rendered_text(attention_row)
                 ),
                 timeout=2,
@@ -400,7 +404,7 @@ async def test_dashboard_mounts_the_default_widgets(
         reader.close()
 
 
-async def test_header_without_home_attention_keeps_stopped_engine_fault_context(
+async def test_home_status_keeps_stopped_engine_fault_context_without_escalations_plugin(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -424,18 +428,73 @@ async def test_header_without_home_attention_keeps_stopped_engine_fault_context(
         app = _app(reader, project_dir, widget_names=["header"])
         async with app.run_test(size=_WIDE_HOME_SIZE):
             header = app.query_one("#header", Static)
+            status = app.query_one("#escalations", Static)
             await wait_until(
-                lambda: "Engine stopped" in " ".join(_rendered_widget_lines(header)),
+                lambda: (
+                    "Engine stopped" in " ".join(_rendered_widget_lines(header))
+                    and "host sample failed" in _rendered_text(status)
+                ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            text = " ".join(_rendered_widget_lines(header))
-            assert "Engine stopped" in text
-            assert "host sample failed x2" in text
+            assert "host sample failed" not in _rendered_text(header)
     finally:
         reader.close()
 
 
-async def test_wide_focus_renders_mixed_billing_and_attention_inside_visible_readout_area(
+async def test_home_attention_tracks_owned_held_and_engine_state_changes(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    services = StubServices(engine_running=True)
+    paused = seed_task(connection, clock, title="Paused task")
+    owned = seed_task(connection, clock, title="Owned task")
+    runs = RunStore(connection, clock)
+    run = runs.start(owned.id, Role.LEADER, Rung("codex", "gpt-6-luna", "high"))
+    runs.mark_taken_over(run.id)
+    tasks = TaskStore(connection, clock)
+    tasks.set_holds(paused.id, frozenset({Hold.PAUSED}))
+    tasks.set_holds(owned.id, frozenset({Hold.INTERVENTION}))
+    reader = StateReader(database, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=["queue", "escalations"], services=services)
+        async with app.run_test(size=_WIDE_HOME_SIZE):
+            attention = app.query_one("#escalations", EscalationsPanel)
+            await wait_until(
+                lambda: (
+                    "Operator owns" in _rendered_text(_focus_attention_row(attention))
+                    and "automation held" in _rendered_text(_focus_attention_row(attention))
+                    and "intervention" in _rendered_text(_focus_attention_row(attention))
+                    and "paused" in _rendered_text(_focus_attention_row(attention))
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            attention.activate_attention()
+            app.query_one("#task-browser-list", ListView).focus()
+            assert attention.display
+
+            services.engine_running = False
+            EventLog(connection, clock).append(EventKind.ENGINE_STOPPED, message="stopped")
+            await wait_until(
+                lambda: (
+                    "Engine stopped" in _rendered_text(_focus_attention_row(attention))
+                    and "automation held" in _rendered_text(_focus_attention_row(attention))
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert "Automation continues" not in _rendered_text(_focus_attention_row(attention))
+            assert attention.display
+    finally:
+        reader.close()
+
+
+def _focus_attention_row(attention: EscalationsPanel) -> Static:
+    return attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+
+
+async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_task_list(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -519,11 +578,12 @@ async def test_wide_focus_renders_mixed_billing_and_attention_inside_visible_rea
                 ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            primary = (identity, usage, resources, attention)
+            primary = (identity, usage, resources)
             assert readouts.scroll_y == 0
             assert all(widget.is_on_screen for widget in primary)
             assert all(widget.region.y >= readouts.region.y for widget in primary)
             assert all(widget.region.bottom <= readouts.region.bottom for widget in primary)
+            assert attention.region.bottom <= app.query_one("#focus-main", Horizontal).region.y
             assert app.query_one("#task-browser-list", ListView).region.height >= (
                 _MIN_WIDE_TASK_LIST_ROWS
             )
@@ -538,8 +598,8 @@ async def test_wide_focus_renders_mixed_billing_and_attention_inside_visible_rea
             assert "API billed $0.42" in usage_text
             assert "1 subscription agent" in usage_text
             assert "Host" in resource_text
-            assert "Shikiru including agents" in resource_text
-            assert "1 faults" in attention_text
+            assert "Shikiru + agents" in resource_text
+            assert "engine fault" in attention_text
             assert task.id in attention_text
             assert "host sample failed" not in identity_text
     finally:
@@ -615,6 +675,42 @@ async def test_focus_keeps_selected_task_and_reading_position_after_reorder(
         reader.close()
 
 
+async def test_home_task_list_keeps_a_recent_completed_history_row(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    active = seed_task(connection, clock, title="Active request")
+    completed = seed_task(connection, clock, title="Completed request")
+    TaskStore(connection, clock).apply_transition(
+        completed.id,
+        Transition.stay(completed, step=None, status=Status.DONE),
+    )
+    reader = StateReader(database, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=["queue"])
+        async with app.run_test(size=_WIDE_HOME_SIZE):
+            task_list = app.query_one("#task-browser-list", ListView)
+            await wait_until(
+                lambda: any(item.id == f"task-row-{completed.id}" for item in task_list.children),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            rows = tuple(
+                _rendered_text(item.query_one(Static))
+                for item in task_list.children
+                if isinstance(item, ListItem)
+            )
+            active_row = next(index for index, row in enumerate(rows) if active.id in row)
+            recent_row = next(index for index, row in enumerate(rows) if completed.id in row)
+            assert active_row < recent_row
+            assert rows[recent_row].startswith("Recent\n")
+            assert "done" in rows[recent_row]
+    finally:
+        reader.close()
+
+
 async def test_focus_operational_counts_and_contextual_task_filters(
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
@@ -640,11 +736,11 @@ async def test_focus_operational_counts_and_contextual_task_filters(
                 lambda: "Running 1 · Waiting 1" in plain_text(header.content),
                 timeout=2,
             )
-            assert app.query_one("#escalations").display is False
+            assert app.query_one("#escalations").display is True
             await _choose_focus_view(app, pilot, "Task filter · Waiting")
             count = app.query_one("#task-browser-count", Static)
             await wait_until(
-                lambda: plain_text(count.content).startswith("Waiting · 1 of 1"),
+                lambda: plain_text(count.content).startswith("TASKS · Waiting · 1 of 1"),
                 timeout=2,
             )
             assert waiting.title in plain_text(
@@ -959,7 +1055,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
 
 
 @pytest.mark.parametrize("width", [36, 48])
-async def test_narrow_dashboard_keeps_command_controls_reachable(
+async def test_narrow_home_keeps_keyboard_routes_reachable(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -978,14 +1074,11 @@ async def test_narrow_dashboard_keeps_command_controls_reachable(
             await pilot.pause()
             status = app.query_one("#workspace-command-status", Static)
             assert status.size.height == 1
-            views_button = app.query_one("#focus-views", Button)
-            help_button = app.query_one("#focus-help", Button)
-            assert views_button.region.bottom <= 20
-            assert views_button.region.right <= width
-            assert help_button.region.bottom <= 20
-            assert help_button.region.right <= width
+            footer = app.query_one("#focus-footer", Static)
+            assert footer.region.bottom <= 20
+            assert footer.region.right <= width
             home_screen = app.screen
-            await pilot.click(views_button)
+            await pilot.press("v")
             await wait_until(lambda: app.screen is not home_screen, timeout=2)
             await pilot.pause()
             await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
@@ -1037,7 +1130,7 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
             assert task.id in row_text
             assert task.title in row_text
 
-            for width, height in ((48, 20), (36, 20), (48, 14), (20, 8)):
+            for width, height in ((48, 20), (36, 20), (48, 14)):
                 await pilot.resize_terminal(width, height)
                 await pilot.pause()
                 assert app.focused is search
@@ -1046,8 +1139,6 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
                 assert home_layout.region.width <= width
                 assert detail_panel.display is False
                 _assert_home_navigation_fits(app, width, height)
-                if (width, height) == (20, 8):
-                    await _exercise_tiny_home_mouse_navigation(app, pilot, search, task.id)
 
             home_screen = app.screen
             await pilot.press("enter")
@@ -1066,50 +1157,14 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
 
 
 def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> None:
-    assert app.query_one("#focus-footer").region.bottom <= height
-    buttons = (app.query_one("#focus-views", Button), app.query_one("#focus-help", Button))
-    for button in buttons:
-        assert button.visible
-        assert button.region.x >= 0
-        assert button.region.right <= width
-        assert button.region.y >= 0
-        assert button.region.bottom <= height
+    footer = app.query_one("#focus-footer", Static)
+    assert footer.region.x >= 0
+    assert footer.region.right <= width
+    assert footer.region.y >= 0
+    assert footer.region.bottom <= height
 
 
-async def _exercise_tiny_home_mouse_navigation(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    search: Input,
-    task_id: str,
-) -> None:
-    task_list = app.query_one("#task-browser-list", ListView)
-    selected_index = task_list.index
-    assert selected_index is not None
-    selected_row = cast("ListItem", task_list.children[selected_index])
-    selected_copy = selected_row.query_one(Static)
-    content_region = task_list.scrollable_content_region
-    assert task_id in _rendered_text(selected_copy)
-    assert "queued" in _rendered_text(selected_copy)
-    assert selected_row.region.y >= content_region.y
-    assert selected_row.region.bottom <= content_region.bottom
-    assert selected_row.region.y >= 0
-    assert selected_row.region.bottom <= app.size.height
-    views_button = app.query_one("#focus-views", Button)
-    help_button = app.query_one("#focus-help", Button)
-
-    home_screen = app.screen
-    assert await pilot.click(views_button)
-    await wait_until(lambda: app.screen is not home_screen, timeout=2)
-    await pilot.press("escape")
-    await wait_until(lambda: app.screen is home_screen, timeout=2)
-    assert await pilot.click(help_button)
-    await wait_until(lambda: bool(app.screen.query("#workspace-help-copy")), timeout=2)
-    await pilot.press("escape")
-    await wait_until(lambda: app.screen is home_screen, timeout=2)
-    search.focus()
-
-
-async def test_home_help_works_with_mouse_and_keyboard_without_color(
+async def test_home_help_works_with_keyboard_without_color(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1122,14 +1177,14 @@ async def test_home_help_works_with_mouse_and_keyboard_without_color(
     try:
         app = _app(reader, project_dir, widget_names=["queue"])
         async with app.run_test(size=(36, 20)) as pilot:
-            await pilot.click("#focus-help")
+            await pilot.press("?")
             await pilot.pause()
             assert "Mouse: select or open a task" in _rendered_text(
                 app.screen.query_one("#workspace-help-copy", Static)
             )
             await pilot.press("escape")
             await pilot.pause()
-            assert await pilot.click("#focus-help")
+            await pilot.press("?")
             await pilot.pause()
             assert app.screen.query_one("#workspace-help-copy", Static).display
             await pilot.press("escape")
@@ -1433,14 +1488,9 @@ async def test_dashboard_compact_footer_and_persisted_state_are_readable_without
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
             footer = app.query_one("#focus-footer")
-            views_button = app.query_one("#focus-views", Button)
-            help_button = app.query_one("#focus-help", Button)
-            assert app.focused is app.query_one("#focus-views", Button)
+            assert app.focused is footer
             assert footer.region.height >= 2
             assert footer.region.bottom <= app.size.height
-            assert views_button.region.right <= app.size.width
-            assert help_button.region.right <= app.size.width
-            assert help_button.region.bottom <= app.size.height
             await _choose_focus_view(app, pilot, "Workflow · Strips")
             strips = app.screen.query_one(StripsPanel)
             strip_text = _rendered_text(strips)
@@ -1450,7 +1500,7 @@ async def test_dashboard_compact_footer_and_persisted_state_are_readable_without
             await pilot.press("escape")
             await wait_until(lambda: app.screen is not workflow_screen, timeout=2)
             home_screen = app.screen
-            assert await pilot.click("#focus-help")
+            await pilot.press("?")
             await pilot.pause()
             assert app.screen is not home_screen
             assert "Focus" in _rendered_text(
@@ -1552,7 +1602,7 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
         app = _app(reader, project_dir, widget_names=["usage", _EXTERNAL_WIDGET_NAME])
         async with app.run_test(size=(72, 30)) as pilot:
             workspace_screen = app.screen
-            await pilot.click("#focus-views")
+            await pilot.press("v")
             await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
             await _choose_focus_view(app, pilot, "Extensions · Outside-Widget", mouse=True)
             assert app.screen is not workspace_screen
@@ -1561,7 +1611,7 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
             await pilot.press("escape")
             await wait_until(lambda: app.screen is workspace_screen, timeout=2)
 
-            assert await pilot.click("#focus-help")
+            await pilot.press("?")
             await pilot.pause()
             assert app.screen is not workspace_screen
             assert app.screen.query_one("#workspace-help-copy", Static).region.height > 0
@@ -1608,7 +1658,7 @@ async def test_home_views_mouse_opens_selected_task_actions_and_help(
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
 
-            await pilot.click("#focus-views")
+            await pilot.press("v")
             await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
             await _choose_focus_view(app, pilot, "Operator actions", mouse=True)
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
@@ -1621,7 +1671,7 @@ async def test_home_views_mouse_opens_selected_task_actions_and_help(
 
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
-            await pilot.click("#focus-views")
+            await pilot.press("v")
             await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
             await _choose_focus_view(app, pilot, "Help", mouse=True)
             help_context = app.screen.query_one("#workspace-help-context", Static)

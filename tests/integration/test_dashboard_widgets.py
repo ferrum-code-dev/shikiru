@@ -62,11 +62,10 @@ async def test_header_shows_project_name_engine_state_and_slots(
         await pilot.pause()
         text = cast("str", widget.content)
         assert "demo" in text
-        assert "Engine running" in text
-        assert "uptime unknown" in text
-        assert "Running 1 · Waiting 0 · Attention 0" in text
-        assert "slots 1/2" in text
-        assert "integration merge" in text
+        assert "Engine running · Uptime unknown" in text
+        assert "Running 1 · Waiting 0" in text
+        assert "Slots 1/2" in text
+        assert "Local merge" in text
         assert "+1/-0" in text
         assert "2 dirty" in text
 
@@ -86,7 +85,7 @@ async def test_header_does_not_count_an_escalated_slot_as_occupied(
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
 
-        assert "slots 0/2" in cast("str", widget.content)
+        assert "Slots 0/2" in cast("str", widget.content)
 
 
 async def test_home_summary_separates_paused_and_external_waits_from_slot_occupancy(
@@ -155,11 +154,11 @@ async def test_header_refreshes_when_the_writer_commits(
     widget = cast("HeaderPanel", HeaderWidget().create(context))
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
-        assert "slots 0/2" in cast("str", widget.content)
+        assert "Slots 0/2" in cast("str", widget.content)
 
         _submit_task(connection, clock)
 
-        await wait_until(lambda: "slots 1/2" in cast("str", widget.content), timeout=5.0)
+        await wait_until(lambda: "Slots 1/2" in cast("str", widget.content), timeout=5.0)
 
 
 async def test_strips_shows_the_active_task_at_its_current_step(

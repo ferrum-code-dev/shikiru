@@ -30,6 +30,7 @@ _RUN_COLUMNS = (
     "cost_usd, cost_basis, context_used_pct, usage_reported, billing_mode, billing_source, "
     "started_at, ended_at"
 )
+MAX_TAKEN_OVER_ROLE_COUNT = len(Role)
 
 
 def _row_to_run(row: sqlite3.Row) -> Run:
@@ -73,6 +74,17 @@ def fetch_runs_for_task(connection: sqlite3.Connection, task_id: str) -> list[Ru
         f"SELECT {_RUN_COLUMNS} FROM runs WHERE task_id = ? ORDER BY id DESC", (task_id,)
     ).fetchall()
     return [_row_to_run(row) for row in rows]
+
+
+def fetch_taken_over_roles_for_task(
+    connection: sqlite3.Connection,
+    task_id: str,
+) -> tuple[Role, ...]:
+    rows = connection.execute(
+        "SELECT role FROM runs WHERE task_id = ? AND status = ? ORDER BY id DESC LIMIT ?",
+        (task_id, RunStatus.TAKEN_OVER.value, MAX_TAKEN_OVER_ROLE_COUNT),
+    ).fetchall()
+    return tuple(Role(row["role"]) for row in rows)
 
 
 def fetch_all_runs(connection: sqlite3.Connection) -> list[Run]:

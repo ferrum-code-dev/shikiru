@@ -33,6 +33,7 @@ from shikiru.dashboard.detail import (
     TaskDetailScreen,
 )
 from shikiru.errors import ConfigError
+from shikiru.ui.compact import attention_status_text
 from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.dashboard.contract import (
+        AttentionView,
         DashboardViews,
         DashboardWidget,
         NavigateHome,
@@ -90,20 +92,15 @@ _SEARCH_KEY = "slash"
 _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
-HOME_SPLIT_MIN_COLUMNS = 100
-SHORT_PANE_MAX_ROWS = 18
-FOCUS_TINY_PANE_MAX_ROWS = 8
+HOME_SPLIT_MIN_COLUMNS = 73
 FOCUS_SUMMARY_MAX_ROWS = 12
-FOCUS_SHORT_SUMMARY_MAX_ROWS = 3
 FOCUS_MAIN_MIN_ROWS = 3
 FOCUS_MIN_TASK_LIST_ROWS = 9
-FOCUS_TINY_TASK_LIST_ROWS = 3
 FOCUS_COMMAND_STATUS_ROWS = 1
-FOCUS_READOUT_BORDER_ROWS = 1
-FOCUS_FOOTER_HEIGHT = 2
-FOCUS_VIEWS_BUTTON = "focus-views"
-FOCUS_HELP_BUTTON = "focus-help"
-FOCUS_HINTS = "focus-hints"
+FOCUS_FRAME_BORDER_ROWS = 2
+FOCUS_FOOTER_HEIGHT = 4
+FOCUS_COMPACT_FOOTER_HEIGHT = 5
+FOCUS_ATTENTION_HEIGHT = 3
 FOCUS_VIEWS_LIST = "focus-views-list"
 FOCUS_VIEW_PREFIX = "focus-view-"
 FOCUS_COMMAND_HISTORY = "commands"
@@ -519,6 +516,51 @@ class _CommandStatusLine(Static):
             self.update(_command_summary_text(history))
 
 
+class _HomeAttentionStatus(Static):
+    can_focus = True
+
+    def __init__(self, context: WidgetContext) -> None:
+        super().__init__("", id="escalations", markup=False)
+        self._widget_context = context
+        self._attention: AttentionView | None = None
+        self._remove_motion_callback: Callable[[], None] | None = None
+
+    async def on_mount(self) -> None:
+        await self._refresh()
+        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_if_active)
+
+    def on_unmount(self) -> None:
+        if self._remove_motion_callback is not None:
+            self._remove_motion_callback()
+            self._remove_motion_callback = None
+
+    async def on_click(self, event: events.Click) -> None:
+        attention = self._attention
+        if attention is None or not attention.groups:
+            return
+        group = attention.groups[0]
+        if group.task_id is not None and self._widget_context.open_task_detail is not None:
+            if self._widget_context.on_task_selected is not None:
+                self._widget_context.on_task_selected(group.task_id)
+            await self._widget_context.open_task_detail(group.task_id)
+            event.stop()
+
+    async def _refresh_if_active(self) -> None:
+        if self.is_mounted and self.is_on_screen and self.screen.is_active:
+            await self._refresh()
+
+    async def _refresh(self) -> None:
+        attention = self._widget_context.views.attention()
+        summary = self._widget_context.views.workspace_summary()
+        self._attention = attention
+        self.update(attention_status_text(attention, summary, action_hint="Ctrl+P actions"))
+
+
+class _HomeFooter(Static):
+    can_focus = True
+
+
 class DashboardApp(App[None]):
     """Present the configured Home focus or one shared task detail view."""
 
@@ -529,27 +571,35 @@ class DashboardApp(App[None]):
     ]
     CSS = """
     Screen { background: $background; color: $primary-text; }
-    #focus-root { height: 100%; }
-    #focus-readouts {
-        height: auto; padding: 0 1;
-        border-bottom: solid $neutral-border; background: $background;
+    #focus-root {
+        height: 100%; border: solid $neutral-border; padding: 0 2;
+        background: $background;
     }
-    #header { height: auto; padding: 1 1 0 1; }
-    #usage { height: auto; padding: 0 1; }
-    #resources { height: auto; padding: 0 1; }
-    #escalations { height: auto; padding: 0 1; }
-    #focus-main { height: 1fr; min-height: 3; padding: 0 1; }
+    #focus-readouts {
+        height: auto; max-height: 12; padding: 1 0 0 0; background: $background;
+        scrollbar-size-vertical: 0;
+    }
+    #header { height: auto; margin-bottom: 1; text-wrap: wrap; text-overflow: clip; }
+    #usage { height: auto; margin-bottom: 1; }
+    #resources {
+        height: auto; border-top: solid $neutral-border;
+    }
+    #escalations {
+        height: auto; max-height: 2; padding: 0 1; margin-bottom: 1;
+        background: $surface;
+    }
+    #focus-main { height: 1fr; min-height: 3; }
     #focus-main.wide { layout: horizontal; }
-    #focus-main.compact { layout: vertical; overflow-y: auto; }
+    #focus-main.compact { layout: vertical; overflow-y: auto; scrollbar-size-vertical: 0; }
     #focus-main.wide #focus-task-list-column {
-        width: 48; min-width: 30; height: 100%;
+        width: 42%; min-width: 0; height: 100%; padding-right: 1;
     }
     #focus-main.wide #queue {
         width: 100%; min-width: 0; height: 100%;
     }
     #focus-main.wide #task-browser-list { height: 1fr; min-height: 3; }
     #focus-main.wide #task-detail-panel {
-        width: 1fr; min-width: 45; height: 100%; padding-left: 1;
+        width: 58%; min-width: 0; height: 100%; padding-left: 2;
         border-left: solid $neutral-border;
     }
     #focus-main.wide #task-detail-body { height: 1fr; max-height: 1fr; }
@@ -562,25 +612,10 @@ class DashboardApp(App[None]):
     #task-view-root #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
     #focus-footer {
-        height: 1; padding: 0 1; border-top: solid $neutral-border;
-        background: $panel;
+        height: auto; padding: 1 0 0 0; margin-top: 1; border-top: solid $neutral-border;
+        background: $background; color: $secondary-text;
     }
-    #focus-hints { width: 1fr; height: 1; color: $secondary-text; }
-    #focus-footer Button {
-        width: auto; min-width: 1; height: 1; margin: 0 1 0 0; padding: 0;
-        border: none; background: $panel; color: $steel-blue;
-    }
-    #focus-footer Button:focus { text-style: bold reverse; }
     #workspace-command-status { height: 1; padding: 0 1; color: $secondary-text; }
-    #focus-root.tiny #focus-readouts { padding: 0; border-bottom: none; }
-    #focus-root.tiny #header {
-        height: 1; padding: 0; text-wrap: nowrap; text-overflow: ellipsis;
-    }
-    #focus-root.tiny #focus-main { min-height: 3; padding: 0; }
-    #focus-root.tiny #task-browser-count { display: none; }
-    #focus-root.tiny #task-browser-list { height: 3; min-height: 2; border: none; }
-    #focus-root.tiny #task-browser-list ListItem:last-child { margin-bottom: 0; }
-    #focus-root.tiny #focus-hints { display: none; }
     """
 
     def __init__(
@@ -659,12 +694,19 @@ class DashboardApp(App[None]):
                     WidgetPlacement.IDENTITY,
                     WidgetPlacement.PROJECT_USAGE,
                     WidgetPlacement.RESOURCES,
-                    WidgetPlacement.ATTENTION,
                 ):
                     for name in self._widget_names_by_placement.get(placement, ()):
                         widget = self._create_widget(name)
                         self._widget_instances[name] = widget
                         yield widget
+            attention_names = self._widget_names_by_placement.get(WidgetPlacement.ATTENTION, ())
+            if attention_names:
+                for name in attention_names:
+                    widget = self._create_widget(name)
+                    self._widget_instances[name] = widget
+                    yield widget
+            else:
+                yield _HomeAttentionStatus(context)
             with Horizontal(id="focus-main"):
                 task_list_names = self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST, ())
                 if task_list_names:
@@ -683,14 +725,11 @@ class DashboardApp(App[None]):
                 else:
                     yield Static("Task list is not configured.", id="focus-empty", markup=False)
             yield _CommandStatusLine(self._views, self._on_change)
-            with Horizontal(id="focus-footer"):
-                yield Static(
-                    "↑↓ select · Enter inspect · Ctrl+P actions · / search · v views · ? help",
-                    id=FOCUS_HINTS,
-                    markup=False,
-                )
-                yield Button("Views", id=FOCUS_VIEWS_BUTTON)
-                yield Button("Help", id=FOCUS_HELP_BUTTON)
+            yield _HomeFooter(
+                "↑↓ select   Enter inspect   Ctrl+P actions   ? help",
+                id="focus-footer",
+                markup=False,
+            )
 
     def _compose_task_workspace(self) -> ComposeResult:
         context = self._widget_context()
@@ -754,10 +793,7 @@ class DashboardApp(App[None]):
             on_task_selected=self._select_task_context,
             activate_home_summary=self._activate_home_summary,
             placement=placement,
-            home_attention_present=(
-                self._focus_task is None
-                and bool(self._widget_names_by_placement.get(WidgetPlacement.ATTENTION))
-            ),
+            home_attention_present=self._focus_task is None,
             open_contextual_view=self._open_contextual_view,
             task_contextual_views=tuple(
                 (choice.label, choice.choice_id) for choice in self._task_context_choices()
@@ -978,9 +1014,7 @@ class DashboardApp(App[None]):
         self._apply_layout(self.size.width, self.size.height)
         if self._focus_task is None:
             task_list = self.query("#task-browser-list")
-            target = (
-                task_list.first() if task_list else self.query_one(f"#{FOCUS_VIEWS_BUTTON}", Button)
-            )
+            target = task_list.first() if task_list else self.query_one("#focus-footer", Static)
             self.set_focus(target)
         else:
             self.set_focus(self.query_one("#task-detail-views", Button))
@@ -1028,15 +1062,6 @@ class DashboardApp(App[None]):
                 open_search()
                 event.stop()
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle persistent Home controls outside shared task detail panels."""
-        if self._focus_task is not None:
-            return
-        if event.button.id == FOCUS_VIEWS_BUTTON:
-            await self.action_open_views()
-        elif event.button.id == FOCUS_HELP_BUTTON:
-            await self.action_show_help()
-
     async def _motion_loop(self) -> None:
         interval = self._motion_interval_seconds
         if interval is None:
@@ -1057,42 +1082,32 @@ class DashboardApp(App[None]):
 
     def _apply_layout(self, width: int, height: int) -> None:
         if self._focus_task is None:
-            tiny = height <= FOCUS_TINY_PANE_MAX_ROWS
-            self.query_one("#focus-root").set_class(tiny, "tiny")
             main = self.query_one("#focus-main", Horizontal)
             was_wide = main.has_class("wide")
-            wide = width >= HOME_SPLIT_MIN_COLUMNS and height > SHORT_PANE_MAX_ROWS
+            wide = width >= HOME_SPLIT_MIN_COLUMNS
             main.set_class(wide, "wide")
             main.set_class(not wide, "compact")
             readouts = self.query_one("#focus-readouts", VerticalScroll)
-            self.query_one("#focus-footer").styles.height = FOCUS_FOOTER_HEIGHT
-            if tiny:
-                readouts.styles.max_height = 1
-            elif height <= SHORT_PANE_MAX_ROWS:
-                readouts.styles.max_height = FOCUS_SHORT_SUMMARY_MAX_ROWS
-            else:
-                minimum_main_height = (
-                    FOCUS_MIN_TASK_LIST_ROWS
-                    if self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST)
-                    else FOCUS_MAIN_MIN_ROWS
-                )
-                readouts.styles.max_height = min(
+            minimum_main_height = (
+                FOCUS_MIN_TASK_LIST_ROWS
+                if wide and self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST)
+                else FOCUS_MAIN_MIN_ROWS
+            )
+            readouts.styles.max_height = max(
+                1,
+                min(
                     FOCUS_SUMMARY_MAX_ROWS,
                     height
                     - minimum_main_height
-                    - FOCUS_FOOTER_HEIGHT
+                    - (FOCUS_FOOTER_HEIGHT if wide else FOCUS_COMPACT_FOOTER_HEIGHT)
+                    - FOCUS_ATTENTION_HEIGHT
                     - FOCUS_COMMAND_STATUS_ROWS
-                    - FOCUS_READOUT_BORDER_ROWS,
-                )
+                    - FOCUS_FRAME_BORDER_ROWS,
+                ),
+            )
             task_list = self.query("#task-browser-list")
             if task_list:
-                task_list.first().styles.height = (
-                    "1fr"
-                    if wide
-                    else FOCUS_TINY_TASK_LIST_ROWS
-                    if tiny
-                    else FOCUS_MIN_TASK_LIST_ROWS
-                )
+                task_list.first().styles.height = "1fr" if wide else FOCUS_MIN_TASK_LIST_ROWS
             if self._home_detail_panel is not None:
                 self._home_detail_panel.display = wide
                 self._home_detail_panel.styles.height = "100%" if wide else "auto"
