@@ -1045,9 +1045,9 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
                 assert task.title in _rendered_text(identity)
                 assert home_layout.region.width <= width
                 assert detail_panel.display is False
-                assert app.query_one("#focus-footer").region.bottom <= height
-                assert app.query_one("#focus-views", Button).region.right <= width
-                assert app.query_one("#focus-help", Button).region.right <= width
+                _assert_home_navigation_fits(app, width, height)
+                if (width, height) == (20, 8):
+                    await _exercise_tiny_home_mouse_navigation(app, pilot, search, task.id)
 
             home_screen = app.screen
             await pilot.press("enter")
@@ -1063,6 +1063,50 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
             assert list_view.index == 0
     finally:
         reader.close()
+
+
+def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> None:
+    assert app.query_one("#focus-footer").region.bottom <= height
+    buttons = (app.query_one("#focus-views", Button), app.query_one("#focus-help", Button))
+    for button in buttons:
+        assert button.visible
+        assert button.region.x >= 0
+        assert button.region.right <= width
+        assert button.region.y >= 0
+        assert button.region.bottom <= height
+
+
+async def _exercise_tiny_home_mouse_navigation(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    search: Input,
+    task_id: str,
+) -> None:
+    task_list = app.query_one("#task-browser-list", ListView)
+    selected_index = task_list.index
+    assert selected_index is not None
+    selected_row = cast("ListItem", task_list.children[selected_index])
+    selected_copy = selected_row.query_one(Static)
+    content_region = task_list.scrollable_content_region
+    assert task_id in _rendered_text(selected_copy)
+    assert "queued" in _rendered_text(selected_copy)
+    assert selected_row.region.y >= content_region.y
+    assert selected_row.region.bottom <= content_region.bottom
+    assert selected_row.region.y >= 0
+    assert selected_row.region.bottom <= app.size.height
+    views_button = app.query_one("#focus-views", Button)
+    help_button = app.query_one("#focus-help", Button)
+
+    home_screen = app.screen
+    assert await pilot.click(views_button)
+    await wait_until(lambda: app.screen is not home_screen, timeout=2)
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home_screen, timeout=2)
+    assert await pilot.click(help_button)
+    await wait_until(lambda: bool(app.screen.query("#workspace-help-copy")), timeout=2)
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home_screen, timeout=2)
+    search.focus()
 
 
 async def test_home_help_works_with_mouse_and_keyboard_without_color(

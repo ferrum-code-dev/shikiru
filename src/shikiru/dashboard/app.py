@@ -92,10 +92,12 @@ _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
 HOME_SPLIT_MIN_COLUMNS = 100
 SHORT_PANE_MAX_ROWS = 18
+FOCUS_TINY_PANE_MAX_ROWS = 8
 FOCUS_SUMMARY_MAX_ROWS = 12
 FOCUS_SHORT_SUMMARY_MAX_ROWS = 3
 FOCUS_MAIN_MIN_ROWS = 3
 FOCUS_MIN_TASK_LIST_ROWS = 9
+FOCUS_TINY_TASK_LIST_ROWS = 3
 FOCUS_COMMAND_STATUS_ROWS = 1
 FOCUS_READOUT_BORDER_ROWS = 1
 FOCUS_FOOTER_HEIGHT = 2
@@ -315,26 +317,17 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
 
     def __init__(
         self,
-        current_section: str,
         task_id: str | None,
-        expanded: bool,
         widget_names: Sequence[str],
-        *,
-        compact_focus: bool = False,
-        task_detail: bool = False,
     ) -> None:
         super().__init__()
-        self._current_section = current_section
         self._task_id = task_id
-        self._expanded = expanded
         self._widget_names = tuple(widget_names)
-        self._compact_focus = compact_focus
-        self._task_detail = task_detail
 
     def compose(self) -> ComposeResult:
-        """Render help for the current workspace section and its available keys."""
-        view = f"Task workspace {self._task_id}" if self._task_id else "Home workspace"
-        if self._task_detail:
+        """Render help for Home or the selected task workspace."""
+        view = f"Task detail · {self._task_id}" if self._task_id else "Focus"
+        if self._task_id:
             lines = [
                 "Escape: return to the compact task summary or Home",
                 "v: choose reports, request, evidence, relationships, workspace or plugins",
@@ -345,7 +338,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Command Applied means queued/applied by the engine;",
                 "an agent may consume guidance later",
             ]
-        elif self._compact_focus:
+        else:
             lines = [
                 "Up/Down: select a task",
                 "Enter: inspect selected task",
@@ -356,29 +349,16 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Mouse: select or open a task; Views includes Actions and Help",
                 "?: show this help",
             ]
-        else:
-            lines = [
-                "Tab / Shift+Tab: move between sections",
-                "Mouse: choose a section",
-                "z: expand the focused section",
-                "Escape returns to the section list."
-                if self._expanded
-                else "Escape closes this help.",
-                "Ctrl+P: open operator actions",
-                "?: show this help",
-            ]
         if _WIDGET_ESCALATIONS in self._widget_names:
             lines.append("Escalations: Up/Down select, o opens evidence, r opens resolution")
         if _WIDGET_DIALOGUE in self._widget_names:
             lines.append("Dialogue: Enter opens full text")
-        if _WIDGET_QUEUE in self._widget_names:
+        if _WIDGET_QUEUE in self._widget_names and self._task_id is None:
             lines.append(
                 "Task browser: / search, Up/Down select, v opens filters, Escape clears search"
-                if self._compact_focus
-                else "Task browser: / search, Up/Down select, filters and Clear search"
             )
         with Vertical(id="workspace-help-frame"):
-            yield Label(f"Help · {view} · {self._current_section}", id=_HELP_CONTEXT)
+            yield Label(f"Help · {view}", id=_HELP_CONTEXT)
             with VerticalScroll(id="workspace-help-scroll"):
                 yield Static("\n".join(lines), id="workspace-help-copy", markup=False)
             yield Button("Close help", id=_HELP_CLOSE_BUTTON)
@@ -592,6 +572,15 @@ class DashboardApp(App[None]):
     }
     #focus-footer Button:focus { text-style: bold reverse; }
     #workspace-command-status { height: 1; padding: 0 1; color: $secondary-text; }
+    #focus-root.tiny #focus-readouts { padding: 0; border-bottom: none; }
+    #focus-root.tiny #header {
+        height: 1; padding: 0; text-wrap: nowrap; text-overflow: ellipsis;
+    }
+    #focus-root.tiny #focus-main { min-height: 3; padding: 0; }
+    #focus-root.tiny #task-browser-count { display: none; }
+    #focus-root.tiny #task-browser-list { height: 3; min-height: 2; border: none; }
+    #focus-root.tiny #task-browser-list ListItem:last-child { margin-bottom: 0; }
+    #focus-root.tiny #focus-hints { display: none; }
     """
 
     def __init__(
@@ -1068,6 +1057,8 @@ class DashboardApp(App[None]):
 
     def _apply_layout(self, width: int, height: int) -> None:
         if self._focus_task is None:
+            tiny = height <= FOCUS_TINY_PANE_MAX_ROWS
+            self.query_one("#focus-root").set_class(tiny, "tiny")
             main = self.query_one("#focus-main", Horizontal)
             was_wide = main.has_class("wide")
             wide = width >= HOME_SPLIT_MIN_COLUMNS and height > SHORT_PANE_MAX_ROWS
@@ -1075,7 +1066,9 @@ class DashboardApp(App[None]):
             main.set_class(not wide, "compact")
             readouts = self.query_one("#focus-readouts", VerticalScroll)
             self.query_one("#focus-footer").styles.height = FOCUS_FOOTER_HEIGHT
-            if height <= SHORT_PANE_MAX_ROWS:
+            if tiny:
+                readouts.styles.max_height = 1
+            elif height <= SHORT_PANE_MAX_ROWS:
                 readouts.styles.max_height = FOCUS_SHORT_SUMMARY_MAX_ROWS
             else:
                 minimum_main_height = (
@@ -1093,7 +1086,13 @@ class DashboardApp(App[None]):
                 )
             task_list = self.query("#task-browser-list")
             if task_list:
-                task_list.first().styles.height = "1fr" if wide else FOCUS_MIN_TASK_LIST_ROWS
+                task_list.first().styles.height = (
+                    "1fr"
+                    if wide
+                    else FOCUS_TINY_TASK_LIST_ROWS
+                    if tiny
+                    else FOCUS_MIN_TASK_LIST_ROWS
+                )
             if self._home_detail_panel is not None:
                 self._home_detail_panel.display = wide
                 self._home_detail_panel.styles.height = "100%" if wide else "auto"
@@ -1122,33 +1121,24 @@ class DashboardApp(App[None]):
         if self._focus_task is None:
             await self.push_screen(
                 _WorkspaceHelpScreen(
-                    "Focus",
                     None,
-                    False,
                     self._widget_names,
-                    compact_focus=True,
                 )
             )
             return
         await self.push_screen(
             _WorkspaceHelpScreen(
-                "Task detail",
                 self._focus_task,
-                False,
                 self._widget_names,
-                task_detail=True,
             )
         )
 
-    async def open_task_detail_help(self, task_id: str, *, expanded: bool) -> None:
+    async def open_task_detail_help(self, task_id: str) -> None:
         """Open help with the selected task and current detail context."""
         await self.push_screen(
             _WorkspaceHelpScreen(
-                "Task detail",
                 task_id,
-                expanded,
                 self._widget_names,
-                task_detail=True,
             )
         )
 

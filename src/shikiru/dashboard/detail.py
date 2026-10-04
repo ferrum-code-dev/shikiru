@@ -76,6 +76,9 @@ TASK_DETAIL_CONTEXT_INFO = "task-detail-context-info"
 TASK_DETAIL_HINTS = "task-detail-hints"
 TASK_DETAIL_VIEWS_BUTTON = "task-detail-views"
 TASK_DETAIL_VIEWS_OPEN_BUTTON = "task-detail-views-open"
+TASK_DETAIL_VIEWS_CLOSE_BUTTON = "task-detail-views-close"
+TASK_DETAIL_VIEWS_CONTENT = "task-detail-views-content"
+TASK_DETAIL_VIEWS_TINY_MAX_ROWS = 8
 TASK_DETAIL_VIEWS_KEY = "v"
 TASK_USAGE_KEY = "u"
 TASK_DETAIL_HELP_KEY = "question_mark"
@@ -717,7 +720,6 @@ class TaskDetailPanel(Vertical):
             return
         await cast("DashboardApp", self.app).open_task_detail_help(
             self._task_id,
-            expanded=self._active_view != TASK_VIEW_SUMMARY,
         )
 
     @property
@@ -1195,6 +1197,12 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
         border: solid $neutral-border; background: $surface; color: $primary-text;
     }
     #task-detail-views-frame Select { width: 100%; }
+    #task-detail-views-content { height: auto; max-height: 1fr; min-height: 0; }
+    #task-detail-views-heading { width: 100%; height: auto; }
+    #task-detail-views-title {
+        width: 1fr; height: 1; text-wrap: nowrap; text-overflow: ellipsis;
+    }
+    #task-detail-views-close { width: 9; min-width: 9; height: auto; padding: 0 1; }
     #task-detail-views-open { width: 100%; height: auto; min-width: 1; padding: 0; }
     """
 
@@ -1204,16 +1212,31 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
         self._choices = (*TASK_VIEW_CHOICES, *extra_choices)
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="task-detail-views-frame"):
-            yield Static(f"Task views · {self._task_id}", markup=False)
-            yield Select(self._choices, value=TASK_VIEW_USAGE, id="task-detail-view-choice")
-            yield Button("Open", id=TASK_DETAIL_VIEWS_OPEN_BUTTON)
+        with Vertical(id="task-detail-views-frame"):
+            with Horizontal(id="task-detail-views-heading"):
+                yield Static(
+                    f"Task views · {self._task_id}", id="task-detail-views-title", markup=False
+                )
+                yield Button("Close", id=TASK_DETAIL_VIEWS_CLOSE_BUTTON)
+            with VerticalScroll(id=TASK_DETAIL_VIEWS_CONTENT):
+                yield Select(self._choices, value=TASK_VIEW_USAGE, id="task-detail-view-choice")
+                yield Button("Open", id=TASK_DETAIL_VIEWS_OPEN_BUTTON)
 
     async def on_mount(self) -> None:
+        self._apply_tiny_layout(self.size.height)
         self.set_focus(cast("Select[str]", self.query_one("#task-detail-view-choice", Select)))
 
+    def on_resize(self, event: events.Resize) -> None:
+        self._apply_tiny_layout(event.size.height)
+
+    def _apply_tiny_layout(self, height: int) -> None:
+        frame = self.query_one("#task-detail-views-frame", Vertical)
+        frame.styles.height = height if height <= TASK_DETAIL_VIEWS_TINY_MAX_ROWS else "auto"
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == TASK_DETAIL_VIEWS_OPEN_BUTTON:
+        if event.button.id == TASK_DETAIL_VIEWS_CLOSE_BUTTON:
+            self.dismiss(None)
+        elif event.button.id == TASK_DETAIL_VIEWS_OPEN_BUTTON:
             selected = cast("Select[str]", self.query_one("#task-detail-view-choice", Select)).value
             self.dismiss(selected if isinstance(selected, str) else None)
 

@@ -43,6 +43,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_SITUATION,
     TASK_DETAIL_TIMELINE_TURN,
     TASK_DETAIL_VIEWS_BUTTON,
+    TASK_DETAIL_VIEWS_CLOSE_BUTTON,
     TASK_VIEW_ACTIONS,
     TASK_VIEW_CONTEXT,
     TASK_VIEW_EVIDENCE,
@@ -50,6 +51,7 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_USAGE,
     TASK_VIEW_WORKSPACE,
+    TaskDetailPanel,
     TaskDetailScreen,
     TaskDetailViewsScreen,
 )
@@ -1630,6 +1632,47 @@ async def test_pushed_task_detail_ctrl_p_carries_task_context(
         reader.close()
 
 
+async def _close_task_views_preserving_evidence_at_narrow_sizes(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task_id: str,
+    queue: CommandQueue,
+    pending_before: list[QueuedCommand],
+) -> None:
+    workspace_screen = app.screen
+    panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+    await _open_task_view(app, pilot, TASK_VIEW_EVIDENCE)
+    timeline_turn = app.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
+    timeline_turn.value = "3"
+    body = app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+    body.scroll_to_widget(timeline_turn, animate=False)
+    await pilot.wait_for_scheduled_animations()
+    await pilot.pause()
+    reading_position = body.scroll_target_y
+    assert queue.pending() == pending_before
+
+    for width, height in ((36, 20), (20, 8)):
+        if (app.size.width, app.size.height) != (width, height):
+            await pilot.resize_terminal(width, height)
+            await pilot.wait_for_scheduled_animations()
+        await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+        await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+        await pilot.wait_for_scheduled_animations()
+        close_button = app.screen.query_one(f"#{TASK_DETAIL_VIEWS_CLOSE_BUTTON}", Button)
+        assert close_button.visible
+        assert close_button.region.x >= 0
+        assert close_button.region.right <= width
+        assert close_button.region.y >= 0
+        assert close_button.region.bottom <= height
+        assert await pilot.click(close_button, offset=(1, 1))
+        await wait_until(lambda: app.screen is workspace_screen, timeout=2)
+        assert panel.active_view == TASK_VIEW_EVIDENCE
+        assert task_id in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+        assert timeline_turn.value == "3"
+        assert body.scroll_target_y == reading_position
+        assert queue.pending() == pending_before
+
+
 async def test_task_detail_views_mouse_opens_task_actions_and_help(
     connection: Connection,
     database: Database,
@@ -1647,7 +1690,7 @@ async def test_task_detail_views_mouse_opens_task_actions_and_help(
 
     try:
         app = _operator_task_app(reader, project_root, task.id, queue, clock)
-        async with app.run_test(size=(100, 40)) as pilot:
+        async with app.run_test(size=(36, 20)) as pilot:
             workspace_screen = app.screen
             await wait_until(
                 lambda: (
@@ -1655,6 +1698,11 @@ async def test_task_detail_views_mouse_opens_task_actions_and_help(
                 ),
                 timeout=_BILLING_WIDGET_WAIT_SECONDS,
             )
+            await _close_task_views_preserving_evidence_at_narrow_sizes(
+                app, pilot, task.id, queue, pending_before
+            )
+            await pilot.resize_terminal(100, 40)
+            await pilot.wait_for_scheduled_animations()
             await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
             await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
             choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
