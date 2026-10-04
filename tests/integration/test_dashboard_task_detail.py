@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Button, DataTable, ListView, Select, Static, TextArea
+from textual.widgets import Button, DataTable, Input, ListView, Select, Static, TextArea
 
 import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import (
@@ -40,7 +40,9 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_SESSIONS,
     TASK_DETAIL_SITUATION,
+    TASK_DETAIL_VIEWS_ACTIONS_BUTTON,
     TASK_DETAIL_VIEWS_BUTTON,
+    TASK_DETAIL_VIEWS_HELP_BUTTON,
     TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_USAGE,
     TASK_VIEW_WORKSPACE,
@@ -64,7 +66,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.reports import TestRun as AgentTestRun
-from shikiru.domain.steps import Step, Transition
+from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, RepoState, Role, Status, Task
 from shikiru.engine.events import emit_turn_completed, emit_turn_started
 from shikiru.engine.turn_execution import TurnExecution
@@ -1617,6 +1619,58 @@ async def test_pushed_task_detail_ctrl_p_carries_task_context(
             await wait_until(lambda: bool(opened), timeout=2)
 
         assert opened == [PaletteRequest(task_id=task.id, role=Role.LEADER.value)]
+    finally:
+        reader.close()
+
+
+async def test_task_detail_views_mouse_opens_task_actions_and_help(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Mouse task actions", mode=Mode.IMPLEMENT)
+    tasks = TaskStore(connection, clock)
+    tasks.set_slot(task.id, 0)
+    tasks.apply_transition(task.id, first_step(task))
+    reader = StateReader(database, SystemClock())
+    queue = CommandQueue(connection, clock)
+    pending_before = queue.pending()
+
+    try:
+        app = _operator_task_app(reader, project_root, task.id, queue, clock)
+        async with app.run_test(size=(100, 40)) as pilot:
+            workspace_screen = app.screen
+            await wait_until(
+                lambda: (
+                    "Mouse task actions" in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                ),
+                timeout=_BILLING_WIDGET_WAIT_SECONDS,
+            )
+            await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+            await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+            await pilot.click(f"#{TASK_DETAIL_VIEWS_ACTIONS_BUTTON}")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            palette = cast("PaletteScreen", app.screen)
+            assert palette.query_one("#task-id", Input).value == task.id
+            assert cast("Select[str]", palette.query_one("#role", Select)).value == (
+                Role.IMPLEMENTER.value
+            )
+            assert queue.pending() == pending_before
+
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is workspace_screen, timeout=2)
+            await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+            await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+            await pilot.click(f"#{TASK_DETAIL_VIEWS_HELP_BUTTON}")
+            await wait_until(
+                lambda: task.id in _text(app.screen.query_one("#workspace-help-context", Static)),
+                timeout=2,
+            )
+            assert queue.pending() == pending_before
+            await pilot.click("#workspace-help-close")
+            await wait_until(lambda: app.screen is workspace_screen, timeout=2)
     finally:
         reader.close()
 

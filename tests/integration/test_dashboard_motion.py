@@ -70,6 +70,7 @@ if TYPE_CHECKING:
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _TURN_NAME = "001-implement-i1"
 _STALE_TURN_NAME = "000-implement-i0"
+_TASK_ACTIVITY_WAIT_SECONDS = 2
 
 
 def _row(at: datetime, turn: str, signal: str) -> str:
@@ -209,6 +210,17 @@ def _write_session_start_only_log(project_dir: Path, task: Task) -> Path:
     (role_root / CURRENT_TURN_LINK_NAME).symlink_to(turn_dir, target_is_directory=True)
     log_path = view_log_path(run_dir(project_dir, task.id), Role.IMPLEMENTER.value)
     log_path.write_text(f"{_row(_START, _TURN_NAME, VIEW_SESSION_STARTED_SIGNAL)}\n")
+    return log_path
+
+
+def _write_empty_current_turn_log(project_dir: Path, task: Task) -> Path:
+    role_root = role_dir(run_dir(project_dir, task.id), Role.IMPLEMENTER.value)
+    role_root.mkdir(parents=True)
+    turn_dir = turns_dir(project_dir, task.id) / _TURN_NAME
+    turn_dir.mkdir(parents=True)
+    (role_root / CURRENT_TURN_LINK_NAME).symlink_to(turn_dir, target_is_directory=True)
+    log_path = view_log_path(run_dir(project_dir, task.id), Role.IMPLEMENTER.value)
+    log_path.write_text("")
     return log_path
 
 
@@ -534,6 +546,79 @@ async def test_task_activity_requires_current_turn_signal_and_stays_still_withou
     static_after_tick = await static_views.task_detail(task.id, include_timeline=False)
     assert static_after_tick is not None
     assert static_after_tick.progress.panels[1].spinner_frame == static_spinner
+
+
+@pytest.mark.parametrize("animations", [True, False], ids=("motion", "static"))
+async def test_task_detail_refreshes_activity_from_current_turn_log_without_database_changes(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    animations: bool,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    base_settings = _motion_settings(project_dir)
+    settings = base_settings.model_copy(
+        update={"dashboard": base_settings.dashboard.model_copy(update={"animations": animations})}
+    )
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, task)
+        log_path = _write_empty_current_turn_log(project_dir, task)
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        app = DashboardApp(
+            focus_task=task.id,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+            timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
+        )
+        async with app.run_test(size=(90, 40)):
+            progress = app.query_one("#task-detail-progress", Static)
+            await wait_until(
+                lambda: "Activity · no current signal" in plain_text(progress.content),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            tick = 1 / settings.dashboard.motion.refresh_hz
+            signal_at = clock.now()
+            log_path.write_text(f"{_row(signal_at, _TURN_NAME, VIEW_SESSION_STARTED_SIGNAL)}\n")
+            clock.advance(tick)
+            await wait_until(
+                lambda: "signal observed" in plain_text(progress.content),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            observed = plain_text(progress.content)
+
+            if animations:
+                clock.advance(tick)
+                await wait_until(
+                    lambda: (
+                        "signal observed" in plain_text(progress.content)
+                        and plain_text(progress.content) != observed
+                    ),
+                    timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                )
+            else:
+                clock.advance(settings.orchestration.timeouts.stall - 2 * tick)
+                await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+                assert plain_text(progress.content) == observed
+
+            clock.advance(settings.orchestration.timeouts.stall)
+            await wait_until(
+                lambda: "Activity · stalled" in plain_text(progress.content),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+    finally:
+        reader.close()
 
 
 async def test_task_activity_does_not_claim_a_signal_during_a_hold(

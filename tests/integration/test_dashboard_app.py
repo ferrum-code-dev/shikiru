@@ -8,7 +8,17 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from textual.containers import Horizontal, VerticalScroll
 from textual.geometry import Region
-from textual.widgets import Button, DataTable, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import (
+    Button,
+    DataTable,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+    TextArea,
+)
 
 import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import (
@@ -30,6 +40,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_CRITERIA,
     TASK_DETAIL_EVIDENCE,
     TASK_DETAIL_FACTS,
+    TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_PROGRESS,
     TASK_DETAIL_REPORT,
@@ -1490,6 +1501,71 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
             assert await pilot.click("#workspace-help-close", offset=(6, 1))
             await pilot.pause()
             assert app.screen is workspace_screen
+    finally:
+        reader.close()
+
+
+async def test_home_views_mouse_opens_selected_task_actions_and_help(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Home contextual action", mode=Mode.IMPLEMENT)
+    tasks = TaskStore(connection, clock)
+    tasks.set_slot(task.id, 0)
+    tasks.apply_transition(task.id, first_step(task))
+    reader = StateReader(database, SystemClock())
+    queue = CommandQueue(connection, clock)
+    pending_before = queue.pending()
+    apps: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        palette = _palette_screen_for_app(reader, connection, project_dir, clock, request)
+        await apps[0].push_screen(palette)
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue"],
+            open_palette_context=open_palette_context,
+        )
+        apps.append(app)
+        async with app.run_test(size=(120, 40)) as pilot:
+            home_screen = app.screen
+            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            await wait_until(
+                lambda: task.title in _rendered_text(identity),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+
+            await pilot.click("#focus-views")
+            await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
+            await _choose_focus_view(app, pilot, "Operator actions", mouse=True)
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+            palette = cast("PaletteScreen", app.screen)
+            assert palette.query_one("#task-id", Input).value == task.id
+            assert cast("Select[str]", palette.query_one("#role", Select)).value == (
+                Role.IMPLEMENTER.value
+            )
+            assert queue.pending() == pending_before
+
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
+            await pilot.click("#focus-views")
+            await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
+            await _choose_focus_view(app, pilot, "Help", mouse=True)
+            help_context = app.screen.query_one("#workspace-help-context", Static)
+            await wait_until(
+                lambda: task.id in _rendered_text(help_context),
+                timeout=2,
+            )
+            assert task.title in _rendered_text(identity)
+            assert queue.pending() == pending_before
+            await pilot.click("#workspace-help-close")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
     finally:
         reader.close()
 

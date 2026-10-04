@@ -75,6 +75,8 @@ TASK_DETAIL_CONTEXT = "task-detail-context"
 TASK_DETAIL_HINTS = "task-detail-hints"
 TASK_DETAIL_VIEWS_BUTTON = "task-detail-views"
 TASK_DETAIL_VIEWS_OPEN_BUTTON = "task-detail-views-open"
+TASK_DETAIL_VIEWS_ACTIONS_BUTTON = "task-detail-views-open-actions"
+TASK_DETAIL_VIEWS_HELP_BUTTON = "task-detail-views-help"
 TASK_DETAIL_VIEWS_CANCEL_BUTTON = "task-detail-views-cancel"
 TASK_DETAIL_VIEWS_KEY = "v"
 TASK_USAGE_KEY = "u"
@@ -102,6 +104,8 @@ TASK_DETAIL_TIMELINE_TITLE = "task-detail-timeline-title"
 TASK_DETAIL_TIMELINE_ENTRY = "task-detail-timeline-entry"
 TASK_DETAIL_TIMELINE_SELECTED = "task-detail-timeline-selected"
 TASK_VIEW_SUMMARY = "task-summary"
+TASK_VIEW_ACTIONS = "task-actions"
+TASK_VIEW_HELP = "task-help"
 TASK_VIEW_USAGE = "task-usage"
 TASK_VIEW_REPORTS = "task-reports"
 TASK_VIEW_REQUEST = "task-request"
@@ -267,6 +271,7 @@ class TaskDetailPanel(Vertical):
         self._timeline_selected_entry: TaskTimelineEntryView | None = None
         self._timeline_page: TaskTimelinePageView | None = None
         self._timeline_worker: Worker[None] | None = None
+        self._remove_motion_callback: Callable[[], None] | None = None
         self._timeline_request_generation = 0
         self._body_focus_generation = 0
         self._rendered_task_id: str | None = None
@@ -377,6 +382,7 @@ class TaskDetailPanel(Vertical):
         self._timeline_worker = self.run_worker(
             self._watch_timeline(), group=TASK_DETAIL_WORKER_GROUP
         )
+        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_activity)
 
     def on_unmount(self) -> None:
         if self._refresh_worker is not None:
@@ -385,6 +391,9 @@ class TaskDetailPanel(Vertical):
             self._change_worker.cancel()
         if self._timeline_worker is not None:
             self._timeline_worker.cancel()
+        if self._remove_motion_callback is not None:
+            self._remove_motion_callback()
+            self._remove_motion_callback = None
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
@@ -531,6 +540,28 @@ class TaskDetailPanel(Vertical):
             elif self._active_view == TASK_VIEW_EVIDENCE and self._timeline_following:
                 await self._refresh_timeline()
 
+    async def _refresh_activity(self) -> None:
+        if (
+            self._task_id is None
+            or self._view is None
+            or self._view.task_id != self._task_id
+            or self._active_view != TASK_VIEW_SUMMARY
+            or not self._screen_is_active()
+        ):
+            return
+        strip = next(
+            (item for item in self._widget_context.views.strips() if item.task_id == self._task_id),
+            None,
+        )
+        if strip is None:
+            return
+        activity = replace(
+            self._view,
+            progress=strip,
+            signal_observed=any(panel.spinner_frame for panel in strip.panels),
+        )
+        self.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).update(StageActivity(activity).render())
+
     async def _refresh_timeline(self) -> None:
         async with self._refresh_lock:
             if not self._screen_is_active():
@@ -666,8 +697,21 @@ class TaskDetailPanel(Vertical):
 
     async def open_palette(self) -> None:
         """Open the shared palette with this detail's current task and selected role."""
-        role = Role(self._view.acting_role) if self._view is not None else None
+        role = (
+            Role(self._view.acting_role)
+            if self._view is not None and self._view.task_id == self._task_id
+            else None
+        )
         await self._open_palette(role)
+
+    async def open_help(self) -> None:
+        """Open help scoped to the current task and detail view."""
+        if self._task_id is None:
+            return
+        await cast("DashboardApp", self.app).open_task_detail_help(
+            self._task_id,
+            expanded=self._active_view != TASK_VIEW_SUMMARY,
+        )
 
     @property
     def task_id(self) -> str | None:
@@ -700,10 +744,15 @@ class TaskDetailPanel(Vertical):
         await self._back()
 
     def _show_selected_view(self, selected: str | None) -> None:
-        self._queue_refresh()
         if selected in TASK_VIEW_WIDGETS:
+            self._queue_refresh()
             self._show_task_view(selected)
+        elif selected == TASK_VIEW_ACTIONS:
+            self.run_worker(self.open_palette(), group=TASK_DETAIL_WORKER_GROUP)
+        elif selected == TASK_VIEW_HELP:
+            self.run_worker(self.open_help(), group=TASK_DETAIL_WORKER_GROUP)
         elif selected is not None and self._widget_context.open_contextual_view is not None:
+            self._queue_refresh()
             self.run_worker(
                 self._widget_context.open_contextual_view(selected),
                 group=TASK_DETAIL_WORKER_GROUP,
@@ -1136,7 +1185,7 @@ class TaskDetailPanel(Vertical):
 
 
 class TaskDetailViewsScreen(ModalScreen[str | None]):
-    """Choose one task-scoped evidence view for the shared detail panel."""
+    """Route task detail to its views, actions or help."""
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Back")]
     DEFAULT_CSS = """
@@ -1161,6 +1210,8 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
             yield Select(self._choices, value=TASK_VIEW_USAGE, id="task-detail-view-choice")
             with Horizontal(id="task-detail-views-actions"):
                 yield Button("Open view", id=TASK_DETAIL_VIEWS_OPEN_BUTTON)
+                yield Button("Actions", id=TASK_DETAIL_VIEWS_ACTIONS_BUTTON)
+                yield Button("Help", id=TASK_DETAIL_VIEWS_HELP_BUTTON)
                 yield Button("Cancel", id=TASK_DETAIL_VIEWS_CANCEL_BUTTON)
 
     async def on_mount(self) -> None:
@@ -1170,6 +1221,10 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
         if event.button.id == TASK_DETAIL_VIEWS_OPEN_BUTTON:
             selected = cast("Select[str]", self.query_one("#task-detail-view-choice", Select)).value
             self.dismiss(selected if isinstance(selected, str) else None)
+        elif event.button.id == TASK_DETAIL_VIEWS_ACTIONS_BUTTON:
+            self.dismiss(TASK_VIEW_ACTIONS)
+        elif event.button.id == TASK_DETAIL_VIEWS_HELP_BUTTON:
+            self.dismiss(TASK_VIEW_HELP)
         elif event.button.id == TASK_DETAIL_VIEWS_CANCEL_BUTTON:
             self.dismiss(None)
 

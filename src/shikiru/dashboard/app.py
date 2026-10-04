@@ -110,6 +110,8 @@ FOCUS_REVEAL_TASK = "reveal-task"
 FOCUS_USAGE_DETAILS = "usage"
 FOCUS_TASK_FILTER_PREFIX = "filter:"
 FOCUS_CONTEXT_VIEW_WORKER = "focus-context-view"
+FOCUS_OPERATOR_ACTIONS = "operator-actions"
+FOCUS_CONTEXT_HELP = "context-help"
 EMPTY_CONTEXT_CHOICE = ""
 
 
@@ -178,6 +180,8 @@ class _ContextChoice:
     command_history: bool = False
     attention: bool = False
     reveal_task: bool = False
+    operator_actions: bool = False
+    context_help: bool = False
 
 
 class _ContextViewsScreen(ModalScreen[str]):
@@ -336,7 +340,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "v: choose reports, request, evidence, relationships, workspace or plugins",
                 "u: open task usage Details",
                 "Ctrl+P: open applicable operator actions for this task",
-                "Mouse: Views opens the same task-scoped choices",
+                "Mouse: Views offers task sections, Actions and Help",
                 "Navigation to task and role windows is under Workspace and existing role targets",
                 "Command Applied means queued/applied by the engine;",
                 "an agent may consume guidance later",
@@ -349,7 +353,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Ctrl+P: open contextual operator actions",
                 "/: search task ID or title",
                 "v: open filters, history and configured secondary views",
-                "Mouse: select or open a task; Views and Help are clickable",
+                "Mouse: select or open a task; Views includes Actions and Help",
                 "?: show this help",
             ]
         else:
@@ -799,7 +803,14 @@ class DashboardApp(App[None]):
         status.display = True
 
     def _context_choices(self) -> tuple[_ContextChoice, ...]:
-        choices: list[_ContextChoice] = []
+        choices = [
+            _ContextChoice(
+                FOCUS_OPERATOR_ACTIONS,
+                "Operator actions",
+                operator_actions=True,
+            ),
+            _ContextChoice(FOCUS_CONTEXT_HELP, "Help", context_help=True),
+        ]
         if _WIDGET_QUEUE in self._widget_plugins:
             choices.extend(
                 _ContextChoice(
@@ -912,6 +923,8 @@ class DashboardApp(App[None]):
         )
 
     async def _run_context_choice(self, choice: _ContextChoice) -> None:
+        if await self._run_special_context_choice(choice):
+            return
         if choice.task_filter is not None:
             queue = self._widget_instances.get(_WIDGET_QUEUE)
             if queue is not None:
@@ -931,6 +944,19 @@ class DashboardApp(App[None]):
                 await cast("_TaskBrowserNavigation", queue).reveal_selected_task()
             return
         await self._show_context_widget(choice)
+
+    async def _run_special_context_choice(self, choice: _ContextChoice) -> bool:
+        if choice.operator_actions:
+            await self.action_open_palette()
+            return True
+        if choice.context_help:
+            if self._home_detail_panel is not None and self._selected_task_id is not None:
+                self._home_detail_panel.select_task(self._selected_task_id)
+                await self._home_detail_panel.open_help()
+            else:
+                await self.action_show_help()
+            return True
+        return False
 
     async def _show_context_widget(self, choice: _ContextChoice) -> None:
         if choice.widget_name is None or choice.placement is None:
@@ -1089,15 +1115,7 @@ class DashboardApp(App[None]):
         """Show the bindings and current home or task workspace context."""
         panel = self._context_task_detail_panel()
         if panel is not None:
-            await self.push_screen(
-                _WorkspaceHelpScreen(
-                    "Task detail",
-                    panel.task_id,
-                    panel.active_view != TASK_VIEW_SUMMARY,
-                    self._widget_names,
-                    task_detail=True,
-                )
-            )
+            await panel.open_help()
             return
         if self._focus_task is None:
             await self.push_screen(
@@ -1115,6 +1133,18 @@ class DashboardApp(App[None]):
                 "Task detail",
                 self._focus_task,
                 False,
+                self._widget_names,
+                task_detail=True,
+            )
+        )
+
+    async def open_task_detail_help(self, task_id: str, *, expanded: bool) -> None:
+        """Open help with the selected task and current detail context."""
+        await self.push_screen(
+            _WorkspaceHelpScreen(
+                "Task detail",
+                task_id,
+                expanded,
                 self._widget_names,
                 task_detail=True,
             )
