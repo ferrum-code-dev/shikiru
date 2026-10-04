@@ -274,11 +274,11 @@ class TaskSessionView:
     cost_usd: float | None
     cost_basis: CostBasis
     context_used_pct: float | None
-    billing_mode: BillingMode = BILLING_MODE_UNKNOWN
-    billing_source: BillingSource = BILLING_SOURCE_UNKNOWN
     usage_reported: bool | None = None
     legacy_token_totals: bool = False
     legacy_cost_recorded: bool = False
+    billing_mode: BillingMode = BILLING_MODE_UNKNOWN
+    billing_source: BillingSource = BILLING_SOURCE_UNKNOWN
 
 
 @dataclass(frozen=True)

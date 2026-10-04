@@ -329,6 +329,9 @@ def billing_declaration_for(agent: Agent) -> BillingDeclaration:
     if declaration.mode not in BILLING_MODES or declaration.source not in BILLING_SOURCES:
         message = f"agent {agent.name!r} returned an unsupported billing declaration"
         raise ConfigError(message)
+    if declaration.mode != BILLING_MODE_UNKNOWN and declaration.source == BILLING_SOURCE_UNKNOWN:
+        message = f"agent {agent.name!r} declared a billing mode without its source"
+        raise ConfigError(message)
     return declaration
 
 

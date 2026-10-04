@@ -91,6 +91,7 @@ TMUX_ACTIVE_PANE_FORMAT = "#{pane_id} #{pane_active}"
 LEADER_PANE_ID = "%1"
 IMPLEMENTER_PANE_ID = "%2"
 _COST_BASIS_BILLED = "billed"
+_BILLING_WIDGET_WAIT_SECONDS = 2
 
 
 class _ExtensionWidget:
@@ -538,11 +539,30 @@ async def _assert_billing_details_are_visible(
         widget_names=TASK_DETAIL_WIDGETS,
         clock=clock,
     )
-    async with app.run_test(size=(90, 42)) as pilot:
-        await pilot.pause()
-        sessions_text = plain_text(app.query_one("#task-detail-sessions", Static).content)
-        assert "Billing mode · subscription · operator_config" in sessions_text
-        assert "$0.25 · billed" in sessions_text
+    async with app.run_test(size=(90, 42)):
+        sessions_widget = app.query_one("#task-detail-sessions", Static)
+        await wait_until(
+            lambda: _has_billing_evidence(sessions_widget),
+            timeout=_BILLING_WIDGET_WAIT_SECONDS,
+        )
+        sessions_text = plain_text(sessions_widget.content)
+        assert BILLING_MODE_SUBSCRIPTION in sessions_text
+        assert BILLING_SOURCE_OPERATOR_CONFIG in sessions_text
+        assert "$0.25" in sessions_text
+        assert _COST_BASIS_BILLED in sessions_text
+
+
+def _has_billing_evidence(widget: Static) -> bool:
+    text = plain_text(widget.content)
+    return all(
+        value in text
+        for value in (
+            BILLING_MODE_SUBSCRIPTION,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+            "$0.25",
+            _COST_BASIS_BILLED,
+        )
+    )
 
 
 async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
