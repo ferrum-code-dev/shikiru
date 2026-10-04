@@ -42,6 +42,9 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_SESSIONS,
     TASK_DETAIL_SITUATION,
+    TASK_DETAIL_TIMELINE_CATEGORY,
+    TASK_DETAIL_TIMELINE_ENTRY,
+    TASK_DETAIL_TIMELINE_ROLE,
     TASK_DETAIL_TIMELINE_TURN,
     TASK_DETAIL_VIEWS_CLOSE_BUTTON,
     TASK_VIEW_ACTIONS,
@@ -808,7 +811,7 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             assert "Used" in sessions_text
             assert "Current" not in sessions_text
             assert "codex/luna" in sessions_text
-            assert "550 input+output" in sessions_text
+            assert "session-wide 550 tokens" in sessions_text
             assert "billed $1.25" in sessions_text
             assert "legacy recorded" in sessions_text
             assert "input 500" in sessions_text
@@ -938,7 +941,7 @@ async def _assert_task_history_rendering(
         timeout=2,
     )
     sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
-    assert "session 13 input+output" in plain_text(sessions.content)
+    assert "13 tokens" in plain_text(sessions.content)
     await pilot.press("u")
     await wait_until(
         lambda: (
@@ -947,7 +950,7 @@ async def _assert_task_history_rendering(
         timeout=2,
     )
     usage_details = plain_text(sessions.content)
-    assert usage_details.count("session 13 input+output") == 1
+    assert usage_details.count("13 tokens") == 1
     assert "Session-wide cumulative totals · across models" in usage_details
     assert "codex/gpt-5" in usage_details
     assert "claude/sonnet" in usage_details
@@ -1987,6 +1990,15 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
     await _open_task_view(app, pilot, TASK_VIEW_EVIDENCE)
     timeline_turn = app.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
     timeline_turn.value = "3"
+    timeline_category = cast(
+        "Select[str]", app.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
+    )
+    timeline_category.value = TaskTimelineCategory.SIGNAL.value
+    timeline_role = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select))
+    timeline_role.value = Role.LEADER.value
+    timeline_entry = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select))
+    await wait_until(lambda: timeline_entry.value != Select.BLANK, timeout=2)
+    selected_entry = timeline_entry.value
     body = app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
     body.scroll_to_widget(timeline_turn, animate=False)
     timeline_turn.focus()
@@ -1998,7 +2010,17 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
         if (app.size.width, app.size.height) != (width, height):
             await pilot.resize_terminal(width, height)
             await pilot.wait_for_scheduled_animations()
-        app.set_focus(None)
+        timeline_turn.focus()
+        await pilot.press("right")
+        await pilot.press("v")
+        await pilot.pause()
+        assert not isinstance(app.screen, TaskDetailViewsScreen)
+        assert timeline_turn.value == "3v"
+        timeline_turn.value = "3"
+        body.scroll_to_widget(timeline_category, animate=False)
+        timeline_category.focus()
+        await pilot.pause()
+        saved_scroll_position = body.scroll_target_y
         await pilot.press("v")
         await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
         await pilot.wait_for_scheduled_animations()
@@ -2009,13 +2031,20 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
         assert close_button.region.y >= 0
         assert close_button.region.bottom <= height
         assert await pilot.click(close_button, offset=(1, 1))
-        await wait_until(lambda: app.screen is workspace_screen, timeout=2)
-        timeline_turn.focus()
-        await pilot.pause()
+        await wait_until(
+            lambda saved_scroll_position=saved_scroll_position: (
+                app.screen is workspace_screen
+                and body.scroll_target_y == saved_scroll_position
+                and app.focused is timeline_category
+            ),
+            timeout=2,
+        )
         assert panel.active_view == TASK_VIEW_EVIDENCE
         assert task_id in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
         assert timeline_turn.value == "3"
-        assert timeline_turn.region.overlaps(body.scrollable_content_region)
+        assert timeline_category.value == TaskTimelineCategory.SIGNAL.value
+        assert timeline_role.value == Role.LEADER.value
+        assert timeline_entry.value == selected_entry
         assert queue.pending() == pending_before
 
 
@@ -2030,6 +2059,11 @@ async def test_task_detail_views_mouse_opens_task_actions_and_help(
     tasks = TaskStore(connection, clock)
     tasks.set_slot(task.id, 0)
     tasks.apply_transition(task.id, first_step(task))
+    EventLog(connection, clock).append(
+        EventKind.TASK_QUEUED,
+        task_id=task.id,
+        message="queued for reading-position exercise",
+    )
     reader = StateReader(database, SystemClock())
     queue = CommandQueue(connection, clock)
     pending_before = queue.pending()
@@ -2502,7 +2536,7 @@ async def test_hand_back_and_resume_remain_explicit_while_other_holds_survive(
             queue.mark_done(first_command.id, {"role": Role.LEADER.value})
             await wait_until(
                 lambda: (
-                    "Operator owns Implementer" in _text(ownership)
+                    "Recorded operator handoff Implementer" in _text(ownership)
                     and "Leader" not in _text(ownership)
                     and Hold.PAUSED.value in _text(ownership)
                     and Hold.INTERVENTION.value in _text(ownership)
@@ -2553,7 +2587,7 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
             ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
             await wait_until(
                 lambda: (
-                    "Operator owns Leader" in _text(ownership)
+                    "Recorded operator handoff Leader" in _text(ownership)
                     and Hold.PAUSED.value in _text(ownership)
                 ),
                 timeout=2,

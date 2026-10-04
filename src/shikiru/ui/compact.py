@@ -16,12 +16,15 @@ from shikiru.agents.contracts import (
     COST_BASIS_BILLED,
     COST_BASIS_UNKNOWN,
 )
-from shikiru.domain.tasks import Role
+from shikiru.domain.tasks import Role, Status
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE
+from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import ALERT_COLOR, AMBER, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 if TYPE_CHECKING:
     from datetime import datetime, timedelta
+
+    from shikiru.ui.strip import TaskStripData
 
 GIB_FORMAT = ".1f"
 BYTES_PER_GIB = 1024**3
@@ -53,6 +56,14 @@ MILESTONE_LATER = "later"
 MILESTONE_SKIPPED = "skipped"
 MILESTONE_UNKNOWN = "unknown"
 MILESTONE_REWORK = "rework"
+NO_ACTIVE_STAGE_TEXT = {
+    Status.DONE: "Stage · complete",
+    Status.QUEUED: "Stage · not started",
+    Status.RUNNING: "Stage · setup",
+    Status.INTEGRATING: "Stage · integration setup",
+    Status.ESCALATED: "Stage · no active stage · decision held",
+    Status.CANCELLED: "Stage · no active stage · cancelled",
+}
 
 
 class _RecordedUsage(Protocol):
@@ -311,6 +322,9 @@ class _TaskDetail(Protocol):
     @property
     def milestones(self) -> tuple[_TaskMilestone, ...]: ...
 
+    @property
+    def progress(self) -> TaskStripData: ...
+
 
 class _TaskMilestone(Protocol):
     @property
@@ -473,9 +487,6 @@ def _task_usage_charges(usage: _TaskUsage) -> list[Text]:
         )
     if usage.api_cost_unreported_sessions:
         charges.append(Text(f"API unreported {usage.api_cost_unreported_sessions}"))
-    if usage.subscription_sessions:
-        label = "subscription" if usage.subscription_sessions == 1 else "subscriptions"
-        charges.append(Text(f"{usage.subscription_sessions} {label}", style=AMBER))
     if usage.unknown_billing_sessions:
         charges.append(
             Text(
@@ -937,7 +948,7 @@ class AgentUsageRow:
         charge, charge_style = _compact_session_charge(session)
         details = Text.assemble(
             (identity, STEEL_BLUE),
-            (f" · session {tokens}", SECONDARY_TEXT_COLOR),
+            (f" · {tokens}", SECONDARY_TEXT_COLOR),
             (f" · {charge}", charge_style),
         )
         return Group(
@@ -948,13 +959,13 @@ class AgentUsageRow:
 
 def _session_token_summary(session: _TaskSession) -> str:
     if session.usage_reported is False:
-        return "tokens unknown"
+        return "session tokens unknown"
     total = _compact_count(session.input_tokens + session.output_tokens)
     if session.usage_reported is True:
-        return f"{total} input+output"
+        return f"session-wide {total} tokens"
     if session.legacy_token_totals:
-        return f"{total} input+output legacy"
-    return "tokens unknown"
+        return f"session-wide {total} tokens legacy"
+    return "session tokens unknown"
 
 
 def _session_cost_text(session: _TaskSession) -> tuple[str, str]:
@@ -1122,7 +1133,7 @@ class StageActivity:
         if not task.milestones:
             milestone_line.append("Workflow milestones unavailable", style=SECONDARY_TEXT_COLOR)
         if task.actual_stage is None:
-            stage_line = Text("Stage · not started", style=SECONDARY_TEXT_COLOR)
+            stage_line = Text(_no_active_stage_text(task.status), style=SECONDARY_TEXT_COLOR)
         else:
             stage = task.actual_stage.replace("_", " ").title()
             end = task.stage_ended_at or now
@@ -1135,7 +1146,13 @@ class StageActivity:
                 (f"{task.acting_role.title()} · ", SECONDARY_TEXT_COLOR),
                 (f"{stage} · {elapsed}", STEEL_BLUE),
             )
+            if any(panel.state is PanelState.STALLED for panel in task.progress.panels):
+                stage_line.append(" · stalled", style=AMBER)
         return Group(milestone_line, stage_line)
+
+
+def _no_active_stage_text(status: str) -> str:
+    return NO_ACTIVE_STAGE_TEXT[Status(status)]
 
 
 def _milestone_marker(state: str) -> tuple[str, str]:
@@ -1153,7 +1170,10 @@ def _milestone_marker(state: str) -> tuple[str, str]:
 
 
 def _duration_text(duration: timedelta) -> str:
-    total_seconds = max(int(duration.total_seconds()), 0)
+    elapsed = duration.total_seconds()
+    if elapsed < 0:
+        return "future timestamp"
+    total_seconds = int(elapsed)
     if total_seconds < SECONDS_PER_MINUTE:
         return f"{total_seconds}s"
     if total_seconds < SECONDS_PER_HOUR:

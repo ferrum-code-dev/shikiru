@@ -31,7 +31,8 @@ from shikiru.ui.compact import (
     TaskUsageMetric,
     task_signal_text,
 )
-from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, SPINNER_FRAMES
+from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_STALLED
+from shikiru.ui.strip import PanelState
 
 if TYPE_CHECKING:
     from textual import events
@@ -193,6 +194,14 @@ TERMINAL_TASK_STATES = {
     Status.DONE.value: "✓ Done",
     Status.CANCELLED.value: "○ Cancelled",
     Status.QUEUED.value: "· Queued",
+}
+ACTIVE_STAGE_LABELS = {
+    "triage": "Triaging",
+    "plan": "Planning",
+    "implement": "Implementing",
+    "consult": "Consulting",
+    "verify": "Verifying",
+    "integrate": "Integrating",
 }
 
 
@@ -650,12 +659,15 @@ class TaskDetailPanel(Vertical):
             view,
             progress=strip,
             signal_observed=any(panel.spinner_frame for panel in strip.panels),
-            actual_stage_started_at=(strip.actual_step_started_at or view.actual_stage_started_at),
+            actual_stage_started_at=strip.actual_step_started_at,
             **signal_values,
         )
 
     def _render_activity(self, view: TaskDetailView) -> None:
         now = self._widget_context.clock.now()
+        self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(
+            f"{view.task_id} · {view.title}\n{_task_state_line(view)}"
+        )
         self.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).update(StageActivity(view).render(now))
         self.query_one(f"#{TASK_DETAIL_SIGNAL}", Static).update(task_signal_text(view, now))
 
@@ -1284,8 +1296,14 @@ class TaskDetailPanel(Vertical):
     def _render_ownership(self, view: TaskDetailView) -> None:
         ownership_lines: list[str] = []
         if view.ownership:
+            owner_label = (
+                "Operator owns"
+                if view.status in {Status.RUNNING.value, Status.INTEGRATING.value}
+                and view.actual_stage is not None
+                else "Recorded operator handoff"
+            )
             ownership_lines.append(
-                f"Operator owns {', '.join(role.title() for role in view.ownership)}"
+                f"{owner_label} {', '.join(role.title() for role in view.ownership)}"
             )
         if view.holds:
             ownership_lines.append(f"Holds · {', '.join(view.holds)}")
@@ -1654,19 +1672,54 @@ def _workspace_text(view: TaskDetailView) -> str:
 
 def _task_state_line(view: TaskDetailView) -> str:
     terminal = TERMINAL_TASK_STATES.get(view.status)
-    if terminal is not None:
-        return terminal
-    state = view.status.title()
     marker = GLYPH_CURRENT_STAGE
-    if Hold.PAUSED.value in view.holds:
-        state, marker = f"Paused · {state}", "="
-    elif Hold.INTERVENTION.value in view.holds:
-        state, marker = f"Intervention hold · {state}", "="
-    elif view.ownership:
-        state, marker = f"Operator-owned · {state}", "@"
-    elif view.signal_observed and view.status in {Status.RUNNING.value, Status.INTEGRATING.value}:
-        marker = SPINNER_FRAMES[0]
+    state = (
+        ACTIVE_STAGE_LABELS.get(view.actual_stage, view.actual_stage.title())
+        if view.actual_stage is not None
+        else terminal.split(" ", maxsplit=1)[1]
+        if terminal is not None
+        else view.status.title()
+    )
+    labels: list[str] = []
+    if view.status == Status.ESCALATED.value:
+        labels.append("Decision hold")
+    labels.extend(_hold_label(hold) for hold in view.holds)
+    current_ownership = (
+        view.ownership
+        if view.status in {Status.RUNNING.value, Status.INTEGRATING.value}
+        and view.actual_stage is not None
+        else ()
+    )
+    if current_ownership:
+        labels.append("Operator-owned")
+    if labels:
+        marker = "@" if current_ownership else "=" if view.holds else "!"
+        state = " · ".join((*labels, state))
+    elif terminal is not None:
+        marker = terminal.split(" ", maxsplit=1)[0]
+    else:
+        active_panel = next(
+            (
+                panel
+                for panel in view.progress.panels
+                if panel.state in {PanelState.ACTIVE, PanelState.STALLED}
+            ),
+            None,
+        )
+        if active_panel is not None:
+            if active_panel.state is PanelState.STALLED:
+                marker = GLYPH_STALLED
+            elif active_panel.spinner_frame:
+                marker = active_panel.spinner_frame
     return f"{marker} {state}"
+
+
+def _hold_label(hold: str) -> str:
+    if hold == Hold.PAUSED.value:
+        return "Paused"
+    if hold == Hold.INTERVENTION.value:
+        return "Intervention hold"
+    return f"{hold.replace('_', ' ').title()} hold"
 
 
 def _task_situation(view: TaskDetailView) -> str:
@@ -1739,12 +1792,19 @@ def _sentence(value: str) -> str:
 def _session_role_state(view: TaskDetailView, session: TaskSessionView) -> str:
     if session.run_id is None:
         return SESSION_STATE_USED
-    if session.status == RunStatus.TAKEN_OVER.value and session.role in view.ownership:
+    active_task = view.status in {Status.RUNNING.value, Status.INTEGRATING.value}
+    if (
+        active_task
+        and view.actual_stage is not None
+        and session.status == RunStatus.TAKEN_OVER.value
+        and session.role in view.ownership
+    ):
         return SESSION_STATE_CURRENT
     if (
         session.status == RunStatus.LIVE.value
         and session.role == view.acting_role
-        and view.status in {Status.RUNNING.value, Status.INTEGRATING.value}
+        and active_task
+        and view.actual_stage is not None
         and not view.holds
         and view.wait_reason is None
     ):
@@ -1758,13 +1818,28 @@ def _summary_sessions(view: TaskDetailView) -> tuple[TaskSessionView, ...]:
         for session in view.sessions
         if _session_role_state(view, session) == SESSION_STATE_CURRENT
     ]
+    current = _ordered_sessions(current)
     current_run_ids = {session.run_id for session in current}
     latest_used_by_role: dict[str, TaskSessionView] = {}
-    for session in view.sessions:
+    for session in _ordered_sessions(list(view.sessions)):
         if session.role not in latest_used_by_role and session.run_id not in current_run_ids:
             latest_used_by_role[session.role] = session
-    sessions = [*latest_used_by_role.values(), *current]
-    return tuple(sorted(sessions, key=lambda session: session.run_id or 0))
+    used = _ordered_sessions(list(latest_used_by_role.values()))
+    return (*current, *used)
+
+
+def _ordered_sessions(sessions: list[TaskSessionView]) -> list[TaskSessionView]:
+    return sorted(
+        sessions,
+        key=lambda session: (
+            session.run_id if session.run_id is not None else -1,
+            session.role,
+            session.agent,
+            session.model,
+            session.session_id or "",
+        ),
+        reverse=True,
+    )
 
 
 def _sessions_text(view: TaskDetailView, *, detailed: bool) -> Group:

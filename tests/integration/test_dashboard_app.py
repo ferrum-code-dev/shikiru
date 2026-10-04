@@ -3,6 +3,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -71,7 +72,7 @@ from shikiru.dashboard.detail import (
     TaskDetailScreen,
 )
 from shikiru.dashboard.palette import PaletteScreen
-from shikiru.domain.commands import Prioritize, Stop
+from shikiru.domain.commands import Prioritize, Stop, Submit
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -146,7 +147,8 @@ _TASK99_SUBSCRIPTION_INPUT_TOKENS = 683
 _TASK99_SUBSCRIPTION_OUTPUT_TOKENS = 149
 _TASK99_SUBSCRIPTION_CACHE_READ_TOKENS = 37
 _TASK99_SUBSCRIPTION_CACHE_WRITE_TOKENS = 8
-_TASK99_SELECTED_TITLE = "Verify compact task inspector"
+_TASK99_SELECTED_TITLE = "Verify compact task"
+_TASK99_LONG_TITLE = "A deliberately long recorded task title that wraps on compact Home"
 _TASK99_SIGNAL_ROW = "ToolStarted"
 _TASK99_SIGNAL_NAME = "pytest"
 _TASK99_CURRENT_TURN = "03-verify-i1"
@@ -483,14 +485,14 @@ def _record_task99_other_tasks(
     connection: Connection,
     clock: FakeClock,
     verifying_task_id: str,
-) -> str:
+) -> tuple[str, str]:
     tasks = TaskStore(connection, clock)
     runs = RunStore(connection, clock)
     events = EventLog(connection, clock)
     decision = seed_task(
         connection,
         clock,
-        title="Choose the recorded recovery path",
+        title="Choose recovery",
         mode=Mode.IMPLEMENT,
     )
     decision = tasks.require(decision.id)
@@ -507,24 +509,24 @@ def _record_task99_other_tasks(
         options=options_for(EscalationReason.DECISION_REQUIRED),
     )
 
-    waiting = seed_task(connection, clock, title="Wait for verification dependency")
+    waiting = seed_task(connection, clock, title="Wait dependency")
     tasks.set_depends_on(waiting.id, (verifying_task_id,))
     tasks.set_wait_reason(waiting.id, WaitReason.DEPENDENCY)
-    paused = seed_task(connection, clock, title="Paused recorded follow-up")
+    paused = seed_task(connection, clock, title="Paused follow-up")
     tasks.set_holds(paused.id, frozenset({Hold.PAUSED}))
-    owned = seed_task(connection, clock, title="Operator-owned recorded follow-up")
+    owned = seed_task(connection, clock, title="Owned follow-up")
     tasks.apply_transition(owned.id, first_step(owned))
     owned_run = runs.start(owned.id, Role.LEADER, Rung("claude", "sonnet", "medium"))
     runs.mark_taken_over(owned_run.id)
     tasks.set_holds(owned.id, frozenset({Hold.INTERVENTION}))
-    seed_task(connection, clock, title="Queued recorded follow-up")
-    recent = seed_task(connection, clock, title="Recently completed recorded task")
+    seed_task(connection, clock, title="Queued follow-up")
+    recent = seed_task(connection, clock, title="Recent Done")
     tasks.apply_transition(
         recent.id,
         Transition.stay(recent, step=None, status=Status.DONE),
     )
     events.append(EventKind.TASK_DONE, task_id=recent.id, message="Task completed")
-    return decision.id
+    return decision.id, recent.id
 
 
 def _record_task99_population(
@@ -532,17 +534,27 @@ def _record_task99_population(
     project_dir: Path,
     clock: FakeClock,
     settings: Settings,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     task = _record_task99_triage(connection, project_dir, clock, settings)
     task, _ = _record_task99_implementation(connection, project_dir, clock, settings, task)
     _record_task99_verification(connection, project_dir, clock, task)
-    decision_id = _record_task99_other_tasks(connection, clock, task.id)
-    return task.id, decision_id
+    decision_id, recent_id = _record_task99_other_tasks(connection, clock, task.id)
+    queue = CommandQueue(connection, clock)
+    for queued in queue.pending():
+        assert isinstance(queued.command, Submit)
+        assert queued.command.task_id is not None
+        queue.mark_done(queued.id, {"task_id": queued.command.task_id})
+    return task.id, decision_id, recent_id
 
 
 def _capture_task99(app: DashboardApp, name: str) -> Path:
     _TASK99_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    path = _TASK99_REVIEW_DIR / name
+    output_kind = (
+        "color"
+        if os.environ.get("TERM") == "xterm-256color" and "NO_COLOR" not in os.environ
+        else "mono"
+    )
+    path = _TASK99_REVIEW_DIR / name.replace("-color.svg", f"-{output_kind}.svg")
     path.write_text(app.export_screenshot(), encoding="utf-8")
     return path
 
@@ -607,6 +619,7 @@ async def _capture_task99_home_size(
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
         assert "Verify" in _task99_widget_text(progress), _task99_widget_text(progress)
+        assert "Verifying" in _task99_widget_text(identity), _task99_widget_text(identity)
         assert _TASK99_SIGNAL_ROW in _task99_widget_text(signal), _task99_widget_text(signal)
         assert f"{Role.LEADER.value}/{_TASK99_CURRENT_TURN}" in _task99_widget_text(signal)
         assert "Leader" in _task99_widget_text(sessions), _task99_widget_text(sessions)
@@ -803,7 +816,7 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_TEST_START)
     settings = _task99_settings(project_dir)
-    selected_task_id, decision_task_id = _record_task99_population(
+    selected_task_id, decision_task_id, recent_task_id = _record_task99_population(
         connection,
         project_dir,
         clock,
@@ -839,6 +852,29 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
                 selected_task_id=selected_task_id,
                 size=size,
             )
+        recent = TaskStore(connection, clock).require(recent_task_id)
+        TaskStore(connection, clock).apply_transition(
+            recent.id,
+            replace(
+                Transition.stay(recent, step=None, status=Status.DONE),
+                title=_TASK99_LONG_TITLE,
+            ),
+        )
+        wrap_app = _app(
+            reader,
+            project_dir,
+            widget_names=["header", "queue", "escalations", "usage", "resources"],
+            services=StubServices(engine_running=False),
+            clock=clock,
+            settings=settings,
+        )
+        async with wrap_app.run_test(size=_STANDARD_HOME_SIZE):
+            await wait_until(
+                lambda: bool(wrap_app.query(f"#task-row-{recent_task_id}")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await _select_home_task(wrap_app, recent_task_id)
+            _capture_task99(wrap_app, "home-long-title-wrap-100x35-color.svg")
     finally:
         reader.close()
 

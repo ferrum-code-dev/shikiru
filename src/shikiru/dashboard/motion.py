@@ -17,7 +17,7 @@ from shikiru.domain.motion import (
 )
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME
 from shikiru.domain.runs import RunStatus
-from shikiru.domain.steps import ACTING_ROLE
+from shikiru.domain.steps import ACTING_ROLE, Step
 from shikiru.domain.tasks import Role, Status, Task
 from shikiru.paths import run_dir
 from shikiru.view_log import TURN_DIR_ITERATION_MARKER, TURN_DIR_SEPARATOR, view_log_path
@@ -175,14 +175,26 @@ class DashboardMotion:
         turn_active = False
         stamp: MotionStamp | None = None
         role = ACTING_ROLE.get(task.step) if task.step is not None else None
-        for event in events:
+        latest_stage_entry = next(
+            (event for event in reversed(events) if event.kind is EventKind.STEP_STARTED),
+            None,
+        )
+        if latest_stage_entry is not None:
+            step_value = latest_stage_entry.data.get("step")
+            iteration = latest_stage_entry.data.get("iteration")
+            try:
+                entry_step = Step(step_value) if isinstance(step_value, str) else None
+            except ValueError:
+                entry_step = None
             if (
-                event.kind is EventKind.STEP_STARTED
-                and task.step is not None
-                and event.data["step"] == task.step.value
+                task.step is not None
+                and entry_step is task.step
+                and type(iteration) is int
+                and iteration == task.iteration
             ):
-                step_started_at = event.ts
-                actual_step_started_at = event.ts
+                actual_step_started_at = latest_stage_entry.ts
+                step_started_at = latest_stage_entry.ts
+        for event in events:
             if event.kind is EventKind.VERDICT:
                 stamp = MotionStamp(
                     event.ts,

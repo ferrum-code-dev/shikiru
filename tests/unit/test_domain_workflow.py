@@ -24,6 +24,9 @@ _FIRST_EVENT_ID = 1
 _SECOND_EVENT_ID = 2
 _THIRD_EVENT_ID = 3
 _FOURTH_EVENT_ID = 4
+_FIFTH_EVENT_ID = 5
+_SIXTH_EVENT_ID = 6
+_SEVENTH_EVENT_ID = 7
 _CURRENT_ITERATION = 2
 _PREVIOUS_ITERATION = 1
 
@@ -193,6 +196,88 @@ def test_prior_iteration_report_does_not_complete_reentered_stage() -> None:
 
     assert _stage_states(progress)[Step.IMPLEMENT] is WorkflowMilestoneState.UNKNOWN
     assert _stage_states(progress)[Step.VERIFY] is WorkflowMilestoneState.CURRENT
+
+
+@pytest.mark.parametrize(
+    ("current_turn_started", "report_turn", "expected"),
+    [
+        pytest.param(False, "implement-before-reentry", WorkflowMilestoneState.UNKNOWN, id="old"),
+        pytest.param(True, "implement-after-reentry", WorkflowMilestoneState.DONE, id="current"),
+    ],
+)
+def test_report_completion_is_bound_to_the_latest_same_iteration_stage_entry(
+    current_turn_started: bool,
+    report_turn: str,
+    expected: WorkflowMilestoneState,
+) -> None:
+    events = [
+        _event(_FIRST_EVENT_ID, EventKind.TASK_QUEUED),
+        _event(
+            _SECOND_EVENT_ID,
+            EventKind.STEP_STARTED,
+            step=Step.IMPLEMENT,
+            iteration=_CURRENT_ITERATION,
+        ),
+        _event(
+            _THIRD_EVENT_ID,
+            EventKind.TURN_STARTED,
+            step=Step.IMPLEMENT,
+            iteration=_CURRENT_ITERATION,
+            turn="implement-before-reentry",
+        ),
+        _event(
+            _FOURTH_EVENT_ID,
+            EventKind.STEP_STARTED,
+            step=Step.CONSULT,
+            iteration=_CURRENT_ITERATION,
+        ),
+        _event(
+            _FIFTH_EVENT_ID,
+            EventKind.STEP_STARTED,
+            step=Step.IMPLEMENT,
+            iteration=_CURRENT_ITERATION,
+        ),
+    ]
+    if current_turn_started:
+        events.append(
+            _event(
+                _SIXTH_EVENT_ID,
+                EventKind.TURN_STARTED,
+                step=Step.IMPLEMENT,
+                iteration=_CURRENT_ITERATION,
+                turn="implement-after-reentry",
+            )
+        )
+    events.append(
+        _event(
+            _SEVENTH_EVENT_ID,
+            EventKind.STEP_STARTED,
+            step=Step.CONSULT,
+            iteration=_CURRENT_ITERATION,
+        )
+    )
+    report = ImplementationReport(
+        status="completed",
+        summary="Recorded implementation report.",
+        commits=[],
+        tests=[],
+        trackers_updated=True,
+    )
+    progress = project_workflow(
+        make_task(mode=Mode.IMPLEMENT, step=Step.CONSULT, iteration=_CURRENT_ITERATION),
+        tuple(events),
+        (
+            WorkflowReport(
+                turn=report_turn,
+                kind=ReportKind.IMPLEMENTATION,
+                data=report,
+            ),
+        ),
+        event_window_complete=True,
+    )
+
+    assert _stage_states(progress)[Step.IMPLEMENT] is expected
+    assert _stage_states(progress)[Step.CONSULT] is WorkflowMilestoneState.CURRENT
 
 
 def test_changes_requested_verdict_marks_verify_rework_after_its_entry() -> None:

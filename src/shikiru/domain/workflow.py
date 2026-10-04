@@ -67,6 +67,14 @@ class WorkflowProgress:
     history_complete: bool
 
 
+@dataclass(frozen=True)
+class _StepEntry:
+    event_index: int
+    event_id: int
+    step: Step | None
+    iteration: int | None
+
+
 def project_workflow(
     task: Task,
     events: Sequence[Event],
@@ -79,13 +87,12 @@ def project_workflow(
         event_window_complete and bool(events) and events[0].kind is EventKind.TASK_QUEUED
     )
     entries = _step_entries(events)
-    entered_steps = {step for _, step, _ in entries}
-    first_entered_step = entries[0][1] if entries else None
+    entered_steps = {entry.step for entry in entries if entry.step is not None}
+    first_entered_step = entries[0].step if entries else None
     reported_steps = {
         step for report in reports if (step := _report_stage(report.kind)) is not None
     }
-    turn_iterations = _turn_iterations(events)
-    completed_reports = _completed_reports(reports, turn_iterations)
+    completed_reports = _completed_reports(reports, events, entries)
     stages = _workflow_stages(task, entered_steps | reported_steps)
     if not stages:
         return WorkflowProgress((), history_complete)
@@ -104,14 +111,17 @@ def project_workflow(
         ):
             state = WorkflowMilestoneState.SKIPPED
         elif step in entered_steps | reported_steps:
-            latest_entry, latest_iteration = last_entries.get(step, (-1, None))
+            latest_entry = last_entries.get(step)
             later_steps = {
-                entered_step
-                for index, entered_step, _ in entries
-                if step in last_entries and index > latest_entry
+                entry.step
+                for entry in entries
+                if latest_entry is not None
+                and entry.step is not None
+                and entry.event_index > latest_entry.event_index
             }
             rework_requested = step is Step.VERIFY and any(
-                index > latest_entry and decision == DECISION_CHANGES_REQUESTED
+                index > (latest_entry.event_index if latest_entry is not None else -1)
+                and decision == DECISION_CHANGES_REQUESTED
                 for index, decision in verdicts
             )
             if rework_requested:
@@ -121,8 +131,7 @@ def project_workflow(
                 or _completed_by_later_step(step, later_steps)
                 or _report_completes_entered_stage(
                     step,
-                    latest_iteration,
-                    task.iteration,
+                    latest_entry.event_id if latest_entry is not None else None,
                     completed_reports,
                 )
             ):
@@ -145,24 +154,35 @@ def project_workflow(
     return WorkflowProgress(milestones, history_complete)
 
 
-def _step_entries(events: Sequence[Event]) -> list[tuple[int, Step, int | None]]:
-    entries: list[tuple[int, Step, int | None]] = []
+def _step_entries(events: Sequence[Event]) -> list[_StepEntry]:
+    entries: list[_StepEntry] = []
     for index, event in enumerate(events):
         value = event.data.get(WORKFLOW_STEP_KEY)
-        if event.kind is not EventKind.STEP_STARTED or not isinstance(value, str):
+        if event.kind is not EventKind.STEP_STARTED:
             continue
         try:
-            step = Step(value)
+            step = Step(value) if isinstance(value, str) else None
         except ValueError:
-            continue
+            step = None
         iteration = event.data.get(WORKFLOW_ITERATION_KEY)
-        entries.append((index, step, iteration if type(iteration) is int else None))
+        entries.append(
+            _StepEntry(
+                index,
+                event.id,
+                step,
+                iteration if type(iteration) is int else None,
+            )
+        )
     return entries
 
 
-def _turn_iterations(events: Sequence[Event]) -> dict[str, tuple[Step, int]]:
-    turn_iterations: dict[str, tuple[Step, int]] = {}
-    for event in events:
+def _completed_reports(
+    reports: Sequence[WorkflowReport],
+    events: Sequence[Event],
+    entries: list[_StepEntry],
+) -> set[tuple[Step, int]]:
+    report_entries: dict[str, tuple[Step, int]] = {}
+    for index, event in enumerate(events):
         turn = event.data.get(WORKFLOW_TURN_KEY)
         step_value = event.data.get(WORKFLOW_STEP_KEY)
         iteration = event.data.get(WORKFLOW_ITERATION_KEY)
@@ -176,31 +196,36 @@ def _turn_iterations(events: Sequence[Event]) -> dict[str, tuple[Step, int]]:
                 step = Step(step_value)
             except ValueError:
                 continue
-            turn_iterations[turn] = (step, iteration)
-    return turn_iterations
-
-
-def _completed_reports(
-    reports: Sequence[WorkflowReport], turn_iterations: dict[str, tuple[Step, int]]
-) -> set[tuple[Step, int | None]]:
-    completed: set[tuple[Step, int | None]] = set()
+            if not entries:
+                continue
+            latest_entry = next(
+                (entry for entry in reversed(entries) if entry.event_index < index),
+                None,
+            )
+            if latest_entry is None or (latest_entry.step, latest_entry.iteration) != (
+                step,
+                iteration,
+            ):
+                continue
+            report_entries[turn] = (step, latest_entry.event_id)
+    completed: set[tuple[Step, int]] = set()
     for report in reports:
         stage = _report_stage(report.kind)
         if stage is None or not _report_completes_stage(report.data):
             continue
-        report_turn = turn_iterations.get(report.turn)
-        if report_turn is not None and report_turn[0] is not stage:
-            continue
-        completed.add((stage, report_turn[1] if report_turn is not None else None))
+        report_entry = report_entries.get(report.turn)
+        if report_entry is not None and report_entry[0] is stage:
+            completed.add((stage, report_entry[1]))
     return completed
 
 
 def _last_step_entries(
-    entries: list[tuple[int, Step, int | None]],
-) -> dict[Step, tuple[int, int | None]]:
-    last_entries: dict[Step, tuple[int, int | None]] = {}
-    for index, step, iteration in entries:
-        last_entries[step] = (index, iteration)
+    entries: list[_StepEntry],
+) -> dict[Step, _StepEntry]:
+    last_entries: dict[Step, _StepEntry] = {}
+    for entry in entries:
+        if entry.step is not None:
+            last_entries[entry.step] = entry
     return last_entries
 
 
@@ -287,15 +312,7 @@ def _report_completes_stage(report: Report) -> bool:
 
 def _report_completes_entered_stage(
     stage: Step,
-    entered_iteration: int | None,
-    task_iteration: int,
-    completed_reports: set[tuple[Step, int | None]],
+    entered_identity: int | None,
+    completed_reports: set[tuple[Step, int]],
 ) -> bool:
-    iterations = {
-        iteration for report_stage, iteration in completed_reports if report_stage is stage
-    }
-    if entered_iteration is not None:
-        return entered_iteration in iterations
-    if stage in {Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE}:
-        return task_iteration in iterations
-    return bool(iterations)
+    return entered_identity is not None and (stage, entered_identity) in completed_reports

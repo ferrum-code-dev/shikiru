@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
@@ -33,6 +34,7 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.ui.compact import StageActivity
 from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
 from shikiru.ui.tokens import STYLE_REVERSE
@@ -70,6 +72,15 @@ _START = datetime(2026, 1, 1, tzinfo=UTC)
 _TURN_NAME = "001-implement-i1"
 _STALE_TURN_NAME = "000-implement-i0"
 _TASK_ACTIVITY_WAIT_SECONDS = 2
+_OLD_ITERATION = 1
+_CURRENT_ITERATION = 2
+
+
+@dataclass(frozen=True)
+class _StageTimingCase:
+    entries: tuple[tuple[Step, int], ...]
+    current_iteration: int
+    expected_entry: int | None
 
 
 def _row(at: datetime, turn: str, signal: str) -> str:
@@ -143,6 +154,81 @@ def _build_views(
     return state_views(
         reader, project_dir, clock, StubServices(), focus_task=task.id, settings=settings
     )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            _StageTimingCase(
+                ((Step.IMPLEMENT, _OLD_ITERATION),),
+                _CURRENT_ITERATION,
+                None,
+            ),
+            id="old-iteration",
+        ),
+        pytest.param(
+            _StageTimingCase(
+                ((Step.IMPLEMENT, _OLD_ITERATION), (Step.CONSULT, _OLD_ITERATION)),
+                _OLD_ITERATION,
+                None,
+            ),
+            id="same-iteration-reentry-without-current-entry",
+        ),
+        pytest.param(
+            _StageTimingCase(
+                (
+                    (Step.IMPLEMENT, _OLD_ITERATION),
+                    (Step.CONSULT, _OLD_ITERATION),
+                    (Step.IMPLEMENT, _OLD_ITERATION),
+                ),
+                _OLD_ITERATION,
+                3,
+            ),
+            id="same-iteration-current-entry",
+        ),
+    ],
+)
+async def test_actual_stage_start_uses_latest_matching_workflow_entry(
+    case: _StageTimingCase,
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(project_dir)
+    task, _ = _seed_dashboard_state(connection, clock)
+    tasks = TaskStore(connection, clock)
+    if case.current_iteration != task.iteration:
+        tasks.apply_transition(
+            task.id,
+            replace(Transition.stay(task, step=task.step), iteration=case.current_iteration),
+        )
+    events = EventLog(connection, clock)
+    expected_at = None
+    for index, (step, iteration) in enumerate(case.entries, start=1):
+        clock.advance(1)
+        entry_at = clock.now()
+        events.append(
+            EventKind.STEP_STARTED,
+            task_id=task.id,
+            message=f"{step.value} stage started",
+            data={"step": step.value, "iteration": iteration},
+        )
+        if case.expected_entry == index:
+            expected_at = entry_at
+    reader = StateReader(database, clock)
+    try:
+        detail = await _build_views(reader, project_dir, settings, clock, task).task_detail(
+            task.id,
+            include_timeline=False,
+        )
+
+        assert detail is not None
+        assert detail.actual_stage_started_at == expected_at
+    finally:
+        reader.close()
 
 
 @pytest.fixture
@@ -520,6 +606,32 @@ async def test_task_activity_distinguishes_setup_from_a_missing_signal(
     assert setup_detail is not None
     assert setup_detail.actual_stage is None
     assert setup_detail.actual_stage_started_at is None
+    setup_activity = plain_text(StageActivity(setup_detail).render(clock.now()))
+    assert "Stage · setup" in setup_activity
+    assert "not started" not in setup_activity
+
+    completed_task = TaskStore(connection, clock).get(setup.id)
+    assert completed_task is not None
+    TaskStore(connection, clock).finish(
+        completed_task.id,
+        Transition.stay(completed_task, step=None, status=Status.DONE),
+        EventKind.TASK_DONE,
+        message="setup task completed",
+        data={"summary": "completed"},
+    )
+    completed_detail = await setup_views.task_detail(setup.id, include_timeline=False)
+    assert completed_detail is not None
+    completed_activity = plain_text(StageActivity(completed_detail).render(clock.now()))
+    assert "Stage · complete" in completed_activity
+    assert "not started" not in completed_activity
+
+    future_detail = replace(
+        setup_detail,
+        actual_stage=Step.VERIFY.value,
+        actual_stage_started_at=clock.now() + timedelta(seconds=1),
+    )
+    future_activity = plain_text(StageActivity(future_detail).render(clock.now()))
+    assert "future timestamp" in future_activity
 
 
 async def test_task_activity_requires_current_turn_signal_and_stays_still_without_motion(
@@ -587,9 +699,7 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             views=views,
             on_change=reader.watch,
             clock=clock,
-            motion_interval_seconds=(
-                1 / settings.dashboard.motion.refresh_hz if animations else None
-            ),
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
             resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=open_palette,
@@ -599,6 +709,7 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
         async with app.run_test(size=(90, 40)):
             progress = app.query_one("#task-detail-progress", Static)
             signal = app.query_one("#task-detail-signal", Static)
+            identity = app.query_one("#task-detail-identity", Static)
             await wait_until(
                 lambda: "Implement" in plain_text(progress.content),
                 timeout=_TASK_ACTIVITY_WAIT_SECONDS,
@@ -616,6 +727,15 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
                     _TURN_NAME in plain_text(signal.content)
                     and "1s ago" in plain_text(signal.content)
                     and "1s" in plain_text(progress.content)
+                ),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            clock.advance(settings.orchestration.timeouts.stall + 1)
+            await wait_until(
+                lambda: (
+                    GLYPH_STALLED in plain_text(identity.content)
+                    and "stalled" in plain_text(progress.content)
                 ),
                 timeout=_TASK_ACTIVITY_WAIT_SECONDS,
             )
