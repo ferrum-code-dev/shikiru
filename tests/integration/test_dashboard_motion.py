@@ -21,7 +21,7 @@ from shikiru.dashboard.app import DashboardApp
 from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME
-from shikiru.domain.steps import Transition, first_step
+from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
@@ -33,7 +33,6 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
-from shikiru.ui.compact import StageActivity
 from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
 from shikiru.ui.tokens import STYLE_REVERSE
@@ -265,6 +264,8 @@ def test_role_view_tail_recovers_a_new_turn_consumed_under_the_old_turn_name(
 
     assert activity is not None
     assert activity.last_signal_at == next_turn_at
+    latest_row = _row(next_turn_at, "002-implement-i1", VIEW_TOOL_STARTED_SIGNAL)
+    assert activity.identity_offset == path.read_bytes().rfind(latest_row.encode())
     assert activity.tool_running
     assert not activity.ended
 
@@ -503,9 +504,9 @@ async def test_task_activity_distinguishes_setup_from_a_missing_signal(
     no_signal = await views.task_detail(task.id, include_timeline=False)
     assert no_signal is not None
     assert not no_signal.signal_observed
-    no_signal_text = plain_text(StageActivity(no_signal).render())
-    assert "no current signal" in no_signal_text
-    assert "signal observed" not in no_signal_text
+    assert no_signal.latest_signal is None
+    assert no_signal.actual_stage == Step.IMPLEMENT.value
+    assert no_signal.actual_stage_started_at is None
 
     setup = seed_task(connection, clock, title="Setup stage", mode=Mode.IMPLEMENT)
     TaskStore(connection, clock).apply_transition(
@@ -517,9 +518,8 @@ async def test_task_activity_distinguishes_setup_from_a_missing_signal(
     setup_views = _build_views(reader, project_dir, settings, clock, setup)
     setup_detail = await setup_views.task_detail(setup.id, include_timeline=False)
     assert setup_detail is not None
-    setup_text = plain_text(StageActivity(setup_detail).render())
-    assert "Setup" in setup_text
-    assert "Not Started" not in setup_text
+    assert setup_detail.actual_stage is None
+    assert setup_detail.actual_stage_started_at is None
 
 
 async def test_task_activity_requires_current_turn_signal_and_stays_still_without_motion(
@@ -532,7 +532,9 @@ async def test_task_activity_requires_current_turn_signal_and_stays_still_withou
     observed = await views.task_detail(task.id, include_timeline=False)
     assert observed is not None
     assert observed.signal_observed
-    assert "signal observed" in plain_text(StageActivity(observed).render())
+    assert observed.latest_signal_at == _START
+    assert observed.latest_signal_role == Role.IMPLEMENTER.value
+    assert observed.latest_signal_turn == _TURN_NAME
 
     static_settings = settings.model_copy(
         update={"dashboard": settings.dashboard.model_copy(update={"animations": False})}
@@ -549,7 +551,7 @@ async def test_task_activity_requires_current_turn_signal_and_stays_still_withou
 
 
 @pytest.mark.parametrize("animations", [True, False], ids=("motion", "static"))
-async def test_task_detail_refreshes_activity_from_current_turn_log_without_database_changes(
+async def test_task_detail_refreshes_recorded_ages_without_database_changes(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -562,6 +564,16 @@ async def test_task_detail_refreshes_activity_from_current_turn_log_without_data
         update={"dashboard": base_settings.dashboard.model_copy(update={"animations": animations})}
     )
     task, _ = _seed_dashboard_state(connection, clock)
+    EventLog(connection, clock).append(
+        EventKind.STEP_STARTED,
+        task_id=task.id,
+        message="implementation stage started",
+        data={
+            "step": Step.IMPLEMENT.value,
+            "role": Role.IMPLEMENTER.value,
+            "iteration": task.iteration,
+        },
+    )
     reader = StateReader(database, clock)
     try:
         views = _build_views(reader, project_dir, settings, clock, task)
@@ -575,7 +587,9 @@ async def test_task_detail_refreshes_activity_from_current_turn_log_without_data
             views=views,
             on_change=reader.watch,
             clock=clock,
-            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            motion_interval_seconds=(
+                1 / settings.dashboard.motion.refresh_hz if animations else None
+            ),
             resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             open_palette=open_palette,
@@ -584,37 +598,25 @@ async def test_task_detail_refreshes_activity_from_current_turn_log_without_data
         )
         async with app.run_test(size=(90, 40)):
             progress = app.query_one("#task-detail-progress", Static)
+            signal = app.query_one("#task-detail-signal", Static)
             await wait_until(
-                lambda: "Activity · no current signal" in plain_text(progress.content),
+                lambda: "Implement" in plain_text(progress.content),
                 timeout=_TASK_ACTIVITY_WAIT_SECONDS,
             )
-            tick = 1 / settings.dashboard.motion.refresh_hz
+            tick = settings.dashboard.timeline_refresh_seconds
             signal_at = clock.now()
             log_path.write_text(f"{_row(signal_at, _TURN_NAME, VIEW_SESSION_STARTED_SIGNAL)}\n")
-            clock.advance(tick)
             await wait_until(
-                lambda: "signal observed" in plain_text(progress.content),
+                clock.has_pending_sleep,
                 timeout=_TASK_ACTIVITY_WAIT_SECONDS,
             )
-            observed = plain_text(progress.content)
-
-            if animations:
-                clock.advance(tick)
-                await wait_until(
-                    lambda: (
-                        "signal observed" in plain_text(progress.content)
-                        and plain_text(progress.content) != observed
-                    ),
-                    timeout=_TASK_ACTIVITY_WAIT_SECONDS,
-                )
-            else:
-                clock.advance(settings.orchestration.timeouts.stall - 2 * tick)
-                await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
-                assert plain_text(progress.content) == observed
-
-            clock.advance(settings.orchestration.timeouts.stall)
+            clock.advance(tick)
             await wait_until(
-                lambda: "Activity · stalled" in plain_text(progress.content),
+                lambda: (
+                    _TURN_NAME in plain_text(signal.content)
+                    and "1s ago" in plain_text(signal.content)
+                    and "1s" in plain_text(progress.content)
+                ),
                 timeout=_TASK_ACTIVITY_WAIT_SECONDS,
             )
     finally:
@@ -634,7 +636,8 @@ async def test_task_activity_does_not_claim_a_signal_during_a_hold(
     assert held is not None
     assert Hold.PAUSED.value in held.holds
     assert not held.signal_observed
-    assert "signal observed" not in plain_text(StageActivity(held).render())
+    assert held.latest_signal_at == _START
+    assert held.actual_stage_started_at is None
 
 
 async def test_task_activity_does_not_claim_a_signal_after_stop_or_completion(
@@ -662,7 +665,7 @@ async def test_task_activity_does_not_claim_a_signal_after_stop_or_completion(
     stopped = await views.task_detail(task.id, include_timeline=False)
     assert stopped is not None
     assert not stopped.signal_observed
-    assert "signal observed" not in plain_text(StageActivity(stopped).render())
+    assert stopped.latest_signal_at == _START
 
     current = tasks.get(task.id)
     assert current is not None
@@ -677,7 +680,7 @@ async def test_task_activity_does_not_claim_a_signal_after_stop_or_completion(
     assert completed is not None
     assert completed.status == Status.DONE.value
     assert not completed.signal_observed
-    assert "signal observed" not in plain_text(StageActivity(completed).render())
+    assert completed.latest_signal_at == _START
 
 
 async def test_home_attention_count_updates_from_motion_without_database_changes(

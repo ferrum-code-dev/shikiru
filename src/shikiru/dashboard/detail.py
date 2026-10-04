@@ -19,6 +19,7 @@ from shikiru.dashboard.contract import (
     TaskTimelineCategory,
     TaskTimelineSource,
 )
+from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason
 from shikiru.errors import ShikiruError
 from shikiru.ui.compact import (
@@ -26,13 +27,16 @@ from shikiru.ui.compact import (
     AgentUsageRow,
     ProjectAgentUsageDetails,
     ProjectUsageDetails,
-    ProjectUsageMetric,
     StageActivity,
+    TaskUsageMetric,
+    task_signal_text,
 )
+from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, SPINNER_FRAMES
 
 if TYPE_CHECKING:
     from textual import events
     from textual.app import App, ComposeResult
+    from textual.binding import BindingType
     from textual.events import MouseScrollUp
     from textual.widget import Widget
     from textual.worker import Worker
@@ -50,9 +54,12 @@ if TYPE_CHECKING:
         TaskTimelinePageView,
         WidgetContext,
     )
+    from shikiru.ui.strip import TaskStripData
 
 TASK_DETAIL_WORKER_GROUP = "task-detail-updates"
 TASK_DETAIL_ESCAPE = "escape"
+SESSION_STATE_CURRENT = "Current"
+SESSION_STATE_USED = "Used"
 TASK_DETAIL_BACK_BUTTON = "task-detail-back"
 TASK_DETAIL_WINDOW_BUTTON = "task-detail-window"
 TASK_DETAIL_LEADER_BUTTON = "task-detail-leader"
@@ -61,6 +68,10 @@ TASK_DETAIL_IDENTITY = "task-detail-identity"
 TASK_DETAIL_OWNERSHIP = "task-detail-ownership"
 TASK_DETAIL_SITUATION = "task-detail-situation"
 TASK_DETAIL_PROGRESS = "task-detail-progress"
+TASK_DETAIL_SIGNAL = "task-detail-signal"
+TASK_DETAIL_SUMMARY_USAGE = "task-detail-summary-usage"
+TASK_DETAIL_USAGE_INLINE_BUTTON = "task-detail-usage-inline"
+TASK_DETAIL_EVIDENCE_INLINE_BUTTON = "task-detail-evidence-inline"
 TASK_DETAIL_REQUEST = "task-detail-request"
 TASK_DETAIL_CRITERIA = "task-detail-criteria"
 TASK_DETAIL_REPORT = "task-detail-report"
@@ -129,9 +140,12 @@ TASK_VIEW_CHOICES = (
 )
 TASK_VIEW_WIDGETS = {
     TASK_VIEW_SUMMARY: (
-        TASK_DETAIL_SITUATION,
         TASK_DETAIL_PROGRESS,
+        TASK_DETAIL_SITUATION,
+        TASK_DETAIL_SIGNAL,
+        TASK_DETAIL_SUMMARY_USAGE,
         TASK_DETAIL_SESSIONS,
+        "task-detail-evidence-link",
     ),
     TASK_VIEW_USAGE: (TASK_DETAIL_SESSIONS,),
     TASK_VIEW_CONTEXT: (TASK_DETAIL_CONTEXT_INFO,),
@@ -174,9 +188,17 @@ NO_FACTS = "No engine-computed git facts are recorded."
 CLOSED_RUN_STATUS = "closed"
 COST_VALUE_FORMAT = ".2f"
 AGE_NOW = "now"
+TERMINAL_TASK_STATES = {
+    Status.ESCALATED.value: "! Escalated",
+    Status.DONE.value: "✓ Done",
+    Status.CANCELLED.value: "○ Cancelled",
+    Status.QUEUED.value: "· Queued",
+}
 
 
 class TaskDetailBody(VerticalScroll):
+    can_focus = True
+
     def __init__(self, scroll_away: Callable[[], None]) -> None:
         super().__init__(id="task-detail-body")
         self._scroll_away = scroll_away
@@ -215,22 +237,37 @@ class TaskDetailBody(VerticalScroll):
 class TaskDetailPanel(Vertical):
     """Render shared task detail from the injected dashboard view contract."""
 
+    BINDINGS: ClassVar[list[BindingType]] = [
+        (TASK_DETAIL_VIEWS_KEY, "open_contextual_views", "Views")
+    ]
+
     DEFAULT_CSS = """
     #task-detail-panel { width: 100%; height: auto; }
-    #task-detail-context { width: 100%; height: 1; padding: 0 1; background: $panel; }
-    #task-detail-context Button {
-        width: auto; min-width: 1; height: 1; margin-right: 1;
-        border: none; padding: 0; background: $panel; color: $steel-blue;
-    }
-    #task-detail-context Button:focus { text-style: bold reverse; }
-    #task-detail-hints { width: 1fr; height: 1; color: $secondary-text; }
-    #task-detail-identity {
-        height: auto; padding: 1 1 0 1; color: $primary-text; text-style: bold;
-    }
+    #task-detail-identity { height: auto; padding: 0; color: $primary-text; }
     #task-detail-context-info { height: auto; color: $primary-text; }
-    #task-detail-ownership { height: auto; padding: 0 1; color: $amber; }
-    #task-detail-feedback { height: auto; min-height: 1; color: $secondary-text; }
+    #task-detail-ownership { height: auto; padding: 0; color: $amber; }
+    #task-detail-feedback { height: auto; min-height: 0; color: $secondary-text; }
     #task-detail-body { height: auto; max-height: 32; padding: 0 1; }
+    #task-detail-summary-usage {
+        width: 100%; height: auto; margin-top: 1; padding-top: 0;
+        border-top: solid $neutral-border;
+    }
+    #task-detail-summary-usage Static { width: 1fr; height: auto; }
+    #task-detail-summary-usage Button,
+    #task-detail-evidence-inline {
+        width: auto; min-width: 1; height: 1; margin: 0; padding: 0;
+        border: none; background: $background; color: $steel-blue;
+    }
+    #task-detail-summary-usage Button:focus,
+    #task-detail-evidence-inline:focus { text-style: reverse; }
+    #task-detail-evidence-link { width: 100%; height: 1; margin-top: 1; }
+    #task-detail-body.compact-summary #task-detail-identity,
+    #task-detail-body.compact-summary #task-detail-ownership,
+    #task-detail-body.compact-summary #task-detail-situation,
+    #task-detail-body.compact-summary #task-detail-progress,
+    #task-detail-body.compact-summary #task-detail-signal,
+    #task-detail-body.compact-summary #task-detail-sessions { padding: 0; }
+    #task-detail-body.compact-summary .task-detail-section { padding: 0; }
     #task-detail-timeline-filters, #task-detail-timeline-navigation,
     #task-detail-related-tools, #task-detail-workspace-tools { width: 100%; height: auto; }
     #task-detail-timeline-filters HorizontalScroll,
@@ -281,26 +318,28 @@ class TaskDetailPanel(Vertical):
         self._remove_motion_callback: Callable[[], None] | None = None
         self._timeline_request_generation = 0
         self._body_focus_generation = 0
+        self._views_return_state: tuple[float, Widget | None] | None = None
         self._rendered_task_id: str | None = None
         self._active_view = initial_view
         self._view: TaskDetailView | None = None
 
     def compose(self) -> ComposeResult:
-        with HorizontalScroll(id=TASK_DETAIL_CONTEXT):
-            back_label = "Inspect" if self._embedded else "Home" if self._fixed else "Back"
-            yield Button(back_label, id=TASK_DETAIL_BACK_BUTTON)
-            yield Button("Views", id=TASK_DETAIL_VIEWS_BUTTON)
-            yield Static("v views · u usage · Ctrl+P actions · ? help", id=TASK_DETAIL_HINTS)
         with TaskDetailBody(self._pause_timeline_follow):
             yield Static("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
             yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
             yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
+            yield Static("", id=TASK_DETAIL_PROGRESS, classes="task-detail-section")
             yield Static("", id=TASK_DETAIL_SITUATION, classes="task-detail-section", markup=False)
+            yield Static("", id=TASK_DETAIL_SIGNAL, classes="task-detail-section", markup=False)
+            with Horizontal(id=TASK_DETAIL_SUMMARY_USAGE):
+                yield Static("", id="task-detail-task-usage", markup=False)
+                yield Button("u Details", id=TASK_DETAIL_USAGE_INLINE_BUTTON)
+            yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section")
+            with Horizontal(id="task-detail-evidence-link"):
+                yield Button("e Evidence", id=TASK_DETAIL_EVIDENCE_INLINE_BUTTON)
             yield Static(
                 "", id=TASK_DETAIL_CONTEXT_INFO, classes="task-detail-section", markup=False
             )
-            yield Static("", id=TASK_DETAIL_PROGRESS, classes="task-detail-section")
-            yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section")
             yield Static("", id=TASK_DETAIL_BLOCKER, classes="task-detail-section", markup=False)
             yield Static(
                 "", id=TASK_DETAIL_RELATIONSHIPS, classes="task-detail-section", markup=False
@@ -377,6 +416,7 @@ class TaskDetailPanel(Vertical):
 
     async def on_mount(self) -> None:
         self.disabled = self._task_id is None
+        self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).add_class("compact-summary")
         self._apply_view_visibility(blocker_visible=False)
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         identity.update(
@@ -384,6 +424,7 @@ class TaskDetailPanel(Vertical):
             if self._task_id is not None
             else "Select a task to inspect it."
         )
+        self._set_feedback(None)
         self._refresh_worker = self.run_worker(self._refresh(), group=TASK_DETAIL_WORKER_GROUP)
         self._change_worker = self.run_worker(
             self._widget_context.on_change(self._refresh),
@@ -469,6 +510,7 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_SITUATION,
             TASK_DETAIL_BLOCKER,
             TASK_DETAIL_PROGRESS,
+            TASK_DETAIL_SIGNAL,
             TASK_DETAIL_REQUEST,
             TASK_DETAIL_CRITERIA,
             TASK_DETAIL_REPORT,
@@ -483,7 +525,8 @@ class TaskDetailPanel(Vertical):
         ):
             self.query_one(f"#{section_id}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static).display = False
-        self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update("")
+        self._set_feedback(None)
+        self.query_one("#task-detail-task-usage", Static).update("")
         related_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))
         related_select.value = Select.BLANK
         related_select.set_options(())
@@ -517,6 +560,12 @@ class TaskDetailPanel(Vertical):
         self._apply_view_visibility(blocker_visible=False)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == TASK_DETAIL_USAGE_INLINE_BUTTON:
+            self.open_usage_details()
+            return
+        if event.button.id == TASK_DETAIL_EVIDENCE_INLINE_BUTTON:
+            self._show_task_view(TASK_VIEW_EVIDENCE)
+            return
         handlers = {
             TASK_DETAIL_BACK_BUTTON: self._back,
             TASK_DETAIL_WINDOW_BUTTON: self._navigate_task_window,
@@ -549,6 +598,8 @@ class TaskDetailPanel(Vertical):
                 await self._refresh_usage_observations()
             elif self._active_view == TASK_VIEW_EVIDENCE and self._timeline_following:
                 await self._refresh_timeline()
+            elif self._active_view == TASK_VIEW_SUMMARY:
+                await self._refresh_activity()
 
     async def _refresh_activity(self) -> None:
         if (
@@ -565,12 +616,48 @@ class TaskDetailPanel(Vertical):
         )
         if strip is None:
             return
-        activity = replace(
-            self._view,
+        activity = self._activity_view(self._view, strip)
+        self._render_activity(activity)
+
+    def _activity_view(self, view: TaskDetailView, strip: TaskStripData) -> TaskDetailView:
+        signal_is_newer = (
+            strip.last_signal is not None
+            and strip.last_signal_at is not None
+            and view.latest_signal_at is not None
+            and strip.last_signal_at > view.latest_signal_at
+        )
+        signal_has_no_recorded_predecessor = (
+            strip.last_signal is not None
+            and strip.last_signal_at is not None
+            and view.latest_signal is None
+            and view.latest_signal_error is None
+        )
+        signal_values = (
+            {
+                "latest_signal": strip.last_signal,
+                "latest_signal_identity": strip.last_signal_identity,
+                "latest_signal_at": strip.last_signal_at,
+                "latest_signal_role": strip.last_signal_role,
+                "latest_signal_turn": strip.last_signal_turn,
+                "latest_signal_uncertain": view.latest_signal_uncertain,
+                "latest_signal_error": view.latest_signal_error,
+                "latest_signal_incomplete": False,
+            }
+            if signal_is_newer or signal_has_no_recorded_predecessor
+            else {}
+        )
+        return replace(
+            view,
             progress=strip,
             signal_observed=any(panel.spinner_frame for panel in strip.panels),
+            actual_stage_started_at=(strip.actual_step_started_at or view.actual_stage_started_at),
+            **signal_values,
         )
-        self.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).update(StageActivity(activity).render())
+
+    def _render_activity(self, view: TaskDetailView) -> None:
+        now = self._widget_context.clock.now()
+        self.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).update(StageActivity(view).render(now))
+        self.query_one(f"#{TASK_DETAIL_SIGNAL}", Static).update(task_signal_text(view, now))
 
     async def _refresh_timeline(self) -> None:
         async with self._refresh_lock:
@@ -733,6 +820,8 @@ class TaskDetailPanel(Vertical):
     async def open_contextual_views(self) -> None:
         if self._task_id is None:
             return
+        body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
+        self._views_return_state = (body.scroll_target_y, self.screen.focused)
         app = cast("App[None]", self.app)
         app.push_screen(
             TaskDetailViewsScreen(
@@ -741,6 +830,9 @@ class TaskDetailPanel(Vertical):
             ),
             callback=self._show_selected_view,
         )
+
+    async def action_open_contextual_views(self) -> None:
+        await self.open_contextual_views()
 
     def open_usage_details(self) -> None:
         self._show_task_view(TASK_VIEW_USAGE)
@@ -753,6 +845,10 @@ class TaskDetailPanel(Vertical):
         await self._back()
 
     def _show_selected_view(self, selected: str | None) -> None:
+        if selected is None:
+            self._restore_contextual_position()
+            return
+        self._views_return_state = None
         if selected in TASK_VIEW_WIDGETS:
             self._queue_refresh()
             self._show_task_view(selected)
@@ -760,12 +856,32 @@ class TaskDetailPanel(Vertical):
             self.run_worker(self.open_palette(), group=TASK_DETAIL_WORKER_GROUP)
         elif selected == TASK_VIEW_HELP:
             self.run_worker(self.open_help(), group=TASK_DETAIL_WORKER_GROUP)
-        elif selected is not None and self._widget_context.open_contextual_view is not None:
+        elif self._widget_context.open_contextual_view is not None:
             self._queue_refresh()
             self.run_worker(
                 self._widget_context.open_contextual_view(selected),
                 group=TASK_DETAIL_WORKER_GROUP,
             )
+
+    def _restore_contextual_position(self) -> None:
+        state = self._views_return_state
+        self._views_return_state = None
+        if state is None:
+            return
+        body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
+        self.call_after_refresh(self._restore_contextual_position_after_refresh, body, *state)
+
+    def _restore_contextual_position_after_refresh(
+        self,
+        body: TaskDetailBody,
+        scroll_y: float,
+        focused: Widget | None,
+    ) -> None:
+        if not self._screen_is_active():
+            return
+        if focused is not None and focused.is_mounted and focused.display:
+            cast("App[None]", self.app).set_focus(focused)
+        body.scroll_to(y=scroll_y, animate=False, immediate=True)
 
     def _show_task_view(self, view_id: str) -> None:
         if view_id not in TASK_VIEW_WIDGETS:
@@ -778,7 +894,7 @@ class TaskDetailPanel(Vertical):
             self._queue_refresh()
         self._render_view(self._view, render_timeline=False)
         target_id = {
-            TASK_VIEW_SUMMARY: TASK_DETAIL_SITUATION,
+            TASK_VIEW_SUMMARY: TASK_DETAIL_PROGRESS,
             TASK_VIEW_USAGE: TASK_DETAIL_SESSIONS,
             TASK_VIEW_CONTEXT: TASK_DETAIL_CONTEXT_INFO,
             TASK_VIEW_REPORTS: TASK_DETAIL_REPORT,
@@ -822,7 +938,12 @@ class TaskDetailPanel(Vertical):
         )
 
     async def _show_navigation_result(self, result: str) -> None:
-        self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update(result)
+        self._set_feedback(result)
+
+    def _set_feedback(self, result: str | None) -> None:
+        feedback = self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static)
+        feedback.update(result or "")
+        feedback.display = result is not None
 
     async def _refresh(self, *, include_timeline: bool = True) -> None:
         async with self._refresh_lock:
@@ -849,9 +970,7 @@ class TaskDetailPanel(Vertical):
                 )
             except (ShikiruError, OSError, ValueError, TypeError) as error:
                 if self._screen_is_active() and generation == self._timeline_request_generation:
-                    self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update(
-                        f"Task detail refresh failed: {error}"
-                    )
+                    self._set_feedback(f"Task detail refresh failed: {error}")
                 return
             if not self._screen_is_active():
                 return
@@ -861,9 +980,7 @@ class TaskDetailPanel(Vertical):
                 self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(
                     f"{task_id} · task record is unavailable"
                 )
-                self.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static).update(
-                    "Task state could not be read."
-                )
+                self._set_feedback("Task state could not be read.")
                 return
             self._render_view(
                 view,
@@ -910,24 +1027,19 @@ class TaskDetailPanel(Vertical):
         focused = self.screen.focused
         restore_scroll = self._rendered_task_id == view.task_id
         self._rendered_task_id = view.task_id
-        identity = f"{view.task_id} · {view.title}\n{view.status}"
+        identity = f"{view.task_id} · {view.title}\n{_task_state_line(view)}"
         self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(identity)
-        situation = ["Situation"]
-        if view.status_reason is not None:
-            situation.append(f"Status reason · {view.status_reason}")
-        if view.wait_reason is not None:
-            situation.append(f"Waiting · {view.wait_reason}")
-        decision = _critical_decision(view)
-        if decision is not None:
-            situation.append(decision)
         self._render_ownership(view)
-        self.query_one(f"#{TASK_DETAIL_SITUATION}", Static).update("\n".join(situation))
+        self.query_one(f"#{TASK_DETAIL_SITUATION}", Static).update(_task_situation(view))
         self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(_task_context_text(view))
         blocker_lines = list(view.blocker.lines) if view.blocker is not None else []
         blocker = self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
         blocker.update("Blocker evidence\n" + "\n".join(blocker_lines) if blocker_lines else "")
         self._render_relationships(view)
-        self.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).update(StageActivity(view).render())
+        self._render_activity(view)
+        self.query_one("#task-detail-task-usage", Static).update(
+            TaskUsageMetric(view.usage).render()
+        )
         self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(f"Request\n{view.request}")
         criteria = "\n".join(f"- {item}" for item in view.acceptance_criteria)
         self.query_one(f"#{TASK_DETAIL_CRITERIA}", Static).update(
@@ -1173,10 +1285,10 @@ class TaskDetailPanel(Vertical):
         ownership_lines: list[str] = []
         if view.ownership:
             ownership_lines.append(
-                f"Operator owns · {', '.join(role.title() for role in view.ownership)}"
+                f"Operator owns {', '.join(role.title() for role in view.ownership)}"
             )
         if view.holds:
-            ownership_lines.append(f"Remaining holds · {', '.join(view.holds)}")
+            ownership_lines.append(f"Holds · {', '.join(view.holds)}")
         if view.ownership and Hold.PAUSED.value in view.holds:
             ownership_lines.append(
                 "Hand back alone will not clear the pause; Resume is a separate action."
@@ -1282,7 +1394,13 @@ class TaskDetailScreen(ModalScreen[None]):
         )
 
     async def on_mount(self) -> None:
-        self.set_focus(self.query_one(f"#{TASK_DETAIL_VIEWS_BUTTON}", Button))
+        panel = self.query_one("#task-detail-panel", TaskDetailPanel)
+        target = (
+            panel.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}", Button)
+            if panel.active_view == TASK_VIEW_SUMMARY
+            else panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
+        )
+        self.set_focus(target)
 
     async def _close(self) -> None:
         self.dismiss()
@@ -1534,20 +1652,119 @@ def _workspace_text(view: TaskDetailView) -> str:
     return "\n".join(lines)
 
 
-def _critical_decision(view: TaskDetailView) -> str | None:
-    reports = (view.latest_report, view.latest_verdict)
-    question = next((item.question for item in reports if item is not None and item.question), None)
+def _task_state_line(view: TaskDetailView) -> str:
+    terminal = TERMINAL_TASK_STATES.get(view.status)
+    if terminal is not None:
+        return terminal
+    state = view.status.title()
+    marker = GLYPH_CURRENT_STAGE
+    if Hold.PAUSED.value in view.holds:
+        state, marker = f"Paused · {state}", "="
+    elif Hold.INTERVENTION.value in view.holds:
+        state, marker = f"Intervention hold · {state}", "="
+    elif view.ownership:
+        state, marker = f"Operator-owned · {state}", "@"
+    elif view.signal_observed and view.status in {Status.RUNNING.value, Status.INTEGRATING.value}:
+        marker = SPINNER_FRAMES[0]
+    return f"{marker} {state}"
+
+
+def _task_situation(view: TaskDetailView) -> str:
+    decision = _decision_situation(view)
+    if decision is not None:
+        return decision
+    blocking = _blocking_situation(view)
+    if blocking is not None:
+        return blocking
+    report = _report_situation(view)
+    if report is not None:
+        return report
+    return _status_situation(view)
+
+
+def _decision_situation(view: TaskDetailView) -> str | None:
+    if view.status != Status.ESCALATED.value:
+        return None
+    question = next(
+        (
+            report.question
+            for report in (view.latest_report, view.latest_verdict)
+            if report is not None and report.question
+        ),
+        None,
+    )
     if question is not None:
-        label = (
-            "Decision needed"
-            if view.status == Status.ESCALATED.value
-            else "Latest recorded question"
-        )
-        return f"{label} · {question}"
-    decision = next((item.decision for item in reports if item is not None and item.decision), None)
-    if view.status == Status.ESCALATED.value:
-        return "Escalation open · use Ctrl+P to review its packet and allowed actions"
-    return f"Latest decision · {decision}" if decision is not None else None
+        return _sentence(f"Decision needed · {question}")
+    return "Escalation open; no validated decision question is recorded."
+
+
+def _blocking_situation(view: TaskDetailView) -> str | None:
+    if view.wait_reason is not None:
+        return _sentence(f"Waiting on {view.wait_reason.replace('_', ' ')}")
+    if view.status_reason == StatusReason.SUPERSEDED.value:
+        return "Task was superseded"
+    if view.holds:
+        holds = ", ".join(view.holds)
+        if view.ownership:
+            return _sentence(f"Operator ownership is holding {holds}")
+        return _sentence(f"Task is held on {holds}")
+    return None
+
+
+def _report_situation(view: TaskDetailView) -> str | None:
+    if view.latest_report is not None and view.latest_report.summary.strip():
+        return _sentence(view.latest_report.summary)
+    if view.latest_verdict is not None and view.latest_verdict.summary.strip():
+        return _sentence(view.latest_verdict.summary)
+    return None
+
+
+def _status_situation(view: TaskDetailView) -> str:
+    status_situations = {
+        Status.QUEUED.value: "Queued for execution.",
+        Status.RUNNING.value: "Work is active.",
+        Status.INTEGRATING.value: "Integration is in progress.",
+        Status.DONE.value: "Completed; no validated report is recorded.",
+        Status.CANCELLED.value: "Cancelled.",
+        Status.ESCALATED.value: "Decision required.",
+    }
+    return status_situations.get(view.status, "Task state is recorded.")
+
+
+def _sentence(value: str) -> str:
+    sentence = value.strip().splitlines()[0].strip()
+    return sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
+
+
+def _session_role_state(view: TaskDetailView, session: TaskSessionView) -> str:
+    if session.run_id is None:
+        return SESSION_STATE_USED
+    if session.status == RunStatus.TAKEN_OVER.value and session.role in view.ownership:
+        return SESSION_STATE_CURRENT
+    if (
+        session.status == RunStatus.LIVE.value
+        and session.role == view.acting_role
+        and view.status in {Status.RUNNING.value, Status.INTEGRATING.value}
+        and not view.holds
+        and view.wait_reason is None
+    ):
+        return SESSION_STATE_CURRENT
+    return SESSION_STATE_USED
+
+
+def _summary_sessions(view: TaskDetailView) -> tuple[TaskSessionView, ...]:
+    current = [
+        session
+        for session in view.sessions
+        if _session_role_state(view, session) == SESSION_STATE_CURRENT
+    ]
+    current_run_ids = {session.run_id for session in current}
+    latest_used_by_role: dict[str, TaskSessionView] = {}
+    for session in view.sessions:
+        if session.role not in latest_used_by_role and session.run_id not in current_run_ids:
+            latest_used_by_role[session.role] = session
+    sessions = [*latest_used_by_role.values(), *current]
+    return tuple(sorted(sessions, key=lambda session: session.run_id or 0))
 
 
 def _sessions_text(view: TaskDetailView, *, detailed: bool) -> Group:
@@ -1558,12 +1775,11 @@ def _sessions_text(view: TaskDetailView, *, detailed: bool) -> Group:
             lines.append(Text("Task usage coverage unavailable", style="bold"))
         else:
             lines.append(ProjectUsageDetails(view.usage).render())
-    elif view.sessions and view.usage is not None:
-        lines.append(ProjectUsageMetric(view.usage, "Task").render())
     if not view.sessions:
         lines.append(Text("No agent sessions are recorded."))
-    for session in view.sessions:
-        lines.append(AgentUsageRow(session).render())
+    sessions = view.sessions if detailed else _summary_sessions(view)
+    for session in sessions:
+        lines.append(AgentUsageRow(session, _session_role_state(view, session)).render())
         if detailed:
             lines.extend(_session_details(session))
     if detailed:

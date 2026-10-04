@@ -14,13 +14,14 @@ from textual.widgets import Button, OptionList, Select, Static
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import TaskTimelineCategory
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_BODY,
     TASK_DETAIL_TIMELINE_ENTRY,
     TASK_DETAIL_TIMELINE_FILTER,
     TASK_DETAIL_TIMELINE_FOLLOW,
     TASK_DETAIL_TIMELINE_OLDER,
     TASK_DETAIL_TIMELINE_SELECTED,
     TASK_DETAIL_TIMELINE_STATUS,
-    TASK_DETAIL_VIEWS_BUTTON,
+    TASK_DETAIL_VIEWS_KEY,
     TASK_VIEW_EVIDENCE,
     TaskDetailBody,
     TaskDetailPanel,
@@ -80,7 +81,8 @@ TIMELINE_CATEGORY_TRANSITION = "transition"
 
 
 async def _open_timeline_view(panel: TaskDetailPanel, pilot: Pilot[None]) -> None:
-    await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+    panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).focus()
+    await pilot.press(TASK_DETAIL_VIEWS_KEY)
     await wait_until(lambda: isinstance(pilot.app.screen, TaskDetailViewsScreen), timeout=2)
     choice = cast("Select[str]", pilot.app.screen.query_one("#task-detail-view-choice", Select))
     choice.value = TASK_VIEW_EVIDENCE

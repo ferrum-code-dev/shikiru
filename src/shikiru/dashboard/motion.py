@@ -121,17 +121,30 @@ class DashboardMotion:
 
     def _task_motion(self, task: Task) -> TaskMotionState:
         events = self._events_for(task)
-        step_started_at, turn_started_at, turn_active, stamp = self._event_timing(task, events)
-        last_signal_at, tool_running, turn_active = self._current_activity(
-            task, turn_active, turn_started_at
+        step_started_at, actual_step_started_at, turn_started_at, turn_active, stamp = (
+            self._event_timing(task, events)
         )
+        (
+            last_signal_at,
+            last_signal,
+            last_signal_identity,
+            last_signal_role,
+            last_signal_turn,
+            tool_running,
+            turn_active,
+        ) = self._current_activity(task, turn_active, turn_started_at)
         held = self._is_held(task)
         stamp = self._merge_stamp(task.id, stamp)
         return TaskMotionState(
             task_id=task.id,
             step_started_at=step_started_at,
+            actual_step_started_at=actual_step_started_at,
             turn_started_at=turn_started_at,
             last_signal_at=last_signal_at,
+            last_signal=last_signal,
+            last_signal_identity=last_signal_identity,
+            last_signal_role=last_signal_role,
+            last_signal_turn=last_signal_turn,
             tool_running=tool_running,
             turn_active=turn_active,
             held=held,
@@ -155,8 +168,9 @@ class DashboardMotion:
     @staticmethod
     def _event_timing(
         task: Task, events: tuple[Event, ...]
-    ) -> tuple[datetime, datetime | None, bool, MotionStamp | None]:
+    ) -> tuple[datetime, datetime | None, datetime | None, bool, MotionStamp | None]:
         step_started_at = task.started_at or task.created_at
+        actual_step_started_at = None
         turn_started_at = None
         turn_active = False
         stamp: MotionStamp | None = None
@@ -168,6 +182,7 @@ class DashboardMotion:
                 and event.data["step"] == task.step.value
             ):
                 step_started_at = event.ts
+                actual_step_started_at = event.ts
             if event.kind is EventKind.VERDICT:
                 stamp = MotionStamp(
                     event.ts,
@@ -191,30 +206,70 @@ class DashboardMotion:
             ):
                 turn_started_at = None
                 turn_active = False
-        return step_started_at, turn_started_at, turn_active, stamp
+        return step_started_at, actual_step_started_at, turn_started_at, turn_active, stamp
 
     def _current_activity(
         self, task: Task, turn_active: bool, turn_started_at: datetime | None
-    ) -> tuple[datetime | None, bool, bool]:
+    ) -> tuple[datetime | None, str | None, str | None, str | None, str | None, bool, bool]:
         role = ACTING_ROLE.get(task.step) if task.step is not None else None
         last_signal_at = None
+        last_signal = None
+        last_signal_identity = None
+        last_signal_role = None
+        last_signal_turn = None
         tool_running = False
         if role is None:
-            return last_signal_at, tool_running, False
+            return (
+                last_signal_at,
+                last_signal,
+                last_signal_identity,
+                last_signal_role,
+                last_signal_turn,
+                tool_running,
+                False,
+            )
         turn_name = self._current_turn_name(task)
         if turn_name is None:
-            return last_signal_at, tool_running, turn_active
+            return (
+                last_signal_at,
+                last_signal,
+                last_signal_identity,
+                last_signal_role,
+                last_signal_turn,
+                tool_running,
+                turn_active,
+            )
         activity = self._role_view_tail.read(
             view_log_path(run_dir(self._project_root, task.id), role.value), turn_name
         )
         if activity is None or (
             turn_started_at is not None and activity.last_signal_at < turn_started_at
         ):
-            return last_signal_at, tool_running, turn_active
+            return (
+                last_signal_at,
+                last_signal,
+                last_signal_identity,
+                last_signal_role,
+                last_signal_turn,
+                tool_running,
+                turn_active,
+            )
         last_signal_at = activity.last_signal_at
+        last_signal = activity.last_signal
+        last_signal_identity = f"signal:{role.value}:{activity.identity_offset}"
+        last_signal_role = role.value
+        last_signal_turn = activity.turn
         tool_running = activity.tool_running
         turn_active = turn_active and not activity.ended
-        return last_signal_at, tool_running, turn_active
+        return (
+            last_signal_at,
+            last_signal,
+            last_signal_identity,
+            last_signal_role,
+            last_signal_turn,
+            tool_running,
+            turn_active,
+        )
 
     def _is_held(self, task: Task) -> bool:
         role = ACTING_ROLE.get(task.step) if task.step is not None else None

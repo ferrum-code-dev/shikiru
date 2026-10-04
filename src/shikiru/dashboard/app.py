@@ -1020,7 +1020,7 @@ class DashboardApp(App[None]):
             target = task_list.first() if task_list else self.query_one("#focus-footer", Static)
             self.set_focus(target)
         else:
-            self.set_focus(self.query_one("#task-detail-views", Button))
+            self.set_focus(self.query_one("#task-detail-body"))
         if self._motion_interval_seconds is not None:
             self.run_worker(self._motion_loop(), group="dashboard-motion", exclusive=True)
 

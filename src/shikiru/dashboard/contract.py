@@ -394,6 +394,14 @@ class TaskSignalView:
 
 
 @dataclass(frozen=True)
+class TaskMilestoneView:
+    """One workflow stage and the recorded outcome shown in the compact inspector."""
+
+    stage: str
+    state: str
+
+
+@dataclass(frozen=True)
 class TaskTimelineEntryView:
     """One recorded engine event or normalized agent signal with stable identity."""
 
@@ -500,6 +508,19 @@ class TaskDetailView:
     quota_observations: tuple[AgentUsageView, ...] = ()
     agent_usage: tuple[AgentUsageView, ...] = ()
     priority: int | None = None
+    actual_stage: str | None = None
+    actual_stage_started_at: datetime | None = None
+    stage_ended_at: datetime | None = None
+    milestones: tuple[TaskMilestoneView, ...] = ()
+    workflow_history_complete: bool = False
+    latest_signal: str | None = None
+    latest_signal_identity: str | None = None
+    latest_signal_at: datetime | None = None
+    latest_signal_role: str | None = None
+    latest_signal_turn: str | None = None
+    latest_signal_uncertain: bool = False
+    latest_signal_error: str | None = None
+    latest_signal_incomplete: bool = False
 
 
 @dataclass(frozen=True)

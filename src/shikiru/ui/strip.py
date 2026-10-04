@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum, auto
+from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -35,6 +36,9 @@ from shikiru.ui.tokens import (
     STYLE_REVERSE,
     SUCCESS_COLOR,
 )
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 STRIP_WIDE_MIN_COLUMNS = 60
 
@@ -155,6 +159,12 @@ class TaskStripData:
     title: str
     panels: tuple[PanelView, ...] = ()
     stamp: StripStamp | None = None
+    actual_step_started_at: datetime | None = None
+    last_signal_at: datetime | None = None
+    last_signal: str | None = None
+    last_signal_identity: str | None = None
+    last_signal_role: str | None = None
+    last_signal_turn: str | None = None
 
 
 def _fit(text: str, width: int) -> str:

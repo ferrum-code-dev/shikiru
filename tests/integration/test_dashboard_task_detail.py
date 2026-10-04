@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import shutil
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -12,6 +12,7 @@ from textual.widgets import Button, DataTable, Input, ListView, Select, Static, 
 
 import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import (
+    BILLING_MODE_API,
     BILLING_MODE_SUBSCRIPTION,
     BILLING_SOURCE_OPERATOR_CONFIG,
     COST_BASIS_API_EQUIVALENT,
@@ -29,9 +30,9 @@ from shikiru.dashboard.contract import (
     WIDGET_ENTRY_POINT_GROUP,
     PaletteRequest,
     TaskHistoryGap,
+    TaskTimelineCategory,
 )
 from shikiru.dashboard.detail import (
-    TASK_DETAIL_BACK_BUTTON,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BODY,
     TASK_DETAIL_CONTEXT_INFO,
@@ -42,7 +43,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_SESSIONS,
     TASK_DETAIL_SITUATION,
     TASK_DETAIL_TIMELINE_TURN,
-    TASK_DETAIL_VIEWS_BUTTON,
     TASK_DETAIL_VIEWS_CLOSE_BUTTON,
     TASK_VIEW_ACTIONS,
     TASK_VIEW_CONTEXT,
@@ -73,13 +73,13 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.reports import TestRun as AgentTestRun
-from shikiru.domain.steps import Step, Transition, first_step
+from shikiru.domain.steps import ACTING_ROLE, Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, RepoState, Role, Status, Task
 from shikiru.engine.events import emit_turn_completed, emit_turn_started
 from shikiru.engine.turn_execution import TurnExecution
 from shikiru.operator.commands import OperatorCommands
-from shikiru.operator.queries import OperatorQueries
-from shikiru.paths import run_dir, task_root
+from shikiru.operator.queries import TASK_DETAIL_EVENT_LIMIT, OperatorQueries
+from shikiru.paths import run_dir, task_root, turns_dir
 from shikiru.process import ProcessIdentity
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
@@ -89,6 +89,7 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import HOME_WINDOW_NAME
+from shikiru.view_log import view_log_path
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -119,6 +120,63 @@ _COST_BASIS_BILLED = "billed"
 _BILLING_WIDGET_WAIT_SECONDS = 2
 _SCROLL_SETTLE_TIMEOUT_SECONDS = 2
 _RESPONSIVE_TASK_SIZES = ((120, 40), (48, 20), (36, 20), (48, 14), (20, 8))
+_TASK99_STAGE_START_SECONDS = 3
+_TASK99_LEADER_START_SECONDS = 4
+_TASK99_IMPLEMENTER_SIGNAL_SECONDS = 6
+_TASK99_LATEST_SIGNAL_SECONDS = 8
+_TASK99_DETAIL_NOW_SECONDS = 9
+_TASK99_TIMELINE_PAGE_SIZE = 1
+_TASK99_HISTORY_OVERFLOW_EXTRA = 2
+_TASK99_OLD_ITERATION = 1
+_TASK99_CURRENT_ITERATION = 2
+
+
+def _write_task99_role_signals(project_root: Path, task_id: str) -> None:
+    implementer_path = view_log_path(run_dir(project_root, task_id), Role.IMPLEMENTER.value)
+    implementer_path.parent.mkdir(parents=True)
+    implementer_rows = (
+        {
+            "ts": (START + timedelta(seconds=_TASK99_LEADER_START_SECONDS)).isoformat(),
+            "turn": "02-implement-i1",
+            "signal": "SessionStarted",
+        },
+        {
+            "ts": (START + timedelta(seconds=_TASK99_IMPLEMENTER_SIGNAL_SECONDS)).isoformat(),
+            "turn": "02-implement-i1",
+            "signal": "ToolFinished",
+        },
+    )
+    implementer_path.write_text(
+        "\n".join([*(json.dumps(row) for row in implementer_rows), ""]), encoding="utf-8"
+    )
+    leader_path = view_log_path(run_dir(project_root, task_id), Role.LEADER.value)
+    leader_path.parent.mkdir(parents=True)
+    leader_row = {
+        "ts": (START + timedelta(seconds=_TASK99_LATEST_SIGNAL_SECONDS)).isoformat(),
+        "turn": "03-verify-i1",
+        "signal": "ToolStarted",
+    }
+    leader_path.write_text(f"{json.dumps(leader_row)}\n", encoding="utf-8")
+
+
+def _append_task99_step(
+    events: EventLog,
+    task_id: str,
+    step: Step,
+    iteration: int,
+) -> None:
+    events.append(
+        EventKind.STEP_STARTED,
+        task_id=task_id,
+        message=f"{step.value} started",
+        data={"step": step.value, "role": ACTING_ROLE[step].value, "iteration": iteration},
+    )
+
+
+def _milestone_state(detail: TaskDetailView, step: Step) -> str:
+    label = "Merge" if step is Step.INTEGRATE else step.value.title()
+    milestone = next(item for item in detail.milestones if item.stage == label)
+    return milestone.state
 
 
 class _ExtensionWidget:
@@ -150,6 +208,7 @@ if TYPE_CHECKING:
         NavigateRolePane,
         NavigateTaskWindow,
         OpenPaletteContext,
+        TaskDetailView,
         WidgetContext,
     )
     from shikiru.domain.runs import Run
@@ -187,6 +246,15 @@ class _VerdictCase:
     expected_verdict: str
     expected_verdict_source: str
     expected_verdict_turn: str
+
+
+@dataclass(frozen=True)
+class _ReenteredStageCase:
+    step: Step
+    report_kind: ReportKind
+    turn: str
+    role: Role
+    rung: Rung
 
 
 @dataclass(frozen=True)
@@ -354,7 +422,12 @@ async def _open_task_view(
     pilot: Pilot[None],
     view_id: str,
 ) -> None:
-    await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+    if view_id == TASK_VIEW_USAGE:
+        await pilot.press("u")
+        panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+        await wait_until(lambda: panel.active_view == TASK_VIEW_USAGE, timeout=2)
+        return
+    await pilot.press("v")
     await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
     choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
     choice.value = view_id
@@ -368,7 +441,7 @@ async def _open_task_context_choice(
     pilot: Pilot[None],
     choice_id: str,
 ) -> None:
-    await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+    await pilot.press("v")
     await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
     choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
     choice.value = choice_id
@@ -730,10 +803,10 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             assert "2 unknown" in sessions_text
             assert "$1.25" in sessions_text
             assert "Billing declaration · unknown · source unknown" in sessions_text
-            assert "$1.25" in sessions_text
             assert "$0.00" in sessions_text
             assert "Implementer" in sessions_text
-            assert "current" in sessions_text
+            assert "Used" in sessions_text
+            assert "Current" not in sessions_text
             assert "codex/luna" in sessions_text
             assert "550 input+output" in sessions_text
             assert "billed $1.25" in sessions_text
@@ -1482,6 +1555,276 @@ async def test_detail_observes_new_role_signals_without_a_database_revision(
     assert any("pytest" in line for line in refreshed.signals[0].lines)
 
 
+async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_and_task_state(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Retained role signals", mode=Mode.IMPLEMENT)
+    tasks = TaskStore(connection, clock)
+    events = EventLog(connection, clock)
+    events.append(EventKind.TASK_QUEUED, task_id=task.id, message="queued")
+    task = tasks.require(task.id)
+    tasks.apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.VERIFY, status=Status.RUNNING),
+    )
+    clock.advance(_TASK99_STAGE_START_SECONDS)
+    events.append(
+        EventKind.STEP_STARTED,
+        task_id=task.id,
+        message="verify started",
+        data={"step": Step.VERIFY.value, "role": Role.LEADER.value, "iteration": task.iteration},
+    )
+    runs = RunStore(connection, clock)
+    implementer = runs.start(
+        task.id,
+        Role.IMPLEMENTER,
+        IMPLEMENTER_RUNGS[0],
+        billing_declaration=BillingDeclaration(BILLING_MODE_API, BILLING_SOURCE_OPERATOR_CONFIG),
+    )
+    runs.close(implementer.id)
+    clock.advance(_TASK99_LEADER_START_SECONDS - _TASK99_STAGE_START_SECONDS)
+    leader = runs.start(
+        task.id,
+        Role.LEADER,
+        LEADER_RUNG,
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_SUBSCRIPTION,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    clock.advance(_TASK99_IMPLEMENTER_SIGNAL_SECONDS - _TASK99_LEADER_START_SECONDS)
+    _write_task99_role_signals(project_root, task.id)
+    clock.advance(_TASK99_DETAIL_NOW_SECONDS - _TASK99_LATEST_SIGNAL_SECONDS)
+    settings = load_settings(project_root)
+    settings = settings.model_copy(
+        update={
+            "dashboard": settings.dashboard.model_copy(
+                update={"timeline_page_size": _TASK99_TIMELINE_PAGE_SIZE}
+            )
+        }
+    )
+    views = state_views(reader, project_root, clock, StubServices(), settings=settings)
+
+    filtered_latest = await views.task_timeline(
+        task.id,
+        cursor=None,
+        role=Role.IMPLEMENTER.value,
+        turn=None,
+        category=TaskTimelineCategory.SIGNAL.value,
+    )
+    assert filtered_latest is not None
+    assert filtered_latest.older_cursor is not None
+    detail = await views.task_detail(
+        task.id,
+        timeline_cursor=filtered_latest.older_cursor,
+        timeline_role=Role.IMPLEMENTER.value,
+        timeline_category=TaskTimelineCategory.SIGNAL.value,
+    )
+
+    assert detail is not None
+    assert detail.timeline is not None
+    assert detail.timeline.entries[0].turn == "02-implement-i1"
+    assert detail.timeline.entries[0].summary == "SessionStarted"
+    assert detail.latest_signal == "ToolStarted"
+    assert detail.latest_signal_identity == "signal:leader:0"
+    assert detail.latest_signal_role == Role.LEADER.value
+    assert detail.latest_signal_turn == "03-verify-i1"
+    assert detail.latest_signal_at == START + timedelta(seconds=_TASK99_LATEST_SIGNAL_SECONDS)
+    assert detail.actual_stage_started_at == START + timedelta(seconds=_TASK99_STAGE_START_SECONDS)
+    assert not detail.latest_signal_uncertain
+
+    tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
+    paused = await views.task_detail(task.id, include_timeline=False)
+    assert paused is not None
+    assert paused.latest_signal_identity == detail.latest_signal_identity
+    assert paused.latest_signal_at == detail.latest_signal_at
+
+    current_task = tasks.require(task.id)
+    tasks.apply_transition(
+        task.id,
+        Transition.stay(current_task, step=None, status=Status.DONE),
+    )
+    runs.close(leader.id)
+    completed = await views.task_detail(task.id, include_timeline=False)
+    assert completed is not None
+    assert completed.actual_stage is None
+    assert completed.latest_signal_identity == detail.latest_signal_identity
+    assert completed.latest_signal_at == detail.latest_signal_at
+
+
+@pytest.mark.parametrize(
+    ("mode", "step"),
+    [(Mode.PLAN, Step.PLAN), (Mode.IMPLEMENT, Step.IMPLEMENT)],
+    ids=("planning-bypass", "implementation-bypass"),
+)
+async def test_first_recorded_plan_or_implement_transition_marks_triage_bypassed(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    mode: Mode,
+    step: Step,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Explicit workflow mode", mode=mode)
+    events = EventLog(connection, clock)
+    events.append(EventKind.TASK_QUEUED, task_id=task.id, message="queued")
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=step, status=Status.RUNNING),
+    )
+    _append_task99_step(events, task.id, step, task.iteration)
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    assert detail.workflow_history_complete
+    assert _milestone_state(detail, Step.TRIAGE) == "skipped"
+    assert _milestone_state(detail, step) == "current"
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            _ReenteredStageCase(
+                Step.IMPLEMENT,
+                ReportKind.IMPLEMENTATION,
+                "02-implement-i1",
+                Role.IMPLEMENTER,
+                IMPLEMENTER_RUNGS[0],
+            ),
+            id="implementation-reentered",
+        ),
+        pytest.param(
+            _ReenteredStageCase(
+                Step.VERIFY,
+                ReportKind.VERDICT,
+                "03-verify-i1",
+                Role.LEADER,
+                LEADER_RUNG,
+            ),
+            id="verification-reentered",
+        ),
+    ],
+)
+async def test_older_iteration_report_does_not_complete_the_reentered_stage(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    case: _ReenteredStageCase,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Re-entered stage", mode=Mode.IMPLEMENT)
+    events = EventLog(connection, clock)
+    events.append(EventKind.TASK_QUEUED, task_id=task.id, message="queued")
+    runs = RunStore(connection, clock)
+    previous = runs.start(task.id, case.role, case.rung)
+    _append_task99_step(events, task.id, case.step, _TASK99_OLD_ITERATION)
+    events.append(
+        EventKind.TURN_STARTED,
+        task_id=task.id,
+        message="previous iteration started",
+        data={
+            "step": case.step.value,
+            "role": case.role.value,
+            "agent": case.rung.agent,
+            "model": case.rung.model,
+            "effort": case.rung.effort,
+            "iteration": _TASK99_OLD_ITERATION,
+            "run_id": previous.id,
+            "turn": case.turn,
+        },
+    )
+    runs.close(previous.id)
+    _write_report_turn(
+        turns_dir(project_root, task.id),
+        case.turn,
+        case.report_kind,
+        "A prior iteration recorded a successful outcome.",
+        None,
+    )
+    current_transition = replace(
+        Transition.stay(task, step=case.step, status=Status.RUNNING),
+        iteration=_TASK99_CURRENT_ITERATION,
+    )
+    TaskStore(connection, clock).apply_transition(task.id, current_transition)
+    _append_task99_step(events, task.id, case.step, _TASK99_CURRENT_ITERATION)
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    assert _milestone_state(detail, case.step) == "current"
+
+
+async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Implementation rework", mode=Mode.IMPLEMENT)
+    events = EventLog(connection, clock)
+    events.append(EventKind.TASK_QUEUED, task_id=task.id, message="queued")
+    _append_task99_step(events, task.id, Step.IMPLEMENT, _TASK99_OLD_ITERATION)
+    _append_task99_step(events, task.id, Step.VERIFY, _TASK99_OLD_ITERATION)
+    events.append(
+        EventKind.VERDICT,
+        task_id=task.id,
+        message="changes requested",
+        data={"decision": "changes_requested"},
+    )
+    current_transition = replace(
+        Transition.stay(task, step=Step.IMPLEMENT, status=Status.RUNNING),
+        iteration=_TASK99_CURRENT_ITERATION,
+    )
+    TaskStore(connection, clock).apply_transition(task.id, current_transition)
+    _append_task99_step(events, task.id, Step.IMPLEMENT, _TASK99_CURRENT_ITERATION)
+    turns_root = turns_dir(project_root, task.id)
+    _write_report_turn(
+        turns_root,
+        "02-implement-i1",
+        ReportKind.IMPLEMENTATION,
+        "The earlier implementation passed its recorded checks.",
+        None,
+    )
+
+    rework = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert rework is not None
+    assert _milestone_state(rework, Step.IMPLEMENT) == "current"
+    assert _milestone_state(rework, Step.VERIFY) == "rework"
+    assert rework.workflow_history_complete
+
+    truncated = seed_task(connection, clock, title="Truncated workflow", mode=Mode.IMPLEMENT)
+    events.append(EventKind.TASK_QUEUED, task_id=truncated.id, message="queued")
+    truncated_task = TaskStore(connection, clock).require(truncated.id)
+    TaskStore(connection, clock).apply_transition(
+        truncated.id,
+        Transition.stay(truncated_task, step=Step.VERIFY, status=Status.RUNNING),
+    )
+    _append_task99_step(events, truncated.id, Step.TRIAGE, _TASK99_OLD_ITERATION)
+    _append_task99_step(events, truncated.id, Step.VERIFY, _TASK99_OLD_ITERATION)
+    for _ in range(TASK_DETAIL_EVENT_LIMIT + _TASK99_HISTORY_OVERFLOW_EXTRA):
+        events.append(EventKind.NUDGE, task_id=truncated.id, message="retained activity")
+
+    incomplete = await state_views(reader, project_root, clock, StubServices()).task_detail(
+        truncated.id
+    )
+
+    assert incomplete is not None
+    assert not incomplete.workflow_history_complete
+    assert _milestone_state(incomplete, Step.TRIAGE) == "unknown"
+    assert _milestone_state(incomplete, Step.IMPLEMENT) == "unknown"
+    assert _milestone_state(incomplete, Step.VERIFY) == "current"
+
+
 async def test_enter_opens_shared_detail_and_escape_restores_browser_selection_and_scroll(
     connection: Connection,
     database: Database,
@@ -1646,16 +1989,17 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
     timeline_turn.value = "3"
     body = app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
     body.scroll_to_widget(timeline_turn, animate=False)
+    timeline_turn.focus()
     await pilot.wait_for_scheduled_animations()
     await pilot.pause()
-    reading_position = body.scroll_target_y
     assert queue.pending() == pending_before
 
     for width, height in ((36, 20), (20, 8)):
         if (app.size.width, app.size.height) != (width, height):
             await pilot.resize_terminal(width, height)
             await pilot.wait_for_scheduled_animations()
-        await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+        app.set_focus(None)
+        await pilot.press("v")
         await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
         await pilot.wait_for_scheduled_animations()
         close_button = app.screen.query_one(f"#{TASK_DETAIL_VIEWS_CLOSE_BUTTON}", Button)
@@ -1666,10 +2010,12 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
         assert close_button.region.bottom <= height
         assert await pilot.click(close_button, offset=(1, 1))
         await wait_until(lambda: app.screen is workspace_screen, timeout=2)
+        timeline_turn.focus()
+        await pilot.pause()
         assert panel.active_view == TASK_VIEW_EVIDENCE
         assert task_id in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
         assert timeline_turn.value == "3"
-        assert body.scroll_target_y == reading_position
+        assert timeline_turn.region.overlaps(body.scrollable_content_region)
         assert queue.pending() == pending_before
 
 
@@ -1703,7 +2049,8 @@ async def test_task_detail_views_mouse_opens_task_actions_and_help(
             )
             await pilot.resize_terminal(100, 40)
             await pilot.wait_for_scheduled_animations()
-            await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+            app.set_focus(None)
+            await pilot.press("v")
             await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
             choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
             choice.value = TASK_VIEW_ACTIONS
@@ -1718,7 +2065,8 @@ async def test_task_detail_views_mouse_opens_task_actions_and_help(
 
             await pilot.press("escape")
             await wait_until(lambda: app.screen is workspace_screen, timeout=2)
-            await pilot.click(f"#{TASK_DETAIL_VIEWS_BUTTON}")
+            app.set_focus(None)
+            await pilot.press("v")
             await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
             choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
             choice.value = TASK_VIEW_HELP
@@ -2016,8 +2364,7 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
 
             def filter_visible() -> bool:
                 return (
-                    detail_body.scroll_y > 0
-                    and timeline_turn.region.y >= detail_body.region.y
+                    timeline_turn.region.y >= detail_body.region.y
                     and timeline_turn.region.bottom <= detail_body.region.bottom
                     and timeline_turn.region.y >= 0
                     and timeline_turn.region.bottom <= app.size.height
@@ -2045,20 +2392,19 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
             assert timeline_turn.value == "3"
             assert filter_visible()
 
-            views_button = app.query_one(f"#{TASK_DETAIL_VIEWS_BUTTON}", Button)
-            views_button.focus()
+            timeline_turn.focus()
             await pilot.wait_for_scheduled_animations()
             reading_position = detail_body.scroll_target_y
             await pilot.resize_terminal(36, 20)
             await pilot.wait_for_scheduled_animations()
             assert detail_body.scroll_target_y == reading_position
             assert filter_visible()
-            assert app.focused is views_button
+            assert app.focused is timeline_turn
             assert timeline_turn.value == "3"
-            assert views_button.region.x >= 0
-            assert views_button.region.right <= app.size.width
-            assert views_button.region.y >= 0
-            assert views_button.region.bottom <= app.size.height
+            assert timeline_turn.region.x >= 0
+            assert timeline_turn.region.right <= app.size.width
+            assert timeline_turn.region.y >= 0
+            assert timeline_turn.region.bottom <= app.size.height
     finally:
         reader.close()
 
@@ -2098,7 +2444,7 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
             identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
             assert task.id in _text(identity)
             assert task.title in _text(identity)
-            assert "queued" in _text(identity)
+            assert "queued" in _text(identity).casefold()
             assert Hold.PAUSED.value in _text(ownership)
             await _open_task_view(app, pilot, TASK_VIEW_CONTEXT)
             assert "Project attention" in _text(
@@ -2156,7 +2502,7 @@ async def test_hand_back_and_resume_remain_explicit_while_other_holds_survive(
             queue.mark_done(first_command.id, {"role": Role.LEADER.value})
             await wait_until(
                 lambda: (
-                    "Operator owns · Implementer" in _text(ownership)
+                    "Operator owns Implementer" in _text(ownership)
                     and "Leader" not in _text(ownership)
                     and Hold.PAUSED.value in _text(ownership)
                     and Hold.INTERVENTION.value in _text(ownership)
@@ -2207,7 +2553,7 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
             ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
             await wait_until(
                 lambda: (
-                    "Operator owns · Leader" in _text(ownership)
+                    "Operator owns Leader" in _text(ownership)
                     and Hold.PAUSED.value in _text(ownership)
                 ),
                 timeout=2,
@@ -2238,7 +2584,7 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
             tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
             queue.mark_done(hand_back.id, {"role": Role.LEADER.value})
             await wait_until(
-                lambda: "Remaining holds · paused" in _text(ownership),
+                lambda: "Holds · paused" in _text(ownership),
                 timeout=2,
             )
             paused_task = tasks.get(task.id)
@@ -2421,7 +2767,7 @@ async def test_task_window_global_attention_uses_injected_home_navigation(
         async with app.run_test(size=(100, 30)) as pilot:
             identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
             await wait_until(lambda: task.title in _text(identity), timeout=2)
-            await pilot.click(f"#{TASK_DETAIL_BACK_BUTTON}")
+            await pilot.press("escape")
             feedback = app.query_one("#task-detail-feedback", Static)
             await wait_until(
                 lambda: "opened existing home window" in _text(feedback),
@@ -2512,7 +2858,7 @@ async def test_navigation_uses_activation_time_targets_and_terminal_cleanup_crea
         async with app.run_test(size=(36, 24)) as pilot:
             identity = app.query_one("#task-detail-identity", Static)
             await wait_until(lambda: task.title in _text(identity), timeout=2)
-            assert "done" in _text(identity)
+            assert "done" in _text(identity).casefold()
             workspace = _text(app.query_one("#task-detail-workspace", Static))
             assert str(task_root(context.project_root, task.id)) in workspace
             button = app.query_one("#task-detail-window", Button)

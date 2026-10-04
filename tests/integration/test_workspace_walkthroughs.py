@@ -15,6 +15,7 @@ from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.detail import (
     TASK_DETAIL_OWNERSHIP,
+    TASK_DETAIL_SITUATION,
     TaskDetailScreen,
 )
 from shikiru.dashboard.motion import DashboardMotion
@@ -369,15 +370,13 @@ async def _wait_for_terminal_task_cleanup(runtime: WorkspaceRuntime, task_id: st
 async def _export_terminal_task(
     runtime: WorkspaceRuntime,
     task_id: str,
-    status: Status,
     destination: str,
 ) -> dict[str, Any]:
     app = runtime.app(focus_task=task_id)
     async with app.run_test(size=TASK_SIZE) as pilot:
         identity = app.query_one("#task-detail-identity", Static)
-        await runtime.wait_for(
-            lambda: task_id in _plain(identity) and status.value in _plain(identity)
-        )
+        situation = app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)
+        await runtime.wait_for(lambda: task_id in _plain(identity) and bool(_plain(situation)))
         await pilot.press("ctrl+p")
         await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
         palette = cast("PaletteScreen", app.screen)
@@ -742,7 +741,7 @@ async def test_real_terminal_cleanup_remains_exportable_with_missing_evidence_ma
             task_ids, (Status.DONE, Status.CANCELLED, Status.CANCELLED), strict=True
         ):
             destination = f"exports/{task_id}.json"
-            document = await _export_terminal_task(runtime, task_id, status, destination)
+            document = await _export_terminal_task(runtime, task_id, destination)
             assert document["task_id"] == task_id
             assert document["outcome"]["status"] == status.value
             if task_id == done_task_id:

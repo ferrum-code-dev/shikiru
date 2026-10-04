@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -33,6 +34,7 @@ from shikiru.agents.contracts import (
     BillingDeclaration,
     Rung,
     Usage,
+    role_dir,
 )
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
@@ -47,6 +49,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_CRITERIA,
     TASK_DETAIL_EVIDENCE,
+    TASK_DETAIL_EVIDENCE_INLINE_BUTTON,
     TASK_DETAIL_FACTS,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
@@ -54,9 +57,16 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_REPORT,
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_SESSIONS,
+    TASK_DETAIL_SIGNAL,
     TASK_DETAIL_SITUATION,
+    TASK_DETAIL_TIMELINE_ENTRY,
+    TASK_DETAIL_TIMELINE_TITLE,
+    TASK_DETAIL_USAGE_INLINE_BUTTON,
     TASK_DETAIL_VERDICT,
     TASK_DETAIL_WORKSPACE,
+    TASK_VIEW_EVIDENCE,
+    TASK_VIEW_SUMMARY,
+    TASK_VIEW_USAGE,
     TaskDetailPanel,
     TaskDetailScreen,
 )
@@ -64,13 +74,23 @@ from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.commands import Prioritize, Stop
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
-from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, ReportKind
+from shikiru.domain.reports import (
+    CURRENT_TURN_LINK_NAME,
+    REPORT_FILENAME,
+    REPORT_KIND_FILENAME,
+    ImplementationReport,
+    ReportKind,
+    TriageReport,
+)
+from shikiru.domain.reports import (
+    TestRun as AgentTestRun,
+)
 from shikiru.domain.scheduling import WaitReason
-from shikiru.domain.steps import Step, Transition, first_step
+from shikiru.domain.steps import ACTING_ROLE, Step, Transition, first_step, next_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Task
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
-from shikiru.paths import turns_dir
+from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.store.commands import CommandQueue
@@ -80,6 +100,7 @@ from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.resources import ResourceSampler
+from shikiru.view_log import view_log_path
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
@@ -95,6 +116,8 @@ _EXTERNAL_WIDGET_NAME = "outside-widget"
 _WIDE_HOME_SIZE = (120, 40)
 _STANDARD_HOME_SIZE = (100, 35)
 _COMPACT_HOME_SIZE = (48, 20)
+_NARROW_TASK_SIZE = (36, 20)
+_COMPACT_TASK_SIZES = (_COMPACT_HOME_SIZE, _NARROW_TASK_SIZE)
 _TINY_HOME_SIZE = (20, 8)
 _HOME_REVIEW_SIZES = (_STANDARD_HOME_SIZE, _WIDE_HOME_SIZE, (80, 24), _COMPACT_HOME_SIZE)
 _MIN_WIDE_TASK_LIST_ROWS = 9
@@ -108,6 +131,28 @@ _ESTIMATED_INPUT_TOKENS = 200
 _ESTIMATED_OUTPUT_TOKENS = 100
 _API_BILLED_COST_USD = 0.42
 _API_EQUIVALENT_ESTIMATE_USD = 0.11
+_TASK99_TRIAGE_DURATION_SECONDS = 30
+_TASK99_IMPLEMENT_DURATION_SECONDS = 90
+_TASK99_VERIFY_DURATION_SECONDS = 180
+_TASK99_SIGNAL_AGE_SECONDS = 59
+_TASK99_AGE_BOUNDARY_ADVANCE_SECONDS = 1
+_TASK99_TIMELINE_REFRESH_SECONDS = 1
+_TASK99_API_INPUT_TOKENS = 1_731
+_TASK99_API_OUTPUT_TOKENS = 284
+_TASK99_API_CACHE_READ_TOKENS = 91
+_TASK99_API_CACHE_WRITE_TOKENS = 17
+_TASK99_API_COST_USD = 0.37
+_TASK99_SUBSCRIPTION_INPUT_TOKENS = 683
+_TASK99_SUBSCRIPTION_OUTPUT_TOKENS = 149
+_TASK99_SUBSCRIPTION_CACHE_READ_TOKENS = 37
+_TASK99_SUBSCRIPTION_CACHE_WRITE_TOKENS = 8
+_TASK99_SELECTED_TITLE = "Verify compact task inspector"
+_TASK99_SIGNAL_ROW = "ToolStarted"
+_TASK99_SIGNAL_NAME = "pytest"
+_TASK99_CURRENT_TURN = "03-verify-i1"
+_TASK99_IMPLEMENT_TURN = "02-implement-i1"
+_TASK99_TRIAGE_TURN = "01-triage-i0"
+_TASK99_REVIEW_DIR = Path("build/review/task99")
 
 
 class _ExternalWidget:
@@ -186,6 +231,10 @@ def _rendered_task_detail_sections(app: DashboardApp) -> tuple[str, ...]:
     )
 
 
+def _task99_widget_text(widget: Static) -> str:
+    return "\n".join(_rendered_widget_lines(widget))
+
+
 def _seed_paused_escalated_task(connection: Connection) -> str:
     clock = SystemClock()
     task = seed_task(connection, clock, title="Paused dashboard task", mode=Mode.IMPLEMENT)
@@ -198,12 +247,609 @@ def _seed_paused_escalated_task(connection: Connection) -> str:
     return task.id
 
 
+def _append_task99_stage_start(events: EventLog, task: Task, step: Step) -> None:
+    events.append(
+        EventKind.STEP_STARTED,
+        task_id=task.id,
+        message=f"{step.value} stage started",
+        data={
+            "step": step.value,
+            "role": ACTING_ROLE[step].value,
+            "iteration": task.iteration,
+        },
+    )
+
+
+def _write_task99_report_turn(
+    project_dir: Path,
+    task_id: str,
+    turn: str,
+    kind: ReportKind,
+    report: TriageReport | ImplementationReport,
+) -> Path:
+    turn_dir = turns_dir(project_dir, task_id) / turn
+    turn_dir.mkdir(parents=True, exist_ok=True)
+    (turn_dir / REPORT_KIND_FILENAME).write_text(kind.value, encoding="utf-8")
+    (turn_dir / REPORT_FILENAME).write_text(report.model_dump_json(), encoding="utf-8")
+    return turn_dir
+
+
+def _write_task99_signal(
+    project_dir: Path,
+    task_id: str,
+    role: Role,
+    *,
+    turn: str,
+    observed_at: datetime,
+    signal: str,
+    name: str,
+) -> None:
+    path = view_log_path(run_dir(project_dir, task_id), role.value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"ts": observed_at.isoformat(), "turn": turn, "signal": signal, "name": name})
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _record_task99_triage(
+    connection: Connection,
+    project_dir: Path,
+    clock: FakeClock,
+    settings: Settings,
+) -> Task:
+    tasks = TaskStore(connection, clock)
+    events = EventLog(connection, clock)
+    task = seed_task(connection, clock, title=_TASK99_SELECTED_TITLE)
+    events.append(EventKind.TASK_QUEUED, task_id=task.id, message="Task submitted")
+    tasks.apply_transition(task.id, first_step(task))
+    _append_task99_stage_start(events, task, Step.TRIAGE)
+    triage = TriageReport(
+        title=task.title,
+        mode=Mode.IMPLEMENT,
+        complexity="normal",
+        acceptance_criteria=["Recorded implementation passes verification"],
+        references=[],
+    )
+    _write_task99_report_turn(project_dir, task.id, _TASK99_TRIAGE_TURN, ReportKind.TRIAGE, triage)
+
+    clock.advance(_TASK99_TRIAGE_DURATION_SECONDS)
+    task = tasks.require(task.id)
+    tasks.apply_transition(task.id, next_step(task, triage, settings))
+    return tasks.require(task.id)
+
+
+def _record_task99_implementation(
+    connection: Connection,
+    project_dir: Path,
+    clock: FakeClock,
+    settings: Settings,
+    task: Task,
+) -> tuple[Task, ImplementationReport]:
+    tasks = TaskStore(connection, clock)
+    events = EventLog(connection, clock)
+    runs = RunStore(connection, clock)
+    _append_task99_stage_start(events, task, Step.IMPLEMENT)
+    implementer = runs.start(
+        task.id,
+        Role.IMPLEMENTER,
+        Rung("codex", "gpt-6-luna", "low"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_API,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    implementer_turn_data = {
+        "role": Role.IMPLEMENTER.value,
+        "agent": "codex",
+        "model": "gpt-6-luna",
+        "effort": "low",
+        "run_id": implementer.id,
+        "turn": _TASK99_IMPLEMENT_TURN,
+        "step": Step.IMPLEMENT.value,
+        "iteration": task.iteration,
+    }
+    events.append(
+        EventKind.TURN_STARTED,
+        task_id=task.id,
+        message="Implementer started recorded implementation",
+        data=implementer_turn_data,
+    )
+    runs.record_usage(
+        implementer.id,
+        Usage(
+            _TASK99_API_INPUT_TOKENS,
+            _TASK99_API_OUTPUT_TOKENS,
+            _TASK99_API_CACHE_READ_TOKENS,
+            _TASK99_API_CACHE_WRITE_TOKENS,
+            _TASK99_API_COST_USD,
+            COST_BASIS_BILLED,
+            None,
+        ),
+    )
+    implementer_report = ImplementationReport(
+        status="completed",
+        summary="Checks pass; reviewing the recorded report.",
+        commits=[],
+        tests=[AgentTestRun(name="focused checks", result="passed")],
+        trackers_updated=False,
+    )
+    _write_task99_report_turn(
+        project_dir,
+        task.id,
+        _TASK99_IMPLEMENT_TURN,
+        ReportKind.IMPLEMENTATION,
+        implementer_report,
+    )
+
+    clock.advance(_TASK99_IMPLEMENT_DURATION_SECONDS)
+    events.append(
+        EventKind.TURN_COMPLETED,
+        task_id=task.id,
+        message="Implementer completed the recorded implementation",
+        data={
+            **implementer_turn_data,
+            "usage_delta": {
+                "input_tokens": _TASK99_API_INPUT_TOKENS,
+                "output_tokens": _TASK99_API_OUTPUT_TOKENS,
+                "cache_read_tokens": _TASK99_API_CACHE_READ_TOKENS,
+                "cache_write_tokens": _TASK99_API_CACHE_WRITE_TOKENS,
+                "cost_usd": _TASK99_API_COST_USD,
+            },
+        },
+    )
+    runs.close(implementer.id)
+    task = tasks.require(task.id)
+    tasks.apply_transition(task.id, next_step(task, implementer_report, settings))
+    return tasks.require(task.id), implementer_report
+
+
+def _record_task99_verification(
+    connection: Connection,
+    project_dir: Path,
+    clock: FakeClock,
+    task: Task,
+) -> None:
+    events = EventLog(connection, clock)
+    runs = RunStore(connection, clock)
+    _append_task99_stage_start(events, task, Step.VERIFY)
+    verify_turn = turns_dir(project_dir, task.id) / _TASK99_CURRENT_TURN
+    verify_turn.mkdir(parents=True)
+    leader = runs.start(
+        task.id,
+        Role.LEADER,
+        Rung("claude", "sonnet", "medium"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_SUBSCRIPTION,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    runs.set_session(leader.id, "task99-current-leader-session", "resume task99")
+    runs.record_usage(
+        leader.id,
+        Usage(
+            _TASK99_SUBSCRIPTION_INPUT_TOKENS,
+            _TASK99_SUBSCRIPTION_OUTPUT_TOKENS,
+            _TASK99_SUBSCRIPTION_CACHE_READ_TOKENS,
+            _TASK99_SUBSCRIPTION_CACHE_WRITE_TOKENS,
+            None,
+            COST_BASIS_UNKNOWN,
+            None,
+        ),
+    )
+    events.append(
+        EventKind.TURN_STARTED,
+        task_id=task.id,
+        message="Leader started verification",
+        data={
+            "role": Role.LEADER.value,
+            "agent": "claude",
+            "model": "sonnet",
+            "effort": "medium",
+            "run_id": leader.id,
+            "turn": _TASK99_CURRENT_TURN,
+            "step": Step.VERIFY.value,
+            "iteration": task.iteration,
+        },
+    )
+    _write_task99_signal(
+        project_dir,
+        task.id,
+        Role.IMPLEMENTER,
+        turn=_TASK99_IMPLEMENT_TURN,
+        observed_at=clock.now() - timedelta(seconds=1),
+        signal="ToolFinished",
+        name="pytest",
+    )
+    leader_role_dir = role_dir(run_dir(project_dir, task.id), Role.LEADER.value)
+    leader_role_dir.mkdir(parents=True, exist_ok=True)
+    (leader_role_dir / CURRENT_TURN_LINK_NAME).symlink_to(verify_turn, target_is_directory=True)
+
+    clock.advance(_TASK99_VERIFY_DURATION_SECONDS - _TASK99_SIGNAL_AGE_SECONDS)
+    _write_task99_signal(
+        project_dir,
+        task.id,
+        Role.LEADER,
+        turn=_TASK99_CURRENT_TURN,
+        observed_at=clock.now(),
+        signal=_TASK99_SIGNAL_ROW,
+        name=_TASK99_SIGNAL_NAME,
+    )
+    clock.advance(_TASK99_SIGNAL_AGE_SECONDS)
+
+
+def _record_task99_other_tasks(
+    connection: Connection,
+    clock: FakeClock,
+    verifying_task_id: str,
+) -> str:
+    tasks = TaskStore(connection, clock)
+    runs = RunStore(connection, clock)
+    events = EventLog(connection, clock)
+    decision = seed_task(
+        connection,
+        clock,
+        title="Choose the recorded recovery path",
+        mode=Mode.IMPLEMENT,
+    )
+    decision = tasks.require(decision.id)
+    tasks.apply_transition(
+        decision.id,
+        Transition.stay(decision, step=Step.VERIFY, status=Status.ESCALATED),
+    )
+    EscalationStore(connection, clock).open(
+        decision.id,
+        step=Step.VERIFY,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="Choose whether the task should continue",
+        packet_path=".shikiru/escalations/task99-decision.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+
+    waiting = seed_task(connection, clock, title="Wait for verification dependency")
+    tasks.set_depends_on(waiting.id, (verifying_task_id,))
+    tasks.set_wait_reason(waiting.id, WaitReason.DEPENDENCY)
+    paused = seed_task(connection, clock, title="Paused recorded follow-up")
+    tasks.set_holds(paused.id, frozenset({Hold.PAUSED}))
+    owned = seed_task(connection, clock, title="Operator-owned recorded follow-up")
+    tasks.apply_transition(owned.id, first_step(owned))
+    owned_run = runs.start(owned.id, Role.LEADER, Rung("claude", "sonnet", "medium"))
+    runs.mark_taken_over(owned_run.id)
+    tasks.set_holds(owned.id, frozenset({Hold.INTERVENTION}))
+    seed_task(connection, clock, title="Queued recorded follow-up")
+    recent = seed_task(connection, clock, title="Recently completed recorded task")
+    tasks.apply_transition(
+        recent.id,
+        Transition.stay(recent, step=None, status=Status.DONE),
+    )
+    events.append(EventKind.TASK_DONE, task_id=recent.id, message="Task completed")
+    return decision.id
+
+
+def _record_task99_population(
+    connection: Connection,
+    project_dir: Path,
+    clock: FakeClock,
+    settings: Settings,
+) -> tuple[str, str]:
+    task = _record_task99_triage(connection, project_dir, clock, settings)
+    task, _ = _record_task99_implementation(connection, project_dir, clock, settings, task)
+    _record_task99_verification(connection, project_dir, clock, task)
+    decision_id = _record_task99_other_tasks(connection, clock, task.id)
+    return task.id, decision_id
+
+
+def _capture_task99(app: DashboardApp, name: str) -> Path:
+    _TASK99_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    path = _TASK99_REVIEW_DIR / name
+    path.write_text(app.export_screenshot(), encoding="utf-8")
+    return path
+
+
+def _task99_settings(project_dir: Path) -> Settings:
+    settings = load_settings(project_dir)
+    dashboard = settings.dashboard.model_copy(
+        update={
+            "animations": False,
+            "timeline_refresh_seconds": _TASK99_TIMELINE_REFRESH_SECONDS,
+        }
+    )
+    return settings.model_copy(update={"dashboard": dashboard})
+
+
+async def _select_home_task(app: DashboardApp, task_id: str) -> None:
+    task_list = app.query_one("#task-browser-list", ListView)
+    row = app.query_one(f"#task-row-{task_id}", ListItem)
+    index = tuple(task_list.children).index(row)
+    task_list.focus()
+    task_list.index = index
+    await wait_until(
+        lambda: (
+            task_list.highlighted_child is row
+            and task_id in _task99_widget_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+
+
+async def _capture_task99_home_size(
+    reader: StateReader,
+    *,
+    project_dir: Path,
+    clock: FakeClock,
+    settings: Settings,
+    selected_task_id: str,
+    decision_task_id: str,
+    size: tuple[int, int],
+) -> None:
+    widget_names = ["header", "queue", "escalations", "usage", "resources"]
+    app = _app(
+        reader,
+        project_dir,
+        widget_names=widget_names,
+        services=StubServices(engine_running=False),
+        clock=clock,
+        settings=settings,
+    )
+    async with app.run_test(size=size):
+        await wait_until(
+            lambda: bool(app.query(f"#task-row-{selected_task_id}")),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        await _select_home_task(app, selected_task_id)
+        identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        progress = app.query_one(f"#{TASK_DETAIL_PROGRESS}", Static)
+        signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
+        sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
+        await wait_until(
+            lambda: _TASK99_SELECTED_TITLE in _task99_widget_text(identity),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        assert "Verify" in _task99_widget_text(progress), _task99_widget_text(progress)
+        assert _TASK99_SIGNAL_ROW in _task99_widget_text(signal), _task99_widget_text(signal)
+        assert f"{Role.LEADER.value}/{_TASK99_CURRENT_TURN}" in _task99_widget_text(signal)
+        assert "Leader" in _task99_widget_text(sessions), _task99_widget_text(sessions)
+        detail_text = "\n".join(
+            _task99_widget_text(app.query_one(f"#{identifier}", Static))
+            for identifier in (
+                TASK_DETAIL_IDENTITY,
+                TASK_DETAIL_PROGRESS,
+                TASK_DETAIL_SITUATION,
+                TASK_DETAIL_SIGNAL,
+                "task-detail-task-usage",
+                TASK_DETAIL_SESSIONS,
+            )
+        )
+        assert selected_task_id in detail_text
+        assert "Implementer" in detail_text
+        assert "Used" in detail_text
+        assert "Current" in detail_text
+        assert "gpt-6-luna" in detail_text
+        assert "sonnet" in detail_text
+        attention = app.query_one("#escalations", EscalationsPanel)
+        attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+        assert decision_task_id in _task99_widget_text(attention_row)
+        assert _TASK99_SELECTED_TITLE in _task99_widget_text(identity)
+        _capture_task99(app, f"home-selected-{size[0]}x{size[1]}-color.svg")
+
+
+async def _capture_task99_compact_home_route(
+    reader: StateReader,
+    *,
+    project_dir: Path,
+    clock: FakeClock,
+    settings: Settings,
+    selected_task_id: str,
+    size: tuple[int, int],
+) -> None:
+    app = _app(
+        reader,
+        project_dir,
+        widget_names=["header", "queue", "escalations", "usage", "resources"],
+        services=StubServices(engine_running=False),
+        clock=clock,
+        settings=settings,
+    )
+    async with app.run_test(size=size) as pilot:
+        await wait_until(
+            lambda: bool(app.query(f"#task-row-{selected_task_id}")),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        task_list = app.query_one("#task-browser-list", ListView)
+        row = app.query_one(f"#task-row-{selected_task_id}", ListItem)
+        task_list.focus()
+        task_list.index = tuple(task_list.children).index(row)
+        await wait_until(
+            lambda: task_list.highlighted_child is row,
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        _capture_task99(app, f"home-list-selected-{size[0]}x{size[1]}-color.svg")
+        home_screen = app.screen
+        await pilot.press("enter")
+        await wait_until(
+            lambda: isinstance(app.screen, TaskDetailScreen),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        detail = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        identity = app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        progress = app.screen.query_one(f"#{TASK_DETAIL_PROGRESS}", Static)
+        signal = app.screen.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
+        expected_identity = "Verify" if size == _NARROW_TASK_SIZE else _TASK99_SELECTED_TITLE
+        await wait_until(
+            lambda: (
+                expected_identity in _task99_widget_text(identity)
+                and "Verify" in _task99_widget_text(progress)
+                and _TASK99_SIGNAL_ROW in _task99_widget_text(signal)
+            ),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        assert detail.active_view == TASK_VIEW_SUMMARY
+        _capture_task99(app, f"home-enter-detail-{size[0]}x{size[1]}-color.svg")
+        await pilot.press("escape")
+        await wait_until(
+            lambda: app.screen is home_screen,
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+
+
+async def _capture_task99_detail_size(
+    reader: StateReader,
+    *,
+    project_dir: Path,
+    clock: FakeClock,
+    settings: Settings,
+    selected_task_id: str,
+    size: tuple[int, int],
+) -> None:
+    screen_clock = FakeClock(clock.now())
+    app = _app(
+        reader,
+        project_dir,
+        focus_task=selected_task_id,
+        widget_names=["header", "queue", "escalations", "usage", "resources"],
+        services=StubServices(engine_running=False),
+        clock=screen_clock,
+        settings=settings,
+    )
+    async with app.run_test(size=size) as pilot:
+        panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+        identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        expected_identity = "Verify" if size == _NARROW_TASK_SIZE else _TASK99_SELECTED_TITLE
+        await wait_until(
+            lambda: expected_identity in _task99_widget_text(identity),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        _capture_task99(app, f"dash-task-{size[0]}x{size[1]}-color.svg")
+        if size in _COMPACT_TASK_SIZES:
+            await _assert_task99_live_age_and_routes(
+                app,
+                pilot,
+                panel,
+                screen_clock,
+                size=size,
+            )
+
+
+async def _assert_task99_live_age_and_routes(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    panel: TaskDetailPanel,
+    clock: FakeClock,
+    *,
+    size: tuple[int, int],
+) -> None:
+    signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
+    await wait_until(
+        lambda: "59s ago" in _task99_widget_text(signal),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    if size == _COMPACT_HOME_SIZE:
+        await wait_until(clock.has_pending_sleep, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+        clock.advance(_TASK99_AGE_BOUNDARY_ADVANCE_SECONDS)
+        await wait_until(
+            lambda: "1m ago" in _task99_widget_text(signal),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+
+    evidence_button = panel.query_one(f"#{TASK_DETAIL_EVIDENCE_INLINE_BUTTON}", Button)
+    evidence_button.focus()
+    await wait_until(
+        lambda: evidence_button.region.bottom <= app.size.height,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.press("enter")
+    await wait_until(
+        lambda: (
+            panel.active_view == TASK_VIEW_EVIDENCE
+            and "Evidence"
+            in _task99_widget_text(app.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static))
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    timeline_entry = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select))
+    await wait_until(
+        lambda: timeline_entry.value != Select.BLANK,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    _capture_task99(app, f"task-evidence-{size[0]}x{size[1]}-color.svg")
+    await pilot.press("escape")
+    await wait_until(
+        lambda: panel.active_view == TASK_VIEW_SUMMARY,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    usage_button = panel.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}", Button)
+    usage_button.focus()
+    await wait_until(
+        lambda: usage_button.region.bottom <= app.size.height,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.press("enter")
+    await wait_until(
+        lambda: (
+            panel.active_view == TASK_VIEW_USAGE
+            and "API" in _task99_widget_text(app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static))
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    _capture_task99(app, f"task-usage-{size[0]}x{size[1]}-color.svg")
+
+
+async def test_task99_native_compact_inspector_matches_recorded_workflow(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_TEST_START)
+    settings = _task99_settings(project_dir)
+    selected_task_id, decision_task_id = _record_task99_population(
+        connection,
+        project_dir,
+        clock,
+        settings,
+    )
+    reader = StateReader(database, clock)
+    try:
+        for size in (_STANDARD_HOME_SIZE, _WIDE_HOME_SIZE):
+            await _capture_task99_home_size(
+                reader,
+                project_dir=project_dir,
+                clock=clock,
+                settings=settings,
+                selected_task_id=selected_task_id,
+                decision_task_id=decision_task_id,
+                size=size,
+            )
+        for size in _COMPACT_TASK_SIZES:
+            await _capture_task99_compact_home_route(
+                reader,
+                project_dir=project_dir,
+                clock=clock,
+                settings=settings,
+                selected_task_id=selected_task_id,
+                size=size,
+            )
+        for size in (_STANDARD_HOME_SIZE, _WIDE_HOME_SIZE, *_COMPACT_TASK_SIZES):
+            await _capture_task99_detail_size(
+                reader,
+                project_dir=project_dir,
+                clock=clock,
+                settings=settings,
+                selected_task_id=selected_task_id,
+                size=size,
+            )
+    finally:
+        reader.close()
+
+
 if TYPE_CHECKING:
     from rich.text import Text
     from textual.pilot import Pilot
     from textual.widget import Widget
 
     from shikiru.clock import Clock
+    from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import OpenPalette, OpenPaletteContext, WidgetContext
     from shikiru.store.database import Database
     from tests.support.store import Connection
@@ -250,19 +896,33 @@ def _app(
     services: StubServices | None = None,
     open_palette: OpenPalette = ignore_palette_action,
     open_palette_context: OpenPaletteContext | None = None,
+    focus_task: str | None = None,
+    clock: Clock | None = None,
+    settings: Settings | None = None,
 ) -> DashboardApp:
-    settings = load_settings(project_dir)
+    settings = settings or load_settings(project_dir)
+    clock = clock or SystemClock()
     return DashboardApp(
-        focus_task=None,
-        views=state_views(reader, project_dir, SystemClock(), services or StubServices()),
+        focus_task=focus_task,
+        views=state_views(
+            reader,
+            project_dir,
+            clock,
+            services or StubServices(),
+            focus_task=focus_task,
+            settings=settings,
+        ),
         on_change=reader.watch,
-        clock=SystemClock(),
-        motion_interval_seconds=_motion_interval(project_dir),
+        clock=clock,
+        motion_interval_seconds=(
+            _motion_interval(project_dir) if settings.dashboard.animations else None
+        ),
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         open_palette=open_palette,
         widget_names=widget_names,
         open_palette_context=open_palette_context,
+        timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
     )
 
 

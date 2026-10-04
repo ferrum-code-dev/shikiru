@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from shikiru.agents.contracts import (
@@ -41,12 +42,14 @@ from shikiru.dashboard.contract import (
     TaskDetailView,
     TaskEventView,
     TaskFamilyOutcomeView,
+    TaskMilestoneView,
     TaskReferenceView,
     TaskRelationshipsView,
     TaskReportView,
     TaskRolePaneView,
     TaskSignalView,
     TaskTestView,
+    TaskTimelineCategory,
     TaskTimelineEntryView,
     TaskTimelinePageView,
     TaskTimelineSource,
@@ -60,19 +63,25 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.reports import (
+    DECISION_CHANGES_REQUESTED,
     ConsultAnswer,
     ImplementationReport,
     PlanReport,
+    ReportKind,
     TriageReport,
     Verdict,
 )
 from shikiru.domain.runs import RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
-from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
+from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Mode, Role, Status, Task
 from shikiru.domain.timeline import TIMELINE_EVIDENCE_CATEGORY
 from shikiru.errors import ShikiruError
-from shikiru.operator.queries import AGENT_REPORT_SOURCE, aggregate_usage
+from shikiru.operator.queries import (
+    AGENT_REPORT_SOURCE,
+    TASK_DETAIL_EVENT_LIMIT,
+    aggregate_usage,
+)
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
 from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
@@ -80,7 +89,7 @@ from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
     from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
@@ -805,6 +814,19 @@ class StateDashboardViews:
                 timeline_view = _timeline_read_error(error, role=timeline_role, turn=timeline_turn)
             if timeline_view is None:
                 return None
+        try:
+            signal_page = await self.task_timeline(
+                task_id,
+                cursor=None,
+                role=None,
+                turn=None,
+                category=TaskTimelineCategory.SIGNAL.value,
+            )
+        except (ShikiruError, OSError, ValueError, TypeError) as error:
+            signal_page = _timeline_read_error(error, role=None, turn=None)
+        if signal_page is None:
+            return None
+        latest_signal, latest_signal_uncertain = _latest_signal_observation(signal_page)
         task = detail.task
         now = self._clock.now()
         triage = next(
@@ -914,6 +936,27 @@ class StateDashboardViews:
             quota_observations=quota_observations,
             agent_usage=task_agent_usage,
             priority=task.priority,
+            actual_stage=task.step.value if task.step is not None else None,
+            actual_stage_started_at=task_frame.actual_step_started_at,
+            stage_ended_at=task.finished_at,
+            milestones=_task_milestones(task, detail.events, detail.reports),
+            workflow_history_complete=_workflow_history_complete(detail.events),
+            latest_signal=(latest_signal.summary if latest_signal is not None else None),
+            latest_signal_identity=(latest_signal.identity if latest_signal is not None else None),
+            latest_signal_at=(
+                _timeline_timestamp(latest_signal.timestamp)
+                if latest_signal is not None and latest_signal.timestamp is not None
+                else None
+            ),
+            latest_signal_role=(latest_signal.role if latest_signal is not None else None),
+            latest_signal_turn=(latest_signal.turn if latest_signal is not None else None),
+            latest_signal_uncertain=latest_signal_uncertain,
+            latest_signal_error=(
+                latest_signal.timestamp_error if latest_signal is not None else None
+            ),
+            latest_signal_incomplete=(
+                latest_signal.incomplete if latest_signal is not None else False
+            ),
         )
 
     async def task_timeline(
@@ -1372,7 +1415,17 @@ class StateDashboardViews:
             stamp = StripStamp(StampKind.VERDICT, motion.stamp_detail, motion.stamp_flash)
         elif motion.stamp_kind is MotionStampKind.MERGED:
             stamp = StripStamp(StampKind.MERGED, flash=motion.stamp_flash)
-        return replace(data, panels=tuple(panels), stamp=stamp)
+        return replace(
+            data,
+            panels=tuple(panels),
+            stamp=stamp,
+            actual_step_started_at=motion.actual_step_started_at,
+            last_signal_at=motion.last_signal_at,
+            last_signal=motion.last_signal,
+            last_signal_identity=motion.last_signal_identity,
+            last_signal_role=motion.last_signal_role,
+            last_signal_turn=motion.last_signal_turn,
+        )
 
     def _refresh_usage_cache_version(self) -> None:
         version = self._state.data_version()
@@ -1461,6 +1514,242 @@ def _age(duration: timedelta) -> str:
     if hours < HOURS_PER_DAY:
         return f"{hours}h"
     return f"{hours // HOURS_PER_DAY}d"
+
+
+def _workflow_history_complete(events: Sequence[Event]) -> bool:
+    return (
+        len(events) < TASK_DETAIL_EVENT_LIMIT
+        and bool(events)
+        and events[0].kind is EventKind.TASK_QUEUED
+    )
+
+
+def _latest_signal_observation(
+    page: TaskTimelinePageView,
+) -> tuple[TaskTimelineEntryView | None, bool]:
+    agent_entries = [
+        entry for entry in page.entries if entry.source == TaskTimelineSource.AGENT.value
+    ]
+    signal_entries = [entry for entry in agent_entries if entry.identity.startswith("signal:")]
+    errors = [
+        entry
+        for entry in agent_entries
+        if entry.identity.startswith(("unavailable:", TASK_TIMELINE_READ_ERROR_ID))
+    ]
+    untimed = [entry for entry in signal_entries if _timeline_timestamp(entry.timestamp) is None]
+    if untimed:
+        return untimed[0], True
+    if signal_entries:
+        timed_signals = [
+            (timestamp, entry)
+            for entry in signal_entries
+            if (timestamp := _timeline_timestamp(entry.timestamp)) is not None
+        ]
+        latest_at, latest = max(timed_signals, key=lambda item: item[0])
+        tied = sum(timestamp == latest_at for timestamp, _ in timed_signals) > 1
+        return latest, bool(errors) or tied
+    if errors:
+        return errors[0], True
+    return None, False
+
+
+def _timeline_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return timestamp if timestamp.tzinfo is not None else None
+
+
+def _task_milestones(
+    task: Task,
+    events: Sequence[Event],
+    reports: Sequence[ReportRow],
+) -> tuple[TaskMilestoneView, ...]:
+    entered = [
+        (
+            index,
+            Step(str(event.data["step"])),
+            event.data.get("iteration") if type(event.data.get("iteration")) is int else None,
+        )
+        for index, event in enumerate(events)
+        if event.kind is EventKind.STEP_STARTED
+        and isinstance(event.data.get("step"), str)
+        and event.data["step"] in {step.value for step in Step}
+    ]
+    entered_steps = {step for _, step, _ in entered}
+    first_entered_step = entered[0][1] if entered else None
+    reported_steps = {
+        step
+        for report in reports
+        if report.source == AGENT_REPORT_SOURCE
+        if (step := _report_stage(report.kind)) is not None
+    }
+    turn_iterations = {
+        event.data["turn"]: (Step(str(event.data["step"])), event.data.get("iteration"))
+        for event in events
+        if event.kind is EventKind.TURN_STARTED
+        and isinstance(event.data.get("turn"), str)
+        and isinstance(event.data.get("step"), str)
+        and event.data["step"] in {step.value for step in Step}
+        and type(event.data.get("iteration")) is int
+    }
+    completed_reports = {
+        (step, turn_iterations[report.turn][1] if report.turn in turn_iterations else None)
+        for report in reports
+        if report.source == AGENT_REPORT_SOURCE and _report_completes_stage(report)
+        if (step := _report_stage(report.kind)) is not None
+        if report.turn not in turn_iterations or turn_iterations[report.turn][0] is step
+    }
+    stages = _workflow_stages(task, entered_steps | reported_steps)
+    if not stages:
+        return ()
+    history_complete = _workflow_history_complete(events)
+    current = task.step
+    stage_positions = {step: index for index, step in enumerate(stages)}
+    current_position = stage_positions.get(current) if current is not None else None
+    last_entry_indexes = {
+        step: max(index for index, entered_step, _ in entered if entered_step is step)
+        for step in entered_steps
+    }
+    last_entries = {
+        step: next(
+            (iteration for _, entered_step, iteration in reversed(entered) if entered_step is step),
+            None,
+        )
+        for step in entered_steps
+    }
+    completed_after: dict[Step, set[Step]] = {
+        Step.TRIAGE: {Step.PLAN, Step.IMPLEMENT},
+        Step.PLAN: {Step.INTEGRATE},
+        Step.IMPLEMENT: {Step.VERIFY},
+        Step.CONSULT: {Step.IMPLEMENT, Step.INTEGRATE},
+        Step.VERIFY: {Step.INTEGRATE},
+        Step.INTEGRATE: set(),
+    }
+    verdicts = [
+        (index, event.data.get("decision"))
+        for index, event in enumerate(events)
+        if event.kind is EventKind.VERDICT
+    ]
+    milestones: list[TaskMilestoneView] = []
+    for step in stages:
+        if step is current:
+            state = "current"
+        elif (
+            step is Step.TRIAGE
+            and history_complete
+            and first_entered_step in {Step.PLAN, Step.IMPLEMENT}
+        ):
+            state = "skipped"
+        elif step in entered_steps | reported_steps:
+            latest_entry = last_entry_indexes.get(step, -1)
+            latest_iteration = last_entries.get(step)
+            later_steps: set[Step] = (
+                {entered_step for index, entered_step, _ in entered if index > latest_entry}
+                if step in last_entry_indexes
+                else set()
+            )
+            rework_requested = step is Step.VERIFY and any(
+                index > latest_entry and decision == DECISION_CHANGES_REQUESTED
+                for index, decision in verdicts
+            )
+            if rework_requested:
+                state = "rework"
+            elif (
+                (step is Step.INTEGRATE and task.status is Status.DONE)
+                or later_steps & completed_after[step]
+                or _report_completes_entered_stage(
+                    step,
+                    latest_iteration,
+                    task.iteration,
+                    completed_reports,
+                )
+            ):
+                state = "done"
+            else:
+                state = "unknown"
+        elif current_position is not None and stage_positions[step] > current_position:
+            state = "later"
+        else:
+            state = "unknown"
+        milestones.append(TaskMilestoneView(stage=_stage_label(step), state=state))
+    return tuple(milestones)
+
+
+def _workflow_stages(task: Task, entered_steps: set[Step]) -> tuple[Step, ...]:
+    if task.mode is Mode.PLAN or task.step is Step.PLAN or Step.PLAN in entered_steps:
+        stages = [Step.TRIAGE, Step.PLAN, Step.INTEGRATE]
+    elif (
+        task.mode is Mode.IMPLEMENT
+        or task.step
+        in {
+            Step.IMPLEMENT,
+            Step.CONSULT,
+            Step.VERIFY,
+            Step.INTEGRATE,
+        }
+        or entered_steps & {Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE}
+    ):
+        stages = [Step.TRIAGE, Step.IMPLEMENT, Step.VERIFY, Step.INTEGRATE]
+    elif task.step is Step.TRIAGE:
+        stages = [Step.TRIAGE]
+    else:
+        return ()
+    if Step.CONSULT in entered_steps or task.step is Step.CONSULT:
+        insert_after = (
+            Step.INTEGRATE
+            if Step.INTEGRATE in entered_steps and Step.VERIFY not in entered_steps
+            else Step.IMPLEMENT
+        )
+        stages.insert(stages.index(insert_after) + 1, Step.CONSULT)
+    return tuple(stages)
+
+
+def _report_stage(kind: ReportKind) -> Step | None:
+    return {
+        ReportKind.TRIAGE: Step.TRIAGE,
+        ReportKind.PLAN: Step.PLAN,
+        ReportKind.IMPLEMENTATION: Step.IMPLEMENT,
+        ReportKind.CONSULT: Step.CONSULT,
+        ReportKind.VERDICT: Step.VERIFY,
+    }[kind]
+
+
+def _report_completes_stage(report: ReportRow) -> bool:
+    match report.data:
+        case TriageReport() | PlanReport():
+            return True
+        case ImplementationReport(status="completed"):
+            return True
+        case ConsultAnswer(decision="answer"):
+            return True
+        case Verdict(decision="accept"):
+            return True
+        case _:
+            return False
+
+
+def _report_completes_entered_stage(
+    stage: Step,
+    entered_iteration: int | None,
+    task_iteration: int,
+    completed_reports: set[tuple[Step, int | None]],
+) -> bool:
+    iterations = {
+        iteration for report_stage, iteration in completed_reports if report_stage is stage
+    }
+    if entered_iteration is not None:
+        return entered_iteration in iterations
+    if stage in {Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE}:
+        return task_iteration in iterations
+    return bool(iterations)
+
+
+def _stage_label(step: Step) -> str:
+    return "Merge" if step is Step.INTEGRATE else step.value.title()
 
 
 def _duration(seconds: int) -> str:
