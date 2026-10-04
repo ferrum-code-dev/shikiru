@@ -44,6 +44,7 @@ REFERENCE_FONT_SIZE_PIXELS = 12
 REFERENCE_LINE_HEIGHT_RATIO = 1.65
 REFERENCE_LINE_HEIGHT_PIXELS = REFERENCE_FONT_SIZE_PIXELS * REFERENCE_LINE_HEIGHT_RATIO
 TASK_ROW_VERTICAL_PADDING_PIXELS = 12
+TASK_ROW_OUTLINE_MIN_WIDTH = 18
 RECENT_RULE_MARGIN_PIXELS = 12
 RECENT_RULE_BORDER_PIXELS = 1
 RECENT_RULE_VERTICAL_MARGINS = 2
@@ -52,6 +53,7 @@ TASK_STATE_DECISION_NEEDED = "decision needed"
 WAIT_REASON_DEPENDENCY = "dependency"
 REFERENCE_ROW_GAP_CLASS = "reference-row-gap"
 FOCUS_LIST_CLASS = "focus-list"
+NO_TASK_ROW_OUTLINE_CLASS = "no-task-row-outline"
 TASK_STATUS_DONE = "done"
 TASK_STATUS_CANCELLED = "cancelled"
 TASK_HOLD_PAUSED = "paused"
@@ -275,6 +277,12 @@ class QueuePanel(Vertical):
         outline: solid $steel-blue; background: $selected-surface; color: $primary-text;
         text-style: none;
     }
+    #task-browser-list.focus-list > ListItem.-highlight {
+        outline: none; border: solid $steel-blue;
+    }
+    #task-browser-list.no-task-row-outline.focus-list > ListItem.-highlight {
+        border: none;
+    }
     #task-browser-list > ListItem.-highlight > Static {
         background: $selected-surface; color: $primary-text; text-style: none;
     }
@@ -345,12 +353,17 @@ class QueuePanel(Vertical):
             yield Button("Reveal selected task", id=REVEAL_BUTTON_ID)
 
     async def on_mount(self) -> None:
+        self._sync_task_row_outline()
         await self._refresh()
         self.run_worker(
             self._widget_context.on_change(self._refresh_while_active),
             exclusive=True,
         )
         self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_active)
+
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        self._sync_task_row_outline()
 
     def on_unmount(self) -> None:
         if self._remove_motion_callback is not None:
@@ -363,6 +376,15 @@ class QueuePanel(Vertical):
         app = cast("App[object]", self.app)
         if app.is_running and self.screen.is_current:
             await self._refresh()
+
+    def _sync_task_row_outline(self) -> None:
+        if not self._focus_layout or not self.is_mounted:
+            return
+        list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
+        list_view.set_class(
+            list_view.size.width < TASK_ROW_OUTLINE_MIN_WIDTH,
+            NO_TASK_ROW_OUTLINE_CLASS,
+        )
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != SEARCH_INPUT_ID:
@@ -829,17 +851,17 @@ class QueuePanel(Vertical):
                     + RECENT_RULE_BORDER_PIXELS
                     + REFERENCE_LINE_HEIGHT_PIXELS
                 )
-                line_count = item.region.height
             else:
                 raise TypeError(type(item).__name__)
             target_height_cells = floor(
                 source_height_pixels / REFERENCE_LINE_HEIGHT_PIXELS + HALF_CELL_ROUNDING
             )
-            gap_cells = target_height_cells - native_height_cells - line_count
+            native_item_height = item.region.height
+            gap_cells = target_height_cells - native_height_cells - native_item_height
             has_gap = gap_cells > 0 and index < len(list_view.children) - 1
             changed = item.has_class(REFERENCE_ROW_GAP_CLASS) != has_gap or changed
             item.set_class(has_gap, REFERENCE_ROW_GAP_CLASS)
-            native_height_cells = target_height_cells
+            native_height_cells += native_item_height + int(has_gap)
         return changed
 
     def _sync_selection(self, list_view: ListView, rows: tuple[TaskBrowserRow, ...]) -> None:

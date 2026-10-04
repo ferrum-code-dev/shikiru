@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from rich.cells import cell_len
 from textual.containers import Horizontal, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import (
@@ -149,6 +150,17 @@ def _rendered_text(widget: Static) -> str:
 def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
     lines = widget.render_lines(Region(0, 0, widget.region.width, widget.region.height))
     return tuple(line.text.rstrip() for line in lines if line.text.strip())
+
+
+def _resource_groups_are_right_aligned(widget: Static) -> bool:
+    lines = tuple(line for line in _rendered_widget_lines(widget) if "Shikiru + agents" in line)
+    if len(lines) != 1:
+        return False
+    line = lines[0]
+    instance_start = line.find("Shikiru + agents")
+    if instance_start < 0:
+        return False
+    return cell_len(line[:instance_start]) + cell_len(line[instance_start:]) == widget.region.width
 
 
 _TASK_DETAIL_SECTION_IDS = (
@@ -675,12 +687,17 @@ def _seed_home_task_rows(
     return active_task_ids, completed.id, paused.id, owned.id
 
 
-def _home_review_services(project_dir: Path, clock: SystemClock) -> StubServices:
+def _home_review_services(
+    project_dir: Path,
+    clock: SystemClock,
+    *,
+    engine_pid: int | None = None,
+) -> StubServices:
     settings = load_settings(project_dir)
     resource_snapshot = ResourceSampler(
         clock,
         settings.orchestration.resources,
-    ).sample_process_trees(None, ())
+    ).sample_process_trees(engine_pid, ())
     services = StubServices(engine_running=True)
     services.resource_observation = ResourceView(
         host_cpu_pct=resource_snapshot.host_cpu_pct,
@@ -689,14 +706,18 @@ def _home_review_services(project_dir: Path, clock: SystemClock) -> StubServices
         instance_cpu_pct=resource_snapshot.instance_cpu_pct,
         instance_rss_gb=resource_snapshot.instance_rss_gb,
         sampled_at=resource_snapshot.sampled_at,
-        state=DiagnosticSampleState.EMPTY,
+        state=(
+            DiagnosticSampleState.AVAILABLE
+            if resource_snapshot.instance_cpu_pct is not None
+            else DiagnosticSampleState.EMPTY
+        ),
         host_ram_used_bytes=resource_snapshot.host_ram_used_bytes,
         host_ram_total_bytes=resource_snapshot.host_ram_total_bytes,
     )
     return services
 
 
-async def _assert_mixed_home_readouts(app: DashboardApp, size: tuple[int, int]) -> None:
+async def _assert_mixed_home_readouts(app: DashboardApp) -> None:
     readouts = app.query_one("#focus-readouts", VerticalScroll)
     identity = app.query_one("#header", Static)
     usage = app.query_one("#usage", Static)
@@ -728,12 +749,17 @@ async def _assert_mixed_home_readouts(app: DashboardApp, size: tuple[int, int]) 
     assert "2.7k tok" in usage_text
     assert "API billed $0.42" in usage_text
     assert "API unreported 2" in usage_text
-    assert "API-equiv. est. $0.11" in usage_text
+    assert "API-equiv. est. $0.11" not in usage_text
     assert "1 subscription agent" in usage_text
-    if size[0] == _WIDE_HOME_SIZE[0]:
-        assert usage.region.height == 1
+    assert usage.region.height == 1
     assert "Host" in resource_text
     assert "Shikiru + agents" in resource_text
+    assert "process tree empty" in resource_text
+    assert _resource_groups_are_right_aligned(resources), (
+        _rendered_widget_lines(resources),
+        resources.region.width,
+        resources.size.width,
+    )
     assert "Operator owns" in attention_text
 
 
@@ -741,7 +767,9 @@ def _capture_home_screenshot(app: DashboardApp, size: tuple[int, int]) -> None:
     capture_dir = Path("build/review/task98")
     capture_dir.mkdir(parents=True, exist_ok=True)
     color_mode = "mono" if os.environ.get("NO_COLOR") else "color"
-    capture_path = capture_dir / f"mixed-home-{size[0]}x{size[1]}-{color_mode}.svg"
+    capture_path = capture_dir / (
+        f"mixed-home-{size[0]}x{size[1]}-{color_mode}-selected-second.svg"
+    )
     capture_path.write_text(app.export_screenshot(), encoding="utf-8")
 
 
@@ -765,6 +793,19 @@ async def _assert_mixed_home_task_rows(
     assert all(f"task-row-{task_id}" in item_ids for task_id in active_task_ids)
     assert all(item.region.overlaps(task_list.scrollable_content_region) for item in children)
     assert recent_task.region.bottom <= task_list.scrollable_content_region.bottom
+    selected_item = app.query_one(f"#task-row-{active_task_ids[1]}", ListItem)
+    assert task_list.highlighted_child is selected_item
+    edge_lines = tuple(
+        strip.text
+        for strip in selected_item.render_lines(
+            Region(0, 0, selected_item.region.width, selected_item.region.height)
+        )
+    )
+    assert edge_lines[0][0] == "┌"
+    assert edge_lines[0][-1] == "┐"
+    assert edge_lines[-1][0] == "└"
+    assert edge_lines[-1][-1] == "┘"
+    assert all(line.startswith("│") and line.endswith("│") for line in edge_lines[1:-1])
     _capture_home_screenshot(app, size)
     attention = app.query_one("#escalations", EscalationsPanel)
     attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
@@ -799,12 +840,65 @@ async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_t
             widget_names=["header", "queue", "escalations", "usage", "resources"],
             services=services,
         )
-        async with app.run_test(size=size):
-            await _assert_mixed_home_readouts(app, size)
+        async with app.run_test(size=size) as pilot:
+            await _assert_mixed_home_readouts(app)
+            task_list = app.query_one("#task-browser-list", ListView)
+            task_list.focus()
+            await pilot.press("down")
+            await wait_until(
+                lambda: (
+                    task_list.index == 1
+                    and task_list.highlighted_child is not None
+                    and task_list.highlighted_child.id == f"task-row-{active_task_ids[1]}"
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
             await _assert_mixed_home_task_rows(
                 app,
                 (active_task_ids, completed_task_id, paused_task_id, owned_task_id),
                 size,
+            )
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("populated", [False, True])
+async def test_resource_groups_stay_aligned_after_resize_for_observed_process_trees(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    populated: bool,
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+    services = _home_review_services(
+        project_dir,
+        clock,
+        engine_pid=os.getpid() if populated else None,
+    )
+    try:
+        app = _app(reader, project_dir, widget_names=["resources"], services=services)
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            resources = app.query_one("#resources", Static)
+            expected_group = "Shikiru + agents CPU" if populated else "process tree empty"
+            await wait_until(
+                lambda: (
+                    expected_group in _rendered_text(resources)
+                    and _resource_groups_are_right_aligned(resources)
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            initial_width = resources.region.width
+            await pilot.resize_terminal(*_STANDARD_HOME_SIZE)
+            await wait_until(
+                lambda: (
+                    resources.region.width != initial_width
+                    and expected_group in _rendered_text(resources)
+                    and _resource_groups_are_right_aligned(resources)
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
     finally:
         reader.close()
@@ -1412,7 +1506,11 @@ async def _assert_tiny_home_task_routes(
     await pilot.press("end")
     await wait_until(lambda: root.scroll_y == root.max_scroll_y, timeout=2)
     assert selected_item.region.y >= root.scrollable_content_region.y
-    assert selected_item.region.bottom <= root.scrollable_content_region.bottom
+    assert selected_item.region.bottom <= root.scrollable_content_region.bottom, (
+        selected_item.region,
+        root.scrollable_content_region,
+        _rendered_widget_lines(selected_item.query_one(Static)),
+    )
     assert selected_item.region.height <= root.scrollable_content_region.height
     assert "Implementing" in _rendered_text(selected_item.query_one(Static))
     await pilot.press("ctrl+p")

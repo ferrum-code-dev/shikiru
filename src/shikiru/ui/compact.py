@@ -374,11 +374,6 @@ def _home_project_usage_text(usage: _RecordedUsage) -> Text:
     billing = _primary_billing_summary(usage, home=True)
     if billing:
         text.append(f" · {billing}", style=SECONDARY_TEXT_COLOR)
-    if usage.api_equivalent_cost_sessions and usage.api_equivalent_cost_usd is not None:
-        text.append(
-            f" · API-equiv. est. ${usage.api_equivalent_cost_usd:{SESSION_COST_FORMAT}}",
-            style=AMBER,
-        )
     return text
 
 
@@ -536,18 +531,26 @@ class ResourceMetric:
             state_label = ""
         host = _host_resource_text(self.sample)
         instance = _instance_resource_text(self.sample)
-        group_gap = " · "
-        if width is not None and width >= RESOURCE_WIDE_ALIGNMENT_MIN_WIDTH:
-            group_gap = " " * max(
-                RESOURCE_GROUP_MIN_GAP,
-                width - cell_len(host.plain) - cell_len(instance.plain),
-            )
         age = (
             f" · observed {self.sample.sampled_ago} ago"
             if self.sample.sampled_ago and state != RESOURCE_AVAILABLE
             else ""
         )
         error = f" · {self.sample.error}" if self.sample.error else ""
+        resource_cells = (
+            cell_len(state_label)
+            + cell_len(host.plain)
+            + cell_len(instance.plain)
+            + cell_len(age)
+            + cell_len(error)
+        )
+        group_gap = " · "
+        if (
+            width is not None
+            and width >= RESOURCE_WIDE_ALIGNMENT_MIN_WIDTH
+            and width - resource_cells >= RESOURCE_GROUP_MIN_GAP
+        ):
+            group_gap = " " * (width - resource_cells)
         return Text.assemble(
             (state_label, state_style),
             host,
