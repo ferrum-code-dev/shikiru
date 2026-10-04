@@ -6,7 +6,13 @@ import json
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
-from shikiru.agents.contracts import FailureKind
+from shikiru.agents.contracts import (
+    BILLING_MODE_API,
+    BILLING_MODE_SUBSCRIPTION,
+    BILLING_MODE_UNKNOWN,
+    COST_BASIS_UNKNOWN,
+    FailureKind,
+)
 from shikiru.dashboard.contract import (
     DEFAULT_TASK_TIMELINE_CATEGORY,
     AgentUsageView,
@@ -23,6 +29,7 @@ from shikiru.dashboard.contract import (
     HeaderView,
     QueueRow,
     QuotaGaugeView,
+    RecordedUsageView,
     RepoStatus,
     ResourceView,
     TaskBlockerView,
@@ -37,7 +44,6 @@ from shikiru.dashboard.contract import (
     TaskRelationshipsView,
     TaskReportView,
     TaskRolePaneView,
-    TaskSessionView,
     TaskSignalView,
     TaskTestView,
     TaskTimelineEntryView,
@@ -45,7 +51,9 @@ from shikiru.dashboard.contract import (
     TaskTimelineSource,
     WorkspaceSummaryView,
 )
+from shikiru.dashboard.session_history import project_task_sessions
 from shikiru.domain.commands import CommandStatus, ResolutionKind
+from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
@@ -63,14 +71,14 @@ from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
 from shikiru.domain.timeline import TIMELINE_EVIDENCE_CATEGORY
 from shikiru.errors import ShikiruError
-from shikiru.operator.queries import AGENT_REPORT_SOURCE
+from shikiru.operator.queries import AGENT_REPORT_SOURCE, aggregate_usage
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
 from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
     from datetime import datetime, timedelta
 
     from shikiru.agents.contracts import QuotaWindow
@@ -83,6 +91,7 @@ if TYPE_CHECKING:
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
     from shikiru.operator.queries import EscalationView, OperatorQueries, ReportRow, UsageView
+    from shikiru.process import ProcessIdentity
     from shikiru.store.reader import StateReader
     from shikiru.store.tasks import TaskBrowserPage, TaskRelationships
 
@@ -97,6 +106,15 @@ TASK_TIMELINE_READ_ERROR_SUMMARY = "Task evidence could not be read"
 TASK_TIMELINE_READ_ERROR_TIMESTAMP = (
     "recorded timestamp is unavailable because the page could not be read"
 )
+ENGINE_LIFECYCLE_EVENT_LIMIT = 2
+TASK_MODEL_HISTORY_EVENT_LIMIT = 50
+TASK_MODEL_HISTORY_EVENTS = (
+    EventKind.TURN_STARTED,
+    EventKind.TURN_COMPLETED,
+    EventKind.TURN_FAILED,
+    EventKind.TURN_STOPPED,
+)
+_ENGINE_LIFECYCLE_EVENTS = (EventKind.ENGINE_STARTED, EventKind.ENGINE_STOPPED)
 AGENT_REPORTED_TESTS = "agent-reported"
 TASK_ROLES = (Role.LEADER, Role.IMPLEMENTER)
 SETUP_STEP = "setup"
@@ -153,6 +171,10 @@ class DashboardSources(Protocol):
         """Return whether the engine holds its liveness lock."""
         ...
 
+    def engine_identity(self) -> ProcessIdentity | None:
+        """Return the verified process identity of the engine lock holder."""
+        ...
+
     async def resources(self) -> ResourceView:
         """Return host and Shikiru process-tree resource readings."""
         ...
@@ -192,6 +214,7 @@ class StateDashboardViews:
         self._project_usage_cache: tuple[list[UsageView], dict[str, list[QuotaWindow]]] | None = (
             None
         )
+        self._project_usage_view_cache: RecordedUsageView | None = None
         self._task_usage_cache: dict[str, list[UsageView]] = {}
         self._escalation_version = -1
         self._escalation_cache: list[EscalationView] | None = None
@@ -202,15 +225,37 @@ class StateDashboardViews:
     async def header(self) -> HeaderView:
         """Build the project, engine, slot and repository summary."""
         tasks = self._state.list_tasks()
+        engine_up = self._sources.engine_up()
+        process_identity = self._sources.engine_identity()
+        identity = (
+            (process_identity.pid, process_identity.started_at)
+            if process_identity is not None and process_identity.started_at is not None
+            else None
+        )
+        uptime = project_engine_uptime(
+            self._state.latest_events(ENGINE_LIFECYCLE_EVENT_LIMIT, kinds=_ENGINE_LIFECYCLE_EVENTS),
+            now=self._clock.now(),
+            running=engine_up,
+            identity=identity,
+        )
         return HeaderView(
             project=self._settings.project.name,
-            engine_up=self._sources.engine_up(),
+            engine_up=engine_up,
             occupied_slots=len(occupied_slot_ids(tasks)),
             maximum_slots=self._settings.orchestration.max_parallel,
             repo=await self._sources.repo_status(),
             alerts=self._alerts(),
             integration_mode=self._settings.orchestration.integration,
+            engine_uptime_seconds=uptime.running_seconds,
+            previous_engine_run_seconds=uptime.previous_run_seconds,
         )
+
+    def project_usage(self) -> RecordedUsageView:
+        """Project recorded usage and provenance across every retained session lineage."""
+        self._refresh_usage_cache_version()
+        if self._project_usage_view_cache is None:
+            self._project_usage_view_cache = _recorded_usage(self._state.list_all_runs())
+        return self._project_usage_view_cache
 
     def workspace_summary(self) -> WorkspaceSummaryView:
         """Count home categories without treating them as disjoint task totals."""
@@ -756,6 +801,16 @@ class StateDashboardViews:
         ownership = tuple(
             run.role.value for run in detail.sessions if run.status is RunStatus.TAKEN_OVER
         )
+        try:
+            history_events = self._state.task_timeline_events(
+                task_id,
+                limit=TASK_MODEL_HISTORY_EVENT_LIMIT,
+                kinds=TASK_MODEL_HISTORY_EVENTS,
+            )
+            history_error = False
+        except ShikiruError, OSError, ValueError:
+            history_events = []
+            history_error = True
         stored_relationships = self._state.task_relationships(
             task.id,
             offset=relationship_offset,
@@ -807,13 +862,19 @@ class StateDashboardViews:
                 )
                 for role in TASK_ROLES
             ),
-            sessions=tuple(_task_session(run) for run in detail.sessions),
+            sessions=project_task_sessions(
+                detail.sessions,
+                history_events,
+                history_truncated=len(history_events) == TASK_MODEL_HISTORY_EVENT_LIMIT,
+                history_error=history_error,
+            ),
             attention=self.global_attention(),
             relationships=relationships,
             blocker=self._task_blocker(task, relationships, ownership, now),
             submitted_age=_age(now - task.created_at),
             requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
             timeline=timeline_view,
+            usage=_recorded_usage(detail.sessions),
         )
 
     async def task_timeline(
@@ -1112,11 +1173,7 @@ class StateDashboardViews:
     def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
         """Build project usage or usage recorded for one task."""
         now = self._clock.now()
-        version = self._state.data_version()
-        if version != self._usage_version:
-            self._usage_version = version
-            self._project_usage_cache = None
-            self._task_usage_cache.clear()
+        self._refresh_usage_cache_version()
         if task_id is not None:
             usage = self._task_usage_cache.get(task_id)
             if usage is None:
@@ -1163,7 +1220,7 @@ class StateDashboardViews:
                     cache_read_tokens=item.cache_read_tokens if item is not None else 0,
                     cache_write_tokens=item.cache_write_tokens if item is not None else 0,
                     cost_usd=item.cost_usd if item is not None else None,
-                    cost_basis=item.cost_basis if item is not None else "unknown",
+                    cost_basis=item.cost_basis if item is not None else COST_BASIS_UNKNOWN,
                     quotas=windows,
                     run_count=item.run_count if item is not None else 0,
                     usage_reported_runs=item.usage_reported_runs if item is not None else 0,
@@ -1239,6 +1296,10 @@ class StateDashboardViews:
         """Return the current host and engine/task-pane process-tree sample."""
         return await self._sources.resources()
 
+    def resource_sample(self) -> ResourceView | None:
+        """Return the latest resource observation without triggering a new sample."""
+        return self._sources.resource_sample()
+
     async def containers(self) -> DockerView:
         """Return the current Docker sample."""
         return await self._sources.containers()
@@ -1273,6 +1334,14 @@ class StateDashboardViews:
         elif motion.stamp_kind is MotionStampKind.MERGED:
             stamp = StripStamp(StampKind.MERGED, flash=motion.stamp_flash)
         return replace(data, panels=tuple(panels), stamp=stamp)
+
+    def _refresh_usage_cache_version(self) -> None:
+        version = self._state.data_version()
+        if version != self._usage_version:
+            self._usage_version = version
+            self._project_usage_cache = None
+            self._project_usage_view_cache = None
+            self._task_usage_cache.clear()
 
 
 def _event_role(kind: EventKind, data: dict[str, object]) -> Role | None:
@@ -1441,27 +1510,51 @@ def _task_report(row: ReportRow) -> TaskReportView:
     )
 
 
-def _task_session(run: Run) -> TaskSessionView:
-    return TaskSessionView(
-        role=run.role.value,
-        agent=run.agent,
-        model=run.model,
-        effort=run.effort,
-        session_id=run.session_id,
-        status=run.status.value,
-        input_tokens=run.usage.input_tokens,
-        output_tokens=run.usage.output_tokens,
-        cache_read_tokens=run.usage.cache_read_tokens,
-        cache_write_tokens=run.usage.cache_write_tokens,
-        cost_usd=run.usage.cost_usd,
-        cost_basis=run.usage.cost_basis,
-        context_used_pct=run.usage.context_used_pct,
-        billing_mode=run.billing_mode,
-        billing_source=run.billing_source,
-        usage_reported=run.usage_reported,
-        legacy_token_totals=(run.usage_reported is None and has_positive_token_evidence(run)),
-        legacy_cost_recorded=(run.usage_reported is None and run.usage.cost_usd is not None),
+def _recorded_usage(runs: Sequence[Run]) -> RecordedUsageView:
+    usage = aggregate_usage(runs)
+    api_runs = [run for run in runs if run.billing_mode == BILLING_MODE_API]
+    api_usage = aggregate_usage(api_runs)
+    billed_sessions = sum(item.billed_cost_runs for item in usage)
+    api_billed_sessions = sum(item.billed_cost_runs for item in api_usage)
+    api_equivalent_sessions = sum(item.api_equivalent_cost_runs for item in usage)
+    return RecordedUsageView(
+        session_count=len(runs),
+        input_tokens=sum(item.input_tokens for item in usage),
+        output_tokens=sum(item.output_tokens for item in usage),
+        cache_read_tokens=sum(item.cache_read_tokens for item in usage),
+        cache_write_tokens=sum(item.cache_write_tokens for item in usage),
+        reported_sessions=sum(run.usage_reported is True for run in runs),
+        legacy_token_sessions=sum(
+            run.usage_reported is None and has_positive_token_evidence(run) for run in runs
+        ),
+        unknown_token_sessions=sum(
+            run.usage_reported is not True
+            and not (run.usage_reported is None and has_positive_token_evidence(run))
+            for run in runs
+        ),
+        billed_cost_usd=_cost_total((item.billed_cost_usd for item in usage), billed_sessions),
+        billed_cost_sessions=billed_sessions,
+        api_billed_cost_usd=_cost_total(
+            (item.billed_cost_usd for item in api_usage), api_billed_sessions
+        ),
+        api_billed_cost_sessions=api_billed_sessions,
+        api_cost_unreported_sessions=len(api_runs) - api_billed_sessions,
+        api_equivalent_cost_usd=_cost_total(
+            (item.api_equivalent_cost_usd for item in usage), api_equivalent_sessions
+        ),
+        api_equivalent_cost_sessions=api_equivalent_sessions,
+        unknown_billing_sessions=sum(run.billing_mode == BILLING_MODE_UNKNOWN for run in runs),
+        subscription_sessions=sum(run.billing_mode == BILLING_MODE_SUBSCRIPTION for run in runs),
+        subscription_agents=tuple(
+            sorted({run.agent for run in runs if run.billing_mode == BILLING_MODE_SUBSCRIPTION})
+        ),
     )
+
+
+def _cost_total(amounts: Iterable[float | None], count: int) -> float | None:
+    if count == 0:
+        return None
+    return sum(amount for amount in amounts if amount is not None)
 
 
 def _agent_usage(item: UsageView, *, quotas: tuple[QuotaGaugeView, ...]) -> AgentUsageView:

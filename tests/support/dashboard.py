@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import OpenPalette
+    from shikiru.process import ProcessIdentity
     from shikiru.store.reader import StateReader
 
 REPO_AHEAD = 1
@@ -32,8 +33,14 @@ RESOURCES = ResourceView(10.0, 40.0, 4.0, 2.0, 0.2)
 class StubServices:
     """Dashboard data sources with fixed answers and no processes behind them."""
 
-    def __init__(self, *, engine_running: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        engine_running: bool = False,
+        engine_process_identity: ProcessIdentity | None = None,
+    ) -> None:
         self._engine_running = engine_running
+        self._engine_process_identity = engine_process_identity
         self.resource_observation: ResourceView | None = None
 
     async def repo_status(self) -> RepoStatus:
@@ -41,6 +48,9 @@ class StubServices:
 
     def engine_up(self) -> bool:
         return self._engine_running
+
+    def engine_identity(self) -> ProcessIdentity | None:
+        return self._engine_process_identity
 
     async def resources(self) -> ResourceView:
         return RESOURCES

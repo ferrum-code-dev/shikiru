@@ -279,9 +279,12 @@ def test_engine_lock_is_exclusive(tmp_path: Path) -> None:
     lock = EngineLock(lock_path)
     with lock:
         assert engine_is_running(lock_path)
+        assert EngineLock.identity_if_running(lock_path) == lock.identity
+        assert EngineLock.pid_if_running(lock_path) == lock.identity.pid
         with pytest.raises(EngineAlreadyRunningError):
             EngineLock(lock_path).acquire()
     assert not engine_is_running(lock_path)
+    assert EngineLock.identity_if_running(lock_path) is None
 
 
 async def test_an_engine_started_while_a_liveness_probe_holds_the_lock_waits_and_takes_it(

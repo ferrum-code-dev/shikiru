@@ -22,6 +22,7 @@ class TurnExecution:
     role: Role
     turn_dir: Path
     rung: Rung
+    run_id: int
     usage_before: Usage
     usage_after: Usage
     quota_wait_exhausted: bool = False

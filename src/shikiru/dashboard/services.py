@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import RepoConfig
     from shikiru.operator.queries import OperatorQueries
+    from shikiru.process import ProcessIdentity
     from shikiru.telemetry.docker import DockerSampler
     from shikiru.telemetry.resources import ResourceSampler, ResourceSnapshot
     from shikiru.tmux.client import Tmux
@@ -107,6 +108,7 @@ class DashboardServices:
         clock: Clock,
         resources_refresh_seconds: float,
         engine_up: Callable[[], bool],
+        engine_identity: Callable[[], ProcessIdentity | None],
         engine_pid: Callable[[], int | None],
         tmux: Tmux,
         session_target: str,
@@ -118,11 +120,13 @@ class DashboardServices:
         self._clock = clock
         self._resources_refresh_seconds = resources_refresh_seconds
         self._engine_up = engine_up
+        self._engine_identity = engine_identity
         self._engine_pid = engine_pid
         self._tmux = tmux
         self._session_target = session_target
         self._resources = resources
         self._docker = docker
+        self._resource_failure: tuple[datetime, str] | None = None
 
     async def repo_status(self) -> RepoStatus:
         """See `GitRepoStatusService.repo_status`."""
@@ -132,9 +136,14 @@ class DashboardServices:
         """Return whether the engine holds its liveness lock."""
         return self._engine_up()
 
+    def engine_identity(self) -> ProcessIdentity | None:
+        """Return the verified identity of the process holding the engine lock."""
+        return self._engine_identity()
+
     async def resources(self) -> ResourceView:
         """Sample host usage and process trees for the engine and all project panes."""
         try:
+            previous = self._resources.latest()
             pane_pids: list[int] = []
             if await self._tmux.target_exists(self._session_target):
                 pane_pids = [
@@ -145,6 +154,8 @@ class DashboardServices:
                 ]
             snapshot = self._resources.sample_process_trees(self._engine_pid(), pane_pids)
         except (OSError, RuntimeError, ShikiruError, ValueError) as error:
+            failed_at = self._clock.now()
+            self._resource_failure = (failed_at, str(error))
             latest = self._resources.latest()
             state = (
                 DiagnosticSampleState.STALE
@@ -152,11 +163,36 @@ class DashboardServices:
                 else DiagnosticSampleState.FAILED
             )
             return _resource_view(latest, self._clock, state=state, error=str(error))
+        if snapshot is not previous:
+            self._resource_failure = None
+        elif self._resource_failure is not None:
+            latest = self._resources.latest()
+            state = (
+                DiagnosticSampleState.STALE
+                if latest.sampled_at is not None
+                else DiagnosticSampleState.FAILED
+            )
+            return _resource_view(
+                latest,
+                self._clock,
+                state=state,
+                error=self._resource_failure[1],
+            )
         return _resource_view(snapshot, self._clock, state=DiagnosticSampleState.AVAILABLE)
 
     def resource_sample(self) -> ResourceView | None:
         """Return the latest dashboard resource reading without sampling again."""
         snapshot = self._resources.latest()
+        failure = self._resource_failure
+        if failure is not None and (
+            snapshot.sampled_at is None or failure[0] >= snapshot.sampled_at
+        ):
+            state = (
+                DiagnosticSampleState.STALE
+                if snapshot.sampled_at is not None
+                else DiagnosticSampleState.FAILED
+            )
+            return _resource_view(snapshot, self._clock, state=state, error=failure[1])
         if snapshot.sampled_at is None:
             return None
         age = (self._clock.now() - snapshot.sampled_at).total_seconds()

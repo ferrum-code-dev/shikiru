@@ -896,11 +896,11 @@ Refs: Focus §5/§8; 04 §1/4–5, 05 §1–2; Task 89's additive contract.
 
 ### Task 91: Compact metrics and agent-history projections
 Refs: Focus §3–5/§8; 02 §2, 05 §2–3, 06 §5.4; Tasks 89–90.
-- [ ] Add consumed project projections for recorded token totals, explicit reported/unknown session coverage, reported API charge coverage, separate API-equivalent evidence and distinct declared subscription agents. Do not invent account identities or sum charges with subscription fees.
-- [ ] Project engine uptime from current lock liveness, recorded engine-start evidence and injected Clock. A stopped engine never shows an advancing uptime; a previous run duration requires its recorded stop, and absent timing remains unknown.
-- [ ] Project compact host and instance resources from the existing timestamped sampler; the instance includes its agent/process trees. Preserve empty, unavailable, stale and failed meanings without another sampler or motion-triggered expensive reads.
-- [ ] Project task agent/usage rows from persisted session lineages, preserving role, agent, model/effort, billing mode/source, observed token/cost coverage and current/previous state. Expose recorded earlier models through bounded existing evidence; show history gaps explicitly and never duplicate cumulative session totals across models.
-- [ ] Add only compatible widget view fields/capabilities with consumers in the upcoming Home and task views; update the relevant design contracts.
+- [x] Add consumed project projections for recorded token totals, explicit reported/unknown session coverage, reported API charge coverage, separate API-equivalent evidence and distinct declared subscription agents. Do not invent account identities or sum charges with subscription fees.
+- [x] Project engine uptime from current lock liveness, recorded engine-start evidence and injected Clock. A stopped engine never shows an advancing uptime; a previous run duration requires its recorded stop, and absent timing remains unknown.
+- [x] Project compact host and instance resources from the existing timestamped sampler; the instance includes its agent/process trees. Preserve empty, unavailable, stale and failed meanings without another sampler or motion-triggered expensive reads.
+- [x] Project task agent/usage rows from persisted session lineages, preserving role, agent, model/effort, billing mode/source, observed token/cost coverage and current/previous state. Expose recorded earlier models through bounded existing evidence; show history gaps explicitly and never duplicate cumulative session totals across models.
+- [x] Add only compatible widget view fields/capabilities with consumers in the upcoming Home and task views; update the relevant design contracts.
 - Tests: real SQLite and FakeClock verify mixed modes and coverage, model/agent changes and closed-task history, no cumulative double-counting, run restart/stop uptime and stale/missing timing/resource observations. Domain unit tables only for genuine new projection invariants.
 
 ### Task 92: Shared compact visual language

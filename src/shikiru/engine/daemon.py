@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import math
 import os
 from datetime import timedelta
 from typing import TYPE_CHECKING, Self
@@ -10,6 +11,10 @@ from typing import TYPE_CHECKING, Self
 import psutil
 
 from shikiru.domain.commands import COMMAND_POLL_SECONDS, Stop
+from shikiru.domain.engine_uptime import (
+    ENGINE_PID_FIELD,
+    ENGINE_PROCESS_STARTED_AT_FIELD,
+)
 from shikiru.domain.events import STOP_REASON_KEY, EventKind
 from shikiru.errors import ShikiruError
 from shikiru.private import create_private_file, make_private_dir
@@ -56,6 +61,7 @@ class EngineLock:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._file: TextIO | None = None
+        self._identity: ProcessIdentity | None = None
 
     def acquire(self) -> None:
         """Acquire the lock without blocking, or raise `EngineAlreadyRunningError`."""
@@ -71,13 +77,23 @@ class EngineLock:
             raise EngineAlreadyRunningError(message) from None
         self._file.seek(0)
         self._file.truncate()
-        started_at = psutil.Process(os.getpid()).create_time()
-        self._file.write(f"{os.getpid()} {started_at!r}")
+        identity = ProcessIdentity(os.getpid(), psutil.Process(os.getpid()).create_time())
+        self._identity = identity
+        self._file.write(f"{identity.pid} {identity.started_at!r}")
         self._file.flush()
 
+    @property
+    def identity(self) -> ProcessIdentity:
+        """Return this lock holder's recorded process identity."""
+        identity = self._identity
+        if identity is None:
+            message = "engine lock identity is unavailable before acquisition"
+            raise RuntimeError(message)
+        return identity
+
     @staticmethod
-    def pid_if_running(path: Path) -> int | None:
-        """Return the verified PID written by the process that currently holds `path`."""
+    def identity_if_running(path: Path) -> ProcessIdentity | None:
+        """Return the verified identity written by the process currently holding `path`."""
         try:
             lock_file = path.open()
         except FileNotFoundError:
@@ -92,12 +108,21 @@ class EngineLock:
                     return None
                 try:
                     pid = int(contents[0])
-                    started_at = float(contents[1])
+                    process_started_at = float(contents[1])
                 except ValueError:
                     return None
-                return pid if ProcessIdentity(pid, started_at).matches(identify_pid(pid)) else None
+                if pid < 1 or not math.isfinite(process_started_at):
+                    return None
+                identity = ProcessIdentity(pid, process_started_at)
+                return identity if identity.matches(identify_pid(identity.pid)) else None
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         return None
+
+    @staticmethod
+    def pid_if_running(path: Path) -> int | None:
+        """Return the verified PID written by the process that currently holds `path`."""
+        identity = EngineLock.identity_if_running(path)
+        return identity.pid if identity is not None else None
 
     def release(self) -> None:
         """Release the lock and close its file descriptor."""
@@ -106,6 +131,7 @@ class EngineLock:
         fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
         self._file.close()
         self._file = None
+        self._identity = None
 
     def __enter__(self) -> Self:
         self.acquire()
@@ -260,7 +286,11 @@ class Engine:
         return True
 
     async def _record_start(self) -> bool:
-        self._events.append(EventKind.ENGINE_STARTED, message="engine started")
+        self._events.append(
+            EventKind.ENGINE_STARTED,
+            message="engine started",
+            data=_engine_identity_data(self._lock.identity),
+        )
         return True
 
     async def _new_events(self) -> list[Event]:
@@ -338,7 +368,10 @@ class Engine:
         self._stopped_event = self._events.append(
             EventKind.ENGINE_STOPPED,
             message="engine stopped" if reason is None else f"engine stopped: {reason}",
-            data={} if reason is None else {STOP_REASON_KEY: reason},
+            data={
+                **_engine_identity_data(self._lock.identity),
+                **({} if reason is None else {STOP_REASON_KEY: reason}),
+            },
         )
 
     async def _persist_notification_cursor(self) -> None:
@@ -354,3 +387,13 @@ class Engine:
         handler = self._log_handler
         self._logger.removeHandler(handler)
         handler.close()
+
+
+def _engine_identity_data(identity: ProcessIdentity) -> dict[str, int | float]:
+    if identity.started_at is None:
+        message = "engine process start time is unavailable"
+        raise RuntimeError(message)
+    return {
+        ENGINE_PID_FIELD: identity.pid,
+        ENGINE_PROCESS_STARTED_AT_FIELD: identity.started_at,
+    }

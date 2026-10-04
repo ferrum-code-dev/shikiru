@@ -94,6 +94,8 @@ class TurnRecovery:
             task,
             step,
             result,
+            rung=execution.rung,
+            run_id=execution.run_id,
             turn=execution.turn_dir.name,
             role=execution.role,
         )

@@ -169,6 +169,7 @@ class TurnLoop:
                 role=role,
                 turn_dir=turn_dir,
                 rung=selection.rung,
+                run_id=selection.run.id,
                 usage_before=usage_before,
                 usage_after=usage_before,
             )
@@ -177,7 +178,15 @@ class TurnLoop:
         def on_start(turn_dir: Path) -> None:
             nonlocal turn_name
             turn_name = turn_dir.name
-            emit_turn_started(self._events, task, step, role, selection.rung, turn=turn_name)
+            emit_turn_started(
+                self._events,
+                task,
+                step,
+                role,
+                selection.rung,
+                run_id=selection.run.id,
+                turn=turn_name,
+            )
 
         def on_nudge() -> None:
             emit_nudge(self._events, task, step, role, turn=turn_name)
@@ -187,7 +196,15 @@ class TurnLoop:
                 task, role, selection, turn_request, on_start=on_start, on_nudge=on_nudge
             )
         except BaseException as stop:
-            emit_turn_stopped(self._events, task, step, role, turn=turn_name)
+            emit_turn_stopped(
+                self._events,
+                task,
+                step,
+                role,
+                rung=selection.rung,
+                run_id=selection.run.id,
+                turn=turn_name,
+            )
             if isinstance(stop, TurnHeld):
                 return None
             raise
@@ -201,6 +218,7 @@ class TurnLoop:
             role=role,
             turn_dir=turn_dir,
             rung=selection.rung,
+            run_id=selection.run.id,
             usage_before=usage_before,
             usage_after=live_run.usage,
         )

@@ -59,6 +59,7 @@ def emit_turn_started(
     role: Role,
     rung: Rung,
     *,
+    run_id: int | None = None,
     turn: str | None = None,
 ) -> None:
     """Record that `role` started its `step` turn on `rung`."""
@@ -72,13 +73,22 @@ def emit_turn_started(
             "iteration": task.iteration,
             "agent": rung.agent,
             "model": rung.model,
+            "effort": rung.effort,
             **_turn_data(turn),
+            **({"run_id": run_id} if run_id is not None else {}),
         },
     )
 
 
 def emit_turn_stopped(
-    events: EventLog, task: Task, step: Step, role: Role, *, turn: str | None = None
+    events: EventLog,
+    task: Task,
+    step: Step,
+    role: Role,
+    *,
+    rung: Rung,
+    run_id: int,
+    turn: str | None = None,
 ) -> None:
     """Record that `role`'s `step` turn ended without a result because the task was stopped."""
     events.append(
@@ -89,6 +99,10 @@ def emit_turn_stopped(
             "step": step.value,
             "role": role.value,
             "iteration": task.iteration,
+            "agent": rung.agent,
+            "model": rung.model,
+            "effort": rung.effort,
+            "run_id": run_id,
             **_turn_data(turn),
         },
     )
@@ -112,6 +126,8 @@ def emit_turn_failed(
     step: Step,
     result: TurnResult,
     *,
+    rung: Rung,
+    run_id: int,
     turn: str | None = None,
     role: Role | None = None,
 ) -> None:
@@ -133,6 +149,10 @@ def emit_turn_failed(
             "step": step.value,
             "result": type(result).__name__,
             **_provenance_data(role, task.iteration),
+            "agent": rung.agent,
+            "model": rung.model,
+            "effort": rung.effort,
+            "run_id": run_id,
             **_turn_data(turn),
         }
     )
@@ -154,6 +174,8 @@ def emit_turn_completed(
             "role": execution.role.value,
             "agent": execution.rung.agent,
             "model": execution.rung.model,
+            "effort": execution.rung.effort,
+            "run_id": execution.run_id,
             "outcome": _turn_outcome(outcome),
             "summary": summary,
             "question": _turn_question(outcome),

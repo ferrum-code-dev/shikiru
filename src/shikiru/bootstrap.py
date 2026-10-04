@@ -306,6 +306,7 @@ async def run_dashboard(
             clock=clock,
             resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             engine_up=lambda: engine_is_running(lock_path),
+            engine_identity=lambda: EngineLock.identity_if_running(lock_path),
             engine_pid=lambda: EngineLock.pid_if_running(lock_path),
             tmux=tmux,
             session_target=session_target,

@@ -11,7 +11,17 @@ import psutil
 import pytest
 from textual.widgets import DataTable, ListView, Static
 
-from shikiru.agents.contracts import QuotaWindow, Rung, Usage
+from shikiru.agents.contracts import (
+    BILLING_MODE_API,
+    BILLING_MODE_SUBSCRIPTION,
+    BILLING_MODE_UNKNOWN,
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    BILLING_SOURCE_UNKNOWN,
+    BillingDeclaration,
+    QuotaWindow,
+    Rung,
+    Usage,
+)
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.activity import RoleViewTail
@@ -25,6 +35,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Role, Status
 from shikiru.operator.queries import OperatorQueries
+from shikiru.paths import run_dir
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
 from shikiru.plugins.widgets.usage import UNKNOWN_VALUE, UsagePanel, UsageWidget
@@ -57,6 +68,7 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shikiru.agents.contracts import BillingMode
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.views import DashboardSources
@@ -98,6 +110,7 @@ def _dashboard_services(
         clock=clock,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         engine_up=lambda: False,
+        engine_identity=lambda: None,
         engine_pid=lambda: resource_pid,
         tmux=tmux,
         session_target=UNUSED_SESSION_TARGET,
@@ -492,6 +505,92 @@ async def test_usage_panel_separates_cost_bases_and_marks_unknown_usage_and_cost
         assert f"unknown-agent · tokens {UNKNOWN_VALUE} · usage not reported (0/1 runs)" in text
 
 
+async def test_project_usage_projects_persisted_coverage_without_inventing_api_spend(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Retained mixed billing history")
+    runs = RunStore(connection, clock)
+
+    def declaration(mode: BillingMode) -> BillingDeclaration:
+        source = (
+            BILLING_SOURCE_OPERATOR_CONFIG
+            if mode != BILLING_MODE_UNKNOWN
+            else BILLING_SOURCE_UNKNOWN
+        )
+        return BillingDeclaration(mode=mode, source=source)
+
+    api_zero = runs.start(
+        task.id,
+        Role.IMPLEMENTER,
+        Rung("codex", "gpt-6-luna", "low"),
+        billing_declaration=declaration(BILLING_MODE_API),
+    )
+    runs.record_usage(api_zero.id, Usage(10, 0, 0, 0, 0.0, "billed", None))
+    api_missing = runs.start(
+        task.id,
+        Role.LEADER,
+        Rung("codex", "gpt-6-sol", "high"),
+        billing_declaration=declaration(BILLING_MODE_API),
+    )
+    runs.record_usage(api_missing.id, Usage(20, 0, 0, 0, None, "unknown", None))
+    subscription_charge = runs.start(
+        task.id,
+        Role.IMPLEMENTER,
+        Rung("claude", "sonnet", "low"),
+        billing_declaration=declaration(BILLING_MODE_SUBSCRIPTION),
+    )
+    runs.record_usage(subscription_charge.id, Usage(30, 0, 0, 0, 2.5, "billed", None))
+    subscription_unknown = runs.start(
+        task.id,
+        Role.LEADER,
+        Rung("claude", "opus", "high"),
+        billing_declaration=declaration(BILLING_MODE_SUBSCRIPTION),
+    )
+    runs.record_usage(subscription_unknown.id, Usage(40, 0, 0, 0, None, "unknown", None))
+    unknown_equivalent = runs.start(
+        task.id,
+        Role.IMPLEMENTER,
+        Rung("unknown-agent", "model", "low"),
+    )
+    runs.record_usage(unknown_equivalent.id, Usage(50, 0, 0, 0, 1.5, "api_equivalent", None))
+    legacy = runs.start(task.id, Role.LEADER, Rung("legacy-agent", "model", "low"))
+    runs.record_usage(legacy.id, Usage(60, 0, 0, 0, None, "unknown", None))
+    connection.execute("UPDATE runs SET usage_reported = NULL WHERE id = ?", (legacy.id,))
+    runs.start(task.id, Role.IMPLEMENTER, Rung("no-report-agent", "model", "low"))
+    for run in runs.for_task(task.id):
+        runs.close(run.id)
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=None, status=Status.DONE),
+    )
+    disposable_run_data = run_dir(project_dir, task.id)
+    disposable_run_data.mkdir(parents=True)
+    (disposable_run_data / "temporary-evidence").write_text("removed by ordinary cleanup")
+    shutil.rmtree(disposable_run_data)
+
+    projection = widget_context(reader, project_dir, clock).views.project_usage()
+
+    assert projection.session_count == 7
+    assert projection.input_tokens == 210
+    assert projection.reported_sessions == 5
+    assert projection.legacy_token_sessions == 1
+    assert projection.unknown_token_sessions == 1
+    assert projection.billed_cost_usd == 2.5
+    assert projection.billed_cost_sessions == 2
+    assert projection.api_billed_cost_usd == 0.0
+    assert projection.api_billed_cost_sessions == 1
+    assert projection.api_cost_unreported_sessions == 1
+    assert projection.api_equivalent_cost_usd == 1.5
+    assert projection.api_equivalent_cost_sessions == 1
+    assert projection.unknown_billing_sessions == 3
+    assert projection.subscription_sessions == 2
+    assert projection.subscription_agents == ("claude",)
+
+
 async def test_resource_sampling_failure_is_stale_and_task_navigation_still_works(
     connection: Connection,
     reader: StateReader,
@@ -586,6 +685,40 @@ async def test_process_sampling_failure_retains_the_last_complete_tree_sample(
     assert stale.instance_cpu_pct == initial.instance_cpu_pct
     assert stale.instance_rss_gb == initial.instance_rss_gb
     assert stale.error is not None
+    retained = sources.resource_sample()
+    assert retained is not None
+    assert retained.state is DiagnosticSampleState.STALE
+    assert retained.sampled_at == initial.sampled_at
+    assert retained.instance_cpu_pct == initial.instance_cpu_pct
+    assert retained.error == stale.error
+
+
+async def test_resource_failure_without_a_prior_sample_remains_failed(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name)
+    sources, _settings = _dashboard_services(project_dir, clock, tmux)
+
+    def fail_cpu_sample(*, interval: float | None = None, percpu: bool = False) -> float:
+        del interval, percpu
+        raise psutil.Error
+
+    monkeypatch.setattr(psutil, "cpu_percent", fail_cpu_sample)
+
+    failure = await sources.resources()
+    retained = sources.resource_sample()
+
+    assert failure.state is DiagnosticSampleState.FAILED
+    assert failure.sampled_at is None
+    assert failure.error is not None
+    assert retained is not None
+    assert retained.state is DiagnosticSampleState.FAILED
+    assert retained.sampled_at is None
+    assert retained.error == failure.error
 
 
 async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navigable(
@@ -689,6 +822,7 @@ async def test_resources_service_samples_every_pane_in_the_project_session(
         clock=clock,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         engine_up=lambda: False,
+        engine_identity=lambda: None,
         engine_pid=lambda: None,
         tmux=tmux,
         session_target=session_target,

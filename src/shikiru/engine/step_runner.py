@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from shikiru.engine.acceptance import AcceptanceGuard
     from shikiru.engine.escalation_filing import EscalationFiler
     from shikiru.engine.transitions import TransitionWriter
+    from shikiru.engine.turn_execution import TurnExecution
     from shikiru.engine.turn_loop import TurnLoop
     from shikiru.prompts.renderer import PromptName
     from shikiru.store.events import EventLog
@@ -73,8 +74,7 @@ class StepRunner:
                 step,
                 outcome,
                 error,
-                turn=result.execution.turn_dir.name,
-                role=result.execution.role,
+                execution=result.execution,
             )
             return escalated_task, TurnCounters(), True
         return current, TurnCounters(), escalated
@@ -119,9 +119,17 @@ class StepRunner:
         outcome: Outcome,
         error: UsageError,
         *,
-        turn: str,
-        role: Role,
+        execution: TurnExecution,
     ) -> Task:
-        emit_turn_failed(self._events, task, step, ProtocolError(), turn=turn, role=role)
+        emit_turn_failed(
+            self._events,
+            task,
+            step,
+            ProtocolError(),
+            rung=execution.rung,
+            run_id=execution.run_id,
+            turn=execution.turn_dir.name,
+            role=execution.role,
+        )
         transition = Transition.escalate(task, EscalationReason.AGENT_PROTOCOL, step=step)
         return await self._escalations.escalate(task, transition, outcome, question=str(error))

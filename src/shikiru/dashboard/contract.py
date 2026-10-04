@@ -133,6 +133,32 @@ class HeaderView:
     repo: RepoStatus
     alerts: tuple[str, ...]
     integration_mode: str = ""
+    engine_uptime_seconds: float | None = None
+    previous_engine_run_seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class RecordedUsageView:
+    """Recorded project or task usage with token, billing and reporting coverage."""
+
+    session_count: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    reported_sessions: int
+    legacy_token_sessions: int
+    unknown_token_sessions: int
+    billed_cost_usd: float | None
+    billed_cost_sessions: int
+    api_billed_cost_usd: float | None
+    api_billed_cost_sessions: int
+    api_cost_unreported_sessions: int
+    api_equivalent_cost_usd: float | None
+    api_equivalent_cost_sessions: int
+    unknown_billing_sessions: int
+    subscription_sessions: int
+    subscription_agents: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -279,6 +305,34 @@ class TaskSessionView:
     legacy_cost_recorded: bool = False
     billing_mode: BillingMode = BILLING_MODE_UNKNOWN
     billing_source: BillingSource = BILLING_SOURCE_UNKNOWN
+    run_id: int | None = None
+    current_lineage: bool = True
+    model_history: tuple[TaskModelHistoryView, ...] = ()
+    history_gaps: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TaskTurnUsageDeltaView:
+    """Usage delta recorded for one completed agent turn."""
+
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float | None
+
+
+@dataclass(frozen=True)
+class TaskModelHistoryView:
+    """One bounded turn observation with model identity and per-turn usage, when recorded."""
+
+    agent: str
+    model: str
+    effort: str | None
+    turn: str | None
+    status: str
+    usage_delta: TaskTurnUsageDeltaView | None = None
+    identity_complete: bool = False
 
 
 @dataclass(frozen=True)
@@ -391,6 +445,7 @@ class TaskDetailView:
     submitted_age: str = ""
     requeued_age: str | None = None
     timeline: TaskTimelinePageView | None = None
+    usage: RecordedUsageView | None = None
 
 
 @dataclass(frozen=True)
@@ -569,6 +624,10 @@ class DashboardViews(Protocol):
         """Return the project, engine, slots and repository view."""
         ...
 
+    def project_usage(self) -> RecordedUsageView:
+        """Return token and monetary coverage for all retained session lineages."""
+        ...
+
     def workspace_summary(self) -> WorkspaceSummaryView:
         """Return attention, running and waiting counts for home navigation."""
         ...
@@ -668,6 +727,10 @@ class DashboardViews(Protocol):
 
     async def resources(self) -> ResourceView:
         """Return host usage and the engine/task-pane process-tree usage."""
+        ...
+
+    def resource_sample(self) -> ResourceView | None:
+        """Return the latest timestamped resource observation without sampling again."""
         ...
 
     async def containers(self) -> DockerView:

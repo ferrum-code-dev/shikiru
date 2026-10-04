@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -14,6 +15,7 @@ from shikiru.agents.contracts import (
     BILLING_MODE_SUBSCRIPTION,
     BILLING_SOURCE_OPERATOR_CONFIG,
     BillingDeclaration,
+    Rung,
     Usage,
 )
 from shikiru.clock import SystemClock
@@ -56,6 +58,7 @@ from shikiru.domain.tasks import EscalationReason, Hold, Mode, RepoState, Role, 
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import run_dir, task_root
+from shikiru.process import ProcessIdentity
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
@@ -626,6 +629,339 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             assert "no reliable context provenance" in sessions_text
     finally:
         reader.close()
+
+
+async def test_task_history_keeps_closed_lineages_and_observed_model_deltas(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Retained model history")
+    runs = RunStore(connection, clock)
+    events = EventLog(connection, clock)
+    previous = runs.start(task.id, Role.IMPLEMENTER, Rung("codex", "gpt-5", "low"))
+    _record_history_turn(
+        events,
+        task.id,
+        previous.id,
+        Role.IMPLEMENTER,
+        agent="codex",
+        model="gpt-5",
+        effort="low",
+        turn="01-implement-i1",
+        input_tokens=3,
+    )
+    runs.record_usage(previous.id, Usage(3, 1, 0, 0, 0.0, "billed", None))
+    runs.close(previous.id)
+    clock.advance(1)
+    current = runs.start(
+        task.id,
+        Role.IMPLEMENTER,
+        Rung("claude", "sonnet", "low"),
+        billing_declaration=BillingDeclaration(
+            mode=BILLING_MODE_SUBSCRIPTION,
+            source=BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    taken_over = runs.start(task.id, Role.LEADER, Rung("codex", "gpt-6-sol", "high"))
+    runs.mark_taken_over(taken_over.id)
+    _record_history_turn(
+        events,
+        task.id,
+        current.id,
+        Role.IMPLEMENTER,
+        agent="claude",
+        model="sonnet",
+        effort="low",
+        turn="02-implement-i1",
+        input_tokens=4,
+    )
+    clock.advance(1)
+    runs.set_rung(current.id, Rung("claude", "opus", "high"))
+    _record_history_turn(
+        events,
+        task.id,
+        current.id,
+        Role.IMPLEMENTER,
+        agent="claude",
+        model="opus",
+        effort="high",
+        turn="03-verify-i1",
+        input_tokens=7,
+    )
+    runs.record_usage(current.id, Usage(11, 2, 0, 0, 0.25, "billed", None))
+    turns_path = run_dir(project_root, task.id)
+    turns_path.mkdir(parents=True)
+    (turns_path / "temporary-evidence").write_text("retained only for this test")
+    shutil.rmtree(turns_path)
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    assert detail.usage is not None
+    assert detail.usage.input_tokens == 14
+    assert sum(session.input_tokens for session in detail.sessions) == 14
+    prior_view = next(session for session in detail.sessions if session.run_id == previous.id)
+    current_view = next(session for session in detail.sessions if session.run_id == current.id)
+    assert prior_view.current_lineage is False
+    assert prior_view.status == "closed"
+    assert prior_view.model == "gpt-5"
+    assert prior_view.model_history[0].usage_delta is not None
+    assert prior_view.model_history[0].usage_delta.input_tokens == 3
+    assert current_view.current_lineage is True
+    assert current_view.status == "live"
+    assert current_view.billing_mode == BILLING_MODE_SUBSCRIPTION
+    assert current_view.model == "opus"
+    assert [item.model for item in current_view.model_history] == ["sonnet", "opus"]
+    assert [item.effort for item in current_view.model_history] == ["low", "high"]
+    deltas = [item.usage_delta for item in current_view.model_history]
+    assert all(delta is not None for delta in deltas)
+    assert [delta.input_tokens for delta in deltas if delta is not None] == [4, 7]
+    taken_over_view = next(
+        session for session in detail.sessions if session.run_id == taken_over.id
+    )
+    assert taken_over_view.current_lineage is True
+    assert taken_over_view.status == "taken_over"
+
+
+async def test_legacy_turn_without_effort_does_not_inherit_latest_run_effort(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Legacy model identity")
+    run = RunStore(connection, clock).start(
+        task.id,
+        Role.IMPLEMENTER,
+        Rung("codex", "gpt-6", "high"),
+    )
+    RunStore(connection, clock).record_usage(run.id, Usage(30, 2, 0, 0, None, "unknown", None))
+    events = EventLog(connection, clock)
+    turn_data = {
+        "role": Role.IMPLEMENTER.value,
+        "agent": "codex",
+        "model": "gpt-5",
+        "run_id": run.id,
+        "turn": "01-implement-i1",
+    }
+    events.append(
+        EventKind.TURN_STARTED,
+        task_id=task.id,
+        message="legacy turn started",
+        data=turn_data,
+    )
+    events.append(
+        EventKind.TURN_COMPLETED,
+        task_id=task.id,
+        message="legacy turn completed",
+        data={
+            **turn_data,
+            "usage_delta": {
+                "input_tokens": 99,
+                "output_tokens": 20,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": None,
+            },
+        },
+    )
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    [session] = detail.sessions
+    [history] = session.model_history
+    assert session.effort == "high"
+    assert history.model == "gpt-5"
+    assert history.effort is None
+    assert history.identity_complete is False
+    assert history.usage_delta is None
+    assert "per-turn usage delta is unavailable" in session.history_gaps
+
+
+async def test_header_uptime_tracks_recorded_engine_restarts_and_stopped_duration(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    events = EventLog(connection, clock)
+    first_identity = ProcessIdentity(4321, 1_700_000_000.0)
+    events.append(
+        EventKind.ENGINE_STARTED,
+        message="engine started",
+        data={
+            "engine_pid": first_identity.pid,
+            "engine_process_started_at": first_identity.started_at,
+        },
+    )
+    running_views = state_views(
+        reader,
+        project_root,
+        clock,
+        StubServices(engine_running=True, engine_process_identity=first_identity),
+    )
+    clock.advance(12)
+
+    live_header = await running_views.header()
+
+    assert live_header.engine_up is True
+    assert live_header.engine_uptime_seconds == 12
+    assert live_header.previous_engine_run_seconds is None
+    events.append(
+        EventKind.ENGINE_STOPPED,
+        message="engine stopped",
+        data={
+            "engine_pid": first_identity.pid,
+            "engine_process_started_at": first_identity.started_at,
+        },
+    )
+    stopped_views = state_views(reader, project_root, clock, StubServices())
+    first_stopped_header = await stopped_views.header()
+    clock.advance(60)
+    later_stopped_header = await stopped_views.header()
+
+    assert first_stopped_header.engine_up is False
+    assert first_stopped_header.engine_uptime_seconds is None
+    assert first_stopped_header.previous_engine_run_seconds == 12
+    assert later_stopped_header.previous_engine_run_seconds == 12
+
+    second_identity = ProcessIdentity(4322, 1_700_000_100.0)
+    events.append(
+        EventKind.ENGINE_STARTED,
+        message="engine restarted",
+        data={
+            "engine_pid": second_identity.pid,
+            "engine_process_started_at": second_identity.started_at,
+        },
+    )
+    restarted_views = state_views(
+        reader,
+        project_root,
+        clock,
+        StubServices(engine_running=True, engine_process_identity=second_identity),
+    )
+    restarted_header = await restarted_views.header()
+    mismatched_views = state_views(
+        reader,
+        project_root,
+        clock,
+        StubServices(
+            engine_running=True,
+            engine_process_identity=ProcessIdentity(9999, 1_700_000_100.0),
+        ),
+    )
+    mismatched_header = await mismatched_views.header()
+    no_stop_header = await state_views(
+        reader,
+        project_root,
+        clock,
+        StubServices(),
+    ).header()
+
+    assert restarted_header.engine_uptime_seconds == 0
+    assert restarted_header.previous_engine_run_seconds is None
+    assert mismatched_header.engine_uptime_seconds is None
+    assert no_stop_header.previous_engine_run_seconds is None
+
+
+async def test_ambiguous_legacy_turn_evidence_is_not_assigned_to_multiple_lineages(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Ambiguous retained turn")
+    runs = RunStore(connection, clock)
+    runs.start(task.id, Role.IMPLEMENTER, Rung("codex", "gpt-5", "low"))
+    runs.start(task.id, Role.IMPLEMENTER, Rung("codex", "gpt-5", "low"))
+    events = EventLog(connection, clock)
+    turn_data = {
+        "role": Role.IMPLEMENTER.value,
+        "agent": "codex",
+        "model": "gpt-5",
+        "turn": "01-implement-i1",
+    }
+    events.append(
+        EventKind.TURN_STARTED,
+        task_id=task.id,
+        message="legacy turn started",
+        data=turn_data,
+    )
+    events.append(
+        EventKind.TURN_COMPLETED,
+        task_id=task.id,
+        message="legacy turn completed",
+        data={
+            **turn_data,
+            "usage_delta": {
+                "input_tokens": 5,
+                "output_tokens": 2,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": None,
+            },
+        },
+    )
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    assert len(detail.sessions) == 2
+    assert all(not session.model_history for session in detail.sessions)
+    assert all(
+        "turn evidence could not be linked to a session lineage" in session.history_gaps
+        for session in detail.sessions
+    )
+
+
+def _record_history_turn(
+    events: EventLog,
+    task_id: str,
+    run_id: int,
+    role: Role,
+    *,
+    agent: str,
+    model: str,
+    effort: str,
+    turn: str,
+    input_tokens: int,
+) -> None:
+    data = {
+        "role": role.value,
+        "agent": agent,
+        "model": model,
+        "effort": effort,
+        "run_id": run_id,
+        "turn": turn,
+    }
+    events.append(
+        EventKind.TURN_STARTED,
+        task_id=task_id,
+        message=f"{turn} started",
+        data=data,
+    )
+    events.append(
+        EventKind.TURN_COMPLETED,
+        task_id=task_id,
+        message=f"{turn} completed",
+        data={
+            **data,
+            "usage_delta": {
+                "input_tokens": input_tokens,
+                "output_tokens": 1,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": None,
+            },
+        },
+    )
 
 
 @pytest.mark.parametrize(
