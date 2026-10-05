@@ -1964,12 +1964,8 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
 
             guidance = "Preserve the existing call pattern."
             await pilot.press(*guidance)
-            await pilot.press("escape")
-            await wait_until(
-                lambda: app.screen is caller,
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            assert queue.pending() == []
+            await _back_to_context_actions(pilot, screen, queue)
+            await _close_palette_to_caller(app, pilot, caller, queue)
             await pilot.click(row)
             await wait_until(
                 lambda: isinstance(app.screen, PaletteScreen),
@@ -2778,6 +2774,45 @@ async def _open_and_close_task_message_draft(
     return home, list_view, guidance
 
 
+async def _open_home_task_action_menu(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+) -> PaletteScreen:
+    await _select_home_task(app, task.id)
+    app.query_one("#task-browser-list", ListView).focus()
+    await pilot.press("ctrl+p")
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    return cast("PaletteScreen", app.screen)
+
+
+async def _back_to_context_actions(
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+    queue: CommandQueue,
+) -> None:
+    await pilot.click("#palette-back-to-menu")
+    await wait_until(
+        lambda: palette.query_one("#palette-menu", VerticalScroll).display,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert queue.pending() == []
+
+
+async def _close_palette_to_caller(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    caller: object,
+    queue: CommandQueue,
+) -> None:
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is caller, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    assert queue.pending() == []
+
+
 async def test_contextual_message_draft_survives_answer_form_for_another_task(
     database: Database,
     connection: Connection,
@@ -2870,6 +2905,91 @@ async def test_contextual_message_draft_survives_answer_form_for_another_task(
             assert queue.pending() == []
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    finally:
+        reader.close()
+
+
+async def test_contextual_message_draft_survives_back_and_action_change(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Back menu message draft", mode=Mode.IMPLEMENT)
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
+    reader = StateReader(database, clock)
+    app_instances: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        app = app_instances[0]
+        palette = _palette_screen_for_app(
+            reader,
+            connection,
+            project_dir,
+            clock,
+            request,
+            remember_contextual_draft=app.remember_contextual_palette_draft,
+            task_routes_available=True,
+        )
+        await app.push_screen(palette, callback=app.palette_return_callback(request.task_id))
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue"],
+            open_palette_context=open_palette_context,
+            clock=clock,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            home = app.screen
+            palette = await _open_home_task_action_menu(app, pilot, task)
+            await pilot.click("#palette-menu-action-message")
+            role = cast("Select[str]", palette.query_one("#role", Select))
+            role.focus()
+            role.value = Role.IMPLEMENTER.value
+            await wait_until(
+                lambda: role.value == Role.IMPLEMENTER.value,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            guidance = "Keep the explicitly selected implementer message."
+            message = palette.query_one("#message", TextArea)
+            message.focus()
+            await pilot.press(*guidance)
+            assert queue.pending() == []
+
+            await _back_to_context_actions(pilot, palette, queue)
+            await pilot.click("#palette-menu-action-submit")
+            await wait_until(
+                lambda: palette.query_one("#palette-form", VerticalScroll).display,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await _close_palette_to_caller(app, pilot, home, queue)
+
+            palette = await _open_home_task_action_menu(app, pilot, task)
+            await pilot.click("#palette-menu-action-message")
+            message = palette.query_one("#message", TextArea)
+            role = cast("Select[str]", palette.query_one("#role", Select))
+            await wait_until(
+                lambda: message.text == guidance and role.value == Role.IMPLEMENTER.value,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await _back_to_context_actions(pilot, palette, queue)
+            await _close_palette_to_caller(app, pilot, home, queue)
+
+            palette = await _open_home_task_action_menu(app, pilot, task)
+            await pilot.click("#palette-menu-action-message")
+            message = palette.query_one("#message", TextArea)
+            role = cast("Select[str]", palette.query_one("#role", Select))
+            await wait_until(
+                lambda: message.text == guidance and role.value == Role.IMPLEMENTER.value,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await _close_palette_to_caller(app, pilot, home, queue)
     finally:
         reader.close()
 

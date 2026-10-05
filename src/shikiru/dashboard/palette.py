@@ -824,6 +824,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._form_scroll_y = form.scroll_y
         focused = cast("App[None]", self.app).focused
         self._form_focus_id = focused.id if focused is not None else None
+        self._remember_form_draft()
         self._show_menu(True)
         self.call_after_refresh(self._focus_first_menu_action)
 
