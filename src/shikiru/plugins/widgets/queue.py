@@ -30,7 +30,7 @@ from shikiru.ui.tokens import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from textual import events
     from textual.app import App, ComposeResult
@@ -97,6 +97,7 @@ CLEAR_BUTTON_ID = "task-browser-clear"
 MORE_BUTTON_ID = "task-browser-more"
 REVEAL_BUTTON_ID = "task-browser-reveal"
 ESCAPE_KEY = "escape"
+MOVE_STEPS = {"up": -1, "down": 1}
 FILTER_BUTTONS = (
     (TaskBrowserFilter.ACTIVE, "task-filter-active", "Active"),
     (TaskBrowserFilter.WAITING, "task-filter-waiting", "Waiting"),
@@ -137,6 +138,44 @@ class _RecentHeading(ListItem):
             classes="recent-heading",
             disabled=True,
         )
+
+
+class _TaskBrowserListView(ListView):
+    def __init__(
+        self,
+        *,
+        widget_id: str,
+        focus_layout: bool,
+        move_selection: Callable[[int], Awaitable[None]],
+        select_task: Callable[[str], None],
+        open_task: Callable[[str], Awaitable[None]],
+    ) -> None:
+        super().__init__(id=widget_id)
+        self._focus_layout = focus_layout
+        self._move_selection = move_selection
+        self._select_task = select_task
+        self._open_task = open_task
+
+    def action_cursor_up(self) -> None:
+        if not self._focus_layout:
+            super().action_cursor_up()
+            return
+        self.run_worker(self._move_selection(MOVE_STEPS["up"]))
+
+    def action_cursor_down(self) -> None:
+        if not self._focus_layout:
+            super().action_cursor_down()
+            return
+        self.run_worker(self._move_selection(MOVE_STEPS["down"]))
+
+    def action_select_cursor(self) -> None:
+        if not self._focus_layout:
+            super().action_select_cursor()
+            return
+        item = self.highlighted_child
+        if isinstance(item, _BrowserListItem):
+            self._select_task(item.task_id)
+            self.run_worker(self._open_task(item.task_id))
 
 
 def _row_text(row: TaskBrowserRow) -> str:
@@ -332,7 +371,13 @@ class QueuePanel(Vertical):
         yield Static("", id=COUNT_ID, markup=False)
         yield Static("", id=EMPTY_ID, markup=False)
         yield Static("", id=FAMILY_CONTEXT_ID, markup=False)
-        task_list = ListView(id=TASK_LIST_ID)
+        task_list = _TaskBrowserListView(
+            widget_id=TASK_LIST_ID,
+            focus_layout=self._focus_layout,
+            move_selection=self._move_selection,
+            select_task=self.select_task,
+            open_task=self._open_task,
+        )
         if self._focus_layout:
             task_list.add_class(FOCUS_LIST_CLASS)
         yield task_list
@@ -440,31 +485,47 @@ class QueuePanel(Vertical):
         if event.list_view.id != TASK_LIST_ID or self._refreshing:
             return
         if isinstance(event.item, _BrowserListItem):
-            self._select_task(event.item.task_id)
+            self.select_task(event.item.task_id)
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id == TASK_LIST_ID and isinstance(event.item, _BrowserListItem):
-            self._select_task(event.item.task_id)
-            open_detail = self._widget_context.open_task_detail
-            if open_detail is not None:
-                await open_detail(event.item.task_id)
+            self.select_task(event.item.task_id)
 
     def on_key(self, event: events.Key) -> None:
         focused = cast("App[object]", self.app).focused
-        if event.key != ESCAPE_KEY or not isinstance(focused, Input):
+        if event.key == ESCAPE_KEY and isinstance(focused, Input) and focused.id == SEARCH_INPUT_ID:
+            event.stop()
+            if focused.value:
+                focused.value = ""
+            else:
+                if self._focus_layout:
+                    focused.display = False
+                self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
             return
-        search = focused
-        if search.id != SEARCH_INPUT_ID:
+        if isinstance(focused, Input):
             return
-        event.stop()
-        if search.value:
-            search.value = ""
-        else:
-            if self._focus_layout:
-                search.display = False
-            self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
 
-    def _select_task(self, task_id: str) -> None:
+    async def _move_selection(self, step: int) -> None:
+        list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
+        rows = tuple(item for item in list_view.children if isinstance(item, _BrowserListItem))
+        if not rows:
+            return
+        current = next(
+            (index for index, item in enumerate(rows) if item.task_id == self._selected_task_id),
+            0,
+        )
+        item = rows[(current + step) % len(rows)]
+        self.select_task(item.task_id)
+        list_view.index = list_view.children.index(item)
+        list_view.scroll_to_widget(item, animate=False, immediate=True)
+
+    async def _open_task(self, task_id: str) -> None:
+        open_detail = self._widget_context.open_task_detail
+        if open_detail is not None:
+            await open_detail(task_id)
+
+    def select_task(self, task_id: str) -> None:
+        """Select a task and update the Home inspector without opening a route."""
         self._selected_task_id = task_id
         callback = self._widget_context.on_task_selected
         if callback is not None:
@@ -577,6 +638,15 @@ class QueuePanel(Vertical):
                 selected_task = recent_by_id[selected_task.task_id]
             elif selected_task is None:
                 selected_task = recent_page.selected_task
+            visible_active_count = len(active_rows)
+            matching_active_count = max(
+                view.matching_count - recent_page.matching_count,
+                0,
+            )
+            view = replace(
+                view,
+                has_more=visible_active_count < matching_active_count,
+            )
         return replace(
             view,
             rows=rows,

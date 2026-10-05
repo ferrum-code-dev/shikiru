@@ -60,6 +60,8 @@ STALL_TURN_NAME = "001-implement-i1"
 READING_INDEX = 10
 READING_SCROLL_POSITION = 20
 MATCHING_TERMINAL_COUNT = PAGE_SIZE + 1
+MATCHING_ACTIVE_COUNT = PAGE_SIZE + 1
+ALL_HISTORY_TASK_COUNT = 2
 TERMINAL_SEARCH_QUERY = "Matching terminal result"
 
 
@@ -89,6 +91,14 @@ def _visible_task_ids(list_view: ListView) -> tuple[str, ...]:
         for item in list_view.children
         if item.id is not None and item.region.overlaps(list_view.scrollable_content_region)
     )
+
+
+def _loaded_task_ids(list_view: ListView) -> set[str]:
+    return {
+        item.id.removeprefix("task-row-")
+        for item in list_view.children
+        if item.id is not None and item.id.startswith("task-row-")
+    }
 
 
 async def test_task_browser_queries_apply_filter_order_search_and_page_counts(
@@ -418,6 +428,58 @@ async def test_history_load_more_keeps_the_selected_task(
         assert widget.query_one("#task-browser-more", Button).disabled
         assert task_list.children[-1].id == f"task-row-{selected.id}"
         assert selected.id in _static_text(widget.query_one("#task-browser-preview", Static))
+
+
+async def test_unsearched_all_load_more_stops_after_queued_tasks_and_recent_history(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    queued = [
+        seed_task(connection, clock, title=f"All queue task {index}")
+        for index in range(MATCHING_ACTIVE_COUNT)
+    ]
+    terminal: list[Task] = []
+    for index in range(ALL_HISTORY_TASK_COUNT):
+        task = seed_task(connection, clock, title=f"All history task {index}")
+        _finish_task(connection, clock, task.id)
+        terminal.append(task)
+        clock.advance(1)
+    context = replace(
+        widget_context(reader, project_dir, clock, services=StubServices()),
+        placement=WidgetPlacement.TASK_LIST,
+    )
+    widget = cast("QueuePanel", QueueWidget().create(context))
+
+    async with WidgetHostApp(widget).run_test(size=(100, 35)) as pilot:
+        task_list = widget.query_one("#task-browser-list", ListView)
+        await wait_until(
+            lambda: (
+                terminal[-1].id in _loaded_task_ids(task_list)
+                and len(_loaded_task_ids(task_list) & {task.id for task in queued}) == PAGE_SIZE
+            ),
+            timeout=5.0,
+        )
+        visible_ids = _loaded_task_ids(task_list)
+        assert len(visible_ids & {task.id for task in queued}) == PAGE_SIZE
+        assert terminal[-1].id in visible_ids
+        assert terminal[0].id not in visible_ids
+        load_more = widget.query_one("#task-browser-more", Button)
+        assert not load_more.disabled
+
+        assert await pilot.click(load_more)
+        await wait_until(
+            lambda: (
+                queued[-1].id in _loaded_task_ids(task_list)
+                and widget.query_one("#task-browser-more", Button).disabled
+            ),
+            timeout=5.0,
+        )
+        visible_ids = _loaded_task_ids(task_list)
+        assert visible_ids == {task.id for task in queued} | {terminal[-1].id}
+        assert widget.query_one("#task-browser-more", Button).disabled
 
 
 async def test_home_search_preserves_matching_terminal_tasks_across_loaded_pages(

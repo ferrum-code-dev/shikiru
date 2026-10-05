@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from fake_agent.scripted import TASK_SCRIPT_DIR_ENV_VAR, role_script_env_var, task_script_path
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
 from shikiru.bootstrap import build_engine
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rich.text import Text
+    from textual.pilot import Pilot
 
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import PaletteRequest
@@ -380,7 +382,7 @@ async def _export_terminal_task(
         await pilot.press("ctrl+p")
         await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
         palette = cast("PaletteScreen", app.screen)
-        cast("Select[str]", palette.query_one("#action", Select)).value = "export"
+        await _select_palette_action(runtime, pilot, palette, "export")
         await runtime.wait_for(lambda: palette.query_one("#export-destination", Input).display)
         palette.query_one("#export-destination", Input).value = destination
         cast("Select[str]", palette.query_one("#export-format", Select)).value = EXPORT_FORMAT_JSON
@@ -391,6 +393,34 @@ async def _export_terminal_task(
             lambda: "Exported JSON" in _plain(palette.query_one("#palette-result", Static))
         )
     return cast("dict[str, Any]", json.loads((runtime.project_root / destination).read_text()))
+
+
+async def _select_palette_action(
+    runtime: WorkspaceRuntime,
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+    action: str,
+) -> None:
+    menu = palette.query_one("#palette-menu", VerticalScroll)
+    if menu.display:
+        button = palette.query_one(f"#palette-menu-action-{action}", Button)
+        menu.scroll_to_widget(button, animate=False, immediate=True)
+        button.scroll_visible(animate=False, force=True)
+        button.focus()
+        await pilot.wait_for_scheduled_animations()
+        await pilot.pause()
+        assert button.region.y >= menu.region.y
+        assert button.region.bottom <= menu.region.bottom
+        assert await pilot.click(button)
+        await runtime.wait_for(
+            lambda: (
+                not menu.display
+                and cast("Select[str]", palette.query_one("#action", Select)).value == action
+            )
+        )
+        return
+    cast("Select[str]", palette.query_one("#action", Select)).value = action
+    await pilot.pause()
 
 
 async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message(
@@ -440,7 +470,7 @@ async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message
             assert cast("Select[str]", palette.query_one("#role", Select)).value == (
                 Role.IMPLEMENTER.value
             )
-            cast("Select[str]", palette.query_one("#action", Select)).value = "message"
+            await _select_palette_action(runtime, pilot, palette, "message")
             await pilot.pause()
             palette.query_one("#message", TextArea).text = REQUEST_MESSAGE
             await pilot.click("#palette-submit")
@@ -484,8 +514,7 @@ async def test_fake_agent_escalation_updates_an_open_resolution_form_from_anothe
             await pilot.press("ctrl+p")
             await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
             palette = cast("PaletteScreen", app.screen)
-            cast("Select[str]", palette.query_one("#action", Select)).value = "resolve"
-            await pilot.pause()
+            await _select_palette_action(runtime, pilot, palette, "resolve")
             cast("Select[str]", palette.query_one("#escalation", Select)).value = escalation.id
             await pilot.pause()
             packet_view = runtime.queries.get_escalation(escalation.id)
@@ -610,8 +639,7 @@ async def test_dashboard_queued_submit_survives_engine_and_dashboard_restarts_on
             await pilot.press("ctrl+p")
             await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
             palette = cast("PaletteScreen", app.screen)
-            cast("Select[str]", palette.query_one("#action", Select)).value = "submit"
-            await pilot.pause()
+            await _select_palette_action(runtime, pilot, palette, "submit")
             palette.query_one(
                 "#request", TextArea
             ).text = "Queue this task while the engine is stopped."
@@ -621,6 +649,8 @@ async def test_dashboard_queued_submit_survives_engine_and_dashboard_restarts_on
             await runtime.wait_for(
                 lambda: "Pending" in _plain(palette.query_one("#palette-result", Static))
             )
+            await pilot.press("escape")
+            await runtime.wait_for(lambda: palette.query_one("#palette-menu").display)
             await pilot.press("escape")
             await runtime.wait_for(lambda: not isinstance(app.screen, PaletteScreen))
 

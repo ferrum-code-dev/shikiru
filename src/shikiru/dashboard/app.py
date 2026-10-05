@@ -9,11 +9,13 @@ from textual.app import App
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Input, Label, ListItem, ListView, Select, Static, TextArea
+from textual.widgets import Button, Label, ListItem, ListView, Select, Static
 
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
     DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
+    FOCUS_FAULTS_VIEW,
+    FOCUS_RESOURCES_VIEW,
     WIDGET_ENTRY_POINT_GROUP,
     CommandFeedbackEntryView,
     CommandFeedbackStatus,
@@ -24,14 +26,17 @@ from shikiru.dashboard.contract import (
     WidgetPlacement,
 )
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_ESCAPE,
     TASK_DETAIL_HELP_KEY,
     TASK_DETAIL_VIEWS_KEY,
     TASK_USAGE_KEY,
+    TASK_VIEW_EVIDENCE,
     TASK_VIEW_SUMMARY,
     TASK_VIEW_USAGE,
     TaskDetailPanel,
     TaskDetailScreen,
 )
+from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.errors import ConfigError
 from shikiru.ui.compact import attention_status_text
 from shikiru.ui.theme import install_theme
@@ -62,6 +67,7 @@ _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
 _WIDGET_DIALOGUE = "dialogue"
 _WIDGET_ESCALATIONS = "escalations"
 _WIDGET_QUEUE = "queue"
+_WIDGET_RESOURCES = "resources"
 _TASK_VIEW_OMITTED_PLACEMENTS = frozenset(
     {
         WidgetPlacement.IDENTITY,
@@ -89,6 +95,8 @@ _COMMAND_HISTORY_PREVIOUS_KEY = "left"
 _COMMAND_HISTORY_NEXT_KEY = "right"
 COMMAND_ACTION_SAY = "Say"
 _SEARCH_KEY = "slash"
+_ACTIONS_KEY = "ctrl+p"
+_EVIDENCE_KEY = "e"
 _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
@@ -543,10 +551,26 @@ class _HomeAttentionStatus(Static):
         if attention is None or not attention.groups:
             return
         group = attention.groups[0]
-        if group.task_id is not None and self._widget_context.open_task_detail is not None:
+        if group.task_id is not None and self._widget_context.on_task_selected is not None:
+            self._widget_context.on_task_selected(group.task_id)
+        if group.escalations:
+            decision = group.escalations[0]
+            request = PaletteRequest(
+                action=f"resolve {decision.escalation_id}",
+                task_id=decision.task_id,
+            )
+            if self._widget_context.open_palette_context is not None:
+                await self._widget_context.open_palette_context(request)
+            else:
+                await self._widget_context.open_palette(request.action or "")
+            event.stop()
+        elif group.task_id is not None and self._widget_context.open_task_detail is not None:
             if self._widget_context.on_task_selected is not None:
                 self._widget_context.on_task_selected(group.task_id)
             await self._widget_context.open_task_detail(group.task_id)
+            event.stop()
+        elif self._widget_context.open_contextual_view is not None:
+            await self._widget_context.open_contextual_view(FOCUS_FAULTS_VIEW)
             event.stop()
 
     async def _refresh_if_active(self) -> None:
@@ -568,10 +592,6 @@ class DashboardApp(App[None]):
     """Present the configured Home focus or one shared task detail view."""
 
     ENABLE_COMMAND_PALETTE = False
-    BINDINGS: ClassVar[list[BindingType]] = [
-        ("ctrl+p", "open_palette", "Palette"),
-        ("escape", "return_from_section", "Back"),
-    ]
     CSS = """
     Screen { background: $background; color: $primary-text; }
     #focus-root {
@@ -774,7 +794,13 @@ class DashboardApp(App[None]):
                 self.refresh_task_detail_after_resume()
 
             await self.push_screen(
-                TaskDetailScreen(self._widget_context(), task_id),
+                TaskDetailScreen(
+                    self._widget_context(),
+                    task_id,
+                    wide_overlay=(
+                        self._focus_task is None and self.size.width >= HOME_SPLIT_MIN_COLUMNS
+                    ),
+                ),
                 callback=refresh_resumed_detail,
             )
 
@@ -883,6 +909,15 @@ class DashboardApp(App[None]):
                         "Usage details",
                         widget_name=name,
                         placement=WidgetPlacement.DETAILED_USAGE,
+                    )
+                )
+            elif placement is WidgetPlacement.RESOURCES:
+                choices.append(
+                    _ContextChoice(
+                        FOCUS_RESOURCES_VIEW if name == _WIDGET_RESOURCES else f"widget-{name}",
+                        _contextual_widget_label(name, WidgetPlacement.DIAGNOSTICS),
+                        widget_name=name,
+                        placement=WidgetPlacement.DIAGNOSTICS,
                     )
                 )
             elif placement in {
@@ -1037,33 +1072,49 @@ class DashboardApp(App[None]):
 
     async def on_key(self, event: events.Key) -> None:
         task_detail_screen = isinstance(self.screen, TaskDetailScreen)
-        if isinstance(self.focused, (Input, TextArea)) or (
+        if (native_editor_has_focus(self.focused) and event.key != TASK_DETAIL_ESCAPE) or (
             isinstance(self.screen, ModalScreen) and not task_detail_screen
         ):
             return
-        if event.key == TASK_DETAIL_HELP_KEY:
-            await self.action_show_help()
+        if await self._dispatch_workspace_key(event):
             event.stop()
+            if event.key in {_ACTIONS_KEY, TASK_DETAIL_ESCAPE}:
+                event.prevent_default()
+
+    async def _dispatch_workspace_key(self, event: events.Key) -> bool:
+        if event.key == _ACTIONS_KEY:
+            await self.action_open_palette()
+        elif event.key == TASK_DETAIL_ESCAPE:
+            await self.action_return_from_section()
+        elif event.key == TASK_DETAIL_HELP_KEY:
+            await self.action_show_help()
         elif event.key == TASK_DETAIL_VIEWS_KEY:
             panel = self._context_task_detail_panel()
             if panel is not None:
                 await panel.open_contextual_views()
             else:
                 await self.action_open_views()
-            event.stop()
         elif event.key == TASK_USAGE_KEY:
             await self.action_open_task_usage()
-            event.stop()
-        elif (
-            event.key == _SEARCH_KEY
-            and self._focus_task is None
-            and _WIDGET_QUEUE in self._widget_names
+        elif event.key == _EVIDENCE_KEY:
+            await self.action_open_task_evidence()
+        else:
+            return self._open_workspace_search(event.key)
+        return True
+
+    def _open_workspace_search(self, key: str) -> bool:
+        if (
+            key != _SEARCH_KEY
+            or self._focus_task is not None
+            or _WIDGET_QUEUE not in self._widget_names
         ):
-            queue = self._widget_instances.get(_WIDGET_QUEUE)
-            open_search = getattr(queue, "open_search", None)
-            if callable(open_search):
-                open_search()
-                event.stop()
+            return False
+        queue = self._widget_instances.get(_WIDGET_QUEUE)
+        open_search = getattr(queue, "open_search", None)
+        if not callable(open_search):
+            return False
+        open_search()
+        return True
 
     async def _motion_loop(self) -> None:
         interval = self._motion_interval_seconds
@@ -1141,7 +1192,7 @@ class DashboardApp(App[None]):
         if panel.active_view != TASK_VIEW_SUMMARY:
             panel.close_contextual_view()
             return
-        if self._focus_task is not None:
+        if self._focus_task is not None or isinstance(self.screen, TaskDetailScreen):
             await panel.return_from_detail()
 
     async def action_show_help(self) -> None:
@@ -1186,6 +1237,10 @@ class DashboardApp(App[None]):
 
     async def action_open_palette(self) -> None:
         """Open the operator palette through the shared dashboard callback."""
+        panel = self._context_task_detail_panel()
+        if panel is not None:
+            await panel.open_palette()
+            return
         if self._focus_task is not None:
             await self.query_one("#task-detail-panel", TaskDetailPanel).open_palette()
             return
@@ -1204,6 +1259,15 @@ class DashboardApp(App[None]):
         if panel is not None:
             panel.open_usage_details()
             return
+        if (
+            self._focus_task is None
+            and self._home_detail_panel is not None
+            and self.size.width >= HOME_SPLIT_MIN_COLUMNS
+            and self._selected_task_id is not None
+        ):
+            self._home_detail_panel.select_task(self._selected_task_id)
+            self._home_detail_panel.open_usage_details()
+            return
         if self._selected_task_id is None:
             return
         await self.push_screen(
@@ -1211,6 +1275,32 @@ class DashboardApp(App[None]):
                 self._widget_context(),
                 self._selected_task_id,
                 initial_view=TASK_VIEW_USAGE,
+            ),
+            callback=lambda _: self.refresh_task_detail_after_resume(),
+        )
+
+    async def action_open_task_evidence(self) -> None:
+        """Open retained evidence for the selected task or task view."""
+        panel = self._context_task_detail_panel()
+        if panel is not None:
+            panel.open_evidence()
+            return
+        if (
+            self._focus_task is None
+            and self._home_detail_panel is not None
+            and self.size.width >= HOME_SPLIT_MIN_COLUMNS
+            and self._selected_task_id is not None
+        ):
+            self._home_detail_panel.select_task(self._selected_task_id)
+            self._home_detail_panel.open_evidence()
+            return
+        if self._selected_task_id is None:
+            return
+        await self.push_screen(
+            TaskDetailScreen(
+                self._widget_context(),
+                self._selected_task_id,
+                initial_view=TASK_VIEW_EVIDENCE,
             ),
             callback=lambda _: self.refresh_task_detail_after_resume(),
         )

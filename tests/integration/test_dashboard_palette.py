@@ -24,6 +24,7 @@ from shikiru.domain.commands import (
     RetryResolution,
     Say,
     SetRung,
+    Stop,
     Submit,
     TakeOver,
 )
@@ -271,8 +272,14 @@ async def _assert_engine_applies_resolution(
 
 
 async def _open_action(pilot: Pilot[None], screen: PaletteScreen, action: str) -> None:
-    screen.query_one("#action", Select).value = action
-    await pilot.pause()
+    menu = screen.query_one("#palette-menu", VerticalScroll)
+    if menu.display:
+        button = screen.query_one(f"#palette-menu-action-{action}", Button)
+        assert button.display
+        await pilot.click(button)
+    else:
+        screen.query_one("#action", Select).value = action
+        await pilot.pause()
 
 
 async def _set_target(pilot: Pilot[None], screen: PaletteScreen, task_id: str) -> None:
@@ -344,6 +351,145 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
             role=Role.IMPLEMENTER,
             rung=_LIVE_RUNG,
         )
+
+
+async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Context menu role target")
+    TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: "%7"})
+    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, _LIVE_RUNG)
+    RunStore(connection, clock).set_session(run.id, "menu-session", "menu-resume")
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(task_id=task.id),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        menu = screen.query_one("#palette-menu", VerticalScroll)
+        assert menu.display
+        assert screen.query_one("#palette-menu-action-submit").display
+        assert screen.query_one("#palette-menu-action-stop").display
+        assert screen.query_one("#palette-menu-action-take-over").display
+        assert queue.pending() == []
+
+        await pilot.click("#palette-menu-action-message")
+        assert not menu.display
+        assert screen.query_one("#field-role").display
+        assert screen.query_one("#field-message").display
+        guidance = "Keep the new parser branch behind the existing validation."
+        screen.query_one("#message", TextArea).text = guidance
+        await pilot.press("escape")
+        await wait_until(lambda: menu.display, timeout=2)
+        assert screen.query_one("#message", TextArea).text == guidance
+        assert queue.pending() == []
+
+        await pilot.click("#palette-menu-action-message")
+        assert screen.query_one("#message", TextArea).text == guidance
+        assert screen.query_one("#field-role").display
+        await pilot.click("#palette-back-to-menu")
+        await wait_until(lambda: menu.display, timeout=2)
+        await pilot.click("#palette-menu-action-take-over")
+        role = cast("Select[str]", screen.query_one("#role", Select))
+        assert role.value == Role.IMPLEMENTER.value
+        assert screen.query_one("#field-role").display
+        assert not screen.query_one("#field-message").display
+        assert queue.pending() == []
+
+
+async def test_context_menu_preserves_an_explicit_unavailable_role(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Explicit role target")
+    TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: "%7"})
+    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, _LIVE_RUNG)
+    RunStore(connection, clock).set_session(run.id, "explicit-session", "explicit-resume")
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(task_id=task.id, role=Role.LEADER.value),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        assert screen.query_one("#palette-menu-action-take-over").display
+        await pilot.click("#palette-menu-action-take-over")
+        assert cast("Select[str]", screen.query_one("#role", Select)).value == Role.LEADER.value
+        assert screen.query_one("#palette-submit", Button).disabled
+        assert queue.pending() == []
+
+
+async def test_contextual_project_actions_queue_only_after_explicit_submission(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Project action context")
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(task_id=task.id),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        menu = screen.query_one("#palette-menu", VerticalScroll)
+        assert menu.display
+        assert queue.pending() == []
+
+        guidance = "Record the requested work before the next release."
+        for action in ("submit", "stop"):
+            button = screen.query_one(f"#palette-menu-action-{action}", Button)
+            menu.scroll_to_widget(button, animate=False, immediate=True)
+            button.scroll_visible(animate=False, force=True)
+            button.focus()
+            await pilot.wait_for_scheduled_animations()
+            await pilot.pause()
+            assert button.region.y >= menu.region.y
+            assert button.region.bottom <= menu.region.bottom
+            await pilot.click(button)
+            await wait_until(lambda: not menu.display, timeout=2)
+
+            if action == "submit":
+                screen.query_one("#request", TextArea).text = guidance
+            await pilot.click("#palette-submit")
+            expected_pending_count = 1 if action == "submit" else 2
+            await wait_until(
+                lambda count=expected_pending_count: len(queue.pending()) == count,
+                timeout=2,
+            )
+
+            if action == "submit":
+                submitted = queue.pending()[0].command
+                assert isinstance(submitted, Submit)
+                assert submitted.request == guidance
+            else:
+                assert isinstance(queue.pending()[1].command, Stop)
+
+            if action == "submit":
+                await pilot.click("#palette-back-to-menu")
+                await wait_until(lambda: menu.display, timeout=2)
 
 
 async def test_applied_message_feedback_keeps_next_turn_guidance_and_engine_result(

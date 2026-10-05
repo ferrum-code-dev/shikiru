@@ -982,10 +982,10 @@ Refs: parity spec §2/3/4/6; Focus §4/8; Workspace §6–11/§15 retained guara
 
 ### Task 100: Contextual actions, direct attention routes and forms
 Refs: parity spec §2/5/6; Focus §6; Workspace §6–11/§15; 03 §8–9, 06 §5.4–5; Tasks 97–99.
-- [ ] Implement cyclic Up/Down task selection, Enter inspection, Ctrl+P contextual actions, `e` Evidence, `u` Usage Details, `?` Help and Escape close/return. Keep mouse selection and direct clicks on the same routes.
-- [ ] Clicking primary attention selects its affected task and opens the applicable answer form. Project token/billing/subscription summaries open Project Totals; resource summaries open Diagnostics; task inline `u` and `e` links open task Usage Details and Evidence.
-- [ ] Present a centered quiet contextual action surface with only applicable actions, accessible project-level operations and forms with only relevant Role inputs, guidance and consequences. Opening or navigating never queues a command; submitting still uses existing typed commands and Pending/Applied/Rejected results.
-- [ ] Preserve native input editing keys, entered guidance, selected task, role context, search, focus, scroll and reading position on Escape, route changes and resize. Engine validation, ownership, holds, stale escalation handling and all existing actions remain authoritative.
+- [x] Implement cyclic Up/Down task selection, Enter inspection, Ctrl+P contextual actions, `e` Evidence, `u` Usage Details, `?` Help and Escape close/return. Keep mouse selection and direct clicks on the same routes.
+- [x] Clicking primary attention selects its affected task and opens the applicable answer form. Project token/billing/subscription summaries open Project Totals; resource summaries open Diagnostics; task inline `u` and `e` links open task Usage Details and Evidence.
+- [x] Present a centered quiet contextual action surface with only applicable actions, accessible project-level operations and forms with only relevant Role inputs, guidance and consequences. Opening or navigating never queues a command; submitting still uses existing typed commands and Pending/Applied/Rejected results.
+- [x] Preserve native input editing keys, entered guidance, selected task, role context, search, focus, scroll and reading position on Escape, route changes and resize. Engine validation, ownership, holds, stale escalation handling and all existing actions remain authoritative.
 - Proof: connected Textual/SQLite/operator flows for direct attention answer, applicable task actions, global Submit/Stop, durable outcomes and preservation on return; capture menu/form renders. Full normal gate before every commit.
 
 ### Task 101: Responsive and compatibility parity review

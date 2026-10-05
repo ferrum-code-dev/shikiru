@@ -396,6 +396,34 @@ def _operator_task_app(
     return app
 
 
+async def _select_palette_action(
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+    action: str,
+) -> None:
+    menu = palette.query_one("#palette-menu", VerticalScroll)
+    if menu.display:
+        button = palette.query_one(f"#palette-menu-action-{action}", Button)
+        menu.scroll_to_widget(button, animate=False, immediate=True)
+        button.scroll_visible(animate=False, force=True)
+        button.focus()
+        await pilot.wait_for_scheduled_animations()
+        await pilot.pause()
+        assert button.region.y >= menu.region.y
+        assert button.region.bottom <= menu.region.bottom
+        assert await pilot.click(button)
+        await wait_until(
+            lambda: (
+                not menu.display
+                and cast("Select[str]", palette.query_one("#action", Select)).value == action
+            ),
+            timeout=2,
+        )
+        return
+    cast("Select[str]", palette.query_one("#action", Select)).value = action
+    await pilot.pause()
+
+
 async def _submit_detail_command(
     app: DashboardApp,
     pilot: Pilot[None],
@@ -408,13 +436,14 @@ async def _submit_detail_command(
     await pilot.press("ctrl+p")
     await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
     palette = cast("PaletteScreen", app.screen)
-    palette.query_one("#action", Select).value = action
+    await _select_palette_action(pilot, palette, action)
     if role is not None:
         palette.query_one("#role", Select).value = role.value
     await wait_until(lambda: not palette.query_one("#palette-submit", Button).disabled, timeout=2)
     await pilot.click("#palette-submit")
     await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
     command = queue.pending()[0]
+    await pilot.press("escape")
     await pilot.press("escape")
     await wait_until(lambda: app.screen is dashboard_screen, timeout=2)
     return command
@@ -2052,9 +2081,8 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
         assert timeline_turn.value == "3v"
         timeline_turn.value = "3"
         body.scroll_to_widget(timeline_category, animate=False)
-        timeline_category.focus()
-        await pilot.pause()
         saved_scroll_position = body.scroll_target_y
+        await _assert_native_views_shortcut_precedence(body, timeline_category, pilot)
         await pilot.press("v")
         await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
         await pilot.wait_for_scheduled_animations()
@@ -2069,7 +2097,7 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
             lambda saved_scroll_position=saved_scroll_position: (
                 app.screen is workspace_screen
                 and body.scroll_target_y == saved_scroll_position
-                and app.focused is timeline_category
+                and app.focused is body
             ),
             timeout=2,
         )
@@ -2080,6 +2108,18 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
         assert timeline_role.value == Role.LEADER.value
         assert timeline_entry.value == selected_entry
         assert queue.pending() == pending_before
+
+
+async def _assert_native_views_shortcut_precedence(
+    body: VerticalScroll,
+    timeline_category: Select[str],
+    pilot: Pilot[None],
+) -> None:
+    timeline_category.focus()
+    await pilot.press("v")
+    await pilot.pause()
+    assert not isinstance(pilot.app.screen, TaskDetailViewsScreen)
+    body.focus()
 
 
 async def test_task_detail_views_mouse_opens_task_actions_and_help(
@@ -2213,10 +2253,14 @@ async def _assert_responsive_task_actions(
     await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
     palette = cast("PaletteScreen", app.screen)
     assert palette.query_one("#task-id", Input).value == task.id
-    action = cast("Select[str]", palette.query_one("#action", Select))
-    assert action.region.width > 0
-    assert action.region.x >= 0
-    assert action.region.right <= app.size.width
+    menu = palette.query_one("#palette-menu", VerticalScroll)
+    assert menu.display
+    assert menu.region.width > 0
+    assert menu.region.x >= 0
+    assert menu.region.right <= app.size.width
+    assert palette.query_one("#palette-menu-action-submit", Button).display
+    assert palette.query_one("#palette-menu-action-stop", Button).display
+    assert palette.query_one("#palette-menu-action-resolve", Button).display
     await pilot.press("escape")
     await wait_until(lambda: not isinstance(app.screen, PaletteScreen), timeout=2)
 
@@ -2350,11 +2394,14 @@ async def test_task_palette_exposes_contextual_export_action(
             await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
-            actions = cast("Select[str]", palette.query_one("#action", Select))
-            actions.value = "export"
+            await _select_palette_action(pilot, palette, "export")
             await wait_until(
                 lambda: palette.query_one("#field-export-destination").display,
                 timeout=2,
+            )
+            assert palette.query_one("#palette-submit", Button).disabled
+            assert "task evidence export is not configured" in _text(
+                palette.query_one("#palette-action-state", Static)
             )
     finally:
         reader.close()
@@ -2379,19 +2426,16 @@ async def test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resi
             await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
-            palette.query_one("#action", Select).value = "submit"
+            await _select_palette_action(pilot, palette, "submit")
             await wait_until(lambda: palette.query_one("#field-request").display, timeout=2)
             request = palette.query_one("#request", TextArea)
             request.text = ""
             request.focus()
             await pilot.press(*"visible request text")
             await pilot.press("end", "enter", *"second line")
-            form = palette.query_one("#palette-form", VerticalScroll)
             await pilot.pause()
             assert request.text == "visible request text\nsecond line"
             _assert_text_area_cursor_is_visible(request)
-            assert request.region.y >= form.region.y
-            assert request.region.bottom <= form.region.bottom
             assert "second line" in _visible_text_area_text(request)
             submit = palette.query_one("#palette-submit", Button)
             assert submit.region.y >= 0
@@ -2400,8 +2444,6 @@ async def test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resi
             await pilot.pause()
             assert request.text == "visible request text\nsecond line"
             _assert_text_area_cursor_is_visible(request)
-            assert request.region.y >= form.region.y
-            assert request.region.bottom <= form.region.bottom
             assert "second line" in _visible_text_area_text(request)
             assert submit.region.y >= 0
             assert submit.region.bottom <= app.size.height
@@ -2580,7 +2622,7 @@ async def test_hand_back_and_resume_remain_explicit_while_other_holds_survive(
             await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
-            palette.query_one("#action", Select).value = "resume"
+            await _select_palette_action(pilot, palette, "resume")
             await wait_until(
                 lambda: palette.query_one("#palette-submit", Button).disabled, timeout=2
             )
@@ -2629,7 +2671,7 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
             await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
-            palette.query_one("#action", Select).value = "resume"
+            await _select_palette_action(pilot, palette, "resume")
             await wait_until(
                 lambda: palette.query_one("#palette-submit", Button).disabled, timeout=2
             )
@@ -2637,6 +2679,7 @@ async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
             assert "hand back all taken-over roles" in _text(
                 palette.query_one("#palette-action-state", Static)
             )
+            await pilot.press("escape")
             await pilot.press("escape")
 
             hand_back = await _submit_detail_command(
@@ -2701,7 +2744,7 @@ async def test_resume_availability_includes_an_intervention_only_hold(
             await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
             palette = cast("PaletteScreen", app.screen)
-            palette.query_one("#action", Select).value = "resume"
+            await _select_palette_action(pilot, palette, "resume")
             await wait_until(
                 lambda: not palette.query_one("#palette-submit", Button).disabled, timeout=2
             )

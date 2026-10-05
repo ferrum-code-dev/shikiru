@@ -12,9 +12,11 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from shikiru.dashboard.contract import (
+    FOCUS_FAULTS_VIEW,
     AttentionGroupView,
     AttentionView,
     EscalationPanelView,
+    PaletteRequest,
     WidgetPlacement,
     WorkspaceSummaryView,
 )
@@ -164,14 +166,15 @@ class EscalationsPanel(Static):
             return
         self.focus()
         group = self._attention.groups[self._selected]
-        if group.task_id is not None and self._widget_context.open_task_detail is not None:
-            if self._widget_context.on_task_selected is not None:
-                self._widget_context.on_task_selected(group.task_id)
+        if group.task_id is not None and self._widget_context.on_task_selected is not None:
+            self._widget_context.on_task_selected(group.task_id)
+        if group.escalations:
+            decision = self._selected_decision() or group.escalations[0]
+            await self._open_resolution(decision)
+        elif group.task_id is not None and self._widget_context.open_task_detail is not None:
             await self._widget_context.open_task_detail(group.task_id)
         else:
-            decision = self._selected_decision()
-            if decision is not None:
-                cast("App[None]", self.app).push_screen(PacketScreen(_packet_copy(decision)))
+            await self._open_fault_evidence()
         event.stop()
 
     async def _move_group(self, step: int) -> None:
@@ -219,8 +222,27 @@ class EscalationsPanel(Static):
         decision = self._selected_decision()
         if decision is None:
             return
-        await self._widget_context.open_palette(f"resolve {decision.escalation_id}")
+        await self._open_resolution(decision)
         event.stop()
+
+    async def _open_resolution(self, decision: EscalationPanelView) -> None:
+        request = PaletteRequest(
+            action=f"resolve {decision.escalation_id}",
+            task_id=decision.task_id,
+        )
+        if self._widget_context.open_palette_context is not None:
+            await self._widget_context.open_palette_context(request)
+        else:
+            await self._widget_context.open_palette(request.action or "")
+
+    async def _open_fault_evidence(self) -> None:
+        open_view = self._widget_context.open_contextual_view
+        if open_view is not None:
+            await open_view(FOCUS_FAULTS_VIEW)
+            return
+        decision = self._selected_decision()
+        if decision is not None:
+            cast("App[None]", self.app).push_screen(PacketScreen(_packet_copy(decision)))
 
     async def _refresh(self) -> None:
         attention = self._widget_context.views.attention()

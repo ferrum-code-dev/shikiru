@@ -113,6 +113,7 @@ TASK_ACTION_NOT_TAKEN_OVER = "this role is not taken over"
 TASK_ACTION_OTHER_ROLE_TAKEN_OVER = "hand back all taken-over roles before resuming"
 TASK_ACTION_NO_HOLD = "task has no pause or ownership hold"
 TASK_ACTION_NOT_QUEUED = "task can only be prioritized while queued"
+TASK_ACTION_ROLES = (Role.LEADER, Role.IMPLEMENTER)
 TASK_PANE_CONTEXT_STATUSES = (*ACTIVE_STATUSES, Status.QUEUED)
 TASK_TARGET_SEARCH_CATEGORY = "all"
 RECENT_COMMAND_HISTORY_LIMIT = 3
@@ -768,7 +769,7 @@ class OperatorQueries:
         return self._reader.get_task(task_id)
 
     def task_action_availability(
-        self, task_id: str, role: Role
+        self, task_id: str, role: Role | None
     ) -> tuple[TaskActionAvailability, ...]:
         """Project task command availability and disabled reasons from current state."""
         task = self._reader.get_task(task_id)
@@ -777,6 +778,26 @@ class OperatorQueries:
                 TaskActionAvailability(action, TASK_ACTION_MISSING) for action in OperatorTaskAction
             )
         runs = self._reader.list_runs(task_id)
+        roles = (role,) if role is not None else TASK_ACTION_ROLES
+        role_states = tuple(self._task_action_reasons(task, runs, candidate) for candidate in roles)
+        if role is None:
+            return tuple(
+                TaskActionAvailability(
+                    action,
+                    next(
+                        (states[action] for states in role_states if states[action] is None),
+                        role_states[0][action],
+                    ),
+                )
+                for action in OperatorTaskAction
+            )
+        return tuple(
+            TaskActionAvailability(action, role_states[0][action]) for action in OperatorTaskAction
+        )
+
+    def _task_action_reasons(
+        self, task: Task, runs: Sequence[Run], role: Role
+    ) -> dict[OperatorTaskAction, str | None]:
         role_is_taken_over = any(
             run.role is role and run.status is RunStatus.TAKEN_OVER for run in runs
         )
@@ -787,7 +808,7 @@ class OperatorQueries:
         )
         terminal = task.status in (Status.DONE, Status.CANCELLED)
         pane_missing = role not in task.panes
-        reasons = {
+        return {
             OperatorTaskAction.PRIORITIZE: (
                 None if task.status is Status.QUEUED else TASK_ACTION_NOT_QUEUED
             ),
@@ -826,9 +847,6 @@ class OperatorQueries:
             OperatorTaskAction.MESSAGE: TASK_ACTION_TERMINAL if terminal else None,
             OperatorTaskAction.PEEK: None,
         }
-        return tuple(
-            TaskActionAvailability(action, reasons[action]) for action in OperatorTaskAction
-        )
 
     def task_role_for_pane(self, pane_id: str) -> tuple[str, Role] | None:
         """Return the recorded task and role whose pane matches an invoking tmux pane."""

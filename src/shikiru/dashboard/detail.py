@@ -19,6 +19,7 @@ from shikiru.dashboard.contract import (
     TaskTimelineCategory,
     TaskTimelineSource,
 )
+from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason
 from shikiru.errors import ShikiruError
@@ -92,6 +93,7 @@ TASK_DETAIL_VIEWS_CLOSE_BUTTON = "task-detail-views-close"
 TASK_DETAIL_VIEWS_CONTENT = "task-detail-views-content"
 TASK_DETAIL_VIEWS_TINY_MAX_ROWS = 8
 TASK_DETAIL_VIEWS_KEY = "v"
+TASK_DETAIL_VIEWS_ACTION = "open_contextual_views"
 TASK_USAGE_KEY = "u"
 TASK_DETAIL_HELP_KEY = "question_mark"
 TASK_DETAIL_WORKSPACE_TOOLS = "task-detail-workspace-tools"
@@ -846,8 +848,19 @@ class TaskDetailPanel(Vertical):
     async def action_open_contextual_views(self) -> None:
         await self.open_contextual_views()
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        del parameters
+        if action == TASK_DETAIL_VIEWS_ACTION and native_editor_has_focus(
+            cast("App[None]", self.app).focused
+        ):
+            return None
+        return True
+
     def open_usage_details(self) -> None:
         self._show_task_view(TASK_VIEW_USAGE)
+
+    def open_evidence(self) -> None:
+        self._show_task_view(TASK_VIEW_EVIDENCE)
 
     def close_contextual_view(self) -> None:
         if self._active_view != TASK_VIEW_SUMMARY:
@@ -1377,17 +1390,16 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
 class TaskDetailScreen(ModalScreen[None]):
     """Show a selected task's shared detail over the Home browser."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
-        (TASK_DETAIL_ESCAPE, "close", "Back"),
-        (TASK_DETAIL_VIEWS_KEY, "open_contextual_views", "Views"),
-        (TASK_USAGE_KEY, "open_usage_details", "Usage details"),
-        ("ctrl+p", "open_palette", "Palette"),
-        (TASK_DETAIL_HELP_KEY, "open_help", "Help"),
-    ]
     DEFAULT_CSS = """
     TaskDetailScreen { width: 100%; height: 100%; background: $background; }
     #task-detail-panel { height: 100%; }
     #task-detail-panel #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
+    TaskDetailScreen.wide-overlay { align: center middle; background: $background 80%; }
+    TaskDetailScreen.wide-overlay #task-detail-panel {
+        width: 72%; max-width: 88; height: 88%; min-height: 7;
+        padding: 1 2; border: solid $focus; background: $surface;
+    }
+    TaskDetailScreen.wide-overlay #task-detail-body { background: $surface; }
     """
 
     def __init__(
@@ -1396,8 +1408,11 @@ class TaskDetailScreen(ModalScreen[None]):
         task_id: str,
         *,
         initial_view: str = TASK_VIEW_SUMMARY,
+        wide_overlay: bool = False,
     ) -> None:
         super().__init__()
+        if wide_overlay:
+            self.add_class("wide-overlay")
         self._widget_context = context
         self._task_id = task_id
         self._initial_view = initial_view

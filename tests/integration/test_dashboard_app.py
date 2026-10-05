@@ -113,6 +113,7 @@ from tests.support.waiting import wait_until
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
+COMMAND_HISTORY_TEST_LIMIT = 10
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _WIDE_HOME_SIZE = (120, 40)
 _STANDARD_HOME_SIZE = (100, 35)
@@ -1854,6 +1855,88 @@ async def test_focus_attention_opens_durable_decision_evidence(
         reader.close()
 
 
+async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Answer from attention")
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=task.step, status=Status.ESCALATED),
+    )
+    escalation = EscalationStore(connection, clock).open(
+        task.id,
+        step=task.step,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="Choose the parser behavior",
+        packet_path=".shikiru/escalations/missing-packet.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
+    reader = StateReader(database, clock)
+    app: DashboardApp | None = None
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        assert app is not None
+        await app.push_screen(
+            _palette_screen_for_app(reader, connection, project_dir, clock, request)
+        )
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["escalations"],
+            open_palette_context=open_palette_context,
+        )
+        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
+            attention = app.query_one("#escalations", EscalationsPanel)
+            await wait_until(lambda: attention.display, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            assert escalation.id in _rendered_text(row)
+
+            await pilot.click(row)
+            await wait_until(
+                lambda: isinstance(app.screen, PaletteScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            screen = cast("PaletteScreen", app.screen)
+            assert screen.query_one("#task-id", Input).value == task.id
+            assert cast("Select[str]", screen.query_one("#action", Select)).value == "resolve"
+            assert (
+                cast("Select[str]", screen.query_one("#escalation", Select)).value == escalation.id
+            )
+            assert cast("Select[str]", screen.query_one("#resolution", Select)).value == "answer"
+            assert screen.query_one("#field-resolution-text").display
+            assert not screen.query_one("#field-role").display
+            assert queue.pending() == []
+
+            answer = "Preserve the existing call pattern."
+            screen.query_one("#resolution-text", TextArea).text = answer
+            await pilot.press("escape")
+            await wait_until(
+                lambda: screen.query_one("#palette-menu").display,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert screen.query_one("#palette-menu-action-resolve").display
+            assert queue.pending() == []
+            await pilot.click("#palette-menu-action-resolve")
+            await wait_until(
+                lambda: not screen.query_one("#palette-menu").display,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert screen.query_one("#resolution-text", TextArea).text == answer
+            assert cast("Select[str]", screen.query_one("#resolution", Select)).value == "answer"
+            assert queue.pending() == []
+    finally:
+        reader.close()
+
+
 async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
     database: Database,
     connection: Connection,
@@ -1912,6 +1995,8 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
                 timeout=2,
             )
             assert isinstance(queue.pending()[0].command, Stop)
+            await pilot.press("escape")
+            await wait_until(lambda: palette.query_one("#palette-menu").display, timeout=2)
             await pilot.press("escape")
             await wait_until(lambda: first_app.screen is dashboard_screen, timeout=2)
             await wait_until(
@@ -2271,6 +2356,143 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
         reader.close()
 
 
+async def test_home_row_click_selects_and_enter_opens_a_returnable_inspector(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    tasks = (
+        seed_task(connection, clock, title="Focused route first"),
+        seed_task(connection, clock, title="Focused route second"),
+    )
+    reader = StateReader(database, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=["queue"])
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            home = app.screen
+            list_view = app.query_one("#task-browser-list", ListView)
+            await wait_until(
+                lambda: all(app.query(f"#task-row-{task.id}") for task in tasks),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            before_commands = reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count
+            search = app.query_one("#task-browser-search", Input)
+            await pilot.press("/")
+            search.value = "Focused route"
+            await wait_until(
+                lambda: all(app.query(f"#task-row-{task.id}") for task in tasks),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            row_ids = tuple(
+                item.id.removeprefix("task-row-")
+                for item in list_view.children
+                if item.id is not None and item.id.startswith("task-row-")
+            )
+            first_id, last_id = row_ids[0], row_ids[-1]
+            await pilot.click(f"#task-row-{last_id}")
+            await wait_until(
+                lambda: (
+                    last_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert app.screen is home
+            assert search.value == "Focused route"
+            assert (
+                reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count
+                == before_commands
+            )
+
+            list_view.focus()
+            await pilot.press("down")
+            await wait_until(
+                lambda: (
+                    first_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.press("up")
+            await wait_until(
+                lambda: (
+                    last_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.press("down")
+            await wait_until(
+                lambda: (
+                    first_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.press("enter")
+            await wait_until(
+                lambda: isinstance(app.screen, TaskDetailScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            detail_screen = cast("TaskDetailScreen", app.screen)
+            assert detail_screen.has_class("wide-overlay")
+            assert first_id in _rendered_text(
+                detail_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            )
+            assert (
+                reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count
+                == before_commands
+            )
+
+            await pilot.press("escape")
+            await wait_until(
+                lambda: app.screen is home,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert app.focused is list_view
+            assert search.value == "Focused route"
+            assert first_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            assert (
+                reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count
+                == before_commands
+            )
+            await _assert_home_inline_mouse_routes(
+                app,
+                pilot,
+                first_id,
+                reader,
+                before_commands,
+            )
+    finally:
+        reader.close()
+
+
+async def _assert_home_inline_mouse_routes(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task_id: str,
+    reader: StateReader,
+    before_commands: int,
+) -> None:
+    panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+    assert await pilot.click(f"#{TASK_DETAIL_EVIDENCE_INLINE_BUTTON}")
+    await wait_until(
+        lambda: panel.active_view == TASK_VIEW_EVIDENCE,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert task_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    await pilot.press("escape")
+    await wait_until(
+        lambda: panel.active_view == TASK_VIEW_SUMMARY,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert await pilot.click(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}")
+    await wait_until(
+        lambda: panel.active_view == TASK_VIEW_USAGE,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert task_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    assert reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == before_commands
+
+
 def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> None:
     footer = app.query_one("#focus-footer", Static)
     root = app.query_one("#focus-root", VerticalScroll)
@@ -2347,6 +2569,28 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
                 lambda: "recorded usage" in plain_text(sessions.content),
                 timeout=2,
             )
+            detail_screen = cast("TaskDetailScreen", app.screen)
+            await pilot.press("e")
+            native_select = cast(
+                "Select[str]", detail_screen.query_one("#task-detail-timeline-category", Select)
+            )
+            await wait_until(lambda: native_select.display, timeout=2)
+            native_select.focus()
+            await pilot.press("ctrl+p")
+            assert palette_requests == []
+            assert app.screen is detail_screen
+
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("ctrl+p")
+            assert palette_requests == []
+            assert native_select.expanded
+            assert app.screen is detail_screen
+            await pilot.press("escape")
+            await wait_until(lambda: not native_select.expanded, timeout=2)
+            assert app.screen is detail_screen
+
+            detail_screen.query_one("#task-detail-body").focus()
             await pilot.press("ctrl+p")
             assert palette_requests[-1].task_id == task.id
     finally:
@@ -2677,14 +2921,49 @@ async def test_configured_usage_and_docker_views_remain_reachable(
 ) -> None:
     del connection
     project_dir = write_minimal_project(tmp_path)
-    reader = StateReader(database, SystemClock())
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+
+    class CachedResources(StubServices):
+        def __init__(self) -> None:
+            super().__init__()
+            self.resource_observation = ResourceView(37.0, 50.0, 2.0, 1.0, 0.25)
+            self.resource_reads = 0
+
+        async def resources(self) -> ResourceView:
+            self.resource_reads += 1
+            assert self.resource_observation is not None
+            return self.resource_observation
+
+    services = CachedResources()
     try:
-        app = _app(reader, project_dir, widget_names=["usage", "docker"])
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["usage", "resources", "docker"],
+            services=services,
+            clock=clock,
+        )
         async with app.run_test(size=(120, 40)) as pilot:
             home_screen = app.screen
-            await _choose_focus_view(app, pilot, "Usage details")
+            await wait_until(
+                lambda: "CPU 37%" in _rendered_text(app.query_one("#resources", Static)),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert services.resource_reads == 1
+
+            assert await pilot.click("#usage")
+            await wait_until(lambda: app.screen is not home_screen, timeout=2)
             usage = app.screen.query_one("#usage", Static)
             assert "Token values unknown" in plain_text(usage.content)
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
+
+            assert await pilot.click("#resources")
+            await wait_until(lambda: app.screen is not home_screen, timeout=2)
+            resources = app.screen.query_one("#resources", Static)
+            assert "CPU 37%" in _rendered_text(resources)
+            assert services.resource_reads == 1
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
 
