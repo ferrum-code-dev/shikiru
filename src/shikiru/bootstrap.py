@@ -139,7 +139,7 @@ class _PaletteContext(Protocol):
     action: str | None
     task_id: str | None
     role: str | None
-    draft: object | None
+    drafts: tuple[object, ...]
 
 
 def build_clock() -> Clock:

@@ -2523,6 +2523,7 @@ async def _exercise_contextual_draft_and_evidence_route(
         lambda: bool(app.query(f"#task-row-{task.id}")),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
+    await _select_home_task(app, task.id)
     list_view.focus()
     await pilot.click("#focus-footer-actions")
     await wait_until(
@@ -2560,6 +2561,7 @@ async def _exercise_contextual_draft_and_evidence_route(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     palette = cast("PaletteScreen", app.screen)
+    assert task.id in _rendered_text(palette.query_one("#palette-menu-context", Static))
     await pilot.click("#palette-menu-action-message")
     await wait_until(
         lambda: palette.query_one("#message", TextArea).text == guidance,
@@ -2737,6 +2739,137 @@ async def test_task_context_menu_closes_and_opens_secondary_views_without_comman
             await _exercise_home_help_route(app, pilot, task)
             await _exercise_inspector_mouse_and_native_escape(app, pilot, task, queue)
             await _exercise_task_secondary_menu_routes(app, pilot, task, queue)
+    finally:
+        reader.close()
+
+
+async def _open_and_close_task_message_draft(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+) -> tuple[object, ListView, str]:
+    home = app.screen
+    search = app.query_one("#task-browser-search", Input)
+    search.value = task.title
+    list_view = app.query_one("#task-browser-list", ListView)
+    await wait_until(
+        lambda: bool(app.query(f"#task-row-{task.id}")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await _select_home_task(app, task.id)
+    list_view.focus()
+    await pilot.press("ctrl+p")
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    palette = cast("PaletteScreen", app.screen)
+    assert task.id in _rendered_text(palette.query_one("#palette-menu-context", Static))
+    await pilot.click("#palette-menu-action-message")
+    guidance = "Keep this task's message after a different decision route."
+    message = palette.query_one("#message", TextArea)
+    await wait_until(
+        lambda: app.focused is message,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.press(*guidance)
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    return home, list_view, guidance
+
+
+async def test_contextual_message_draft_survives_answer_form_for_another_task(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Message draft caller task")
+    answer_task = seed_task(connection, clock, title="Answer draft caller task")
+    TaskStore(connection, clock).apply_transition(
+        answer_task.id,
+        Transition.stay(answer_task, step=answer_task.step, status=Status.ESCALATED),
+    )
+    escalation = EscalationStore(connection, clock).open(
+        answer_task.id,
+        step=answer_task.step,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="Choose the second caller's behavior",
+        packet_path=".shikiru/escalations/second-caller.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
+    reader = StateReader(database, clock)
+    app_instances: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        app = app_instances[0]
+        palette = _palette_screen_for_app(
+            reader,
+            connection,
+            project_dir,
+            clock,
+            request,
+            remember_contextual_draft=app.remember_contextual_palette_draft,
+            task_routes_available=True,
+        )
+        await app.push_screen(palette, callback=app.palette_return_callback(request.task_id))
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue", "escalations"],
+            open_palette_context=open_palette_context,
+            clock=clock,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            home, list_view, guidance = await _open_and_close_task_message_draft(
+                app,
+                pilot,
+                task,
+            )
+
+            attention = app.query_one("#escalations", EscalationsPanel)
+            answer_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            await wait_until(
+                lambda: escalation.id in _rendered_text(answer_row),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            answer_palette = await _open_attention_answer_form(app, pilot, answer_row)
+            answer = answer_palette.query_one("#resolution-text", TextArea)
+            await wait_until(
+                lambda: app.focused is answer,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.press(*"Preserve the typed answer for the second task.")
+            assert queue.pending() == []
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+
+            await _select_home_task(app, task.id)
+            list_view.focus()
+            await pilot.press("ctrl+p")
+            await wait_until(
+                lambda: isinstance(app.screen, PaletteScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            message_palette = cast("PaletteScreen", app.screen)
+            await pilot.click("#palette-menu-action-message")
+            await wait_until(
+                lambda: message_palette.query_one("#message", TextArea).text == guidance,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert cast("Select[str]", message_palette.query_one("#role", Select)).value == (
+                Role.LEADER.value
+            )
+            assert queue.pending() == []
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
     finally:
         reader.close()
 

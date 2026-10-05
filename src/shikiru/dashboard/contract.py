@@ -100,7 +100,7 @@ class PaletteRequest:
     action: str | None = None
     task_id: str | None = None
     role: str | None = None
-    draft: PaletteDraft | None = None
+    drafts: tuple[PaletteDraft, ...] = ()
 
 
 OpenPalette = Callable[[str], Awaitable[None]]

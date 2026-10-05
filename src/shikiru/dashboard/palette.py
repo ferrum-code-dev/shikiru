@@ -410,7 +410,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._form_scroll_y = 0
         self._form_focus_id: str | None = None
         self._form_position_action: str | None = None
-        self._context_draft_restored = False
+        self._restored_contextual_draft_actions: set[str] = set()
 
     def compose(self) -> ComposeResult:
         """Show one compact form with fields enabled for the selected action."""
@@ -886,13 +886,21 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             )
 
     def _restore_contextual_form_draft(self, action: str | None) -> None:
-        draft = self._initial_context.draft
-        if (
-            self._context_draft_restored
-            or draft is None
-            or self._initial_context.task_id != draft.task_id
-            or action != draft.action
-        ):
+        if action is None or action in self._restored_contextual_draft_actions:
+            return
+        drafts = tuple(
+            draft
+            for draft in self._initial_context.drafts
+            if draft.task_id == self._initial_context.task_id and draft.action == action
+        )
+        if self._initial_context.role is None:
+            draft = drafts[-1] if drafts else None
+        else:
+            draft = next(
+                (item for item in reversed(drafts) if item.role == self._initial_context.role),
+                None,
+            )
+        if draft is None:
             return
         if self._initial_context.role is None and draft.role is not None:
             cast("Select[str]", self.query_one(f"#{_FIELD_ROLE}", Select)).value = draft.role
@@ -907,7 +915,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                     "Select[str]", self.query_one(f"#{_FIELD_RESOLUTION}", Select)
                 ).value = draft.resolution
             self.query_one(f"#{_FIELD_RESOLUTION_TEXT}", TextArea).text = draft.guidance
-        self._context_draft_restored = True
+        self._restored_contextual_draft_actions.add(action)
 
     def _refresh_context_menu(self) -> None:
         if not self.is_mounted:

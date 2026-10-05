@@ -129,6 +129,7 @@ FOCUS_OPERATOR_ACTIONS = "operator-actions"
 FOCUS_CONTEXT_HELP = "context-help"
 EMPTY_CONTEXT_CHOICE = ""
 TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
+_MAX_CONTEXTUAL_PALETTE_DRAFTS = 16
 
 
 class _TaskBrowserNavigation(Protocol):
@@ -698,7 +699,7 @@ class DashboardApp(App[None]):
         self._timeline_refresh_seconds = timeline_refresh_seconds
         self._open_palette = open_palette
         self._open_palette_context = open_palette_context
-        self._palette_draft: PaletteDraft | None = None
+        self._palette_drafts: dict[tuple[str, str, str | None], PaletteDraft] = {}
         self._selected_task_id = focus_task
         self._navigate_task_window = navigate_task_window
         self._navigate_role_pane = navigate_role_pane
@@ -1001,14 +1002,22 @@ class DashboardApp(App[None]):
         if callback is None:
             await self._open_palette(request.action or "")
             return
-        draft = self._palette_draft
-        if draft is not None and draft.task_id == request.task_id:
-            request = replace(request, draft=draft)
+        drafts = tuple(
+            draft
+            for (task_id, _, _), draft in self._palette_drafts.items()
+            if task_id == request.task_id
+        )
+        if drafts:
+            request = replace(request, drafts=drafts)
         await callback(request)
 
     def remember_contextual_palette_draft(self, draft: PaletteDraft) -> None:
         """Keep the latest contextual form draft in memory while its caller is visible."""
-        self._palette_draft = draft
+        key = (draft.task_id, draft.action, draft.role)
+        self._palette_drafts.pop(key, None)
+        self._palette_drafts[key] = draft
+        if len(self._palette_drafts) > _MAX_CONTEXTUAL_PALETTE_DRAFTS:
+            self._palette_drafts.pop(next(iter(self._palette_drafts)))
 
     def route_task_palette(self, task_id: str, route: TaskPaletteRoute) -> None:
         """Open a task detail destination selected from its contextual action surface."""
