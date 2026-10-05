@@ -24,6 +24,8 @@ SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
 SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR
 MIN_HEADER_GAP = 2
+ENGINE_RUNNING_MARKER = "●"
+ENGINE_STOPPED_MARKER = "○"
 MERGE_INTEGRATION = "merge"
 PULL_REQUEST_INTEGRATION = "pr"
 
@@ -51,7 +53,11 @@ def _header_text(
         if view.engine_uptime_seconds is not None
         else "Uptime unknown"
     )
-    engine = f"Engine running · {uptime}" if view.engine_up else "Engine stopped"
+    engine = (
+        f"{ENGINE_RUNNING_MARKER} Engine running · {uptime}"
+        if view.engine_up
+        else f"{ENGINE_STOPPED_MARKER} Engine stopped"
+    )
     if not view.engine_up and view.previous_engine_run_seconds is not None:
         engine = f"{engine} · previous {_duration_text(view.previous_engine_run_seconds)}"
     repo = view.repo
@@ -85,7 +91,11 @@ def _home_header_text(
         if view.engine_uptime_seconds is not None
         else "Uptime unknown"
     )
-    engine = "Engine running" if view.engine_up else "Engine stopped"
+    engine = (
+        f"{ENGINE_RUNNING_MARKER} Engine running"
+        if view.engine_up
+        else f"{ENGINE_STOPPED_MARKER} Engine stopped"
+    )
     if not view.engine_up and view.previous_engine_run_seconds is not None:
         engine = f"{engine} · previous {_duration_text(view.previous_engine_run_seconds)}"
     identity = f"SHIKIRU  {view.project} / {view.repo.branch}"

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from rich.cells import cell_len
 from rich.console import Group, RenderableType
+from rich.rule import Rule
 from rich.text import Text
 
 from shikiru.agents.contracts import (
@@ -19,7 +20,15 @@ from shikiru.agents.contracts import (
 from shikiru.domain.tasks import Role, Status
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE
 from shikiru.ui.strip import PanelState
-from shikiru.ui.tokens import ALERT_COLOR, AMBER, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    AMBER,
+    NEUTRAL_BORDER_COLOR,
+    PRIMARY_TEXT_COLOR,
+    SAGE,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime, timedelta
@@ -37,7 +46,10 @@ MINUTES_PER_HOUR = 60
 SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR
 HOURS_PER_DAY = 24
 FOCUS_ATTENTION_MAX_HEIGHT = 2
-RESOURCE_WIDE_ALIGNMENT_MIN_WIDTH = 73
+RESOURCE_TWO_COLUMN_MIN_WIDTH = 69
+RESOURCE_GRID_GAP_CELLS = 2
+RESOURCE_CONTENT_WIDTH_ADJUSTMENT_CELLS = 1
+RESOURCE_GRID_HALF_DIVISOR = 2
 RESOURCE_FAILED = "failed"
 RESOURCE_UNAVAILABLE = "unavailable"
 RESOURCE_STALE = "stale"
@@ -497,36 +509,31 @@ def _task_usage_charges(usage: _TaskUsage) -> list[Text]:
     return charges
 
 
-def task_signal_text(signal: _TaskSignal, now: datetime) -> Text:
+def task_signal_text(signal: _TaskSignal, now: datetime) -> Group:
     """Render the latest retained signal and only its recorded observation age."""
     if signal.latest_signal is None:
         if signal.latest_signal_error:
-            return Text("Last recorded signal · evidence unavailable", style=AMBER)
-        return Text("Last recorded signal · none recorded", style=SECONDARY_TEXT_COLOR)
-    lineage = " · ".join(
-        item
-        for item in (
-            "/".join(
-                identity
-                for identity in (signal.latest_signal_role, signal.latest_signal_turn)
-                if identity
-            ),
-            signal.latest_signal,
+            return Group(
+                Text.assemble(("\u203a ", STEEL_BLUE), ("Signal evidence unavailable", AMBER)),
+                Text("Last recorded signal · evidence unavailable", style=SECONDARY_TEXT_COLOR),
+            )
+        return Group(
+            Text.assemble(("\u203a ", STEEL_BLUE), ("No retained signal", SECONDARY_TEXT_COLOR)),
+            Text("Last recorded signal · none recorded", style=SECONDARY_TEXT_COLOR),
         )
-        if item
-    )
     uncertainty = " · ordering uncertain" if signal.latest_signal_uncertain else ""
     if signal.latest_signal_incomplete:
         uncertainty = " · incomplete row"
     if signal.latest_signal_at is None:
-        return Text(
-            f"Last recorded signal · {lineage} · time unknown{uncertainty}",
+        age = f"time unknown{uncertainty}"
+    else:
+        age = _recorded_age(signal.latest_signal_at, now) + uncertainty
+    return Group(
+        Text.assemble(("\u203a ", STEEL_BLUE), (signal.latest_signal, PRIMARY_TEXT_COLOR)),
+        Text(
+            f"Last recorded signal · {age}",
             style=SECONDARY_TEXT_COLOR,
-        )
-    age = _recorded_age(signal.latest_signal_at, now)
-    return Text(
-        f"Last recorded signal · {lineage} · {age}{uncertainty}",
-        style=SECONDARY_TEXT_COLOR,
+        ),
     )
 
 
@@ -627,8 +634,8 @@ class ProjectUsageDetails:
             lines.append(
                 Text(
                     f"Subscription · {_session_count(usage.subscription_sessions)} · "
-                    f"declared agents {agents}",
-                    style=AMBER,
+                    f"{_count_label(len(usage.subscription_agents), 'declared agent')} · {agents}",
+                    style=SAGE,
                 )
             )
         if usage.unknown_billing_sessions:
@@ -724,20 +731,28 @@ class ResourceMetric:
             else ""
         )
         error = f" · {self.sample.error}" if self.sample.error else ""
-        resource_cells = (
-            cell_len(state_label)
-            + cell_len(host.plain)
-            + cell_len(instance.plain)
-            + cell_len(age)
-            + cell_len(error)
-        )
         group_gap = " · "
-        if (
-            width is not None
-            and width >= RESOURCE_WIDE_ALIGNMENT_MIN_WIDTH
-            and width - resource_cells >= RESOURCE_GROUP_MIN_GAP
-        ):
-            group_gap = " " * (width - resource_cells)
+        if width is not None and width >= RESOURCE_TWO_COLUMN_MIN_WIDTH:
+            first_group_width = cell_len(state_label) + cell_len(host.plain)
+            content_width = width - RESOURCE_CONTENT_WIDTH_ADJUSTMENT_CELLS
+            second_group_boundary = content_width + RESOURCE_GRID_GAP_CELLS
+            second_group_start = second_group_boundary // RESOURCE_GRID_HALF_DIVISOR
+            if second_group_boundary % RESOURCE_GRID_HALF_DIVISOR:
+                second_group_start += 1
+            group_gap = " " * max(
+                cell_len(group_gap),
+                second_group_start - first_group_width,
+            )
+        elif width is not None:
+            group_gap = "\n"
+        if state == RESOURCE_STALE:
+            return Text.assemble(
+                (f"Stale{age}{error}", AMBER),
+                "\n",
+                host,
+                group_gap,
+                instance,
+            )
         return Text.assemble(
             (state_label, state_style),
             host,
@@ -990,7 +1005,7 @@ def _session_cost_text(session: _TaskSession) -> tuple[str, str]:
 
 def _compact_session_charge(session: _TaskSession) -> tuple[str, str]:
     if session.billing_mode == BILLING_MODE_SUBSCRIPTION:
-        charge, style = "subscription", AMBER
+        charge, style = "Subscription", SAGE
     elif session.billing_mode == BILLING_MODE_API:
         if session.cost_usd is None:
             charge, style = "API charge unreported", SECONDARY_TEXT_COLOR
@@ -1148,7 +1163,11 @@ class StageActivity:
             )
             if any(panel.state is PanelState.STALLED for panel in task.progress.panels):
                 stage_line.append(" · stalled", style=AMBER)
-        return Group(milestone_line, stage_line)
+        return Group(
+            milestone_line,
+            Rule(style=NEUTRAL_BORDER_COLOR),
+            stage_line,
+        )
 
 
 def _no_active_stage_text(status: str) -> str:

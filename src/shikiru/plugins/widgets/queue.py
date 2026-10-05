@@ -44,6 +44,7 @@ REFERENCE_FONT_SIZE_PIXELS = 12
 REFERENCE_LINE_HEIGHT_RATIO = 1.65
 REFERENCE_LINE_HEIGHT_PIXELS = REFERENCE_FONT_SIZE_PIXELS * REFERENCE_LINE_HEIGHT_RATIO
 TASK_ROW_VERTICAL_PADDING_PIXELS = 12
+REFERENCE_FIRST_TASK_ROW_TOP_PIXELS = 227.8
 TASK_ROW_OUTLINE_MIN_WIDTH = 18
 RECENT_RULE_MARGIN_PIXELS = 12
 RECENT_RULE_BORDER_PIXELS = 1
@@ -208,7 +209,7 @@ def _focus_row_text(row: TaskBrowserRow) -> Text:
     details = _focus_row_details(row, stage, state)
     content = Text.assemble(
         (f"{marker} ", marker_style),
-        (f"{row.task_id} · {row.title}", STEEL_BLUE if row.open_decision else PRIMARY_TEXT_COLOR),
+        (f"{row.task_id} · {row.title}", PRIMARY_TEXT_COLOR),
         "\n  ",
     )
     for index, (detail, style) in enumerate(details):
@@ -267,9 +268,16 @@ def _focus_row_details(
     stage: str | None,
     state: str,
 ) -> list[tuple[str, str]]:
-    details: list[tuple[str, str]] = [
-        (state, AMBER if row.wait_reason or row.holds else STEEL_BLUE),
-    ]
+    state_style = (
+        AMBER
+        if row.wait_reason or row.holds or row.open_decision
+        else SAGE
+        if row.status == TASK_STATUS_DONE
+        else SECONDARY_TEXT_COLOR
+        if row.status in {TASK_STATUS_QUEUED, TASK_STATUS_CANCELLED}
+        else STEEL_BLUE
+    )
+    details: list[tuple[str, str]] = [(state, state_style)]
     if row.acting_role and not stage:
         details.append((row.acting_role.title(), SECONDARY_TEXT_COLOR))
     if row.dependencies and row.wait_reason != WAIT_REASON_DEPENDENCY:
@@ -298,7 +306,7 @@ class QueuePanel(Vertical):
     #task-browser-filters Button:focus {
         border: round $focus; color: $primary-text; text-style: bold reverse;
     }
-    #task-browser-count { height: 1; color: $steel-blue; }
+    #task-browser-count { height: 1; margin-bottom: 1; color: $steel-blue; }
     #task-browser-list {
         height: 12; min-height: 3; border: none; padding: 0; background: $background;
         scrollbar-size-vertical: 0;
@@ -313,11 +321,11 @@ class QueuePanel(Vertical):
         text-wrap: wrap; text-overflow: clip;
     }
     #task-browser-list > ListItem.-highlight {
-        outline: solid $steel-blue; background: $selected-surface; color: $primary-text;
+        outline: solid $selection-outline; background: $selected-surface; color: $primary-text;
         text-style: none;
     }
     #task-browser-list.focus-list > ListItem.-highlight {
-        outline: none; border: solid $steel-blue;
+        outline: none; border: solid $selection-outline;
     }
     #task-browser-list.no-task-row-outline.focus-list > ListItem.-highlight {
         border: none;
@@ -908,8 +916,10 @@ class QueuePanel(Vertical):
                 changed = item.has_class(REFERENCE_ROW_GAP_CLASS) or changed
                 item.remove_class(REFERENCE_ROW_GAP_CLASS)
             return changed
-        source_height_pixels = 0.0
-        native_height_cells = 0
+        source_height_pixels = REFERENCE_FIRST_TASK_ROW_TOP_PIXELS
+        native_height_cells = floor(
+            source_height_pixels / REFERENCE_LINE_HEIGHT_PIXELS + HALF_CELL_ROUNDING
+        )
         changed = False
         for index, item in enumerate(list_view.children):
             if isinstance(item, _BrowserListItem):

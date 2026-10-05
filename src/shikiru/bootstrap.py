@@ -135,6 +135,9 @@ if TYPE_CHECKING:
     from shikiru.engine.integration import IntegrationCoordinator
 
 
+DASHBOARD_RESOURCES_WIDGET = "resources"
+
+
 class _PaletteContext(Protocol):
     action: str | None
     task_id: str | None
@@ -359,6 +362,9 @@ async def run_dashboard(
                 evidence_exporter=evidence_exporter,
                 remember_contextual_draft=(app_instance.remember_contextual_palette_draft),
                 task_routes_available=context is not None and context.task_id is not None,
+                project_diagnostics_available=(
+                    context is not None and DASHBOARD_RESOURCES_WIDGET in settings.dashboard.widgets
+                ),
             )
 
             callback = app_instance.palette_return_callback(

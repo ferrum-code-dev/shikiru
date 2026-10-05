@@ -86,11 +86,14 @@ class PaletteDraft:
 
 
 class TaskPaletteRoute(StrEnum):
-    """A task detail destination opened from its contextual action surface."""
+    """A contextual palette destination opened in the task or project workspace."""
 
+    INSPECT = "inspect"
     EVIDENCE = "evidence"
     USAGE = "usage"
     VIEWS = "views"
+    COMMANDS = "commands"
+    DIAGNOSTICS = "diagnostics"
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,7 @@ class PaletteRequest:
     task_id: str | None = None
     role: str | None = None
     drafts: tuple[PaletteDraft, ...] = ()
+    direct_answer: bool = False
 
 
 OpenPalette = Callable[[str], Awaitable[None]]

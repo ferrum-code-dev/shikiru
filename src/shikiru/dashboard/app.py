@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 from textual.app import App
-from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
+from textual.containers import Grid, Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Label, ListItem, ListView, Select, Static
@@ -93,6 +93,7 @@ _COMMAND_HISTORY_PAGE = "command-history-page"
 _COMMAND_HISTORY_PAGE_SIZE = 20
 _COMMAND_HISTORY_ALL = "all"
 _COMMAND_STATUS_LINE_MAX_CHARS = 96
+_INSPECT_KEY = "enter"
 _COMMAND_HISTORY_PREVIOUS_KEY = "left"
 _COMMAND_HISTORY_NEXT_KEY = "right"
 COMMAND_ACTION_SAY = "Say"
@@ -106,9 +107,14 @@ _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
 HOME_SPLIT_MIN_COLUMNS = 73
+FOCUS_INSPECTOR_STACKED_MIN_COLUMNS = 54
+FOCUS_FOOTER_THREE_COLUMN_MIN_COLUMNS = 54
+FOCUS_FOOTER_TWO_COLUMN_COUNT = 2
+FOCUS_FOOTER_THREE_COLUMN_COUNT = 3
+FOCUS_FOOTER_FOUR_COLUMN_COUNT = 4
 FOCUS_SUMMARY_MAX_ROWS = 12
 FOCUS_MAIN_MIN_ROWS = 3
-FOCUS_COMPACT_MAIN_ROWS = 7
+FOCUS_COMPACT_MAIN_ROWS = 8
 FOCUS_COMPACT_TASK_LIST_ROWS = 6
 FOCUS_MIN_TASK_LIST_ROWS = 9
 FOCUS_COMMAND_STATUS_ROWS = 1
@@ -571,6 +577,7 @@ class _HomeAttentionStatus(Static):
             request = PaletteRequest(
                 action=f"resolve {decision.escalation_id}",
                 task_id=decision.task_id,
+                direct_answer=True,
             )
             if self._widget_context.open_palette_context is not None:
                 await self._widget_context.open_palette_context(request)
@@ -597,7 +604,7 @@ class _HomeAttentionStatus(Static):
         self.update(attention_status_text(attention, summary, action_hint="Ctrl+P actions"))
 
 
-class _HomeFooter(Horizontal):
+class _HomeFooter(Grid):
     can_focus = True
 
     def compose(self) -> ComposeResult:
@@ -624,7 +631,7 @@ class DashboardApp(App[None]):
     #header { height: auto; margin-bottom: 0; text-wrap: wrap; text-overflow: clip; }
     #usage { height: auto; margin-bottom: 0; }
     #resources {
-        height: auto; border-top: solid $neutral-border;
+        height: auto; margin-bottom: 1; border-top: solid $neutral-border;
     }
     #escalations {
         height: auto; max-height: 3; padding: 0 1; margin-bottom: 1;
@@ -645,8 +652,9 @@ class DashboardApp(App[None]):
         border-left: solid $neutral-border;
     }
     #focus-main.wide #task-detail-body { height: 1fr; max-height: 1fr; }
+    #focus-main.compact #focus-task-list-column { width: 100%; height: auto; }
     #focus-main.compact #queue { width: 100%; height: auto; }
-    #focus-main.compact #task-browser-list { height: auto; min-height: 3; }
+    #focus-main.compact #task-browser-list { width: 100%; height: auto; min-height: 3; }
     #focus-main.compact #task-detail-panel { width: 100%; height: auto; }
     #focus-main.compact #task-detail-body { max-height: 12; }
     #task-view-root { height: 100%; }
@@ -654,6 +662,7 @@ class DashboardApp(App[None]):
     #task-view-root #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
     #focus-footer {
+        layout: grid; grid-size: 4 0; grid-columns: auto auto auto auto; grid-gutter: 0 1;
         height: auto; min-height: 2; padding: 0; margin-top: 0; border-top: solid $neutral-border;
         background: $background; color: $secondary-text;
     }
@@ -661,7 +670,7 @@ class DashboardApp(App[None]):
     #focus-footer Button {
         width: auto; min-width: 1; height: 1; min-height: 1; margin: 0 0 0 1; padding: 0;
         border: none; background: $background; color: $secondary-text;
-        content-align: left middle; text-style: none;
+        content-align: left middle; text-align: left; text-style: none;
     }
     #focus-footer Button:hover { color: $steel-blue; text-style: none; }
     #focus-footer Button:focus { color: $primary-text; text-style: reverse; }
@@ -1043,30 +1052,38 @@ class DashboardApp(App[None]):
             return
         if self._focus_task is None:
             self._select_task_context(task_id)
+        if route is TaskPaletteRoute.INSPECT:
+            await self._open_task_detail(task_id)
+            return
         if route is TaskPaletteRoute.EVIDENCE:
             await self.action_open_task_evidence()
             return
         if route is TaskPaletteRoute.USAGE:
             await self.action_open_task_usage()
             return
-        panel = self._context_task_detail_panel()
-        if (
-            panel is None
-            and self._home_detail_panel is not None
-            and self._home_detail_panel.display
-        ):
-            panel = self._home_detail_panel
-        if panel is not None:
-            await panel.open_contextual_views()
-            return
-        self.push_screen(
-            TaskDetailScreen(
-                self._widget_context(),
-                task_id,
-                open_views_on_mount=True,
-            ),
-            callback=lambda _: self.refresh_task_detail_after_resume(),
-        )
+        if route is TaskPaletteRoute.COMMANDS:
+            await self.push_screen(_CommandHistoryScreen(self._views, self._on_change))
+        elif route is TaskPaletteRoute.DIAGNOSTICS:
+            await self._open_contextual_view(FOCUS_RESOURCES_VIEW)
+        else:
+            panel = self._context_task_detail_panel()
+            if (
+                panel is None
+                and self._home_detail_panel is not None
+                and self._home_detail_panel.display
+            ):
+                panel = self._home_detail_panel
+            if panel is not None:
+                await panel.open_contextual_views()
+            else:
+                self.push_screen(
+                    TaskDetailScreen(
+                        self._widget_context(),
+                        task_id,
+                        open_views_on_mount=True,
+                    ),
+                    callback=lambda _: self.refresh_task_detail_after_resume(),
+                )
 
     def _find_context_choice(self, choice_id: str) -> _ContextChoice | None:
         return next(
@@ -1160,7 +1177,9 @@ class DashboardApp(App[None]):
         self._apply_layout(self.size.width, self.size.height)
         if self._focus_task is None:
             task_list = self.query("#task-browser-list")
-            target = task_list.first() if task_list else self.query_one("#focus-footer", Horizontal)
+            target = (
+                task_list.first() if task_list else self.query_one("#focus-footer", _HomeFooter)
+            )
             self.set_focus(target)
             self.query_one(f"#{_HOME_FOOTER_INSPECT}", Button).disabled = (
                 self._selected_task_id is None
@@ -1204,6 +1223,19 @@ class DashboardApp(App[None]):
     async def _dispatch_workspace_key(self, event: events.Key) -> bool:
         if event.key == _ACTIONS_KEY:
             await self.action_open_palette()
+        elif event.key == _INSPECT_KEY:
+            task_list = self.query("#task-browser-list")
+            focused = self.focused
+            if (
+                not task_list
+                or focused is None
+                or (focused is not task_list.first() and task_list.first() not in focused.ancestors)
+                or self._selected_task_id is None
+            ):
+                return False
+            event.stop()
+            event.prevent_default()
+            await self._open_task_detail(self._selected_task_id)
         elif event.key == TASK_DETAIL_ESCAPE:
             await self.action_return_from_section()
         elif event.key == TASK_DETAIL_HELP_KEY:
@@ -1273,8 +1305,17 @@ class DashboardApp(App[None]):
                 else FOCUS_MAIN_MIN_ROWS
             )
             main.styles.min_height = minimum_main_height
-            footer = self.query_one("#focus-footer", Horizontal)
+            footer = self.query_one("#focus-footer", _HomeFooter)
             footer.display = height >= FOCUS_FOOTER_MIN_HEIGHT
+            footer_columns = (
+                FOCUS_FOOTER_TWO_COLUMN_COUNT
+                if width < FOCUS_FOOTER_THREE_COLUMN_MIN_COLUMNS
+                else FOCUS_FOOTER_THREE_COLUMN_COUNT
+                if width < HOME_SPLIT_MIN_COLUMNS
+                else FOCUS_FOOTER_FOUR_COLUMN_COUNT
+            )
+            footer.styles.grid_size_columns = footer_columns
+            footer.styles.grid_columns = " ".join("auto" for _ in range(footer_columns))
             readouts.styles.max_height = max(
                 1,
                 min(
@@ -1297,9 +1338,11 @@ class DashboardApp(App[None]):
             if task_list:
                 task_list.first().styles.height = "1fr" if wide else FOCUS_COMPACT_TASK_LIST_ROWS
             if self._home_detail_panel is not None:
-                self._home_detail_panel.display = wide
+                was_visible = self._home_detail_panel.display
+                show_inspector = width >= FOCUS_INSPECTOR_STACKED_MIN_COLUMNS
+                self._home_detail_panel.display = wide or show_inspector
                 self._home_detail_panel.styles.height = "100%" if wide else "auto"
-                if wide != was_wide:
+                if wide != was_wide or was_visible != self._home_detail_panel.display:
                     self._home_detail_panel.refresh_after_resume()
             return
         return
@@ -1382,7 +1425,7 @@ class DashboardApp(App[None]):
         if (
             self._focus_task is None
             and self._home_detail_panel is not None
-            and self.size.width >= HOME_SPLIT_MIN_COLUMNS
+            and self.size.width >= FOCUS_INSPECTOR_STACKED_MIN_COLUMNS
             and self._selected_task_id is not None
         ):
             self._home_detail_panel.select_task(self._selected_task_id)
@@ -1408,7 +1451,7 @@ class DashboardApp(App[None]):
         if (
             self._focus_task is None
             and self._home_detail_panel is not None
-            and self.size.width >= HOME_SPLIT_MIN_COLUMNS
+            and self.size.width >= FOCUS_INSPECTOR_STACKED_MIN_COLUMNS
             and self._selected_task_id is not None
         ):
             self._home_detail_panel.select_task(self._selected_task_id)

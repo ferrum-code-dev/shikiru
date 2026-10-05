@@ -270,7 +270,7 @@ class TaskDetailPanel(Vertical):
     #task-detail-actions-inline {
         width: auto; min-width: 1; height: 1; margin: 0; padding: 0;
         border: none; background: $background; color: $steel-blue;
-        content-align: left middle; text-style: none;
+        content-align: left middle; text-align: left; text-style: none;
     }
     #task-detail-summary-usage Button:focus,
     #task-detail-evidence-inline:focus,
@@ -1406,7 +1406,7 @@ class TaskDetailScreen(ModalScreen[None]):
     #task-detail-panel #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     TaskDetailScreen.wide-overlay { align: center middle; background: $background 80%; }
     TaskDetailScreen.wide-overlay #task-detail-panel {
-        width: 72%; max-width: 88; height: 88%; min-height: 7;
+        width: 100%; max-width: 64; height: auto; max-height: 90%; min-height: 7;
         padding: 1 2; border: solid $focus; background: $surface;
     }
     TaskDetailScreen.wide-overlay #task-detail-body { background: $surface; }

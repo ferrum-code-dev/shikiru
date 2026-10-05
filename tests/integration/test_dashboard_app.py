@@ -5,12 +5,12 @@ import json
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from rich.cells import cell_len
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import (
     Button,
@@ -72,6 +72,7 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_SUMMARY,
     TASK_VIEW_USAGE,
+    TaskDetailBody,
     TaskDetailPanel,
     TaskDetailScreen,
 )
@@ -119,14 +120,33 @@ _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
 COMMAND_HISTORY_TEST_LIMIT = 10
 _EXTERNAL_WIDGET_NAME = "outside-widget"
+_LATER_EXTERNAL_WIDGET_NAME = "later-widget"
 _WIDE_HOME_SIZE = (120, 40)
+_MEASURED_HOME_SIZE = (101, 35)
 _STANDARD_HOME_SIZE = (100, 35)
+_SHORT_WIDE_HOME_SIZE = (80, 24)
+_STACKED_INSPECTOR_HOME_SIZE = (64, 24)
+_WIDE_SHORT_HOME_SIZE = (80, 14)
+_SPLIT_BOUNDARY_HOME_SIZE = (73, 24)
+_STACKED_UPPER_BOUNDARY_HOME_SIZE = (72, 24)
+_STACKED_LOWER_BOUNDARY_HOME_SIZE = (54, 24)
+_LIST_ONLY_BOUNDARY_HOME_SIZE = (53, 24)
 _COMPACT_HOME_SIZE = (48, 20)
 _NARROW_TASK_SIZE = (36, 20)
 _COMPACT_TASK_SIZES = (_COMPACT_HOME_SIZE, _NARROW_TASK_SIZE)
+_SHORT_HOME_SIZE = (36, 14)
+_COMPACT_SHORT_WIDE_HOME_SIZE = (48, 14)
 _TINY_HOME_SIZE = (20, 8)
-_HOME_REVIEW_SIZES = (_STANDARD_HOME_SIZE, _WIDE_HOME_SIZE, (80, 24), _COMPACT_HOME_SIZE)
+_DETAIL_REVIEW_COMPACT_SIZES = (*_COMPACT_TASK_SIZES, _SHORT_HOME_SIZE, _TINY_HOME_SIZE)
+_HOME_REVIEW_SIZES = (
+    _MEASURED_HOME_SIZE,
+    _WIDE_HOME_SIZE,
+    _SHORT_WIDE_HOME_SIZE,
+    _COMPACT_HOME_SIZE,
+)
 _MIN_WIDE_TASK_LIST_ROWS = 9
+_MIN_SHORT_WIDE_TASK_LIST_ROWS = 6
+_REFERENCE_RESOURCE_TWO_COLUMN_MIN_WIDTH = 69
 _API_INPUT_TOKENS = 1_000
 _API_OUTPUT_TOKENS = 500
 _SUBSCRIPTION_INPUT_TOKENS = 400
@@ -159,7 +179,7 @@ _TASK99_SIGNAL_NAME = "pytest"
 _TASK99_CURRENT_TURN = "03-verify-i1"
 _TASK99_IMPLEMENT_TURN = "02-implement-i1"
 _TASK99_TRIAGE_TURN = "01-triage-i0"
-_TASK99_REVIEW_DIR = Path("build/review/task99")
+NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
 
 
 class _ExternalWidget:
@@ -176,6 +196,22 @@ class _ExternalEntryPoint:
 
     def load(self) -> type[_ExternalWidget]:
         return _ExternalWidget
+
+
+class _LaterExternalWidget:
+    name = _LATER_EXTERNAL_WIDGET_NAME
+
+    def create(self, context: WidgetContext) -> Widget:
+        del context
+        return Static(id="later-external-widget-panel")
+
+
+class _LaterExternalEntryPoint:
+    name = _LATER_EXTERNAL_WIDGET_NAME
+    dist = FakeDistribution("later-test-extension")
+
+    def load(self) -> type[_LaterExternalWidget]:
+        return _LaterExternalWidget
 
 
 class _InvalidPlacementWidget:
@@ -202,17 +238,6 @@ def _rendered_text(widget: Static) -> str:
 def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
     lines = widget.render_lines(Region(0, 0, widget.region.width, widget.region.height))
     return tuple(line.text.rstrip() for line in lines if line.text.strip())
-
-
-def _resource_groups_are_right_aligned(widget: Static) -> bool:
-    lines = tuple(line for line in _rendered_widget_lines(widget) if "Shikiru + agents" in line)
-    if len(lines) != 1:
-        return False
-    line = lines[0]
-    instance_start = line.find("Shikiru + agents")
-    if instance_start < 0:
-        return False
-    return cell_len(line[:instance_start]) + cell_len(line[instance_start:]) == widget.region.width
 
 
 _TASK_DETAIL_SECTION_IDS = (
@@ -552,14 +577,20 @@ def _record_task99_population(
     return task.id, decision_id, recent_id
 
 
-def _capture_task99(app: DashboardApp, name: str) -> Path:
-    _TASK99_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+def _capture_task99(app: DashboardApp, name: str) -> Path | None:
+    configured_directory = os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
+    if configured_directory is None:
+        return None
+    capture_dir = Path(configured_directory)
+    capture_dir.mkdir(parents=True, exist_ok=True)
     output_kind = (
         "color"
-        if os.environ.get("TERM") == "xterm-256color" and "NO_COLOR" not in os.environ
+        if os.environ.get("TERM") == "xterm-256color"
+        and "NO_COLOR" not in os.environ
+        and "FORCE_COLOR" not in os.environ
         else "mono"
     )
-    path = _TASK99_REVIEW_DIR / name.replace("-color.svg", f"-{output_kind}.svg")
+    path = capture_dir / name.replace("-color.svg", f"-{output_kind}.svg")
     path.write_text(app.export_screenshot(), encoding="utf-8")
     return path
 
@@ -605,7 +636,11 @@ async def _capture_task99_home_size(
         reader,
         project_dir,
         widget_names=widget_names,
-        services=StubServices(engine_running=False),
+        services=(
+            _home_review_services(project_dir, clock, engine_running=False)
+            if os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
+            else StubServices(engine_running=False)
+        ),
         clock=clock,
         settings=settings,
     )
@@ -625,8 +660,10 @@ async def _capture_task99_home_size(
         )
         assert "Verify" in _task99_widget_text(progress), _task99_widget_text(progress)
         assert "Verifying" in _task99_widget_text(identity), _task99_widget_text(identity)
-        assert _TASK99_SIGNAL_ROW in _task99_widget_text(signal), _task99_widget_text(signal)
-        assert f"{Role.LEADER.value}/{_TASK99_CURRENT_TURN}" in _task99_widget_text(signal)
+        signal_text = _task99_widget_text(signal)
+        assert _TASK99_SIGNAL_ROW in signal_text
+        assert "59s ago" in signal_text
+        assert f"{Role.LEADER.value}/{_TASK99_CURRENT_TURN}" not in signal_text
         assert "Leader" in _task99_widget_text(sessions), _task99_widget_text(sessions)
         detail_text = "\n".join(
             _task99_widget_text(app.query_one(f"#{identifier}", Static))
@@ -665,7 +702,11 @@ async def _capture_task99_compact_home_route(
         reader,
         project_dir,
         widget_names=["header", "queue", "escalations", "usage", "resources"],
-        services=StubServices(engine_running=False),
+        services=(
+            _home_review_services(project_dir, clock, engine_running=False)
+            if os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
+            else StubServices(engine_running=False)
+        ),
         clock=clock,
         settings=settings,
     )
@@ -690,16 +731,21 @@ async def _capture_task99_compact_home_route(
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
         detail = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        body = app.screen.query_one("#task-detail-body", TaskDetailBody)
         identity = app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         progress = app.screen.query_one(f"#{TASK_DETAIL_PROGRESS}", Static)
         signal = app.screen.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
         expected_identity = "Verify" if size == _NARROW_TASK_SIZE else _TASK99_SELECTED_TITLE
         await wait_until(
             lambda: (
-                expected_identity in _task99_widget_text(identity)
-                and "Verify" in _task99_widget_text(progress)
-                and _TASK99_SIGNAL_ROW in _task99_widget_text(signal)
+                expected_identity in plain_text(identity.content)
+                and "Verify" in plain_text(progress.content)
             ),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        body.scroll_to_widget(signal, animate=False)
+        await wait_until(
+            lambda: _TASK99_SIGNAL_ROW in _task99_widget_text(signal),
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
         assert detail.active_view == TASK_VIEW_SUMMARY
@@ -726,7 +772,11 @@ async def _capture_task99_detail_size(
         project_dir,
         focus_task=selected_task_id,
         widget_names=["header", "queue", "escalations", "usage", "resources"],
-        services=StubServices(engine_running=False),
+        services=(
+            _home_review_services(project_dir, screen_clock, engine_running=False)
+            if os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
+            else StubServices(engine_running=False)
+        ),
         clock=screen_clock,
         settings=settings,
     )
@@ -735,11 +785,11 @@ async def _capture_task99_detail_size(
         identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         expected_identity = "Verify" if size == _NARROW_TASK_SIZE else _TASK99_SELECTED_TITLE
         await wait_until(
-            lambda: expected_identity in _task99_widget_text(identity),
+            lambda: expected_identity in plain_text(identity.content),
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
         _capture_task99(app, f"dash-task-{size[0]}x{size[1]}-color.svg")
-        if size in _COMPACT_TASK_SIZES:
+        if size in _DETAIL_REVIEW_COMPACT_SIZES:
             await _assert_task99_live_age_and_routes(
                 app,
                 pilot,
@@ -758,6 +808,8 @@ async def _assert_task99_live_age_and_routes(
     size: tuple[int, int],
 ) -> None:
     signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
+    body = app.query_one("#task-detail-body", TaskDetailBody)
+    body.scroll_to_widget(signal, animate=False)
     await wait_until(
         lambda: "59s ago" in _task99_widget_text(signal),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -829,7 +881,13 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
     )
     reader = StateReader(database, clock)
     try:
-        for size in (_STANDARD_HOME_SIZE, _WIDE_HOME_SIZE):
+        for size in (
+            _MEASURED_HOME_SIZE,
+            _STANDARD_HOME_SIZE,
+            _WIDE_HOME_SIZE,
+            _SHORT_WIDE_HOME_SIZE,
+            _STACKED_INSPECTOR_HOME_SIZE,
+        ):
             await _capture_task99_home_size(
                 reader,
                 project_dir=project_dir,
@@ -839,7 +897,7 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
                 decision_task_id=decision_task_id,
                 size=size,
             )
-        for size in _COMPACT_TASK_SIZES:
+        for size in _DETAIL_REVIEW_COMPACT_SIZES:
             await _capture_task99_compact_home_route(
                 reader,
                 project_dir=project_dir,
@@ -848,7 +906,14 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
                 selected_task_id=selected_task_id,
                 size=size,
             )
-        for size in (_STANDARD_HOME_SIZE, _WIDE_HOME_SIZE, *_COMPACT_TASK_SIZES):
+        for size in (
+            _MEASURED_HOME_SIZE,
+            _STANDARD_HOME_SIZE,
+            _WIDE_HOME_SIZE,
+            _SHORT_WIDE_HOME_SIZE,
+            _STACKED_INSPECTOR_HOME_SIZE,
+            *_DETAIL_REVIEW_COMPACT_SIZES,
+        ):
             await _capture_task99_detail_size(
                 reader,
                 project_dir=project_dir,
@@ -869,17 +934,21 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
             reader,
             project_dir,
             widget_names=["header", "queue", "escalations", "usage", "resources"],
-            services=StubServices(engine_running=False),
+            services=(
+                _home_review_services(project_dir, clock, engine_running=False)
+                if os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
+                else StubServices(engine_running=False)
+            ),
             clock=clock,
             settings=settings,
         )
-        async with wrap_app.run_test(size=_STANDARD_HOME_SIZE):
+        async with wrap_app.run_test(size=_MEASURED_HOME_SIZE):
             await wait_until(
                 lambda: bool(wrap_app.query(f"#task-row-{recent_task_id}")),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
             await _select_home_task(wrap_app, recent_task_id)
-            _capture_task99(wrap_app, "home-long-title-wrap-100x35-color.svg")
+            _capture_task99(wrap_app, "home-long-title-wrap-101x35-color.svg")
     finally:
         reader.close()
 
@@ -912,6 +981,7 @@ def _palette_screen_for_app(
     *,
     remember_contextual_draft: Callable[[PaletteDraft], None] | None = None,
     task_routes_available: bool = False,
+    project_diagnostics_available: bool = False,
 ) -> PaletteScreen:
     settings = load_settings(project_dir)
     services = StubServices()
@@ -933,13 +1003,77 @@ def _palette_screen_for_app(
         initial_context=request,
         remember_contextual_draft=remember_contextual_draft,
         task_routes_available=task_routes_available,
+        project_diagnostics_available=project_diagnostics_available,
     )
+
+
+def _palette_context_opener(
+    reader: StateReader,
+    connection: Connection,
+    project_dir: Path,
+    clock: Clock,
+    app_instances: list[DashboardApp],
+) -> OpenPaletteContext:
+    async def open_palette_context(request: PaletteRequest) -> None:
+        app = app_instances[0]
+        palette = _palette_screen_for_app(
+            reader,
+            connection,
+            project_dir,
+            clock,
+            request,
+            remember_contextual_draft=app.remember_contextual_palette_draft,
+            task_routes_available=True,
+        )
+        await app.push_screen(
+            palette,
+            callback=lambda _: app.refresh_task_detail_after_resume(),
+        )
+
+    return open_palette_context
 
 
 def _assert_fixed_context_target_picker_hidden(screen: PaletteScreen) -> None:
     assert not screen.query_one("#field-task-search").display
     assert not screen.query_one("#field-task-choice").display
     assert not screen.query_one("#field-task-id").display
+
+
+def _assert_attention_answer_target(
+    screen: PaletteScreen,
+    task_id: str,
+    escalation_id: str,
+    headline: str,
+) -> None:
+    assert screen.query_one("#task-id", Input).value == task_id
+    assert cast("Select[str]", screen.query_one("#action", Select)).value == "resolve"
+    assert cast("Select[str]", screen.query_one("#escalation", Select)).value == escalation_id
+    assert not screen.query_one("#field-escalation").display
+    assert screen.query_one("#field-palette-escalation-summary").display
+    assert screen.query_one("#field-palette-evidence-error").display
+    assert cast("Select[str]", screen.query_one("#resolution", Select)).value == "answer"
+    assert screen.query_one("#field-resolution-text").display
+    assert not screen.query_one("#field-role").display
+    _assert_fixed_context_target_picker_hidden(screen)
+    summary = _rendered_text(screen.query_one("#palette-escalation-summary", Static))
+    assert task_id in summary
+    assert escalation_id in summary
+    assert headline in summary
+    assert "Question: unavailable" in summary
+
+
+async def _enter_answer_text(
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+    guidance: str,
+) -> None:
+    answer = palette.query_one("#resolution-text", TextArea)
+    await wait_until(
+        lambda: pilot.app.focused is answer,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.press(*guidance)
+    assert answer.text == guidance
 
 
 async def _open_attention_answer_form(
@@ -1424,16 +1558,17 @@ def _seed_home_task_rows(
 
 def _home_review_services(
     project_dir: Path,
-    clock: SystemClock,
+    clock: Clock,
     *,
     engine_pid: int | None = None,
+    engine_running: bool = True,
 ) -> StubServices:
     settings = load_settings(project_dir)
     resource_snapshot = ResourceSampler(
         clock,
         settings.orchestration.resources,
     ).sample_process_trees(engine_pid, ())
-    services = StubServices(engine_running=True)
+    services = StubServices(engine_running=engine_running)
     services.resource_observation = ResourceView(
         host_cpu_pct=resource_snapshot.host_cpu_pct,
         host_ram_used_pct=resource_snapshot.host_ram_used_pct,
@@ -1469,12 +1604,26 @@ async def _assert_mixed_home_readouts(app: DashboardApp) -> None:
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     primary = (identity, usage, resources)
-    assert readouts.scroll_y == 0
-    assert all(widget.is_on_screen for widget in primary)
     assert all(widget.region.y >= readouts.region.y for widget in primary)
-    assert all(widget.region.bottom <= readouts.region.bottom for widget in primary)
+    if app.size == _SHORT_WIDE_HOME_SIZE:
+        for widget in primary:
+            readouts.scroll_to_widget(widget, animate=False, immediate=True)
+            await wait_until(
+                lambda widget=widget: widget.region.bottom <= readouts.region.bottom,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+        readouts.scroll_to(y=0, animate=False, immediate=True)
+    else:
+        assert readouts.scroll_y == 0
+        assert all(widget.is_on_screen for widget in primary)
+        assert all(widget.region.bottom <= readouts.region.bottom for widget in primary)
     assert attention.region.bottom <= app.query_one("#focus-main", Horizontal).region.y
-    assert app.query_one("#task-browser-list", ListView).region.height >= _MIN_WIDE_TASK_LIST_ROWS
+    minimum_list_rows = (
+        _MIN_SHORT_WIDE_TASK_LIST_ROWS
+        if app.size == _SHORT_WIDE_HOME_SIZE
+        else _MIN_WIDE_TASK_LIST_ROWS
+    )
+    assert app.query_one("#task-browser-list", ListView).region.height >= minimum_list_rows
 
     identity_text = " ".join(_rendered_widget_lines(identity))
     usage_text = " ".join(_rendered_widget_lines(usage))
@@ -1486,26 +1635,31 @@ async def _assert_mixed_home_readouts(app: DashboardApp) -> None:
     assert "API unreported 2" in usage_text
     assert "API-equiv. est. $0.11" not in usage_text
     assert "1 subscription agent" in usage_text
-    assert usage.region.height == 1
+    assert usage.region.height == (2 if app.size == _SHORT_WIDE_HOME_SIZE else 1)
     assert "Host" in resource_text
     assert "Shikiru + agents" in resource_text
     assert "process tree empty" in resource_text
-    assert _resource_groups_are_right_aligned(resources), (
-        _rendered_widget_lines(resources),
-        resources.region.width,
-        resources.size.width,
-    )
     assert "Operator owns" in attention_text
 
 
-def _capture_home_screenshot(app: DashboardApp, size: tuple[int, int]) -> None:
-    capture_dir = Path("build/review/task98")
+def _capture_home_screenshot(app: DashboardApp, size: tuple[int, int]) -> Path | None:
+    configured_directory = os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
+    if configured_directory is None:
+        return None
+    capture_dir = Path(configured_directory)
     capture_dir.mkdir(parents=True, exist_ok=True)
-    color_mode = "mono" if os.environ.get("NO_COLOR") else "color"
+    color_mode = (
+        "color"
+        if os.environ.get("TERM") == "xterm-256color"
+        and "NO_COLOR" not in os.environ
+        and "FORCE_COLOR" not in os.environ
+        else "mono"
+    )
     capture_path = capture_dir / (
         f"mixed-home-{size[0]}x{size[1]}-{color_mode}-selected-second.svg"
     )
     capture_path.write_text(app.export_screenshot(), encoding="utf-8")
+    return capture_path
 
 
 async def _assert_mixed_home_task_rows(
@@ -1516,31 +1670,48 @@ async def _assert_mixed_home_task_rows(
     active_task_ids, completed_task_id, paused_task_id, owned_task_id = row_ids
     task_list = app.query_one("#task-browser-list", ListView)
     await wait_until(
-        lambda: task_list.children[1].region.y > task_list.children[0].region.bottom,
+        lambda: all(
+            app.query_one(f"#task-row-{task_id}", ListItem).region.height > 0
+            for task_id in active_task_ids
+        ),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     children = tuple(task_list.children)
+    active_rows = tuple(
+        app.query_one(f"#task-row-{task_id}", ListItem) for task_id in active_task_ids
+    )
+    active_gaps = tuple(
+        following.region.y - current.region.bottom for current, following in pairwise(active_rows)
+    )
+    assert all(gap >= 0 for gap in active_gaps), active_gaps
+    assert any(gap > 0 for gap in active_gaps), active_gaps
     recent_heading = app.query_one("#task-browser-recent-heading", ListItem)
     recent_task = app.query_one(f"#task-row-{completed_task_id}", ListItem)
     assert recent_heading.disabled
     assert children.index(recent_heading) < children.index(recent_task)
     item_ids = {item.id for item in children}
     assert all(f"task-row-{task_id}" in item_ids for task_id in active_task_ids)
-    assert all(item.region.overlaps(task_list.scrollable_content_region) for item in children)
-    assert recent_task.region.bottom <= task_list.scrollable_content_region.bottom
     selected_item = app.query_one(f"#task-row-{active_task_ids[1]}", ListItem)
     assert task_list.highlighted_child is selected_item
-    edge_lines = tuple(
-        strip.text
-        for strip in selected_item.render_lines(
-            Region(0, 0, selected_item.region.width, selected_item.region.height)
+    if size == _SHORT_WIDE_HOME_SIZE:
+        assert app.query_one("#focus-main", Horizontal).has_class("wide")
+        assert app.query_one("#task-detail-panel", TaskDetailPanel).display
+        task_list.scroll_to_widget(recent_task, animate=False, immediate=True)
+        await wait_until(
+            lambda: recent_task.region.overlaps(task_list.scrollable_content_region),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
-    )
-    assert edge_lines[0][0] == "┌"
-    assert edge_lines[0][-1] == "┐"
-    assert edge_lines[-1][0] == "└"
-    assert edge_lines[-1][-1] == "┘"
-    assert all(line.startswith("│") and line.endswith("│") for line in edge_lines[1:-1])
+        assert task_list.highlighted_child is selected_item
+    else:
+        assert all(
+            item.region.overlaps(task_list.scrollable_content_region) for item in children
+        ), (
+            size,
+            task_list.region,
+            task_list.scrollable_content_region,
+            tuple((item.id, item.region) for item in children),
+        )
+        assert recent_task.region.bottom <= task_list.scrollable_content_region.bottom
     _capture_home_screenshot(app, size)
     attention = app.query_one("#escalations", EscalationsPanel)
     attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
@@ -1550,7 +1721,10 @@ async def _assert_mixed_home_task_rows(
     assert paused_task_id in attention_text
 
 
-@pytest.mark.parametrize("size", [_STANDARD_HOME_SIZE, _WIDE_HOME_SIZE])
+@pytest.mark.parametrize(
+    "size",
+    [_MEASURED_HOME_SIZE, _STANDARD_HOME_SIZE, _WIDE_HOME_SIZE, _SHORT_WIDE_HOME_SIZE],
+)
 async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_task_list(
     database: Database,
     connection: Connection,
@@ -1621,20 +1795,33 @@ async def test_resource_groups_stay_aligned_after_resize_for_observed_process_tr
             await wait_until(
                 lambda: (
                     expected_group in _rendered_text(resources)
-                    and _resource_groups_are_right_aligned(resources)
+                    and "Host" in _rendered_text(resources)
                 ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            reference_metrics = plain_text(resources.content)
             initial_width = resources.region.width
             await pilot.resize_terminal(*_STANDARD_HOME_SIZE)
             await wait_until(
                 lambda: (
                     resources.region.width != initial_width
                     and expected_group in _rendered_text(resources)
-                    and _resource_groups_are_right_aligned(resources)
+                    and plain_text(resources.content) == reference_metrics
                 ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            await pilot.resize_terminal(*_COMPACT_HOME_SIZE)
+            await wait_until(
+                lambda: (
+                    resources.region.width < _REFERENCE_RESOURCE_TWO_COLUMN_MIN_WIDTH
+                    and expected_group in _rendered_text(resources)
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            compact_lines = _rendered_widget_lines(resources)
+            assert compact_lines[1].startswith("Host ")
+            assert "Shikiru + agents" in compact_lines[2]
+            assert plain_text(resources.content) == reference_metrics
     finally:
         reader.close()
 
@@ -1860,10 +2047,10 @@ async def test_focus_attention_opens_durable_decision_evidence(
             await wait_until(lambda: attention.display, timeout=2)
             row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
             assert escalation.id in _rendered_text(row)
-            assert "Enter inspect · r resolve · o evidence" in _rendered_text(row)
+            assert "Enter answer · o evidence" in _rendered_text(row)
             visible_status = " ".join(_rendered_widget_lines(row))
             assert escalation.id in visible_status
-            assert "Enter inspect" in visible_status
+            assert "Enter answer" in visible_status
             assert "Engine stopped" in visible_status
             status_lines = _rendered_text(row).splitlines()
             assert "paused" not in status_lines[0]
@@ -1909,24 +2096,14 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
     for command in queue.pending():
         queue.mark_done(command.id)
     reader = StateReader(database, clock)
-    app: DashboardApp | None = None
-
-    async def open_palette_context(request: PaletteRequest) -> None:
-        assert app is not None
-        current_app = app
-        palette = _palette_screen_for_app(
-            reader,
-            connection,
-            project_dir,
-            clock,
-            request,
-            remember_contextual_draft=app.remember_contextual_palette_draft,
-            task_routes_available=True,
-        )
-        await app.push_screen(
-            palette,
-            callback=lambda _: current_app.refresh_task_detail_after_resume(),
-        )
+    app_instances: list[DashboardApp] = []
+    open_palette_context = _palette_context_opener(
+        reader,
+        connection,
+        project_dir,
+        clock,
+        app_instances,
+    )
 
     try:
         app = _app(
@@ -1935,6 +2112,7 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             widget_names=["escalations"],
             open_palette_context=open_palette_context,
         )
+        app_instances.append(app)
         async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
             attention = app.query_one("#escalations", EscalationsPanel)
             await wait_until(lambda: attention.display, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
@@ -1943,27 +2121,18 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             caller = app.screen
 
             screen = await _open_attention_answer_form(app, pilot, row)
-            assert screen.query_one("#task-id", Input).value == task.id
-            assert cast("Select[str]", screen.query_one("#action", Select)).value == "resolve"
-            assert (
-                cast("Select[str]", screen.query_one("#escalation", Select)).value == escalation.id
-            )
-            assert cast("Select[str]", screen.query_one("#resolution", Select)).value == "answer"
-            assert screen.query_one("#field-resolution-text").display
-            assert not screen.query_one("#field-role").display
-            _assert_fixed_context_target_picker_hidden(screen)
+            _assert_attention_answer_target(screen, task.id, escalation.id, escalation.headline)
             title = screen.query_one("#palette-title", Static)
             assert task.id in _rendered_text(title)
             assert escalation.id in _rendered_text(title)
-            answer_field = screen.query_one("#resolution-text", TextArea)
-            await wait_until(
-                lambda: app.focused is answer_field,
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            assert "missing-packet.md" in _rendered_text(
+                screen.query_one("#palette-evidence-error", Static)
             )
+            _capture_task99(app, "task101-answer-missing-packet-100x35-color.svg")
             assert queue.pending() == []
 
             guidance = "Preserve the existing call pattern."
-            await pilot.press(*guidance)
+            await _enter_answer_text(pilot, screen, guidance)
             await _back_to_context_actions(pilot, screen, queue)
             await _close_palette_to_caller(app, pilot, caller, queue)
             await pilot.click(row)
@@ -1975,6 +2144,116 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             assert reopened.query_one("#resolution-text", TextArea).text == guidance
             assert cast("Select[str]", reopened.query_one("#resolution", Select)).value == "answer"
             assert queue.pending() == []
+    finally:
+        reader.close()
+
+
+async def test_attention_answer_draft_stays_with_its_decision_on_the_same_task(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Sequential decision drafts")
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=task.step, status=Status.ESCALATED),
+    )
+    escalations = EscalationStore(connection, clock)
+    first = escalations.open(
+        task.id,
+        step=task.step,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="First decision summary",
+        packet_path=".shikiru/escalations/first-missing.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
+    assert queue.pending() == []
+    reader = StateReader(database, clock)
+    app_instances: list[DashboardApp] = []
+    open_palette_context = _palette_context_opener(
+        reader,
+        connection,
+        project_dir,
+        clock,
+        app_instances,
+    )
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["escalations"],
+            open_palette_context=open_palette_context,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
+            attention = app.query_one("#escalations", EscalationsPanel)
+            await wait_until(lambda: attention.display, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            await wait_until(
+                lambda: first.id in _rendered_text(row),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            caller = app.screen
+            first_palette = await _open_attention_answer_form(app, pilot, row)
+            assert (
+                cast("Select[str]", first_palette.query_one("#action", Select)).value == "resolve"
+            )
+            assert queue.pending() == []
+            first_guidance = "Keep this answer with the first decision only."
+            await _enter_answer_text(pilot, first_palette, first_guidance)
+            await _close_palette_to_caller(app, pilot, caller, queue)
+
+            escalations.resolve(first.id, "answer closed first decision")
+            second = escalations.open(
+                task.id,
+                step=task.step,
+                reason=EscalationReason.DECISION_REQUIRED,
+                headline="Second decision summary",
+                packet_path=".shikiru/escalations/second-missing.md",
+                options=options_for(EscalationReason.DECISION_REQUIRED),
+            )
+            await wait_until(
+                lambda: second.id in _rendered_text(row) and first.id not in _rendered_text(row),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            second_palette = await _open_attention_answer_form(app, pilot, row)
+            second_summary = _rendered_text(
+                second_palette.query_one("#palette-escalation-summary", Static)
+            )
+            _assert_attention_answer_target(
+                second_palette,
+                task.id,
+                second.id,
+                "Second decision summary",
+            )
+            assert "First decision summary" not in second_summary
+            second_answer = second_palette.query_one("#resolution-text", TextArea)
+            assert second_answer.text == ""
+            assert cast("Select[str]", second_palette.query_one("#escalation", Select)).value == (
+                second.id
+            )
+            assert not second_palette.query_one("#field-escalation").display
+            assert queue.pending() == []
+
+            second_guidance = "Keep this answer with the second decision only."
+            await _enter_answer_text(pilot, second_palette, second_guidance)
+            await _close_palette_to_caller(app, pilot, caller, queue)
+            reopened = await _open_attention_answer_form(app, pilot, row)
+            _assert_attention_answer_target(
+                reopened,
+                task.id,
+                second.id,
+                "Second decision summary",
+            )
+            assert reopened.query_one("#resolution-text", TextArea).text == second_guidance
+            assert queue.pending() == []
+            await _close_palette_to_caller(app, pilot, caller, queue)
     finally:
         reader.close()
 
@@ -2245,7 +2524,7 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
             await pilot.pause()
             status = app.query_one("#workspace-command-status", Static)
             assert status.size.height == 1
-            footer = app.query_one("#focus-footer", Horizontal)
+            footer = app.query_one("#focus-footer", Grid)
             assert footer.region.bottom <= 20
             assert footer.region.right <= width
             home_screen = app.screen
@@ -2291,9 +2570,17 @@ async def _assert_home_resize_matrix(
     assert task.title in row_text
 
     for width, height in (
+        _MEASURED_HOME_SIZE,
+        _WIDE_SHORT_HOME_SIZE,
+        _SPLIT_BOUNDARY_HOME_SIZE,
+        _STACKED_UPPER_BOUNDARY_HOME_SIZE,
+        _STACKED_INSPECTOR_HOME_SIZE,
+        _STACKED_LOWER_BOUNDARY_HOME_SIZE,
+        _LIST_ONLY_BOUNDARY_HOME_SIZE,
         _COMPACT_HOME_SIZE,
-        (36, 20),
-        (48, 14),
+        _SHORT_HOME_SIZE,
+        _NARROW_TASK_SIZE,
+        _COMPACT_SHORT_WIDE_HOME_SIZE,
         _TINY_HOME_SIZE,
     ):
         await pilot.resize_terminal(width, height)
@@ -2302,8 +2589,22 @@ async def _assert_home_resize_matrix(
         assert search.value == task.id
         assert task.title in _rendered_text(identity)
         assert home_layout.region.width <= width
-        assert detail_panel.display is False
+        should_show_inspector = width >= 54
+        assert detail_panel.display is should_show_inspector
+        if width >= 73:
+            assert queue_panel.region.right <= detail_panel.region.x
+        elif should_show_inspector:
+            assert detail_panel.region.x == queue_panel.region.x
+            assert detail_panel.region.y >= queue_panel.region.bottom, (
+                width,
+                home_layout.classes,
+                home_layout.styles.layout,
+                queue_panel.region,
+                detail_panel.region,
+            )
         _assert_home_navigation_fits(app, width, height)
+        if (width, height) == _WIDE_SHORT_HOME_SIZE:
+            _capture_task99(app, "task101-home-short-wide-80x14-color.svg")
         if (width, height) == _COMPACT_HOME_SIZE:
             selected_item = app.query_one(f"#task-row-{task.id}", ListItem)
             assert selected_item.region.height <= list_view.scrollable_content_region.height
@@ -2331,9 +2632,9 @@ async def _assert_tiny_home_task_routes(
         timeout=2,
     )
     assert root.max_scroll_y > 0
-    root.focus()
-    await pilot.press("end")
-    await wait_until(lambda: root.scroll_y == root.max_scroll_y, timeout=2)
+    root.scroll_to_widget(selected_item, animate=False, immediate=True)
+    await pilot.pause()
+    assert root.scroll_y <= root.max_scroll_y
     assert selected_item.region.y >= root.scrollable_content_region.y
     assert selected_item.region.bottom <= root.scrollable_content_region.bottom, (
         selected_item.region,
@@ -2533,11 +2834,14 @@ async def _exercise_contextual_draft_and_evidence_route(
     assert palette.query_one("#palette-menu-view-evidence").display
     assert palette.query_one("#palette-menu-view-usage").display
     assert palette.query_one("#palette-menu-view-secondary").display
-    await pilot.click("#palette-menu-action-message")
+    assert palette.query_one("#palette-menu-diagnostics").display
+    _capture_task99(app, "task101-context-menu-101x35-color.svg")
+    await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
+    _capture_task99(app, "task101-message-form-101x35-color.svg")
     guidance = "Retain this task scoped guidance after closing."
     await pilot.press(*guidance)
     await pilot.click("#palette-back-to-menu")
-    await pilot.click("#palette-menu-view-evidence")
+    await _click_palette_menu_button(pilot, palette, "palette-menu-view-evidence")
     panel = app.query_one("#task-detail-panel", TaskDetailPanel)
     await wait_until(
         lambda: panel.active_view == TASK_VIEW_EVIDENCE,
@@ -2558,7 +2862,7 @@ async def _exercise_contextual_draft_and_evidence_route(
     )
     palette = cast("PaletteScreen", app.screen)
     assert task.id in _rendered_text(palette.query_one("#palette-menu-context", Static))
-    await pilot.click("#palette-menu-action-message")
+    await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
     await wait_until(
         lambda: palette.query_one("#message", TextArea).text == guidance,
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -2607,7 +2911,7 @@ async def _exercise_inspector_mouse_and_native_escape(
     )
     palette = cast("PaletteScreen", app.screen)
     assert task.id in _rendered_text(palette.query_one("#palette-menu-context", Static))
-    await pilot.click("#palette-menu-action-message")
+    await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
     role = cast("Select[str]", palette.query_one("#role", Select))
     role.focus()
     await pilot.press("enter")
@@ -2631,12 +2935,27 @@ async def _exercise_inspector_mouse_and_native_escape(
     assert queue.pending() == []
 
 
+async def _open_task_context_menu(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    list_view: ListView,
+) -> PaletteScreen:
+    list_view.focus()
+    await pilot.press("ctrl+p")
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    return cast("PaletteScreen", app.screen)
+
+
 async def _exercise_task_secondary_menu_routes(
     app: DashboardApp,
     pilot: Pilot[None],
     task: Task,
     queue: CommandQueue,
 ) -> None:
+    home_screen = app.screen
     search = app.query_one("#task-browser-search", Input)
     list_view = app.query_one("#task-browser-list", ListView)
     panel = app.query_one("#task-detail-panel", TaskDetailPanel)
@@ -2644,12 +2963,7 @@ async def _exercise_task_secondary_menu_routes(
         ("#palette-menu-view-evidence", TASK_VIEW_EVIDENCE),
         ("#palette-menu-view-usage", TASK_VIEW_USAGE),
     ):
-        list_view.focus()
-        await pilot.press("ctrl+p")
-        await wait_until(
-            lambda: isinstance(app.screen, PaletteScreen),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
+        await _open_task_context_menu(app, pilot, list_view)
         await pilot.click(route_button)
         await wait_until(
             lambda expected_view=expected_view: panel.active_view == expected_view,
@@ -2658,12 +2972,40 @@ async def _exercise_task_secondary_menu_routes(
         assert search.value == task.title
         assert queue.pending() == []
 
-    list_view.focus()
-    await pilot.press("ctrl+p")
+    await _open_task_context_menu(app, pilot, list_view)
+    await pilot.click("#palette-menu-inspect")
     await wait_until(
-        lambda: isinstance(app.screen, PaletteScreen),
+        lambda: isinstance(app.screen, TaskDetailScreen),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
+    assert task.id in _rendered_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home_screen, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    assert search.value == task.title
+    assert queue.pending() == []
+
+    await _open_task_context_menu(app, pilot, list_view)
+    await pilot.click("#palette-menu-commands")
+    await wait_until(
+        lambda: bool(app.screen.query("#command-history-page")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert queue.pending() == []
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home_screen, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+
+    await _open_task_context_menu(app, pilot, list_view)
+    await pilot.click("#palette-menu-diagnostics")
+    await wait_until(
+        lambda: bool(app.screen.query("#context-widget-frame")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert "Diagnostics" in _rendered_text(app.screen.query_one("#context-widget-title", Static))
+    assert queue.pending() == []
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home_screen, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+
+    await _open_task_context_menu(app, pilot, list_view)
     menu = cast("PaletteScreen", app.screen).query_one("#palette-menu", VerticalScroll)
     menu.scroll_to_widget(
         menu.query_one("#palette-menu-view-secondary", Button),
@@ -2671,7 +3013,11 @@ async def _exercise_task_secondary_menu_routes(
         immediate=True,
     )
     await pilot.pause()
-    await pilot.click("#palette-menu-view-secondary")
+    await _click_palette_menu_button(
+        pilot,
+        cast("PaletteScreen", app.screen),
+        "palette-menu-view-secondary",
+    )
     await wait_until(
         lambda: bool(app.screen.query("#task-detail-views-frame")),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -2711,6 +3057,7 @@ async def test_task_context_menu_closes_and_opens_secondary_views_without_comman
             request,
             remember_contextual_draft=app.remember_contextual_palette_draft,
             task_routes_available=True,
+            project_diagnostics_available=True,
         )
 
         def after_close(route: TaskPaletteRoute | None) -> None:
@@ -2725,12 +3072,12 @@ async def test_task_context_menu_closes_and_opens_secondary_views_without_comman
         app = _app(
             reader,
             project_dir,
-            widget_names=["queue", "faults"],
+            widget_names=["queue", "faults", "resources"],
             open_palette_context=open_palette_context,
             clock=clock,
         )
         app_instances.append(app)
-        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+        async with app.run_test(size=_MEASURED_HOME_SIZE) as pilot:
             await _exercise_contextual_draft_and_evidence_route(app, pilot, task, queue)
             await _exercise_home_help_route(app, pilot, task)
             await _exercise_inspector_mouse_and_native_escape(app, pilot, task, queue)
@@ -2761,7 +3108,7 @@ async def _open_and_close_task_message_draft(
     )
     palette = cast("PaletteScreen", app.screen)
     assert task.id in _rendered_text(palette.query_one("#palette-menu-context", Static))
-    await pilot.click("#palette-menu-action-message")
+    await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
     guidance = "Keep this task's message after a different decision route."
     message = palette.query_one("#message", TextArea)
     await wait_until(
@@ -2800,6 +3147,31 @@ async def _back_to_context_actions(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     assert queue.pending() == []
+
+
+async def _click_palette_menu_button(
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+    button_id: str,
+) -> None:
+    button = palette.query_one(f"#{button_id}", Button)
+    menu = palette.query_one("#palette-menu", VerticalScroll)
+    parent = button.parent
+    while parent is not None and parent is not menu:
+        if not parent.display:
+            more_actions = palette.query_one("#palette-menu-more-actions", Button)
+            menu.scroll_to_widget(more_actions, animate=False, immediate=True)
+            await pilot.pause()
+            await pilot.click(more_actions)
+            await wait_until(
+                lambda parent=parent: parent.display,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            break
+        parent = parent.parent
+    menu.scroll_to_widget(button, animate=False, immediate=True)
+    await pilot.pause()
+    await pilot.click(button)
 
 
 async def _close_palette_to_caller(
@@ -2894,7 +3266,11 @@ async def test_contextual_message_draft_survives_answer_form_for_another_task(
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
             message_palette = cast("PaletteScreen", app.screen)
-            await pilot.click("#palette-menu-action-message")
+            await _click_palette_menu_button(
+                pilot,
+                message_palette,
+                "palette-menu-action-message",
+            )
             await wait_until(
                 lambda: message_palette.query_one("#message", TextArea).text == guidance,
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -2948,7 +3324,7 @@ async def test_contextual_message_draft_survives_back_and_action_change(
         async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
             home = app.screen
             palette = await _open_home_task_action_menu(app, pilot, task)
-            await pilot.click("#palette-menu-action-message")
+            await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
             role = cast("Select[str]", palette.query_one("#role", Select))
             role.focus()
             role.value = Role.IMPLEMENTER.value
@@ -2963,7 +3339,7 @@ async def test_contextual_message_draft_survives_back_and_action_change(
             assert queue.pending() == []
 
             await _back_to_context_actions(pilot, palette, queue)
-            await pilot.click("#palette-menu-action-submit")
+            await _click_palette_menu_button(pilot, palette, "palette-menu-action-submit")
             await wait_until(
                 lambda: palette.query_one("#palette-form", VerticalScroll).display,
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -2971,7 +3347,7 @@ async def test_contextual_message_draft_survives_back_and_action_change(
             await _close_palette_to_caller(app, pilot, home, queue)
 
             palette = await _open_home_task_action_menu(app, pilot, task)
-            await pilot.click("#palette-menu-action-message")
+            await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
             message = palette.query_one("#message", TextArea)
             role = cast("Select[str]", palette.query_one("#role", Select))
             await wait_until(
@@ -2982,7 +3358,7 @@ async def test_contextual_message_draft_survives_back_and_action_change(
             await _close_palette_to_caller(app, pilot, home, queue)
 
             palette = await _open_home_task_action_menu(app, pilot, task)
-            await pilot.click("#palette-menu-action-message")
+            await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
             message = palette.query_one("#message", TextArea)
             role = cast("Select[str]", palette.query_one("#role", Select))
             await wait_until(
@@ -2994,10 +3370,12 @@ async def test_contextual_message_draft_survives_back_and_action_change(
         reader.close()
 
 
+@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE, _NARROW_TASK_SIZE])
 async def test_empty_home_footer_actions_and_help_are_mouse_reachable_and_read_only(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
@@ -3014,14 +3392,22 @@ async def test_empty_home_footer_actions_and_help_are_mouse_reachable_and_read_o
         app = _app(
             reader,
             project_dir,
-            widget_names=[],
+            widget_names=["queue"],
             open_palette_context=open_palette_context,
         )
         app_instances.append(app)
-        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
+        async with app.run_test(size=size) as pilot:
             home = app.screen
+            search = app.query_one("#task-browser-search", Input)
+            search.value = "no matching task"
+            search.focus()
+            await pilot.pause()
             inspect = app.query_one("#focus-footer-inspect", Button)
             assert inspect.disabled
+            for button_id in ("focus-footer-actions", "focus-footer-help"):
+                button = app.query_one(f"#{button_id}", Button)
+                assert button.is_on_screen
+                assert button.region.right <= size[0]
             await pilot.click("#focus-footer-actions")
             await wait_until(
                 lambda: isinstance(app.screen, PaletteScreen),
@@ -3036,6 +3422,7 @@ async def test_empty_home_footer_actions_and_help_are_mouse_reachable_and_read_o
             assert queue.pending() == []
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+            assert search.value == "no matching task"
             assert app.focused is not None
             assert app.focused.id == "focus-footer-actions"
 
@@ -3046,6 +3433,7 @@ async def test_empty_home_footer_actions_and_help_are_mouse_reachable_and_read_o
             )
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+            assert search.value == "no matching task"
             assert app.focused is not None
             assert app.focused.id == "focus-footer-help"
             assert queue.pending() == []
@@ -3107,6 +3495,7 @@ async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
                 lambda: isinstance(app.screen, PaletteScreen),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            _capture_task99(app, "task101-context-menu-48x20-color.svg")
             menu = cast("PaletteScreen", app.screen).query_one("#palette-menu", VerticalScroll)
             menu.scroll_to_widget(
                 menu.query_one("#palette-menu-view-secondary", Button),
@@ -3114,7 +3503,11 @@ async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
                 immediate=True,
             )
             await pilot.pause()
-            await pilot.click("#palette-menu-view-secondary")
+            await _click_palette_menu_button(
+                pilot,
+                cast("PaletteScreen", app.screen),
+                "palette-menu-view-secondary",
+            )
             await wait_until(
                 lambda: bool(app.screen.query("#task-detail-views-frame")),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -3269,7 +3662,7 @@ async def _assert_home_inline_mouse_routes(
 
 
 def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> None:
-    footer = app.query_one("#focus-footer", Horizontal)
+    footer = app.query_one("#focus-footer", Grid)
     root = app.query_one("#focus-root", VerticalScroll)
     assert footer.region.x >= 0
     assert footer.region.right <= width
@@ -3762,16 +4155,38 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
     def entry_points_with_extension(*, group: str) -> list[object]:
         registered = entry_points(group=group)
         if group == WIDGET_ENTRY_POINT_GROUP:
-            return [*registered, _ExternalEntryPoint()]
+            return [*registered, _ExternalEntryPoint(), _LaterExternalEntryPoint()]
         return list(registered)
 
     monkeypatch.setattr(registry_module, "entry_points", entry_points_with_extension)
     project_dir = write_minimal_project(tmp_path)
     reader = StateReader(database, SystemClock())
     try:
-        app = _app(reader, project_dir, widget_names=["usage", _EXTERNAL_WIDGET_NAME])
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["usage", _LATER_EXTERNAL_WIDGET_NAME, _EXTERNAL_WIDGET_NAME],
+        )
         async with app.run_test(size=(72, 30)) as pilot:
             workspace_screen = app.screen
+            await pilot.press("v")
+            await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
+            extension_choices = app.screen.query_one("#focus-views-list", ListView)
+            extension_labels = tuple(
+                _rendered_text(item.query_one(Static))
+                for item in extension_choices.children
+                if isinstance(item, ListItem)
+                and _rendered_text(item.query_one(Static)).startswith("Extensions ·")
+            )
+            assert extension_labels.index("Extensions · Later-Widget") < extension_labels.index(
+                "Extensions · Outside-Widget"
+            )
+            await _choose_focus_view(app, pilot, "Extensions · Later-Widget", mouse=True)
+            later_panel = app.screen.query_one("#later-external-widget-panel", Static)
+            assert later_panel.region.width > 0
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is workspace_screen, timeout=2)
+
             await pilot.press("v")
             await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
             await _choose_focus_view(app, pilot, "Extensions · Outside-Widget", mouse=True)

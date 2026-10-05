@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -71,6 +72,7 @@ _FORM_SCROLL_TEST_OFFSET = 8
 _LONG_PACKET_LINES = 80
 _LAST_PACKET_LINE = "This is the final retained packet line."
 _LIVE_RUNG = Rung(agent="codex", model="sol", effort="high")
+_NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
 
 
 def _seed_live_session(connection: Connection, clock: FakeClock, task_id: str) -> None:
@@ -108,6 +110,62 @@ def _services(
 
 def _screen(app: PaletteApp) -> PaletteScreen:
     return cast("PaletteScreen", app.screen)
+
+
+def _capture_palette(app: PaletteApp, name: str) -> None:
+    configured_directory = os.environ.get(_NATIVE_VISUAL_REVIEW_DIR_ENV)
+    if configured_directory is None:
+        return
+    capture_dir = Path(configured_directory)
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    output_kind = (
+        "color"
+        if os.environ.get("TERM") == "xterm-256color"
+        and "NO_COLOR" not in os.environ
+        and "FORCE_COLOR" not in os.environ
+        else "mono"
+    )
+    path = capture_dir / name.replace("-color.svg", f"-{output_kind}.svg")
+    path.write_text(app.export_screenshot(), encoding="utf-8")
+
+
+async def _click_menu_button(
+    pilot: Pilot[None],
+    screen: PaletteScreen,
+    button_id: str,
+) -> None:
+    button = screen.query_one(f"#{button_id}", Button)
+    menu = screen.query_one("#palette-menu", VerticalScroll)
+    parent = button.parent
+    while parent is not None and parent is not menu:
+        if not parent.display:
+            more_actions = screen.query_one("#palette-menu-more-actions", Button)
+            menu.scroll_to_widget(more_actions, animate=False, immediate=True)
+            await pilot.pause()
+            await pilot.click(more_actions)
+            await wait_until(lambda parent=parent: parent.display, timeout=2)
+            break
+        parent = parent.parent
+    menu.scroll_to_widget(button, animate=False, immediate=True)
+    await pilot.pause()
+    await pilot.click(button)
+
+
+def _assert_context_menu_role_actions(
+    screen: PaletteScreen,
+    queue: CommandQueue,
+) -> VerticalScroll:
+    menu = screen.query_one("#palette-menu", VerticalScroll)
+    assert menu.display
+    assert screen.query_one("#palette-menu-action-submit").display
+    assert screen.query_one("#palette-menu-action-stop").display
+    assert screen.query_one("#palette-menu-action-take-over").display
+    assert not screen.query_one("#palette-menu-action-resume").display
+    assert not screen.query_one("#palette-menu-action-hand-back").display
+    assert not screen.query_one("#palette-menu-task-actions").display
+    assert screen.query_one("#palette-menu-more-actions").display
+    assert queue.pending() == []
+    return menu
 
 
 def _palette_app(
@@ -337,9 +395,10 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
             command_id=queue.pending()[0].id,
         )
 
-        screen.query_one("#action-search", Input).value = "rung"
-        await pilot.pause()
-        await _open_action(pilot, screen, "rung")
+        menu = screen.query_one("#palette-menu", VerticalScroll)
+        await pilot.click("#palette-back-to-menu")
+        await wait_until(lambda: menu.display, timeout=2)
+        await _click_menu_button(pilot, screen, "palette-menu-action-rung")
         screen.query_one("#rung", Input).value = "codex:sol:high"
         assert not screen.query_one("#palette-submit", Button).disabled, _static_text(
             screen, "#palette-action-state"
@@ -375,16 +434,9 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        menu = screen.query_one("#palette-menu", VerticalScroll)
-        assert menu.display
-        assert screen.query_one("#palette-menu-action-submit").display
-        assert screen.query_one("#palette-menu-action-stop").display
-        assert screen.query_one("#palette-menu-action-take-over").display
-        assert not screen.query_one("#palette-menu-action-resume").display
-        assert not screen.query_one("#palette-menu-action-hand-back").display
-        assert queue.pending() == []
+        menu = _assert_context_menu_role_actions(screen, queue)
 
-        await pilot.click("#palette-menu-action-message")
+        await _click_menu_button(pilot, screen, "palette-menu-action-message")
         assert not menu.display
         assert screen.query_one("#field-role").display
         assert screen.query_one("#field-message").display
@@ -398,12 +450,12 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         assert message.text == guidance
         assert queue.pending() == []
 
-        await pilot.click("#palette-menu-action-message")
+        await _click_menu_button(pilot, screen, "palette-menu-action-message")
         assert message.text == guidance
         assert screen.query_one("#field-role").display
         await pilot.click("#palette-back-to-menu")
         await wait_until(lambda: menu.display, timeout=2)
-        await pilot.click("#palette-menu-action-take-over")
+        await _click_menu_button(pilot, screen, "palette-menu-action-take-over")
         role = cast("Select[str]", screen.query_one("#role", Select))
         assert role.value == Role.IMPLEMENTER.value
         await wait_until(lambda: app.focused is role, timeout=2)
@@ -423,6 +475,65 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         )
         assert not screen.query_one("#palette-menu-action-message").display
         assert queue.pending() == []
+
+
+async def test_context_menu_answers_the_recorded_question_without_a_target_picker(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Context menu recorded answer")
+    escalation, _ = _seed_escalation(
+        connection,
+        clock,
+        task.id,
+        tmp_path,
+        EscalationReason.DECISION_REQUIRED,
+    )
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(task_id=task.id),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        answer_button = screen.query_one("#palette-menu-answer", Button)
+        assert answer_button.display
+        _capture_palette(app, "task101-answer-healthy-menu-120x32-color.svg")
+        await _click_menu_button(pilot, screen, "palette-menu-answer")
+        assert not screen.query_one("#field-escalation").display
+        assert not screen.query_one("#field-task-search").display
+        assert not screen.query_one("#field-task-choice").display
+        assert not screen.query_one("#field-task-id").display
+        assert screen.query_one("#field-resolution-text").display
+        assert screen.query_one("#palette-submit", Button).label == "Submit answer"
+        assert queue.pending() == []
+
+        summary = _static_text(screen, "#palette-escalation-summary")
+        assert escalation.id in summary
+        assert "Which behavior should remain?" in summary
+        assert "Keep existing behavior" not in summary
+        assert "Preserve the current call pattern." not in summary
+        assert "Which behavior should remain?" in _static_text(screen, "#palette-original-packet")
+        assert "Evidence error" not in _static_text(screen, "#palette-evidence-error")
+        _capture_palette(app, "task101-answer-healthy-recorded-packet-120x32-color.svg")
+        answer = screen.query_one("#resolution-text", TextArea)
+        await wait_until(lambda: app.focused is answer, timeout=2)
+        await pilot.press(*"Keep the recorded call pattern.")
+        assert queue.pending() == []
+
+        await pilot.click("#palette-submit")
+        await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
+        command = queue.pending()[0].command
+        assert isinstance(command, Resolve)
+        assert command.escalation_id == escalation.id
+        assert command.resolution == AnswerResolution(text="Keep the recorded call pattern.")
 
 
 async def test_project_context_menu_has_no_task_targets(
@@ -447,6 +558,7 @@ async def test_project_context_menu_has_no_task_targets(
         assert _static_text(screen, "#palette-menu-context") == "Project"
         assert not screen.query_one("#palette-menu-task-actions").display
         assert not screen.query_one("#palette-menu-task-views").display
+        assert not screen.query_one("#palette-menu-more-actions").display
         assert screen.query_one("#palette-menu-action-submit").display
         assert screen.query_one("#palette-menu-action-stop").display
         assert queue.pending() == []
@@ -475,7 +587,7 @@ async def test_context_menu_preserves_an_explicit_unavailable_role(
         await pilot.pause()
         screen = _screen(app)
         assert screen.query_one("#palette-menu-action-take-over").display
-        await pilot.click("#palette-menu-action-take-over")
+        await _click_menu_button(pilot, screen, "palette-menu-action-take-over")
         assert cast("Select[str]", screen.query_one("#role", Select)).value == Role.LEADER.value
         assert screen.query_one("#palette-submit", Button).disabled
         assert queue.pending() == []
@@ -502,6 +614,9 @@ async def test_contextual_project_actions_queue_only_after_explicit_submission(
         screen = _screen(app)
         menu = screen.query_one("#palette-menu", VerticalScroll)
         assert menu.display
+        assert not screen.query_one("#palette-menu-project-actions").display
+        await pilot.click("#palette-menu-more-actions")
+        assert screen.query_one("#palette-menu-project-actions").display
         assert queue.pending() == []
 
         guidance = "Record the requested work before the next release."
@@ -954,13 +1069,17 @@ async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
         await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
         say_id = queue.pending()[0].id
 
-        await _open_action(pilot, screen, "pause")
-        await _set_target(pilot, screen, task.id)
+        menu = screen.query_one("#palette-menu", VerticalScroll)
+        await pilot.click("#palette-back-to-menu")
+        await wait_until(lambda: menu.display, timeout=2)
+        await _click_menu_button(pilot, screen, "palette-menu-action-pause")
         await pilot.click("#palette-submit")
         await wait_until(lambda: len(queue.pending()) == 2, timeout=2)
         pause_id = queue.pending()[1].id
 
-        await _open_action(pilot, screen, "message")
+        await pilot.click("#palette-back-to-menu")
+        await wait_until(lambda: menu.display, timeout=2)
+        await _click_menu_button(pilot, screen, "palette-menu-action-message")
         assert screen.query_one("#palette-submit", Button).disabled
         await pilot.click("#palette-submit")
         assert [item.id for item in queue.pending()] == [say_id, pause_id]
@@ -1561,6 +1680,7 @@ async def test_palette_disables_an_escalation_after_another_client_cancels_it(
             ),
             timeout=2,
         )
+        _capture_palette(app, "task101-answer-stale-resolution-120x32-color.svg")
         assert screen.query_one("#resolution-text", TextArea).text == guidance
         assert queries.command_history().total_count == 2
 

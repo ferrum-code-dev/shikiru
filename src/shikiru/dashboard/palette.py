@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import TYPE_CHECKING, cast, get_args
 
+from rich.text import Text
 from textual.app import App
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -37,6 +38,7 @@ from shikiru.operator.queries import (
     OperatorTaskAction,
 )
 from shikiru.ui.theme import install_theme
+from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 if TYPE_CHECKING:
     from textual import events
@@ -114,6 +116,23 @@ PALETTE_ACTIONS = (
     ("Export task evidence", _ACTION_EXPORT),
     ("Stop engine", _ACTION_STOP),
 )
+SUBMIT_ACTION_LABELS = {
+    _ACTION_SUBMIT: "Submit task",
+    _ACTION_PRIORITIZE: "Set priority",
+    _ACTION_PAUSE: "Pause task",
+    _ACTION_PAUSE_NOW: "Pause now",
+    _ACTION_RESUME: "Resume task",
+    _ACTION_TAKE_OVER: "Take over role",
+    _ACTION_HAND_BACK: "Hand back role",
+    _ACTION_CANCEL: "Cancel task",
+    _ACTION_RETRY: "Retry task",
+    _ACTION_RUNG: "Change rung",
+    _ACTION_MESSAGE: "Queue message",
+    _ACTION_PEEK: "Open session",
+    _ACTION_RESOLVE: "Submit resolution",
+    _ACTION_EXPORT: "Export evidence",
+    _ACTION_STOP: "Stop engine",
+}
 _TASK_ROLES = TASK_ACTION_ROLES
 _ROLE_OPTIONS = tuple((role.value.title(), role.value) for role in _TASK_ROLES)
 _MODE_OPTIONS = (
@@ -187,6 +206,7 @@ _PALETTE_FORM_ID = "palette-form"
 _PALETTE_MENU_ID = "palette-menu"
 _PALETTE_MENU_ACTION_PREFIX = "palette-menu-action-"
 _PALETTE_MENU_TASK_ACTIONS = "palette-menu-task-actions"
+_PALETTE_MENU_MORE_ACTIONS = "palette-menu-more-actions"
 _PALETTE_MENU_PROJECT_ACTIONS = "palette-menu-project-actions"
 _PALETTE_MENU_TASK_VIEWS = "palette-menu-task-views"
 _PALETTE_MENU_CONTEXT = "palette-menu-context"
@@ -195,10 +215,19 @@ _PALETTE_BACK_TO_MENU = "palette-back-to-menu"
 _PALETTE_ROUTE_EVIDENCE = "palette-menu-view-evidence"
 _PALETTE_ROUTE_USAGE = "palette-menu-view-usage"
 _PALETTE_ROUTE_VIEWS = "palette-menu-view-secondary"
+_PALETTE_ROUTE_ANSWER = "palette-menu-answer"
+_PALETTE_ROUTE_INSPECT = "palette-menu-inspect"
+_PALETTE_ROUTE_COMMANDS = "palette-menu-commands"
+_PALETTE_ROUTE_DIAGNOSTICS = "palette-menu-diagnostics"
+_PALETTE_MENU_PRIMARY = "palette-menu-primary"
+_PRIMARY_TASK_ACTIONS = frozenset({_ACTION_MESSAGE, _ACTION_TAKE_OVER, _ACTION_HAND_BACK})
 _TASK_PALETTE_ROUTES = {
+    _PALETTE_ROUTE_INSPECT: TaskPaletteRoute.INSPECT,
     _PALETTE_ROUTE_EVIDENCE: TaskPaletteRoute.EVIDENCE,
     _PALETTE_ROUTE_USAGE: TaskPaletteRoute.USAGE,
     _PALETTE_ROUTE_VIEWS: TaskPaletteRoute.VIEWS,
+    _PALETTE_ROUTE_COMMANDS: TaskPaletteRoute.COMMANDS,
+    _PALETTE_ROUTE_DIAGNOSTICS: TaskPaletteRoute.DIAGNOSTICS,
 }
 _PALETTE_ESCAPE_KEY = "escape"
 _PALETTE_SHORT_PANE_MAX_ROWS = 18
@@ -206,8 +235,7 @@ _PALETTE_SHORT_PANE_MAX_COLUMNS = 40
 _PALETTE_COMPACT_TEXT_AREA_HEIGHT = 3
 _PALETTE_COMPACT_RESULT_MAX_HEIGHT = 3
 _PALETTE_RESULT_MAX_HEIGHT = 12
-_PALETTE_ZERO_VERTICAL_PADDING = 0
-_PALETTE_STANDARD_VERTICAL_PADDING = 1
+_PALETTE_VERTICAL_PADDING = 1
 _PALETTE_HORIZONTAL_PADDING = 2
 _PALETTE_TEXT_AREA_HEIGHTS = (
     (_FIELD_REQUEST, 6),
@@ -290,21 +318,30 @@ _ACTION_DISABLED_PREFIX = "unavailable: "
 PaneSelector = Callable[[str], Awaitable[None]]
 
 
+def _context_menu_entry(label: str, meaning: str) -> Text:
+    return Text.assemble(
+        (f"\u203a {label}", STEEL_BLUE),
+        (f"  {meaning}", SECONDARY_TEXT_COLOR),
+    )
+
+
 class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     """Render operator actions, dispatch commands and show their acknowledgements."""
 
     DEFAULT_CSS = """
     PaletteScreen { align: center middle; background: $background 80%; }
     #palette-frame {
-        width: 90%;
-        height: 90%;
-        max-width: 100;
+        width: 100%;
+        height: auto;
+        max-height: 100%;
+        max-width: 64;
         border: solid $focus;
         padding: 1 2;
         background: $surface;
         color: $primary-text;
     }
-    #palette-menu { height: 1fr; }
+    #palette-menu { height: auto; max-height: 1fr; }
+    #palette-menu-primary { height: auto; }
     #palette-menu-context { height: 1; color: $secondary-text; }
     #palette-heading { height: 1; }
     #palette-title { width: 1fr; height: 1; }
@@ -318,26 +355,34 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     }
     #palette-menu-task-views { height: auto; margin-top: 1; color: $secondary-text; }
     #palette-menu-task-actions Label, #palette-menu-project-actions Label {
-        height: 1; color: $secondary-text;
+        height: 1; color: $secondary-text; text-style: none;
     }
-    #palette-menu-task-views Label { height: 1; color: $secondary-text; }
+    #palette-menu-task-views Label { height: 1; color: $secondary-text; text-style: none; }
     #palette-menu Button {
-        width: 100%; height: auto; min-height: 1; margin: 0; padding: 0 1;
+        width: 100%; height: auto; min-height: 1; margin: 0; padding: 0 1 1 1;
         border: none; background: $surface; color: $primary-text;
-        content-align: left middle; text-wrap: wrap; text-style: none;
+        content-align: left middle; text-align: left; text-wrap: wrap; text-style: none;
+    }
+    #palette-menu-primary Button {
+        width: 100%; height: auto; min-height: 2; margin: 0; padding: 0 1 1 1;
+        border: none; background: $surface; text-align: left; text-style: none;
     }
     #palette-menu Button:focus, #palette-back-to-menu:focus {
         border: solid $focus; color: $primary-text; text-style: reverse;
     }
-    #palette-form { height: 1fr; min-height: 4; }
+    #palette-form {
+        height: 1fr; max-height: 1fr; min-height: 4; margin-top: 1; padding-top: 1;
+        border-top: solid $neutral-border;
+    }
+    #field-palette-escalation-summary { height: auto; }
     .palette-field { height: auto; margin-bottom: 1; }
-    .palette-field Label { height: 1; }
+    .palette-field Label { height: 1; color: $secondary-text; text-style: none; }
     .palette-field Input, .palette-field Select { width: 100%; }
     .palette-field Input:focus,
     .palette-field TextArea:focus,
     #palette-submit:focus {
         border: round $focus;
-        text-style: bold reverse;
+        text-style: reverse;
     }
     .palette-field Select:focus > SelectCurrent { border: tall $focus; }
     #palette-result-scroll { height: auto; max-height: 12; margin-top: 1; }
@@ -349,8 +394,10 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     #message { height: 4; }
     #resolution-text { height: 5; }
     #palette-submit, #palette-back-to-menu {
-        height: 1; min-height: 1; margin-top: 1; padding: 0 1; border: none;
+        height: 1; min-height: 1; margin: 0 0 0 1; padding: 0 1; border: none;
+        text-style: none;
     }
+    #palette-actions { width: 100%; height: auto; margin-top: 1; align-horizontal: right; }
     #palette-submit:focus, #palette-back-to-menu:focus {
         text-style: reverse;
     }
@@ -368,6 +415,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         evidence_exporter: TaskEvidenceExporter | None = None,
         remember_contextual_draft: Callable[[PaletteDraft], None] | None = None,
         task_routes_available: bool = False,
+        project_diagnostics_available: bool = False,
     ) -> None:
         """Use the operator services for actions and queries and inject pane selection."""
         super().__init__()
@@ -376,7 +424,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._contextual_palette = initial_context is not None
         self._initial_context = initial_context or PaletteRequest()
         self._initial_action = self._initial_context.action or initial_action
-        self._answer_resolution_route = self._initial_action.startswith("resolve ")
+        self._answer_resolution_route = self._initial_context.direct_answer
         self._menu_available = self._contextual_palette
         self._menu_visible = self._menu_available and self._initial_action == _EMPTY
         self._pane_selector = pane_selector
@@ -384,6 +432,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._evidence_exporter = evidence_exporter
         self._remember_contextual_draft = remember_contextual_draft
         self._task_routes_available = task_routes_available
+        self._project_diagnostics_available = project_diagnostics_available
+        self._more_actions_expanded = False
         self._role_is_explicit = self._initial_context.role is not None
         self._task_search_tasks: tuple[TaskSummary, ...] = ()
         self._task_search_count = 0
@@ -420,21 +470,71 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 yield Button("Close", id=_PALETTE_CLOSE)
             yield from self._compose_menu()
             yield from self._compose_form()
-            yield Button("Back to actions", id=_PALETTE_BACK_TO_MENU)
-            yield Button("Run action", id=_SUBMIT_ID, variant="primary")
+            with Vertical(id="palette-actions"):
+                yield Button("Back to actions", id=_PALETTE_BACK_TO_MENU)
+                yield Button("Run action", id=_SUBMIT_ID, variant="primary")
 
     def _compose_menu(self) -> ComposeResult:
         with VerticalScroll(id=_PALETTE_MENU_ID):
             yield Static("", id=_PALETTE_MENU_CONTEXT, markup=False)
+            with Vertical(id=_PALETTE_MENU_PRIMARY):
+                yield Button(
+                    _context_menu_entry("Answer decision", "Answer the recorded decision"),
+                    id=_PALETTE_ROUTE_ANSWER,
+                )
+                yield Button(
+                    _context_menu_entry("Inspect task", "Read situation and stage"),
+                    id=_PALETTE_ROUTE_INSPECT,
+                )
+                yield Button(
+                    _context_menu_entry(
+                        "Evidence & reports",
+                        "Reports, verdicts and engine facts",
+                    ),
+                    id=_PALETTE_ROUTE_EVIDENCE,
+                )
+                yield Button(
+                    _context_menu_entry("Message a role", "Delivered on the next role turn"),
+                    id=f"{_PALETTE_MENU_ACTION_PREFIX}{_ACTION_MESSAGE}",
+                )
+                yield Button(
+                    _context_menu_entry("Take over a role", "Stop the turn; hold this task"),
+                    id=f"{_PALETTE_MENU_ACTION_PREFIX}{_ACTION_TAKE_OVER}",
+                )
+                yield Button(
+                    _context_menu_entry(
+                        "Hand back a role",
+                        "Release this role; remaining holds apply",
+                    ),
+                    id=f"{_PALETTE_MENU_ACTION_PREFIX}{_ACTION_HAND_BACK}",
+                )
+                yield Button(
+                    _context_menu_entry("Usage", "Recorded session values"),
+                    id=_PALETTE_ROUTE_USAGE,
+                )
+                yield Button(
+                    _context_menu_entry("Commands", "Durable outcomes"),
+                    id=_PALETTE_ROUTE_COMMANDS,
+                )
+                yield Button(
+                    _context_menu_entry("Project diagnostics", "Secondary observations"),
+                    id=_PALETTE_ROUTE_DIAGNOSTICS,
+                )
+            yield Button(
+                _context_menu_entry("More actions", "Task changes and project controls"),
+                id=_PALETTE_MENU_MORE_ACTIONS,
+            )
             with Vertical(id=_PALETTE_MENU_TASK_ACTIONS):
-                yield Label("Task actions")
+                yield Label("More task actions")
                 for label, action in PALETTE_ACTIONS:
-                    if action not in {_ACTION_SUBMIT, _ACTION_STOP}:
+                    if action not in {
+                        _ACTION_SUBMIT,
+                        _ACTION_STOP,
+                        *_PRIMARY_TASK_ACTIONS,
+                    }:
                         yield Button(label, id=f"{_PALETTE_MENU_ACTION_PREFIX}{action}")
             with Vertical(id=_PALETTE_MENU_TASK_VIEWS):
-                yield Label("Task views")
-                yield Button("Evidence", id=_PALETTE_ROUTE_EVIDENCE)
-                yield Button("Usage details", id=_PALETTE_ROUTE_USAGE)
+                yield Label("Secondary views and extensions")
                 yield Button("Views and extensions", id=_PALETTE_ROUTE_VIEWS)
             with Vertical(id=_PALETTE_MENU_PROJECT_ACTIONS):
                 yield Label("Project actions")
@@ -648,11 +748,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     def _set_text_area_heights(self, width: int, height: int) -> None:
         compact = height <= _PALETTE_SHORT_PANE_MAX_ROWS
         compact_layout = compact or width <= _PALETTE_SHORT_PANE_MAX_COLUMNS
-        vertical_padding = (
-            _PALETTE_ZERO_VERTICAL_PADDING if compact_layout else _PALETTE_STANDARD_VERTICAL_PADDING
-        )
         self.query_one("#palette-frame").styles.padding = (
-            vertical_padding,
+            _PALETTE_VERTICAL_PADDING,
             _PALETTE_HORIZONTAL_PADDING,
         )
         self.query_one("#palette-result-scroll").styles.max_height = (
@@ -762,6 +859,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self.query_one(f"#{_ADVANCED_FIELDS_ID}").display = self._advanced_expanded
         elif button_id == _PALETTE_BACK_TO_MENU:
             self._return_to_menu()
+        elif button_id == _PALETTE_MENU_MORE_ACTIONS:
+            self._more_actions_expanded = not self._more_actions_expanded
+            self._refresh_context_menu()
+        elif button_id == _PALETTE_ROUTE_ANSWER:
+            self._open_menu_action(_ACTION_RESOLVE, direct_answer=True)
         elif button_id.startswith(_PALETTE_MENU_ACTION_PREFIX):
             action = button_id.removeprefix(_PALETTE_MENU_ACTION_PREFIX)
             self._open_menu_action(action)
@@ -790,7 +892,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         else:
             self.dismiss()
 
-    def _open_menu_action(self, action: str) -> None:
+    def _open_menu_action(self, action: str, *, direct_answer: bool = False) -> None:
         if action not in {value for _, value in PALETTE_ACTIONS}:
             return
         same_form = self._form_position_action == action
@@ -798,14 +900,22 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self._form_focus_id = None
             self._form_scroll_y = 0
         if action == _ACTION_RESOLVE:
+            self._answer_resolution_route = direct_answer
             escalation_id = self._context_escalation_id()
             if escalation_id is None:
                 return
             cast(
                 "Select[str]", self.query_one(f"#{_FIELD_ESCALATION}", Select)
             ).value = escalation_id
+            self._show_escalation(escalation_id, force=True)
+            if direct_answer:
+                self._select_direct_answer()
         if action in _FORM_ROLE_ACTIONS:
             self._choose_available_role(action)
+        action_search = self.query_one(f"#{_FIELD_ACTION_SEARCH}", Input)
+        if action_search.value:
+            action_search.value = _EMPTY
+            self._refresh_action_options()
         action_select = cast("Select[str]", self.query_one(f"#{_FIELD_ACTION}", Select))
         action_select.value = action
         self._route_error = None
@@ -832,10 +942,23 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._menu_visible = visible
         menu = self.query_one(f"#{_PALETTE_MENU_ID}", VerticalScroll)
         form = self.query_one(f"#{_PALETTE_FORM_ID}", VerticalScroll)
+        compact_layout = (
+            self.size.height <= _PALETTE_SHORT_PANE_MAX_ROWS
+            or self.size.width <= _PALETTE_SHORT_PANE_MAX_COLUMNS
+        )
+        actions = self.query_one("#palette-actions", Vertical)
+        actions.styles.layout = "horizontal" if compact_layout else "vertical"
+        actions.styles.height = 1 if compact_layout else "auto"
+        self.query_one("#palette-frame").styles.height = (
+            "auto" if visible or not compact_layout else "100%"
+        )
         menu.display = visible
         form.display = not visible
         self.query_one(f"#{_PALETTE_BACK_TO_MENU}", Button).display = (
             self._contextual_palette and not visible
+        )
+        self.query_one(f"#{_PALETTE_BACK_TO_MENU}", Button).label = (
+            "Back" if self.size.width <= _PALETTE_SHORT_PANE_MAX_COLUMNS else "Back to actions"
         )
         self.query_one(f"#{_SUBMIT_ID}", Button).display = not visible
         title = self.query_one("#palette-title", Label)
@@ -903,6 +1026,12 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             )
         if draft is None:
             return
+        if (
+            action == _ACTION_RESOLVE
+            and self._answer_resolution_route
+            and draft.escalation_id != self._selected_value(_FIELD_ESCALATION)
+        ):
+            return
         if self._initial_context.role is None and draft.role is not None:
             cast("Select[str]", self.query_one(f"#{_FIELD_ROLE}", Select)).value = draft.role
             self._role_is_explicit = draft.role_explicit
@@ -931,25 +1060,77 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         task_group = self.query_one(f"#{_PALETTE_MENU_TASK_ACTIONS}", Vertical)
         task_exists = task_id is not None and self._queries.get_task_state(task_id) is not None
         task_actions = self._contextual_task_actions(task_id if task_exists else None)
+        available_actions = {item_action for _, item_action in task_actions}
         for _, action in PALETTE_ACTIONS:
+            if action in _PRIMARY_TASK_ACTIONS:
+                self.query_one(f"#{_PALETTE_MENU_ACTION_PREFIX}{action}", Button).display = (
+                    task_exists and action in available_actions
+                )
+                continue
             button = self.query_one(f"#{_PALETTE_MENU_ACTION_PREFIX}{action}", Button)
             button.display = action in {_ACTION_SUBMIT, _ACTION_STOP} or any(
-                item_action == action for _, item_action in task_actions
+                item_action == action for item_action in available_actions
             )
-        task_group.display = bool(task_actions)
+        secondary_actions = available_actions - _PRIMARY_TASK_ACTIONS
+        project_group = self.query_one(f"#{_PALETTE_MENU_PROJECT_ACTIONS}", Vertical)
+        more_actions = self.query_one(f"#{_PALETTE_MENU_MORE_ACTIONS}", Button)
+        more_actions.display = task_exists
+        more_actions.label = _context_menu_entry(
+            "Fewer actions" if self._more_actions_expanded else "More actions",
+            "Hide task changes and project controls"
+            if self._more_actions_expanded
+            else "Task changes and project controls",
+        )
+        task_group.display = bool(task_exists and secondary_actions and self._more_actions_expanded)
+        project_group.display = self._more_actions_expanded if task_exists else True
         self.query_one(f"#{_PALETTE_MENU_TASK_VIEWS}", Vertical).display = (
             task_exists and self._task_routes_available
         )
         for route_id in (
+            _PALETTE_ROUTE_INSPECT,
             _PALETTE_ROUTE_EVIDENCE,
             _PALETTE_ROUTE_USAGE,
-            _PALETTE_ROUTE_VIEWS,
+            _PALETTE_ROUTE_COMMANDS,
         ):
             self.query_one(f"#{route_id}", Button).display = (
                 task_exists and self._task_routes_available
             )
-        project_group = self.query_one(f"#{_PALETTE_MENU_PROJECT_ACTIONS}", Vertical)
-        project_group.display = True
+        self.query_one(f"#{_PALETTE_ROUTE_ANSWER}", Button).display = (
+            task_exists
+            and task_id is not None
+            and self._answerable_escalation_id(task_id) is not None
+        )
+        self.query_one(f"#{_PALETTE_ROUTE_DIAGNOSTICS}", Button).display = (
+            task_exists and self._project_diagnostics_available
+        )
+        primary_labels = {
+            _ACTION_MESSAGE: ("Message a role", "Delivered on the next role turn"),
+            _ACTION_TAKE_OVER: ("Take over a role", "Stop the turn; hold this task"),
+            _ACTION_HAND_BACK: (
+                "Hand back a role",
+                "Release this role; remaining holds apply",
+            ),
+        }
+        for action, (label, meaning) in primary_labels.items():
+            self.query_one(
+                f"#{_PALETTE_MENU_ACTION_PREFIX}{action}", Button
+            ).label = _context_menu_entry(label, meaning)
+        self.query_one(f"#{_PALETTE_ROUTE_VIEWS}", Button).display = (
+            task_exists and self._task_routes_available
+        )
+
+    def _answerable_escalation_id(self, task_id: str) -> str | None:
+        escalation_id = self._context_escalation_id()
+        if escalation_id is None:
+            return None
+        item = self._escalations.get(escalation_id)
+        if item is None or item.escalation.task_id != task_id:
+            return None
+        if not any(option.label is ResolutionKind.ANSWER for option in item.escalation.options):
+            return None
+        if self._queries.escalation_resolution_disabled_reason(escalation_id) is not None:
+            return None
+        return escalation_id
 
     def _contextual_task_actions(self, task_id: str | None) -> list[tuple[str, str]]:
         if task_id is None:
@@ -1683,7 +1864,10 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         packet: EscalationPacket | None,
         question: str | None,
     ) -> str:
-        lines = [f"{item.escalation.id} · {item.escalation.headline}"]
+        identity = f"{item.escalation.task_id} · {item.escalation.id} · {item.escalation.headline}"
+        if self._answer_resolution_route:
+            return f"{identity}\nQuestion: {question or 'unavailable'}"
+        lines = [identity]
         lines.append(f"Question: {question}" if question else "Question: unavailable")
         lines.append("Agent alternatives")
         if packet is not None and packet.agent_request is not None:
@@ -1758,7 +1942,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             in {_ACTION_TAKE_OVER, _ACTION_HAND_BACK, _ACTION_RUNG, _ACTION_MESSAGE, _ACTION_PEEK},
             "rung": action == _ACTION_RUNG,
             "message": action == _ACTION_MESSAGE,
-            _FIELD_ESCALATION: action == _ACTION_RESOLVE,
+            _FIELD_ESCALATION: action == _ACTION_RESOLVE and not self._answer_resolution_route,
             _ESCALATION_STATUS_ID: action == _ACTION_RESOLVE,
             _ESCALATION_SUMMARY_ID: action == _ACTION_RESOLVE,
             _EVIDENCE_ERROR_ID: action == _ACTION_RESOLVE,
@@ -1770,6 +1954,17 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         }
         for field, visible in groups.items():
             self.query_one(f"#field-{field}").display = visible
+        submit_label = SUBMIT_ACTION_LABELS.get(action, "Submit action")
+        if action == _ACTION_RESOLVE:
+            selected_resolution = self._selected_value(_FIELD_RESOLUTION)
+            submit_label = (
+                "Submit answer"
+                if selected_resolution == ResolutionKind.ANSWER
+                else "Submit retry"
+                if selected_resolution == ResolutionKind.RETRY
+                else SUBMIT_ACTION_LABELS[_ACTION_RESOLVE]
+            )
+        self.query_one(f"#{_SUBMIT_ID}", Button).label = submit_label
         self.query_one(f"#{_ACTION_STATE_ID}").display = action in _TASK_TARGET_ACTIONS
         self.query_one(f"#{_GUIDANCE_ID}").display = action in _ACTION_GUIDANCE
         self.query_one(f"#{_TASK_COUNT_ID}").display = show_task_target

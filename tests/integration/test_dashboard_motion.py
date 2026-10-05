@@ -724,8 +724,9 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             clock.advance(tick)
             await wait_until(
                 lambda: (
-                    _TURN_NAME in plain_text(signal.content)
+                    VIEW_SESSION_STARTED_SIGNAL in plain_text(signal.content)
                     and "1s ago" in plain_text(signal.content)
+                    and _TURN_NAME not in plain_text(signal.content)
                     and "1s" in plain_text(progress.content)
                 ),
                 timeout=_TASK_ACTIVITY_WAIT_SECONDS,
@@ -1106,8 +1107,10 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
     try:
         views = _build_views(reader, project_dir, settings, clock, task)
 
+        opened_actions: list[str] = []
+
         async def open_palette(action: str) -> None:
-            del action
+            opened_actions.append(action)
 
         app = DashboardApp(
             focus_task=None,
@@ -1126,8 +1129,9 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
             await wait_until(lambda: len(list(scroll.query(Static))) == 1, timeout=1)
             row = scroll.query_one(Static)
             assert first.id in plain_text(row.content)
-            assert "Enter inspect" in plain_text(row.content)
             panel.focus()
+            await pilot.press("enter")
+            await wait_until(lambda: opened_actions == [f"resolve {first.id}"], timeout=1)
             await pilot.press("right")
             await wait_until(
                 lambda: (
@@ -1199,8 +1203,10 @@ async def test_focus_attention_keyboard_selects_late_groups_in_the_compact_row(
     try:
         views = _build_views(reader, project_dir, settings, clock, tasks[0])
 
+        opened_actions: list[str] = []
+
         async def open_palette(action: str) -> None:
-            del action
+            opened_actions.append(action)
 
         app = DashboardApp(
             focus_task=None,
@@ -1229,7 +1235,14 @@ async def test_focus_attention_keyboard_selects_late_groups_in_the_compact_row(
                 ),
                 timeout=1,
             )
-            assert "Enter inspect" in plain_text(scroll.query_one(Static).content)
+            panel.focus()
+            await pilot.press("enter")
+            await wait_until(
+                lambda: (
+                    opened_actions == [f"resolve {selected_group.escalations[0].escalation_id}"]
+                ),
+                timeout=1,
+            )
     finally:
         reader.close()
 

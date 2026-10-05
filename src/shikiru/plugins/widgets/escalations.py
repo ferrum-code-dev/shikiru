@@ -155,7 +155,10 @@ class EscalationsPanel(Static):
             if await self._move_decision(_DECISION_MOVE_STEPS[event.key]):
                 event.stop()
         elif event.key == _OPEN_TASK_KEY:
-            await self._open_task_detail(event)
+            if self._focus_row and self._selected_decision() is not None:
+                await self._resolve_decision(event)
+            else:
+                await self._open_task_detail(event)
         elif event.key == _OPEN_KEY:
             self._open_evidence(event)
         elif event.key == _RESOLVE_KEY:
@@ -229,6 +232,7 @@ class EscalationsPanel(Static):
         request = PaletteRequest(
             action=f"resolve {decision.escalation_id}",
             task_id=decision.task_id,
+            direct_answer=True,
         )
         if self._widget_context.open_palette_context is not None:
             await self._widget_context.open_palette_context(request)
@@ -365,10 +369,15 @@ class EscalationsPanel(Static):
     def _render_compact_attention(self) -> Text:
         if self._summary is None:
             return Text("○ Engine status unavailable", style=SECONDARY_TEXT_COLOR)
+        action_hint = (
+            "Enter answer · o evidence"
+            if self._focus_row and self._selected_decision() is not None
+            else "Enter inspect · Ctrl+P actions"
+        )
         return attention_status_text(
             self._attention,
             self._summary,
-            action_hint="Enter inspect · r resolve · o evidence",
+            action_hint=action_hint,
             selected_group_index=self._selected,
             selected_escalation_id=self._selected_escalation_id,
         )

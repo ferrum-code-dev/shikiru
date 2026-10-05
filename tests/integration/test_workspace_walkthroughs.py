@@ -404,6 +404,16 @@ async def _select_palette_action(
     menu = palette.query_one("#palette-menu", VerticalScroll)
     if menu.display:
         button = palette.query_one(f"#palette-menu-action-{action}", Button)
+        parent = button.parent
+        while parent is not None and parent is not menu:
+            if not parent.display:
+                more_actions = palette.query_one("#palette-menu-more-actions", Button)
+                menu.scroll_to_widget(more_actions, animate=False, immediate=True)
+                await pilot.pause()
+                await pilot.click(more_actions)
+                await runtime.wait_for(lambda parent=parent: parent.display)
+                break
+            parent = parent.parent
         menu.scroll_to_widget(button, animate=False, immediate=True)
         button.scroll_visible(animate=False, force=True)
         button.focus()
