@@ -326,7 +326,10 @@ class PaletteScreen(ModalScreen[None]):
     #message { height: 4; }
     #resolution-text { height: 5; }
     #palette-submit, #palette-back-to-menu {
-        height: 1; min-height: 1; margin-top: 1;
+        height: 1; min-height: 1; margin-top: 1; padding: 0 1; border: none;
+    }
+    #palette-submit:focus, #palette-back-to-menu:focus {
+        text-style: reverse;
     }
     """
 
