@@ -1211,16 +1211,21 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
 
             services.engine_running = False
             EventLog(connection, clock).append(EventKind.ENGINE_STOPPED, message="stopped")
-            await wait_until(
-                lambda: (
-                    "Engine stopped" in _rendered_text(_focus_attention_row(attention))
-                    and owned.id in _rendered_text(_focus_attention_row(attention))
-                    and paused.id in _rendered_text(_focus_attention_row(attention))
-                    and "intervention" in _rendered_text(_focus_attention_row(attention))
-                    and "paused" in _rendered_text(_focus_attention_row(attention))
-                ),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
+
+            def stopped_state_visible() -> bool:
+                visible = " ".join(_rendered_widget_lines(_focus_attention_row(attention)))
+                return all(
+                    value in visible
+                    for value in (
+                        "Engine stopped",
+                        owned.id,
+                        paused.id,
+                        "intervention",
+                        "paused",
+                    )
+                )
+
+            await wait_until(stopped_state_visible, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
             visible_status = " ".join(_rendered_widget_lines(_focus_attention_row(attention)))
             assert "intervention" in visible_status
             assert "paused" in visible_status
