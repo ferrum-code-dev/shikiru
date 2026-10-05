@@ -277,7 +277,10 @@ class TaskDetailPanel(Vertical):
     #task-detail-actions-inline:focus { text-style: reverse; }
     #task-detail-evidence-inline:hover,
     #task-detail-actions-inline:hover { color: $primary-text; }
-    #task-detail-evidence-link { width: 100%; height: 1; margin-top: 1; }
+    #task-detail-evidence-link {
+        width: 100%; height: auto; min-height: 2; margin-top: 1;
+        border-top: solid $neutral-border;
+    }
     #task-detail-body.compact-summary #task-detail-identity,
     #task-detail-body.compact-summary #task-detail-ownership,
     #task-detail-body.compact-summary #task-detail-situation,

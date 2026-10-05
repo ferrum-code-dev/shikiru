@@ -662,15 +662,15 @@ class DashboardApp(App[None]):
     #task-view-root #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
     #focus-footer {
-        layout: grid; grid-size: 4 0; grid-columns: auto auto auto auto; grid-gutter: 0 1;
+        layout: grid; grid-size: 4 0; grid-columns: 1fr 1fr 1fr 1fr; grid-gutter: 0 1;
         height: auto; min-height: 2; padding: 0; margin-top: 0; border-top: solid $neutral-border;
         background: $background; color: $secondary-text;
     }
-    #focus-footer Static { width: auto; height: 1; padding: 0 1; color: $secondary-text; }
+    #focus-footer Static { width: 100%; height: auto; padding: 0 1; color: $secondary-text; }
     #focus-footer Button {
-        width: auto; min-width: 1; height: 1; min-height: 1; margin: 0 0 0 1; padding: 0;
+        width: 100%; min-width: 1; height: auto; min-height: 1; margin: 0 0 0 1; padding: 0;
         border: none; background: $background; color: $secondary-text;
-        content-align: left middle; text-align: left; text-style: none;
+        content-align: left top; text-align: left; text-wrap: wrap; text-style: none;
     }
     #focus-footer Button:hover { color: $steel-blue; text-style: none; }
     #focus-footer Button:focus { color: $primary-text; text-style: reverse; }
@@ -1315,7 +1315,7 @@ class DashboardApp(App[None]):
                 else FOCUS_FOOTER_FOUR_COLUMN_COUNT
             )
             footer.styles.grid_size_columns = footer_columns
-            footer.styles.grid_columns = " ".join("auto" for _ in range(footer_columns))
+            footer.styles.grid_columns = " ".join("1fr" for _ in range(footer_columns))
             readouts.styles.max_height = max(
                 1,
                 min(

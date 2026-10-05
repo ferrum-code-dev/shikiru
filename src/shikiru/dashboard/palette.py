@@ -232,11 +232,17 @@ _TASK_PALETTE_ROUTES = {
 _PALETTE_ESCAPE_KEY = "escape"
 _PALETTE_SHORT_PANE_MAX_ROWS = 18
 _PALETTE_SHORT_PANE_MAX_COLUMNS = 40
+_PALETTE_TINY_PANE_MAX_ROWS = 8
+_PALETTE_ACTION_BUTTON_MIN_COLUMNS = 16
 _PALETTE_COMPACT_TEXT_AREA_HEIGHT = 3
 _PALETTE_COMPACT_RESULT_MAX_HEIGHT = 3
 _PALETTE_RESULT_MAX_HEIGHT = 12
 _PALETTE_VERTICAL_PADDING = 1
 _PALETTE_HORIZONTAL_PADDING = 2
+_PALETTE_FORM_STANDARD_FIXED_ROWS = 8
+_PALETTE_FORM_TINY_FIXED_ROWS = 4
+_PALETTE_INLINE_ACTIONS_ROWS = 1
+_PALETTE_STACKED_ACTIONS_ROWS = 2
 _PALETTE_TEXT_AREA_HEIGHTS = (
     (_FIELD_REQUEST, 6),
     (_FIELD_MESSAGE, 4),
@@ -368,12 +374,13 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         border: none; background: $surface; text-align: left; text-style: none;
     }
     #palette-menu Button:focus, #palette-back-to-menu:focus {
-        border: solid $focus; color: $primary-text; text-style: reverse;
+        color: $primary-text; text-style: reverse;
     }
     #palette-form {
-        height: 1fr; max-height: 1fr; min-height: 4; margin-top: 1; padding-top: 1;
+        height: auto; max-height: 1fr; min-height: 0; margin-top: 1; padding-top: 0;
         border-top: solid $neutral-border;
     }
+    #palette-form.tiny { border-top: none; }
     #field-palette-escalation-summary { height: auto; }
     .palette-field { height: auto; margin-bottom: 1; }
     .palette-field Label { height: 1; color: $secondary-text; text-style: none; }
@@ -397,7 +404,13 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         height: 1; min-height: 1; margin: 0 0 0 1; padding: 0 1; border: none;
         text-style: none;
     }
-    #palette-actions { width: 100%; height: auto; margin-top: 1; align-horizontal: right; }
+    #palette-actions {
+        layout: horizontal; width: 100%; height: auto; margin-top: 1; align-horizontal: right;
+    }
+    #palette-actions Button {
+        width: auto; max-width: 100%; height: auto; min-height: 1; padding: 0;
+        text-wrap: wrap; text-style: none;
+    }
     #palette-submit:focus, #palette-back-to-menu:focus {
         text-style: reverse;
     }
@@ -603,7 +616,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         with Vertical(id=f"field-{_ESCALATION_SUMMARY_ID}"):
             yield Static("", id=_ESCALATION_SUMMARY_ID, markup=False)
         yield from self._select_field("Resolution", _FIELD_RESOLUTION, ())
-        yield from self._text_area_field("Answer", "resolution-text", "Guidance for the Leader")
+        yield from self._text_area_field(
+            "Answer guidance", "resolution-text", "Guidance for the Leader"
+        )
         yield from self._input_field(
             "Retry rung (optional)", "resolution-rung", "agent:model:effort"
         )
@@ -652,6 +667,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         scroll_y = form.scroll_y
         focused = cast("App[None]", self.app).focused
         self._set_text_area_heights(event.size.width, event.size.height)
+        self._show_menu(self._menu_visible)
         self.call_after_refresh(self._restore_form_layout, scroll_y, focused)
 
     async def on_mount(self) -> None:
@@ -733,6 +749,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._update_fields(action_select.value)
         if self._answer_resolution_route:
             self._select_direct_answer()
+            self._update_fields(action_select.value)
         self._restore_contextual_form_draft(self._selected_value(_FIELD_ACTION))
         self._form_position_action = self._selected_value(_FIELD_ACTION)
 
@@ -942,16 +959,52 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._menu_visible = visible
         menu = self.query_one(f"#{_PALETTE_MENU_ID}", VerticalScroll)
         form = self.query_one(f"#{_PALETTE_FORM_ID}", VerticalScroll)
-        compact_layout = (
+        tiny_pane = self.size.height <= _PALETTE_TINY_PANE_MAX_ROWS
+        short_pane = (
             self.size.height <= _PALETTE_SHORT_PANE_MAX_ROWS
             or self.size.width <= _PALETTE_SHORT_PANE_MAX_COLUMNS
         )
+        narrow_pane = self.size.width <= _PALETTE_SHORT_PANE_MAX_COLUMNS
+        frame = self.query_one("#palette-frame")
         actions = self.query_one("#palette-actions", Vertical)
-        actions.styles.layout = "horizontal" if compact_layout else "vertical"
-        actions.styles.height = 1 if compact_layout else "auto"
-        self.query_one("#palette-frame").styles.height = (
-            "auto" if visible or not compact_layout else "100%"
+        actions.styles.layout = "horizontal" if tiny_pane or not narrow_pane else "vertical"
+        actions.styles.height = "auto"
+        actions.styles.margin = (0 if tiny_pane else 1, 0, 0, 0)
+        form.set_class(tiny_pane, "tiny")
+        frame.styles.padding = (
+            (0, _PALETTE_HORIZONTAL_PADDING)
+            if tiny_pane
+            else (_PALETTE_VERTICAL_PADDING, _PALETTE_HORIZONTAL_PADDING)
         )
+        form.styles.margin = (0 if tiny_pane else 1, 0, 0, 0)
+        form.styles.padding = (0, 0, 0, 0)
+        form.styles.max_height = max(
+            1,
+            self.size.height
+            - (_PALETTE_FORM_TINY_FIXED_ROWS if tiny_pane else _PALETTE_FORM_STANDARD_FIXED_ROWS)
+            - (_PALETTE_STACKED_ACTIONS_ROWS if narrow_pane else _PALETTE_INLINE_ACTIONS_ROWS),
+        )
+        for button_id in (_PALETTE_BACK_TO_MENU, _SUBMIT_ID):
+            button = self.query_one(f"#{button_id}", Button)
+            button.styles.width = "auto" if tiny_pane else "100%" if narrow_pane else "auto"
+            button.styles.min_width = 1 if tiny_pane else _PALETTE_ACTION_BUTTON_MIN_COLUMNS
+            button.styles.margin = 0 if narrow_pane else (0, 0, 0, 1)
+            button.styles.height = 1 if narrow_pane else "auto"
+        if tiny_pane:
+            action = self._selected_value(_FIELD_ACTION)
+            compact_submit_label = (
+                "Answer"
+                if self._answer_resolution_route
+                else "Queue"
+                if action == _ACTION_MESSAGE
+                else "Resolve"
+                if action == _ACTION_RESOLVE
+                else "Submit"
+            )
+            self.query_one(f"#{_SUBMIT_ID}", Button).label = compact_submit_label
+        else:
+            self._update_fields(self._selected_value(_FIELD_ACTION))
+        frame.styles.height = "auto" if visible or not short_pane else "100%"
         menu.display = visible
         form.display = not visible
         self.query_one(f"#{_PALETTE_BACK_TO_MENU}", Button).display = (
@@ -979,6 +1032,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             escalation_id = self._selected_value(_FIELD_ESCALATION)
             if escalation_id is not None:
                 target = f"{escalation_id} · {task_id}"
+            if self._answer_resolution_route:
+                return f"Answer decision · {target}"
         elif action in _FORM_ROLE_ACTIONS:
             role = self._selected_value(_FIELD_ROLE)
             if role is not None:
@@ -1084,7 +1139,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         task_group.display = bool(task_exists and secondary_actions and self._more_actions_expanded)
         project_group.display = self._more_actions_expanded if task_exists else True
         self.query_one(f"#{_PALETTE_MENU_TASK_VIEWS}", Vertical).display = (
-            task_exists and self._task_routes_available
+            task_exists and self._task_routes_available and self._more_actions_expanded
         )
         for route_id in (
             _PALETTE_ROUTE_INSPECT,
@@ -1425,7 +1480,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             disabled_reason = self._resolve_disabled_reason() or disabled_reason
         state = self.query_one(f"#{_ACTION_STATE_ID}", Static)
         state.update(f"Unavailable: {disabled_reason}" if disabled_reason is not None else _EMPTY)
-        guidance = _ACTION_GUIDANCE.get(action or "", _EMPTY)
+        guidance = (
+            self._answer_resolution_consequence()
+            if action == _ACTION_RESOLVE and self._answer_resolution_route
+            else _ACTION_GUIDANCE.get(action or "", _EMPTY)
+        )
         self.query_one(f"#{_GUIDANCE_ID}", Static).update(guidance)
         pending_same_form = form_identity in self._pending_form_commands
         self.query_one(f"#{_SUBMIT_ID}", Button).disabled = (
@@ -1474,6 +1533,24 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                     ):
                         reason = "answer is required"
         return reason
+
+    def _answer_resolution_consequence(self) -> str:
+        packet = self._escalation_packet
+        if packet is None:
+            return "Consequence unavailable in the recorded packet."
+        consequence = next(
+            (
+                item.consequences
+                for item in packet.resolutions
+                if item.kind is ResolutionKind.ANSWER
+            ),
+            None,
+        )
+        return (
+            f"Consequence: {consequence}"
+            if consequence is not None
+            else "Consequence unavailable in the recorded packet."
+        )
 
     async def _refresh_after_database_change(self) -> None:
         if self._is_current_screen():
@@ -1809,11 +1886,13 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         status = self.query_one(f"#{_ESCALATION_STATUS_ID}", Static)
         summary = self.query_one(f"#{_ESCALATION_SUMMARY_ID}", Static)
         evidence_error = self.query_one(f"#{_EVIDENCE_ERROR_ID}", Static)
+        status_field = self.query_one(f"#field-{_ESCALATION_STATUS_ID}")
         resolution = cast("Select[str]", self.query_one("#resolution", Select))
         if item is None:
             self._escalation_packet = None
             self._escalation_state_message = None
             status.update(_EMPTY)
+            status_field.display = True
             summary.update(self._route_error or self._missing_escalation_message(escalation_id))
             evidence_error.update(_EMPTY)
             self._show_packet_evidence(None, None)
@@ -1824,6 +1903,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             escalation_id
         )
         status.update(self._escalation_state_message or "Open escalation")
+        status_field.display = (
+            not self._answer_resolution_route or self._escalation_state_message is not None
+        )
         self._escalation_packet = (
             parse_escalation_packet(item.packet) if item.packet is not None else None
         )
@@ -1866,7 +1948,16 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     ) -> str:
         identity = f"{item.escalation.task_id} · {item.escalation.id} · {item.escalation.headline}"
         if self._answer_resolution_route:
-            return f"{identity}\nQuestion: {question or 'unavailable'}"
+            lines = [identity, f"Question: {question or 'unavailable'}"]
+            if packet is not None and packet.agent_request is not None:
+                suggestion = next(
+                    (option for option in packet.agent_request.options if option.recommended),
+                    None,
+                )
+                if suggestion is not None:
+                    lines.append(f"Leader suggestion: {suggestion.label}")
+                    lines.append(f"Suggestion consequence: {suggestion.consequences}")
+            return "\n".join(lines)
         lines = [identity]
         lines.append(f"Question: {question}" if question else "Question: unavailable")
         lines.append("Agent alternatives")
@@ -1943,10 +2034,15 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             "rung": action == _ACTION_RUNG,
             "message": action == _ACTION_MESSAGE,
             _FIELD_ESCALATION: action == _ACTION_RESOLVE and not self._answer_resolution_route,
-            _ESCALATION_STATUS_ID: action == _ACTION_RESOLVE,
+            _ESCALATION_STATUS_ID: action == _ACTION_RESOLVE
+            and (
+                not self._answer_resolution_route
+                or self._escalation_state_message is not None
+                or self._selected_value(_FIELD_ESCALATION) not in self._escalations
+            ),
             _ESCALATION_SUMMARY_ID: action == _ACTION_RESOLVE,
             _EVIDENCE_ERROR_ID: action == _ACTION_RESOLVE,
-            _FIELD_RESOLUTION: action == _ACTION_RESOLVE,
+            _FIELD_RESOLUTION: action == _ACTION_RESOLVE and not self._answer_resolution_route,
             "resolution-text": action == _ACTION_RESOLVE
             and self._selected_value(_FIELD_RESOLUTION) == ResolutionKind.ANSWER,
             "resolution-rung": action == _ACTION_RESOLVE
@@ -1958,7 +2054,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         if action == _ACTION_RESOLVE:
             selected_resolution = self._selected_value(_FIELD_RESOLUTION)
             submit_label = (
-                "Submit answer"
+                "Submit Answer"
                 if selected_resolution == ResolutionKind.ANSWER
                 else "Submit retry"
                 if selected_resolution == ResolutionKind.RETRY

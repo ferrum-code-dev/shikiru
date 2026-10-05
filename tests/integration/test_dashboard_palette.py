@@ -511,29 +511,75 @@ async def test_context_menu_answers_the_recorded_question_without_a_target_picke
         assert not screen.query_one("#field-task-search").display
         assert not screen.query_one("#field-task-choice").display
         assert not screen.query_one("#field-task-id").display
+        assert not screen.query_one("#field-resolution").display
+        assert not screen.query_one("#field-palette-escalation-status").display
         assert screen.query_one("#field-resolution-text").display
-        assert screen.query_one("#palette-submit", Button).label == "Submit answer"
+        submit = screen.query_one("#palette-submit", Button)
+        assert submit.display
+        assert submit.disabled
         assert queue.pending() == []
 
         summary = _static_text(screen, "#palette-escalation-summary")
         assert escalation.id in summary
         assert "Which behavior should remain?" in summary
-        assert "Keep existing behavior" not in summary
-        assert "Preserve the current call pattern." not in summary
+        assert "Keep existing behavior" in summary
+        assert "Preserve the current call pattern." in summary
+        assert "Consequence:" in _static_text(screen, "#palette-guidance")
+        assert screen.query_one("#palette-evidence-original", Collapsible).collapsed
+        assert "Change behavior" in _static_text(screen, "#palette-original-packet")
         assert "Which behavior should remain?" in _static_text(screen, "#palette-original-packet")
         assert "Evidence error" not in _static_text(screen, "#palette-evidence-error")
         _capture_palette(app, "task101-answer-healthy-recorded-packet-120x32-color.svg")
         answer = screen.query_one("#resolution-text", TextArea)
         await wait_until(lambda: app.focused is answer, timeout=2)
         await pilot.press(*"Keep the recorded call pattern.")
+        await pilot.press("enter")
+        await pilot.press(*" and update callers.")
+        assert answer.text == "Keep the recorded call pattern.\n and update callers."
+        await wait_until(lambda: not submit.disabled, timeout=2)
         assert queue.pending() == []
+        await _resize_recorded_answer_form(
+            app,
+            pilot,
+            screen,
+            answer=answer,
+            queue=queue,
+            expected_answer="Keep the recorded call pattern.\n and update callers.",
+        )
 
         await pilot.click("#palette-submit")
         await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
         command = queue.pending()[0].command
         assert isinstance(command, Resolve)
         assert command.escalation_id == escalation.id
-        assert command.resolution == AnswerResolution(text="Keep the recorded call pattern.")
+        assert command.resolution == AnswerResolution(
+            text="Keep the recorded call pattern.\n and update callers."
+        )
+
+
+async def _resize_recorded_answer_form(
+    app: PaletteApp,
+    pilot: Pilot[None],
+    screen: PaletteScreen,
+    *,
+    answer: TextArea,
+    queue: CommandQueue,
+    expected_answer: str,
+) -> None:
+    for width, height in ((48, 20), (36, 14), (20, 8)):
+        await pilot.resize_terminal(width, height)
+        await wait_until(lambda: app.focused is answer, timeout=2)
+        for button_id in ("palette-back-to-menu", "palette-submit"):
+            button = screen.query_one(f"#{button_id}", Button)
+            assert button.display
+            assert button.region.right <= width
+            assert button.region.bottom < height
+        assert answer.text == expected_answer
+        assert queue.pending() == []
+        if width == 20:
+            _capture_palette(app, "task101-answer-healthy-recorded-packet-20x8-color.svg")
+    await pilot.resize_terminal(*_APP_SIZE)
+    await wait_until(lambda: app.focused is answer, timeout=2)
 
 
 async def test_project_context_menu_has_no_task_targets(
@@ -1376,6 +1422,7 @@ async def test_palette_routes_structured_escalation_to_validated_resolution(
         assert "Recorded git facts." in _static_text(screen, "#palette-evidence-facts")
         assert "Recent stream tail." in _static_text(screen, "#palette-evidence-recent-signals")
         assert "Leader session evidence." in _static_text(screen, "#palette-evidence-sessions")
+        assert screen.query_one("#field-resolution").display
 
         screen.query_one("#resolution", Select).value = kind
         if kind == "answer":

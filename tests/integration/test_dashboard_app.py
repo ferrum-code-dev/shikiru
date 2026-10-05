@@ -1037,6 +1037,7 @@ def _assert_fixed_context_target_picker_hidden(screen: PaletteScreen) -> None:
     assert not screen.query_one("#field-task-search").display
     assert not screen.query_one("#field-task-choice").display
     assert not screen.query_one("#field-task-id").display
+    assert not screen.query_one("#field-resolution").display
 
 
 def _assert_attention_answer_target(
@@ -1046,12 +1047,9 @@ def _assert_attention_answer_target(
     headline: str,
 ) -> None:
     assert screen.query_one("#task-id", Input).value == task_id
-    assert cast("Select[str]", screen.query_one("#action", Select)).value == "resolve"
-    assert cast("Select[str]", screen.query_one("#escalation", Select)).value == escalation_id
     assert not screen.query_one("#field-escalation").display
     assert screen.query_one("#field-palette-escalation-summary").display
     assert screen.query_one("#field-palette-evidence-error").display
-    assert cast("Select[str]", screen.query_one("#resolution", Select)).value == "answer"
     assert screen.query_one("#field-resolution-text").display
     assert not screen.query_one("#field-role").display
     _assert_fixed_context_target_picker_hidden(screen)
@@ -2201,8 +2199,11 @@ async def test_attention_answer_draft_stays_with_its_decision_on_the_same_task(
             )
             caller = app.screen
             first_palette = await _open_attention_answer_form(app, pilot, row)
-            assert (
-                cast("Select[str]", first_palette.query_one("#action", Select)).value == "resolve"
+            _assert_attention_answer_target(
+                first_palette,
+                task.id,
+                first.id,
+                "First decision summary",
             )
             assert queue.pending() == []
             first_guidance = "Keep this answer with the first decision only."
@@ -2235,9 +2236,6 @@ async def test_attention_answer_draft_stays_with_its_decision_on_the_same_task(
             assert "First decision summary" not in second_summary
             second_answer = second_palette.query_one("#resolution-text", TextArea)
             assert second_answer.text == ""
-            assert cast("Select[str]", second_palette.query_one("#escalation", Select)).value == (
-                second.id
-            )
             assert not second_palette.query_one("#field-escalation").display
             assert queue.pending() == []
 
@@ -2527,6 +2525,7 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
             footer = app.query_one("#focus-footer", Grid)
             assert footer.region.bottom <= 20
             assert footer.region.right <= width
+            _capture_task99(app, f"task101-home-footer-{width}x20-color.svg")
             home_screen = app.screen
             await pilot.press("v")
             await wait_until(lambda: app.screen is not home_screen, timeout=2)
@@ -2833,13 +2832,21 @@ async def _exercise_contextual_draft_and_evidence_route(
     assert "Leader" in context
     assert palette.query_one("#palette-menu-view-evidence").display
     assert palette.query_one("#palette-menu-view-usage").display
-    assert palette.query_one("#palette-menu-view-secondary").display
+    assert not palette.query_one("#palette-menu-task-views").display
     assert palette.query_one("#palette-menu-diagnostics").display
     _capture_task99(app, "task101-context-menu-101x35-color.svg")
+    await _click_palette_menu_button(pilot, palette, "palette-menu-more-actions")
+    await wait_until(
+        lambda: palette.query_one("#palette-menu-task-views").display,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert palette.query_one("#palette-menu-view-secondary").display
+    _capture_task99(app, "task101-context-menu-more-101x35-color.svg")
     await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
     _capture_task99(app, "task101-message-form-101x35-color.svg")
     guidance = "Retain this task scoped guidance after closing."
     await pilot.press(*guidance)
+    await _resize_contextual_message_form(app, pilot, palette, guidance)
     await pilot.click("#palette-back-to-menu")
     await _click_palette_menu_button(pilot, palette, "palette-menu-view-evidence")
     panel = app.query_one("#task-detail-panel", TaskDetailPanel)
@@ -2871,6 +2878,34 @@ async def _exercise_contextual_draft_and_evidence_route(
     await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
     assert search.value == task.title
     assert queue.pending() == []
+
+
+async def _resize_contextual_message_form(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+    guidance: str,
+) -> None:
+    message = palette.query_one("#message", TextArea)
+    cursor = message.cursor_location
+    for width, height in ((48, 20), (36, 14), (20, 8)):
+        await pilot.resize_terminal(width, height)
+        await wait_until(
+            lambda: app.focused is message and message.cursor_location == cursor,
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        for button_id in ("palette-back-to-menu", "palette-submit"):
+            button = palette.query_one(f"#{button_id}", Button)
+            assert button.display
+            assert button.region.right <= width
+            assert button.region.bottom < height
+        _capture_task99(app, f"task101-message-form-{width}x{height}-color.svg")
+    await pilot.resize_terminal(*_STANDARD_HOME_SIZE)
+    await wait_until(
+        lambda: app.focused is message and message.cursor_location == cursor,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert message.text == guidance
 
 
 async def _exercise_home_help_route(app: DashboardApp, pilot: Pilot[None], task: Task) -> None:
