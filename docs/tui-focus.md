@@ -6,7 +6,7 @@ Phase 9 implements the Operator-approved layout and palette direction from 2026-
 
 The Owner reports that the real test-project TUI is improved but still differs significantly from the approved screenshot, design and UX. The release record does not claim exact visual or interaction parity; a separate alignment follow-up remains after Phase 9.
 
-The [Focus terminal parity correction](tui-parity.md) is the normative Phase 10 target for the exact terminal composition, hierarchy and direct keyboard/mouse routes. Its Task 97 audit/specification and Tasks 98–99 are complete; Tasks 100–102 remain planned. Where this Phase 9 document described a broader visual or interaction interpretation, `tui-parity.md` takes precedence for the correction. The billing, usage, resource, task-history, ownership, plugin, engine and command guarantees below remain in force.
+The [Focus terminal parity correction](tui-parity.md) is the normative Phase 10 target for the exact terminal composition, hierarchy and direct keyboard/mouse routes. Tasks 97–100 are accepted complete; Task 101 implementation and native review are complete pending architect review; Task 102 remains planned. Where this Phase 9 document described a broader visual or interaction interpretation, `tui-parity.md` takes precedence for the correction. The billing, usage, resource, task-history, ownership, plugin, engine and command guarantees below remain in force.
 
 Task 93 ships Focus Home, Task 94 converts both the inline inspector and `dash --task` to the same compact detail panel, and Tasks 95–96 complete responsive compatibility, obsolete presentation cleanup and release verification. Focus supersedes the Home and primary task-detail presentation in [Operator Workspace](tui-workspace.md) and the presentation portions of 01 D18/D24 and 06 §5.4/§6. Phase 8's completion and evidence remain historical facts. Its task search/selection, command timing/outcomes, ownership/holds, escalation correctness, reports/evidence/history/export, plugin compatibility and responsive preservation guarantees continue to apply. The [approved standalone mockup](design/references/focus-steel-approved.html) preserves the interactive reference; its [736-pixel approved view](design/references/focus-steel-approved-736.png) records the selected appearance.
 
@@ -103,7 +103,7 @@ Remove superseded private presentation as screens convert. Preserve useful publi
 
 Execute [Tasks 89–96](../tasks/plan.md#phase-9-compact-operator-tui) sequentially, with review between tasks. All eight tasks are complete. The Task 96 release gate used the configured E2E ladder of Codex `gpt-6-luna` at low effort for Leader, Implementer and Helper; that test-only choice does not change project defaults.
 
-Phase 10 continues in [Tasks 97–102](../tasks/plan.md#phase-10-focus-terminal-parity-correction); Phase 9 completion and release evidence remain historical facts.
+Phase 10 continues in [Tasks 97–102](../tasks/plan.md#phase-10-focus-terminal-parity-correction). Tasks 97–100 are accepted; Task 101 is ready for architect review; Task 102 remains open. Phase 9 completion and release evidence remain historical facts.
 
 Each logical commit is conventional, follows a green `uv run poe check` and ends with `Co-Authored-By: Codex <codex@openai.com>`. Tick task ACs and todo only when implemented and verified. Record design deviations explicitly; the approved layout and honest billing/usage meanings remain required.
 
