@@ -158,7 +158,7 @@ Target: [Compact Operator TUI](../docs/tui-focus.md); acceptance criteria: [plan
 
 ## Phase 10 — Focus terminal parity correction
 
-Target: [Focus terminal parity correction](../docs/tui-parity.md); acceptance criteria: [plan.md](plan.md#phase-10-focus-terminal-parity-correction). Phase 9 remains accepted complete; Phase 10 corrects the native composition and routes to the approved reference. Tasks 97–101 are accepted complete; Task 102's implementation and evidence are ready for root review. See the [Task 98 native Home review](../docs/task98-visual-review-2026-10-04.md), [Task 99 native inspector review](../docs/task99-visual-review-2026-10-04.md), [Task 100 native interaction review](../docs/task100-visual-review-2026-10-05.md), and [Task 101 measured native review](../docs/task101-visual-review-2026-10-05.md).
+Target: [Focus terminal parity correction](../docs/tui-parity.md); acceptance criteria: [plan.md](plan.md#phase-10-focus-terminal-parity-correction). Phase 9 remains accepted complete; Phase 10 corrects the native composition and routes to the approved reference. Tasks 97–102 are accepted complete, with Root sign-off at `580368c`; see the [Phase 10 release record](../docs/release-readiness-2026-10-05-phase10.md). See also the [Task 98 native Home review](../docs/task98-visual-review-2026-10-04.md), [Task 99 native inspector review](../docs/task99-visual-review-2026-10-04.md), [Task 100 native interaction review](../docs/task100-visual-review-2026-10-05.md), and [Task 101 measured native review](../docs/task101-visual-review-2026-10-05.md).
 
 - [x] Task 97: Approved reference parity audit and target specification
 - [x] Task 98: Reference-aligned Home frame and task list
