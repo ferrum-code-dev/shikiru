@@ -5,8 +5,14 @@ from datetime import UTC, datetime
 import pytest
 
 from shikiru.domain.events import Event, EventKind
-from shikiru.domain.reports import DECISION_CHANGES_REQUESTED, ImplementationReport, ReportKind
-from shikiru.domain.tasks import Mode, Step
+from shikiru.domain.reports import (
+    DECISION_ACCEPT,
+    DECISION_CHANGES_REQUESTED,
+    ImplementationReport,
+    ReportKind,
+    Verdict,
+)
+from shikiru.domain.tasks import Mode, Status, Step
 from shikiru.domain.workflow import (
     WORKFLOW_DECISION_KEY,
     WORKFLOW_ITERATION_KEY,
@@ -64,25 +70,33 @@ def _stage_states(progress: WorkflowProgress) -> dict[Step, WorkflowMilestoneSta
 
 
 @pytest.mark.parametrize(
-    ("mode", "step", "events", "expected"),
+    ("mode", "step", "status", "iteration", "events", "expected", "before"),
     [
         pytest.param(
             Mode.PLAN,
             Step.PLAN,
+            Status.RUNNING,
+            0,
             (),
-            (Step.TRIAGE, Step.PLAN, Step.INTEGRATE),
+            {Step.PLAN: WorkflowMilestoneState.CURRENT},
+            (),
             id="planning-workflow",
         ),
         pytest.param(
             Mode.IMPLEMENT,
             Step.IMPLEMENT,
+            Status.RUNNING,
+            _CURRENT_ITERATION,
             (),
-            (Step.TRIAGE, Step.IMPLEMENT, Step.VERIFY, Step.INTEGRATE),
+            {Step.IMPLEMENT: WorkflowMilestoneState.CURRENT},
+            (),
             id="implementation-workflow",
         ),
         pytest.param(
             Mode.IMPLEMENT,
             Step.CONSULT,
+            Status.RUNNING,
+            _CURRENT_ITERATION,
             (
                 _event(
                     _FIRST_EVENT_ID,
@@ -91,25 +105,212 @@ def _stage_states(progress: WorkflowProgress) -> dict[Step, WorkflowMilestoneSta
                     iteration=_PREVIOUS_ITERATION,
                 ),
             ),
-            (Step.TRIAGE, Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE),
-            id="consult-workflow",
+            {Step.CONSULT: WorkflowMilestoneState.CURRENT},
+            ((Step.IMPLEMENT, Step.CONSULT),),
+            id="implementation-consult",
+        ),
+        pytest.param(
+            Mode.PLAN,
+            Step.CONSULT,
+            Status.INTEGRATING,
+            0,
+            (),
+            {
+                Step.TRIAGE: WorkflowMilestoneState.UNKNOWN,
+                Step.PLAN: WorkflowMilestoneState.UNKNOWN,
+                Step.INTEGRATE: WorkflowMilestoneState.UNKNOWN,
+                Step.CONSULT: WorkflowMilestoneState.CURRENT,
+            },
+            ((Step.INTEGRATE, Step.CONSULT),),
+            id="plan-integration-consult-with-missing-history",
+        ),
+        pytest.param(
+            Mode.PLAN,
+            Step.CONSULT,
+            Status.ESCALATED,
+            0,
+            (),
+            {
+                Step.INTEGRATE: WorkflowMilestoneState.UNKNOWN,
+                Step.CONSULT: WorkflowMilestoneState.CURRENT,
+            },
+            ((Step.INTEGRATE, Step.CONSULT),),
+            id="plan-escalation-retains-integration-consult",
+        ),
+        pytest.param(
+            Mode.PLAN,
+            Step.CONSULT,
+            Status.QUEUED,
+            0,
+            (),
+            {
+                Step.INTEGRATE: WorkflowMilestoneState.UNKNOWN,
+                Step.CONSULT: WorkflowMilestoneState.CURRENT,
+            },
+            ((Step.INTEGRATE, Step.CONSULT),),
+            id="plan-queue-retains-integration-consult",
+        ),
+        pytest.param(
+            Mode.PLAN,
+            Step.VERIFY,
+            Status.INTEGRATING,
+            0,
+            (),
+            {
+                Step.INTEGRATE: WorkflowMilestoneState.UNKNOWN,
+                Step.VERIFY: WorkflowMilestoneState.CURRENT,
+            },
+            ((Step.INTEGRATE, Step.VERIFY),),
+            id="plan-current-verify-is-retained",
+        ),
+        pytest.param(
+            Mode.PLAN,
+            Step.INTEGRATE,
+            Status.INTEGRATING,
+            0,
+            (
+                _event(
+                    _FIRST_EVENT_ID,
+                    EventKind.STEP_STARTED,
+                    step=Step.VERIFY,
+                    iteration=0,
+                ),
+            ),
+            {
+                Step.INTEGRATE: WorkflowMilestoneState.CURRENT,
+                Step.VERIFY: WorkflowMilestoneState.UNKNOWN,
+            },
+            ((Step.INTEGRATE, Step.VERIFY),),
+            id="plan-history-retains-actual-verify-entry",
+        ),
+        pytest.param(
+            Mode.IMPLEMENT,
+            Step.CONSULT,
+            Status.INTEGRATING,
+            _CURRENT_ITERATION,
+            (
+                _event(
+                    _FIRST_EVENT_ID,
+                    EventKind.STEP_STARTED,
+                    step=Step.IMPLEMENT,
+                    iteration=_CURRENT_ITERATION,
+                ),
+                _event(
+                    _SECOND_EVENT_ID,
+                    EventKind.STEP_STARTED,
+                    step=Step.VERIFY,
+                    iteration=_CURRENT_ITERATION,
+                ),
+                _event(
+                    _THIRD_EVENT_ID,
+                    EventKind.STEP_STARTED,
+                    step=Step.INTEGRATE,
+                    iteration=_CURRENT_ITERATION,
+                ),
+                _event(
+                    _FOURTH_EVENT_ID,
+                    EventKind.STEP_STARTED,
+                    step=Step.CONSULT,
+                    iteration=_CURRENT_ITERATION,
+                ),
+            ),
+            {
+                Step.IMPLEMENT: WorkflowMilestoneState.DONE,
+                Step.VERIFY: WorkflowMilestoneState.DONE,
+                Step.INTEGRATE: WorkflowMilestoneState.UNKNOWN,
+                Step.CONSULT: WorkflowMilestoneState.CURRENT,
+            },
+            ((Step.INTEGRATE, Step.CONSULT),),
+            id="integration-consult-follows-verify-and-merge",
+        ),
+        pytest.param(
+            Mode.IMPLEMENT,
+            Step.CONSULT,
+            Status.ESCALATED,
+            _CURRENT_ITERATION,
+            (
+                _event(
+                    _FIRST_EVENT_ID,
+                    EventKind.STEP_STARTED,
+                    step=Step.IMPLEMENT,
+                    iteration=_CURRENT_ITERATION,
+                ),
+                _event(
+                    _SECOND_EVENT_ID,
+                    EventKind.STEP_STARTED,
+                    step=Step.VERIFY,
+                    iteration=_CURRENT_ITERATION,
+                ),
+                _event(
+                    _THIRD_EVENT_ID,
+                    EventKind.STEP_STARTED,
+                    step=Step.INTEGRATE,
+                    iteration=_CURRENT_ITERATION,
+                ),
+                _event(
+                    _FOURTH_EVENT_ID,
+                    EventKind.STEP_STARTED,
+                    step=Step.CONSULT,
+                    iteration=_CURRENT_ITERATION,
+                ),
+            ),
+            {
+                Step.IMPLEMENT: WorkflowMilestoneState.DONE,
+                Step.VERIFY: WorkflowMilestoneState.DONE,
+                Step.INTEGRATE: WorkflowMilestoneState.UNKNOWN,
+                Step.CONSULT: WorkflowMilestoneState.CURRENT,
+            },
+            ((Step.INTEGRATE, Step.CONSULT),),
+            id="retained-integration-context-survives-escalation",
         ),
     ],
 )
 def test_workflow_stages_follow_task_mode_and_recorded_consult(
+    *,
     mode: Mode,
     step: Step,
+    status: Status,
+    iteration: int,
     events: tuple[Event, ...],
-    expected: tuple[Step, ...],
+    expected: dict[Step, WorkflowMilestoneState],
+    before: tuple[tuple[Step, Step], ...],
 ) -> None:
     progress = project_workflow(
-        make_task(mode=mode, step=step),
+        make_task(mode=mode, step=step, status=status, iteration=iteration),
         events,
         (),
         event_window_complete=False,
     )
+    states = _stage_states(progress)
 
-    assert tuple(item.stage for item in progress.milestones) == expected
+    for stage, state in expected.items():
+        assert states[stage] is state
+    positions = {item.stage: index for index, item in enumerate(progress.milestones)}
+    for earlier, later in before:
+        assert positions[earlier] < positions[later]
+
+
+def test_plan_integration_verdict_does_not_invent_a_verify_stage() -> None:
+    task = make_task(mode=Mode.PLAN, step=Step.INTEGRATE, status=Status.INTEGRATING)
+    events = (
+        _event(
+            _FIRST_EVENT_ID,
+            EventKind.STEP_STARTED,
+            step=Step.INTEGRATE,
+            iteration=task.iteration,
+        ),
+    )
+    report = WorkflowReport(
+        turn="post-rebase-verify",
+        kind=ReportKind.VERDICT,
+        data=Verdict(decision=DECISION_ACCEPT, summary="Conflicts verified."),
+    )
+
+    progress = project_workflow(task, events, (report,), event_window_complete=False)
+    states = _stage_states(progress)
+
+    assert states[Step.INTEGRATE] is WorkflowMilestoneState.CURRENT
+    assert Step.VERIFY not in states
 
 
 @pytest.mark.parametrize(

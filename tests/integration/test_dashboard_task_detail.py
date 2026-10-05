@@ -1691,6 +1691,40 @@ async def test_first_recorded_plan_or_implement_transition_marks_triage_bypassed
 
 
 @pytest.mark.parametrize(
+    "step",
+    [Step.CONSULT, Step.VERIFY],
+    ids=("plan-integration-consult", "observed-plan-verify"),
+)
+async def test_plan_detail_keeps_current_stage_and_prior_gaps_without_retained_events(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    step: Step,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Plan integration recovery", mode=Mode.PLAN)
+    tasks = TaskStore(connection, clock)
+    tasks.apply_transition(
+        task.id,
+        Transition.stay(
+            tasks.require(task.id),
+            step=step,
+            status=Status.INTEGRATING,
+        ),
+    )
+
+    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+
+    assert detail is not None
+    assert not detail.workflow_history_complete
+    assert _milestone_state(detail, step) == "current"
+    for earlier in (Step.TRIAGE, Step.PLAN, Step.INTEGRATE):
+        if earlier is not step:
+            assert _milestone_state(detail, earlier) == "unknown"
+
+
+@pytest.mark.parametrize(
     "case",
     [
         pytest.param(

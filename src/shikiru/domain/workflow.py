@@ -93,7 +93,7 @@ def project_workflow(
         step for report in reports if (step := _report_stage(report.kind)) is not None
     }
     completed_reports = _completed_reports(reports, events, entries)
-    stages = _workflow_stages(task, entered_steps | reported_steps)
+    stages = _workflow_stages(task, entered_steps, reported_steps, entries)
     if not stages:
         return WorkflowProgress((), history_complete)
     stage_positions = {step: index for index, step in enumerate(stages)}
@@ -237,10 +237,21 @@ def _verdicts(events: Sequence[Event]) -> list[tuple[int, object]]:
     ]
 
 
-def _workflow_stages(task: Task, entered_steps: set[Step]) -> tuple[Step, ...]:
-    if task.mode is Mode.PLAN or task.step is Step.PLAN or Step.PLAN in entered_steps:
+def _workflow_stages(
+    task: Task,
+    entered_steps: set[Step],
+    reported_steps: set[Step],
+    entries: list[_StepEntry],
+) -> tuple[Step, ...]:
+    observed_steps = entered_steps | reported_steps
+    if task.mode is Mode.PLAN or task.step is Step.PLAN or Step.PLAN in observed_steps:
         stages = [Step.TRIAGE, Step.PLAN, Step.INTEGRATE]
-    elif (
+        if Step.CONSULT in observed_steps or task.step is Step.CONSULT:
+            stages.append(Step.CONSULT)
+        if Step.VERIFY in entered_steps or task.step is Step.VERIFY:
+            stages.append(Step.VERIFY)
+        return tuple(stages)
+    if (
         task.mode is Mode.IMPLEMENT
         or task.step
         in {
@@ -249,21 +260,36 @@ def _workflow_stages(task: Task, entered_steps: set[Step]) -> tuple[Step, ...]:
             Step.VERIFY,
             Step.INTEGRATE,
         }
-        or entered_steps & {Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE}
+        or observed_steps & {Step.IMPLEMENT, Step.CONSULT, Step.VERIFY, Step.INTEGRATE}
     ):
         stages = [Step.TRIAGE, Step.IMPLEMENT, Step.VERIFY, Step.INTEGRATE]
     elif task.step is Step.TRIAGE:
         stages = [Step.TRIAGE]
     else:
         return ()
-    if Step.CONSULT in entered_steps or task.step is Step.CONSULT:
-        insert_after = (
-            Step.INTEGRATE
-            if Step.INTEGRATE in entered_steps and Step.VERIFY not in entered_steps
-            else Step.IMPLEMENT
-        )
-        stages.insert(stages.index(insert_after) + 1, Step.CONSULT)
+    if Step.CONSULT in observed_steps or task.step is Step.CONSULT:
+        if _consult_follows_integration(task, entries):
+            stages.append(Step.CONSULT)
+        else:
+            stages.insert(stages.index(Step.IMPLEMENT) + 1, Step.CONSULT)
     return tuple(stages)
+
+
+def _consult_follows_integration(task: Task, entries: list[_StepEntry]) -> bool:
+    if task.step is Step.CONSULT and task.status is Status.INTEGRATING:
+        return True
+    for index in range(len(entries) - 1, -1, -1):
+        entry = entries[index]
+        if entry.step is not Step.CONSULT or entry.iteration != task.iteration:
+            continue
+        if index == 0:
+            return False
+        previous = entries[index - 1]
+        return previous.step is Step.INTEGRATE and previous.iteration == task.iteration
+    if task.step is Step.CONSULT and entries:
+        latest = entries[-1]
+        return latest.step is Step.INTEGRATE and latest.iteration == task.iteration
+    return False
 
 
 def _completed_by_later_step(stage: Step, later_steps: set[Step]) -> bool:
