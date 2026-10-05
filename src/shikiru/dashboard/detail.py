@@ -34,6 +34,16 @@ from shikiru.ui.compact import (
 )
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_STALLED
 from shikiru.ui.strip import PanelState
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    ENGINE_COLOR,
+    HOLD_COLOR,
+    IDLE_COLOR,
+    ROLE_COLORS,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+    SUCCESS_COLOR,
+)
 
 if TYPE_CHECKING:
     from textual import events
@@ -255,7 +265,7 @@ class TaskDetailPanel(Vertical):
 
     DEFAULT_CSS = """
     #task-detail-panel { width: 100%; height: auto; }
-    #task-detail-identity { height: auto; padding: 0; color: $primary-text; }
+    #task-detail-identity { height: auto; padding: 0; color: $steel-blue; }
     #task-detail-context-info { height: auto; color: $primary-text; }
     #task-detail-ownership { height: auto; padding: 0; color: $amber; }
     #task-detail-feedback { height: auto; min-height: 0; color: $secondary-text; }
@@ -441,7 +451,7 @@ class TaskDetailPanel(Vertical):
         self._apply_view_visibility(blocker_visible=False)
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         identity.update(
-            f"{self._task_id} · loading selected task"
+            _task_identity_text(f"{self._task_id} · loading selected task")
             if self._task_id is not None
             else "Select a task to inspect it."
         )
@@ -499,7 +509,7 @@ class TaskDetailPanel(Vertical):
             return
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         identity.update(
-            f"{task_id} · loading selected task"
+            _task_identity_text(f"{task_id} · loading selected task")
             if task_id is not None
             else "Select a task to inspect it."
         )
@@ -1065,8 +1075,7 @@ class TaskDetailPanel(Vertical):
         focused = self.screen.focused
         restore_scroll = self._rendered_task_id == view.task_id
         self._rendered_task_id = view.task_id
-        identity = f"{view.task_id} · {view.title}\n{_task_state_line(view)}"
-        self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(identity)
+        self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(_task_identity(view))
         self._render_ownership(view)
         self.query_one(f"#{TASK_DETAIL_SITUATION}", Static).update(_task_situation(view))
         self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(_task_context_text(view))
@@ -1744,6 +1753,42 @@ def _task_state_line(view: TaskDetailView) -> str:
             elif active_panel.spinner_frame:
                 marker = active_panel.spinner_frame
     return f"{marker} {state}"
+
+
+def _task_identity(view: TaskDetailView) -> Text:
+    identity = Text(f"{view.task_id} · {view.title}", style=STEEL_BLUE)
+    identity.append("\n")
+    identity.append(_task_state_line(view), style=_task_state_color(view))
+    return identity
+
+
+def _task_identity_text(identity: str) -> Text:
+    return Text(identity, style=STEEL_BLUE)
+
+
+def _task_state_color(view: TaskDetailView) -> str:
+    if view.status == Status.ESCALATED.value:
+        color = ALERT_COLOR
+    elif view.holds:
+        color = HOLD_COLOR
+    elif view.status == Status.DONE.value:
+        color = SUCCESS_COLOR
+    elif view.status in {Status.CANCELLED.value, Status.QUEUED.value}:
+        color = IDLE_COLOR
+    else:
+        active_panel = next(
+            (panel for panel in view.progress.panels if panel.state is PanelState.ACTIVE),
+            None,
+        )
+        if active_panel is not None:
+            color = (
+                ROLE_COLORS[active_panel.role] if active_panel.role is not None else ENGINE_COLOR
+            )
+        elif any(panel.state is PanelState.STALLED for panel in view.progress.panels):
+            color = HOLD_COLOR
+        else:
+            color = SECONDARY_TEXT_COLOR
+    return color
 
 
 def _hold_label(hold: str) -> str:

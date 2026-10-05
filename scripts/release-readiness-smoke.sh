@@ -411,7 +411,7 @@ record env -i \
     "$ROOT/tests/integration/test_dashboard_task_detail.py::test_task_evidence_filter_and_reading_position_survive_resize_and_refresh" \
     "$ROOT/tests/integration/test_dashboard_motion.py::test_disabled_animations_keep_countdowns_live_without_animating_frames"
 cd "$ROOT"
-WORKSPACE_NAVIGATION_CHECK="headless Textual run_test with installed package interpreter: Home / and title search, Enter focuses results, arrows change selection, Enter opens detail, Escape restores Home selection, Ctrl+P carries task and Implementer context, contextual message reaches Applied; Home 120x40 and through 20x8, task detail and controls at 36x20, palette and evidence filter across 36x20/48x14 with cursor/focus/reading-position preservation, NO_COLOR and static countdown behavior covered; live private-tmux Home launch and attach-picker checks are separate"
+WORKSPACE_NAVIGATION_CHECK="seven installed-interpreter Textual boundary tests under TERM=xterm-256color and NO_COLOR=1: fake-agent contextual message reaches Applied; Enter/Escape restores detail selection and scroll; Home resize 120x40 through 20x8 preserves selection/focus; narrow detail controls stay reachable; palette cursor/form survives resize; Evidence filter/reading position survives resize and refresh; disabled motion keeps countdown live; private-tmux installed Home launch and attach-picker checks are separate"
 
 SMOKE_STAGE="session listing and attach"
 record app "$SECONDARY_PROJECT" start

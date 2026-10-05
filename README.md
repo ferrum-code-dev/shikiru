@@ -44,14 +44,23 @@ task search, enter a title or task ID, then press Enter to move to the matching 
 changes the selected task. Detail shows the latest validated verdict alongside the request, task
 state, relationships, blocker evidence and available history.
 
-Press `Ctrl+P` in the dashboard to open the shared action palette with the selected task and role
-pre-filled. The Views menu also opens Actions, Help, filters, command history and configured
-secondary widgets. In task detail, `u` opens Usage Details and `v` opens its contextual Views.
+Click a task row or use Up/Down to select it. Press Enter to inspect it and Escape to return to the
+same selection. Press `Ctrl+P` to open the contextual action menu with the selected task and role
+pre-filled. Its primary actions are Answer decision when one applies, Inspect task, Evidence &
+reports, Message a role, Take over/Hand back when applicable, Usage, Commands and Project
+diagnostics. More actions opens the remaining task and project operations. Answer opens the
+recorded question directly; only its explicit submit queues an answer. Form inputs retain native
+editing keys, and Escape returns without submitting. In task detail, `e` opens Evidence, `u` opens
+Usage Details and `v` opens the broader contextual Views menu. The Views menu also opens Help,
+filters, command history and configured secondary widgets, including Extensions.
 Inside a Shikiru tmux session, `prefix + Space` opens the same palette in a popup; a popup opened
 from a role pane carries that pane's current task and role. Outside a Shikiru session, the tmux
 binding keeps its normal `next-layout` action. `?` opens contextual help.
 
-The compact Focus layout shipped in Phase 9. Home shows engine state and evidence-backed uptime, operational counts, project usage and combined Host/Shikiru-including-agents resource readings. Its exact composition, visual hierarchy and interaction routes still differ from the approved reference; Phase 10 specifies the correction in [Focus terminal parity](docs/tui-parity.md). The [Focus specification](docs/tui-focus.md) describes the shipped layout and its evidence rules.
+The compact Focus layout shipped in Phase 9. Phase 10 aligned the native composition and direct
+routes to the approved reference while preserving the recorded usage, resource, ownership and
+plugin contracts. The [Focus specification](docs/tui-focus.md) describes those evidence rules; the
+[parity specification](docs/tui-parity.md) records the measured native layout and supported routes.
 
 The dashboard labels command outcomes **Pending**, **Applied** or **Rejected**. Pending means the
 command is still in the durable queue; when the engine is stopped it can apply after the next
@@ -103,8 +112,9 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 
 - Design: [`docs/design`](docs/design/README.md)
 - Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — Phase 8 interaction and evidence specification. Tasks 75–88 are verified on macOS; a fresh Codex gpt-6-luna E1–E6 run, the normal and `TERM=dumb` full gates, and the clean-install/navigation smoke passed. GNU/Linux was not run and remains unverified. The older Task 59, 74h and 74p review gates remain open. See the [2026-10-03 release record](docs/release-readiness-2026-10-03-phase8.md).
-- Compact Operator TUI: [`docs/tui-focus.md`](docs/tui-focus.md) — shipped Phase 9 Focus layout, billing and usage evidence contract. [`docs/tui-parity.md`](docs/tui-parity.md) is the planned Phase 10 exact native parity target; its Task 97 audit/specification is complete, with implementation Tasks 98–102 not yet shipped. The [approved standalone mockup](docs/design/references/focus-steel-approved.html) and [selected 736-pixel view](docs/design/references/focus-steel-approved-736.png) remain immutable.
+- Compact Operator TUI: [`docs/tui-focus.md`](docs/tui-focus.md) — shipped Phase 9 Focus layout, billing and usage evidence contract. [`docs/tui-parity.md`](docs/tui-parity.md) records the completed Phase 10 native correction; Tasks 97–101 are accepted and Task 102's final evidence is pending root review. The [approved standalone mockup](docs/design/references/focus-steel-approved.html) and [selected 736-pixel view](docs/design/references/focus-steel-approved-736.png) remain immutable.
 - Phase 9 release evidence: [`docs/release-readiness-2026-10-04-phase9.md`](docs/release-readiness-2026-10-04-phase9.md) — macOS gates, connected fake-agent walkthroughs, fresh E1–E6, visual review, limits and host hygiene.
+- Phase 10 release evidence: [`docs/release-readiness-2026-10-05-phase10.md`](docs/release-readiness-2026-10-05-phase10.md) — connected correction walkthroughs, final gates, macOS clean-install/navigation smoke, native-cell review, limits and host hygiene.
 - Workspace walkthrough evidence: [`docs/workspace-walkthroughs-2026-10-03.md`](docs/workspace-walkthroughs-2026-10-03.md) — executed flows, fixtures and observed limits.
 - Implementation plan: [`tasks/plan.md`](tasks/plan.md), progress: [`tasks/todo.md`](tasks/todo.md)
 

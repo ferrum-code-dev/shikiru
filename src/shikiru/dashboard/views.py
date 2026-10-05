@@ -653,6 +653,9 @@ class StateDashboardViews:
                 task_title=task.title if task is not None else escalation.task_id,
                 age=_age(now - escalation.created_at),
                 resolution_actions=tuple(option.label.value for option in escalation.options),
+                answer_available=any(
+                    option.label is ResolutionKind.ANSWER for option in escalation.options
+                ),
                 evidence_error="; ".join(evidence_errors) if evidence_errors else None,
             )
         return result

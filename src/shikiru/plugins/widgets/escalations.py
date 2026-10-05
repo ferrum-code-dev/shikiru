@@ -21,7 +21,7 @@ from shikiru.dashboard.contract import (
     WorkspaceSummaryView,
 )
 from shikiru.ui import SplashPanel
-from shikiru.ui.compact import FOCUS_ATTENTION_MAX_HEIGHT, attention_status_text
+from shikiru.ui.compact import FOCUS_ATTENTION_MAX_HEIGHT, FocusAttentionStatus
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
@@ -79,9 +79,11 @@ class EscalationsPanel(Static):
     DEFAULT_CSS = f"""
     EscalationsPanel {{ height: auto; }}
     #escalation-panels {{ height: auto; max-height: {MAX_ESCALATION_PANEL_HEIGHT}; }}
+    EscalationsPanel.focus-row {{ width: 100%; }}
     EscalationsPanel.focus-row #escalation-panels {{
-        height: auto; max-height: {FOCUS_ATTENTION_MAX_HEIGHT};
+        width: 100%; height: auto; max-height: {FOCUS_ATTENTION_MAX_HEIGHT};
     }}
+    EscalationsPanel.focus-row #escalation-panels Static {{ width: 100%; }}
     """
     can_focus = True
 
@@ -232,7 +234,7 @@ class EscalationsPanel(Static):
         request = PaletteRequest(
             action=f"resolve {decision.escalation_id}",
             task_id=decision.task_id,
-            direct_answer=True,
+            direct_answer=decision.answer_available,
         )
         if self._widget_context.open_palette_context is not None:
             await self._widget_context.open_palette_context(request)
@@ -366,15 +368,14 @@ class EscalationsPanel(Static):
         else:
             panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
 
-    def _render_compact_attention(self) -> Text:
+    def _render_compact_attention(self) -> RenderableType:
         if self._summary is None:
             return Text("○ Engine status unavailable", style=SECONDARY_TEXT_COLOR)
-        action_hint = (
-            "Enter answer · o evidence"
-            if self._focus_row and self._selected_decision() is not None
-            else "Enter inspect · Ctrl+P actions"
-        )
-        return attention_status_text(
+        decision = self._selected_decision()
+        action_hint = "Enter inspect ↵ · Ctrl+P actions"
+        if self._focus_row and decision is not None:
+            action_hint = "Enter answer ↵" if decision.answer_available else "Enter resolve ↵"
+        return FocusAttentionStatus(
             self._attention,
             self._summary,
             action_hint=action_hint,

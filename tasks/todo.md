@@ -158,11 +158,11 @@ Target: [Compact Operator TUI](../docs/tui-focus.md); acceptance criteria: [plan
 
 ## Phase 10 — Focus terminal parity correction
 
-Target: [Focus terminal parity correction](../docs/tui-parity.md); acceptance criteria: [plan.md](plan.md#phase-10-focus-terminal-parity-correction). Phase 9 remains accepted complete; exact native screenshot and interaction parity is the correction in progress. Tasks 97–100 are accepted complete. Task 101 implementation and native review are complete pending architect review; Task 102 remains open. See the [Task 98 native Home review](../docs/task98-visual-review-2026-10-04.md), [Task 99 native inspector review](../docs/task99-visual-review-2026-10-04.md), [Task 100 native interaction review](../docs/task100-visual-review-2026-10-05.md), and [Task 101 measured native review](../docs/task101-visual-review-2026-10-05.md).
+Target: [Focus terminal parity correction](../docs/tui-parity.md); acceptance criteria: [plan.md](plan.md#phase-10-focus-terminal-parity-correction). Phase 9 remains accepted complete; Phase 10 corrects the native composition and routes to the approved reference. Tasks 97–101 are accepted complete; Task 102's implementation and evidence are ready for root review. See the [Task 98 native Home review](../docs/task98-visual-review-2026-10-04.md), [Task 99 native inspector review](../docs/task99-visual-review-2026-10-04.md), [Task 100 native interaction review](../docs/task100-visual-review-2026-10-05.md), and [Task 101 measured native review](../docs/task101-visual-review-2026-10-05.md).
 
 - [x] Task 97: Approved reference parity audit and target specification
 - [x] Task 98: Reference-aligned Home frame and task list
 - [x] Task 99: Compact shared task inspector and factual stage/signal rows
 - [x] Task 100: Contextual actions, direct attention routes and forms
 - [x] Task 101: Responsive and compatibility parity review
-- [ ] Task 102: Connected correction walkthroughs and final evidence
+- [x] Task 102: Connected correction walkthroughs and final evidence

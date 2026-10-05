@@ -358,6 +358,7 @@ async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packe
     assert decision.task_id == task.id
     assert decision.headline == "Choose whether to retry"
     assert decision.resolution_actions == ("answer", "cancel")
+    assert decision.answer_available
     assert decision.evidence_error is not None
     assert "missing-packet.md" in decision.evidence_error
 

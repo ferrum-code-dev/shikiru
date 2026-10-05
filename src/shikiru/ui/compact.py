@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.rule import Rule
+from rich.table import Table
 from rich.text import Text
 
 from shikiru.agents.contracts import (
@@ -33,6 +34,8 @@ from shikiru.ui.tokens import (
 if TYPE_CHECKING:
     from datetime import datetime, timedelta
 
+    from rich.console import Console, ConsoleOptions, RenderResult
+
     from shikiru.ui.strip import TaskStripData
 
 GIB_FORMAT = ".1f"
@@ -57,6 +60,7 @@ RESOURCE_EMPTY = "empty"
 RESOURCE_AVAILABLE = "available"
 RESOURCE_STATE_UNKNOWN = "sample state unknown"
 RESOURCE_GROUP_MIN_GAP = 3
+STATUS_ALIGNMENT_MIN_GAP = 1
 ROLE_LABELS = {
     Role.LEADER.value: "Leader",
     Role.IMPLEMENTER.value: "Implementer",
@@ -810,6 +814,7 @@ def attention_status_text(
     action_hint: str,
     selected_group_index: int = 0,
     selected_escalation_id: str | None = None,
+    width: int | None = None,
 ) -> Text:
     """Render the Home status strip from current attention and observed workspace state."""
     if attention.groups:
@@ -818,6 +823,7 @@ def attention_status_text(
             group,
             action_hint=action_hint,
             selected_escalation_id=selected_escalation_id,
+            width=width,
         )
         _append_engine_state(status, summary)
         _append_held_task_states(status, summary)
@@ -833,11 +839,35 @@ def attention_status_text(
     return status
 
 
+@dataclass(frozen=True)
+class FocusAttentionStatus:
+    """Render a cached Home attention projection against the current terminal width."""
+
+    attention: _Attention
+    summary: _AttentionSummary
+    action_hint: str
+    selected_group_index: int = 0
+    selected_escalation_id: str | None = None
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Align the existing status and action hint during Rich's current-width render."""
+        del console
+        yield attention_status_text(
+            self.attention,
+            self.summary,
+            action_hint=self.action_hint,
+            selected_group_index=self.selected_group_index,
+            selected_escalation_id=self.selected_escalation_id,
+            width=options.max_width,
+        )
+
+
 def _attention_group_status(
     group: _AttentionGroup,
     *,
     action_hint: str,
     selected_escalation_id: str | None,
+    width: int | None,
 ) -> Text:
     if group.escalations:
         decision = next(
@@ -847,8 +877,16 @@ def _attention_group_status(
         status = Text.assemble(
             ("! ", AMBER),
             (decision.escalation_id, AMBER),
-            f" · {group.task_id or 'Project'} · {decision.headline} · {action_hint}",
+            (f" · {group.task_id or 'Project'} · {decision.headline}", PRIMARY_TEXT_COLOR),
         )
+        gap = max(
+            width - cell_len(status.plain) - cell_len(action_hint)
+            if width is not None
+            else STATUS_ALIGNMENT_MIN_GAP,
+            STATUS_ALIGNMENT_MIN_GAP,
+        )
+        status.append(" " * gap)
+        status.append(action_hint, style=SECONDARY_TEXT_COLOR)
     else:
         fault = next(
             (reason for reason in group.reasons if reason.startswith("engine fault")),
@@ -868,6 +906,14 @@ def _attention_group_status(
                 ),
             )
     return status
+
+
+def _aligned_line(left: RenderableType, right: RenderableType) -> Table:
+    line = Table.grid(padding=(0, 0), expand=True)
+    line.add_column(ratio=1)
+    line.add_column(justify="right")
+    line.add_row(left, right)
+    return line
 
 
 def _append_held_task_states(
@@ -967,7 +1013,10 @@ class AgentUsageRow:
             (f" · {charge}", charge_style),
         )
         return Group(
-            Text(f"{role} · {self.role_state}", style=SECONDARY_TEXT_COLOR),
+            _aligned_line(
+                Text(role, style=SECONDARY_TEXT_COLOR),
+                Text(self.role_state, style=SECONDARY_TEXT_COLOR),
+            ),
             details,
         )
 

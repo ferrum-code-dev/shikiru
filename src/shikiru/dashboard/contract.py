@@ -604,6 +604,7 @@ class EscalationPanelView:
     task_title: str = ""
     age: str = ""
     resolution_actions: tuple[str, ...] = ()
+    answer_available: bool = False
     evidence_error: str | None = None
 
 

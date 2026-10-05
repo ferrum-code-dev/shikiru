@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
+from rich.text import Text
 from textual.app import App
 from textual.containers import Grid, Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -40,8 +41,9 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.errors import ConfigError
-from shikiru.ui.compact import attention_status_text
+from shikiru.ui.compact import FocusAttentionStatus
 from shikiru.ui.theme import install_theme
+from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -108,10 +110,9 @@ _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
 HOME_SPLIT_MIN_COLUMNS = 73
 FOCUS_INSPECTOR_STACKED_MIN_COLUMNS = 54
-FOCUS_FOOTER_THREE_COLUMN_MIN_COLUMNS = 54
-FOCUS_FOOTER_TWO_COLUMN_COUNT = 2
-FOCUS_FOOTER_THREE_COLUMN_COUNT = 3
-FOCUS_FOOTER_FOUR_COLUMN_COUNT = 4
+FOCUS_FOOTER_GROUP_MIN_COLUMNS = 54
+FOCUS_FOOTER_STACKED_COLUMN_COUNT = 1
+FOCUS_FOOTER_GROUP_COUNT = 2
 FOCUS_SUMMARY_MAX_ROWS = 12
 FOCUS_MAIN_MIN_ROWS = 3
 FOCUS_COMPACT_MAIN_ROWS = 8
@@ -577,7 +578,7 @@ class _HomeAttentionStatus(Static):
             request = PaletteRequest(
                 action=f"resolve {decision.escalation_id}",
                 task_id=decision.task_id,
-                direct_answer=True,
+                direct_answer=decision.answer_available,
             )
             if self._widget_context.open_palette_context is not None:
                 await self._widget_context.open_palette_context(request)
@@ -601,17 +602,37 @@ class _HomeAttentionStatus(Static):
         attention = self._widget_context.views.attention()
         summary = self._widget_context.views.workspace_summary()
         self._attention = attention
-        self.update(attention_status_text(attention, summary, action_hint="Ctrl+P actions"))
+        self.update(
+            FocusAttentionStatus(
+                attention,
+                summary,
+                action_hint="Ctrl+P actions",
+            )
+        )
 
 
 class _HomeFooter(Grid):
     can_focus = True
 
     def compose(self) -> ComposeResult:
-        yield Static("↑↓ select", markup=False)
-        yield Button("Enter inspect", id=_HOME_FOOTER_INSPECT)
-        yield Button("Ctrl+P actions", id=_HOME_FOOTER_ACTIONS)
-        yield Button("? help", id=_HOME_FOOTER_HELP)
+        with Horizontal():
+            yield Static(
+                Text.assemble(("↑↓", STEEL_BLUE), (" select", SECONDARY_TEXT_COLOR)),
+                markup=False,
+            )
+            yield Button(
+                Text.assemble(("Enter", STEEL_BLUE), (" inspect", SECONDARY_TEXT_COLOR)),
+                id=_HOME_FOOTER_INSPECT,
+            )
+        with Horizontal():
+            yield Button(
+                Text.assemble(("Ctrl+P", STEEL_BLUE), (" actions", SECONDARY_TEXT_COLOR)),
+                id=_HOME_FOOTER_ACTIONS,
+            )
+            yield Button(
+                Text.assemble(("?", STEEL_BLUE), (" help", SECONDARY_TEXT_COLOR)),
+                id=_HOME_FOOTER_HELP,
+            )
 
 
 class DashboardApp(App[None]):
@@ -625,7 +646,7 @@ class DashboardApp(App[None]):
         background: $background; scrollbar-size-vertical: 0;
     }
     #focus-readouts {
-        height: auto; max-height: 12; padding: 0; background: $background;
+        width: 100%; height: auto; max-height: 12; padding: 0; background: $background;
         scrollbar-size-vertical: 0;
     }
     #header { height: auto; margin-bottom: 0; text-wrap: wrap; text-overflow: clip; }
@@ -634,7 +655,7 @@ class DashboardApp(App[None]):
         height: auto; margin-bottom: 1; border-top: solid $neutral-border;
     }
     #escalations {
-        height: auto; max-height: 3; padding: 0 1; margin-bottom: 1;
+        width: 100%; height: auto; max-height: 3; padding: 0 1; margin-bottom: 1;
         background: $surface;
     }
     #focus-main { height: 1fr; min-height: 3; }
@@ -662,13 +683,14 @@ class DashboardApp(App[None]):
     #task-view-root #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
     #focus-footer {
-        layout: grid; grid-size: 4 0; grid-columns: 1fr 1fr 1fr 1fr; grid-gutter: 0 1;
+        layout: grid; grid-size: 2 0; grid-columns: auto auto; grid-gutter: 0 0;
         height: auto; min-height: 2; padding: 0; margin-top: 0; border-top: solid $neutral-border;
         background: $background; color: $secondary-text;
     }
-    #focus-footer Static { width: 100%; height: auto; padding: 0 1; color: $secondary-text; }
+    #focus-footer Horizontal { width: auto; height: auto; }
+    #focus-footer Static { width: auto; height: auto; padding: 0 1; color: $secondary-text; }
     #focus-footer Button {
-        width: 100%; min-width: 1; height: auto; min-height: 1; margin: 0 0 0 1; padding: 0;
+        width: auto; min-width: 1; height: auto; min-height: 1; margin: 0; padding: 0;
         border: none; background: $background; color: $secondary-text;
         content-align: left top; text-align: left; text-wrap: wrap; text-style: none;
     }
@@ -1308,14 +1330,12 @@ class DashboardApp(App[None]):
             footer = self.query_one("#focus-footer", _HomeFooter)
             footer.display = height >= FOCUS_FOOTER_MIN_HEIGHT
             footer_columns = (
-                FOCUS_FOOTER_TWO_COLUMN_COUNT
-                if width < FOCUS_FOOTER_THREE_COLUMN_MIN_COLUMNS
-                else FOCUS_FOOTER_THREE_COLUMN_COUNT
-                if width < HOME_SPLIT_MIN_COLUMNS
-                else FOCUS_FOOTER_FOUR_COLUMN_COUNT
+                FOCUS_FOOTER_STACKED_COLUMN_COUNT
+                if width < FOCUS_FOOTER_GROUP_MIN_COLUMNS
+                else FOCUS_FOOTER_GROUP_COUNT
             )
             footer.styles.grid_size_columns = footer_columns
-            footer.styles.grid_columns = " ".join("1fr" for _ in range(footer_columns))
+            footer.styles.grid_columns = " ".join("auto" for _ in range(footer_columns))
             readouts.styles.max_height = max(
                 1,
                 min(

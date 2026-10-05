@@ -7,6 +7,7 @@ from dataclasses import replace
 from math import floor
 from typing import TYPE_CHECKING, cast
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.widgets import Button, Input, ListItem, ListView, Static
@@ -32,6 +33,7 @@ from shikiru.ui.tokens import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from rich.console import Console, ConsoleOptions, RenderResult
     from textual import events
     from textual.app import App, ComposeResult
     from textual.widget import Widget
@@ -107,6 +109,22 @@ FILTER_BUTTONS = (
 )
 FILTER_BY_BUTTON_ID = {button_id: task_filter for task_filter, button_id, _ in FILTER_BUTTONS}
 FILTER_LABELS = {task_filter: label for task_filter, _, label in FILTER_BUTTONS}
+
+
+class _FocusTaskCount:
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        del console
+        count_label = " TASKS"
+        decision_label = "Decision first"
+        if options.max_width > cell_len(count_label) + cell_len(decision_label):
+            count = Text(count_label, style=STEEL_BLUE)
+            count.append(
+                " " * (options.max_width - cell_len(count_label) - cell_len(decision_label))
+            )
+            count.append(decision_label, style=STEEL_BLUE)
+            yield count
+        else:
+            yield Text("TASKS", style=STEEL_BLUE)
 
 
 class _BrowserListItem(ListItem):
@@ -969,16 +987,7 @@ class QueuePanel(Vertical):
             list_view.index = selected_index
 
     def _render_view(self, view: TaskBrowserView) -> None:
-        count = (
-            "TASKS · Decision first"
-            if self._focus_layout and view.filter is TaskBrowserFilter.ALL and not view.search
-            else f"TASKS · {FILTER_LABELS[view.filter]} · {len(view.rows)} of {view.matching_count}"
-        )
-        if view.search:
-            count += f" · Search: {view.search}"
-        if view.selected_task_missing and view.selected_task is not None:
-            count += f" · selected {view.selected_task.task_id} remains outside this view"
-        self.query_one(f"#{COUNT_ID}", Static).update(count)
+        self._render_count(view)
         if not self._focus_layout:
             self.query_one(f"#{CLEAR_BUTTON_ID}", Button).disabled = not bool(view.search)
             for task_filter, button_id, label in FILTER_BUTTONS:
@@ -1012,6 +1021,27 @@ class QueuePanel(Vertical):
             context.update("")
         if not self._focus_layout:
             self._render_preview(view)
+
+    def _render_count(self, view: TaskBrowserView) -> None:
+        is_default_focus = (
+            self._focus_layout and view.filter is TaskBrowserFilter.ALL and not view.search
+        )
+        if is_default_focus and not view.selected_task_missing:
+            count = _FocusTaskCount()
+        else:
+            count = Text(
+                "TASKS · Decision first"
+                if is_default_focus
+                else (
+                    f"TASKS · {FILTER_LABELS[view.filter]} · "
+                    f"{len(view.rows)} of {view.matching_count}"
+                )
+            )
+            if view.search:
+                count += f" · Search: {view.search}"
+            if view.selected_task_missing and view.selected_task is not None:
+                count += f" · selected {view.selected_task.task_id} remains outside this view"
+        self.query_one(f"#{COUNT_ID}", Static).update(count)
 
     def _render_preview(self, view: TaskBrowserView) -> None:
         preview = self.query_one(f"#{TASK_PREVIEW_ID}", Static)

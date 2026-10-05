@@ -72,6 +72,7 @@ _ACTION_RUNG = "rung"
 _ACTION_MESSAGE = "message"
 _ACTION_PEEK = "peek"
 _ACTION_RESOLVE = "resolve"
+_RESOLUTION_ROUTE_PREFIX = f"{_ACTION_RESOLVE} "
 _ACTION_STOP = "stop"
 _ACTION_EXPORT = "export"
 _FIELD_EXPORT_DESTINATION = "export-destination"
@@ -350,7 +351,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     #palette-menu-primary { height: auto; }
     #palette-menu-context { height: 1; color: $secondary-text; }
     #palette-heading { height: 1; }
-    #palette-title { width: 1fr; height: 1; }
+    #palette-title { width: 1fr; height: 1; color: $steel-blue; }
     #palette-close {
         width: auto; min-width: 5; height: 1; margin: 0; padding: 0 1;
         border: none; background: $surface; color: $secondary-text; text-style: none;
@@ -437,6 +438,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._contextual_palette = initial_context is not None
         self._initial_context = initial_context or PaletteRequest()
         self._initial_action = self._initial_context.action or initial_action
+        self._fixed_escalation_id = (
+            self._initial_action.removeprefix(_RESOLUTION_ROUTE_PREFIX)
+            if self._initial_action.startswith(_RESOLUTION_ROUTE_PREFIX)
+            else None
+        )
         self._answer_resolution_route = self._initial_context.direct_answer
         self._menu_available = self._contextual_palette
         self._menu_visible = self._menu_available and self._initial_action == _EMPTY
@@ -698,9 +704,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             action_select.value = _ACTION_SUBMIT
         elif self._initial_action in {action for _, action in PALETTE_ACTIONS}:
             action_select.value = self._initial_action
-        elif self._initial_action.startswith("resolve "):
+        elif self._initial_action.startswith(_RESOLUTION_ROUTE_PREFIX):
             action_select.value = _ACTION_RESOLVE
-            _, _, escalation_id = self._initial_action.partition(" ")
+            escalation_id = self._initial_action.removeprefix(_RESOLUTION_ROUTE_PREFIX)
             if self._is_open_escalation(escalation_id):
                 escalation_select.value = escalation_id
             else:
@@ -748,7 +754,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._route_action = self._selected_value(_FIELD_ACTION)
         self._update_fields(action_select.value)
         if self._answer_resolution_route:
-            self._select_direct_answer()
+            self._answer_resolution_route = self._select_direct_answer()
+            self._show_escalation(self._selected_value(_FIELD_ESCALATION), force=True)
             self._update_fields(action_select.value)
         self._restore_contextual_form_draft(self._selected_value(_FIELD_ACTION))
         self._form_position_action = self._selected_value(_FIELD_ACTION)
@@ -926,7 +933,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             ).value = escalation_id
             self._show_escalation(escalation_id, force=True)
             if direct_answer:
-                self._select_direct_answer()
+                self._answer_resolution_route = self._select_direct_answer()
+                self._show_escalation(escalation_id, force=True)
         if action in _FORM_ROLE_ACTIONS:
             self._choose_available_role(action)
         action_search = self.query_one(f"#{_FIELD_ACTION_SEARCH}", Input)
@@ -1081,9 +1089,12 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             )
         if draft is None:
             return
+        fixed_escalation_route = (
+            self._fixed_escalation_id is not None or self._answer_resolution_route
+        )
         if (
             action == _ACTION_RESOLVE
-            and self._answer_resolution_route
+            and fixed_escalation_route
             and draft.escalation_id != self._selected_value(_FIELD_ESCALATION)
         ):
             return
@@ -1495,18 +1506,19 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         )
         self._refresh_context_menu()
 
-    def _select_direct_answer(self) -> None:
+    def _select_direct_answer(self) -> bool:
         escalation_id = self._selected_value(_FIELD_ESCALATION)
         if escalation_id is None:
-            return
+            return False
         item = self._escalations.get(escalation_id)
         if item is None or not any(
             option.label is ResolutionKind.ANSWER for option in item.escalation.options
         ):
-            return
+            return False
         cast(
             "Select[str]", self.query_one(f"#{_FIELD_RESOLUTION}", Select)
         ).value = ResolutionKind.ANSWER.value
+        return True
 
     def _resolve_disabled_reason(self) -> str | None:
         escalation_id = self._selected_value(_FIELD_ESCALATION)
