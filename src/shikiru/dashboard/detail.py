@@ -74,6 +74,7 @@ TASK_DETAIL_SIGNAL = "task-detail-signal"
 TASK_DETAIL_SUMMARY_USAGE = "task-detail-summary-usage"
 TASK_DETAIL_USAGE_INLINE_BUTTON = "task-detail-usage-inline"
 TASK_DETAIL_EVIDENCE_INLINE_BUTTON = "task-detail-evidence-inline"
+TASK_DETAIL_ACTIONS_INLINE_BUTTON = "task-detail-actions-inline"
 TASK_DETAIL_REQUEST = "task-detail-request"
 TASK_DETAIL_CRITERIA = "task-detail-criteria"
 TASK_DETAIL_REPORT = "task-detail-report"
@@ -265,12 +266,17 @@ class TaskDetailPanel(Vertical):
     }
     #task-detail-summary-usage Static { width: 1fr; height: auto; }
     #task-detail-summary-usage Button,
-    #task-detail-evidence-inline {
+    #task-detail-evidence-inline,
+    #task-detail-actions-inline {
         width: auto; min-width: 1; height: 1; margin: 0; padding: 0;
         border: none; background: $background; color: $steel-blue;
+        content-align: left middle; text-style: none;
     }
     #task-detail-summary-usage Button:focus,
-    #task-detail-evidence-inline:focus { text-style: reverse; }
+    #task-detail-evidence-inline:focus,
+    #task-detail-actions-inline:focus { text-style: reverse; }
+    #task-detail-evidence-inline:hover,
+    #task-detail-actions-inline:hover { color: $primary-text; }
     #task-detail-evidence-link { width: 100%; height: 1; margin-top: 1; }
     #task-detail-body.compact-summary #task-detail-identity,
     #task-detail-body.compact-summary #task-detail-ownership,
@@ -348,6 +354,7 @@ class TaskDetailPanel(Vertical):
             yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section")
             with Horizontal(id="task-detail-evidence-link"):
                 yield Button("e Evidence", id=TASK_DETAIL_EVIDENCE_INLINE_BUTTON)
+                yield Button("Ctrl+P actions", id=TASK_DETAIL_ACTIONS_INLINE_BUTTON)
             yield Static(
                 "", id=TASK_DETAIL_CONTEXT_INFO, classes="task-detail-section", markup=False
             )
@@ -576,6 +583,9 @@ class TaskDetailPanel(Vertical):
             return
         if event.button.id == TASK_DETAIL_EVIDENCE_INLINE_BUTTON:
             self._show_task_view(TASK_VIEW_EVIDENCE)
+            return
+        if event.button.id == TASK_DETAIL_ACTIONS_INLINE_BUTTON:
+            await self.open_palette()
             return
         handlers = {
             TASK_DETAIL_BACK_BUTTON: self._back,
@@ -1409,6 +1419,7 @@ class TaskDetailScreen(ModalScreen[None]):
         *,
         initial_view: str = TASK_VIEW_SUMMARY,
         wide_overlay: bool = False,
+        open_views_on_mount: bool = False,
     ) -> None:
         super().__init__()
         if wide_overlay:
@@ -1416,6 +1427,7 @@ class TaskDetailScreen(ModalScreen[None]):
         self._widget_context = context
         self._task_id = task_id
         self._initial_view = initial_view
+        self._open_views_on_mount = open_views_on_mount
 
     def compose(self) -> ComposeResult:
         yield TaskDetailPanel(
@@ -1434,6 +1446,8 @@ class TaskDetailScreen(ModalScreen[None]):
             else panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         )
         self.set_focus(target)
+        if self._open_views_on_mount:
+            await panel.open_contextual_views()
 
     async def _close(self) -> None:
         self.dismiss()

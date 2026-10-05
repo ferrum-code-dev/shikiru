@@ -370,7 +370,7 @@ def _operator_task_app(
     active_apps: list[DashboardApp] = []
 
     async def open_palette_context(request: PaletteRequest) -> None:
-        def refresh_task_detail(_: None) -> None:
+        def refresh_task_detail(_: object | None) -> None:
             active_apps[0].refresh_task_detail_after_resume()
 
         await active_apps[0].push_screen(

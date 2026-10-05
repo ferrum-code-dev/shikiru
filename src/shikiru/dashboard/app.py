@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 from textual.app import App
@@ -20,8 +20,10 @@ from shikiru.dashboard.contract import (
     CommandFeedbackEntryView,
     CommandFeedbackStatus,
     CommandHistoryView,
+    PaletteDraft,
     PaletteRequest,
     TaskBrowserFilter,
+    TaskPaletteRoute,
     WidgetContext,
     WidgetPlacement,
 )
@@ -96,6 +98,9 @@ _COMMAND_HISTORY_NEXT_KEY = "right"
 COMMAND_ACTION_SAY = "Say"
 _SEARCH_KEY = "slash"
 _ACTIONS_KEY = "ctrl+p"
+_HOME_FOOTER_INSPECT = "focus-footer-inspect"
+_HOME_FOOTER_ACTIONS = "focus-footer-actions"
+_HOME_FOOTER_HELP = "focus-footer-help"
 _EVIDENCE_KEY = "e"
 _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
@@ -123,6 +128,7 @@ FOCUS_CONTEXT_VIEW_WORKER = "focus-context-view"
 FOCUS_OPERATOR_ACTIONS = "operator-actions"
 FOCUS_CONTEXT_HELP = "context-help"
 EMPTY_CONTEXT_CHOICE = ""
+TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
 
 
 class _TaskBrowserNavigation(Protocol):
@@ -548,7 +554,13 @@ class _HomeAttentionStatus(Static):
 
     async def on_click(self, event: events.Click) -> None:
         attention = self._attention
-        if attention is None or not attention.groups:
+        if attention is None:
+            return
+        if not attention.groups:
+            summary = self._widget_context.views.workspace_summary()
+            if summary.engine_up is False and self._widget_context.open_contextual_view is not None:
+                await self._widget_context.open_contextual_view(FOCUS_COMMAND_HISTORY)
+                event.stop()
             return
         group = attention.groups[0]
         if group.task_id is not None and self._widget_context.on_task_selected is not None:
@@ -584,8 +596,14 @@ class _HomeAttentionStatus(Static):
         self.update(attention_status_text(attention, summary, action_hint="Ctrl+P actions"))
 
 
-class _HomeFooter(Static):
+class _HomeFooter(Horizontal):
     can_focus = True
+
+    def compose(self) -> ComposeResult:
+        yield Static("↑↓ select", markup=False)
+        yield Button("Enter inspect", id=_HOME_FOOTER_INSPECT)
+        yield Button("Ctrl+P actions", id=_HOME_FOOTER_ACTIONS)
+        yield Button("? help", id=_HOME_FOOTER_HELP)
 
 
 class DashboardApp(App[None]):
@@ -635,9 +653,17 @@ class DashboardApp(App[None]):
     #task-view-root #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
     #focus-footer {
-        height: auto; padding: 0; margin-top: 0; border-top: solid $neutral-border;
+        height: auto; min-height: 2; padding: 0; margin-top: 0; border-top: solid $neutral-border;
         background: $background; color: $secondary-text;
     }
+    #focus-footer Static { width: auto; height: 1; padding: 0 1; color: $secondary-text; }
+    #focus-footer Button {
+        width: auto; min-width: 1; height: 1; min-height: 1; margin: 0 0 0 1; padding: 0;
+        border: none; background: $background; color: $secondary-text;
+        content-align: left middle; text-style: none;
+    }
+    #focus-footer Button:hover { color: $steel-blue; text-style: none; }
+    #focus-footer Button:focus { color: $primary-text; text-style: reverse; }
     #workspace-command-status { height: 1; padding: 0 1; color: $secondary-text; }
     """
 
@@ -672,6 +698,7 @@ class DashboardApp(App[None]):
         self._timeline_refresh_seconds = timeline_refresh_seconds
         self._open_palette = open_palette
         self._open_palette_context = open_palette_context
+        self._palette_draft: PaletteDraft | None = None
         self._selected_task_id = focus_task
         self._navigate_task_window = navigate_task_window
         self._navigate_role_pane = navigate_role_pane
@@ -748,11 +775,7 @@ class DashboardApp(App[None]):
                 else:
                     yield Static("Task list is not configured.", id="focus-empty", markup=False)
             yield _CommandStatusLine(self._views, self._on_change)
-            yield _HomeFooter(
-                "↑↓ select   Enter inspect   Ctrl+P actions   ? help",
-                id="focus-footer",
-                markup=False,
-            )
+            yield _HomeFooter(id="focus-footer")
 
     def _compose_task_workspace(self) -> ComposeResult:
         context = self._widget_context()
@@ -790,19 +813,7 @@ class DashboardApp(App[None]):
         placement: WidgetPlacement = WidgetPlacement.EXTENSIONS,
     ) -> WidgetContext:
         async def open_task_detail(task_id: str) -> None:
-            def refresh_resumed_detail(_: None) -> None:
-                self.refresh_task_detail_after_resume()
-
-            await self.push_screen(
-                TaskDetailScreen(
-                    self._widget_context(),
-                    task_id,
-                    wide_overlay=(
-                        self._focus_task is None and self.size.width >= HOME_SPLIT_MIN_COLUMNS
-                    ),
-                ),
-                callback=refresh_resumed_detail,
-            )
+            await self._open_task_detail(task_id)
 
         return WidgetContext(
             views=self._views,
@@ -814,7 +825,7 @@ class DashboardApp(App[None]):
             on_change=self._on_change,
             on_motion=self._register_motion_callback,
             open_palette=self._open_palette,
-            open_palette_context=self._open_palette_context,
+            open_palette_context=self._open_contextual_palette,
             open_task_detail=open_task_detail,
             navigate_task_window=self._navigate_task_window,
             navigate_role_pane=self._navigate_role_pane,
@@ -972,10 +983,81 @@ class DashboardApp(App[None]):
         if choice_id == EMPTY_CONTEXT_CHOICE:
             return
         choice = self._find_context_choice(choice_id)
+        if choice is None and choice_id == FOCUS_FAULTS_VIEW:
+            self._show_navigation_feedback(
+                "Fault history extension is not configured; showing command history."
+            )
+            history = self._find_context_choice(FOCUS_COMMAND_HISTORY)
+            if history is not None:
+                await self._run_context_choice(history)
+            return
         if choice is None:
             message = f"unknown contextual dashboard view {choice_id!r}"
             raise ValueError(message)
         await self._run_context_choice(choice)
+
+    async def _open_contextual_palette(self, request: PaletteRequest) -> None:
+        callback = self._open_palette_context
+        if callback is None:
+            await self._open_palette(request.action or "")
+            return
+        draft = self._palette_draft
+        if draft is not None and draft.task_id == request.task_id:
+            request = replace(request, draft=draft)
+        await callback(request)
+
+    def remember_contextual_palette_draft(self, draft: PaletteDraft) -> None:
+        """Keep the latest contextual form draft in memory while its caller is visible."""
+        self._palette_draft = draft
+
+    def route_task_palette(self, task_id: str, route: TaskPaletteRoute) -> None:
+        """Open a task detail destination selected from its contextual action surface."""
+        self.run_worker(
+            self._open_task_palette_route(task_id, route),
+            group=TASK_PALETTE_ROUTE_WORKER,
+        )
+
+    def palette_return_callback(
+        self, task_id: str | None
+    ) -> Callable[[TaskPaletteRoute | None], None]:
+        """Return from a palette to its task context and optional secondary route."""
+
+        def on_return(route: TaskPaletteRoute | None) -> None:
+            self.refresh_task_detail_after_resume()
+            if route is not None and task_id is not None:
+                self.route_task_palette(task_id, route)
+
+        return on_return
+
+    async def _open_task_palette_route(self, task_id: str, route: TaskPaletteRoute) -> None:
+        if self._focus_task is not None and self._focus_task != task_id:
+            return
+        if self._focus_task is None:
+            self._select_task_context(task_id)
+        if route is TaskPaletteRoute.EVIDENCE:
+            await self.action_open_task_evidence()
+            return
+        if route is TaskPaletteRoute.USAGE:
+            await self.action_open_task_usage()
+            return
+        panel = self._context_task_detail_panel()
+        if (
+            panel is None
+            and self._home_detail_panel is not None
+            and self._home_detail_panel.display
+        ):
+            panel = self._home_detail_panel
+        if panel is not None:
+            await panel.open_contextual_views()
+            return
+        self.push_screen(
+            TaskDetailScreen(
+                self._widget_context(),
+                task_id,
+                open_views_on_mount=True,
+            ),
+            callback=lambda _: self.refresh_task_detail_after_resume(),
+        )
 
     def _find_context_choice(self, choice_id: str) -> _ContextChoice | None:
         return next(
@@ -1009,6 +1091,21 @@ class DashboardApp(App[None]):
                 await cast("_TaskBrowserNavigation", queue).reveal_selected_task()
             return
         await self._show_context_widget(choice)
+
+    async def _open_task_detail(self, task_id: str) -> None:
+        def refresh_resumed_detail(_: None) -> None:
+            self.refresh_task_detail_after_resume()
+
+        await self.push_screen(
+            TaskDetailScreen(
+                self._widget_context(),
+                task_id,
+                wide_overlay=(
+                    self._focus_task is None and self.size.width >= HOME_SPLIT_MIN_COLUMNS
+                ),
+            ),
+            callback=refresh_resumed_detail,
+        )
 
     async def _run_special_context_choice(self, choice: _ContextChoice) -> bool:
         if choice.operator_actions:
@@ -1046,14 +1143,19 @@ class DashboardApp(App[None]):
         self._selected_task_id = task_id
         if self._home_detail_panel is not None:
             self._home_detail_panel.select_task(task_id)
+        if self._focus_task is None:
+            self.query_one(f"#{_HOME_FOOTER_INSPECT}", Button).disabled = task_id is None
 
     async def on_mount(self) -> None:
         """Focus the task browser or task view and start signal-driven refresh."""
         self._apply_layout(self.size.width, self.size.height)
         if self._focus_task is None:
             task_list = self.query("#task-browser-list")
-            target = task_list.first() if task_list else self.query_one("#focus-footer", Static)
+            target = task_list.first() if task_list else self.query_one("#focus-footer", Horizontal)
             self.set_focus(target)
+            self.query_one(f"#{_HOME_FOOTER_INSPECT}", Button).disabled = (
+                self._selected_task_id is None
+            )
         else:
             self.set_focus(self.query_one("#task-detail-body"))
         if self._motion_interval_seconds is not None:
@@ -1080,6 +1182,15 @@ class DashboardApp(App[None]):
             event.stop()
             if event.key in {_ACTIONS_KEY, TASK_DETAIL_ESCAPE}:
                 event.prevent_default()
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == _HOME_FOOTER_INSPECT:
+            if self._selected_task_id is not None:
+                await self._open_task_detail(self._selected_task_id)
+        elif event.button.id == _HOME_FOOTER_ACTIONS:
+            await self.action_open_palette()
+        elif event.button.id == _HOME_FOOTER_HELP:
+            await self.action_show_help()
 
     async def _dispatch_workspace_key(self, event: events.Key) -> bool:
         if event.key == _ACTIONS_KEY:
@@ -1153,7 +1264,7 @@ class DashboardApp(App[None]):
                 else FOCUS_MAIN_MIN_ROWS
             )
             main.styles.min_height = minimum_main_height
-            footer = self.query_one("#focus-footer", Static)
+            footer = self.query_one("#focus-footer", Horizontal)
             footer.display = height >= FOCUS_FOOTER_MIN_HEIGHT
             readouts.styles.max_height = max(
                 1,
@@ -1249,7 +1360,7 @@ class DashboardApp(App[None]):
             await self._home_detail_panel.open_palette()
             return
         if self._open_palette_context is not None:
-            await self._open_palette_context(PaletteRequest(task_id=self._selected_task_id))
+            await self._open_contextual_palette(PaletteRequest(task_id=self._selected_task_id))
             return
         await self._open_palette("")
 

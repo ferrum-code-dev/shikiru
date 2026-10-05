@@ -139,6 +139,7 @@ class _PaletteContext(Protocol):
     action: str | None
     task_id: str | None
     role: str | None
+    draft: object | None
 
 
 def build_clock() -> Clock:
@@ -356,13 +357,14 @@ async def run_dashboard(
                 initial_action=action,
                 initial_context=context,
                 evidence_exporter=evidence_exporter,
+                remember_contextual_draft=(app_instance.remember_contextual_palette_draft),
+                task_routes_available=context is not None and context.task_id is not None,
             )
 
-            def refresh_task_detail(_: None) -> None:
-                if app_instance is not None:
-                    app_instance.refresh_task_detail_after_resume()
-
-            await app_instance.push_screen(palette, callback=refresh_task_detail)
+            callback = app_instance.palette_return_callback(
+                context.task_id if context is not None else None
+            )
+            await app_instance.push_screen(palette, callback=callback)
 
         async def open_palette(action: str) -> None:
             await push_palette(action)

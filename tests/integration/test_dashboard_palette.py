@@ -380,17 +380,20 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         assert screen.query_one("#palette-menu-action-submit").display
         assert screen.query_one("#palette-menu-action-stop").display
         assert screen.query_one("#palette-menu-action-take-over").display
+        assert not screen.query_one("#palette-menu-action-resume").display
+        assert not screen.query_one("#palette-menu-action-hand-back").display
         assert queue.pending() == []
 
         await pilot.click("#palette-menu-action-message")
         assert not menu.display
         assert screen.query_one("#field-role").display
         assert screen.query_one("#field-message").display
+        _assert_fixed_task_context_title(screen, task.id, "Leader")
         message = screen.query_one("#message", TextArea)
         await wait_until(lambda: app.focused is message, timeout=2)
         guidance = "Keep the new parser branch behind the existing validation."
-        message.text = guidance
-        await pilot.press("escape")
+        await pilot.press(*guidance)
+        await pilot.click("#palette-back-to-menu")
         await wait_until(lambda: menu.display, timeout=2)
         assert message.text == guidance
         assert queue.pending() == []
@@ -403,8 +406,49 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         await pilot.click("#palette-menu-action-take-over")
         role = cast("Select[str]", screen.query_one("#role", Select))
         assert role.value == Role.IMPLEMENTER.value
+        await wait_until(lambda: app.focused is role, timeout=2)
         assert screen.query_one("#field-role").display
         assert not screen.query_one("#field-message").display
+        assert queue.pending() == []
+
+        current = TaskStore(connection, clock).require(task.id)
+        TaskStore(connection, clock).apply_transition(
+            task.id,
+            Transition.stay(current, step=None, status=Status.CANCELLED),
+        )
+        clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
+        await wait_until(
+            lambda: not screen.query_one("#palette-menu-action-take-over").display,
+            timeout=2,
+        )
+        assert not screen.query_one("#palette-menu-action-message").display
+        assert queue.pending() == []
+
+
+async def test_project_context_menu_has_no_task_targets(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        assert screen.query_one("#palette-menu").display
+        assert _static_text(screen, "#palette-menu-context") == "Project"
+        assert not screen.query_one("#palette-menu-task-actions").display
+        assert not screen.query_one("#palette-menu-task-views").display
+        assert screen.query_one("#palette-menu-action-submit").display
+        assert screen.query_one("#palette-menu-action-stop").display
         assert queue.pending() == []
 
 
@@ -1078,6 +1122,15 @@ async def _enter_text(pilot: Pilot[None], text: str) -> None:
 def _static_text(screen: PaletteScreen, selector: str) -> str:
     rendered = cast("Text", screen.query_one(selector, Static).render())
     return rendered.plain
+
+
+def _assert_fixed_task_context_title(screen: PaletteScreen, task_id: str, role_name: str) -> None:
+    assert not screen.query_one("#field-task-search").display
+    assert not screen.query_one("#field-task-choice").display
+    assert not screen.query_one("#field-task-id").display
+    title = _static_text(screen, "#palette-title")
+    assert task_id in title
+    assert role_name in title
 
 
 async def test_palette_submit_queues_a_typed_command_and_shows_its_ack(

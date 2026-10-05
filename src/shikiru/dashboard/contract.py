@@ -73,12 +73,34 @@ MotionRegistration = Callable[[OnChange], Callable[[], None]]
 
 
 @dataclass(frozen=True)
+class PaletteDraft:
+    """One transient contextual form draft retained while its caller is visible."""
+
+    task_id: str
+    action: str
+    guidance: str
+    role: str | None = None
+    role_explicit: bool = False
+    escalation_id: str | None = None
+    resolution: str | None = None
+
+
+class TaskPaletteRoute(StrEnum):
+    """A task detail destination opened from its contextual action surface."""
+
+    EVIDENCE = "evidence"
+    USAGE = "usage"
+    VIEWS = "views"
+
+
+@dataclass(frozen=True)
 class PaletteRequest:
     """Optional task, role and action context for the shared operator palette."""
 
     action: str | None = None
     task_id: str | None = None
     role: str | None = None
+    draft: PaletteDraft | None = None
 
 
 OpenPalette = Callable[[str], Awaitable[None]]

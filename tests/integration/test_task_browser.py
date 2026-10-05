@@ -385,6 +385,34 @@ async def test_browser_keeps_selection_while_search_filter_state_and_history_cha
         assert widget.query_one(f"#task-row-{selected.id}")
 
 
+async def test_legacy_queue_enter_opens_selected_task_once(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Legacy Queue Enter")
+    opened_task_ids: list[str] = []
+
+    async def open_task_detail(task_id: str) -> None:
+        opened_task_ids.append(task_id)
+
+    context = replace(
+        widget_context(reader, project_dir, clock),
+        open_task_detail=open_task_detail,
+        placement=WidgetPlacement.EXTENSIONS,
+    )
+    widget = cast("QueuePanel", QueueWidget().create(context))
+
+    async with WidgetHostApp(widget).run_test(size=(90, 24)) as pilot:
+        task_list = widget.query_one("#task-browser-list", ListView)
+        await wait_until(lambda: bool(widget.query(f"#task-row-{task.id}")), timeout=2)
+        task_list.focus()
+        await pilot.press("enter")
+        await wait_until(lambda: opened_task_ids == [task.id], timeout=2)
+
+
 async def test_history_load_more_keeps_the_selected_task(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:

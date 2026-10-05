@@ -43,10 +43,13 @@ from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import (
     WIDGET_ENTRY_POINT_GROUP,
     DiagnosticSampleState,
+    PaletteDraft,
     PaletteRequest,
     ResourceView,
+    TaskPaletteRoute,
 )
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_ACTIONS_INLINE_BUTTON,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_CRITERIA,
     TASK_DETAIL_EVIDENCE,
@@ -64,6 +67,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_TITLE,
     TASK_DETAIL_USAGE_INLINE_BUTTON,
     TASK_DETAIL_VERDICT,
+    TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TASK_DETAIL_WORKSPACE,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_SUMMARY,
@@ -881,6 +885,8 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rich.text import Text
     from textual.pilot import Pilot
     from textual.widget import Widget
@@ -903,6 +909,9 @@ def _palette_screen_for_app(
     project_dir: Path,
     clock: Clock,
     request: PaletteRequest | None = None,
+    *,
+    remember_contextual_draft: Callable[[PaletteDraft], None] | None = None,
+    task_routes_available: bool = False,
 ) -> PaletteScreen:
     settings = load_settings(project_dir)
     services = StubServices()
@@ -922,7 +931,28 @@ def _palette_screen_for_app(
         _unexpected_pane_selection,
         on_change=reader.watch,
         initial_context=request,
+        remember_contextual_draft=remember_contextual_draft,
+        task_routes_available=task_routes_available,
     )
+
+
+def _assert_fixed_context_target_picker_hidden(screen: PaletteScreen) -> None:
+    assert not screen.query_one("#field-task-search").display
+    assert not screen.query_one("#field-task-choice").display
+    assert not screen.query_one("#field-task-id").display
+
+
+async def _open_attention_answer_form(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    row: Static,
+) -> PaletteScreen:
+    await pilot.click(row)
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    return cast("PaletteScreen", app.screen)
 
 
 def _app(
@@ -1883,8 +1913,19 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
 
     async def open_palette_context(request: PaletteRequest) -> None:
         assert app is not None
+        current_app = app
+        palette = _palette_screen_for_app(
+            reader,
+            connection,
+            project_dir,
+            clock,
+            request,
+            remember_contextual_draft=app.remember_contextual_palette_draft,
+            task_routes_available=True,
+        )
         await app.push_screen(
-            _palette_screen_for_app(reader, connection, project_dir, clock, request)
+            palette,
+            callback=lambda _: current_app.refresh_task_detail_after_resume(),
         )
 
     try:
@@ -1899,13 +1940,9 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             await wait_until(lambda: attention.display, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
             row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
             assert escalation.id in _rendered_text(row)
+            caller = app.screen
 
-            await pilot.click(row)
-            await wait_until(
-                lambda: isinstance(app.screen, PaletteScreen),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            screen = cast("PaletteScreen", app.screen)
+            screen = await _open_attention_answer_form(app, pilot, row)
             assert screen.query_one("#task-id", Input).value == task.id
             assert cast("Select[str]", screen.query_one("#action", Select)).value == "resolve"
             assert (
@@ -1914,6 +1951,10 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             assert cast("Select[str]", screen.query_one("#resolution", Select)).value == "answer"
             assert screen.query_one("#field-resolution-text").display
             assert not screen.query_one("#field-role").display
+            _assert_fixed_context_target_picker_hidden(screen)
+            title = screen.query_one("#palette-title", Static)
+            assert task.id in _rendered_text(title)
+            assert escalation.id in _rendered_text(title)
             answer_field = screen.query_one("#resolution-text", TextArea)
             await wait_until(
                 lambda: app.focused is answer_field,
@@ -1922,21 +1963,21 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             assert queue.pending() == []
 
             guidance = "Preserve the existing call pattern."
-            answer_field.text = guidance
+            await pilot.press(*guidance)
             await pilot.press("escape")
             await wait_until(
-                lambda: screen.query_one("#palette-menu").display,
+                lambda: app.screen is caller,
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            assert screen.query_one("#palette-menu-action-resolve").display
             assert queue.pending() == []
-            await pilot.click("#palette-menu-action-resolve")
+            await pilot.click(row)
             await wait_until(
-                lambda: not screen.query_one("#palette-menu").display,
+                lambda: isinstance(app.screen, PaletteScreen),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            assert answer_field.text == guidance
-            assert cast("Select[str]", screen.query_one("#resolution", Select)).value == "answer"
+            reopened = cast("PaletteScreen", app.screen)
+            assert reopened.query_one("#resolution-text", TextArea).text == guidance
+            assert cast("Select[str]", reopened.query_one("#resolution", Select)).value == "answer"
             assert queue.pending() == []
     finally:
         reader.close()
@@ -2000,8 +2041,6 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
                 timeout=2,
             )
             assert isinstance(queue.pending()[0].command, Stop)
-            await pilot.press("escape")
-            await wait_until(lambda: palette.query_one("#palette-menu").display, timeout=2)
             await pilot.press("escape")
             await wait_until(lambda: first_app.screen is dashboard_screen, timeout=2)
             await wait_until(
@@ -2210,7 +2249,7 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
             await pilot.pause()
             status = app.query_one("#workspace-command-status", Static)
             assert status.size.height == 1
-            footer = app.query_one("#focus-footer", Static)
+            footer = app.query_one("#focus-footer", Horizontal)
             assert footer.region.bottom <= 20
             assert footer.region.right <= width
             home_screen = app.screen
@@ -2470,6 +2509,484 @@ async def test_home_row_click_selects_and_enter_opens_a_returnable_inspector(
         reader.close()
 
 
+async def _exercise_contextual_draft_and_evidence_route(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+    queue: CommandQueue,
+) -> None:
+    home = app.screen
+    search = app.query_one("#task-browser-search", Input)
+    search.value = task.title
+    list_view = app.query_one("#task-browser-list", ListView)
+    await wait_until(
+        lambda: bool(app.query(f"#task-row-{task.id}")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    list_view.focus()
+    await pilot.click("#focus-footer-actions")
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    palette = cast("PaletteScreen", app.screen)
+    context = _rendered_text(palette.query_one("#palette-menu-context", Static))
+    assert task.id in context
+    assert "Leader" in context
+    assert palette.query_one("#palette-menu-view-evidence").display
+    assert palette.query_one("#palette-menu-view-usage").display
+    assert palette.query_one("#palette-menu-view-secondary").display
+    await pilot.click("#palette-menu-action-message")
+    guidance = "Retain this task scoped guidance after closing."
+    await pilot.press(*guidance)
+    await pilot.click("#palette-back-to-menu")
+    await pilot.click("#palette-menu-view-evidence")
+    panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+    await wait_until(
+        lambda: panel.active_view == TASK_VIEW_EVIDENCE,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    assert queue.pending() == []
+    await pilot.press("escape")
+    await wait_until(
+        lambda: panel.active_view == TASK_VIEW_SUMMARY,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    list_view.focus()
+    await pilot.press("ctrl+p")
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    palette = cast("PaletteScreen", app.screen)
+    await pilot.click("#palette-menu-action-message")
+    await wait_until(
+        lambda: palette.query_one("#message", TextArea).text == guidance,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.click("#palette-close")
+    await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    assert search.value == task.title
+    assert queue.pending() == []
+
+
+async def _exercise_home_help_route(app: DashboardApp, pilot: Pilot[None], task: Task) -> None:
+    home = app.screen
+    search = app.query_one("#task-browser-search", Input)
+    await pilot.click("#focus-footer-help")
+    await wait_until(
+        lambda: bool(app.screen.query("#workspace-help-copy")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    assert app.focused is not None
+    assert app.focused.id == "focus-footer-help"
+    assert search.value == task.title
+
+
+async def _exercise_inspector_mouse_and_native_escape(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+    queue: CommandQueue,
+) -> None:
+    home = app.screen
+    search = app.query_one("#task-browser-search", Input)
+    await pilot.click("#focus-footer-inspect")
+    await wait_until(
+        lambda: isinstance(app.screen, TaskDetailScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    detail_screen = cast("TaskDetailScreen", app.screen)
+    assert detail_screen.has_class("wide-overlay")
+    assert task.id in _rendered_text(detail_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    await pilot.click(f"#{TASK_DETAIL_ACTIONS_INLINE_BUTTON}")
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    palette = cast("PaletteScreen", app.screen)
+    assert task.id in _rendered_text(palette.query_one("#palette-menu-context", Static))
+    await pilot.click("#palette-menu-action-message")
+    role = cast("Select[str]", palette.query_one("#role", Select))
+    role.focus()
+    await pilot.press("enter")
+    await wait_until(lambda: role.expanded, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    await pilot.press("ctrl+p")
+    assert app.screen is palette
+    assert role.expanded
+    await pilot.press("escape")
+    await wait_until(lambda: not role.expanded, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    assert app.screen is palette
+    await pilot.press("escape")
+    await wait_until(
+        lambda: app.screen is detail_screen,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    assert search.value == task.title
+    assert app.focused is not None
+    assert app.focused.id == "focus-footer-inspect"
+    assert queue.pending() == []
+
+
+async def _exercise_task_secondary_menu_routes(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+    queue: CommandQueue,
+) -> None:
+    search = app.query_one("#task-browser-search", Input)
+    list_view = app.query_one("#task-browser-list", ListView)
+    panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+    for route_button, expected_view in (
+        ("#palette-menu-view-evidence", TASK_VIEW_EVIDENCE),
+        ("#palette-menu-view-usage", TASK_VIEW_USAGE),
+    ):
+        list_view.focus()
+        await pilot.press("ctrl+p")
+        await wait_until(
+            lambda: isinstance(app.screen, PaletteScreen),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        await pilot.click(route_button)
+        await wait_until(
+            lambda expected_view=expected_view: panel.active_view == expected_view,
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        assert search.value == task.title
+        assert queue.pending() == []
+
+    list_view.focus()
+    await pilot.press("ctrl+p")
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    menu = cast("PaletteScreen", app.screen).query_one("#palette-menu", VerticalScroll)
+    menu.scroll_to_widget(
+        menu.query_one("#palette-menu-view-secondary", Button),
+        animate=False,
+        immediate=True,
+    )
+    await pilot.pause()
+    await pilot.click("#palette-menu-view-secondary")
+    await wait_until(
+        lambda: bool(app.screen.query("#task-detail-views-frame")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    views = app.screen
+    views.query_one("#task-detail-view-choice", Select).value = "widget-faults"
+    await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
+    await wait_until(
+        lambda: bool(app.screen.query("#context-widget-frame")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert "Faults" in _rendered_text(app.screen.query_one("#context-widget-title", Static))
+    assert queue.pending() == []
+
+
+async def test_task_context_menu_closes_and_opens_secondary_views_without_commands(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Context menu view target")
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
+    reader = StateReader(database, clock)
+    app_instances: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        app = app_instances[0]
+        palette = _palette_screen_for_app(
+            reader,
+            connection,
+            project_dir,
+            clock,
+            request,
+            remember_contextual_draft=app.remember_contextual_palette_draft,
+            task_routes_available=True,
+        )
+
+        def after_close(route: TaskPaletteRoute | None) -> None:
+            if route is None or request.task_id is None:
+                app.refresh_task_detail_after_resume()
+                return
+            app.route_task_palette(request.task_id, route)
+
+        await app.push_screen(palette, callback=after_close)
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue", "faults"],
+            open_palette_context=open_palette_context,
+            clock=clock,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            await _exercise_contextual_draft_and_evidence_route(app, pilot, task, queue)
+            await _exercise_home_help_route(app, pilot, task)
+            await _exercise_inspector_mouse_and_native_escape(app, pilot, task, queue)
+            await _exercise_task_secondary_menu_routes(app, pilot, task, queue)
+    finally:
+        reader.close()
+
+
+async def test_empty_home_footer_actions_and_help_are_mouse_reachable_and_read_only(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+    queue = CommandQueue(connection, clock)
+    app_instances: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        app = app_instances[0]
+        palette = _palette_screen_for_app(reader, connection, project_dir, clock, request)
+        await app.push_screen(palette)
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=[],
+            open_palette_context=open_palette_context,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
+            home = app.screen
+            inspect = app.query_one("#focus-footer-inspect", Button)
+            assert inspect.disabled
+            await pilot.click("#focus-footer-actions")
+            await wait_until(
+                lambda: isinstance(app.screen, PaletteScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            palette = cast("PaletteScreen", app.screen)
+            assert _rendered_text(palette.query_one("#palette-menu-context", Static)) == "Project"
+            assert palette.query_one("#palette-menu-action-submit").display
+            assert palette.query_one("#palette-menu-action-stop").display
+            assert not palette.query_one("#palette-menu-task-actions").display
+            assert not palette.query_one("#palette-menu-task-views").display
+            assert queue.pending() == []
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+            assert app.focused is not None
+            assert app.focused.id == "focus-footer-actions"
+
+            await pilot.click("#focus-footer-help")
+            await wait_until(
+                lambda: bool(app.screen.query("#workspace-help-copy")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+            assert app.focused is not None
+            assert app.focused.id == "focus-footer-help"
+            assert queue.pending() == []
+    finally:
+        reader.close()
+
+
+async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Compact contextual view")
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
+    reader = StateReader(database, clock)
+    app_instances: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        app = app_instances[0]
+        palette = _palette_screen_for_app(
+            reader,
+            connection,
+            project_dir,
+            clock,
+            request,
+            remember_contextual_draft=app.remember_contextual_palette_draft,
+            task_routes_available=True,
+        )
+
+        def after_close(route: TaskPaletteRoute | None) -> None:
+            if route is not None and request.task_id is not None:
+                app.route_task_palette(request.task_id, route)
+
+        await app.push_screen(palette, callback=after_close)
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue"],
+            open_palette_context=open_palette_context,
+            clock=clock,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=_COMPACT_HOME_SIZE) as pilot:
+            home = app.screen
+            list_view = app.query_one("#task-browser-list", ListView)
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{task.id}")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            list_view.focus()
+            await pilot.press("ctrl+p")
+            await wait_until(
+                lambda: isinstance(app.screen, PaletteScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            menu = cast("PaletteScreen", app.screen).query_one("#palette-menu", VerticalScroll)
+            menu.scroll_to_widget(
+                menu.query_one("#palette-menu-view-secondary", Button),
+                animate=False,
+                immediate=True,
+            )
+            await pilot.pause()
+            await pilot.click("#palette-menu-view-secondary")
+            await wait_until(
+                lambda: bool(app.screen.query("#task-detail-views-frame")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            views = app.screen
+            choice = cast("Select[str]", views.query_one("#task-detail-view-choice", Select))
+            choice.value = TASK_VIEW_EVIDENCE
+            await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
+            await wait_until(
+                lambda: (
+                    isinstance(app.screen, TaskDetailScreen)
+                    and cast("TaskDetailScreen", app.screen)
+                    .query_one("#task-detail-panel", TaskDetailPanel)
+                    .active_view
+                    == TASK_VIEW_EVIDENCE
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            detail_screen = cast("TaskDetailScreen", app.screen)
+            assert task.id in _rendered_text(
+                detail_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            )
+            assert queue.pending() == []
+            await pilot.press("escape")
+            await wait_until(
+                lambda: (
+                    detail_screen.query_one("#task-detail-panel", TaskDetailPanel).active_view
+                    == TASK_VIEW_SUMMARY
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+            assert app.query_one("#task-browser-search", Input).value == ""
+            assert task.id in _rendered_text(app.query_one("#task-detail-identity", Static))
+            assert queue.pending() == []
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("widget_names", [["header"], ["escalations"]])
+async def test_project_fault_attention_without_faults_extension_opens_existing_history(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    widget_names: list[str],
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    EventLog(connection, clock).append(
+        EventKind.ENGINE_FAULT,
+        task_id=None,
+        message="project engine stopped after a recorded fault",
+        data={
+            "scope": "engine",
+            "error": "engine stopped with a recoverable fault",
+            "recoverable": True,
+            "repeat": 1,
+        },
+    )
+    reader = StateReader(database, clock)
+    queue = CommandQueue(connection, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=widget_names)
+        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
+            attention = app.query_one("#escalations")
+            attention_text = (
+                attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+                if isinstance(attention, EscalationsPanel)
+                else attention
+            )
+            await wait_until(
+                lambda: "engine fault" in _rendered_text(cast("Static", attention_text)),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.click("#escalations")
+            await wait_until(
+                lambda: bool(app.screen.query("#command-history-page")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert queue.pending() == []
+            assert reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == 0
+            await pilot.press("escape")
+            await wait_until(
+                lambda: app.screen.query_one("#workspace-command-status", Static).display,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert "Fault history extension is not configured" in _rendered_text(
+                app.screen.query_one("#workspace-command-status", Static)
+            )
+    finally:
+        reader.close()
+
+
+async def test_stopped_project_attention_without_rows_opens_command_history(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    reader = StateReader(database, SystemClock())
+    queue = CommandQueue(connection, SystemClock())
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["header"],
+            services=StubServices(engine_running=False),
+        )
+        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
+            attention = app.query_one("#escalations", Static)
+            await wait_until(
+                lambda: "Engine stopped" in _rendered_text(attention),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.click(attention)
+            await wait_until(
+                lambda: bool(app.screen.query("#command-history-page")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert queue.pending() == []
+    finally:
+        reader.close()
+
+
 async def _assert_home_inline_mouse_routes(
     app: DashboardApp,
     pilot: Pilot[None],
@@ -2499,7 +3016,7 @@ async def _assert_home_inline_mouse_routes(
 
 
 def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> None:
-    footer = app.query_one("#focus-footer", Static)
+    footer = app.query_one("#focus-footer", Horizontal)
     root = app.query_one("#focus-root", VerticalScroll)
     assert footer.region.x >= 0
     assert footer.region.right <= width
