@@ -1914,10 +1914,15 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             assert cast("Select[str]", screen.query_one("#resolution", Select)).value == "answer"
             assert screen.query_one("#field-resolution-text").display
             assert not screen.query_one("#field-role").display
+            answer_field = screen.query_one("#resolution-text", TextArea)
+            await wait_until(
+                lambda: app.focused is answer_field,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
             assert queue.pending() == []
 
-            answer = "Preserve the existing call pattern."
-            screen.query_one("#resolution-text", TextArea).text = answer
+            guidance = "Preserve the existing call pattern."
+            answer_field.text = guidance
             await pilot.press("escape")
             await wait_until(
                 lambda: screen.query_one("#palette-menu").display,
@@ -1930,7 +1935,7 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
                 lambda: not screen.query_one("#palette-menu").display,
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            assert screen.query_one("#resolution-text", TextArea).text == answer
+            assert answer_field.text == guidance
             assert cast("Select[str]", screen.query_one("#resolution", Select)).value == "answer"
             assert queue.pending() == []
     finally:

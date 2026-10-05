@@ -525,6 +525,8 @@ class PaletteScreen(ModalScreen[None]):
         self._show_menu(self._menu_visible)
         if self._menu_visible:
             self.call_after_refresh(self._focus_first_menu_action)
+        elif self._contextual_palette:
+            self.call_after_refresh(self._restore_context_form_position)
         self._change_worker = self.run_worker(
             self._on_change(self._refresh_after_database_change),
             group=_PALETTE_STATE_WORKER,
@@ -877,20 +879,23 @@ class PaletteScreen(ModalScreen[None]):
         control = self.query_one(f"#{self._form_focus_id}") if self._form_focus_id else None
         if control is not None and control.display and control.can_focus:
             control.focus()
-        else:
-            action = self._selected_value(_FIELD_ACTION)
-            candidate = (
-                _FIELD_ROLE
-                if action in _FORM_ROLE_ACTIONS
-                else _FIELD_RESOLUTION_TEXT
-                if action == _ACTION_RESOLVE
-                and self._selected_value(_FIELD_RESOLUTION) == ResolutionKind.ANSWER.value
-                else _FIELD_TASK_ID
-            )
-            field = self.query_one(f"#{candidate}")
-            if field.display and field.can_focus:
-                field.focus()
-        form.scroll_to(y=self._form_scroll_y, animate=False, immediate=True)
+            form.scroll_to(y=self._form_scroll_y, animate=False, immediate=True)
+            return
+        action = self._selected_value(_FIELD_ACTION)
+        candidate = (
+            _FIELD_MESSAGE
+            if action == _ACTION_MESSAGE
+            else _FIELD_RESOLUTION_TEXT
+            if action == _ACTION_RESOLVE
+            and self._selected_value(_FIELD_RESOLUTION) == ResolutionKind.ANSWER.value
+            else _FIELD_ROLE
+            if action in _FORM_ROLE_ACTIONS
+            else _FIELD_TASK_ID
+        )
+        field = self.query_one(f"#{candidate}")
+        if field.display and field.can_focus:
+            field.focus()
+            form.scroll_to_widget(field, animate=False, immediate=True)
 
     async def _run_action(self) -> None:
         try:

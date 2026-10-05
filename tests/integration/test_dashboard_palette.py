@@ -386,15 +386,17 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         assert not menu.display
         assert screen.query_one("#field-role").display
         assert screen.query_one("#field-message").display
+        message = screen.query_one("#message", TextArea)
+        await wait_until(lambda: app.focused is message, timeout=2)
         guidance = "Keep the new parser branch behind the existing validation."
-        screen.query_one("#message", TextArea).text = guidance
+        message.text = guidance
         await pilot.press("escape")
         await wait_until(lambda: menu.display, timeout=2)
-        assert screen.query_one("#message", TextArea).text == guidance
+        assert message.text == guidance
         assert queue.pending() == []
 
         await pilot.click("#palette-menu-action-message")
-        assert screen.query_one("#message", TextArea).text == guidance
+        assert message.text == guidance
         assert screen.query_one("#field-role").display
         await pilot.click("#palette-back-to-menu")
         await wait_until(lambda: menu.display, timeout=2)
