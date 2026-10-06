@@ -37,6 +37,7 @@ from shikiru.operator.queries import (
     TASK_ACTION_ROLES,
     OperatorTaskAction,
 )
+from shikiru.ui.screen import widget_is_on_screen
 from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
 
@@ -796,7 +797,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         if not self.is_mounted:
             return
         form = self.query_one("#palette-form", VerticalScroll)
-        if focused is not None and focused.is_mounted and focused.screen is self:
+        if focused is not None and widget_is_on_screen(focused, self):
             parent = focused.parent
             while parent is not None:
                 if parent.id == _PALETTE_FORM_ID:
@@ -1600,7 +1601,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     def _restore_escalation_form_state(self, scroll_y: float, focused: Widget | None) -> None:
         if not self._is_current_screen():
             return
-        if focused is not None and focused.is_mounted and focused.screen is self:
+        if focused is not None and widget_is_on_screen(focused, self):
             focused.focus()
         self.query_one("#palette-form", VerticalScroll).scroll_to(
             y=scroll_y,

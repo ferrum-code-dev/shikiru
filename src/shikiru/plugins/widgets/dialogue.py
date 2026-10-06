@@ -10,6 +10,7 @@ from textual.widgets import DataTable, Static
 
 from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui import SpeechBubble
+from shikiru.ui.screen import widget_is_attached
 
 if TYPE_CHECKING:
     from textual.app import App, ComposeResult
@@ -69,7 +70,7 @@ class DialoguePanel(Static):
     async def on_mount(self) -> None:
         """Render recent events and refresh after each state change."""
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Show the complete text of the selected event."""
@@ -94,6 +95,10 @@ class DialoguePanel(Static):
                     age=bubble.age,
                 ).render()
             )
+
+    async def _refresh_if_attached(self) -> None:
+        if widget_is_attached(self):
+            await self._refresh()
 
 
 class DialogueWidget:

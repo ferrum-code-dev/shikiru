@@ -21,6 +21,7 @@ from shikiru.dashboard.contract import (
     TaskBrowserView,
     WidgetPlacement,
 )
+from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
@@ -427,7 +428,7 @@ class QueuePanel(Vertical):
         self._sync_task_row_outline()
         await self._refresh()
         self.run_worker(
-            self._widget_context.on_change(self._refresh_while_active),
+            self._widget_context.on_change(self._refresh_if_attached),
             exclusive=True,
         )
         self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_active)
@@ -442,10 +443,11 @@ class QueuePanel(Vertical):
             self._remove_motion_callback = None
 
     async def _refresh_while_active(self) -> None:
-        if not self.is_mounted:
-            return
-        app = cast("App[object]", self.app)
-        if app.is_running and self.screen.is_current:
+        if widget_is_current(self) and cast("App[object]", self.app).is_running:
+            await self._refresh()
+
+    async def _refresh_if_attached(self) -> None:
+        if widget_is_attached(self):
             await self._refresh()
 
     def _sync_task_row_outline(self) -> None:
@@ -616,6 +618,8 @@ class QueuePanel(Vertical):
                     callback(self._selected_task_id)
                 list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
                 await self._sync_list_rows(list_view, view.rows)
+                if not widget_is_attached(self):
+                    return
                 self._render_view(view)
             finally:
                 self._refreshing = False
@@ -724,6 +728,8 @@ class QueuePanel(Vertical):
             wanted_ids,
             recent_task_id,
         )
+        if not widget_is_attached(self):
+            return
         self._update_browser_items(items, rows)
         desired_children, heading = self._ordered_list_items(
             rows,
@@ -732,6 +738,8 @@ class QueuePanel(Vertical):
             recent_task_id,
         )
         await self._place_list_items(list_view, desired_children)
+        if not widget_is_attached(self):
+            return
         self._sync_selection(list_view, rows)
         self._restore_list_position_after_refresh(
             list_view,
@@ -826,6 +834,8 @@ class QueuePanel(Vertical):
         additions = [child for child in desired_children if child.parent is None]
         if additions:
             await list_view.extend(additions)
+            if not widget_is_attached(self):
+                return
         for index, child in enumerate(desired_children):
             if list_view.children[index] is not child:
                 list_view.move_child(child, before=index)

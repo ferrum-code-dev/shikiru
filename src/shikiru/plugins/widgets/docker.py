@@ -8,6 +8,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
+from shikiru.ui.screen import widget_is_attached
 
 if TYPE_CHECKING:
     from textual.widget import Widget
@@ -59,7 +60,11 @@ class DockerPanel(Static):
         self.set_interval(self._widget_context.docker_refresh_seconds, self._refresh)
 
     async def _refresh(self) -> None:
+        if not widget_is_attached(self):
+            return
         snapshot = await self._widget_context.views.containers()
+        if not widget_is_attached(self):
+            return
         self.update(_docker_text(snapshot))
 
 

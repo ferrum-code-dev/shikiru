@@ -8,6 +8,7 @@ from textual.widgets import Static
 
 from shikiru.dashboard.contract import FOCUS_RESOURCES_VIEW, WidgetPlacement
 from shikiru.ui.compact import render_resource_metric
+from shikiru.ui.screen import widget_is_attached
 
 RESOURCE_ENTER_KEY = "enter"
 
@@ -56,6 +57,8 @@ class ResourcesPanel(Static):
             self.update(render_resource_metric(self._sample, width=self.size.width))
 
     async def _refresh(self) -> None:
+        if not widget_is_attached(self):
+            return
         if self._widget_context.placement is WidgetPlacement.DIAGNOSTICS:
             self._sample = self._widget_context.views.resource_sample()
             self.update(
@@ -64,8 +67,11 @@ class ResourcesPanel(Static):
                 else "No cached resource sample."
             )
             return
-        self._sample = await self._widget_context.views.resources()
-        self.update(render_resource_metric(self._sample, width=self.size.width))
+        sample = await self._widget_context.views.resources()
+        if not widget_is_attached(self):
+            return
+        self._sample = sample
+        self.update(render_resource_metric(sample, width=self.size.width))
 
 
 class ResourcesWidget:

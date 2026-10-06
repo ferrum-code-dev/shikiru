@@ -11,6 +11,7 @@ from textual.widgets import Static
 from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui import Gauge
 from shikiru.ui.compact import ProjectAgentUsageDetails, ProjectUsageDetails, ProjectUsageMetric
+from shikiru.ui.screen import widget_is_attached, widget_is_current
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,7 +53,7 @@ class UsagePanel(Static):
     async def on_mount(self) -> None:
         """Render current usage, subscribe to state and tick quota age/countdowns."""
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh_if_active), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
         if self._widget_context.placement is not WidgetPlacement.PROJECT_USAGE:
             self._remove_motion_callback = self._widget_context.on_motion(self._refresh_on_motion)
 
@@ -97,6 +98,8 @@ class UsagePanel(Static):
                 self._widget_context.focus_task,
                 include_timeline=False,
             )
+            if not widget_is_attached(self):
+                return
             if detail is None or detail.usage is None:
                 lines.append(Text("Task usage coverage unavailable", style="bold"))
             else:
@@ -115,10 +118,11 @@ class UsagePanel(Static):
         self.update(Group(*lines))
 
     async def _refresh_if_active(self) -> None:
-        if not self.is_mounted:
-            return
-        app = cast("App[None]", self.app)
-        if app.is_running and self.screen.is_current:
+        if widget_is_current(self) and cast("App[None]", self.app).is_running:
+            await self._refresh()
+
+    async def _refresh_if_attached(self) -> None:
+        if widget_is_attached(self):
             await self._refresh()
 
     async def _refresh_on_motion(self) -> None:

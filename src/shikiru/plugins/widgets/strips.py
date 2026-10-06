@@ -8,6 +8,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.dashboard.contract import WidgetPlacement
+from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.strip import STRIP_WIDE_MIN_COLUMNS, TaskStrip
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ class StripsPanel(Static):
     async def on_mount(self) -> None:
         """Render the current strips, then refresh on every state change."""
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh_while_active), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
         self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_active)
 
     def on_unmount(self) -> None:
@@ -41,10 +42,11 @@ class StripsPanel(Static):
             self._remove_motion_callback = None
 
     async def _refresh_while_active(self) -> None:
-        if not self.is_mounted:
-            return
-        app = cast("App[None]", self.app)
-        if app.is_running and self.screen.is_current:
+        if widget_is_current(self) and cast("App[None]", self.app).is_running:
+            await self._refresh()
+
+    async def _refresh_if_attached(self) -> None:
+        if widget_is_attached(self):
             await self._refresh()
 
     async def on_resize(self, event: events.Resize) -> None:

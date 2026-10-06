@@ -33,6 +33,7 @@ from shikiru.ui.compact import (
     task_signal_text,
 )
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_STALLED
+from shikiru.ui.screen import widget_is_active
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -730,10 +731,10 @@ class TaskDetailPanel(Vertical):
                 self._render_timeline(page)
 
     def _screen_is_active(self) -> bool:
-        if not self.is_mounted:
+        if not widget_is_active(self):
             return False
         app = cast("App[None]", self.app)
-        return app.is_running and app.screen is self.screen
+        return app.is_running
 
     def _pause_timeline_follow(self) -> None:
         if not self._timeline_following:
@@ -914,6 +915,7 @@ class TaskDetailPanel(Vertical):
     def _restore_contextual_position(self) -> None:
         state = self._views_return_state
         self._views_return_state = None
+        self._queue_refresh()
         if state is None:
             return
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)

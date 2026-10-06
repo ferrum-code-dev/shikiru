@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import errno
 import json
+import os
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Static
+from textual.widgets import Select, Static
 
 from shikiru.agents.contracts import (
     QuotaWindow,
@@ -18,10 +21,21 @@ from shikiru.agents.contracts import (
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import TimeoutsConfig
 from shikiru.dashboard.activity import RoleViewTail
-from shikiru.dashboard.app import DashboardApp
+from shikiru.dashboard.app import FOCUS_USAGE_DETAILS, DashboardApp
+from shikiru.dashboard.detail import (
+    TASK_DETAIL_IDENTITY,
+    TASK_DETAIL_OWNERSHIP,
+    TASK_DETAIL_VIEWS_OPEN_BUTTON,
+    TaskDetailViewsScreen,
+)
 from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
-from shikiru.domain.reports import CURRENT_TURN_LINK_NAME
+from shikiru.domain.reports import (
+    CURRENT_TURN_LINK_NAME,
+    REPORT_FILENAME,
+    REPORT_KIND_FILENAME,
+    ReportKind,
+)
 from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.paths import run_dir, turns_dir
@@ -50,13 +64,19 @@ from shikiru.view_log import (
 )
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, choose_focus_view, state_views
+from tests.support.dashboard import (
+    StubServices,
+    WidgetHostApp,
+    choose_focus_view,
+    state_views,
+    widget_context,
+)
 from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Awaitable, Callable, Iterator
     from pathlib import Path
 
     from rich.text import Text
@@ -74,6 +94,15 @@ _STALE_TURN_NAME = "000-implement-i0"
 _TASK_ACTIVITY_WAIT_SECONDS = 2
 _OLD_ITERATION = 1
 _CURRENT_ITERATION = 2
+_INITIAL_USAGE_COST = 0.42
+_USAGE_REFRESH_COSTS = (0.87, 1.13, 1.41, 1.62)
+_USAGE_REFRESH_INPUT_TOKENS = 200
+_USAGE_REFRESH_OUTPUT_TOKENS = 40
+_INITIAL_TRIAGE_TURN = "01-triage-i0"
+_IN_FLIGHT_REPORT_TEXT = (
+    '{"title":"Loaded report","mode":"implement","complexity":"normal",'
+    '"acceptance_criteria":[],"references":[]}'
+)
 
 
 @dataclass(frozen=True)
@@ -146,6 +175,55 @@ def _seed_dashboard_state(connection: Connection, clock: FakeClock) -> tuple[Tas
         data={"summary": "merged"},
     )
     return task, task_run
+
+
+def _task_dashboard(
+    reader: StateReader,
+    project_dir: Path,
+    settings: Settings,
+    clock: FakeClock,
+    task: Task,
+) -> tuple[DashboardApp, list[tuple[object | None, Callable[[], Awaitable[None]]]]]:
+    registered_callbacks: list[tuple[object | None, Callable[[], Awaitable[None]]]] = []
+
+    async def watch(callback: Callable[[], Awaitable[None]]) -> None:
+        registered_callbacks.append((getattr(callback, "__self__", None), callback))
+        await reader.watch(callback)
+
+    async def open_palette(action: str) -> None:
+        del action
+
+    views = _build_views(reader, project_dir, settings, clock, task)
+    app = DashboardApp(
+        focus_task=task.id,
+        views=views,
+        on_change=watch,
+        clock=clock,
+        motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        open_palette=open_palette,
+        widget_names=settings.dashboard.widgets,
+    )
+    return app, registered_callbacks
+
+
+async def _wait_for_fifo_writer(path: Path) -> int:
+    descriptor: int | None = None
+
+    async def open_writer() -> bool:
+        nonlocal descriptor
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as error:
+            if error.errno != errno.ENXIO:
+                raise
+            return False
+        return True
+
+    await wait_until(open_writer, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+    assert descriptor is not None
+    return descriptor
 
 
 def _build_views(
@@ -508,6 +586,227 @@ async def test_focus_usage_details_refreshes_reported_cost_and_quota_on_motion(
             clock.advance(0.5)
             await wait_until(lambda: "$0.87" in plain_text(usage.content), timeout=1)
     finally:
+        reader.close()
+
+
+async def test_usage_motion_callbacks_survive_repeated_screen_teardown(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    _, task_run = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    motion_callbacks: list[Callable[[], Awaitable[None]]] = []
+
+    def register_motion(callback: Callable[[], Awaitable[None]]) -> Callable[[], None]:
+        motion_callbacks.append(callback)
+
+        def unsubscribe() -> None:
+            if callback in motion_callbacks:
+                motion_callbacks.remove(callback)
+
+        return unsubscribe
+
+    try:
+        context = replace(
+            widget_context(reader, project_dir, clock),
+            on_motion=register_motion,
+        )
+        usage = UsagePanel(context)
+        app = WidgetHostApp(usage)
+        async with app.run_test(size=(180, 40)):
+            await wait_until(
+                lambda: f"${_INITIAL_USAGE_COST:.2f}" in plain_text(usage.content),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            for cost in _USAGE_REFRESH_COSTS[:-1]:
+                motion_callback = motion_callbacks[-1]
+                RunStore(connection, clock).record_usage(
+                    task_run.id,
+                    Usage(
+                        _USAGE_REFRESH_INPUT_TOKENS,
+                        _USAGE_REFRESH_OUTPUT_TOKENS,
+                        0,
+                        0,
+                        cost,
+                        "billed",
+                        None,
+                    ),
+                )
+                await motion_callback()
+                previous_content = plain_text(usage.content)
+                assert f"${cost:.2f}" in previous_content
+
+                await usage.remove()
+                assert motion_callback not in motion_callbacks
+                await motion_callback()
+                assert plain_text(usage.content) == previous_content
+                assert app.is_running
+
+                usage = UsagePanel(context)
+                await app.mount(usage)
+                await wait_until(
+                    lambda current_usage=usage, expected_cost=cost: (
+                        f"${expected_cost:.2f}" in plain_text(current_usage.content)
+                    ),
+                    timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                )
+
+            active_callback = motion_callbacks[-1]
+            RunStore(connection, clock).record_usage(
+                task_run.id,
+                Usage(
+                    _USAGE_REFRESH_INPUT_TOKENS,
+                    _USAGE_REFRESH_OUTPUT_TOKENS,
+                    0,
+                    0,
+                    _USAGE_REFRESH_COSTS[-1],
+                    "billed",
+                    None,
+                ),
+            )
+            await active_callback()
+            assert f"${_USAGE_REFRESH_COSTS[-1]:.2f}" in plain_text(usage.content)
+    finally:
+        reader.close()
+
+
+async def test_task_detail_refreshes_facts_after_a_covered_screen_returns(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(project_dir)
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, task)
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        app = DashboardApp(
+            focus_task=task.id,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        async with app.run_test(size=(180, 40)) as pilot:
+            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+            await wait_until(
+                lambda: (
+                    task.title in plain_text(app.query_one("#task-detail-identity", Static).content)
+                ),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            assert Hold.PAUSED.value not in plain_text(ownership.content)
+            await pilot.press("v")
+            await wait_until(
+                lambda: isinstance(app.screen, TaskDetailViewsScreen),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
+            clock.advance(1)
+            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            assert Hold.PAUSED.value not in plain_text(ownership.content)
+
+            await pilot.press("escape")
+            await wait_until(
+                lambda: not isinstance(app.screen, TaskDetailViewsScreen),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await wait_until(
+                lambda: Hold.PAUSED.value in plain_text(ownership.content),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+    finally:
+        reader.close()
+
+
+async def test_usage_result_finishing_after_context_screen_teardown_is_discarded(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(project_dir)
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    app, registered_callbacks = _task_dashboard(reader, project_dir, settings, clock, task)
+    writer_descriptors: list[int] = []
+
+    try:
+        async with app.run_test(size=(180, 40)) as pilot:
+            await wait_until(
+                lambda: (
+                    task.title
+                    in plain_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
+                ),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await pilot.press("v")
+            await wait_until(
+                lambda: isinstance(app.screen, TaskDetailViewsScreen),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
+            choice.value = FOCUS_USAGE_DETAILS
+            await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
+            await wait_until(
+                lambda: bool(app.screen.query(UsagePanel)),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            usage = app.screen.query_one(UsagePanel)
+            await wait_until(
+                lambda: any(owner is usage for owner, _ in registered_callbacks),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await wait_until(
+                lambda: f"${_INITIAL_USAGE_COST:.2f}" in plain_text(usage.content),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+
+            report_path = turns_dir(project_dir, task.id) / _INITIAL_TRIAGE_TURN / REPORT_FILENAME
+            report_path.parent.mkdir(parents=True)
+            (report_path.parent / REPORT_KIND_FILENAME).write_text(ReportKind.TRIAGE.value)
+            os.mkfifo(report_path)
+            TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
+            refresh = next(callback for owner, callback in registered_callbacks if owner is usage)
+            pending_refresh = asyncio.ensure_future(refresh())
+            writer_descriptors.append(await _wait_for_fifo_writer(report_path))
+            previous_content = plain_text(usage.content)
+            report_path.unlink()
+            report_path.write_text(_IN_FLIGHT_REPORT_TEXT)
+            await pilot.press("escape")
+            await wait_until(
+                lambda: not app.screen.query(UsagePanel),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            writer_descriptor = writer_descriptors[0]
+            os.write(writer_descriptor, _IN_FLIGHT_REPORT_TEXT.encode())
+            os.close(writer_descriptor)
+            writer_descriptors.remove(writer_descriptor)
+            await wait_until(
+                pending_refresh.done,
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await pending_refresh
+            assert plain_text(usage.content) == previous_content
+            assert app.is_running
+    finally:
+        for writer_descriptor in writer_descriptors:
+            os.close(writer_descriptor)
         reader.close()
 
 

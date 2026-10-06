@@ -22,6 +22,7 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.ui import SplashPanel
 from shikiru.ui.compact import FOCUS_ATTENTION_MAX_HEIGHT, FocusAttentionStatus
+from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
@@ -108,7 +109,7 @@ class EscalationsPanel(Static):
     async def on_mount(self) -> None:
         """Render current attention and refresh on state or motion changes."""
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh_while_active), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
         self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_active)
 
     def on_unmount(self) -> None:
@@ -126,10 +127,11 @@ class EscalationsPanel(Static):
             self.display = True
 
     async def _refresh_while_active(self) -> None:
-        if not self.is_mounted:
-            return
-        app = cast("App[None]", self.app)
-        if app.is_running and self.screen.is_current:
+        if widget_is_current(self) and cast("App[None]", self.app).is_running:
+            await self._refresh()
+
+    async def _refresh_if_attached(self) -> None:
+        if widget_is_attached(self):
             await self._refresh()
 
     def activate_attention(self) -> None:
@@ -251,6 +253,8 @@ class EscalationsPanel(Static):
             cast("App[None]", self.app).push_screen(PacketScreen(_packet_copy(decision)))
 
     async def _refresh(self) -> None:
+        if not widget_is_attached(self):
+            return
         attention = self._widget_context.views.attention()
         summary = self._widget_context.views.workspace_summary()
         current_status = _attention_status_state(attention, summary)
@@ -324,27 +328,17 @@ class EscalationsPanel(Static):
     async def _render_panels(self, *, reveal_selection: bool = False) -> None:
         panels = self.query_one("#escalation-panels", VerticalScroll)
         scroll_x, scroll_y = panels.scroll_x, panels.scroll_y
-        if self._focus_row:
-            status = self._render_compact_attention()
+        if self._focus_row or not self._attention.groups:
+            status = (
+                self._render_compact_attention()
+                if self._focus_row
+                else "No open decisions, diagnosed stalls or recorded engine faults."
+            )
             children = list(panels.query(Static))
             if len(children) == 1:
                 children[0].update(status)
                 return
-            await panels.remove_children()
-            await panels.mount(Static(status, markup=False))
-            return
-        if not self._attention.groups:
-            children = list(panels.query(Static))
-            if len(children) == 1:
-                children[0].update("No open decisions, diagnosed stalls or recorded engine faults.")
-                return
-            await panels.remove_children()
-            await panels.mount(
-                Static(
-                    "No open decisions, diagnosed stalls or recorded engine faults.",
-                    markup=False,
-                )
-            )
+            await self._replace_panels(panels, [Static(status, markup=False)])
             return
         children = list(panels.query(Static))
         if len(children) == len(self._attention.groups):
@@ -362,11 +356,18 @@ class EscalationsPanel(Static):
             Static(self._render_group(index, group), markup=False)
             for index, group in enumerate(self._attention.groups)
         ]
+        if await self._replace_panels(panels, cards):
+            if reveal_selection:
+                self._reveal_selection(panels, cards[self._selected])
+            else:
+                panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+
+    async def _replace_panels(self, panels: VerticalScroll, cards: list[Static]) -> bool:
+        await panels.remove_children()
+        if not widget_is_attached(self):
+            return False
         await panels.mount(*cards)
-        if reveal_selection:
-            self._reveal_selection(panels, cards[self._selected])
-        else:
-            panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+        return widget_is_attached(self)
 
     def _render_compact_attention(self) -> RenderableType:
         if self._summary is None:

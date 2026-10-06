@@ -42,6 +42,7 @@ from shikiru.dashboard.detail import (
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.errors import ConfigError
 from shikiru.ui.compact import FocusAttentionStatus
+from shikiru.ui.screen import widget_is_active, widget_is_attached
 from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
 
@@ -482,7 +483,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
             self._display_history()
 
     async def _refresh(self) -> None:
-        if self.is_mounted:
+        if widget_is_attached(self):
             self._display_history(preserve_scroll=True)
 
     def _display_history(self, *, preserve_scroll: bool = False) -> None:
@@ -531,7 +532,7 @@ class _CommandStatusLine(Static):
         self.run_worker(self._on_change(self._refresh), group=_COMMAND_HISTORY_WORKER)
 
     async def _refresh(self) -> None:
-        if self.is_mounted:
+        if widget_is_attached(self):
             self._display_history()
 
     def _display_history(self) -> None:
@@ -552,7 +553,7 @@ class _HomeAttentionStatus(Static):
 
     async def on_mount(self) -> None:
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
         self._remove_motion_callback = self._widget_context.on_motion(self._refresh_if_active)
 
     def on_unmount(self) -> None:
@@ -595,7 +596,11 @@ class _HomeAttentionStatus(Static):
             event.stop()
 
     async def _refresh_if_active(self) -> None:
-        if self.is_mounted and self.is_on_screen and self.screen.is_active:
+        if widget_is_active(self):
+            await self._refresh()
+
+    async def _refresh_if_attached(self) -> None:
+        if widget_is_attached(self):
             await self._refresh()
 
     async def _refresh(self) -> None:
@@ -1084,7 +1089,10 @@ class DashboardApp(App[None]):
             await self.action_open_task_usage()
             return
         if route is TaskPaletteRoute.COMMANDS:
-            await self.push_screen(_CommandHistoryScreen(self._views, self._on_change))
+            await self.push_screen(
+                _CommandHistoryScreen(self._views, self._on_change),
+                callback=lambda _: self.refresh_task_detail_after_resume(),
+            )
         elif route is TaskPaletteRoute.DIAGNOSTICS:
             await self._open_contextual_view(FOCUS_RESOURCES_VIEW)
         else:
@@ -1126,7 +1134,10 @@ class DashboardApp(App[None]):
                 await cast("_TaskBrowserNavigation", queue).activate_filter(choice.task_filter)
             return
         if choice.command_history:
-            await self.push_screen(_CommandHistoryScreen(self._views, self._on_change))
+            await self.push_screen(
+                _CommandHistoryScreen(self._views, self._on_change),
+                callback=lambda _: self.refresh_task_detail_after_resume(),
+            )
             return
         if choice.attention:
             panel = self._widget_instances.get(_WIDGET_ESCALATIONS)
@@ -1177,10 +1188,12 @@ class DashboardApp(App[None]):
             _ContextWidgetScreen(
                 _contextual_widget_label(choice.widget_name, choice.placement),
                 widget,
-            )
+            ),
+            callback=lambda _: self.refresh_task_detail_after_resume(),
         )
 
     def _context_view_selected(self, choice_id: str | None) -> None:
+        self.refresh_task_detail_after_resume()
         if choice_id is not None and choice_id != EMPTY_CONTEXT_CHOICE:
             self.run_worker(
                 self._open_contextual_view(choice_id),
@@ -1389,14 +1402,16 @@ class DashboardApp(App[None]):
                 _WorkspaceHelpScreen(
                     None,
                     self._widget_names,
-                )
+                ),
+                callback=lambda _: self.refresh_task_detail_after_resume(),
             )
             return
         await self.push_screen(
             _WorkspaceHelpScreen(
                 self._focus_task,
                 self._widget_names,
-            )
+            ),
+            callback=lambda _: self.refresh_task_detail_after_resume(),
         )
 
     async def open_task_detail_help(self, task_id: str) -> None:
@@ -1405,7 +1420,8 @@ class DashboardApp(App[None]):
             _WorkspaceHelpScreen(
                 task_id,
                 self._widget_names,
-            )
+            ),
+            callback=lambda _: self.refresh_task_detail_after_resume(),
         )
 
     async def action_open_views(self) -> None:

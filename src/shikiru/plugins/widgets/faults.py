@@ -9,6 +9,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.dashboard.contract import WidgetPlacement
+from shikiru.ui.screen import widget_is_attached
 
 if TYPE_CHECKING:
     from textual.widget import Widget
@@ -38,7 +39,11 @@ class FaultsPanel(Static):
     async def on_mount(self) -> None:
         """Render current fault streaks and refresh after durable state changes."""
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
+
+    async def _refresh_if_attached(self) -> None:
+        if widget_is_attached(self):
+            await self._refresh()
 
     async def _refresh(self) -> None:
         faults = self._widget_context.views.engine_faults()

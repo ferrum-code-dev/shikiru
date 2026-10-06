@@ -9,6 +9,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.dashboard.contract import WidgetPlacement
+from shikiru.ui.screen import widget_is_active, widget_is_attached
 from shikiru.ui.tokens import ALERT_COLOR, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 if TYPE_CHECKING:
@@ -149,7 +150,7 @@ class HeaderPanel(Static):
     async def on_mount(self) -> None:
         """Render the current view, then refresh on every state change."""
         await self._refresh()
-        self.run_worker(self._widget_context.on_change(self._refresh), exclusive=True)
+        self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
         self._remove_motion_callback = self._widget_context.on_motion(self._refresh_if_active)
 
     def on_unmount(self) -> None:
@@ -159,6 +160,8 @@ class HeaderPanel(Static):
 
     async def _refresh(self) -> None:
         view = await self._widget_context.views.header()
+        if not widget_is_attached(self):
+            return
         summary = self._widget_context.views.workspace_summary()
         include_alerts = (
             self._widget_context.placement is not WidgetPlacement.IDENTITY
@@ -185,10 +188,14 @@ class HeaderPanel(Static):
 
     async def on_resize(self, event: events.Resize) -> None:
         del event
-        await self._refresh()
+        await self._refresh_if_active()
 
     async def _refresh_if_active(self) -> None:
-        if self.is_mounted and self.is_on_screen and self.screen.is_active:
+        if widget_is_active(self):
+            await self._refresh()
+
+    async def _refresh_if_attached(self) -> None:
+        if widget_is_attached(self):
             await self._refresh()
 
 
