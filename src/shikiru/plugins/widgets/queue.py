@@ -596,6 +596,8 @@ class QueuePanel(Vertical):
         reset_pages: bool = False,
     ) -> None:
         async with self._refresh_lock:
+            if not widget_is_attached(self):
+                return
             self._refreshing = True
             try:
                 if task_filter is not None:

@@ -28,6 +28,8 @@ def widget_is_active(widget: Widget) -> bool:
 
 
 def _screen_for(widget: Widget) -> Screen[object] | None:
+    if not widget.is_attached:
+        return None
     try:
         return widget.screen
     except NoScreen:

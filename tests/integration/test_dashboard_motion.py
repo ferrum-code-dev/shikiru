@@ -21,7 +21,7 @@ from shikiru.agents.contracts import (
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import TimeoutsConfig
 from shikiru.dashboard.activity import RoleViewTail
-from shikiru.dashboard.app import FOCUS_USAGE_DETAILS, DashboardApp
+from shikiru.dashboard.app import FOCUS_COMMAND_HISTORY, FOCUS_USAGE_DETAILS, DashboardApp
 from shikiru.dashboard.detail import (
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
@@ -80,6 +80,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rich.text import Text
+    from textual.pilot import Pilot
 
     from shikiru.config.settings import Settings
     from shikiru.dashboard.views import StateDashboardViews
@@ -224,6 +225,43 @@ async def _wait_for_fifo_writer(path: Path) -> int:
     await wait_until(open_writer, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
     assert descriptor is not None
     return descriptor
+
+
+async def _assert_closed_history_callback_is_safe(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    registered_callbacks: list[tuple[object | None, Callable[[], Awaitable[None]]]],
+) -> None:
+    await pilot.press("escape")
+    await wait_until(
+        lambda: not isinstance(app.screen, TaskDetailViewsScreen),
+        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+    )
+    await pilot.press("v")
+    await wait_until(
+        lambda: isinstance(app.screen, TaskDetailViewsScreen),
+        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+    )
+    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
+    choice.value = FOCUS_COMMAND_HISTORY
+    await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
+    await wait_until(
+        lambda: bool(app.screen.query("#command-history-page")),
+        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+    )
+    history_screen = app.screen
+    await wait_until(
+        lambda: any(owner is history_screen for owner, _ in registered_callbacks),
+        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+    )
+    callback = next(callback for owner, callback in registered_callbacks if owner is history_screen)
+    await pilot.press("escape")
+    await wait_until(
+        lambda: app.screen is not history_screen,
+        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+    )
+    await callback()
+    assert app.is_running
 
 
 def _build_views(
@@ -804,6 +842,7 @@ async def test_usage_result_finishing_after_context_screen_teardown_is_discarded
             await pending_refresh
             assert plain_text(usage.content) == previous_content
             assert app.is_running
+            await _assert_closed_history_callback_is_safe(app, pilot, registered_callbacks)
     finally:
         for writer_descriptor in writer_descriptors:
             os.close(writer_descriptor)

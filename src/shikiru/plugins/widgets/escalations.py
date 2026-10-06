@@ -351,7 +351,6 @@ class EscalationsPanel(Static):
             else:
                 panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
             return
-        await panels.remove_children()
         cards = [
             Static(self._render_group(index, group), markup=False)
             for index, group in enumerate(self._attention.groups)
