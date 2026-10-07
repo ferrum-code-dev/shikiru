@@ -174,7 +174,7 @@ Target: [Focus terminal parity correction](../docs/tui-parity.md); acceptance cr
 
 ## Phase 11 — Real-project TUI corrections
 
-Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus-steel-approved.html); scope and acceptance criteria: [plan.md](plan.md#phase-11-real-project-tui-corrections). Tasks 105–112 and native verification are complete; preserve the historical Phase 10 evidence and use the [Phase 11 release record](../docs/release-readiness-2026-10-07-phase11.md) for current limits and evidence.
+Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus-steel-approved.html); scope and acceptance criteria: [plan.md](plan.md#phase-11-real-project-tui-corrections). Tasks 105–112 are the accepted first delivery in the [Phase 11 release record](../docs/release-readiness-2026-10-07-phase11.md). The subsequent review adds Tasks 113–121, including Task 113a, under the [follow-up specification](../docs/tui-feedback-followup.md); implement sequentially with GPT-6-Luna xhigh and root review, preserving prior historical evidence.
 
 - [x] Task 105: Prevent dashboard refresh callbacks from crashing during screen teardown
 - [x] Task 106: Align dashboard identity, checkout, summaries and engine status with the reference
@@ -184,3 +184,13 @@ Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus
 - [x] Task 110: Split host, current Shikiru instance and agent resource measurements
 - [x] Task 111: Make unknown billing modes understandable and preserve declared subscription facts
 - [x] Task 112: Verify every reported issue and record native reference alignment
+- [ ] Task 113: Keep live agent motion responsive and animate active task status
+- [ ] Task 113a: Update the HTML reference for the second review
+- [ ] Task 114: Correct tmux title contrast and agent labels while preserving the clock
+- [ ] Task 115: Keep popup underlays stationary and align frames and close controls
+- [ ] Task 116: Make Recent fixed and scrollable with contiguous task rows
+- [ ] Task 117: Align the resource strip and composed Project Diagnostics popup
+- [ ] Task 118: Remove escalation identity duplication and make Enter resolve truthful
+- [ ] Task 119: Resolve rebase conflicts through bounded turns and classify continuation failures
+- [ ] Task 120: Move clear durable command feedback into the footer
+- [ ] Task 121: Verify the second review end to end and reconcile Phase 11 evidence

@@ -14,3 +14,5 @@
 | [Focus terminal parity correction](../tui-parity.md) | Historical Phase 10 composition and interaction, implemented in accepted Tasks 97–102 with Root sign-off at `580368c`; Phase 11 Tasks 105–112 complete the real-project corrections to the [current HTML reference](references/focus-steel-approved.html). The [Phase 11 release record](../release-readiness-2026-10-07-phase11.md) is the current visual and walkthrough evidence; the [Phase 10 release record](../release-readiness-2026-10-05-phase10.md) and [736-pixel view](references/focus-steel-approved-736.png) remain historical |
 
 Read the docs in order. Each doc is normative. When a later doc refines an earlier one, it names the section it refines.
+
+The next real-project review extends Phase 11 with [Tasks 113–121, including Task 113a and the follow-up specification](../tui-feedback-followup.md). Its explicit new motion, task-list, tmux, popup, diagnostics, attention, integration and feedback requirements refine the first delivery; they remain planned until their own gates and root review pass.

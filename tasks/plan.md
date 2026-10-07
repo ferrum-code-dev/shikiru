@@ -1025,7 +1025,7 @@ Refs: operator review of Task 103; [Focus Steel HTML](../docs/design/references/
 
 ## Phase 11 — Real-project TUI corrections
 
-Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus-steel-approved.html), including Task 104 and the green-running/red-stopped clarification. This phase supersedes Phase 10's conflicting presentation, Enter-inspection and task-window layout requirements. The original PNG, measurements and release evidence remain historical. Implement Tasks 105–112 in order, one task at a time; keep their checkboxes open until implementation and verification pass. The browser's outer selectors, palette legend and sample values are demonstration controls/data, not product features or observations. No task-pane preview belongs in Home. Each commit requires a green `uv run poe check`; preserve the single writer, typed commands, plugin boundaries, ownership, holds, retained evidence and configured extension contracts.
+Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus-steel-approved.html), including Task 104 and the green-running/red-stopped clarification. Tasks 105–112 are the accepted first delivery. The subsequent real-project review extends this phase through Tasks 113–121, including Task 113a, under the [follow-up specification](../docs/tui-feedback-followup.md); new operator requests supersede conflicting prototype row spacing and presentation. Implement the extension in order, one task at a time, with a new GPT-6-Luna xhigh agent per task and root review/fixes by that same agent before continuing. The original PNG and first-delivery release evidence remain historical. The browser's outer selectors, palette legend and sample values are demonstration controls/data, not product features or observations. No task-pane preview belongs in Home. Each commit requires a green `uv run poe check`; preserve the single writer, typed commands, plugin boundaries, ownership, holds, retained evidence and configured extension contracts. Tick new ACs only when implementation and verification pass.
 
 Planning verification: the final template/documentation tree passed `uv run poe check` on 2026-10-06: 1,219 passed, 15 skipped, 90.47% coverage. Log: `/private/tmp/shikiru-template-plan-check-final-20261006.log`. This gate supports the reference/planning commit only; it does not complete any native implementation task below.
 
@@ -1122,3 +1122,86 @@ Task112 evidence: The [Phase 11 release record](../docs/release-readiness-2026-1
 | Remove redundant top chrome; project-aware terminal/session title; `0:dashboard`; preserve task window titles | 109, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
 | Host/Shikiru/Agents CPU and RAM with exact dot separators and truthful instance/agent scopes | 110, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
 | Unknown billing mode versus explicit subscription/API and unreported charges | 111, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+
+### Task 113: Keep live agent motion responsive and animate active task status
+Refs: follow-up Motion; `domain/motion.py`, `dashboard/app.py` motion loop, `dashboard/motion.py`, `plugins/widgets/queue.py`, detail callbacks; 02 §2, 06 §6.5, 07 §2–3.
+- [ ] Reproduce and distinguish intentional recent-signal freezing from slow callback/refresh starvation with real current-turn evidence. Keep live, unheld, non-stalled agent indicators cycling through quiet long-running tools; retain honest last-signal ages and stop/static behavior for ended, held, waiting, stalled and stopped-engine cases. Document the refined indicator meaning rather than manufacturing activity.
+- [ ] Prevent a slow refresh callback from blocking unrelated frame updates or indefinitely extending the configured capped cadence. Reuse Clock, existing caches and lifecycle subscriptions; avoid overlapping callback work, extra polling/sampler timers, unsafe reader threading and detached-result updates.
+- [ ] Blink the status of tasks currently processed by agents from cached recorded current-turn facts, independently of signal freshness. State words remain readable; disabled animation and monochrome/static mode remain usable, and decisions/holds/waits never acquire a misleading working animation.
+- [ ] Add only necessary behavior/rule coverage for a quiet live fake-agent turn, blocked refresh, phase progression and pause/stop/detachment. Review native normal/static motion and run the full quality gate; preserve Task105 teardown guarantees.
+
+### Task 113a: Update the HTML reference for the second review
+Refs: operator's request to update the template using a sub-agent; follow-up presentation contract; `docs/design/references/focus-steel-approved.html`; Task113.
+- [ ] Update the existing HTML through a new GPT-6-Luna xhigh agent, preserving its approved graphite/steel/sage/amber/dusty-rose palette and project identity, branch parentheses, running-green/stopped-red engine states, direct selection and separate task-window semantics.
+- [ ] Demonstrate live active-status motion with static/reduced-motion and monochrome alternatives, contiguous task rows, fixed Recent heading with an independently scrollable body and truthful overflow cues, capitalized grey terminal statuses, and clear durable command feedback on the footer's right side. Add only enough sample records to exercise overflow; identify preview data as demonstration rather than engine facts.
+- [ ] Keep the dashboard stationary under centered overlays, place visible `Esc ×` controls outside scrolling bodies, and align resource groups and composed Project Diagnostics. Make advertised Enter resolution open the relevant decision without submitting it; preserve input editing, drafts, keyboard/mouse selection, close and compact reachability. Do not add a Home task-pane preview or change the existing tmux wall clock.
+- [ ] Inspect the actual HTML in wide/compact color/mono and scrolling/modal states, retain paired review evidence, and run the complete quality gate before committing. Preserve the original PNG and historical first-delivery reference at `f367f4e`; record the revised HTML hash/source and update follow-up references so Tasks114–121 verify the new template rather than the old immutable HTML. Avoid browser test catalogues, permanent harnesses or new dependencies.
+
+### Task 114: Correct tmux title contrast and agent labels while preserving the clock
+Refs: follow-up tmux; `tmux/decorator.py`, `tmux/session.py`, `engine/titles.py`, packaged titles; 06 §5.1–3/§6, 05 §1; Tasks113/113a.
+- [ ] Give Shikiru-owned active/inactive task window and pane title surfaces an explicit contrasting graphite background with readable foregrounds, preserving useful current-window distinction and the approved palette. Verify effective scoped options on an isolated attached tmux client seeded with conflicting inherited styles.
+- [ ] Remove role/state glyph prefixes from shipped agent pane labels and the pane-border format; retain readable role, model/effort, iteration, context and ownership/hold words. Preserve task window templates, project terminal title, Home index/name and explicit custom configuration; document any custom-template migration choice without rewriting the operator's file.
+- [ ] Preserve the existing wall clock and useful session/window navigation, global styles/options, other sessions, palette/detach keys and dispatch/recovery focus. The operator questioned the proposed clock removal; no clock replacement was requested.
+- [ ] Verify active/inactive/readability and title/focus behavior on private tmux, inspect native pane/status captures, update active documentation and pass the full quality gate.
+
+### Task 115: Keep popup underlays stationary and align frames and close controls
+Refs: reproduced before/Help SVGs; follow-up popup geometry; approved HTML modal CSS; dashboard modal classes and widget dialogs; 06 §5.4–5; Tasks113–114.
+- [ ] Remove transparent ModalScreen root gutter effects so the rendered Home shell, identity, resources, task rows and inline inspector stay at identical cells before, during and after overlays. Apply required popup inset to child composition, retaining standalone palette entry from task/role panes.
+- [ ] Align Actions, Answer, Evidence, Task Usage, Project Totals, Diagnostics, Help, Views, command history and existing widget/packet dialogs with the reference's centered maximum width, surface/steel border and cell-quantized spacing. Use compact consumed styles rather than a new popup framework; remove superseded conflicting layout rules.
+- [ ] Keep `Esc ×` fully visible at each popup header's right edge outside its body scroll area, operable by mouse and Escape. Preserve native Select Escape precedence, form editing/drafts, selection/focus/reading position, nested close behavior and 20×8 Open/result reachability.
+- [ ] Verify representative normal/contextual routes on mounted default Home with settled rendered underlay coordinates and actual control containment, including wide, 48×20, 36×14/20 and 20×8. Review paired native artifacts against current HTML; no DOM-presence-only assertions or permanent screenshot catalogue. Pass the full gate.
+
+### Task 116: Make Recent fixed and scrollable with contiguous task rows
+Refs: follow-up list; `plugins/widgets/queue.py`, task-browser projection, Home layout and existing selection tests; 06 §5.4; Tasks113–115.
+- [ ] Keep Recent's heading fixed above a bounded independently scrollable Recent body. Show a usable scrollbar or accurate up/down overflow cues when needed; empty/short lists do not advertise unavailable scrolling. Preserve newest-first bounded Recent and full History pagination.
+- [ ] Preserve one selected task identity across active/Recent sections, cyclic Up/Down, click, search/filter/history, explicit Escape clear, refresh/resize and inline detail. Reuse existing browser queries/order; no workflow writes from navigation or second default inspector.
+- [ ] Remove extra blank rows between processing, dependency-waiting, slot-waiting and Recent tasks. Render Recent `Done`/`Cancelled` status words in secondary grey with initial capitals; preserve meaningful task icons and Task113 active-status animation.
+- [ ] Exercise overflowing active/Recent lists and cross-section keyboard/mouse selection at wide, short and compact sizes with real SQLite/Textual. Review fixed heading/cues/contiguous density natively, replace obsolete gap expectations and reconcile prototype-spacing precedence; pass the full gate.
+
+### Task 117: Align the resource strip and composed Project Diagnostics popup
+Refs: follow-up resources; HTML `resourceMetrics`/`PROJECT DIAGNOSTICS`; existing resource/Docker/fault projections and context routes; 02 §2, 06 §5.4; Tasks113–116.
+- [ ] Align the resource line's top rule, spacing, wrapping and Host/Shikiru/Agents groups with the reference and available cells. Preserve exact single-space dot separators, CPU normalization, host-total denominators, disjoint ownership and known/unknown/empty/stale/failed states; compact groups remain reachable without stealing selection/focus.
+- [ ] Make the Project Diagnostics/resource route compose existing resource, engine-lock/status, open-fault and Docker facts in the reference-aligned popup, with honest unavailable/unconfigured meanings and coherent scope/title. Preserve configured built-in/external diagnostic widget routes and public callbacks.
+- [ ] Home and popup use the identical cached resource observation and existing diagnostic cadences. Add no sampler, timer, provider lookup, resource attribution heuristic or SQL outside store; failures retain original timestamp/state/error and do not become zero.
+- [ ] Verify cached identity, diagnostic fact reachability and navigation with real SQLite/process/private-tmux boundaries. Review native wide/compact color/mono strip and popup after Task115's frame correction; pass the full gate.
+
+### Task 118: Remove escalation identity duplication and make Enter resolve truthful
+Refs: follow-up attention; `engine/escalations.py` stored headline, `ui/compact.py`, escalation widget/palette/detail, Home focus/keys; 03 §8, 06 §5.4–5; Tasks113–117.
+- [ ] Display a task ID once in attention, detail and resolution summaries, suppressing only its already-present leading headline prefix. Preserve stable escalation IDs, meaningful references to other tasks, stored headlines, retained packet/evidence and engine records.
+- [ ] Make the advertised Enter answer/resolve route work from normal Home focus and target the displayed/selected decision consistently. Preserve native input/form/selector Enter, avoid duplicate inspection and do not queue a command until explicit submission; mouse and keyboard reach the same form.
+- [ ] Keep actual packet questions/proposals, typed recovery actions, stale-decision validation, drafts and durable Pending/Applied/Rejected outcomes. Engine-generated packets explain the absence of an agent proposal rather than presenting unavailable alternatives as an actionable choice.
+- [ ] Verify startup/list-focused Enter, multiple decisions, task-ID normalization and explicit submission/cancellation against real Textual/SQLite/operator boundaries at wide/compact sizes. Inspect native attention and forms and pass the full gate; no message-wording unit tests.
+
+### Task 119: Resolve rebase conflicts through bounded turns and classify continuation failures
+Refs: follow-up retained integration evidence; 03 §6/§8, 07 §3/§5; `engine/integration.py`, `integration_turns.py`, existing conflict prompt, escalation filing; Tasks113–118.
+- [ ] Reproduce true unmerged-path conflicts and a non-content `rebase --continue` failure with real Git and the fake agent. Distinguish actual semantic conflicts from other Git continuation errors; preserve bounded useful failure evidence and classify recovery honestly. Do not assert the inspected project's root cause without evidence or mutate its retained worktree.
+- [ ] Reuse the existing Implementer conflicts, Leader consult/post-rebase verify and conflict-round bound for automatic semantic resolution. Retry follows current Git/report state instead of repeatedly treating an inappropriate stale completed report as resolved; preserve holds, cancellation/restart behavior, integration locking and the operator checkout.
+- [ ] On genuine unresolved/exhausted or external Git failure, keep the worktree/rebase and provide clear recorded context and applicable typed recovery actions. Preserve recorded agent EscalationRequest proposals when available, distinct from engine actions; fabricate neither alternatives nor automatic ours/theirs resolution, and do not raise budgets or discard files.
+- [ ] Verify successful resolution/merge, bounded unresolved outcomes, continuation failure/retry after remedy and retained evidence with meaningful real-Git/fake-agent integration. Update the workflow contract for the demonstrated correction, assess existing E3 verification under §5, and pass the full gate.
+
+### Task 120: Move clear durable command feedback into the footer
+Refs: follow-up feedback; `dashboard/app.py` command status/footer, command-history projection and operator command routes; 02 §2, 06 §5.4–5; Tasks113–119.
+- [ ] Move latest-command feedback from below the task body to the actions footer's right side at usable wide widths; wrap/truncate coherently at compact widths while preserving actions, detach, Help and keyboard order. Remove obsolete separate-row height reservations and keep task list/detail space usable.
+- [ ] Reuse durable command-history facts to show action/target, Pending timing, Applied effect and Rejected cause clearly. Queued messages are not shown as consumed; engine-down pending commands retain honest delivery meaning, and no feedback is manufactured from navigation.
+- [ ] Keep full feedback/history reachable by keyboard and mouse when the summary truncates or the 20×8 footer is hidden. Preserve command result updates after popup return/restart and configured widget callbacks.
+- [ ] Verify real Pending→Applied and Rejected/operator flows, footer reachability and no overlap with controls across resize. Review native wide/compact feedback and pass the full gate; no wording-only or shape tests.
+
+### Task 121: Verify the second review end to end and reconcile Phase 11 evidence
+Refs: all new reported issues, follow-up specification, Tasks 113–120 and 113a; 07 §3/§5; original/current HTML and preserved first release record.
+- [ ] Run connected fake-agent/private-tmux/operator walkthroughs for responsive live motion/blink, fixed Recent scrolling/contiguous rows, stationary popup underlays and visible close controls, scoped readable titles/clock, resources/diagnostics, Enter resolution and durable right-side feedback. Include paused/stopped/restarted, explicit custom layouts/widgets and no-focus-steal guarantees.
+- [ ] Review matching real facts and rendered before/during/after coordinates in color/mono at 120×40, 101×35, 80×24/14, 48×20, 36×20/14 and 20×8. Compare popup/resources and new spacing/Recent/status/footer behavior to the revised Task113a HTML, preserving the earlier reference evidence; do not use prototype sample values, stale captures or injected task-detail renders as production evidence.
+- [ ] Run complete normal and `TERM=dumb NO_COLOR=1` quality gates and the existing macOS clean-install/attach/navigation smoke on the final implementation revision. Run warranted existing bounded real-agent verification for the changed integration behavior under §5, recording source/versions/budgets/cost and actual failures; no speculative paid scenarios or unrun platform claims.
+- [ ] Reconcile active design/operator/Focus/parity/config/README with delivered behavior, record every new issue's evidence-backed result and genuine remaining limits in a follow-up release record, and tick only satisfied ACs. Preserve prior acceptance, original PNG, and independently open gates 59/74h/74p. Audit/clean only owned test processes, private sockets, scratch and browser profiles; retain useful evidence and leave the user's project/resources untouched.
+
+### Second-review issue coverage
+
+| Reported issue | Implementation / verification |
+|---|---|
+| Periodically frozen cycling indicator; active agent status blinking | 113, 113a, 121 |
+| Cyan/green tmux contrast; agent title glyphs; bottom wall-clock | 114, 121 |
+| Popup moves Home one row/column; popup reference geometry; missing visible `Esc ×` | 115, 121 |
+| Fixed Recent heading/scroll cues; grey capitalized terminal status; blank task-row gaps | 113a, 116, 121 |
+| Resource strip and Project Diagnostics reference alignment | 117, 121 |
+| Escalation repeats task ID; Enter resolve does not work | 118, 121 |
+| Rebase conflict auto-resolution, repeated continuation, absent structured alternatives | 118, 119, 121 |
+| Last command belongs right of actions with clearer meaning | 113a, 120, 121 |
