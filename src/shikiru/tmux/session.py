@@ -12,6 +12,8 @@ from shikiru.tmux.client import (
     FORMAT_WINDOW_ID,
     FORMAT_WINDOW_INDEX,
     FORMAT_WINDOW_NAME,
+    HOME_PANE_OPTION,
+    HOME_PANE_OPTION_VALUE,
     exact_target,
 )
 
@@ -45,8 +47,6 @@ def _escape_glob(text: str) -> str:
 SHIKIRU_SESSION_PATTERN = f"#{{m:{_escape_glob(SESSION_PREFIX)}*,#{{session_name}}}}"
 _DEFAULT_PALETTE_KEY_COMMAND = "next-layout"
 _HOME_COMMAND_MARKER = "dash --home"
-_HOME_PANE_OPTION = "@shk_home"
-_HOME_PANE_OPTION_VALUE = "1"
 _HOME_WINDOW_NAMES = frozenset((HOME_WINDOW_NAME, LEGACY_HOME_WINDOW_NAME))
 _HOME_ROW_MAX_SPLITS = 5
 _HOME_WINDOW_NAME_FIELD = 2
@@ -57,7 +57,7 @@ _HOME_PANE_FORMAT = (
     f"{FORMAT_WINDOW_ID}{_FIELD_SEPARATOR}{FORMAT_PANE_ID}{_FIELD_SEPARATOR}"
     f"{FORMAT_WINDOW_NAME}{_FIELD_SEPARATOR}#{{window_active}}{_FIELD_SEPARATOR}"
     f"{FORMAT_PANE_START_COMMAND}{_FIELD_SEPARATOR}"
-    "#{@shk_home}"
+    f"#{{{HOME_PANE_OPTION}}}"
 )
 
 _SESSION_SCOPED_OPTIONS: dict[str, str] = {
@@ -224,7 +224,7 @@ class SessionView:
         await self._tmux.move_window(home_window, home_target)
 
     async def _mark_home_pane(self, pane_id: str) -> None:
-        await self._tmux.set_pane_option(pane_id, _HOME_PANE_OPTION, _HOME_PANE_OPTION_VALUE)
+        await self._tmux.set_pane_option(pane_id, HOME_PANE_OPTION, HOME_PANE_OPTION_VALUE)
 
     async def _remove_duplicate_home_windows(self, target: str, home_window: str) -> None:
         for duplicate, _, _, _ in await home_window_targets(self._tmux, target):
@@ -258,7 +258,7 @@ async def home_window_targets(tmux: Tmux, session_target: str) -> list[tuple[str
         window_id, pane_id, window_name, active, start_command, marker = row.split(
             _FIELD_SEPARATOR, _HOME_ROW_MAX_SPLITS
         )
-        if marker == _HOME_PANE_OPTION_VALUE or _HOME_COMMAND_MARKER in start_command:
+        if marker == HOME_PANE_OPTION_VALUE or _HOME_COMMAND_MARKER in start_command:
             identified.append((window_id, pane_id, window_name, active))
         elif window_name in _HOME_WINDOW_NAMES:
             named.append((window_id, pane_id, window_name, active))

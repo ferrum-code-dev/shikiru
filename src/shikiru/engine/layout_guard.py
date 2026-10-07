@@ -12,7 +12,7 @@ from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Task
 from shikiru.errors import InvariantError
 from shikiru.paths import task_root
 from shikiru.private import make_private_dir
-from shikiru.tmux.client import FORMAT_PANE_ID
+from shikiru.tmux.client import FORMAT_PANE_ID, LAYOUT_PANE_OPTION
 from shikiru.tmux.decorator import render_title
 from shikiru.view_log import view_argv
 
@@ -33,9 +33,8 @@ if TYPE_CHECKING:
 _SHELL_ARGV = ("/bin/sh",)
 _ROLE_PANE_NAMES = frozenset((Role.LEADER.value, Role.IMPLEMENTER.value))
 _SHELL_PANE_NAME = "shell"
-_LAYOUT_PANE_OPTION = "@shk_layout_pane"
 _LAYOUT_PANE_SEPARATOR = "\t"
-_LAYOUT_PANE_FORMAT = f"{FORMAT_PANE_ID}{_LAYOUT_PANE_SEPARATOR}#{{{_LAYOUT_PANE_OPTION}}}"
+_LAYOUT_PANE_FORMAT = f"{FORMAT_PANE_ID}{_LAYOUT_PANE_SEPARATOR}#{{{LAYOUT_PANE_OPTION}}}"
 
 
 class LayoutGuard:
@@ -187,7 +186,7 @@ class LayoutGuard:
         for name in self._special_pane_names:
             if name not in special and available:
                 special[name] = available.pop(0)
-                await self._tmux.set_pane_option(special[name], _LAYOUT_PANE_OPTION, name)
+                await self._tmux.set_pane_option(special[name], LAYOUT_PANE_OPTION, name)
         return {name for name in self._special_pane_names if name not in special}
 
     async def _restore_missing_panes(self, task: Task, missing_agents: set[Role]) -> None:
@@ -267,7 +266,7 @@ class LayoutGuard:
     async def _decorate_special_panes(self, root: Path, panes: dict[str, str]) -> None:
         for name in self._special_pane_names:
             pane_id = panes[name]
-            await self._tmux.set_pane_option(pane_id, _LAYOUT_PANE_OPTION, name)
+            await self._tmux.set_pane_option(pane_id, LAYOUT_PANE_OPTION, name)
             await self._title_special_pane(name, pane_id, root)
 
     async def _title_special_pane(self, name: str, pane_id: str, root: Path) -> None:

@@ -199,6 +199,20 @@ def home_command(root: Path) -> tuple[str, ...]:
     return (sys.executable, "-m", PACKAGE_NAME, "--project", str(root), CLI_DASH_COMMAND, "--home")
 
 
+def task_dashboard_command(root: Path, task_id: str) -> tuple[str, ...]:
+    """Return the explicit task dashboard command for `task_id` in `root`."""
+    return (
+        sys.executable,
+        "-m",
+        PACKAGE_NAME,
+        "--project",
+        str(root),
+        CLI_DASH_COMMAND,
+        "--task",
+        task_id,
+    )
+
+
 def command_with_overrides(command: tuple[str, ...], overrides: Sequence[str]) -> tuple[str, ...]:
     """Insert global `--set` values before the hidden engine or dashboard command."""
     command_index = next(

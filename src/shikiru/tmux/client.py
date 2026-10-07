@@ -19,7 +19,10 @@ _SOCKET_FLAG = "-L"
 _CONFIG_FLAG = "-f"
 _COMMAND_TIMEOUT_SECONDS = 5.0
 _END_OF_OPTIONS = "--"
-_ENV_COMMAND = "env"
+TMUX_ENV_COMMAND = "env"
+TMUX_ENV_UNSET_OPTION = "-u"
+TMUX_ENV_UNSET_OPTION_ARGUMENT_COUNT = 2
+ENV_VARIABLE_ASSIGNMENT_SEPARATOR = "="
 _SESSION_SEPARATOR = ":"
 _HORIZONTAL_AXIS = "h"
 _FLAG_TRUE = "1"
@@ -50,6 +53,10 @@ FORMAT_SESSION_NAME = "#{session_name}"
 FORMAT_CLIENT_TTY = "#{client_tty}"
 FORMAT_CLIENT_SESSION = "#{client_session}"
 FORMAT_CLIENT_PANE_ID = "#{pane_id}"
+HOME_PANE_OPTION = "@shk_home"
+HOME_PANE_OPTION_VALUE = "1"
+LAYOUT_PANE_OPTION = "@shk_layout_pane"
+SYSTEM_LAYOUT_PANE = "system"
 NO_SERVER_RUNNING = "no server running on "
 ERROR_CONNECTING = "error connecting to "
 SOCKET_MISSING = "(No such file or directory)"
@@ -357,10 +364,10 @@ class Tmux:
     ) -> None:
         """Restart pane `target`'s process, killing any survivor first."""
         args = ["respawn-pane", "-k", "-t", target, "-c", str(cwd)]
-        command = [_ENV_COMMAND]
+        command = [TMUX_ENV_COMMAND]
         for key, value in env.items():
             if value is None:
-                command += ["-u", key]
+                command += [TMUX_ENV_UNSET_OPTION, key]
         for key, value in env.items():
             if value is not None:
                 command.append(f"{key}={value}")

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import shlex
 import shutil
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
@@ -36,16 +39,19 @@ from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Role, Status
+from shikiru.operator.lifecycle import task_dashboard_command
 from shikiru.operator.queries import OperatorQueries
-from shikiru.paths import run_dir
+from shikiru.paths import run_dir, state_db_path
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
 from shikiru.plugins.widgets.resources import ResourcesPanel, ResourcesWidget
 from shikiru.plugins.widgets.usage import UsagePanel, UsageWidget
 from shikiru.process import SubprocessRunner
+from shikiru.store.database import Database
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
+from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.docker import (
@@ -57,7 +63,14 @@ from shikiru.telemetry.docker import (
     DockerSampler,
 )
 from shikiru.telemetry.resources import ResourceSampler
-from shikiru.tmux.client import Tmux
+from shikiru.tmux.client import (
+    HOME_PANE_OPTION,
+    HOME_PANE_OPTION_VALUE,
+    LAYOUT_PANE_OPTION,
+    SYSTEM_LAYOUT_PANE,
+    TMUX_ENV_COMMAND,
+    Tmux,
+)
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -76,8 +89,6 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import WidgetContext
     from shikiru.dashboard.views import DashboardSources
-    from shikiru.store.database import Database
-    from shikiru.store.reader import StateReader
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -100,7 +111,24 @@ USAGE_DETAIL_HEIGHT = 30
 RESOURCE_PROJECT_SESSION = "task110-project"
 RESOURCE_OTHER_SESSION = "task110-other"
 RESOURCE_OTHER_PROJECT_DIRECTORY = "other-project"
+RESOURCE_RENAMED_HOME_NAME = "renamed-home"
+RESOURCE_OPERATOR_SYSTEM_WINDOW = "operator-system"
+RESOURCE_SHELL_WINDOW = "project-shell"
+RESOURCE_SHELL_LAYOUT_PANE = "shell"
+RESOURCE_SYSTEM_SPLIT_SIZE_PCT = 40
+RESOURCE_UNRELATED_ALLOCATION_MULTIPLIER = 4
+RESOURCE_RSS_MATCH_TOLERANCE_BYTES = 16 * 1024**2
 RESOURCE_TEST_RUNG = Rung("fake", "resource-test", None)
+
+
+@dataclass(frozen=True)
+class _ResourceTestPanes:
+    role_pane_id: str
+    task_window_id: str
+    role_root: psutil.Process
+    home_root: psutil.Process
+    system_root: psutil.Process
+    excluded_roots: tuple[psutil.Process, ...]
 
 
 def _dashboard_services(
@@ -937,24 +965,12 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         assert app.screen is home_screen
 
 
-async def test_resources_service_excludes_panes_from_other_projects(
-    connection: Connection,
-    reader: StateReader,
-    tmux_server: TmuxServer,
-    tmp_path: Path,
-) -> None:
-    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
-    project_dir = write_minimal_project(tmp_path)
-    other_project_dir = tmp_path / RESOURCE_OTHER_PROJECT_DIRECTORY
-    other_project_dir.mkdir()
-    other_project_dir = write_minimal_project(other_project_dir)
-    clock = FakeClock(START)
-    settings = make_settings()
-    sampler = ResourceSampler(clock, settings.orchestration.resources)
-    task = seed_task(connection, clock, title="Owned role pane")
-    tasks = TaskStore(connection, clock)
-    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, RESOURCE_TEST_RUNG)
-    RunStore(connection, clock).mark_taken_over(run.id)
+async def _start_resource_test_panes(
+    tmux: Tmux,
+    project_dir: Path,
+    other_project_dir: Path,
+    task_id: str,
+) -> _ResourceTestPanes:
     sample_command = (
         sys.executable,
         "-c",
@@ -968,15 +984,35 @@ async def test_resources_service_excludes_panes_from_other_projects(
         size=(120, 40),
         command=sample_command,
     )
+    await tmux.set_pane_option(home_pane, HOME_PANE_OPTION, HOME_PANE_OPTION_VALUE)
+    await tmux.rename_window(home_pane, RESOURCE_RENAMED_HOME_NAME)
     session_target = f"={RESOURCE_PROJECT_SESSION}"
-    pane_id = await tmux.new_window(
-        session_target,
-        name=task.id,
-        command=sample_command,
+    role_pane = await tmux.new_window(session_target, name=task_id, command=sample_command)
+    task_window_id = await tmux.display(role_pane, "#{window_id}")
+    system_pane = await tmux.split_window(
+        role_pane,
+        axis="h",
+        size_pct=RESOURCE_SYSTEM_SPLIT_SIZE_PCT,
+        cwd=project_dir,
+        detached=True,
     )
-    window_id = await tmux.display(pane_id, "#{window_id}")
-    tasks.set_window(task.id, window_id)
-    tasks.set_panes(task.id, {Role.IMPLEMENTER: pane_id})
+    system_command = task_dashboard_command(project_dir, task_id)
+    await tmux.respawn_pane(system_pane, system_command, env={}, cwd=project_dir)
+    await tmux.set_pane_option(system_pane, LAYOUT_PANE_OPTION, SYSTEM_LAYOUT_PANE)
+    command_row = await tmux.display(system_pane, "#{pane_start_command}")
+    assert tuple(shlex.split(command_row)) == (TMUX_ENV_COMMAND, *system_command)
+    await wait_until(lambda: _pane_is_live(tmux, system_pane), timeout=5.0)
+    excluded_panes: list[str] = []
+    for name, marker in (
+        ("dashboard", None),
+        (RESOURCE_OPERATOR_SYSTEM_WINDOW, SYSTEM_LAYOUT_PANE),
+        (RESOURCE_SHELL_WINDOW, RESOURCE_SHELL_LAYOUT_PANE),
+    ):
+        pane_id = await tmux.new_window(session_target, name=name, command=sample_command)
+        if marker is not None:
+            await tmux.set_pane_option(pane_id, LAYOUT_PANE_OPTION, marker)
+        excluded_panes.append(pane_id)
+    unrelated_memory_bytes = OBSERVABLE_PANE_MEMORY_BYTES * RESOURCE_UNRELATED_ALLOCATION_MULTIPLIER
     unrelated_pane = await tmux.new_session(
         RESOURCE_OTHER_SESSION,
         cwd=other_project_dir,
@@ -986,38 +1022,81 @@ async def test_resources_service_excludes_panes_from_other_projects(
         command=(
             sys.executable,
             "-c",
-            f"import os; allocation=bytearray({OBSERVABLE_PANE_MEMORY_BYTES * 4}); os.read(0, 1)",
+            f"import os; allocation=bytearray({unrelated_memory_bytes}); os.read(0, 1)",
         ),
     )
-    owned_root = psutil.Process(int(await tmux.display(pane_id, "#{pane_pid}")))
-    home_root = psutil.Process(int(await tmux.display(home_pane, "#{pane_pid}")))
-    unrelated_root = psutil.Process(int(await tmux.display(unrelated_pane, "#{pane_pid}")))
-
-    def pane_trees_own_memory() -> bool:
-        owned = [owned_root, *owned_root.children(recursive=True)]
-        home = [home_root, *home_root.children(recursive=True)]
-        unrelated = [unrelated_root, *unrelated_root.children(recursive=True)]
-        return (
-            max(process.memory_info().rss for process in owned) >= MINIMUM_PANE_MEMORY_BYTES
-            and max(process.memory_info().rss for process in home) >= MINIMUM_PANE_MEMORY_BYTES
-            and max(process.memory_info().rss for process in unrelated)
-            >= MINIMUM_PANE_MEMORY_BYTES * 3
+    pane_ids = (role_pane, home_pane, system_pane, *excluded_panes, unrelated_pane)
+    roots = tuple(
+        psutil.Process(int(process_id))
+        for process_id in await asyncio.gather(
+            *(tmux.display(pane_id, "#{pane_pid}") for pane_id in pane_ids)
         )
+    )
+    return _ResourceTestPanes(
+        role_pane,
+        task_window_id,
+        roots[0],
+        roots[1],
+        roots[2],
+        roots[3:],
+    )
 
-    await wait_until(pane_trees_own_memory, timeout=5.0)
-    owned_tree_rss = sum(
-        process.memory_info().rss for process in [owned_root, *owned_root.children(recursive=True)]
+
+def _resource_panes_ready(panes: _ResourceTestPanes) -> bool:
+    roots = (panes.role_root, panes.home_root, *panes.excluded_roots)
+    return all(
+        max(process.memory_info().rss for process in [root, *root.children(recursive=True)])
+        >= MINIMUM_PANE_MEMORY_BYTES
+        for root in roots
     )
-    home_tree_rss = sum(
-        process.memory_info().rss for process in [home_root, *home_root.children(recursive=True)]
+
+
+async def _pane_is_live(tmux: Tmux, pane_id: str) -> bool:
+    return not await tmux.is_pane_dead(pane_id)
+
+
+def _resource_tree_rss(root: psutil.Process) -> int:
+    return sum(process.memory_info().rss for process in [root, *root.children(recursive=True)])
+
+
+async def test_resources_service_excludes_panes_from_other_projects(
+    request: pytest.FixtureRequest,
+    tmux_server: TmuxServer,
+    tmp_path: Path,
+) -> None:
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
+    project_dir = write_minimal_project(
+        tmp_path,
+        '\n[dashboard.layout]\nsplit = "h"\npanes = [ '
+        f'{{ pane = "{SYSTEM_LAYOUT_PANE}", size = 30 }}, '
+        f'{{ pane = "{Role.LEADER.value}" }}, '
+        f'{{ pane = "{Role.IMPLEMENTER.value}" }}, '
+        f'{{ pane = "{RESOURCE_SHELL_LAYOUT_PANE}", size = 20 }} ]\n',
     )
-    unrelated_tree_rss = sum(
-        process.memory_info().rss
-        for process in [unrelated_root, *unrelated_root.children(recursive=True)]
-    )
+    other_project_dir = tmp_path / RESOURCE_OTHER_PROJECT_DIRECTORY
+    other_project_dir.mkdir()
+    other_project_dir = write_minimal_project(other_project_dir)
     clock = FakeClock(START)
-    tasks_state = reader.list_tasks()
-    assert any(item.id == task.id and item.window_id == window_id for item in tasks_state)
+    database = Database(state_db_path(project_dir))
+    connection = database.connect()
+    request.addfinalizer(connection.close)
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    settings = load_settings(project_dir)
+    sampler = ResourceSampler(clock, settings.orchestration.resources)
+    task = seed_task(connection, clock, title="Owned role pane")
+    tasks = TaskStore(connection, clock)
+    runs = RunStore(connection, clock)
+    run = runs.start(task.id, Role.IMPLEMENTER, RESOURCE_TEST_RUNG)
+    runs.mark_taken_over(run.id)
+    panes = await _start_resource_test_panes(tmux, project_dir, other_project_dir, task.id)
+    tasks.set_window(task.id, panes.task_window_id)
+    tasks.set_panes(task.id, {Role.IMPLEMENTER: panes.role_pane_id})
+    await wait_until(lambda: _resource_panes_ready(panes), timeout=5.0)
+    assert any(
+        item.id == task.id and item.window_id == panes.task_window_id
+        for item in reader.list_tasks()
+    )
     service = DashboardServices(
         GitRepoStatusService(
             Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT),
@@ -1033,7 +1112,7 @@ async def test_resources_service_excludes_panes_from_other_projects(
         project_root=project_dir,
         state=reader,
         tmux=tmux,
-        session_target=session_target,
+        session_target=f"={RESOURCE_PROJECT_SESSION}",
         resources=sampler,
         docker=DockerSampler(
             SubprocessRunner(),
@@ -1050,11 +1129,17 @@ async def test_resources_service_excludes_panes_from_other_projects(
 
     assert snapshot.shikiru_rss_gb is not None
     assert snapshot.instance_rss_gb is not None
-    measured_rss = snapshot.instance_rss_gb * BYTES_PER_GIB
-    assert measured_rss < owned_tree_rss + home_tree_rss + unrelated_tree_rss
-    assert snapshot.shikiru_rss_gb * BYTES_PER_GIB >= home_tree_rss
+    expected_shikiru_rss = (
+        _resource_tree_rss(psutil.Process(os.getpid()))
+        + _resource_tree_rss(panes.home_root)
+        + _resource_tree_rss(panes.system_root)
+    )
+    measured_shikiru_rss = snapshot.shikiru_rss_gb * BYTES_PER_GIB
+    assert abs(measured_shikiru_rss - expected_shikiru_rss) < RESOURCE_RSS_MATCH_TOLERANCE_BYTES
     assert snapshot.agents_rss_gb is not None
-    assert snapshot.agents_rss_gb * BYTES_PER_GIB >= owned_tree_rss
+    expected_agents_rss = _resource_tree_rss(panes.role_root)
+    measured_agents_rss = snapshot.agents_rss_gb * BYTES_PER_GIB
+    assert abs(measured_agents_rss - expected_agents_rss) < RESOURCE_RSS_MATCH_TOLERANCE_BYTES
     assert snapshot.agents_process_tree_empty is False
     assert snapshot.agents_cpu_pct is not None
     assert snapshot.instance_rss_gb == pytest.approx(

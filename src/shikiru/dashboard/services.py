@@ -7,6 +7,7 @@ configured interval so a dashboard refresh never spawns a git process on every t
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -21,10 +22,25 @@ from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role, Status
 from shikiru.engine.turn_processes import read_turn_pid, turn_pid_path
 from shikiru.errors import ShikiruError
+from shikiru.operator.lifecycle import task_dashboard_command
 from shikiru.paths import run_dir
 from shikiru.process import ProcessIdentity, identify_pid
 from shikiru.telemetry.resources import ResourceProcessRoots
-from shikiru.tmux.session import HOME_WINDOW_NAME, home_window_target
+from shikiru.tmux.client import (
+    ENV_VARIABLE_ASSIGNMENT_SEPARATOR,
+    FORMAT_PANE_ID,
+    FORMAT_PANE_PID,
+    FORMAT_PANE_START_COMMAND,
+    FORMAT_WINDOW_ID,
+    HOME_PANE_OPTION,
+    HOME_PANE_OPTION_VALUE,
+    LAYOUT_PANE_OPTION,
+    SYSTEM_LAYOUT_PANE,
+    TMUX_ENV_COMMAND,
+    TMUX_ENV_UNSET_OPTION,
+    TMUX_ENV_UNSET_OPTION_ARGUMENT_COUNT,
+)
+from shikiru.tmux.session import home_window_target
 from shikiru.ui.age import format_age
 
 if TYPE_CHECKING:
@@ -43,8 +59,18 @@ if TYPE_CHECKING:
     from shikiru.tmux.client import Tmux
     from shikiru.workspace.git import Git
 
-_PANE_RESOURCE_FORMAT = "#{pane_id} #{pane_pid} #{window_id} #{window_name}"
-_PANE_RESOURCE_FIELD_COUNT = 4
+_PANE_RESOURCE_FIELD_SEPARATOR = "\t"
+_PANE_RESOURCE_FORMAT = _PANE_RESOURCE_FIELD_SEPARATOR.join(
+    (
+        FORMAT_PANE_ID,
+        FORMAT_PANE_PID,
+        FORMAT_WINDOW_ID,
+        f"#{{{HOME_PANE_OPTION}}}",
+        f"#{{{LAYOUT_PANE_OPTION}}}",
+        FORMAT_PANE_START_COMMAND,
+    )
+)
+_PANE_RESOURCE_FIELD_COUNT = 6
 _PANE_RESOURCE_MAX_SPLITS = _PANE_RESOURCE_FIELD_COUNT - 1
 TASK_MISSING = "task is missing"
 TASK_WINDOW_UNRECORDED = "task window is not recorded"
@@ -64,6 +90,24 @@ class _CachedRepoStatus:
     checked_at: datetime
     sampled_at: datetime | None
     status: RepoStatus
+
+
+@dataclass(frozen=True)
+class _PaneResource:
+    pane_id: str
+    pane_pid: int
+    window_id: str
+    home_marker: str
+    layout_marker: str
+    start_command: str
+
+
+@dataclass(frozen=True)
+class _PaneOwnership:
+    project_root: Path
+    pane_owners: dict[str, tuple[str, Role, str]]
+    task_windows: dict[str, str]
+    taken_over_runs: set[tuple[str, Role]]
 
 
 class GitRepoStatusService:
@@ -238,7 +282,7 @@ class DashboardServices:
         runs = self._state.list_all_runs()
         shikiru = _process_root_map((self._engine_identity(), identify_pid(os.getpid())))
         agents = _live_agent_process_roots(self._project_root, runs)
-        pane_shikiru, pane_agents = _pane_process_roots(pane_rows, tasks, runs)
+        pane_shikiru, pane_agents = _pane_process_roots(pane_rows, tasks, runs, self._project_root)
         shikiru.update(pane_shikiru)
         agents.update(pane_agents)
         return ResourceProcessRoots(tuple(shikiru.values()), tuple(agents.values()))
@@ -407,13 +451,20 @@ def _sampled_ago(sampled_at: datetime | None, clock: Clock) -> str | None:
     return format_age(age) if age >= 0 else None
 
 
-def _pane_resource(line: str) -> tuple[str, int, str, str]:
-    fields = line.split(" ", _PANE_RESOURCE_MAX_SPLITS)
+def _pane_resource(line: str) -> _PaneResource:
+    fields = line.split(_PANE_RESOURCE_FIELD_SEPARATOR, _PANE_RESOURCE_MAX_SPLITS)
     if len(fields) != _PANE_RESOURCE_FIELD_COUNT:
         message = f"tmux pane resource row is invalid: {line!r}"
         raise ValueError(message)
-    pane_id, pane_pid_text, window_id, window_name = fields
-    return pane_id, int(pane_pid_text), window_id, window_name
+    pane_id, pane_pid_text, window_id, home_marker, layout_marker, start_command = fields
+    return _PaneResource(
+        pane_id,
+        int(pane_pid_text),
+        window_id,
+        home_marker,
+        layout_marker,
+        start_command,
+    )
 
 
 def _process_root_map(
@@ -447,6 +498,7 @@ def _pane_process_roots(
     pane_rows: list[str],
     tasks: list[Task],
     runs: list[Run],
+    project_root: Path,
 ) -> tuple[
     dict[tuple[int, float | None], ProcessIdentity],
     dict[tuple[int, float | None], ProcessIdentity],
@@ -460,32 +512,63 @@ def _pane_process_roots(
         if task.window_id is not None
         for role, pane_id in task.panes.items()
     }
+    task_windows = {task.window_id: task.id for task in tasks if task.window_id is not None}
+    ownership = _PaneOwnership(project_root, pane_owners, task_windows, taken_over_runs)
     shikiru: dict[tuple[int, float | None], ProcessIdentity] = {}
     agents: dict[tuple[int, float | None], ProcessIdentity] = {}
     for line in pane_rows:
-        _add_pane_process_root(line, pane_owners, taken_over_runs, shikiru, agents)
+        _add_pane_process_root(line, ownership, shikiru, agents)
     return shikiru, agents
 
 
 def _add_pane_process_root(
     line: str,
-    pane_owners: dict[str, tuple[str, Role, str]],
-    taken_over_runs: set[tuple[str, Role]],
+    ownership: _PaneOwnership,
     shikiru: dict[tuple[int, float | None], ProcessIdentity],
     agents: dict[tuple[int, float | None], ProcessIdentity],
 ) -> None:
-    pane_id, pane_pid, window_id, window_name = _pane_resource(line)
-    identity = identify_pid(pane_pid)
+    pane = _pane_resource(line)
+    identity = identify_pid(pane.pane_pid)
     if identity is None:
         return
     identity_key = (identity.pid, identity.started_at)
-    if window_name == HOME_WINDOW_NAME:
+    if pane.home_marker == HOME_PANE_OPTION_VALUE:
         shikiru[identity_key] = identity
-    owner = pane_owners.get(pane_id)
+    owner = ownership.pane_owners.get(pane.pane_id)
     if owner is None:
+        owner_task_id = ownership.task_windows.get(pane.window_id)
+        if (
+            owner_task_id is not None
+            and pane.layout_marker == SYSTEM_LAYOUT_PANE
+            and _is_task_dashboard(pane.start_command, ownership.project_root, owner_task_id)
+        ):
+            shikiru[identity_key] = identity
         return
     owner_task_id, owner_role, owner_window_id = owner
-    if owner_window_id != window_id:
-        return
-    target = agents if (owner_task_id, owner_role) in taken_over_runs else shikiru
-    target[identity_key] = identity
+    if owner_window_id == pane.window_id:
+        target = agents if (owner_task_id, owner_role) in ownership.taken_over_runs else shikiru
+        target[identity_key] = identity
+
+
+def _is_task_dashboard(start_command: str, project_root: Path, task_id: str) -> bool:
+    try:
+        command = tuple(shlex.split(start_command))
+    except ValueError:
+        return False
+    expected = task_dashboard_command(project_root, task_id)
+    if command[:1] != (TMUX_ENV_COMMAND,):
+        return command == expected
+    index = 1
+    while index < len(command):
+        value = command[index]
+        if value == TMUX_ENV_UNSET_OPTION:
+            if index + 1 == len(command):
+                return False
+            index += TMUX_ENV_UNSET_OPTION_ARGUMENT_COUNT
+            continue
+        if ENV_VARIABLE_ASSIGNMENT_SEPARATOR not in value or value.startswith(
+            TMUX_ENV_UNSET_OPTION[0]
+        ):
+            return command[index:] == expected
+        index += 1
+    return False
