@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import HandBack, Submit
@@ -11,6 +13,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step
 from shikiru.engine.layout_guard import LayoutGuard
+from shikiru.paths import task_root
 from shikiru.store.commands import CommandQueue
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
@@ -29,6 +32,7 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
+    from shikiru.tmux.client import Tmux
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -43,9 +47,18 @@ _LAYOUT = LayoutSplit(
         PaneLeaf(pane="shell"),
     ],
 )
+_VERTICAL_LAYOUT = LayoutSplit(
+    split="v",
+    panes=[
+        PaneLeaf(pane="leader", size=40),
+        PaneLeaf(pane="implementer", size=40),
+        PaneLeaf(pane="shell", size=20),
+    ],
+)
+_PANE_SIZE_TOLERANCE_PCT = 3
 
 
-def _settings() -> Settings:
+def _settings(layout: LayoutSplit = _LAYOUT) -> Settings:
     settings = make_settings(
         leader_ladder=[_FAKE_RUNG],
         implementer_ladder=[_FAKE_RUNG],
@@ -54,7 +67,14 @@ def _settings() -> Settings:
     return settings.model_copy(
         update={
             "project": ProjectConfig(name="test", trackers=[]),
-            "dashboard": settings.dashboard.model_copy(update={"layout": _LAYOUT}),
+            "dashboard": settings.dashboard.model_copy(
+                update={
+                    "layout": layout,
+                    "titles": settings.dashboard.titles.model_copy(
+                        update={"shell": "Project folder · {cwd}"}
+                    ),
+                }
+            ),
         }
     )
 
@@ -64,8 +84,10 @@ async def _task_window(
     clock: Clock,
     tmux_server: TmuxServer,
     tmp_path: Path,
+    *,
+    layout_tree: LayoutSplit = _LAYOUT,
 ) -> tuple[LayoutGuard, TaskStore, EventLog, str]:
-    settings = _settings()
+    settings = _settings(layout_tree)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     tasks = TaskStore(connection, clock)
@@ -117,6 +139,67 @@ async def test_killed_agent_pane_rebuilds_the_task_window(
     assert await tmux.target_exists(restored.window_id)
     pane_events = events.since(0, kinds=[EventKind.PANE_RESTORED], task_id=task_id)
     assert any(event.data.get("pane") == "agent" for event in pane_events)
+
+
+async def test_default_vertical_stack_keeps_its_geometry_after_role_pane_recovery(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    layout, tasks, _events, task_id = await _task_window(
+        connection, clock, tmux_server, tmp_path, layout_tree=_VERTICAL_LAYOUT
+    )
+    task = tasks.get(task_id)
+    assert task is not None
+    assert task.window_id is not None
+    tmux = build_tmux(tmux_server)
+    leader = task.panes[Role.LEADER]
+    implementer = task.panes[Role.IMPLEMENTER]
+    shell = next(
+        pane
+        for pane in await tmux.list_panes(task.window_id, FORMAT_PANE_ID)
+        if pane not in task.panes.values()
+    )
+    leader_pid = await tmux.display(leader, "#{pane_pid}")
+    root = task_root(tmp_path, task_id)
+    await _assert_vertical_shares(tmux, task.window_id, leader, implementer, shell)
+    assert await tmux.display(shell, "#{pane_current_path}") == str(root)
+    assert await tmux.display(shell, "#{pane_title}") == f"Project folder · {root}"
+
+    await tmux_server.run("kill-pane", "-t", implementer)
+    restored = await layout.ensure(task)
+    await layout.ensure(restored)
+
+    current = tasks.get(task_id)
+    assert current is not None
+    assert current.panes[Role.LEADER] == leader
+    assert current.panes[Role.IMPLEMENTER] != implementer
+    assert await tmux.display(leader, "#{pane_pid}") == leader_pid
+    assert await tmux.display(shell, "#{pane_current_path}") == str(root)
+    await _assert_vertical_shares(
+        tmux,
+        task.window_id,
+        current.panes[Role.LEADER],
+        current.panes[Role.IMPLEMENTER],
+        shell,
+    )
+
+
+async def _assert_vertical_shares(
+    tmux: Tmux, window_id: str, leader: str, implementer: str, shell: str
+) -> None:
+    widths = [
+        int(await tmux.display(pane, "#{pane_width}")) for pane in (leader, implementer, shell)
+    ]
+    heights = [
+        int(await tmux.display(pane, "#{pane_height}")) for pane in (leader, implementer, shell)
+    ]
+    total_height = sum(heights)
+    window_width = int(await tmux.display(window_id, "#{window_width}"))
+
+    assert widths == [window_width, window_width, window_width]
+    assert heights[0] / total_height == pytest.approx(0.4, abs=_PANE_SIZE_TOLERANCE_PCT / 100)
+    assert heights[1] / total_height == pytest.approx(0.4, abs=_PANE_SIZE_TOLERANCE_PCT / 100)
+    assert heights[2] / total_height == pytest.approx(0.2, abs=_PANE_SIZE_TOLERANCE_PCT / 100)
 
 
 async def test_dead_view_pane_is_respawned_in_place(

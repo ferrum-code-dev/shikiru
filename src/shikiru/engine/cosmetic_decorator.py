@@ -54,6 +54,10 @@ class CosmeticDecorator(PaneDecorator):
             "set_pane_state", super().set_pane_state(pane_target, color=color, glyph=glyph)
         )
 
+    async def set_pane_option(self, pane_target: str, name: str, value: str) -> None:
+        """Set a pane option, logging a tmux failure."""
+        await self._cosmetic("set_pane_option", super().set_pane_option(pane_target, name, value))
+
     async def set_window_state(self, window_target: str, *, color: str, glyph: str) -> None:
         """Set the window state, logging a tmux failure."""
         await self._cosmetic(

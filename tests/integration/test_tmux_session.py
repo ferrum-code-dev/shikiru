@@ -11,6 +11,7 @@ from shikiru.tmux.client import Tmux, exact_target, tmux_key_label
 from shikiru.tmux.session import (
     DETACHED_SIZE,
     HOME_WINDOW_NAME,
+    LEGACY_HOME_WINDOW_NAME,
     PROJECT_DIR_ENV_VAR,
     SessionView,
     session_name,
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
     from tests.support.tmux import TmuxServer
 
-_HOME_COMMAND = ("sh", "-c", "sleep 300")
+_HOME_COMMAND = ("sh", "-c", "sleep 300; shikiru dash --home")
 
 
 def _tmux(server: TmuxServer) -> Tmux:
@@ -89,6 +90,100 @@ async def test_ensure_recreates_the_home_window_once_it_has_been_killed(
     await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
 
     assert await tmux.target_exists(window_target)
+
+
+async def test_ensure_reuses_a_renamed_legacy_home_without_touching_other_windows(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    name = session_name("upgrade")
+    target = exact_target(name)
+    await tmux.new_session(
+        name,
+        cwd=tmp_path,
+        env={PROJECT_DIR_ENV_VAR: str(tmp_path)},
+        window_name=LEGACY_HOME_WINDOW_NAME,
+        size=DETACHED_SIZE,
+        command=_HOME_COMMAND,
+    )
+    other_pane = await tmux.new_window(
+        target, name="operator window", cwd=tmp_path, command=("sh", "-c", "sleep 300")
+    )
+    other_window = await tmux.window_id(other_pane)
+    legacy_pane = await tmux.display(f"{target}:{LEGACY_HOME_WINDOW_NAME}", "#{pane_id}")
+    await tmux.rename_window(f"{target}:{LEGACY_HOME_WINDOW_NAME}", "operator renamed Home")
+    view = SessionView(tmux)
+
+    await view.ensure("upgrade", tmp_path, home_command=_HOME_COMMAND)
+    await view.ensure("upgrade", tmp_path, home_command=_HOME_COMMAND)
+
+    windows = await tmux_server.run(
+        "list-windows", "-t", target, "-F", "#{window_id}\t#{window_name}"
+    )
+    home_pane = await tmux.display(f"{target}:{HOME_WINDOW_NAME}", "#{pane_id}")
+    home_window = await tmux.window_id(home_pane)
+    assert dict(line.split("\t", 1) for line in windows.stdout.splitlines()) == {
+        home_window: HOME_WINDOW_NAME,
+        other_window: "operator window",
+    }
+    assert home_pane == legacy_pane
+    title = await tmux_server.run("show-options", "-Aqv", "-t", f"{target}:", "set-titles-string")
+    assert title.stdout.strip() == "upgrade"
+
+
+async def test_ensure_converges_duplicate_home_windows_without_moving_focus(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    view = SessionView(tmux)
+    target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+    first_home = await tmux.window_id(
+        await tmux.display(f"{target}:{HOME_WINDOW_NAME}", "#{pane_id}")
+    )
+    operator_pane = await tmux.new_window(
+        target, name="operator window", cwd=tmp_path, command=("sh", "-c", "sleep 300")
+    )
+    operator_window = await tmux.window_id(operator_pane)
+    second_home = await tmux.new_window(
+        target,
+        name="renamed dashboard",
+        cwd=tmp_path,
+        command=_HOME_COMMAND,
+        detached=True,
+    )
+    second_home_window = await tmux.window_id(second_home)
+    await tmux.select_window(second_home_window)
+
+    await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+
+    windows = await tmux_server.run(
+        "list-windows", "-t", target, "-F", "#{window_id}\t#{window_name}"
+    )
+    assert dict(line.split("\t", 1) for line in windows.stdout.splitlines()) == {
+        second_home_window: HOME_WINDOW_NAME,
+        operator_window: "operator window",
+    }
+    assert first_home != second_home_window
+
+
+async def test_home_owns_no_pane_border_row_while_task_roles_keep_their_labels(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    view = SessionView(tmux)
+    target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+    task_pane = await view.create_task_window(target, window_name="T-1 Add retries", cwd=tmp_path)
+    task_window = await tmux.window_id(task_pane)
+
+    home_chrome = await tmux_server.run(
+        "show-window-options", "-v", "-t", f"{target}:{HOME_WINDOW_NAME}", "pane-border-status"
+    )
+    task_chrome = await tmux_server.run(
+        "show-window-options", "-v", "-t", task_window, "pane-border-status"
+    )
+
+    assert home_chrome.stdout.strip() == "off"
+    assert task_chrome.stdout.strip() == "top"
 
 
 async def test_missing_pane_is_dead(tmux_server: TmuxServer, tmp_path: Path) -> None:

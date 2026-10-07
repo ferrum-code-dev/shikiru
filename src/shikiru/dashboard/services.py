@@ -18,7 +18,7 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.domain.tasks import Role, Status
 from shikiru.errors import ShikiruError
-from shikiru.tmux.session import HOME_WINDOW_NAME
+from shikiru.tmux.session import home_window_target
 from shikiru.ui.age import format_age
 
 if TYPE_CHECKING:
@@ -342,11 +342,11 @@ class TaskNavigation:
 
     async def home(self) -> str:
         """Select the existing home window or report that it is unavailable."""
-        target = f"{self._session_target}:{HOME_WINDOW_NAME}"
-        if not await self._tmux.target_exists(target):
+        target = await home_window_target(self._tmux, self._session_target)
+        if target is None:
             return HOME_WINDOW_MISSING
         try:
-            await self._tmux.select_window(target)
+            await self._tmux.select_window(target[0])
         except ShikiruError as error:
             return f"{HOME_WINDOW_MISSING}: {error}"
         return HOME_TARGET_OPENED

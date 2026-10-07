@@ -101,10 +101,15 @@ repo_status_cache_seconds = 10
 timeline_page_size = 20                         # task evidence rows returned per page, maximum 49
 timeline_scan_rows = 256                        # normalized signal rows scanned per role and page, maximum 1024
 timeline_refresh_seconds = 1                    # latest task evidence page refresh interval
-layout = { split = "h", panes = [
-  { pane = "system", size = 30 },
-  { split = "v", panes = [ { pane = "leader" }, { pane = "implementer" }, { pane = "shell", size = 20 } ] },
+layout = { split = "v", panes = [
+  { pane = "leader", size = 40 },
+  { pane = "implementer", size = 40 },
+  { pane = "shell", size = 20 },
 ] }
+
+Projects without an explicit `dashboard.layout` inherit this packaged task-window layout. Existing
+project files that declare a layout keep that override unchanged; remove or edit the override to
+adopt the packaged default. No configuration migration rewrites an operator's layout.
 
 [dashboard.motion]
 refresh_hz = 4                                  # at most 4
@@ -119,7 +124,7 @@ window = "{task_id} {title:.24}"
 leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
 implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
 system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
-shell = "Shell · {cwd}"
+shell = "Project folder · {cwd}"
 
 [notify]
 command = ""                                    # optional; event JSON on stdin for escalation and task_done

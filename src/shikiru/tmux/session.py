@@ -6,7 +6,13 @@ import shlex
 from typing import TYPE_CHECKING
 
 from shikiru.errors import ConfigError
-from shikiru.tmux.client import exact_target
+from shikiru.tmux.client import (
+    FORMAT_PANE_ID,
+    FORMAT_PANE_START_COMMAND,
+    FORMAT_WINDOW_ID,
+    FORMAT_WINDOW_NAME,
+    exact_target,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -19,7 +25,8 @@ _SANITIZED_CHARS = (".", ":")
 _SANITIZED_REPLACEMENT = "_"
 
 PROJECT_DIR_ENV_VAR = "SHIKIRU_PROJECT_DIR"
-HOME_WINDOW_NAME = "shikiru"
+HOME_WINDOW_NAME = "dashboard"
+LEGACY_HOME_WINDOW_NAME = "shikiru"
 DETACHED_SIZE = (240, 64)
 
 _PALETTE_KEY = "Space"
@@ -34,10 +41,25 @@ def _escape_glob(text: str) -> str:
 
 SHIKIRU_SESSION_PATTERN = f"#{{m:{_escape_glob(SESSION_PREFIX)}*,#{{session_name}}}}"
 _DEFAULT_PALETTE_KEY_COMMAND = "next-layout"
+_HOME_COMMAND_MARKER = "dash --home"
+_HOME_PANE_OPTION = "@shk_home"
+_HOME_PANE_OPTION_VALUE = "1"
+_HOME_ROW_MAX_SPLITS = 5
+_HOME_WINDOW_NAME_FIELD = 2
+_HOME_WINDOW_ACTIVE_FIELD = 3
+_ACTIVE_WINDOW_VALUE = "1"
+_FIELD_SEPARATOR = "\t"
+_HOME_PANE_FORMAT = (
+    f"{FORMAT_WINDOW_ID}{_FIELD_SEPARATOR}{FORMAT_PANE_ID}{_FIELD_SEPARATOR}"
+    f"{FORMAT_WINDOW_NAME}{_FIELD_SEPARATOR}#{{window_active}}{_FIELD_SEPARATOR}"
+    f"{FORMAT_PANE_START_COMMAND}{_FIELD_SEPARATOR}"
+    "#{@shk_home}"
+)
 
 _SESSION_SCOPED_OPTIONS: dict[str, str] = {
     "renumber-windows": "on",
     "mouse": "on",
+    "set-titles": "on",
 }
 
 _WINDOW_SCOPED_OPTIONS: dict[str, str] = {
@@ -47,6 +69,11 @@ _WINDOW_SCOPED_OPTIONS: dict[str, str] = {
     "allow-set-title": "off",
     "pane-border-status": "top",
     "pane-border-lines": "heavy",
+}
+
+_HOME_WINDOW_SCOPED_OPTIONS: dict[str, str] = {
+    **_WINDOW_SCOPED_OPTIONS,
+    "pane-border-status": "off",
 }
 
 
@@ -104,10 +131,11 @@ class SessionView:
         """
         name = session_name(project_name)
         target = exact_target(name)
+        created_home_pane: str | None = None
         if await self._tmux.target_exists(target):
             await self._check_no_collision(target, project_dir)
         else:
-            await self._tmux.new_session(
+            created_home_pane = await self._tmux.new_session(
                 name,
                 cwd=project_dir,
                 env={PROJECT_DIR_ENV_VAR: str(project_dir)},
@@ -115,17 +143,20 @@ class SessionView:
                 size=DETACHED_SIZE,
                 command=home_command,
             )
-            await self._apply_window_options(f"{target}:{HOME_WINDOW_NAME}")
         for option, value in _SESSION_SCOPED_OPTIONS.items():
             await self._tmux.set_session_option(target, option, value)
-        await self._ensure_home_window(target, project_dir, home_command)
+        await self._tmux.set_session_option(target, "set-titles-string", project_name)
+        await self._ensure_home_window(
+            target, project_dir, home_command, initial_pane=created_home_pane
+        )
         return target
 
     async def create_task_window(self, session_target: str, *, window_name: str, cwd: Path) -> str:
         """Create a task window in `session_target`, returning the id of its base pane."""
-        window_target = f"{session_target}:{window_name}"
-        base_pane = await self._tmux.new_window(session_target, name=window_name, cwd=cwd)
-        await self._apply_window_options(window_target)
+        base_pane = await self._tmux.new_window(
+            session_target, name=window_name, cwd=cwd, detached=True
+        )
+        await self._apply_window_options(await self._tmux.window_id(base_pane))
         return base_pane
 
     async def close_task_window(self, window_target: str) -> None:
@@ -140,16 +171,88 @@ class SessionView:
             raise ConfigError(message)
 
     async def _ensure_home_window(
-        self, target: str, project_dir: Path, home_command: Sequence[str]
+        self,
+        target: str,
+        project_dir: Path,
+        home_command: Sequence[str],
+        *,
+        initial_pane: str | None,
     ) -> None:
-        window_target = f"{target}:{HOME_WINDOW_NAME}"
-        if await self._tmux.target_exists(window_target):
-            return
-        await self._tmux.new_window(
-            target, name=HOME_WINDOW_NAME, cwd=project_dir, command=home_command
-        )
-        await self._apply_window_options(window_target)
+        if initial_pane is not None:
+            window_target = await self._tmux.window_id(initial_pane)
+            await self._mark_home_pane(initial_pane)
+        else:
+            matches = await home_window_targets(self._tmux, target)
+            if not matches:
+                pane_id = await self._tmux.new_window(
+                    target,
+                    name=HOME_WINDOW_NAME,
+                    cwd=project_dir,
+                    command=home_command,
+                    detached=True,
+                )
+                await self._mark_home_pane(pane_id)
+                matches = await home_window_targets(self._tmux, target)
+            window_target, pane_id, _, _ = _preferred_home(matches)
+            await self._mark_home_pane(pane_id)
+        if await self._tmux.display(window_target, FORMAT_WINDOW_NAME) != HOME_WINDOW_NAME:
+            await self._tmux.rename_window(window_target, HOME_WINDOW_NAME)
+        await self._apply_home_window_options(window_target)
+        await self._remove_duplicate_home_windows(target, window_target)
+
+    async def _mark_home_pane(self, pane_id: str) -> None:
+        await self._tmux.set_pane_option(pane_id, _HOME_PANE_OPTION, _HOME_PANE_OPTION_VALUE)
+
+    async def _remove_duplicate_home_windows(self, target: str, home_window: str) -> None:
+        for duplicate, _, _, _ in await home_window_targets(self._tmux, target):
+            if duplicate != home_window:
+                await self._tmux.kill_window(duplicate)
 
     async def _apply_window_options(self, window_target: str) -> None:
         for option, value in _WINDOW_SCOPED_OPTIONS.items():
             await self._tmux.set_window_option(window_target, option, value)
+
+    async def _apply_home_window_options(self, window_target: str) -> None:
+        for option, value in _HOME_WINDOW_SCOPED_OPTIONS.items():
+            await self._tmux.set_window_option(window_target, option, value)
+
+
+async def home_window_target(tmux: Tmux, session_target: str) -> tuple[str, str] | None:
+    """Find Home by its owned pane marker or dashboard command, regardless of window name."""
+    matches = await home_window_targets(tmux, session_target)
+    if not matches:
+        return None
+    home = _preferred_home(matches)
+    return home[0], home[1]
+
+
+async def home_window_targets(tmux: Tmux, session_target: str) -> list[tuple[str, str, str, str]]:
+    """Find every Home window by its owned pane marker or dashboard command."""
+    panes = await tmux.list_session_panes(session_target, _HOME_PANE_FORMAT)
+    matches: list[tuple[str, str, str, str]] = []
+    for row in panes:
+        window_id, pane_id, window_name, active, start_command, marker = row.split(
+            _FIELD_SEPARATOR, _HOME_ROW_MAX_SPLITS
+        )
+        if marker == _HOME_PANE_OPTION_VALUE or _HOME_COMMAND_MARKER in start_command:
+            matches.append((window_id, pane_id, window_name, active))
+    return matches
+
+
+def _preferred_home(
+    matches: list[tuple[str, str, str, str]],
+) -> tuple[str, str, str, str]:
+    return next(
+        (match for match in matches if match[_HOME_WINDOW_ACTIVE_FIELD] == _ACTIVE_WINDOW_VALUE),
+        next(
+            (match for match in matches if match[_HOME_WINDOW_NAME_FIELD] == HOME_WINDOW_NAME),
+            next(
+                (
+                    match
+                    for match in matches
+                    if match[_HOME_WINDOW_NAME_FIELD] == LEGACY_HOME_WINDOW_NAME
+                ),
+                matches[0],
+            ),
+        ),
+    )

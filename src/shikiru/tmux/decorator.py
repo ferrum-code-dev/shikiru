@@ -62,6 +62,10 @@ class PaneDecorator:
         await self._tmux.set_pane_option(pane_target, PANE_COLOR_OPTION, color)
         await self._tmux.set_pane_option(pane_target, PANE_GLYPH_OPTION, glyph)
 
+    async def set_pane_option(self, pane_target: str, name: str, value: str) -> None:
+        """Set pane option `name` on `pane_target`."""
+        await self._tmux.set_pane_option(pane_target, name, value)
+
     async def set_window_state(self, window_target: str, *, color: str, glyph: str) -> None:
         """Set window `window_target`'s `@shk_state_color` and `@shk_state_glyph`."""
         await self._tmux.set_window_option(window_target, WINDOW_STATE_COLOR_OPTION, color)

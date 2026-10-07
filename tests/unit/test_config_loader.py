@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.config.loader import load_settings
+from shikiru.config.settings import PaneLeaf
 from shikiru.errors import ConfigError
 from tests.support.config import MINIMAL_PROJECT_CONFIG
 from tests.support.config import write_minimal_project as _project
@@ -42,6 +43,40 @@ def test_deep_merge_replaces_arrays_instead_of_concatenating(tmp_path: Path) -> 
     settings = load_settings(project_dir)
 
     assert settings.dashboard.widgets == ["header"]
+
+
+def test_unconfigured_task_layout_inherits_the_packaged_stack(tmp_path: Path) -> None:
+    project_dir = _project(tmp_path)
+
+    layout = load_settings(project_dir).dashboard.layout
+
+    assert layout.split == "v"
+    assert [(pane.pane, pane.size) for pane in layout.panes if isinstance(pane, PaneLeaf)] == [
+        ("leader", 40),
+        ("implementer", 40),
+        ("shell", 20),
+    ]
+
+
+def test_explicit_task_layout_override_remains_intact(tmp_path: Path) -> None:
+    project_dir = _project(
+        tmp_path,
+        '\n[dashboard.layout]\nsplit = "h"\npanes = [ '
+        '{ pane = "system", size = 30 }, '
+        '{ pane = "leader" }, '
+        '{ pane = "implementer" }, '
+        '{ pane = "shell", size = 20 } ]\n',
+    )
+
+    layout = load_settings(project_dir).dashboard.layout
+
+    assert layout.split == "h"
+    assert [(pane.pane, pane.size) for pane in layout.panes if isinstance(pane, PaneLeaf)] == [
+        ("system", 30),
+        ("leader", None),
+        ("implementer", None),
+        ("shell", 20),
+    ]
 
 
 def test_set_override_wins_over_project_file(tmp_path: Path) -> None:

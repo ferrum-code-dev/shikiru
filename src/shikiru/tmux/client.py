@@ -33,11 +33,20 @@ _DETACH_CLIENT_COMMAND = "detach-client"
 _LIST_CLIENTS_COMMAND = "list-clients"
 _NO_CLIENTS = "no clients"
 _CLIENT_FIELD_SEPARATOR = "\t"
+_PANE_ACTIVE_FORMAT = "#{pane_id}\t#{pane_active}"
+_TMUX_COMMAND_SEPARATOR = ";"
+_DETACHED_FLAG = "-d"
+_BEFORE_FLAG = "-b"
+_EVEN_VERTICAL_LAYOUT = "even-vertical"
+_RESIZE_HEIGHT_FLAG = "-y"
+_LAYOUT_OPTION = "-t"
 
 FORMAT_PANE_ID = "#{pane_id}"
 FORMAT_PANE_PID = "#{pane_pid}"
 FORMAT_PANE_DEAD = "#{pane_dead}"
 FORMAT_WINDOW_ID = "#{window_id}"
+FORMAT_WINDOW_NAME = "#{window_name}"
+FORMAT_PANE_START_COMMAND = "#{pane_start_command}"
 FORMAT_SOCKET_PATH = "#{socket_path}"
 FORMAT_SESSION_NAME = "#{session_name}"
 FORMAT_CLIENT_TTY = "#{client_tty}"
@@ -241,8 +250,13 @@ class Tmux:
         await self._run("rename-window", "-t", target, name)
 
     async def set_pane_title(self, target: str, title: str) -> None:
-        """Set pane `target`'s title (`#{pane_title}`)."""
-        await self._run("select-pane", "-t", target, "-T", title)
+        """Set pane `target`'s title while restoring its window's active pane."""
+        window = await self.window_id(target)
+        active_pane = await self._active_pane(window)
+        args = ["select-pane", "-t", target, "-T", title]
+        if active_pane != target:
+            args += [_TMUX_COMMAND_SEPARATOR, "select-pane", "-t", active_pane]
+        await self._run(*args)
 
     async def select_pane(self, target: str) -> None:
         """Select the window containing pane `target`, then make that pane active."""
@@ -260,9 +274,12 @@ class Tmux:
         name: str,
         cwd: Path | None = None,
         command: Sequence[str] | None = None,
+        detached: bool = False,
     ) -> str:
         """Create a window named `name` in `target_session`, returning its base pane id."""
         args = ["new-window", "-P", "-F", FORMAT_PANE_ID, "-t", target_session, "-n", name]
+        if detached:
+            args.append(_DETACHED_FLAG)
         if cwd is not None:
             args += ["-c", str(cwd)]
         args += self._command_args(command)
@@ -296,6 +313,8 @@ class Tmux:
         axis: SplitAxis,
         size_pct: int,
         cwd: Path | None = None,
+        detached: bool = False,
+        before: bool = False,
     ) -> str:
         """Split pane `target`, returning the new pane's id sized `size_pct`% of `target`."""
         axis_flag = "-h" if axis == _HORIZONTAL_AXIS else "-v"
@@ -310,10 +329,22 @@ class Tmux:
             "-t",
             target,
         ]
+        if detached:
+            args.append(_DETACHED_FLAG)
+        if before:
+            args.append(_BEFORE_FLAG)
         if cwd is not None:
             args += ["-c", str(cwd)]
         result = await self._run(*args)
         return result.stdout.strip()
+
+    async def select_layout(self, target: str, layout: str) -> None:
+        """Apply tmux's named layout to `target` without rebuilding its panes."""
+        await self._run("select-layout", _LAYOUT_OPTION, target, layout)
+
+    async def resize_pane_height(self, target: str, size_pct: int) -> None:
+        """Set pane `target` to `size_pct` of the window's available height."""
+        await self._run("resize-pane", _RESIZE_HEIGHT_FLAG, f"{size_pct}%", "-t", target)
 
     async def respawn_pane(
         self,
@@ -346,6 +377,19 @@ class Tmux:
         """List every pane of `target`, one formatted line per pane."""
         result = await self._run("list-panes", "-t", target, "-F", fmt)
         return result.stdout.splitlines()
+
+    async def _active_pane(self, window_target: str) -> str:
+        rows = await self.list_panes(window_target, _PANE_ACTIVE_FORMAT)
+        active_panes = [
+            pane_id
+            for row in rows
+            for pane_id, active in (row.split(_CLIENT_FIELD_SEPARATOR, 1),)
+            if active == _FLAG_TRUE
+        ]
+        if len(active_panes) != 1:
+            message = f"tmux returned {len(active_panes)} active panes for {window_target}"
+            raise ValueError(message)
+        return active_panes[0]
 
     async def list_session_panes(self, target: str, fmt: str) -> list[str]:
         """List every pane across every window of session `target`."""

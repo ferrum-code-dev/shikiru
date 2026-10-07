@@ -63,10 +63,11 @@ task_event_limit = 50
 merge_event_limit = 20
 
 [dashboard.layout]
-split = "h"
+split = "v"
 panes = [
-  { pane = "system", size = 30 },
-  { split = "v", panes = [ { pane = "leader" }, { pane = "implementer" }, { pane = "shell", size = 20 } ] },
+  { pane = "leader", size = 40 },
+  { pane = "implementer", size = 40 },
+  { pane = "shell", size = 20 },
 ]
 
 [dashboard.titles]
@@ -74,7 +75,7 @@ window = "{task_id} {title:.24}"
 leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
 implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
 system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
-shell = "Shell · {cwd}"
+shell = "Project folder · {cwd}"
 
 [notify]
 command = ""

@@ -7,8 +7,8 @@
    │ tmux attach               │ shikiru … --json │ shikiru mcp
    ▼                           ▼
 ┌──────────────── tmux session "[shikiru] <project>" ──────────────────────────────┐
-│ window "shikiru": dash --home │ shell                                            │
-│ window per task:  dash --task │ view leader │ view implementer │ shell           │
+│ window "dashboard": dash --home                                                │
+│ window per task: dash --task │ view leader │ view implementer │ project shell    │
 │                   (a view pane runs the agent's TUI while taken over)            │
 └──────────────▲──────────────────────────────▲──────────────────▲─────────────────┘
                │ read state, append commands  │ tmux             │ tail runs/T/<role>/view.jsonl

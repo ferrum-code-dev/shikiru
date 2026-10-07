@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from shikiru.config.settings import LayoutSplit, PaneLeaf
 from shikiru.domain.commands import HandBack
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Task
@@ -30,9 +31,11 @@ if TYPE_CHECKING:
     from shikiru.tmux.session import SessionView
 
 _SHELL_ARGV = ("/bin/sh",)
-_LAYOUT_ROLE_NAMES = (Role.LEADER.value, Role.IMPLEMENTER.value)
-_SPECIAL_PANE_NAMES = ("system", "shell")
-_RESTORED_PANE_SIZE_PCT = 50
+_ROLE_PANE_NAMES = frozenset((Role.LEADER.value, Role.IMPLEMENTER.value))
+_SHELL_PANE_NAME = "shell"
+_LAYOUT_PANE_OPTION = "@shk_layout_pane"
+_LAYOUT_PANE_SEPARATOR = "\t"
+_LAYOUT_PANE_FORMAT = f"{FORMAT_PANE_ID}{_LAYOUT_PANE_SEPARATOR}#{{{_LAYOUT_PANE_OPTION}}}"
 
 
 class LayoutGuard:
@@ -71,6 +74,10 @@ class LayoutGuard:
         self._runs = runs
         self._commands = commands
         self._faults = faults
+        self._layout_pane_names = _layout_pane_names(settings.dashboard.layout)
+        self._special_pane_names = tuple(
+            name for name in self._layout_pane_names if name not in _ROLE_PANE_NAMES
+        )
         self._special_panes: dict[str, dict[str, str]] = {}
         self._windows = asyncio.Lock()
 
@@ -82,7 +89,7 @@ class LayoutGuard:
         missing_agents = await self._missing_agent_roles(task)
         missing_special = await self._missing_special_panes(task)
         if missing_agents or missing_special:
-            await self._restore_missing_panes(task, missing_agents, missing_special)
+            await self._restore_missing_panes(task, missing_agents)
         await self._restore_special_panes(task)
         restored = await self._refresh_cache(task.id)
         self._release_lost_takeovers(task.id, missing_agents)
@@ -122,13 +129,14 @@ class LayoutGuard:
             cwd=root,
         )
         window_id = await self._tmux.window_id(base)
-        panes = await self._builder.build(base, self._settings.dashboard.layout)
+        panes = await self._builder.build(base, self._settings.dashboard.layout, cwd=root)
         role_panes = {
-            Role(name): pane_id for name, pane_id in panes.items() if name in _LAYOUT_ROLE_NAMES
+            Role(name): pane_id for name, pane_id in panes.items() if name in _ROLE_PANE_NAMES
         }
         self._special_panes[task.id] = {
-            name: pane_id for name, pane_id in panes.items() if name in _SPECIAL_PANE_NAMES
+            name: pane_id for name, pane_id in panes.items() if name in self._special_pane_names
         }
+        await self._decorate_special_panes(root, panes)
         await self._decorator.configure_formats(window_id)
         for role, pane_id in role_panes.items():
             await self.start_view(task.id, role, pane_id)
@@ -161,50 +169,58 @@ class LayoutGuard:
             message = f"{task.id} has no window while checking special panes"
             raise InvariantError(message)
         special = self._special_panes.setdefault(task.id, {})
-        window_panes = set(await self._tmux.list_panes(task.window_id, FORMAT_PANE_ID))
+        pane_rows = await self._tmux.list_panes(task.window_id, _LAYOUT_PANE_FORMAT)
+        window_panes = {row.split(_LAYOUT_PANE_SEPARATOR, 1)[0] for row in pane_rows}
         for name, pane_id in tuple(special.items()):
             if pane_id not in window_panes:
                 del special[name]
+        for row in pane_rows:
+            pane_id, name = row.split(_LAYOUT_PANE_SEPARATOR, 1)
+            if name in self._special_pane_names:
+                special[name] = pane_id
         available = [
             pane_id
             for pane_id in window_panes
             if pane_id not in task.panes.values() and pane_id not in special.values()
         ]
         available.sort()
-        for name in _SPECIAL_PANE_NAMES:
+        for name in self._special_pane_names:
             if name not in special and available:
                 special[name] = available.pop(0)
-        return {name for name in _SPECIAL_PANE_NAMES if name not in special}
+                await self._decorator.set_pane_option(special[name], _LAYOUT_PANE_OPTION, name)
+        return {name for name in self._special_pane_names if name not in special}
 
-    async def _restore_missing_panes(
-        self, task: Task, missing_agents: set[Role], missing_special: set[str]
-    ) -> None:
+    async def _restore_missing_panes(self, task: Task, missing_agents: set[Role]) -> None:
         if task.window_id is None:
             message = f"{task.id} has no window while restoring panes"
             raise InvariantError(message)
         root = task_root(self._project_root, task.id)
-        role_panes = dict(task.panes)
+        existing = {
+            role.value: pane_id
+            for role, pane_id in task.panes.items()
+            if await self._tmux.pane_exists(pane_id)
+        }
         special = self._special_panes.setdefault(task.id, {})
-        for role in (Role.LEADER, Role.IMPLEMENTER):
-            if role in missing_agents:
-                role_panes[role] = await self._split_restored_pane(task.window_id, root)
-                await self.start_view(task.id, role, role_panes[role])
-        for name in _SPECIAL_PANE_NAMES:
-            if name in missing_special:
-                special[name] = await self._split_restored_pane(task.window_id, root)
-        self._tasks.set_panes(task.id, role_panes)
-
-    async def _split_restored_pane(self, window_id: str, root: Path) -> str:
-        pane_ids = await self._tmux.list_panes(window_id, FORMAT_PANE_ID)
-        if not pane_ids:
-            message = f"{window_id} has no surviving pane for restoration"
-            raise InvariantError(message)
-        return await self._tmux.split_window(
-            pane_ids[0],
-            axis=self._settings.dashboard.layout.split,
-            size_pct=_RESTORED_PANE_SIZE_PCT,
-            cwd=root,
+        existing.update(
+            {
+                name: pane_id
+                for name, pane_id in special.items()
+                if await self._tmux.pane_exists(pane_id)
+            }
         )
+        panes = await self._builder.restore_missing(
+            self._settings.dashboard.layout, existing, cwd=root
+        )
+        await self._builder.restore_vertical_stack(
+            task.window_id, self._settings.dashboard.layout, panes
+        )
+        role_panes = {Role(name): panes[name] for name in _ROLE_PANE_NAMES if name in panes}
+        special.clear()
+        special.update({name: panes[name] for name in self._special_pane_names})
+        await self._decorate_special_panes(root, panes)
+        for role in missing_agents:
+            await self.start_view(task.id, role, role_panes[role])
+        self._tasks.set_panes(task.id, role_panes)
 
     async def _restore_special_panes(self, task: Task) -> None:
         special = self._special_panes.get(task.id, {})
@@ -213,6 +229,7 @@ class LayoutGuard:
             if not await self._tmux.is_pane_dead(pane_id):
                 continue
             await self._tmux.respawn_pane(pane_id, _SHELL_ARGV, env={}, cwd=root)
+            await self._title_special_pane(name, pane_id, root)
             self._record_restored(task.id, name)
 
     async def _restore_view_panes(self, task: Task) -> None:
@@ -247,6 +264,18 @@ class LayoutGuard:
         self._commands.append(command)
         return True
 
+    async def _decorate_special_panes(self, root: Path, panes: dict[str, str]) -> None:
+        for name in self._special_pane_names:
+            pane_id = panes[name]
+            await self._decorator.set_pane_option(pane_id, _LAYOUT_PANE_OPTION, name)
+            await self._title_special_pane(name, pane_id, root)
+
+    async def _title_special_pane(self, name: str, pane_id: str, root: Path) -> None:
+        if name == _SHELL_PANE_NAME:
+            await self._decorator.set_pane_title(
+                pane_id, self._settings.dashboard.titles.shell, {"cwd": str(root)}
+            )
+
     async def start_view(self, task_id: str, role: Role, pane_id: str) -> None:
         """Run `role`'s streaming view of `task_id` in `pane_id`."""
         argv = view_argv(self._project_root, task_id, role.value)
@@ -260,3 +289,9 @@ class LayoutGuard:
             message=f"{task_id} pane restored: {pane}",
             data={"pane": pane},
         )
+
+
+def _layout_pane_names(node: LayoutSplit | PaneLeaf) -> tuple[str, ...]:
+    if isinstance(node, PaneLeaf):
+        return (node.pane,)
+    return tuple(name for child in node.panes for name in _layout_pane_names(child))

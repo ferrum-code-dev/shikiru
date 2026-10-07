@@ -55,6 +55,7 @@ from tests.support.flow import init_project_repo
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import add_bare_remote
 from tests.support.permissions import EXECUTABLE_MODE
+from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
@@ -68,6 +69,39 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
+
+
+async def test_dispatch_and_guard_recovery_keep_an_attached_client_in_place(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    tmux_server: TmuxServer,
+) -> None:
+    tmux = build_tmux(tmux_server)
+    target = exact_target(session_name("test"))
+    queued = _submit(connection, scheduler_env.clock, title="Keep Home focused")
+
+    async with attach_tmux_client(tmux_server, target):
+        before = await tmux.list_clients(target, "#{window_id}\t#{pane_id}")
+        schedule = await scheduler_env.scheduler.run_once()
+        dispatched = scheduler_env.tasks.get(queued.id)
+        assert dispatched is not None
+        assert schedule.dispatches
+        assert dispatched.window_id is not None
+        assert dispatched.panes
+        home_window, _home_pane = before[0].split("\t", 1)
+        assert await tmux.display(home_window, "#{window_name}") == "dashboard"
+        assert await tmux.display(dispatched.window_id, "#{window_name}") == (
+            f"{queued.id} Keep Home focused"
+        )
+        dispatched_pane = next(iter(dispatched.panes.values()))
+        await tmux_server.run("kill-pane", "-t", dispatched_pane)
+
+        await scheduler_env.layout.ensure(dispatched)
+
+        after = await tmux.list_clients(target, "#{window_id}\t#{pane_id}")
+
+    assert before == after
+
 
 _FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
 _SAMPLED_CPU_PERCENT = 50.0
@@ -113,7 +147,14 @@ def _settings(*, max_parallel: int = 2, max_cpu_pct: int = CPU_UNCAPPED_PCT) -> 
             ),
         }
     )
-    dashboard = settings.dashboard.model_copy(update={"layout": _LAYOUT})
+    dashboard = settings.dashboard.model_copy(
+        update={
+            "layout": _LAYOUT,
+            "titles": settings.dashboard.titles.model_copy(
+                update={"window": "{task_id} {title:.24}"}
+            ),
+        }
+    )
     return settings.model_copy(
         update={
             "project": ProjectConfig(name="test", trackers=[_TRACKER]),

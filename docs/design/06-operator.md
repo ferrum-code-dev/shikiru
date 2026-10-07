@@ -68,30 +68,32 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 
 - **Name**: `[shikiru] <project.name>`, with `.` and `:` replaced by `_`, always targeted as `=[shikiru] name`. The session env stores `SHIKIRU_PROJECT_DIR`.
 - **Size**: the session is created detached at 240×64, so views get readable panes before anyone attaches; an attaching client resizes it as usual.
+- **Terminal title**: the Shikiru session enables tmux title updates and sets the terminal title to the project name, without a Shikiru prefix.
 - **Options**, set at the scope tmux gives each one:
-  - *Session*: `renumber-windows on`, `mouse on`. Applied on every `start`, not only when the session is created.
-  - *Window*, applied to each window as it is created (the home window and every task window): `remain-on-exit on`, `allow-rename off`, `automatic-rename off`, `allow-set-title off`, `pane-border-status top`, `pane-border-lines heavy`.
+  - *Session*: `renumber-windows on`, `mouse on`, and the project terminal title. Applied on every `start`, not only when the session is created.
+  - *Task window*: `remain-on-exit on`, `allow-rename off`, `automatic-rename off`, `allow-set-title off`, `pane-border-status top`, `pane-border-lines heavy`.
+  - *Home window*: the same lifetime and rename options, with `pane-border-status off`. The top pane-border row is Shikiru's own extra Home chrome; the Home identity row remains, task role labels keep their border row, and tmux's user-configured status line is left alone.
   - A window option set at session scope reaches only the session's current window, so `remain-on-exit` in particular must be set per window: without it a dead pane disappears instead of staying for the guard (§5.2).
 - **Windows**:
-  - The permanent home window `shikiru` has `shikiru dash --home` and a shell.
-  - Each active task has its own window, named by `titles.window`, built from `dashboard.layout`. It is created at dispatch and closed at a terminal status.
+  - The permanent home window is `dashboard` (`0:dashboard` in the normal session), running `shikiru dash --home`. Start and session recovery identify it by its owned pane marker or command, so renaming it does not create a second Home. A restart restores its name.
+  - Each active task has its own window, named exactly by `titles.window`, built from `dashboard.layout`. It is created at dispatch and closed at a terminal status. New task windows and their splits are detached: dispatch and guard restoration leave the attached client's current window and pane unchanged. Explicit task or role navigation and takeover still select the requested target.
 - **Role panes** run `shikiru view T-n ROLE`: a read-only Rich live tail of `runs/T/<role>/view.jsonl` (turn boundaries with step and rung, messages, tool calls, usage, failures) through `ui.StreamLine`. It writes nothing and survives engine restarts. While the role is taken over (03 §9), the pane runs the agent's own TUI instead.
 
 ### 5.2 Layout and protection (`LayoutGuard`)
 
-- **Build**: the layout tree is built with `split-window -h|-v -l <size>%`. `{role: pane_id}` is stored in `tasks.panes`.
+- **Build**: the packaged layout is a full-width vertical stack: Leader 40%, Implementer 40%, and a Project folder shell at 20%. It omits the system pane. The tree is built with detached `split-window -h|-v -l <size>%`; `{role: pane_id}` is stored in `tasks.panes`. Projects with no layout override inherit this default. Existing explicit overrides, including special panes such as `system`, remain unchanged until the operator edits or removes the override.
 - **Guard**: every `poll_seconds`, the engine first recreates the session and its home window if the tmux server or session is gone (02 §1), then the guard compares each task window with the DB.
-  - A missing pane (killed) is recreated in the layout.
-  - A dead `system`, `shell` or view pane is respawned.
+  - A missing configured pane (killed) is recreated beside surviving leaves in the layout. Restoring a missing pane preserves surviving pane ids and processes, then reapplies a direct vertical stack's configured geometry.
+  - A dead configured special pane or view pane is respawned.
   - A dead taken-over pane (the Operator exited the TUI) becomes a `HandBack` (03 §9). A taken-over role whose pane is gone (tmux server loss, host reboot, a killed pane) is rebuilt, never as a read-only view of a held role: `LayoutGuard` appends `takeover_lost` and queues the `HandBack` (03 §9).
   - Each restoration emits `pane_restored`.
 
   There are no global key-binding overrides, so closing a pane has no lasting effect.
-- **Palette key**: one conditional binding. In a live Home pane, `prefix + Space` sends F12 to the current pane so its mounted `DashboardApp` opens contextual Actions over Home. In other `[shikiru]` panes it opens the standalone `shikiru palette` app in a tmux popup and passes the originating `#{pane_id}` through hidden `--origin-pane`; task and role come from the project's recorded pane mapping rather than popup-inherited `TMUX_PANE`. Unrelated sessions keep tmux's `next-layout` default.
+- **Palette key**: one conditional binding uses the effective inherited or session-specific prefix. In a live Home pane, `prefix + Space` sends F12 to the current pane so its mounted `DashboardApp` opens contextual Actions over Home. In other `[shikiru]` panes it opens the standalone `shikiru palette` app in a tmux popup and passes the originating `#{pane_id}` through hidden `--origin-pane`; task and role come from the project's recorded pane mapping rather than popup-inherited `TMUX_PANE`. Unrelated sessions keep tmux's `next-layout` default.
 
 ### 5.3 Titles and decorations
 
-- **Titles** use the `dashboard.titles` templates. Fields:
+- **Titles** use the `dashboard.titles` templates. Task window names use `dashboard.titles.window` unchanged, without a Shikiru or project prefix. The packaged shell title is `Project folder · {cwd}`; an explicit title override is preserved. Fields:
   - `task_id`, `title`, `project`, `role`, `glyph`, `agent`, `model`, `effort`
   - `iteration`, `step`, `status`
   - `context`, `cost`: preformatted (`42%`, `$1.84`), `–` when the agent reports no value (04 §1)
@@ -106,7 +108,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 
 Tasks 93–96 ship Home's Focus composition, shared compact task detail, responsive compatibility and release verification as specified in [Compact Operator TUI](../tui-focus.md). Phase 8's operator service behavior remains in force: state changes still go through `OperatorCommands`, browser/detail queries remain bounded, the engine stays the single writer, and existing widgets and callbacks remain compatible. See the [Phase 9 release record](../release-readiness-2026-10-04-phase9.md).
 
-`shikiru dash --home | --task T-n` is a Textual app with one shared navigable shell. The permanent home window opens the Home workspace. A task window opens the same shell with its existing `focus_task` context and the shared task detail fixed to that task.
+`shikiru dash --home` is the mounted Textual Home workspace. The packaged task window contains the Leader view, Implementer view and Project folder shell from `dashboard.layout`; it has no dashboard or system pane. The standalone `shikiru dash --task T-n` entry remains available for an explicit task-focused dashboard.
 
 Home uses configured widget placements to build compact identity/engine and uptime, operating-count, project-usage, host/instance resource and conditional attention readouts. The normative Phase 10 width thresholds in [Focus terminal parity](../tui-parity.md) govern its responsive layout: split list and inspector at 73 columns or wider, stack the inspector at 54–72 columns, and use list-primary compact mode at 53 columns or fewer. Height alone never changes the layout. The compact palette keeps the focused form field and Run control reachable by scrolling; three-row text areas retain one editable row between borders at 18 rows or less.
 
