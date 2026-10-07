@@ -2839,7 +2839,7 @@ async def test_focus_attention_opens_durable_decision_evidence(
         reader.close()
 
 
-@pytest.mark.parametrize("size", [_STANDARD_HOME_SIZE, _COMPACT_HOME_SIZE])
+@pytest.mark.parametrize("size", [_STANDARD_HOME_SIZE, _COMPACT_HOME_SIZE, _TINY_HOME_SIZE])
 async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch(
     database: Database,
     connection: Connection,
@@ -2887,6 +2887,13 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             await wait_until(lambda: attention.display, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
             row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
             assert escalation.id in _rendered_text(row)
+            if size == _TINY_HOME_SIZE:
+                root = app.query_one("#focus-root", VerticalScroll)
+                root.scroll_to_widget(row, animate=False, immediate=True)
+                await wait_until(
+                    lambda: row.region.overlaps(root.scrollable_content_region),
+                    timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+                )
             caller = app.screen
 
             screen = await _open_attention_answer_form(app, pilot, row)
@@ -4581,13 +4588,16 @@ async def _no_tmux_clients(tmux: Tmux, target: str) -> bool:
     return not await tmux.list_clients(target, _TMUX_CLIENT_TTY_FORMAT)
 
 
+@pytest.mark.parametrize("size", [_COMPACT_HOME_SIZE, _TINY_HOME_SIZE])
 async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
+    settings = load_settings(project_dir)
     task = seed_task(connection, clock, title="Compact contextual view")
     queue = CommandQueue(connection, clock)
     for command in queue.pending():
@@ -4617,50 +4627,19 @@ async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
         app = _app(
             reader,
             project_dir,
-            widget_names=["queue"],
+            widget_names=list(settings.dashboard.widgets),
             open_palette_context=open_palette_context,
             clock=clock,
+            settings=settings,
         )
         app_instances.append(app)
-        async with app.run_test(size=_COMPACT_HOME_SIZE) as pilot:
-            home = app.screen
-            list_view = app.query_one("#task-browser-list", ListView)
-            await wait_until(
-                lambda: bool(app.query(f"#task-row-{task.id}")),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            list_view.focus()
-            await pilot.press("ctrl+p")
-            await wait_until(
-                lambda: isinstance(app.screen, PaletteScreen),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            _capture_task99(app, "task101-context-menu-48x20-color.svg")
-            menu = cast("PaletteScreen", app.screen).query_one("#palette-menu", VerticalScroll)
-            menu.scroll_to_widget(
-                menu.query_one("#palette-menu-view-secondary", Button),
-                animate=False,
-                immediate=True,
-            )
-            await pilot.pause()
-            await _click_palette_menu_button(
+        async with app.run_test(size=size) as pilot:
+            home, list_view, evidence_screen = await _open_compact_task_evidence_route(
+                app,
                 pilot,
-                cast("PaletteScreen", app.screen),
-                "palette-menu-view-secondary",
+                task.id,
+                size,
             )
-            await wait_until(
-                lambda: bool(app.screen.query("#task-detail-views-frame")),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            views = app.screen
-            choice = cast("Select[str]", views.query_one("#task-detail-view-choice", Select))
-            choice.value = TASK_VIEW_EVIDENCE
-            await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
-            await wait_until(
-                lambda: isinstance(app.screen, TaskDetailScreen),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            evidence_screen = app.screen
             evidence_panel = evidence_screen.query_one("#task-detail-panel", TaskDetailPanel)
             assert evidence_panel.active_view == TASK_VIEW_EVIDENCE
             assert task.id in _rendered_text(
@@ -4683,9 +4662,69 @@ async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
             assert app.query_one("#task-browser-search", Input).value == ""
+            assert list_view.index is None
             assert queue.pending() == []
     finally:
         reader.close()
+
+
+async def _open_compact_task_evidence_route(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task_id: str,
+    size: tuple[int, int],
+) -> tuple[Widget, ListView, TaskDetailScreen]:
+    home = cast("Widget", app.screen)
+    list_view = app.query_one("#task-browser-list", ListView)
+    await wait_until(
+        lambda: bool(app.query(f"#task-row-{task_id}")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    list_view.focus()
+    await pilot.press("ctrl+p")
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    _capture_task99(app, f"task112-context-menu-{size[0]}x{size[1]}-color.svg")
+    menu = cast("PaletteScreen", app.screen).query_one("#palette-menu", VerticalScroll)
+    menu.scroll_to_widget(
+        menu.query_one("#palette-menu-view-secondary", Button),
+        animate=False,
+        immediate=True,
+    )
+    await pilot.pause()
+    await _click_palette_menu_button(
+        pilot,
+        cast("PaletteScreen", app.screen),
+        "palette-menu-view-secondary",
+    )
+    await wait_until(
+        lambda: bool(app.screen.query("#task-detail-views-frame")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    views = app.screen
+    choice = cast("Select[str]", views.query_one("#task-detail-view-choice", Select))
+    choice.value = TASK_VIEW_EVIDENCE
+    views_content = views.query_one("#task-detail-views-content", VerticalScroll)
+    open_button = views.query_one(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}", Button)
+    close_button = views.query_one("#task-detail-views-close", Button)
+    await pilot.press("tab")
+    await pilot.pause()
+    if size == _TINY_HOME_SIZE:
+        assert views_content.max_scroll_y > 0
+        views_content.scroll_to_widget(open_button, animate=False, immediate=True)
+        await pilot.pause()
+    assert pilot.app.focused is open_button
+    assert views_content.scrollable_content_region.contains_region(open_button.region)
+    assert views.region.contains_region(close_button.region)
+    _capture_task99(app, f"task112-task-views-{size[0]}x{size[1]}-color.svg")
+    await pilot.press("enter")
+    await wait_until(
+        lambda: isinstance(app.screen, TaskDetailScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    return home, list_view, cast("TaskDetailScreen", app.screen)
 
 
 @pytest.mark.parametrize("widget_names", [["header"], ["escalations"]])
@@ -4821,11 +4860,13 @@ def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> 
     assert not footer.display or footer.region.bottom <= height or root.max_scroll_y > 0
 
 
+@pytest.mark.parametrize("size", [_COMPACT_HOME_SIZE, _TINY_HOME_SIZE])
 async def test_home_help_works_with_keyboard_without_color(
     database: Database,
     connection: Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
 ) -> None:
     monkeypatch.setenv("NO_COLOR", "1")
     project_dir = write_minimal_project(tmp_path)
@@ -4833,7 +4874,7 @@ async def test_home_help_works_with_keyboard_without_color(
     reader = StateReader(database, SystemClock())
     try:
         app = _app(reader, project_dir, widget_names=["queue"])
-        async with app.run_test(size=(36, 20)) as pilot:
+        async with app.run_test(size=size) as pilot:
             await pilot.press("?")
             await pilot.pause()
             assert app.screen.query_one("#workspace-help-copy", Static).display

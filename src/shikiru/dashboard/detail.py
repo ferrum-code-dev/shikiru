@@ -1429,7 +1429,10 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
 
     def _apply_tiny_layout(self, height: int) -> None:
         frame = self.query_one("#task-detail-views-frame", Vertical)
-        frame.styles.height = height if height <= TASK_DETAIL_VIEWS_TINY_MAX_ROWS else "auto"
+        tiny = height <= TASK_DETAIL_VIEWS_TINY_MAX_ROWS
+        self.styles.padding = 0 if tiny else 1
+        frame.styles.max_height = height if tiny else "90%"
+        frame.styles.height = height if tiny else "auto"
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == TASK_DETAIL_VIEWS_CLOSE_BUTTON:
