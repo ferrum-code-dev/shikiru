@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.agents.contracts import Rung
+from shikiru.config.loader import validate_project_config_text
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import HandBack, Submit
 from shikiru.domain.events import EventKind
@@ -23,6 +24,7 @@ from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
+from tests.support.config import MINIMAL_PROJECT_CONFIG
 from tests.support.engine import build_fault_reporter, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.waiting import wait_until
@@ -45,14 +47,6 @@ _LAYOUT = LayoutSplit(
         PaneLeaf(pane="implementer"),
         PaneLeaf(pane="system"),
         PaneLeaf(pane="shell"),
-    ],
-)
-_VERTICAL_LAYOUT = LayoutSplit(
-    split="v",
-    panes=[
-        PaneLeaf(pane="leader", size=40),
-        PaneLeaf(pane="implementer", size=40),
-        PaneLeaf(pane="shell", size=20),
     ],
 )
 _PANE_SIZE_TOLERANCE_PCT = 3
@@ -146,7 +140,11 @@ async def test_default_vertical_stack_keeps_its_geometry_after_role_pane_recover
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     layout, tasks, _events, task_id = await _task_window(
-        connection, clock, tmux_server, tmp_path, layout_tree=_VERTICAL_LAYOUT
+        connection,
+        clock,
+        tmux_server,
+        tmp_path,
+        layout_tree=validate_project_config_text(MINIMAL_PROJECT_CONFIG).dashboard.layout,
     )
     task = tasks.get(task_id)
     assert task is not None

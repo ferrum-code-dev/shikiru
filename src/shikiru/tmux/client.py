@@ -33,11 +33,8 @@ _DETACH_CLIENT_COMMAND = "detach-client"
 _LIST_CLIENTS_COMMAND = "list-clients"
 _NO_CLIENTS = "no clients"
 _CLIENT_FIELD_SEPARATOR = "\t"
-_PANE_ACTIVE_FORMAT = "#{pane_id}\t#{pane_active}"
-_TMUX_COMMAND_SEPARATOR = ";"
 _DETACHED_FLAG = "-d"
 _BEFORE_FLAG = "-b"
-_EVEN_VERTICAL_LAYOUT = "even-vertical"
 _RESIZE_HEIGHT_FLAG = "-y"
 _LAYOUT_OPTION = "-t"
 
@@ -46,6 +43,7 @@ FORMAT_PANE_PID = "#{pane_pid}"
 FORMAT_PANE_DEAD = "#{pane_dead}"
 FORMAT_WINDOW_ID = "#{window_id}"
 FORMAT_WINDOW_NAME = "#{window_name}"
+FORMAT_WINDOW_INDEX = "#{window_index}"
 FORMAT_PANE_START_COMMAND = "#{pane_start_command}"
 FORMAT_SOCKET_PATH = "#{socket_path}"
 FORMAT_SESSION_NAME = "#{session_name}"
@@ -250,13 +248,8 @@ class Tmux:
         await self._run("rename-window", "-t", target, name)
 
     async def set_pane_title(self, target: str, title: str) -> None:
-        """Set pane `target`'s title while restoring its window's active pane."""
-        window = await self.window_id(target)
-        active_pane = await self._active_pane(window)
-        args = ["select-pane", "-t", target, "-T", title]
-        if active_pane != target:
-            args += [_TMUX_COMMAND_SEPARATOR, "select-pane", "-t", active_pane]
-        await self._run(*args)
+        """Set pane `target`'s title without changing the active pane."""
+        await self._run("select-pane", "-t", target, "-T", title)
 
     async def select_pane(self, target: str) -> None:
         """Select the window containing pane `target`, then make that pane active."""
@@ -289,6 +282,14 @@ class Tmux:
     async def kill_window(self, target: str) -> None:
         """Kill window `target`."""
         await self._run("kill-window", "-t", target)
+
+    async def move_window(self, source: str, target: str) -> None:
+        """Move a window to an explicit target without replacing an existing window."""
+        await self._run("move-window", "-s", source, "-t", target)
+
+    async def swap_windows(self, source: str, target: str) -> None:
+        """Exchange two windows' positions without changing their identities."""
+        await self._run("swap-window", "-s", source, "-t", target)
 
     async def kill_session(self, target: str) -> None:
         """Kill session `target`."""
@@ -342,9 +343,9 @@ class Tmux:
         """Apply tmux's named layout to `target` without rebuilding its panes."""
         await self._run("select-layout", _LAYOUT_OPTION, target, layout)
 
-    async def resize_pane_height(self, target: str, size_pct: int) -> None:
-        """Set pane `target` to `size_pct` of the window's available height."""
-        await self._run("resize-pane", _RESIZE_HEIGHT_FLAG, f"{size_pct}%", "-t", target)
+    async def resize_pane_height(self, target: str, height: int) -> None:
+        """Set pane `target` to an exact number of rows."""
+        await self._run("resize-pane", _RESIZE_HEIGHT_FLAG, str(height), "-t", target)
 
     async def respawn_pane(
         self,
@@ -377,19 +378,6 @@ class Tmux:
         """List every pane of `target`, one formatted line per pane."""
         result = await self._run("list-panes", "-t", target, "-F", fmt)
         return result.stdout.splitlines()
-
-    async def _active_pane(self, window_target: str) -> str:
-        rows = await self.list_panes(window_target, _PANE_ACTIVE_FORMAT)
-        active_panes = [
-            pane_id
-            for row in rows
-            for pane_id, active in (row.split(_CLIENT_FIELD_SEPARATOR, 1),)
-            if active == _FLAG_TRUE
-        ]
-        if len(active_panes) != 1:
-            message = f"tmux returned {len(active_panes)} active panes for {window_target}"
-            raise ValueError(message)
-        return active_panes[0]
 
     async def list_session_panes(self, target: str, fmt: str) -> list[str]:
         """List every pane across every window of session `target`."""

@@ -64,8 +64,12 @@ class LayoutBuilder:
             return
         await self._tmux.select_layout(window_id, _VERTICAL_STACK_LAYOUT)
         fractions = _resolve_fractions([leaf.size for leaf in leaves])
-        for leaf, fraction in zip(leaves[:-1], fractions[:-1], strict=True):
-            await self._tmux.resize_pane_height(panes[leaf.pane], round(fraction * _FULL_PERCENT))
+        available_height = sum(
+            [int(await self._tmux.display(panes[leaf.pane], "#{pane_height}")) for leaf in leaves]
+        )
+        heights = _allocate_heights(fractions, available_height)
+        for leaf, height in zip(leaves[:-1], heights[:-1], strict=True):
+            await self._tmux.resize_pane_height(panes[leaf.pane], height)
 
     async def _restore_node(self, node: LayoutNode, panes: dict[str, str], cwd: Path) -> None:
         if isinstance(node, PaneLeaf):
@@ -180,3 +184,17 @@ def _resolve_fractions(sizes: list[int | None]) -> list[float]:
     unsized_count = sizes.count(None)
     share = (_FULL_PERCENT - explicit_total) / unsized_count if unsized_count else 0.0
     return [(size if size is not None else share) / _FULL_PERCENT for size in sizes]
+
+
+def _allocate_heights(fractions: list[float], total_height: int) -> list[int]:
+    exact_heights = [fraction * total_height for fraction in fractions]
+    heights = [int(height) for height in exact_heights]
+    remaining = total_height - sum(heights)
+    remainders = sorted(
+        range(len(heights)),
+        key=lambda index: exact_heights[index] - heights[index],
+        reverse=True,
+    )
+    for index in remainders[:remaining]:
+        heights[index] += 1
+    return heights

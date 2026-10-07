@@ -41,18 +41,89 @@ async def test_current_prefix_uses_the_matching_session_override(
     assert tmux_key_label(await tmux.current_prefix(target)) == "Ctrl+A"
 
 
-async def test_ensure_creates_the_session_with_the_project_env_var(
-    tmux_server: TmuxServer, tmp_path: Path
+@pytest.mark.parametrize("global_base_index", [0, 1])
+async def test_ensure_creates_home_at_zero_with_session_scoped_base_index(
+    tmux_server: TmuxServer, tmp_path: Path, global_base_index: int
 ) -> None:
     view = SessionView(_tmux(tmux_server))
+    await tmux_server.run("set-option", "-g", "base-index", str(global_base_index))
 
     target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+    session_base_index = await tmux_server.run(
+        "show-options", "-Aqv", "-t", f"{target}:", "base-index"
+    )
+    actual_global_base_index = await tmux_server.run("show-options", "-gqv", "base-index")
+    home_index = await _tmux(tmux_server).display(f"{target}:{HOME_WINDOW_NAME}", "#{window_index}")
 
     assert target == exact_target(session_name("demo"))
     assert await _tmux(tmux_server).show_session_environment(target, PROJECT_DIR_ENV_VAR) == str(
         tmp_path
     )
     assert await _tmux(tmux_server).target_exists(f"{target}:{HOME_WINDOW_NAME}")
+    assert session_base_index.stdout.strip() == "0"
+    assert actual_global_base_index.stdout.strip() == str(global_base_index)
+    assert home_index == "0"
+    renumber = await tmux_server.run("show-options", "-Aqv", "-t", f"{target}:", "renumber-windows")
+    assert renumber.stdout.strip() == "off"
+
+
+async def test_ensure_does_not_replace_a_window_occupying_home_index_zero(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    name = session_name("collision")
+    target = exact_target(name)
+    await tmux_server.run("set-option", "-g", "base-index", "1")
+    await tmux.new_session(
+        name,
+        cwd=tmp_path,
+        env={PROJECT_DIR_ENV_VAR: str(tmp_path)},
+        window_name=LEGACY_HOME_WINDOW_NAME,
+        size=DETACHED_SIZE,
+        command=_HOME_COMMAND,
+    )
+    await tmux_server.run(
+        "new-window",
+        "-d",
+        "-t",
+        f"{target}:0",
+        "-n",
+        "operator window",
+        "-c",
+        str(tmp_path),
+        "sleep",
+        "300",
+    )
+    before = await tmux_server.run(
+        "list-windows", "-t", target, "-F", "#{window_index}:#{window_name}\t#{window_id}"
+    )
+    before_windows = {
+        window_id: index_and_name
+        for line in before.stdout.splitlines()
+        for index_and_name, window_id in (line.split("\t", 1),)
+    }
+    home_id = next(
+        window_id for window_id, row in before_windows.items() if row.endswith(":shikiru")
+    )
+    operator_id = next(
+        window_id for window_id, row in before_windows.items() if row.endswith(":operator window")
+    )
+
+    with pytest.raises(ConfigError, match="index 0"):
+        await SessionView(tmux).ensure("collision", tmp_path, home_command=_HOME_COMMAND)
+
+    after = await tmux_server.run(
+        "list-windows", "-t", target, "-F", "#{window_index}:#{window_name}\t#{window_id}"
+    )
+    global_base_index = await tmux_server.run("show-options", "-gqv", "base-index")
+    after_windows = {
+        window_id: index_and_name
+        for line in after.stdout.splitlines()
+        for index_and_name, window_id in (line.split("\t", 1),)
+    }
+    assert after_windows[operator_id] == before_windows[operator_id]
+    assert after_windows[home_id] == "1:dashboard"
+    assert global_base_index.stdout.strip() == "1"
 
 
 async def test_show_session_environment_reads_a_removed_variable_as_unset(
@@ -82,7 +153,8 @@ async def test_ensure_recreates_the_home_window_once_it_has_been_killed(
     tmux = _tmux(tmux_server)
     view = SessionView(tmux)
     target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
-    await view.create_task_window(target, window_name="T-1", cwd=tmp_path)
+    task_pane = await view.create_task_window(target, window_name="T-1", cwd=tmp_path)
+    task_window = await tmux.window_id(task_pane)
     window_target = f"{target}:{HOME_WINDOW_NAME}"
     await tmux.kill_window(window_target)
     assert not await tmux.target_exists(window_target)
@@ -90,12 +162,15 @@ async def test_ensure_recreates_the_home_window_once_it_has_been_killed(
     await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
 
     assert await tmux.target_exists(window_target)
+    assert await tmux.display(window_target, "#{window_index}") == "0"
+    assert await tmux.display(task_window, "#{window_index}") == "1"
 
 
 async def test_ensure_reuses_a_renamed_legacy_home_without_touching_other_windows(
     tmux_server: TmuxServer, tmp_path: Path
 ) -> None:
     tmux = _tmux(tmux_server)
+    await tmux_server.run("set-option", "-g", "base-index", "1")
     name = session_name("upgrade")
     target = exact_target(name)
     await tmux.new_session(
@@ -110,6 +185,7 @@ async def test_ensure_reuses_a_renamed_legacy_home_without_touching_other_window
         target, name="operator window", cwd=tmp_path, command=("sh", "-c", "sleep 300")
     )
     other_window = await tmux.window_id(other_pane)
+    other_index = await tmux.display(other_window, "#{window_index}")
     legacy_pane = await tmux.display(f"{target}:{LEGACY_HOME_WINDOW_NAME}", "#{pane_id}")
     await tmux.rename_window(f"{target}:{LEGACY_HOME_WINDOW_NAME}", "operator renamed Home")
     view = SessionView(tmux)
@@ -127,6 +203,8 @@ async def test_ensure_reuses_a_renamed_legacy_home_without_touching_other_window
         other_window: "operator window",
     }
     assert home_pane == legacy_pane
+    assert await tmux.display(home_window, "#{window_index}") == "0"
+    assert await tmux.display(other_window, "#{window_index}") == other_index
     title = await tmux_server.run("show-options", "-Aqv", "-t", f"{target}:", "set-titles-string")
     assert title.stdout.strip() == "upgrade"
 
@@ -135,6 +213,7 @@ async def test_ensure_converges_duplicate_home_windows_without_moving_focus(
     tmux_server: TmuxServer, tmp_path: Path
 ) -> None:
     tmux = _tmux(tmux_server)
+    await tmux_server.run("set-option", "-g", "base-index", "1")
     view = SessionView(tmux)
     target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
     first_home = await tmux.window_id(
@@ -152,6 +231,7 @@ async def test_ensure_converges_duplicate_home_windows_without_moving_focus(
         detached=True,
     )
     second_home_window = await tmux.window_id(second_home)
+    operator_index = await tmux.display(operator_window, "#{window_index}")
     await tmux.select_window(second_home_window)
 
     await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
@@ -164,6 +244,8 @@ async def test_ensure_converges_duplicate_home_windows_without_moving_focus(
         operator_window: "operator window",
     }
     assert first_home != second_home_window
+    assert await tmux.display(second_home_window, "#{window_index}") == "0"
+    assert await tmux.display(operator_window, "#{window_index}") == operator_index
 
 
 async def test_home_owns_no_pane_border_row_while_task_roles_keep_their_labels(

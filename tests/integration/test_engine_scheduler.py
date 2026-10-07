@@ -93,6 +93,8 @@ async def test_dispatch_and_guard_recovery_keep_an_attached_client_in_place(
         assert await tmux.display(dispatched.window_id, "#{window_name}") == (
             f"{queued.id} Keep Home focused"
         )
+        await scheduler_env.titles.refresh(dispatched)
+        assert await tmux.list_clients(target, "#{window_id}\t#{pane_id}") == before
         dispatched_pane = next(iter(dispatched.panes.values()))
         await tmux_server.run("kill-pane", "-t", dispatched_pane)
 

@@ -53,9 +53,12 @@ recorded question directly; only its explicit submit queues an answer. Form inpu
 editing keys, and Escape returns without submitting. In task detail, `e` opens Evidence, `u` opens
 Usage Details and `v` opens the broader contextual Views menu. The Views menu also opens Help,
 filters, command history and configured secondary widgets, including Extensions.
-Inside a Shikiru tmux session, `prefix + Space` opens the same palette in a popup; a popup opened
-from a role pane carries that pane's current task and role. Outside a Shikiru session, the tmux
-binding keeps its normal `next-layout` action. `?` opens contextual help.
+Selecting a task updates its inline detail, and Escape clears the selection after closing an
+overlay. Home's `Ctrl+P` opens contextual Actions over the running dashboard. `prefix + Space`
+does the same on Home; in other Shikiru panes it opens the standalone palette with that pane's
+task and role context. The binding is session-scoped, so unrelated sessions keep tmux's normal
+`next-layout` action. The Home footer also shows the effective prefix and detach hint. `?` opens
+contextual help.
 
 The compact Focus layout shipped in Phase 9. Phase 10 aligned the native composition and direct
 routes to the approved reference while preserving the recorded usage, resource, ownership and

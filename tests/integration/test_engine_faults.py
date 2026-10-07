@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 
 _TARGET = exact_target(session_name("test"))
 _WAIT_SECONDS = 15
-_USER_OPTION_PREFIX = "@shk_"
+_DECORATION_OPTIONS = {"@shk_color", "@shk_glyph", "@shk_state_color", "@shk_state_glyph"}
 _RENAME_WINDOW = "rename-window"
 _PANE_TITLE_FLAG = "-T"
 _TMUX_TIMEOUT_SECONDS = 5.0
@@ -108,7 +108,7 @@ class _DecorationTimeoutRunner(SubprocessRunner):
 
 
 def _is_user_option(argv: Sequence[str]) -> bool:
-    return any(arg.startswith(_USER_OPTION_PREFIX) for arg in argv)
+    return any(arg in _DECORATION_OPTIONS for arg in argv)
 
 
 class _Harness:

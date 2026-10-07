@@ -187,7 +187,7 @@ class LayoutGuard:
         for name in self._special_pane_names:
             if name not in special and available:
                 special[name] = available.pop(0)
-                await self._decorator.set_pane_option(special[name], _LAYOUT_PANE_OPTION, name)
+                await self._tmux.set_pane_option(special[name], _LAYOUT_PANE_OPTION, name)
         return {name for name in self._special_pane_names if name not in special}
 
     async def _restore_missing_panes(self, task: Task, missing_agents: set[Role]) -> None:
@@ -267,7 +267,7 @@ class LayoutGuard:
     async def _decorate_special_panes(self, root: Path, panes: dict[str, str]) -> None:
         for name in self._special_pane_names:
             pane_id = panes[name]
-            await self._decorator.set_pane_option(pane_id, _LAYOUT_PANE_OPTION, name)
+            await self._tmux.set_pane_option(pane_id, _LAYOUT_PANE_OPTION, name)
             await self._title_special_pane(name, pane_id, root)
 
     async def _title_special_pane(self, name: str, pane_id: str, root: Path) -> None:

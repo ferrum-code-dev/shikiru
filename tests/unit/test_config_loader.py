@@ -45,19 +45,6 @@ def test_deep_merge_replaces_arrays_instead_of_concatenating(tmp_path: Path) -> 
     assert settings.dashboard.widgets == ["header"]
 
 
-def test_unconfigured_task_layout_inherits_the_packaged_stack(tmp_path: Path) -> None:
-    project_dir = _project(tmp_path)
-
-    layout = load_settings(project_dir).dashboard.layout
-
-    assert layout.split == "v"
-    assert [(pane.pane, pane.size) for pane in layout.panes if isinstance(pane, PaneLeaf)] == [
-        ("leader", 40),
-        ("implementer", 40),
-        ("shell", 20),
-    ]
-
-
 def test_explicit_task_layout_override_remains_intact(tmp_path: Path) -> None:
     project_dir = _project(
         tmp_path,

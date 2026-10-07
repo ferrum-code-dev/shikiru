@@ -10,6 +10,7 @@ from shikiru.tmux.client import (
     FORMAT_PANE_ID,
     FORMAT_PANE_START_COMMAND,
     FORMAT_WINDOW_ID,
+    FORMAT_WINDOW_INDEX,
     FORMAT_WINDOW_NAME,
     exact_target,
 )
@@ -28,6 +29,8 @@ PROJECT_DIR_ENV_VAR = "SHIKIRU_PROJECT_DIR"
 HOME_WINDOW_NAME = "dashboard"
 LEGACY_HOME_WINDOW_NAME = "shikiru"
 DETACHED_SIZE = (240, 64)
+_HOME_WINDOW_INDEX = "0"
+_HOME_INDEX_TARGET = f":{_HOME_WINDOW_INDEX}"
 
 _PALETTE_KEY = "Space"
 _DASHBOARD_PALETTE_EVENT = "F12"
@@ -44,6 +47,7 @@ _DEFAULT_PALETTE_KEY_COMMAND = "next-layout"
 _HOME_COMMAND_MARKER = "dash --home"
 _HOME_PANE_OPTION = "@shk_home"
 _HOME_PANE_OPTION_VALUE = "1"
+_HOME_WINDOW_NAMES = frozenset((HOME_WINDOW_NAME, LEGACY_HOME_WINDOW_NAME))
 _HOME_ROW_MAX_SPLITS = 5
 _HOME_WINDOW_NAME_FIELD = 2
 _HOME_WINDOW_ACTIVE_FIELD = 3
@@ -57,7 +61,8 @@ _HOME_PANE_FORMAT = (
 )
 
 _SESSION_SCOPED_OPTIONS: dict[str, str] = {
-    "renumber-windows": "on",
+    "base-index": _HOME_WINDOW_INDEX,
+    "renumber-windows": "off",
     "mouse": "on",
     "set-titles": "on",
 }
@@ -198,7 +203,25 @@ class SessionView:
         if await self._tmux.display(window_target, FORMAT_WINDOW_NAME) != HOME_WINDOW_NAME:
             await self._tmux.rename_window(window_target, HOME_WINDOW_NAME)
         await self._apply_home_window_options(window_target)
+        await self._ensure_home_index(target, window_target)
         await self._remove_duplicate_home_windows(target, window_target)
+
+    async def _ensure_home_index(self, target: str, home_window: str) -> None:
+        if await self._tmux.display(home_window, FORMAT_WINDOW_INDEX) == _HOME_WINDOW_INDEX:
+            return
+        home_target = f"{target}{_HOME_INDEX_TARGET}"
+        if await self._tmux.target_exists(home_target):
+            occupant_window = await self._tmux.window_id(home_target)
+            homes = await home_window_targets(self._tmux, target)
+            if any(match[0] == occupant_window for match in homes):
+                await self._tmux.swap_windows(home_window, home_target)
+                return
+            occupant = await self._tmux.display(home_target, FORMAT_WINDOW_NAME)
+            message = (
+                f"cannot move Home window to index 0; {home_target} is occupied by {occupant!r}"
+            )
+            raise ConfigError(message)
+        await self._tmux.move_window(home_window, home_target)
 
     async def _mark_home_pane(self, pane_id: str) -> None:
         await self._tmux.set_pane_option(pane_id, _HOME_PANE_OPTION, _HOME_PANE_OPTION_VALUE)
@@ -218,7 +241,7 @@ class SessionView:
 
 
 async def home_window_target(tmux: Tmux, session_target: str) -> tuple[str, str] | None:
-    """Find Home by its owned pane marker or dashboard command, regardless of window name."""
+    """Find Home by its owned pane marker or its shipped window name."""
     matches = await home_window_targets(tmux, session_target)
     if not matches:
         return None
@@ -227,16 +250,19 @@ async def home_window_target(tmux: Tmux, session_target: str) -> tuple[str, str]
 
 
 async def home_window_targets(tmux: Tmux, session_target: str) -> list[tuple[str, str, str, str]]:
-    """Find every Home window by its owned pane marker or dashboard command."""
+    """Find owned Home windows, falling back to shipped names for legacy sessions."""
     panes = await tmux.list_session_panes(session_target, _HOME_PANE_FORMAT)
-    matches: list[tuple[str, str, str, str]] = []
+    identified: list[tuple[str, str, str, str]] = []
+    named: list[tuple[str, str, str, str]] = []
     for row in panes:
         window_id, pane_id, window_name, active, start_command, marker = row.split(
             _FIELD_SEPARATOR, _HOME_ROW_MAX_SPLITS
         )
         if marker == _HOME_PANE_OPTION_VALUE or _HOME_COMMAND_MARKER in start_command:
-            matches.append((window_id, pane_id, window_name, active))
-    return matches
+            identified.append((window_id, pane_id, window_name, active))
+        elif window_name in _HOME_WINDOW_NAMES:
+            named.append((window_id, pane_id, window_name, active))
+    return identified or named
 
 
 def _preferred_home(
