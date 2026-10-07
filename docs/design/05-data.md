@@ -107,23 +107,12 @@ layout = { split = "v", panes = [
   { pane = "shell", size = 20 },
 ] }
 
-Projects without an explicit `dashboard.layout` inherit this packaged task-window layout. Existing
-project files that declare a layout keep that override unchanged; remove or edit the override to
-adopt the packaged default. This creates Leader, Implementer and Project folder panes only; Home
-runs in the separate `dashboard` window and the default task window has no system pane. No
-configuration migration rewrites an operator's layout.
-
 [dashboard.motion]
 refresh_hz = 4                                  # at most 4
 stamp_flash_milliseconds = 400
 escalation_pulse_hz = 1
 task_event_limit = 50                           # events read per task for the motion state
 merge_event_limit = 20
-
-Older project files may still set `stream_active_seconds`; it is accepted for configuration
-compatibility but deprecated and no longer affects live-agent motion. Activity is based on a
-recorded current turn, engine liveness, holds and diagnosed stall deadlines, while signal age
-continues to report the last recorded observation.
 
 [dashboard.titles]                              # fields: 06 §5.3
 window = "{task_id} {title:.24}"
@@ -150,6 +139,17 @@ command_days = 30                               # answered commands
 probe_timeout = 180                             # seconds per `doctor --probe` live turn
 probe_stream_tail_lines = 20                    # stream lines shown when a probe fails
 ```
+
+Projects without an explicit `dashboard.layout` inherit this packaged task-window layout. Existing
+project files that declare a layout keep that override unchanged; remove or edit the override to
+adopt the packaged default. This creates Leader, Implementer and Project folder panes only; Home
+runs in the separate `dashboard` window and the default task window has no system pane. No
+configuration migration rewrites an operator's layout.
+
+Older project files may still set `stream_active_seconds`; it is accepted for configuration
+compatibility but deprecated and no longer affects live-agent motion. Activity is based on a
+recorded current turn, engine liveness, holds and diagnosed stall deadlines, while signal age
+continues to report the last recorded observation.
 
 **`submit` flags**, applying to that task only: `--mode implement|plan`, `--complexity low|normal|high` (omitted: triage decides), `--priority N`, `--after T-n` (repeatable), `--leader a:m:e`, `--implementer a:m:e`.
 

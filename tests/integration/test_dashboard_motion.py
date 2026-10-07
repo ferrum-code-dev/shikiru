@@ -669,6 +669,33 @@ async def test_quiet_current_tool_keeps_cycling_without_changing_recorded_signal
         reader.close()
 
 
+async def _assert_unstarted_motion_callback_can_be_unsubscribed(
+    app: DashboardApp,
+    clock: FakeClock,
+    interval: float,
+) -> None:
+    scheduled_calls = 0
+    scheduled_cancelled = asyncio.Event()
+    unsubscribe_scheduled: Callable[[], None] | None = None
+
+    async def scheduled_refresh() -> None:
+        nonlocal scheduled_calls
+        scheduled_calls += 1
+
+    async def cancel_scheduled_refresh() -> None:
+        assert unsubscribe_scheduled is not None
+        unsubscribe_scheduled()
+        scheduled_cancelled.set()
+
+    app.register_motion_callback(cancel_scheduled_refresh)
+    unsubscribe_scheduled = app.register_motion_callback(scheduled_refresh)
+    await wait_until(clock.has_pending_sleep, timeout=1)
+    clock.advance(interval)
+    await wait_until(scheduled_cancelled.is_set, timeout=1)
+    await yield_control()
+    assert scheduled_calls == 0
+
+
 async def test_slow_motion_callback_does_not_block_or_overlap_other_callbacks(
     database: Database,
     connection: Connection,
@@ -695,12 +722,6 @@ async def test_slow_motion_callback_does_not_block_or_overlap_other_callbacks(
 
         async def fast_refresh() -> None:
             fast_frames.append(clock.now())
-
-        scheduled_calls = 0
-
-        async def scheduled_refresh() -> None:
-            nonlocal scheduled_calls
-            scheduled_calls += 1
 
         async def open_palette(action: str) -> None:
             del action
@@ -738,12 +759,7 @@ async def test_slow_motion_callback_does_not_block_or_overlap_other_callbacks(
                 )
             assert len(fast_frames) == 5
             unsubscribe_fast()
-            unsubscribe_scheduled = app.register_motion_callback(scheduled_refresh)
-            await wait_until(clock.has_pending_sleep, timeout=1)
-            clock.advance(interval)
-            unsubscribe_scheduled()
-            await yield_control()
-            assert scheduled_calls == 0
+            await _assert_unstarted_motion_callback_can_be_unsubscribed(app, clock, interval)
     finally:
         reader.close()
 

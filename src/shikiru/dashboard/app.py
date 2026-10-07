@@ -1452,8 +1452,12 @@ class DashboardApp(App[None]):
                 worker = registration.worker
                 if worker is not None and not worker.is_finished:
                     continue
+
+                async def run_callback(callback: OnChange = registration.callback) -> None:
+                    await callback()
+
                 registration.worker = self.run_worker(
-                    registration.callback(),
+                    run_callback,
                     group=_MOTION_CALLBACK_WORKER_GROUP,
                     exclusive=False,
                 )
