@@ -364,9 +364,9 @@ Motion is driven by real signals, so the dashboard shows how alive the system is
 
 | Motion | Meaning |
 |---|---|
-| Active panel spinner runs only while a stream signal arrived in the last 10 s; otherwise it freezes, and after the stall timeout the panel turns `hold` with `⚠︎` | Working vs idle vs stalled |
+| Active panel spinner cycles through a recorded live, unheld current turn until it is diagnosed stalled; quiet tools do not freeze it. The signal age remains tied to the last recorded signal. Home task status blinks only while the engine is running and an agent is processing an unheld, non-waiting, non-stalled turn | Working vs waiting vs stalled vs stopped |
 | Stamp flash (400 ms reverse video) when a verdict or merge lands | A turn outcome just happened |
 | Escalation border pulses red/dim at 1 Hz while open | Needs attention |
 | Elapsed time, quota countdowns and cost tick live | Live time and spend |
 
-Motion comes from a pure `frame(state, now)` function with an injected clock, capped at 4 Hz. Setting `animations = false` renders static frames while the configured `refresh_hz` timer still updates state, ages and countdowns. Report, facts and packet evidence load on detail mount or relevant state/file change, not on each motion tick. `NO_COLOR` and `TERM=dumb` use textual state and focus cues so color and animation never carry meaning alone.
+Motion comes from a pure `frame(state, now)` function with an injected clock, capped at 4 Hz. Setting `animations = false` renders static frames while the configured `refresh_hz` timer still updates state, ages and countdowns. Slow callback work does not delay other callbacks, and an in-flight callback is not started again until it completes; removing its subscription cancels outstanding work. Report, facts and packet evidence load on detail mount or relevant state/file change, not on each motion tick. `NO_COLOR` and `TERM=dumb` use readable textual state and focus cues so color and animation never carry meaning alone.

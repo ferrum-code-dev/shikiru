@@ -296,6 +296,7 @@ class TaskBrowserRow:
     open_decision: bool
     diagnosed_stall: bool
     requeued_age: str | None = None
+    agent_processing: bool = False
 
 
 @dataclass(frozen=True)
@@ -747,6 +748,10 @@ class DashboardViews(Protocol):
         """Return the project, engine, slots and repository view."""
         ...
 
+    def engine_up(self) -> bool:
+        """Return current engine lock liveness for active-turn presentation."""
+        ...
+
     def project_usage(self) -> RecordedUsageView:
         """Return token and monetary coverage for all retained session lineages."""
         ...
@@ -896,3 +901,4 @@ class WidgetContext:
     home_attention_present: bool = False
     open_contextual_view: OpenContextualView | None = None
     task_contextual_views: tuple[tuple[str, str], ...] = ()
+    animations: bool = True

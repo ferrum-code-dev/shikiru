@@ -155,6 +155,13 @@ FOCUS_CONTEXT_HELP = "context-help"
 EMPTY_CONTEXT_CHOICE = ""
 TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
 _MAX_CONTEXTUAL_PALETTE_DRAFTS = 16
+_MOTION_CALLBACK_WORKER_GROUP = "dashboard-motion-callback"
+
+
+@dataclass
+class _MotionCallback:
+    callback: OnChange
+    worker: Worker[None] | None = None
 
 
 class _TaskBrowserNavigation(Protocol):
@@ -816,6 +823,7 @@ class DashboardApp(App[None]):
         motion_interval_seconds: float | None,
         resources_refresh_seconds: float,
         docker_refresh_seconds: float,
+        animations: bool = True,
         open_palette: OpenPalette,
         widget_names: Sequence[str],
         open_palette_context: OpenPaletteContext | None = None,
@@ -834,6 +842,7 @@ class DashboardApp(App[None]):
         self._on_change = on_change
         self._clock = clock
         self._motion_interval_seconds = motion_interval_seconds
+        self._animations = animations
         self._resources_refresh_seconds = resources_refresh_seconds
         self._docker_refresh_seconds = docker_refresh_seconds
         self._timeline_refresh_seconds = timeline_refresh_seconds
@@ -848,7 +857,7 @@ class DashboardApp(App[None]):
         self._detach_tmux_client = detach_tmux_client
         self._configured_widget_names = tuple(widget_names)
         self._widget_names = self._configured_widget_names
-        self._motion_callbacks: list[OnChange] = []
+        self._motion_callbacks: list[_MotionCallback] = []
         self._home_detail_panel: TaskDetailPanel | None = None
         self._widget_plugins: dict[str, DashboardWidget] = {}
         self._widget_placements: dict[str, WidgetPlacement] = {}
@@ -968,8 +977,9 @@ class DashboardApp(App[None]):
             docker_refresh_seconds=self._docker_refresh_seconds,
             timeline_refresh_seconds=self._timeline_refresh_seconds,
             clock=self._clock,
+            animations=self._animations,
             on_change=self._on_change,
-            on_motion=self._register_motion_callback,
+            on_motion=self.register_motion_callback,
             open_palette=self._open_palette,
             open_palette_context=self._open_contextual_palette,
             open_task_detail=open_task_detail,
@@ -1438,17 +1448,35 @@ class DashboardApp(App[None]):
             return
         while True:
             await self._clock.sleep(interval)
-            for callback in tuple(self._motion_callbacks):
-                await callback()
+            for registration in tuple(self._motion_callbacks):
+                worker = registration.worker
+                if worker is not None and worker.is_running:
+                    continue
+                registration.worker = self.run_worker(
+                    registration.callback(),
+                    group=_MOTION_CALLBACK_WORKER_GROUP,
+                    exclusive=False,
+                )
 
-    def _register_motion_callback(self, callback: OnChange) -> Callable[[], None]:
-        self._motion_callbacks.append(callback)
+    def register_motion_callback(self, callback: OnChange) -> Callable[[], None]:
+        """Register a motion callback and return its cancellation subscription."""
+        registration = _MotionCallback(callback)
+        self._motion_callbacks.append(registration)
 
         def unsubscribe() -> None:
-            if callback in self._motion_callbacks:
-                self._motion_callbacks.remove(callback)
+            self._motion_callbacks = [
+                item for item in self._motion_callbacks if item is not registration
+            ]
+            if registration.worker is not None and registration.worker.is_running:
+                registration.worker.cancel()
 
         return unsubscribe
+
+    def on_unmount(self) -> None:
+        for registration in self._motion_callbacks:
+            if registration.worker is not None and registration.worker.is_running:
+                registration.worker.cancel()
+        self._motion_callbacks.clear()
 
     def _apply_layout(self, width: int, height: int) -> None:
         if self._focus_task is None:

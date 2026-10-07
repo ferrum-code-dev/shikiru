@@ -32,6 +32,7 @@ _TIMEOUTS = TimeoutsConfig(
 def _state(
     *,
     animations: bool = True,
+    engine_running: bool = True,
     tasks: tuple[TaskMotionState, ...] = (),
     quotas: tuple[QuotaMotionState, ...] = (),
     escalations_open: bool = False,
@@ -43,6 +44,7 @@ def _state(
         stream_active_seconds=10,
         stamp_flash_seconds=0.4,
         escalation_pulse_hz=1,
+        engine_running=engine_running,
         tasks=tasks,
         quotas=quotas,
         escalations_open=escalations_open,
@@ -50,18 +52,22 @@ def _state(
 
 
 @pytest.mark.parametrize(
-    ("elapsed", "tool_running", "held", "stalled"),
+    ("elapsed", "tool_running", "held", "stalled", "agent_processing"),
     [
-        (2, False, False, False),
-        (3, False, False, True),
-        (4, True, False, False),
-        (5, True, False, True),
-        (8, False, True, False),
+        (2, False, False, False, True),
+        (3, False, False, True, False),
+        (4, True, False, False, True),
+        (5, True, False, True, False),
+        (8, False, True, False, False),
     ],
     ids=["working", "stall-timeout", "running-tool", "tool-timeout", "held"],
 )
 def test_stream_state_uses_activity_kind_and_does_not_spin_while_held(
-    elapsed: int, tool_running: bool, held: bool, stalled: bool
+    elapsed: int,
+    tool_running: bool,
+    held: bool,
+    stalled: bool,
+    agent_processing: bool,
 ) -> None:
     clock = FakeClock(_START + timedelta(seconds=elapsed))
     task = TaskMotionState(
@@ -77,9 +83,10 @@ def test_stream_state_uses_activity_kind_and_does_not_spin_while_held(
 
     assert result.stalled is stalled
     assert result.spinner_visible is (not held and not stalled)
+    assert result.agent_processing is agent_processing
 
 
-def test_spinner_freezes_on_the_last_active_tick_after_the_stream_window() -> None:
+def test_spinner_keeps_cycling_after_the_stream_window_without_refreshing_signal_age() -> None:
     clock = FakeClock(_START)
     task = TaskMotionState("T-1", _START, last_signal_at=_START, turn_active=True)
     state = _state(tasks=(task,))
@@ -107,11 +114,13 @@ def test_spinner_freezes_on_the_last_active_tick_after_the_stream_window() -> No
     clock.advance(0.25)
     [frozen] = frame(state, clock.now()).tasks
     clock.advance(3)
-    [still_frozen] = frame(state, clock.now()).tasks
+    [still_cycling] = frame(state, clock.now()).tasks
 
-    assert frozen.spinner_phase == last_active.spinner_phase
-    assert still_frozen.spinner_phase == frozen.spinner_phase
+    assert frozen.spinner_phase != last_active.spinner_phase
+    assert still_cycling.spinner_phase != frozen.spinner_phase
     assert frozen.spinner_visible
+    assert still_cycling.last_signal_at == _START
+    assert still_cycling.agent_processing
 
 
 def test_static_frames_hold_phase_and_hide_outcome_flashes() -> None:
@@ -151,6 +160,7 @@ def test_static_frames_hold_phase_and_hide_outcome_flashes() -> None:
     assert initial.spinner_phase == result.spinner_phase
     assert result.spinner_phase == 0
     assert result.spinner_visible
+    assert result.agent_processing
     assert not result.stamp_flash
 
 
@@ -233,3 +243,25 @@ def test_non_stream_activity_does_not_show_a_spinner() -> None:
     ).tasks
 
     assert not result.spinner_visible
+
+
+def test_stopped_engine_keeps_recorded_signal_without_live_motion() -> None:
+    clock = FakeClock(_START)
+    task = TaskMotionState(
+        "T-1",
+        _START,
+        last_signal_at=_START,
+        last_signal="tool started",
+        turn_active=True,
+    )
+
+    [result] = frame(
+        _state(engine_running=False, tasks=(task,)),
+        clock.now(),
+    ).tasks
+
+    assert not result.spinner_visible
+    assert result.spinner_phase == 0
+    assert not result.agent_processing
+    assert result.last_signal_at == _START
+    assert result.last_signal == "tool started"

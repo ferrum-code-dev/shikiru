@@ -1264,6 +1264,7 @@ def _app(
         ),
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        animations=settings.dashboard.animations,
         open_palette=open_palette,
         widget_names=widget_names,
         open_palette_context=open_palette_context,

@@ -76,6 +76,7 @@ class MotionState:
     tasks: tuple[TaskMotionState, ...] = ()
     quotas: tuple[QuotaMotionState, ...] = ()
     escalations_open: bool = False
+    engine_running: bool = True
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ class TaskMotionFrame:
     task_id: str
     spinner_phase: int
     spinner_visible: bool
+    agent_processing: bool
     stalled: bool
     elapsed_seconds: int
     actual_step_started_at: datetime | None
@@ -141,21 +143,15 @@ def _task_frame(task: TaskMotionState, state: MotionState, now: datetime) -> Tas
         and is_stalled(activity_at, task.tool_running, now, state.timeouts)
     )
     spinner_phase = 0
-    if activity_at is not None:
-        age = max((now - activity_at).total_seconds(), 0.0)
-        if not state.animations:
-            spinner_phase = 0
-        elif task.turn_active and not task.held and not stalled:
-            if task.last_signal_at is not None and age < state.stream_active_seconds:
-                spinner_phase = int(now.timestamp() * min(state.refresh_hz, MAX_MOTION_REFRESH_HZ))
-            elif task.last_signal_at is not None:
-                spinner_phase = int(
-                    ceil(
-                        (activity_at.timestamp() + state.stream_active_seconds)
-                        * min(state.refresh_hz, MAX_MOTION_REFRESH_HZ)
-                    )
-                    - 1
-                )
+    if (
+        activity_at is not None
+        and state.animations
+        and state.engine_running
+        and task.turn_active
+        and not task.held
+        and not stalled
+    ):
+        spinner_phase = int(now.timestamp() * min(state.refresh_hz, MAX_MOTION_REFRESH_HZ))
     elapsed_end = task.ended_at or now
     elapsed_seconds = max(int((elapsed_end - task.step_started_at).total_seconds()), 0)
     stamp_kind = None
@@ -171,7 +167,14 @@ def _task_frame(task: TaskMotionState, state: MotionState, now: datetime) -> Tas
         task_id=task.task_id,
         spinner_phase=spinner_phase,
         spinner_visible=(
-            task.turn_active and not task.held and not stalled and task.last_signal_at is not None
+            state.engine_running
+            and task.turn_active
+            and not task.held
+            and not stalled
+            and task.last_signal_at is not None
+        ),
+        agent_processing=(
+            state.engine_running and task.turn_active and not task.held and not stalled
         ),
         stalled=stalled,
         elapsed_seconds=elapsed_seconds,

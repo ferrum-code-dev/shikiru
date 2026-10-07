@@ -86,6 +86,7 @@ class DashboardMotion:
         *,
         quotas: tuple[QuotaMotionState, ...] = (),
         escalations_open: bool = False,
+        engine_running: bool = True,
     ) -> MotionFrame:
         """Resolve task, quota and escalation frames at one injected time value."""
         self._sync_event_cache()
@@ -94,6 +95,7 @@ class DashboardMotion:
                 tasks=tuple(self._task_motion(task) for task in tasks),
                 quotas=quotas,
                 escalations_open=escalations_open,
+                engine_running=engine_running,
             ),
             now,
         )
@@ -286,7 +288,11 @@ class DashboardMotion:
     def _is_held(self, task: Task) -> bool:
         role = ACTING_ROLE.get(task.step) if task.step is not None else None
         run = self._run_for_role(task, role) if role is not None else None
-        held = bool(task.holds) or task.status is Status.ESCALATED
+        held = (
+            bool(task.holds)
+            or task.wait_reason is not None
+            or task.status not in (Status.RUNNING, Status.INTEGRATING)
+        )
         if run is not None and run.status is RunStatus.TAKEN_OVER:
             held = True
         return held
@@ -335,6 +341,7 @@ class DashboardMotion:
         tasks: tuple[TaskMotionState, ...] = (),
         quotas: tuple[QuotaMotionState, ...] = (),
         escalations_open: bool = False,
+        engine_running: bool = True,
     ) -> MotionState:
         config = self._settings.dashboard.motion
         return MotionState(
@@ -347,6 +354,7 @@ class DashboardMotion:
             tasks=tasks,
             quotas=quotas,
             escalations_open=escalations_open,
+            engine_running=engine_running,
         )
 
 

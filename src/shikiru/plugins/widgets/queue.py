@@ -125,7 +125,12 @@ class _BrowserListItem(ListItem):
         *,
         focus_layout: bool,
     ) -> None:
-        render = _focus_row_text(row) if focus_layout else _row_text(row)
+        self._status_bright = False
+        render = (
+            _focus_row_text(row, status_bright=self._status_bright)
+            if focus_layout
+            else _row_text(row)
+        )
         super().__init__(Static(render, markup=False), id=f"task-row-{row.task_id}")
         self.task_id = row.task_id
         self.row = row
@@ -135,9 +140,25 @@ class _BrowserListItem(ListItem):
         if row == self.row:
             return False
         self.row = row
-        render = _focus_row_text(row) if self.focus_layout else _row_text(row)
-        self.query_one(Static).update(render)
+        self._status_bright = False
+        self._render_row()
         return True
+
+    def update_status_motion(self, status_bright: bool) -> None:
+        if not self.focus_layout or not self.row.agent_processing:
+            return
+        if self._status_bright == status_bright:
+            return
+        self._status_bright = status_bright
+        self._render_row()
+
+    def _render_row(self) -> None:
+        render = (
+            _focus_row_text(self.row, status_bright=self._status_bright)
+            if self.focus_layout
+            else _row_text(self.row)
+        )
+        self.query_one(Static).update(render)
 
 
 class _RecentHeading(ListItem):
@@ -208,11 +229,13 @@ def _row_text(row: TaskBrowserRow) -> str:
     return f"{' · '.join(identity)}\n{' · '.join((*state_details, *signals))}"
 
 
-def _focus_row_text(row: TaskBrowserRow) -> Text:
+def _focus_row_text(row: TaskBrowserRow, *, status_bright: bool = False) -> Text:
     marker, marker_style = _focus_row_marker(row)
     stage = STEP_LABELS.get(row.step or "")
     state = _focus_row_state(row, stage)
     details = _focus_row_details(row, stage, state)
+    if row.agent_processing and status_bright:
+        details[0] = (details[0][0], f"{details[0][1]} bold")
     content = Text.assemble(
         (f"{marker} ", marker_style),
         (f"{row.task_id} · {row.title}", PRIMARY_TEXT_COLOR),
@@ -373,6 +396,7 @@ class QueuePanel(Vertical):
         self._refreshing = False
         self._refresh_lock = asyncio.Lock()
         self._list_render_version = 0
+        self._status_bright = False
         self._remove_motion_callback: Callable[[], None] | None = None
 
     def compose(self) -> ComposeResult:
@@ -434,8 +458,29 @@ class QueuePanel(Vertical):
             self._remove_motion_callback = None
 
     async def _refresh_while_active(self) -> None:
-        if widget_is_current(self) and cast("App[object]", self.app).is_running:
-            await self._refresh()
+        if (
+            not self._widget_context.animations
+            or not self.is_mounted
+            or not widget_is_current(self)
+            or not cast("App[object]", self.app).is_running
+        ):
+            return
+        await self._refresh()
+        if not self._render_targets_are_attached():
+            return
+        list_view = self.query(f"#{TASK_LIST_ID}")
+        if not list_view:
+            return
+        if not self._widget_context.views.engine_up():
+            self._status_bright = False
+            for item in list_view.first().children:
+                if isinstance(item, _BrowserListItem):
+                    item.update_status_motion(False)
+            return
+        self._status_bright = not self._status_bright
+        for item in list_view.first().children:
+            if isinstance(item, _BrowserListItem):
+                item.update_status_motion(self._status_bright)
 
     async def _refresh_if_current(self) -> None:
         if widget_is_current(self):
@@ -659,9 +704,11 @@ class QueuePanel(Vertical):
                 callback = self._widget_context.on_task_selected
                 if callback is not None:
                     callback(self._selected_task_id)
+                if not self._render_targets_are_attached():
+                    return
                 list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
                 await self._sync_list_rows(list_view, view.rows)
-                if not widget_is_current(self):
+                if not self._render_targets_are_attached():
                     return
                 self._render_view(view)
             finally:
@@ -740,6 +787,8 @@ class QueuePanel(Vertical):
         return self._load_pages()
 
     async def _sync_list_rows(self, list_view: ListView, rows: tuple[TaskBrowserRow, ...]) -> None:
+        if not self._list_view_is_current(list_view):
+            return
         items = {
             item.task_id: item for item in list_view.children if isinstance(item, _BrowserListItem)
         }
@@ -771,7 +820,7 @@ class QueuePanel(Vertical):
             wanted_ids,
             recent_task_id,
         )
-        if not widget_is_current(self):
+        if not self._list_view_is_current(list_view):
             return
         self._update_browser_items(items, rows)
         desired_children, heading = self._ordered_list_items(
@@ -781,7 +830,7 @@ class QueuePanel(Vertical):
             recent_task_id,
         )
         await self._place_list_items(list_view, desired_children)
-        if not widget_is_current(self):
+        if not self._list_view_is_current(list_view):
             return
         self._sync_selection(list_view, rows)
         self._restore_list_position_after_refresh(
@@ -877,7 +926,7 @@ class QueuePanel(Vertical):
         additions = [child for child in desired_children if child.parent is None]
         if additions:
             await list_view.extend(additions)
-            if not widget_is_current(self):
+            if not self._list_view_is_current(list_view):
                 return
         for index, child in enumerate(desired_children):
             if list_view.children[index] is not child:
@@ -1040,6 +1089,8 @@ class QueuePanel(Vertical):
             list_view.index = selected_index
 
     def _render_view(self, view: TaskBrowserView) -> None:
+        if not self._render_targets_are_attached():
+            return
         self._render_count(view)
         if not self._focus_layout:
             self.query_one(f"#{CLEAR_BUTTON_ID}", Button).disabled = not bool(view.search)
@@ -1074,6 +1125,31 @@ class QueuePanel(Vertical):
             context.update("")
         if not self._focus_layout:
             self._render_preview(view)
+
+    def _render_targets_are_attached(self) -> bool:
+        target_ids = (
+            COUNT_ID,
+            EMPTY_ID,
+            FAMILY_CONTEXT_ID,
+            MORE_BUTTON_ID,
+            TASK_LIST_ID,
+        )
+        if self._focus_layout:
+            target_ids = (*target_ids, TASK_PREVIEW_ID)
+        else:
+            target_ids = (
+                *target_ids,
+                TASK_PREVIEW_ID,
+                REVEAL_BUTTON_ID,
+                CLEAR_BUTTON_ID,
+                *(button_id for _, button_id, _ in FILTER_BUTTONS),
+            )
+        return widget_is_current(self) and all(
+            self.query(f"#{target_id}") for target_id in target_ids
+        )
+
+    def _list_view_is_current(self, list_view: ListView) -> bool:
+        return widget_is_current(self) and list_view.is_attached and list_view.parent is self
 
     def _render_count(self, view: TaskBrowserView) -> None:
         is_default_focus = (

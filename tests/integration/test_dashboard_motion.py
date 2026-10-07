@@ -6,6 +6,7 @@ import json
 import os
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -77,9 +78,9 @@ from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
-    from pathlib import Path
 
     from rich.text import Text
+    from textual.content import Content
     from textual.pilot import Pilot
 
     from shikiru.config.settings import Settings
@@ -96,6 +97,13 @@ _TASK_ACTIVITY_WAIT_SECONDS = 2
 _OLD_ITERATION = 1
 _CURRENT_ITERATION = 2
 _INITIAL_USAGE_COST = 0.42
+_QUIET_STALL_SECONDS = 30
+_QUIET_TOOL_SECONDS = 60
+_QUIET_STREAM_SECONDS = 1
+_QUIET_TOOL_ELAPSED_SECONDS = 10.5
+_STATUS_MOTION_TICKS = 5
+_STATUS_MOTION_PHASES = 2
+_NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
 _USAGE_REFRESH_COSTS = (0.87, 1.13, 1.41, 1.62)
 _USAGE_REFRESH_INPUT_TOKENS = 200
 _USAGE_REFRESH_OUTPUT_TOKENS = 40
@@ -137,23 +145,38 @@ def _motion_settings(project_dir: Path) -> Settings:
     )
 
 
-def _seed_dashboard_state(connection: Connection, clock: FakeClock) -> tuple[Task, Run]:
+def _seed_running_task(
+    connection: Connection,
+    clock: FakeClock,
+    *,
+    title: str,
+    slot: int,
+) -> tuple[Task, Run]:
     tasks = TaskStore(connection, clock)
-    task = seed_task(connection, clock, title="Live stream", mode=Mode.IMPLEMENT)
-    tasks.set_slot(task.id, 0)
+    task = seed_task(connection, clock, title=title, mode=Mode.IMPLEMENT)
+    tasks.set_slot(task.id, slot)
     tasks.apply_transition(task.id, first_step(task))
     task = tasks.get(task.id)
     assert task is not None
     step = task.step
     assert step is not None
-    runs = RunStore(connection, clock)
-    task_run = runs.start(task.id, Role.IMPLEMENTER, Rung("codex", "gpt-6-luna", "low"))
-    runs.record_usage(task_run.id, Usage(100, 20, 0, 0, 0.42, "billed", None))
+    task_run = RunStore(connection, clock).start(
+        task.id, Role.IMPLEMENTER, Rung("codex", "gpt-6-luna", "low")
+    )
     EventLog(connection, clock).append(
         EventKind.TURN_STARTED,
         task_id=task.id,
         message="implementer turn started",
         data={"step": step.value, "role": Role.IMPLEMENTER.value, "iteration": task.iteration},
+    )
+    return task, task_run
+
+
+def _seed_dashboard_state(connection: Connection, clock: FakeClock) -> tuple[Task, Run]:
+    tasks = TaskStore(connection, clock)
+    task, task_run = _seed_running_task(connection, clock, title="Live stream", slot=0)
+    RunStore(connection, clock).record_usage(
+        task_run.id, Usage(100, 20, 0, 0, 0.42, "billed", None)
     )
     QuotaStore(connection).record(
         "codex", QuotaWindow("weekly", 50, _START + timedelta(seconds=10), _START)
@@ -203,6 +226,7 @@ def _task_dashboard(
         motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        animations=settings.dashboard.animations,
         open_palette=open_palette,
         widget_names=settings.dashboard.widgets,
     )
@@ -268,8 +292,31 @@ def _build_views(
     reader: StateReader, project_dir: Path, settings: Settings, clock: FakeClock, task: Task
 ) -> StateDashboardViews:
     return state_views(
-        reader, project_dir, clock, StubServices(), focus_task=task.id, settings=settings
+        reader,
+        project_dir,
+        clock,
+        StubServices(engine_running=True),
+        focus_task=task.id,
+        settings=settings,
     )
+
+
+def _capture_home_status(app: DashboardApp, *, animations: bool) -> None:
+    configured_directory = os.environ.get(_NATIVE_VISUAL_REVIEW_DIR_ENV)
+    if configured_directory is None:
+        return
+    capture_directory = Path(configured_directory)
+    capture_directory.mkdir(parents=True, exist_ok=True)
+    output_kind = (
+        "color"
+        if os.environ.get("TERM") == "xterm-256color"
+        and "NO_COLOR" not in os.environ
+        and "FORCE_COLOR" not in os.environ
+        else "mono"
+    )
+    motion_kind = "motion" if animations else "static"
+    output_path = capture_directory / f"task113-home-status-{motion_kind}-{output_kind}.svg"
+    output_path.write_text(app.export_screenshot(), encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -579,6 +626,233 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
                 handle.write(f"{_row(clock.now(), _TURN_NAME, VIEW_TOOL_FINISHED_SIGNAL)}\n")
             clock.advance(2.5)
             await wait_until(lambda: GLYPH_STALLED in cast("Text", strips.content).plain, timeout=1)
+    finally:
+        reader.close()
+
+
+async def test_quiet_current_tool_keeps_cycling_without_changing_recorded_signal_age(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    base_settings = load_settings(project_dir)
+    settings = base_settings.model_copy(
+        update={
+            "orchestration": base_settings.orchestration.model_copy(
+                update={
+                    "timeouts": base_settings.orchestration.timeouts.model_copy(
+                        update={"stall": _QUIET_STALL_SECONDS, "tool": _QUIET_TOOL_SECONDS}
+                    )
+                }
+            ),
+            "dashboard": base_settings.dashboard.model_copy(
+                update={
+                    "motion": base_settings.dashboard.motion.model_copy(
+                        update={"stream_active_seconds": _QUIET_STREAM_SECONDS}
+                    )
+                }
+            ),
+        }
+    )
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, task)
+        _write_current_turn_log(project_dir, task, views)
+        initial = next(strip for strip in views.strips() if strip.task_id == task.id)
+        assert initial.last_signal_at == _START
+        initial_frame = initial.panels[1].spinner_frame
+
+        clock.advance(_QUIET_TOOL_ELAPSED_SECONDS)
+        quiet = next(strip for strip in views.strips() if strip.task_id == task.id)
+
+        assert quiet.last_signal_at == _START
+        assert quiet.panels[1].spinner_frame != initial_frame
+        assert quiet.panels[1].state is PanelState.ACTIVE
+    finally:
+        reader.close()
+
+
+async def test_slow_motion_callback_does_not_block_or_overlap_other_callbacks(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(project_dir)
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        blocked = asyncio.Event()
+        cancelled = asyncio.Event()
+        blocked_calls = 0
+        fast_frames: list[datetime] = []
+
+        async def blocked_refresh() -> None:
+            nonlocal blocked_calls
+            blocked_calls += 1
+            try:
+                await blocked.wait()
+            finally:
+                cancelled.set()
+
+        async def fast_refresh() -> None:
+            fast_frames.append(clock.now())
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        app = DashboardApp(
+            focus_task=None,
+            views=_build_views(reader, project_dir, settings, clock, task),
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        unsubscribe_blocked = app.register_motion_callback(blocked_refresh)
+        unsubscribe_fast = app.register_motion_callback(fast_refresh)
+        interval = 1 / settings.dashboard.motion.refresh_hz
+        async with app.run_test(size=(100, 35)):
+            await wait_until(clock.has_pending_sleep, timeout=1)
+            for expected_frames in (1, 2, 3):
+                clock.advance(interval)
+                await wait_until(
+                    lambda frame_count=expected_frames: len(fast_frames) >= frame_count,
+                    timeout=1,
+                )
+            assert blocked_calls == 1
+            unsubscribe_blocked()
+            await wait_until(cancelled.is_set, timeout=1)
+            for expected_frames in (4, 5):
+                clock.advance(interval)
+                await wait_until(
+                    lambda frame_count=expected_frames: len(fast_frames) >= frame_count,
+                    timeout=1,
+                )
+            assert len(fast_frames) == 5
+            unsubscribe_fast()
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("animations", [True, False], ids=("motion", "static"))
+async def test_home_status_blinks_only_for_a_recorded_active_turn(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    animations: bool,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    base_settings = _motion_settings(project_dir)
+    settings = base_settings.model_copy(
+        update={
+            "orchestration": base_settings.orchestration.model_copy(
+                update={
+                    "timeouts": base_settings.orchestration.timeouts.model_copy(
+                        update={"stall": _QUIET_STALL_SECONDS, "tool": _QUIET_TOOL_SECONDS}
+                    )
+                }
+            ),
+            "dashboard": base_settings.dashboard.model_copy(
+                update={
+                    "animations": animations,
+                    "widgets": ["queue"],
+                    "motion": base_settings.dashboard.motion.model_copy(
+                        update={"stream_active_seconds": _QUIET_STREAM_SECONDS}
+                    ),
+                }
+            ),
+        }
+    )
+    task, _ = _seed_dashboard_state(connection, clock)
+    other_task, _ = _seed_running_task(
+        connection,
+        clock,
+        title="Second current turn",
+        slot=1,
+    )
+    reader = StateReader(database, clock)
+    try:
+        views = state_views(
+            reader,
+            project_dir,
+            clock,
+            StubServices(engine_running=True),
+            settings=settings,
+        )
+        _write_current_turn_log(project_dir, task, views)
+        _write_current_turn_log(project_dir, other_task, views)
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        interval = 1 / settings.dashboard.motion.refresh_hz
+        app = DashboardApp(
+            focus_task=None,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=interval,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            animations=animations,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        async with app.run_test(size=(120, 40)):
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{task.id} > Static")),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            row = app.query_one(f"#task-row-{task.id} > Static", Static)
+            other_row = app.query_one(f"#task-row-{other_task.id} > Static", Static)
+
+            def status_content(widget: Static) -> Content:
+                return cast("Content", widget.render())
+
+            def status_is_bold(widget: Static, expected_bold: bool) -> bool:
+                rendered = status_content(widget)
+                offset = rendered.plain.index("Implementing")
+                return bool(rendered.get_style_at_offset(offset).bold) is expected_bold
+
+            active_text = status_content(row)
+            state_offset = active_text.plain.index("Implementing")
+            initial_bold = active_text.get_style_at_offset(state_offset).bold is True
+            other_initial = status_content(other_row)
+            other_offset = other_initial.plain.index("Implementing")
+            other_initial_bold = other_initial.get_style_at_offset(other_offset).bold is True
+
+            for tick in range(1, _STATUS_MOTION_TICKS + 1):
+                clock.advance(interval)
+                expected_bold = bool(animations and tick % _STATUS_MOTION_PHASES)
+                await wait_until(
+                    lambda expected=expected_bold: (
+                        status_is_bold(row, expected) and status_is_bold(other_row, expected)
+                    ),
+                    timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                )
+
+            _capture_home_status(app, animations=animations)
+
+            rendered = status_content(row)
+            assert "Implementing" in rendered.plain
+            assert initial_bold is False
+            assert other_initial_bold is False
+            if animations:
+                detail = await views.task_detail(task.id, include_timeline=False)
+                assert detail is not None
+                assert detail.latest_signal == VIEW_TOOL_STARTED_SIGNAL
+                assert detail.latest_signal_at == _START
+            else:
+                assert not rendered.get_style_at_offset(state_offset).bold
     finally:
         reader.close()
 

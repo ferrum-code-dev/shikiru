@@ -237,7 +237,7 @@ class StateDashboardViews:
     async def header(self) -> HeaderView:
         """Build the project, engine, slot and repository summary."""
         tasks = self._state.list_tasks()
-        engine_up = self._sources.engine_up()
+        engine_up = self.engine_up()
         process_identity = self._sources.engine_identity()
         identity = (
             (process_identity.pid, process_identity.started_at)
@@ -269,6 +269,10 @@ class StateDashboardViews:
             self._project_usage_view_cache = _recorded_usage(self._state.list_all_runs())
         return self._project_usage_view_cache
 
+    def engine_up(self) -> bool:
+        """Return whether the current engine holds its liveness lock."""
+        return self._sources.engine_up()
+
     def workspace_summary(self) -> WorkspaceSummaryView:
         """Count home categories without treating them as disjoint task totals."""
         attention = self.attention()
@@ -298,7 +302,7 @@ class StateDashboardViews:
             for task in tasks
         )
         held_tasks = [task for task in active_tasks if task.held]
-        engine_up = self._sources.engine_up()
+        engine_up = self.engine_up()
         operator_owned_roles = {
             task.id: tuple(role.value for role in self._state.list_taken_over_roles(task.id))
             for task in held_tasks
@@ -361,7 +365,7 @@ class StateDashboardViews:
         recent_merges = self._motion.recent_merges(now)
         task_ids = {task.id for task in tasks}
         all_tasks = [*tasks, *(task for task in recent_merges if task.id not in task_ids)]
-        rendered = self._motion.frames(tuple(all_tasks), now)
+        rendered = self._motion.frames(tuple(all_tasks), now, engine_running=self.engine_up())
         frames = {item.task_id: item for item in rendered.tasks}
         return [
             self._strip_with_motion(task, frames[task.id], self._motion.current_cost(task))
@@ -394,10 +398,12 @@ class StateDashboardViews:
     ) -> TaskBrowserView:
         """Build one ready-to-render browser page and retain the selected task context."""
         now = self._clock.now()
-        motion_task_ids, stalled_ids, diagnosed_stall_task_ids = self._task_browser_motion(
-            task_filter,
-            now,
-        )
+        (
+            motion_task_ids,
+            stalled_ids,
+            diagnosed_stall_task_ids,
+            agent_processing_ids,
+        ) = self._task_browser_motion(task_filter, now)
         quota_wait_task_ids = (
             self._quota_wait_task_ids(now) if task_filter is TaskBrowserFilter.WAITING else ()
         )
@@ -421,6 +427,7 @@ class StateDashboardViews:
             now=now,
             motion_task_ids=motion_task_ids,
             stalled_ids=stalled_ids,
+            agent_processing_ids=agent_processing_ids,
         )
 
     def task_browser_pages(
@@ -434,10 +441,12 @@ class StateDashboardViews:
     ) -> tuple[TaskBrowserView, ...]:
         """Build contiguous bounded browser pages from one state snapshot."""
         now = self._clock.now()
-        motion_task_ids, stalled_ids, diagnosed_stall_task_ids = self._task_browser_motion(
-            task_filter,
-            now,
-        )
+        (
+            motion_task_ids,
+            stalled_ids,
+            diagnosed_stall_task_ids,
+            agent_processing_ids,
+        ) = self._task_browser_motion(task_filter, now)
         quota_wait_task_ids = (
             self._quota_wait_task_ids(now) if task_filter is TaskBrowserFilter.WAITING else ()
         )
@@ -462,6 +471,7 @@ class StateDashboardViews:
                 now=now,
                 motion_task_ids=motion_task_ids,
                 stalled_ids=stalled_ids,
+                agent_processing_ids=agent_processing_ids,
             )
             for page_index, page in enumerate(pages)
         )
@@ -470,15 +480,21 @@ class StateDashboardViews:
         self,
         task_filter: TaskBrowserFilter,
         now: datetime,
-    ) -> tuple[set[str], set[str], tuple[str, ...]]:
+    ) -> tuple[set[str], set[str], tuple[str, ...], set[str]]:
         motion_task_ids: set[str] = set()
         stalled_ids: set[str] = set()
-        if task_filter is TaskBrowserFilter.ACTIVE:
+        agent_processing_ids: set[str] = set()
+        if task_filter in (TaskBrowserFilter.ACTIVE, TaskBrowserFilter.ALL):
             current_turn_tasks = self._state.list_tasks(statuses=_ACTIVE_TURN_STATUSES)
             motion_task_ids.update(task.id for task in current_turn_tasks)
-            frames = self._motion.frames(tuple(current_turn_tasks), now)
+            frames = self._motion.frames(
+                tuple(current_turn_tasks), now, engine_running=self.engine_up()
+            )
             stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
-        return motion_task_ids, stalled_ids, tuple(sorted(stalled_ids))
+            agent_processing_ids.update(
+                item.task_id for item in frames.tasks if item.agent_processing
+            )
+        return motion_task_ids, stalled_ids, tuple(sorted(stalled_ids)), agent_processing_ids
 
     def _quota_wait_task_ids(self, now: datetime) -> tuple[str, ...]:
         return tuple(
@@ -514,8 +530,10 @@ class StateDashboardViews:
         now: datetime,
         motion_task_ids: set[str],
         stalled_ids: set[str],
+        agent_processing_ids: set[str],
     ) -> TaskBrowserView:
         page_stalled_ids = set(stalled_ids)
+        page_agent_processing_ids = set(agent_processing_ids)
 
         framed_tasks = [
             task
@@ -530,14 +548,18 @@ class StateDashboardViews:
         ):
             framed_tasks.append(selected_task)
         if framed_tasks:
-            frames = self._motion.frames(tuple(framed_tasks), now)
+            frames = self._motion.frames(tuple(framed_tasks), now, engine_running=self.engine_up())
             page_stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
+            page_agent_processing_ids.update(
+                item.task_id for item in frames.tasks if item.agent_processing
+            )
         open_decision_ids = page.open_decision_task_ids
         rows = [
             self._task_browser_row(
                 task,
                 open_decision=task.id in open_decision_ids,
                 diagnosed_stall=task.id in page_stalled_ids,
+                agent_processing_ids=page_agent_processing_ids,
                 now=now,
                 task_filter=task_filter,
             )
@@ -554,6 +576,7 @@ class StateDashboardViews:
                 selected_task,
                 open_decision=selected_task.status is Status.ESCALATED,
                 diagnosed_stall=selected_task.id in page_stalled_ids,
+                agent_processing_ids=page_agent_processing_ids,
                 now=now,
                 task_filter=task_filter,
             )
@@ -586,6 +609,7 @@ class StateDashboardViews:
         *,
         open_decision: bool,
         diagnosed_stall: bool,
+        agent_processing_ids: set[str],
         now: datetime,
         task_filter: TaskBrowserFilter,
     ) -> TaskBrowserRow:
@@ -609,6 +633,14 @@ class StateDashboardViews:
             open_decision=open_decision,
             diagnosed_stall=diagnosed_stall,
             requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
+            agent_processing=(
+                task.id in agent_processing_ids
+                and task.status in _ACTIVE_TURN_STATUSES
+                and not task.holds
+                and task.wait_reason is None
+                and not open_decision
+                and not diagnosed_stall
+            ),
         )
 
     def escalations(self) -> list[EscalationPanelView]:
@@ -881,7 +913,7 @@ class StateDashboardViews:
         quota_observations = tuple(
             item for item in self.usage() if item.agent in task_agents and item.quotas
         )
-        task_frame = self._motion.frames((task,), now).tasks[0]
+        task_frame = self._motion.frames((task,), now, engine_running=self.engine_up()).tasks[0]
         workflow = _task_workflow(task, detail.events, detail.reports)
         return TaskDetailView(
             task_id=task.id,
