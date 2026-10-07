@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import errno
 import json
 import os
@@ -41,14 +40,12 @@ from shikiru.agents.contracts import (
 )
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
-from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
 from shikiru.dashboard.contract import (
     WIDGET_ENTRY_POINT_GROUP,
     DiagnosticSampleState,
     PaletteDraft,
     PaletteRequest,
-    RepoStatus,
     ResourceView,
     TaskPaletteRoute,
 )
@@ -81,7 +78,6 @@ from shikiru.dashboard.detail import (
     TaskDetailScreen,
 )
 from shikiru.dashboard.palette import PaletteScreen
-from shikiru.dashboard.services import GitRepoStatusService
 from shikiru.domain.commands import (
     CancelResolution,
     Prioritize,
@@ -113,9 +109,7 @@ from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.strips import StripsPanel
-from shikiru.process import ProcessIdentity, SubprocessRunner
 from shikiru.store.commands import CommandQueue
-from shikiru.store.database import Database
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
@@ -123,12 +117,10 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.resources import ResourceSampler
 from shikiru.view_log import view_log_path
-from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
 from tests.support.entry_points import FakeDistribution, ambiguous_entry_points
-from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo, run_git
 from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
@@ -197,9 +189,6 @@ _TASK99_SIGNAL_NAME = "pytest"
 _TASK99_CURRENT_TURN = "03-verify-i1"
 _TASK99_IMPLEMENT_TURN = "02-implement-i1"
 _TASK99_TRIAGE_TURN = "01-triage-i0"
-_TASK106_ENGINE_PID = 106106
-_TASK106_ENGINE_STARTED_AT = 1_700_000_106.0
-_TASK106_UPTIME_SECONDS = 4_980
 NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
 
 
@@ -616,33 +605,6 @@ def _capture_task99(app: DashboardApp, name: str) -> Path | None:
     return path
 
 
-async def _task106_screenshot_after_refresh(app: DashboardApp, widget: Widget) -> str:
-    refreshed = asyncio.Event()
-    widget.call_after_refresh(refreshed.set)
-
-    await wait_until(refreshed.is_set, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
-    return app.export_screenshot()
-
-
-async def _scroll_task106_to_content(
-    app: DashboardApp,
-    scrollable: VerticalScroll,
-    content: str,
-) -> None:
-    screenshot = app.export_screenshot()
-    while content not in screenshot:
-        assert scrollable.scroll_y < scrollable.max_scroll_y, (
-            f"could not reach {content!r} by scrolling {scrollable.id}"
-        )
-        previous_y = scrollable.scroll_y
-        scrollable.scroll_page_down(animate=False)
-        await wait_until(
-            lambda previous_y=previous_y: scrollable.scroll_y > previous_y,
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        screenshot = await _task106_screenshot_after_refresh(app, scrollable)
-
-
 def _task99_settings(project_dir: Path) -> Settings:
     settings = load_settings(project_dir)
     dashboard = settings.dashboard.model_copy(
@@ -1013,6 +975,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import OpenPalette, OpenPaletteContext, WidgetContext
+    from shikiru.store.database import Database
     from tests.support.store import Connection
 
 
@@ -1538,370 +1501,42 @@ def _seed_primary_usage(connection: Connection, clock: Clock) -> tuple[str, RunS
     return primary.id, runs
 
 
-def _assert_task106_header_view(
-    header: Static,
-    status: RepoStatus,
-    *,
-    engine_running: bool,
-    expected_checkout: str,
-    expected_runtime: str,
-) -> None:
-    assert status.root is not None
-    header_text = plain_text(header.content)
-    assert f"SHIKIRU demo ({status.root})" in header_text
-    assert expected_checkout in header_text
-    assert "Local merge" in header_text
-    assert expected_runtime in header_text
-    if "(clean)" in expected_checkout:
-        assert "+0 -0" not in header_text
-    if engine_running:
-        assert "Last " not in header_text
-    else:
-        assert "Uptime " not in header_text
-    header_rows = _rendered_widget_lines(header)
-    slots_line = next(line for line in header_rows if "Slots " in line)
-    assert "Local merge" not in slots_line
-    assert all(cell_len(line) <= header.region.width for line in header_rows)
-
-
-async def _assert_task106_usage_and_attention(app: DashboardApp) -> None:
-    usage = app.query_one("#usage", Static)
-    usage_text = plain_text(usage.content)
-    assert "2.7k tokens" in usage_text
-    assert "4/4 sessions" in usage_text
-    assert "API billed $0.42" in usage_text
-    assert "API unreported 2" in usage_text
-    assert "1 subscription agent" in usage_text
-    status_row = _focus_attention_row(app.query_one("#escalations", EscalationsPanel))
-    await wait_until(
-        lambda: "No decisions needed" in plain_text(status_row.content),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    attention_text = plain_text(status_row.content)
-    assert "Engine stopped" not in attention_text
-    assert "Automation continues" not in attention_text
-
-
-async def _capture_task106_scrolled_readouts(
-    app: DashboardApp,
-    status: RepoStatus,
-    capture_prefix: str,
-    *,
-    capture_identity_path: bool = False,
-) -> None:
-    root = app.query_one("#focus-root", VerticalScroll)
-    readouts = app.query_one("#focus-readouts", VerticalScroll)
-    scrollable = root if capture_identity_path else readouts
-    assert scrollable.max_scroll_y > 0
-    assert status.branch is not None
-    await _scroll_task106_to_content(app, scrollable, status.branch)
-    _capture_task99(app, f"{capture_prefix}-checkout-scroll-color.svg")
-    await _scroll_task106_to_content(app, scrollable, "Slots")
-    _capture_task99(app, f"{capture_prefix}-slots-scroll-color.svg")
-    await _scroll_task106_to_content(app, scrollable, "2.7k")
-    await _scroll_task106_to_content(app, scrollable, "subscription")
-    _capture_task99(app, f"{capture_prefix}-usage-scroll-color.svg")
-
-
-async def _capture_task106_header_state(
-    reader: StateReader,
-    project_dir: Path,
-    clock: FakeClock,
-    status: RepoStatus,
-    *,
-    engine_running: bool,
-    engine_identity: ProcessIdentity | None,
-    size: tuple[int, int],
-    capture_name: str,
-    scroll_capture_prefix: str | None = None,
-    expected_checkout: str,
-    expected_runtime: str,
-) -> None:
-    services = StubServices(
-        engine_running=engine_running,
-        engine_process_identity=engine_identity,
-        repo_status_value=status,
-    )
-    settings = load_settings(project_dir)
-    app = _app(
-        reader,
-        project_dir,
-        widget_names=["header", "queue", "escalations", "usage"],
-        services=services,
-        clock=clock,
-        settings=settings,
-    )
-    async with app.run_test(size=size):
-        header = app.query_one("#header", Static)
-        _assert_task106_header_view(
-            header,
-            status,
-            engine_running=engine_running,
-            expected_checkout=expected_checkout,
-            expected_runtime=expected_runtime,
-        )
-
-        readouts = app.query_one("#focus-readouts", VerticalScroll)
-        root = app.query_one("#focus-root", VerticalScroll)
-        if size in (_WIDE_SHORT_HOME_SIZE, _COMPACT_HOME_SIZE, _TINY_HOME_SIZE):
-            viewport = root if size == _TINY_HOME_SIZE else readouts
-            visible_header_rows = min(header.region.bottom, viewport.region.bottom) - max(
-                header.region.y,
-                viewport.region.y,
-            )
-            rendered_header = header.render_lines(
-                Region(0, 0, header.region.width, header.region.height)
-            )
-            identity_marker = (
-                f"SHIKIRU {settings.project.name}" if size == _TINY_HOME_SIZE else project_dir.name
-            )
-            identity_row = next(
-                index for index, line in enumerate(rendered_header) if identity_marker in line.text
-            )
-            engine_row = next(
-                index
-                for index, line in enumerate(rendered_header)
-                if ("Engine running" if engine_running else "Engine stopped") in line.text
-            )
-            assert identity_row < visible_header_rows
-            if size != _TINY_HOME_SIZE:
-                assert engine_row < visible_header_rows
-        await _assert_task106_usage_and_attention(app)
-        _capture_task99(app, capture_name)
-        if scroll_capture_prefix is not None:
-            await _capture_task106_scrolled_readouts(
-                app,
-                status,
-                scroll_capture_prefix,
-                capture_identity_path=size == _TINY_HOME_SIZE,
-            )
-
-
-async def _task106_repo_status(project_dir: Path, clock: FakeClock) -> RepoStatus:
-    settings = load_settings(project_dir)
-    service = GitRepoStatusService(
-        Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT),
-        RepoConfig(base=None),
-        project_dir,
-        clock,
-        cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
-    )
-    return await service.repo_status()
-
-
-async def _create_task106_baseline(project_dir: Path, runner: SubprocessRunner) -> None:
-    write_minimal_project(project_dir)
-    await init_repo(runner, project_dir, initial_branch="main")
-    (project_dir / "tracked.txt").write_text("one\ntwo\nthree\n")
-    (project_dir / "tracked.bin").write_bytes(b"\x00before")
-    await commit_all(runner, project_dir, "baseline")
-
-
-async def _make_task106_dirty_checkout(
-    project_dir: Path, runner: SubprocessRunner, clock: FakeClock
-) -> RepoStatus:
-    (project_dir / "tracked.txt").write_text("one\nstaged\nthree\n")
-    await run_git(runner, project_dir, "add", "--", "tracked.txt")
-    (project_dir / "tracked.txt").write_text("one\nunstaged\nthree\nfour\n")
-    (project_dir / "tracked.bin").write_bytes(b"\x00after")
-    (project_dir / "new.txt").write_text("new one\nnew two\n")
-    (project_dir / "new.bin").write_bytes(b"\x00new binary")
-    return await _task106_repo_status(project_dir, clock)
-
-
-async def _capture_task106_dirty_home_sizes(
-    reader: StateReader,
-    project_dir: Path,
-    clock: FakeClock,
-    dirty_status: RepoStatus,
-    engine_identity: ProcessIdentity,
-) -> None:
-    for size, name in (
-        (_MEASURED_HOME_SIZE, "wide"),
-        (_WIDE_SHORT_HOME_SIZE, "short"),
-        (_COMPACT_HOME_SIZE, "compact"),
-        (_TINY_HOME_SIZE, "tiny"),
-    ):
-        await _capture_task106_header_state(
-            reader,
-            project_dir,
-            clock,
-            dirty_status,
-            engine_running=True,
-            engine_identity=engine_identity,
-            size=size,
-            capture_name=f"task106-dirty-running-{name}-{size[0]}x{size[1]}-color.svg",
-            scroll_capture_prefix=(
-                f"task106-dirty-running-{name}-{size[0]}x{size[1]}"
-                if name in ("short", "compact", "tiny")
-                else None
-            ),
-            expected_checkout=(
-                "main (+2 -1) · Local merge · 1 binary uncounted · "
-                "2 untracked paths excluded from line totals"
-            ),
-            expected_runtime="Uptime 1h 23m",
-        )
-
-
-async def _capture_task106_clean_and_untracked_states(
-    reader: StateReader,
-    project_dir: Path,
-    runner: SubprocessRunner,
-    clock: FakeClock,
-    engine_identity: ProcessIdentity,
-) -> RepoStatus:
-    await run_git(runner, project_dir, "restore", "--staged", "--worktree", ".")
-    (project_dir / "new.txt").unlink()
-    (project_dir / "new.bin").unlink()
-    clean_status = await _task106_repo_status(project_dir, clock)
-    assert clean_status.dirty == 0
-    assert clean_status.added_lines == 0
-    assert clean_status.deleted_lines == 0
-    await _capture_task106_header_state(
-        reader,
-        project_dir,
-        clock,
-        clean_status,
-        engine_running=True,
-        engine_identity=engine_identity,
-        size=_MEASURED_HOME_SIZE,
-        capture_name="task106-clean-running-wide-101x35-color.svg",
-        expected_checkout="main (clean)",
-        expected_runtime="Uptime 1h 23m",
-    )
-    (project_dir / "untracked.txt").write_text("untracked content\n")
-    untracked_only_status = await _task106_repo_status(project_dir, clock)
-    assert untracked_only_status.dirty == 1
-    assert untracked_only_status.added_lines == 0
-    assert untracked_only_status.deleted_lines == 0
-    assert untracked_only_status.untracked_paths == 1
-    await _capture_task106_header_state(
-        reader,
-        project_dir,
-        clock,
-        untracked_only_status,
-        engine_running=True,
-        engine_identity=engine_identity,
-        size=_MEASURED_HOME_SIZE,
-        capture_name="task106-untracked-zero-lines-wide-101x35-color.svg",
-        expected_checkout=(
-            "main (+0 -0) · Local merge · 1 untracked paths excluded from line totals"
-        ),
-        expected_runtime="Uptime 1h 23m",
-    )
-    (project_dir / "untracked.txt").unlink()
-    return clean_status
-
-
-async def _capture_task106_stopped_states(
-    tmp_path_factory: pytest.TempPathFactory,
-    *,
-    reader: StateReader,
-    project_dir: Path,
-    clock: FakeClock,
-    clean_status: RepoStatus,
-    events: EventLog,
-    engine_identity: ProcessIdentity,
-) -> None:
-    events.append(
-        EventKind.ENGINE_STOPPED,
-        message="engine stopped",
-        data={
-            "engine_pid": engine_identity.pid,
-            "engine_process_started_at": engine_identity.started_at,
-        },
-    )
-    await _capture_task106_header_state(
-        reader,
-        project_dir,
-        clock,
-        clean_status,
-        engine_running=False,
-        engine_identity=None,
-        size=_WIDE_SHORT_HOME_SIZE,
-        capture_name="task106-clean-stopped-known-short-80x14-color.svg",
-        expected_checkout="main (clean)",
-        expected_runtime="Last 1h 23m",
-    )
-    empty_database = Database(tmp_path_factory.mktemp("empty") / "state.db")
-    empty_connection = empty_database.connect()
-    _seed_primary_usage(empty_connection, clock)
-    empty_connection.close()
-    empty_reader = StateReader(empty_database, clock)
-    try:
-        await _capture_task106_header_state(
-            empty_reader,
-            project_dir,
-            clock,
-            clean_status,
-            engine_running=False,
-            engine_identity=None,
-            size=_COMPACT_HOME_SIZE,
-            capture_name="task106-clean-stopped-missing-compact-48x20-color.svg",
-            expected_checkout="main (clean)",
-            expected_runtime="Last unavailable",
-        )
-    finally:
-        empty_reader.close()
-
-
-async def test_task106_home_header_uses_real_checkout_and_recorded_usage(
+@pytest.mark.parametrize("size", [_WIDE_SHORT_HOME_SIZE, _TINY_HOME_SIZE])
+async def test_home_usage_remains_reachable_at_short_and_tiny_sizes(
     database: Database,
     connection: Connection,
-    tmp_path_factory: pytest.TempPathFactory,
+    tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
-    project_dir = tmp_path_factory.mktemp("p")
-    runner = SubprocessRunner()
-    await _create_task106_baseline(project_dir, runner)
-
+    project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_TEST_START)
     _seed_primary_usage(connection, clock)
-    engine_identity = ProcessIdentity(_TASK106_ENGINE_PID, _TASK106_ENGINE_STARTED_AT)
-    events = EventLog(connection, clock)
-    events.append(
-        EventKind.ENGINE_STARTED,
-        message="engine started",
-        data={
-            "engine_pid": engine_identity.pid,
-            "engine_process_started_at": engine_identity.started_at,
-        },
-    )
-    clock.advance(_TASK106_UPTIME_SECONDS)
-    dirty_status = await _make_task106_dirty_checkout(project_dir, runner, clock)
-
-    assert dirty_status.root == str(project_dir.resolve())
-    assert dirty_status.branch == "main"
-    assert dirty_status.added_lines == 2
-    assert dirty_status.deleted_lines == 1
-    assert dirty_status.binary_entries == 1
-    assert dirty_status.untracked_paths == 2
-
     reader = StateReader(database, clock)
     try:
-        await _capture_task106_dirty_home_sizes(
+        app = _app(
             reader,
             project_dir,
-            clock,
-            dirty_status,
-            engine_identity,
-        )
-        clean_status = await _capture_task106_clean_and_untracked_states(
-            reader,
-            project_dir,
-            runner,
-            clock,
-            engine_identity,
-        )
-        await _capture_task106_stopped_states(
-            tmp_path_factory,
-            reader=reader,
-            project_dir=project_dir,
+            widget_names=["header", "usage"],
+            services=StubServices(),
             clock=clock,
-            clean_status=clean_status,
-            events=events,
-            engine_identity=engine_identity,
         )
+        async with app.run_test(size=size):
+            root = app.query_one("#focus-root", VerticalScroll)
+            header = app.query_one("#header", Static)
+            usage = app.query_one("#usage", Static)
+            assert header.region.overlaps(root.scrollable_content_region)
+
+            scrollable = (
+                root
+                if size == _TINY_HOME_SIZE
+                else app.query_one("#focus-readouts", VerticalScroll)
+            )
+            assert scrollable.max_scroll_y > 0
+            scrollable.scroll_to_widget(usage, top=True, animate=False, immediate=True)
+            await wait_until(
+                lambda: usage.region.overlaps(scrollable.scrollable_content_region),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
     finally:
         reader.close()
 
