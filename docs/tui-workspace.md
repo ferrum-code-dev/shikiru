@@ -281,7 +281,7 @@ Show unknown values as `–` with an explanation. A zero is a measured zero. Sep
 
 Project totals are not labelled Today or This week without actual time-bounded queries. Daily trend charts and new billing controls are outside Phase 8; the first workspace uses existing recorded totals and quota gauges.
 
-Diagnostics contains host resources, this instance's process-tree measurements, Docker, open recorded engine-fault streaks and observation ages. It is reachable without occupying the primary task area. Explain absent Docker and failed samples in diagnostics while keeping unrelated task data and task navigation readable. Empty process trees, unavailable Docker, stale observations and failed samples have distinct presentations. A stale sample keeps its actual observation time and includes the latest sampling error; a missing sample has no invented timestamp.
+Diagnostics contains Host CPU/used RAM, Shikiru CPU/RSS excluding agent trees, Agents CPU/RSS for this project, Docker, open recorded engine-fault streaks and observation ages. It is reachable without occupying the primary task area. Explain that process RAM is RSS against sampled host total, not host-used RAM or a per-process limit. Diagnostics reads the same cached resource observation as Home. Explain absent Docker and failed samples while keeping unrelated task data and task navigation readable. Empty process trees, unavailable Docker, stale observations and failed samples have distinct presentations. A stale sample keeps its actual observation time and includes the latest sampling error; a missing sample has no invented timestamp.
 
 ## 13. Visual system
 

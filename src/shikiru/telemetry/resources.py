@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import psutil
+
+from shikiru.process import ProcessIdentity, identify_pid
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -20,7 +22,7 @@ _BYTES_PER_GIB = 1024**3
 
 @dataclass(frozen=True, slots=True)
 class ResourceSnapshot:
-    """The latest host and optional Shikiru process-tree measurements."""
+    """The latest host, Shikiru and agent process-tree measurements."""
 
     host_cpu_pct: float
     host_ram_used_pct: float
@@ -30,6 +32,20 @@ class ResourceSnapshot:
     sampled_at: datetime | None = None
     host_ram_used_bytes: int | None = None
     host_ram_total_bytes: int | None = None
+    shikiru_cpu_pct: float | None = None
+    shikiru_rss_gb: float | None = None
+    agents_cpu_pct: float | None = None
+    agents_rss_gb: float | None = None
+    shikiru_process_tree_empty: bool | None = None
+    agents_process_tree_empty: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceProcessRoots:
+    """Classified live process identities supplied by the current project."""
+
+    shikiru: tuple[ProcessIdentity, ...]
+    agents: tuple[ProcessIdentity, ...]
 
 
 class ResourceSampleError(RuntimeError):
@@ -92,7 +108,27 @@ class ResourceSampler:
     def sample_process_trees(
         self, engine_pid: int | None, pane_pids: Iterable[int]
     ) -> ResourceSnapshot:
-        """Sample host usage and the selected engine and pane process trees."""
+        """Sample a legacy aggregate for the engine and selected pane process trees."""
+        root_pids = list(pane_pids)
+        if engine_pid is not None:
+            root_pids.append(engine_pid)
+        identities = [identity for pid in root_pids if (identity := identify_pid(pid)) is not None]
+        snapshot = self.sample_process_roots(ResourceProcessRoots(tuple(identities), ()))
+        unclassified = replace(
+            snapshot,
+            shikiru_cpu_pct=None,
+            shikiru_rss_gb=None,
+            agents_cpu_pct=None,
+            agents_rss_gb=None,
+            shikiru_process_tree_empty=None,
+            agents_process_tree_empty=None,
+        )
+        self._last = unclassified
+        self._last_complete = unclassified
+        return unclassified
+
+    def sample_process_roots(self, roots: ResourceProcessRoots) -> ResourceSnapshot:
+        """Sample host, Shikiru and agent trees from classified process identities."""
         now = self._clock.now()
         sampled_at = self._instance_sampled_at
         if (
@@ -101,22 +137,28 @@ class ResourceSampler:
         ):
             return self._last_complete
         host_sample = self.sample_if_due()
-        processes = self._process_tree(engine_pid, pane_pids)
-        measurements = [
+        agent_processes = self._process_tree(roots.agents)
+        agent_identities = set(agent_processes)
+        shikiru_processes = {
+            identity: process
+            for identity, process in self._process_tree(roots.shikiru).items()
+            if identity not in agent_identities
+        }
+        all_processes = {**shikiru_processes, **agent_processes}
+        measurements = self._measure_processes(all_processes)
+        shikiru_measurements = [
             measurement
-            for process in processes
-            if (measurement := self._measure(process)) is not None
+            for identity, measurement in measurements.items()
+            if identity in shikiru_processes
         ]
-        instance_cpu_pct: float | None = None
-        instance_rss_gb: float | None = None
-        if measurements:
-            cpu_count = psutil.cpu_count(logical=True)
-            if cpu_count is None or cpu_count < 1:
-                message = "psutil did not report a logical CPU count"
-                raise RuntimeError(message)
-            instance_cpu_pct = sum(cpu for cpu, _ in measurements) / cpu_count
-            rss_bytes = sum(rss for _, rss in measurements)
-            instance_rss_gb = rss_bytes / _BYTES_PER_GIB
+        agent_measurements = [
+            measurement
+            for identity, measurement in measurements.items()
+            if identity in agent_processes
+        ]
+        instance_cpu_pct, instance_rss_gb = _usage(list(measurements.values()))
+        shikiru_cpu_pct, shikiru_rss_gb = _usage(shikiru_measurements)
+        agents_cpu_pct, agents_rss_gb = _usage(agent_measurements)
         snapshot = ResourceSnapshot(
             host_cpu_pct=host_sample.host_cpu_pct,
             host_ram_used_pct=host_sample.host_ram_used_pct,
@@ -126,10 +168,21 @@ class ResourceSampler:
             sampled_at=now,
             host_ram_used_bytes=host_sample.host_ram_used_bytes,
             host_ram_total_bytes=host_sample.host_ram_total_bytes,
+            shikiru_cpu_pct=shikiru_cpu_pct,
+            shikiru_rss_gb=shikiru_rss_gb,
+            agents_cpu_pct=agents_cpu_pct,
+            agents_rss_gb=agents_rss_gb,
+            shikiru_process_tree_empty=not shikiru_measurements,
+            agents_process_tree_empty=not agent_measurements,
         )
         self._last = snapshot
         self._last_complete = snapshot
         self._instance_sampled_at = now
+        self._processes = {
+            identity: process
+            for identity, process in all_processes.items()
+            if identity in measurements
+        }
         return snapshot
 
     def latest(self) -> ResourceSnapshot:
@@ -137,15 +190,14 @@ class ResourceSampler:
         return self._last_complete
 
     def _process_tree(
-        self, engine_pid: int | None, pane_pids: Iterable[int]
-    ) -> list[psutil.Process]:
-        roots = set(pane_pids)
-        if engine_pid is not None:
-            roots.add(engine_pid)
+        self, roots: Iterable[ProcessIdentity]
+    ) -> dict[tuple[int, float], psutil.Process]:
         found: dict[tuple[int, float], psutil.Process] = {}
-        for pid in roots:
+        for root_identity in roots:
             try:
-                root = psutil.Process(pid)
+                root = psutil.Process(root_identity.pid)
+                if not root_identity.matches(_process_identity(root)):
+                    continue
                 descendants = [root, *root.children(recursive=True)]
             except psutil.NoSuchProcess, psutil.ZombieProcess:
                 continue
@@ -153,14 +205,24 @@ class ResourceSampler:
                 raise ResourceSampleError(str(error)) from error
             for process in descendants:
                 try:
-                    identity = (process.pid, process.create_time())
+                    process_key = (process.pid, process.create_time())
                 except psutil.NoSuchProcess, psutil.ZombieProcess:
                     continue
                 except psutil.Error as error:
                     raise ResourceSampleError(str(error)) from error
-                found[identity] = self._processes.get(identity, process)
-        self._processes = found
-        return list(found.values())
+                found[process_key] = self._processes.get(process_key, process)
+        return found
+
+    def _measure_processes(
+        self,
+        processes: dict[tuple[int, float], psutil.Process],
+    ) -> dict[tuple[int, float], tuple[float, int]]:
+        measurements: dict[tuple[int, float], tuple[float, int]] = {}
+        for identity, process in processes.items():
+            measurement = self._measure(process)
+            if measurement is not None:
+                measurements[identity] = measurement
+        return measurements
 
     @staticmethod
     def _measure(process: psutil.Process) -> tuple[float, int] | None:
@@ -180,3 +242,19 @@ class ResourceSampler:
 def _average(values: Iterable[float]) -> float:
     sequence = tuple(values)
     return sum(sequence, 0.0) / len(sequence) if sequence else 0.0
+
+
+def _process_identity(process: psutil.Process) -> ProcessIdentity:
+    return ProcessIdentity(process.pid, process.create_time())
+
+
+def _usage(measurements: list[tuple[float, int]]) -> tuple[float | None, float | None]:
+    if not measurements:
+        return None, None
+    cpu_count = psutil.cpu_count(logical=True)
+    if cpu_count is None or cpu_count < 1:
+        message = "psutil did not report a logical CPU count"
+        raise RuntimeError(message)
+    cpu_pct = sum(cpu for cpu, _ in measurements) / cpu_count
+    rss_gb = sum(rss for _, rss in measurements) / _BYTES_PER_GIB
+    return cpu_pct, rss_gb

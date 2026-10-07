@@ -683,7 +683,7 @@ class AgentUsageView:
 
 @dataclass(frozen=True)
 class ResourceView:
-    """Host and Shikiru process-tree resource measurements."""
+    """Host, Shikiru and agent resource measurements from one sample."""
 
     host_cpu_pct: float
     host_ram_used_pct: float
@@ -696,6 +696,12 @@ class ResourceView:
     error: str | None = None
     host_ram_used_bytes: int | None = None
     host_ram_total_bytes: int | None = None
+    shikiru_cpu_pct: float | None = None
+    shikiru_rss_gb: float | None = None
+    agents_cpu_pct: float | None = None
+    agents_rss_gb: float | None = None
+    shikiru_process_tree_empty: bool | None = None
+    agents_process_tree_empty: bool | None = None
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.console import Console
+from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.dashboard.contract import FOCUS_RESOURCES_VIEW, WidgetPlacement
@@ -11,6 +13,7 @@ from shikiru.ui.compact import render_resource_metric
 from shikiru.ui.screen import widget_is_attached
 
 RESOURCE_ENTER_KEY = "enter"
+RESOURCE_TOP_BORDER_ROWS = 1
 
 if TYPE_CHECKING:
     from textual import events
@@ -54,24 +57,37 @@ class ResourcesPanel(Static):
     def on_resize(self, event: events.Resize) -> None:
         del event
         if self._sample is not None:
-            self.update(render_resource_metric(self._sample, width=self.size.width))
+            self._render_sample_at_current_width()
 
     async def _refresh(self) -> None:
         if not widget_is_attached(self):
             return
         if self._widget_context.placement is WidgetPlacement.DIAGNOSTICS:
             self._sample = self._widget_context.views.resource_sample()
-            self.update(
-                render_resource_metric(self._sample, width=self.size.width)
-                if self._sample is not None
-                else "No cached resource sample."
-            )
+            self._render_sample_at_current_width()
             return
         sample = await self._widget_context.views.resources()
         if not widget_is_attached(self):
             return
         self._sample = sample
-        self.update(render_resource_metric(sample, width=self.size.width))
+        self._render_sample_at_current_width()
+
+    def _render_sample_at_current_width(self) -> None:
+        sample = self._sample
+        if self._widget_context.placement is WidgetPlacement.DIAGNOSTICS:
+            self._update_content(_diagnostics_content(sample, self.size.width))
+            return
+        if sample is None:
+            return
+        self._update_content(render_resource_metric(sample, width=self.size.width))
+
+    def _update_content(self, content: Text) -> None:
+        self.update(content)
+        if self.size.width:
+            rendered_lines = content.wrap(Console(), self.size.width)
+            self.styles.min_height = len(rendered_lines) + RESOURCE_TOP_BORDER_ROWS
+            if self.parent is not None:
+                self.parent.refresh(layout=True)
 
 
 class ResourcesWidget:
@@ -83,3 +99,13 @@ class ResourcesWidget:
     def create(self, context: WidgetContext) -> Widget:
         """Build the resource panel for `context`."""
         return ResourcesPanel(context)
+
+
+def _diagnostics_content(sample: ResourceView | None, width: int) -> Text:
+    metric = render_resource_metric(sample, width=width)
+    age = f"Observed {sample.sampled_ago} ago. " if sample and sample.sampled_ago else ""
+    explanation = (
+        f"{age}CPU is percent of host capacity. Host RAM is used/total; Shikiru and Agents RAM "
+        "are process RSS/host total, not a per-process limit. Shikiru excludes agent trees."
+    )
+    return Text.assemble(metric, "\n", Text(explanation))

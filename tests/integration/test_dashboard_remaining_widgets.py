@@ -86,7 +86,6 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 BYTES_PER_GIB = 1024**3
 OBSERVABLE_PANE_MEMORY_BYTES = 64 * 1024**2
 MINIMUM_PANE_MEMORY_BYTES = 48 * 1024**2
-RSS_COMPARISON_TOLERANCE_GB = 0.01
 CPU_WORK_ITERATIONS = 10_000_000
 CPU_PERCENT_MINIMUM_TOLERANCE = 5.0
 CPU_PERCENT_RELATIVE_TOLERANCE = 0.25
@@ -98,14 +97,17 @@ RESOURCE_READOUT_WIDTH = 48
 COMPACT_READOUT_HEIGHT = 20
 RESOURCE_READOUT_HEIGHT = 8
 USAGE_DETAIL_HEIGHT = 30
+RESOURCE_PROJECT_SESSION = "task110-project"
+RESOURCE_OTHER_SESSION = "task110-other"
+RESOURCE_OTHER_PROJECT_DIRECTORY = "other-project"
+RESOURCE_TEST_RUNG = Rung("fake", "resource-test", None)
 
 
 def _dashboard_services(
     project_dir: Path,
     clock: Clock,
     tmux: Tmux,
-    *,
-    resource_pid: int | None = None,
+    state: StateReader,
 ) -> tuple[DashboardServices, Settings]:
     settings = load_settings(project_dir)
     runner = SubprocessRunner()
@@ -121,7 +123,8 @@ def _dashboard_services(
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         engine_up=lambda: False,
         engine_identity=lambda: None,
-        engine_pid=lambda: resource_pid,
+        project_root=project_dir,
+        state=state,
         tmux=tmux,
         session_target=UNUSED_SESSION_TARGET,
         resources=ResourceSampler(clock, settings.orchestration.resources),
@@ -231,13 +234,14 @@ async def _assert_compact_readouts(context: WidgetContext) -> None:
         text = "\n".join(resource_lines)
         assert "Host" in text
         assert "CPU" in text
-        assert "Shikiru + agents" in text
+        assert "Shikiru CPU/RAM unavailable" in text
+        assert "Agents CPU/RAM unavailable" in text
         assert "RAM" in text
         assert all(cell_len(line) <= RESOURCE_READOUT_WIDTH for line in resource_lines)
 
 
 def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
-    lines = widget.render_lines(Region(0, 0, widget.size.width, widget.size.height))
+    lines = widget.render_lines(Region(0, 0, widget.region.width, widget.region.height))
     return tuple(line.text.rstrip() for line in lines if line.text.strip())
 
 
@@ -721,8 +725,8 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Readable task")
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name)
-    sources, settings = _dashboard_services(project_dir, clock, tmux)
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
+    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
     initial = await sources.resources()
     assert initial.state is DiagnosticSampleState.AVAILABLE
 
@@ -752,15 +756,16 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
     async with app.run_test(size=(100, 50)) as pilot:
         resource_panel = app.query_one("#resources", Static)
         await wait_until(lambda: "Stale" in plain_text(resource_panel.content), timeout=2)
+        await pilot.pause()
         resource_lines = _rendered_widget_lines(resource_panel)
         resource_text = "\n".join(resource_lines)
         assert "Stale" in resource_text
         assert "Host" in resource_text
-        assert "Shikiru + agents" in resource_text
+        assert "Shikiru CPU" in resource_text
+        assert "Agents process tree empty" in resource_text
         assert "CPU" in resource_text
         assert "RAM" in resource_text
         assert "observed" in resource_text
-        assert "CPU/RAM unavailable" in resource_text
         assert all(cell_len(line) <= resource_panel.size.width for line in resource_lines)
         task_row = app.query_one(f"#task-row-{task.id} > Static", Static)
         assert task.title in plain_text(task_row.content)
@@ -777,19 +782,17 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
 
 
 async def test_process_sampling_failure_retains_the_last_complete_tree_sample(
+    connection: Connection,
+    reader: StateReader,
     tmp_path: Path,
     tmux_server: TmuxServer,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    del connection
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name)
-    sources, settings = _dashboard_services(
-        project_dir,
-        clock,
-        tmux,
-        resource_pid=os.getpid(),
-    )
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
+    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
     try:
         initial = await sources.resources()
     except psutil.AccessDenied, PermissionError:
@@ -800,14 +803,18 @@ async def test_process_sampling_failure_retains_the_last_complete_tree_sample(
     assert initial.sampled_at == START
 
     clock.advance(settings.orchestration.resources.sample_seconds)
-    process_factory = psutil.Process
+    children = psutil.Process.children
 
-    def deny_current_process(pid: int) -> psutil.Process:
-        if pid == os.getpid():
-            raise psutil.AccessDenied(pid=pid)
-        return process_factory(pid)
+    def deny_current_process_children(
+        process: psutil.Process,
+        *,
+        recursive: bool = False,
+    ) -> list[psutil.Process]:
+        if process.pid == os.getpid():
+            raise psutil.AccessDenied(pid=process.pid)
+        return children(process, recursive=recursive)
 
-    monkeypatch.setattr(psutil, "Process", deny_current_process)
+    monkeypatch.setattr(psutil.Process, "children", deny_current_process_children)
     stale = await sources.resources()
 
     assert stale.state is DiagnosticSampleState.STALE
@@ -825,14 +832,17 @@ async def test_process_sampling_failure_retains_the_last_complete_tree_sample(
 
 
 async def test_resource_failure_without_a_prior_sample_remains_failed(
+    connection: Connection,
+    reader: StateReader,
     tmp_path: Path,
     tmux_server: TmuxServer,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    del connection
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name)
-    sources, _settings = _dashboard_services(project_dir, clock, tmux)
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
+    sources, _settings = _dashboard_services(project_dir, clock, tmux, reader)
 
     def fail_cpu_sample(*, interval: float | None = None, percpu: bool = False) -> float:
         del interval, percpu
@@ -862,8 +872,8 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Queue remains usable")
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name)
-    sources, settings = _dashboard_services(project_dir, clock, tmux)
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
+    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
     monkeypatch.setenv("PATH", str(tmp_path))
 
     unavailable = await sources.containers()
@@ -927,43 +937,92 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         assert app.screen is home_screen
 
 
-async def test_resources_service_samples_every_pane_in_the_project_session(
+async def test_resources_service_excludes_panes_from_other_projects(
+    connection: Connection,
+    reader: StateReader,
     tmux_server: TmuxServer,
     tmp_path: Path,
 ) -> None:
-    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
-    session_target = "=test"
-    await tmux.new_window(
-        session_target,
-        name="task",
-        command=(
-            sys.executable,
-            "-c",
-            f"import os; allocation=bytearray({OBSERVABLE_PANE_MEMORY_BYTES}); os.read(0, 1)",
-        ),
-    )
-    panes = await tmux.list_session_panes(session_target, "#{pane_id} #{pane_pid}")
-    assert len(panes) == 2
-    pane_pids = [int(line.split()[1]) for line in panes]
-    task_process = psutil.Process(pane_pids[1])
-
-    def task_pane_owns_memory() -> bool:
-        processes = [task_process, *task_process.children(recursive=True)]
-        return max(process.memory_info().rss for process in processes) >= MINIMUM_PANE_MEMORY_BYTES
-
-    await wait_until(task_pane_owns_memory, timeout=5.0)
-    task_tree_rss = sum(
-        process.memory_info().rss
-        for process in [task_process, *task_process.children(recursive=True)]
-    )
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
+    project_dir = write_minimal_project(tmp_path)
+    other_project_dir = tmp_path / RESOURCE_OTHER_PROJECT_DIRECTORY
+    other_project_dir.mkdir()
+    other_project_dir = write_minimal_project(other_project_dir)
     clock = FakeClock(START)
     settings = make_settings()
     sampler = ResourceSampler(clock, settings.orchestration.resources)
+    task = seed_task(connection, clock, title="Owned role pane")
+    tasks = TaskStore(connection, clock)
+    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, RESOURCE_TEST_RUNG)
+    RunStore(connection, clock).mark_taken_over(run.id)
+    sample_command = (
+        sys.executable,
+        "-c",
+        f"import os; allocation=bytearray({OBSERVABLE_PANE_MEMORY_BYTES}); os.read(0, 1)",
+    )
+    home_pane = await tmux.new_session(
+        RESOURCE_PROJECT_SESSION,
+        cwd=project_dir,
+        env={},
+        window_name="dashboard",
+        size=(120, 40),
+        command=sample_command,
+    )
+    session_target = f"={RESOURCE_PROJECT_SESSION}"
+    pane_id = await tmux.new_window(
+        session_target,
+        name=task.id,
+        command=sample_command,
+    )
+    window_id = await tmux.display(pane_id, "#{window_id}")
+    tasks.set_window(task.id, window_id)
+    tasks.set_panes(task.id, {Role.IMPLEMENTER: pane_id})
+    unrelated_pane = await tmux.new_session(
+        RESOURCE_OTHER_SESSION,
+        cwd=other_project_dir,
+        env={},
+        window_name="dashboard",
+        size=(120, 40),
+        command=(
+            sys.executable,
+            "-c",
+            f"import os; allocation=bytearray({OBSERVABLE_PANE_MEMORY_BYTES * 4}); os.read(0, 1)",
+        ),
+    )
+    owned_root = psutil.Process(int(await tmux.display(pane_id, "#{pane_pid}")))
+    home_root = psutil.Process(int(await tmux.display(home_pane, "#{pane_pid}")))
+    unrelated_root = psutil.Process(int(await tmux.display(unrelated_pane, "#{pane_pid}")))
+
+    def pane_trees_own_memory() -> bool:
+        owned = [owned_root, *owned_root.children(recursive=True)]
+        home = [home_root, *home_root.children(recursive=True)]
+        unrelated = [unrelated_root, *unrelated_root.children(recursive=True)]
+        return (
+            max(process.memory_info().rss for process in owned) >= MINIMUM_PANE_MEMORY_BYTES
+            and max(process.memory_info().rss for process in home) >= MINIMUM_PANE_MEMORY_BYTES
+            and max(process.memory_info().rss for process in unrelated)
+            >= MINIMUM_PANE_MEMORY_BYTES * 3
+        )
+
+    await wait_until(pane_trees_own_memory, timeout=5.0)
+    owned_tree_rss = sum(
+        process.memory_info().rss for process in [owned_root, *owned_root.children(recursive=True)]
+    )
+    home_tree_rss = sum(
+        process.memory_info().rss for process in [home_root, *home_root.children(recursive=True)]
+    )
+    unrelated_tree_rss = sum(
+        process.memory_info().rss
+        for process in [unrelated_root, *unrelated_root.children(recursive=True)]
+    )
+    clock = FakeClock(START)
+    tasks_state = reader.list_tasks()
+    assert any(item.id == task.id and item.window_id == window_id for item in tasks_state)
     service = DashboardServices(
         GitRepoStatusService(
             Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT),
             RepoConfig(base=None),
-            tmp_path,
+            project_dir,
             clock,
             cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
         ),
@@ -971,7 +1030,8 @@ async def test_resources_service_samples_every_pane_in_the_project_session(
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         engine_up=lambda: False,
         engine_identity=lambda: None,
-        engine_pid=lambda: None,
+        project_root=project_dir,
+        state=reader,
         tmux=tmux,
         session_target=session_target,
         resources=sampler,
@@ -988,13 +1048,17 @@ async def test_resources_service_samples_every_pane_in_the_project_session(
     except psutil.AccessDenied, PermissionError:
         pytest.skip("host process enumeration is restricted")
 
+    assert snapshot.shikiru_rss_gb is not None
     assert snapshot.instance_rss_gb is not None
-    assert snapshot.instance_rss_gb * BYTES_PER_GIB >= task_tree_rss
-    clock.advance(settings.orchestration.resources.sample_seconds)
-    overlapping_sample = sampler.sample_process_trees(pane_pids[1], pane_pids)
-    assert overlapping_sample.instance_rss_gb is not None
-    assert (
-        overlapping_sample.instance_rss_gb <= snapshot.instance_rss_gb + RSS_COMPARISON_TOLERANCE_GB
+    measured_rss = snapshot.instance_rss_gb * BYTES_PER_GIB
+    assert measured_rss < owned_tree_rss + home_tree_rss + unrelated_tree_rss
+    assert snapshot.shikiru_rss_gb * BYTES_PER_GIB >= home_tree_rss
+    assert snapshot.agents_rss_gb is not None
+    assert snapshot.agents_rss_gb * BYTES_PER_GIB >= owned_tree_rss
+    assert snapshot.agents_process_tree_empty is False
+    assert snapshot.agents_cpu_pct is not None
+    assert snapshot.instance_rss_gb == pytest.approx(
+        snapshot.shikiru_rss_gb + snapshot.agents_rss_gb
     )
 
 
@@ -1010,6 +1074,12 @@ def test_resource_sampler_measures_a_real_process_tree() -> None:
     assert snapshot.instance_cpu_pct is not None
     assert snapshot.instance_rss_gb is not None
     assert snapshot.instance_rss_gb > 0
+    assert snapshot.shikiru_cpu_pct is None
+    assert snapshot.shikiru_rss_gb is None
+    assert snapshot.agents_cpu_pct is None
+    assert snapshot.agents_rss_gb is None
+    assert snapshot.shikiru_process_tree_empty is None
+    assert snapshot.agents_process_tree_empty is None
 
     clock.advance(settings.orchestration.resources.sample_seconds)
     for _ in range(CPU_WORK_ITERATIONS):

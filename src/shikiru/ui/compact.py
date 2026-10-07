@@ -49,10 +49,7 @@ MINUTES_PER_HOUR = 60
 SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR
 HOURS_PER_DAY = 24
 FOCUS_ATTENTION_MAX_HEIGHT = 2
-RESOURCE_TWO_COLUMN_MIN_WIDTH = 69
-RESOURCE_GRID_GAP_CELLS = 2
-RESOURCE_CONTENT_WIDTH_ADJUSTMENT_CELLS = 1
-RESOURCE_GRID_HALF_DIVISOR = 2
+RESOURCE_GROUP_SEPARATOR = " · "
 RESOURCE_FAILED = "failed"
 RESOURCE_UNAVAILABLE = "unavailable"
 RESOURCE_STALE = "stale"
@@ -212,6 +209,24 @@ class _ResourceSample(Protocol):
 
     @property
     def instance_rss_gb(self) -> float | None: ...
+
+    @property
+    def shikiru_cpu_pct(self) -> float | None: ...
+
+    @property
+    def shikiru_rss_gb(self) -> float | None: ...
+
+    @property
+    def agents_cpu_pct(self) -> float | None: ...
+
+    @property
+    def agents_rss_gb(self) -> float | None: ...
+
+    @property
+    def shikiru_process_tree_empty(self) -> bool | None: ...
+
+    @property
+    def agents_process_tree_empty(self) -> bool | None: ...
 
     @property
     def sampled_ago(self) -> str | None: ...
@@ -707,63 +722,50 @@ def _count_label(count: int, noun: str) -> str:
 
 @dataclass(frozen=True)
 class ResourceMetric:
-    """Render one width-wrapping host and Shikiru process-tree observation."""
+    """Render one width-wrapping host, Shikiru and agent observation."""
 
     sample: _ResourceSample | None
 
     def render(self, *, width: int | None = None) -> Text:
         if self.sample is None:
-            return Text("Host and Shikiru resources unavailable · no sample recorded")
+            return Text("Resources unavailable · no sample recorded")
         state = self.sample.state
         if state == RESOURCE_FAILED:
             return _resource_state_line(RESOURCE_FAILED, self.sample)
         if state == RESOURCE_UNAVAILABLE:
             return _resource_state_line(RESOURCE_UNAVAILABLE, self.sample)
-        state_style = AMBER if state == RESOURCE_STALE else SECONDARY_TEXT_COLOR
-        if state == RESOURCE_STALE:
-            state_label = "Stale · "
-        elif state is None:
-            state_label = f"{RESOURCE_STATE_UNKNOWN} · "
-        else:
-            state_label = ""
-        host = _host_resource_text(self.sample)
-        instance = _instance_resource_text(self.sample)
-        age = (
-            f" · observed {self.sample.sampled_ago} ago"
-            if self.sample.sampled_ago and state != RESOURCE_AVAILABLE
-            else ""
+        groups = (
+            _host_resource_text(self.sample),
+            _process_resource_text(
+                "Shikiru",
+                self.sample.shikiru_cpu_pct,
+                self.sample.shikiru_rss_gb,
+                self.sample.host_ram_total_bytes,
+                self.sample.shikiru_process_tree_empty,
+            ),
+            _process_resource_text(
+                "Agents",
+                self.sample.agents_cpu_pct,
+                self.sample.agents_rss_gb,
+                self.sample.host_ram_total_bytes,
+                self.sample.agents_process_tree_empty,
+            ),
         )
-        error = f" · {self.sample.error}" if self.sample.error else ""
-        group_gap = " · "
-        if width is not None and width >= RESOURCE_TWO_COLUMN_MIN_WIDTH:
-            first_group_width = cell_len(state_label) + cell_len(host.plain)
-            content_width = width - RESOURCE_CONTENT_WIDTH_ADJUSTMENT_CELLS
-            second_group_boundary = content_width + RESOURCE_GRID_GAP_CELLS
-            second_group_start = second_group_boundary // RESOURCE_GRID_HALF_DIVISOR
-            if second_group_boundary % RESOURCE_GRID_HALF_DIVISOR:
-                second_group_start += 1
-            group_gap = " " * max(
-                cell_len(group_gap),
-                second_group_start - first_group_width,
-            )
-        elif width is not None:
-            group_gap = "\n"
+        metrics = _wrap_resource_groups(groups, width)
         if state == RESOURCE_STALE:
+            age = f" · observed {self.sample.sampled_ago} ago" if self.sample.sampled_ago else ""
+            error = f" · {self.sample.error}" if self.sample.error else ""
             return Text.assemble(
                 (f"Stale{age}{error}", AMBER),
                 "\n",
-                host,
-                group_gap,
-                instance,
+                metrics,
             )
-        return Text.assemble(
-            (state_label, state_style),
-            host,
-            group_gap,
-            instance,
-            (age, SECONDARY_TEXT_COLOR),
-            (error, AMBER if state == RESOURCE_STALE else ALERT_COLOR),
-        )
+        if state not in {RESOURCE_AVAILABLE, RESOURCE_EMPTY}:
+            return Text.assemble(
+                (f"{RESOURCE_STATE_UNKNOWN}\n", SECONDARY_TEXT_COLOR),
+                metrics,
+            )
+        return metrics
 
 
 def _resource_state_line(state: str, sample: _ResourceSample) -> Text:
@@ -773,23 +775,33 @@ def _resource_state_line(state: str, sample: _ResourceSample) -> Text:
     return Text(f"Resources {state}{error}{age}", style=style)
 
 
-def _instance_resource_text(sample: _ResourceSample) -> Text:
-    if sample.instance_cpu_pct is None or sample.instance_rss_gb is None:
-        if sample.state == RESOURCE_EMPTY:
-            return Text("Shikiru + agents · process tree empty", style=SECONDARY_TEXT_COLOR)
-        return Text("Shikiru + agents · CPU/RAM unavailable", style=SECONDARY_TEXT_COLOR)
+def _process_resource_text(
+    label: str,
+    cpu_pct: float | None,
+    rss_gb: float | None,
+    host_ram_total_bytes: int | None,
+    process_tree_empty: bool | None,
+) -> Text:
+    if cpu_pct is None or rss_gb is None:
+        if process_tree_empty:
+            return Text(f"{label} process tree empty", style=SECONDARY_TEXT_COLOR)
+        return Text(f"{label} CPU/RAM unavailable", style=SECONDARY_TEXT_COLOR)
+    if host_ram_total_bytes is None:
+        ram = "RAM used/total unavailable"
+    else:
+        ram = f"RAM {rss_gb:{GIB_FORMAT}}/{host_ram_total_bytes / BYTES_PER_GIB:{GIB_FORMAT}} GiB"
     return Text.assemble(
-        ("Shikiru + agents ", SECONDARY_TEXT_COLOR),
-        (f"CPU {sample.instance_cpu_pct:.0f}%", STEEL_BLUE),
-        (f" · RAM {sample.instance_rss_gb:{GIB_FORMAT}} GiB", SECONDARY_TEXT_COLOR),
+        (f"{label} ", SECONDARY_TEXT_COLOR),
+        (f"CPU {cpu_pct:.0f}% ", STEEL_BLUE),
+        (ram, SECONDARY_TEXT_COLOR),
     )
 
 
 def _host_resource_text(sample: _ResourceSample) -> Text:
     return Text.assemble(
         ("Host ", SECONDARY_TEXT_COLOR),
-        (f"CPU {sample.host_cpu_pct:.0f}%", STEEL_BLUE),
-        (f" · {_host_ram_text(sample)}", SECONDARY_TEXT_COLOR),
+        (f"CPU {sample.host_cpu_pct:.0f}% ", STEEL_BLUE),
+        (_host_ram_text(sample), SECONDARY_TEXT_COLOR),
     )
 
 
@@ -804,6 +816,23 @@ def _host_ram_text(sample: _ResourceSample) -> str:
 def render_resource_metric(sample: _ResourceSample | None, *, width: int | None = None) -> Text:
     """Render `sample` without starting another resource observation."""
     return ResourceMetric(sample).render(width=width)
+
+
+def _wrap_resource_groups(groups: tuple[Text, ...], width: int | None) -> Text:
+    result = Text()
+    line_width = 0
+    for group in groups:
+        separator = RESOURCE_GROUP_SEPARATOR if line_width else ""
+        group_width = cell_len(group.plain)
+        exceeds_width = line_width + cell_len(separator) + group_width > width if width else False
+        if width is not None and line_width and exceeds_width:
+            result.append("\n")
+            line_width = 0
+            separator = ""
+        result.append(separator)
+        result.append(group)
+        line_width += cell_len(separator) + group_width
+    return result
 
 
 def attention_status_text(

@@ -181,6 +181,6 @@ Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus
 - [x] Task 107: Show multiple recent tasks and make selection the single task-detail route
 - [x] Task 108: Keep action and detail popups over the dashboard and remove redundant controls
 - [x] Task 109: Preserve tmux focus and correct task panes, home naming and chrome
-- [ ] Task 110: Split host, current Shikiru instance and agent resource measurements
+- [x] Task 110: Split host, current Shikiru instance and agent resource measurements
 - [ ] Task 111: Make unknown billing modes understandable and preserve declared subscription facts
 - [ ] Task 112: Verify every reported issue and record native reference alignment
