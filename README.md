@@ -14,7 +14,7 @@ It escalates to the Operator only when something critical comes up.
 - **Live role views** in tmux panes show each headless turn; Operators can take over a role in its native TUI when needed.
 - **Parallel tasks**: each task gets its own git worktree and branch, with instant copy-on-write build caches, a dependency graph, priorities and resource-aware scheduling.
 - **Resilient**: model ladders, a wait for quota resets followed by a real session resume, and recovery after crashes or restarts.
-- **Compact operator workspace**: Focus Home pairs the task list with a selected-task inspector on wide panes, and opens the same detail view from the list on compact panes. Engine uptime, project usage and host/Shikiru resource readouts stay concise; detailed usage, quota, model history, evidence and actions open on demand. Configured secondary widgets remain reachable through Views.
+- **Compact operator workspace**: Focus Home keeps selected-task detail inline at wide and compact widths. Engine uptime, project usage and Host/Shikiru/Agents resource readouts stay concise; detailed usage, quota, model history, evidence and actions open on demand. Configured secondary widgets remain reachable through Views.
 - **Operators everywhere**: a dashboard with a command palette for humans, an MCP server for AI Operators, a small CLI (`--json`) for scripts, and `ls`/`attach` across machines over SSH.
 - **Works with your setup**: your CLAUDE.md/AGENTS.md, skills, plugins, plan and todo files; one git repository per project.
 
@@ -38,17 +38,15 @@ before starting.
 ## Dashboard
 
 `shikiru start` creates Focus Home in the project's `[shikiru] <name>` tmux session. On a wide pane,
-the task list and selected-task inspector sit side by side. On a compact pane, select a task and
-press Enter to open its detail; Escape returns to the same selection. Press `/` to show and focus
-task search, enter a title or task ID, then press Enter to move to the matching results. Up/Down
-changes the selected task. Detail shows the latest validated verdict alongside the request, task
-state, relationships, blocker evidence and available history.
+the task list and selected-task inspector sit side by side. Select a task by clicking it or using
+Up/Down to update the inline detail; Escape clears the selection after closing any overlay. Press
+`/` to show and focus task search, enter a title or task ID, then press Enter to move to matching
+results. Enter activates the focused control and never opens a second task-detail screen.
 
-Click a task row or use Up/Down to select it. Press Enter to inspect it and Escape to return to the
-same selection. Press `Ctrl+P` to open the contextual action menu with the selected task and role
-pre-filled. Its primary actions are Answer decision when one applies, Inspect task, Evidence &
-reports, Message a role, Take over/Hand back when applicable, Usage, Commands and Project
-diagnostics. More actions opens the remaining task and project operations. Answer opens the
+Click a task row or use Up/Down to select it. Press `Ctrl+P` to open contextual Actions with the
+selected task and role pre-filled. Its primary actions are Answer decision when one applies,
+Evidence & reports, Message a role, Take over/Hand back when applicable, Usage, Commands and
+Project diagnostics. More actions opens the remaining task and project operations. Answer opens the
 recorded question directly; only its explicit submit queues an answer. Form inputs retain native
 editing keys, and Escape returns without submitting. In task detail, `e` opens Evidence, `u` opens
 Usage Details and `v` opens the broader contextual Views menu. The Views menu also opens Help,
@@ -57,13 +55,14 @@ Selecting a task updates its inline detail, and Escape clears the selection afte
 overlay. Home's `Ctrl+P` opens contextual Actions over the running dashboard. `prefix + Space`
 does the same on Home; in other Shikiru panes it opens the standalone palette with that pane's
 task and role context. The binding is session-scoped, so unrelated sessions keep tmux's normal
-`next-layout` action. The Home footer also shows the effective prefix and detach hint. `?` opens
-contextual help.
+`next-layout` action. When the Home footer is visible it shows the effective prefix and detach
+hint; at the 20×8 reachability floor, `Ctrl+P`, `?`, Escape and tmux prefix+`d` remain available
+while the footer is hidden. `?` opens contextual help.
 
-The compact Focus layout shipped in Phase 9. Phase 10 aligned the native composition and direct
-routes to the approved reference while preserving the recorded usage, resource, ownership and
-plugin contracts. The [Focus specification](docs/tui-focus.md) describes those evidence rules; the
-[parity specification](docs/tui-parity.md) records the measured native layout and supported routes.
+Phase 11 completes native verification against the approved reference. The [Focus specification](docs/tui-focus.md)
+describes current routes and evidence rules; the [parity record](docs/tui-parity.md) preserves the
+measured Phase 10 audit. See the [Phase 11 release record](docs/release-readiness-2026-10-07-phase11.md)
+for matched native captures, walkthroughs, test gates and documented limits.
 
 The dashboard labels command outcomes **Pending**, **Applied** or **Rejected**. Pending means the
 command is still in the durable queue; when the engine is stopped it can apply after the next
@@ -115,7 +114,7 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 
 - Design: [`docs/design`](docs/design/README.md)
 - Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — Phase 8 interaction and evidence specification. Tasks 75–88 are verified on macOS; a fresh Codex gpt-6-luna E1–E6 run, the normal and `TERM=dumb` full gates, and the clean-install/navigation smoke passed. GNU/Linux was not run and remains unverified. The older Task 59, 74h and 74p review gates remain open. See the [2026-10-03 release record](docs/release-readiness-2026-10-03-phase8.md).
-- Compact Operator TUI: [`docs/tui-focus.md`](docs/tui-focus.md) — shipped Focus layout, billing and usage evidence contract. [`docs/tui-parity.md`](docs/tui-parity.md) and the [Phase 10 release record](docs/release-readiness-2026-10-05-phase10.md) document the accepted Tasks 97–102 correction and Root sign-off at `580368c`. The [approved standalone mockup](docs/design/references/focus-steel-approved.html) and [selected 736-pixel view](docs/design/references/focus-steel-approved-736.png) remain immutable.
+- Compact Operator TUI: [`docs/tui-focus.md`](docs/tui-focus.md) — current Focus routes plus the billing and usage evidence contract. [`docs/tui-parity.md`](docs/tui-parity.md) and the [Phase 10 release record](docs/release-readiness-2026-10-05-phase10.md) preserve the accepted Tasks 97–102 audit. The [Phase 11 release record](docs/release-readiness-2026-10-07-phase11.md) documents current native verification, operator walkthroughs and limits. The [approved standalone mockup](docs/design/references/focus-steel-approved.html) and [selected 736-pixel view](docs/design/references/focus-steel-approved-736.png) remain unchanged.
 - Phase 9 release evidence: [`docs/release-readiness-2026-10-04-phase9.md`](docs/release-readiness-2026-10-04-phase9.md) — macOS gates, connected fake-agent walkthroughs, fresh E1–E6, visual review, limits and host hygiene.
 - Phase 10 release evidence: [`docs/release-readiness-2026-10-05-phase10.md`](docs/release-readiness-2026-10-05-phase10.md) — connected correction walkthroughs, final gates, macOS clean-install/navigation smoke, native-cell review, limits and host hygiene.
 - Workspace walkthrough evidence: [`docs/workspace-walkthroughs-2026-10-03.md`](docs/workspace-walkthroughs-2026-10-03.md) — executed flows, fixtures and observed limits.

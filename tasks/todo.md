@@ -174,7 +174,7 @@ Target: [Focus terminal parity correction](../docs/tui-parity.md); acceptance cr
 
 ## Phase 11 — Real-project TUI corrections
 
-Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus-steel-approved.html); scope and acceptance criteria: [plan.md](plan.md#phase-11-real-project-tui-corrections). Implement Tasks 105–112 in order. Template review is complete; native fixes are pending. Preserve the historical Phase 10 evidence.
+Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus-steel-approved.html); scope and acceptance criteria: [plan.md](plan.md#phase-11-real-project-tui-corrections). Tasks 105–112 and native verification are complete; preserve the historical Phase 10 evidence and use the [Phase 11 release record](../docs/release-readiness-2026-10-07-phase11.md) for current limits and evidence.
 
 - [x] Task 105: Prevent dashboard refresh callbacks from crashing during screen teardown
 - [x] Task 106: Align dashboard identity, checkout, summaries and engine status with the reference
@@ -183,4 +183,4 @@ Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus
 - [x] Task 109: Preserve tmux focus and correct task panes, home naming and chrome
 - [x] Task 110: Split host, current Shikiru instance and agent resource measurements
 - [x] Task 111: Make unknown billing modes understandable and preserve declared subscription facts
-- [ ] Task 112: Verify every reported issue and record native reference alignment
+- [x] Task 112: Verify every reported issue and record native reference alignment

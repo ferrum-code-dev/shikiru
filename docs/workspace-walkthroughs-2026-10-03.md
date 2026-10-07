@@ -4,6 +4,8 @@ The shipped application source exercised here is baseline commit `eed895fda03fb0
 
 This is the historical Phase 8 walkthrough record. Task 96's additional Focus operator flows, mixed billing/model-history projections and release verification are recorded separately in the [2026-10-04 Phase 9 release record](release-readiness-2026-10-04-phase9.md).
 
+The Enter-to-open-detail and narrow system-pane observations below are historical Phase 8 behavior, not the current Home contract. Phase 11 selects tasks into inline detail, keeps contextual overlays on the mounted Home dashboard, and uses the default full-width Leader/Implementer/Project folder 40/40/20 task window without a system pane. Current native captures and connected verification are in the [Phase 11 release record](release-readiness-2026-10-07-phase11.md).
+
 All commands used the project `.venv` through `uv`, isolated pytest temporary projects, real SQLite and Git where the fixture owns them, Textual `run_test`, `FakeClock` with `wait_until_advancing`, and `tests/support/tmux.py::tmux_server` on a unique private socket. The suite did not connect to the user's tmux server or cache. The Task 87 file uses the installed fake agent and a private Shikiru tmux session to run the engine for flows 1, 3, 5, 6 and 7.
 
 ## Connected fake-agent engine walkthroughs

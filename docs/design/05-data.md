@@ -109,7 +109,9 @@ layout = { split = "v", panes = [
 
 Projects without an explicit `dashboard.layout` inherit this packaged task-window layout. Existing
 project files that declare a layout keep that override unchanged; remove or edit the override to
-adopt the packaged default. No configuration migration rewrites an operator's layout.
+adopt the packaged default. This creates Leader, Implementer and Project folder panes only; Home
+runs in the separate `dashboard` window and the default task window has no system pane. No
+configuration migration rewrites an operator's layout.
 
 [dashboard.motion]
 refresh_hz = 4                                  # at most 4

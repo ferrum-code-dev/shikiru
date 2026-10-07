@@ -6,9 +6,9 @@ This document specifies the TUI for [Phase 8](../tasks/plan.md#phase-8--operator
 
 This remains the historical Phase 8 specification and delivery record. Tasks 93–96 ship the [Compact Operator TUI](tui-focus.md) as Home's primary presentation, convert shared task detail to compact identity, stage/activity and combined session usage, complete responsive compatibility and record Phase 9 release verification. Phase 8 completion, evidence and its independently open historical review gates remain unchanged. See the [Phase 9 release record](release-readiness-2026-10-04-phase9.md).
 
-Task 107 and Phase 11's [operator interface rules](design/06-operator.md#54-workspace-shell-and-widgets) supersede conflicting historical Home routes here: selecting a task updates the shared inline detail, Escape clears the selection after closing an overlay, and Home's prefix+Space routes to the mounted dashboard. Separate role panes keep the standalone palette popup and its task/role context.
+Task 112 completes Phase 11; its [release record](release-readiness-2026-10-07-phase11.md) records native alignment, connected walkthroughs and final gates. Current operator behavior is specified in [06 · Operator Interfaces](design/06-operator.md#54-workspace-shell-and-widgets): selecting a task updates shared inline detail, Escape clears the selection after closing an overlay, and Home's prefix+Space routes to the mounted dashboard. Separate role panes keep the standalone palette popup and its task/role context.
 
-The workspace refines [06 · Operator Interfaces](design/06-operator.md), especially §5.4–5.5 and §6: the system pane becomes a navigable workspace with distinct home and task views, contextual actions, and persistent command feedback. The comic strip remains the task's expanded progress view. The architecture and workflow in [02](design/02-architecture.md) and [03](design/03-workflow.md) govern all state changes.
+This remains the historical Phase 8 specification and walkthrough. Its original system-pane and Enter-inspection routes below describe that accepted implementation only; they are superseded by current Home routes in 06 §5.4–5.5. The packaged task window is a full-width Leader 40%, Implementer 40%, Project folder shell 20% stack with no system pane. Explicit custom layouts remain supported. The comic strip remains a task workflow view. The architecture and workflow in [02](design/02-architecture.md) and [03](design/03-workflow.md) govern all state changes.
 
 The implementation stays on Python, Textual, Rich, SQLite and tmux. The engine remains the single writer. Human actions use the same operator services as MCP; remote access continues over SSH. Existing role panes remain structured live views and run the agent's native TUI during takeover.
 
@@ -74,9 +74,9 @@ An escalation remains visible until durable state says it is resolved. When its 
 
 ### 4.3 Main body
 
-The home body contains a selectable task browser, shared task detail access, and recent project activity. On a wide pane, browser and detail sit side by side. On a compact pane, Enter opens detail and Escape returns to the browser with its previous selection and scroll position. Task 80 composed these with the existing header and bounded summaries; Task 85 shipped responsive wide and compact layouts.
+The original Phase 8 home body contained a selectable task browser, shared task detail access, and recent project activity. Current Focus Home keeps selected detail inline; Enter does not open detail. Task 80 composed the historical workspace with the existing header and bounded summaries; Task 85 shipped its original responsive wide and compact layouts.
 
-Recent activity covers verdicts, scope changes, completions, holds, retry/rework transitions, quota changes, integration waits, engine faults and recovery. Routine tool traffic belongs in task evidence and the role panes. Usage and diagnostics are secondary views reachable from the workspace navigation and palette. At 100 columns or more and more than 18 rows, browser and shared task detail sit side by side; compact panes stack the same mounted browser and detail so selection, search and reading state survive resize.
+Recent activity covers verdicts, scope changes, completions, holds, retry/rework transitions, quota changes, integration waits, engine faults and recovery. Routine tool traffic belongs in task evidence and the role panes. Usage and diagnostics are secondary views reachable in the current Home Views menu and palette. The historical Phase 8 layout used a 100-column and 18-row threshold; current Focus Home splits at 73 columns and stacks below that width.
 
 Illustrative wide home view; the numbers and task names are examples:
 
@@ -98,7 +98,7 @@ Illustrative wide home view; the numbers and task names are examples:
  └────────────────────────────┘ │ [Resolve] [Evidence] [Window]    │
                                 └─────────────────────────────────┘
  Recent activity · Verdicts, scope changes and completions
- Tab: section   ↑↓: select   Enter: details   Ctrl+P: actions   ?: help
+ Tab: section   ↑↓: select   Enter: activate   Ctrl+P: actions   ?: help
 ```
 
 ## 5. Task browser
@@ -114,7 +114,7 @@ Every row keeps the task ID, title and meaningful state visible. Additional colu
 | History | `done`, `cancelled` | Latest finish time first, then sequence. |
 | All | Every task | Non-terminal tasks first, then history. |
 
-Search matches task ID and title case-insensitively and combines with the selected filter. Press `/` to focus search, type a title or task ID, then press Enter to move focus to the result list; Up/Down select a row there, and Enter opens its detail. While the search input has focus, Up/Down move its text cursor. The full request is available in detail. Display the active search/filter, matching count and a clear empty result. Clear search and switching filters are explicit operations.
+Search matches task ID and title case-insensitively and combines with the selected filter. Press `/` to focus search, type a title or task ID, then press Enter to move focus to the result list; Up/Down select a row and update inline detail. Enter activates the focused control and does not open duplicate detail. While the search input has focus, Up/Down move its text cursor. The full request is available in detail. Display the active search/filter, matching count and a clear empty result. Clear search and switching filters are explicit operations.
 
 Queued rows use the same dispatch sort rule as the scheduler. A displayed position is an ordering aid, not a promised start time; eligibility can change and agent quota blocks can allow another task to proceed first.
 
@@ -149,7 +149,7 @@ Task 77 ships situation and ownership, the semantic strip for the task's actual 
 
 Task 82 adds collapsible blocker evidence and task relationships to this detail. The blockers section shows the stored scheduler reason with current available evidence and recognizes a running quota wait only from the task's current unresolved turn lifecycle, matching role/rung evidence, task quota-block event and still-live account block. Resource sample age is labelled separately from the scheduler reason; a provider reset, including an unknown reset, remains separate from the engine retry/probe deadline. PR details use recorded events and do not claim live CI observation. Relationship pages show their current position and provide Previous and More controls, disabled at the first and last page; navigating pages keeps the detail identity, selected related task and focus on the available page control. Submitted age and recorded requeued age use their respective timestamps; there is no blocker-age or start-time estimate. Related tasks reuse the existing detail callback, and returning preserves Home's browser selection, search and reading position.
 
-In Home, Enter pushes this shared detail screen for the selected task. Escape dismisses it and restores the browser selection, focus and scroll position. In `dash --task`, the detail is fixed to the task and task-scoped Activity/Usage views remain available. The task view omits project-wide header, queue, escalation, strip and diagnostics widgets. Configured third-party widgets remain reachable in Extensions. Contextual views provide existing-window and role-pane navigation; `Ctrl+P` and the Views dialog's Actions button open the shared action palette with task and role context. The Views dialog's Help button opens task-context help. Task 78 shipped contextual workflow eligibility and action forms; Task 94 removes the always-visible action controls while retaining them in the palette.
+Current Home selection updates shared inline detail; Escape clears that selection after closing any overlay. In `dash --task`, detail is fixed to the task and task-scoped Activity/Usage views remain available. The task view omits project-wide header, queue, escalation, strip and diagnostics widgets. Configured third-party widgets remain reachable in Extensions. Contextual views provide existing-window and role-pane navigation; `Ctrl+P` and the Views dialog's Actions button open the shared action palette with task and role context. The Views dialog's Help button opens task-context help. Task 78 shipped contextual workflow eligibility and action forms; Task 94 removes the always-visible action controls while retaining them in the palette.
 
 ## 7. Navigation and keyboard contract
 
@@ -157,7 +157,7 @@ In Home, Enter pushes this shared detail screen for the selected task. Escape di
 |---|---|---|
 | Workspace | `Tab`, `Shift+Tab` | Move between visible interactive sections. |
 | Task or attention list | `Up`, `Down` | Move the selection and keep it visible. |
-| Selected task | `Enter` | Open shared detail in a screen and preserve the browser context underneath. |
+| Selected task | `Enter` | Activate the focused control; task selection updates Home's inline detail. |
 | Detail, section or evidence | `z` | Expand the focused section to the available body area. |
 | Detail, expanded view or modal | `Escape` | Return to the previous view and restore its focus. |
 | Workspace or detail | `Ctrl+P` | Open the shared palette with the current task and role context. |
@@ -295,7 +295,7 @@ Motion retains the existing signal-driven spinner, diagnosed stall, verdict/merg
 
 ## 14. Responsive layout and accessibility
 
-Choose layout from the dashboard pane's available width and height, not the outer terminal. The default task system pane may be only 36–48 columns on an ordinary terminal. Layout limits are named implementation constants, not operator settings.
+Choose Home layout from the dashboard pane's available width and height, not the outer terminal. The default task window is a full-width 40/40/20 Leader/Implementer/Project folder stack and has no system pane. A configured `system` leaf is custom layout and remains as configured. Layout limits are named implementation constants, not operator settings.
 
 | Available space | Behaviour |
 |---|---|
@@ -305,7 +305,7 @@ Choose layout from the dashboard pane's available width and height, not the oute
 | Narrow task pane | Render ID/title, state/hold/blocker and role on separate compact lines. |
 | Extremely small pane | Show a compact identity/state and accessible navigation/help; explain when more space is needed for a form. |
 
-The shared Home browser/detail split starts at `HOME_SPLIT_MIN_COLUMNS` (100 columns) and requires a pane taller than `SHORT_PANE_MAX_ROWS` (18 rows). Otherwise Home stacks the existing browser and shared detail panel in one scroll area. Its split height is clamped to `HOME_SPLIT_MIN_ROWS` (8) through `HOME_SPLIT_MAX_ROWS` (32). At `COMPACT_LAYOUT_MAX_COLUMNS` (59 columns) or a short pane, summaries collapse to one line. At `VERY_SMALL_MAX_COLUMNS` (23 columns) or `VERY_SMALL_MAX_ROWS` (9 rows), navigation uses one row and the browser list shrinks to its tiny form. The compact footer remains four rows, with a two-row control strip; at 40 columns or less its command-history button reads `Cmds`. Compact detail is bounded within Home and its body remains scrollable. At 18 rows or less, the palette gives text areas three rows so one editable row remains between borders, and scrolls the focused field into view.
+Current Home splits the task list and inline inspector at 73 columns or wider and stacks below that width. Height affects available readout and task rows; it does not change the width mode. The footer hides below 9 rows; Escape clears selection, `Ctrl+P` opens Actions, `?` opens Help and tmux prefix+`d` detaches at the 20×8 floor. Inline detail and compact popups scroll so task identity, decision context and critical controls remain reachable. The older Phase 8 thresholds and footer dimensions are historical implementation details, not current layout rules.
 
 The interaction matrix covers 120×40, 48×20, 36×20, 48×14 and 20×8 panes, including `NO_COLOR`, `TERM=dumb` and static animation. The tested 20×8 layout keeps compact identity and navigation reachable; longer evidence and forms require scrolling, and comfortable form entry needs more rows. The supported glyph policy is unchanged: ambiguous-width CJK terminal settings remain unsupported.
 

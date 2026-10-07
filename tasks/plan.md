@@ -1101,22 +1101,24 @@ Task111 evidence: Existing factory and engine/store integration coverage traces 
 
 ### Task 112: Verify every reported issue and record native reference alignment
 Refs: Tasks 105–111; updated HTML; 07 §3; historical Phase 10 evidence.
-- [ ] Run a connected fake-agent/operator/tmux walkthrough covering dashboard refresh/teardown, dispatch without window switching, the separate 40/40/20 panes, multiple Recent tasks, selection and Escape, inline compact detail, all popup entry/close routes, Answer submission, detach, resource scopes and billing declarations. Exercise stopped/restarted engine states and retain command/ownership/hold guarantees.
-- [ ] Compare matched native populations/facts against the current HTML, not its sample values or historical PNG. Record exact source revision, reference hash, measured CSS-to-cell mapping and color/monochrome artifacts at wide, short-wide and compact geometries, including 101×35, 120×40, 80×24/14, 48×20, 36×14/20 and the previously supported 20×8 floor. Resolve reachable-detail, spacing, separator, overlay, palette, label and keyboard gaps rather than accepting a qualitative resemblance; no golden catalogue or screenshot dependency.
-- [ ] Run normal and `TERM=dumb NO_COLOR=1` full quality gates plus the existing macOS clean-install/attach/navigation smoke. Verify configured built-in/external widgets and custom tmux layouts remain reachable. Real-agent E2E is required only if changed engine/agent behavior warrants it under the existing verification rules; do not claim Linux/other-host support or paid-agent evidence without a run.
-- [ ] Reconcile normative operator/architecture/configuration/Focus/parity docs and walkthroughs with the delivered behavior, including removing obsolete Enter inspection/default system-pane instructions. Preserve prior acceptance history and original PNG, record each report item's result and any actual remaining limitation, and clean up only task-owned processes/sockets/scratch. Tick this task only when all preceding ACs and the issue checklist have evidence.
+- [x] Run a connected fake-agent/operator/tmux walkthrough covering dashboard refresh/teardown, dispatch without window switching, the separate 40/40/20 panes, multiple Recent tasks, selection and Escape, inline compact detail, all popup entry/close routes, Answer submission, detach, resource scopes and billing declarations. Exercise stopped/restarted engine states and retain command/ownership/hold guarantees.
+- [x] Compare matched native populations/facts against the current HTML, not its sample values or historical PNG. Record exact source revision, reference hash, measured CSS-to-cell mapping and color/monochrome artifacts at wide, short-wide and compact geometries, including 101×35, 120×40, 80×24/14, 48×20, 36×14/20 and the previously supported 20×8 floor. Resolve reachable-detail, spacing, separator, overlay, palette, label and keyboard gaps rather than accepting a qualitative resemblance; no golden catalogue or screenshot dependency.
+- [x] Run normal and `TERM=dumb NO_COLOR=1` full quality gates plus the existing macOS clean-install/attach/navigation smoke. Verify configured built-in/external widgets and custom tmux layouts remain reachable. Real-agent E2E is required only if changed engine/agent behavior warrants it under the existing verification rules; do not claim Linux/other-host support or paid-agent evidence without a run.
+- [x] Reconcile normative operator/architecture/configuration/Focus/parity docs and walkthroughs with the delivered behavior, including removing obsolete Enter inspection/default system-pane instructions. Preserve prior acceptance history and original PNG, record each report item's result and any actual remaining limitation, and clean up only task-owned processes/sockets/scratch. Tick this task only when all preceding ACs and the issue checklist have evidence.
+
+Task112 evidence: The [Phase 11 release record](../docs/release-readiness-2026-10-07-phase11.md) records all walkthroughs, the matched fixture and CSS-to-cell matrix, native color/monochrome exports, per-issue outcomes, full gates, smoke, billing/platform limits and ownership cleanup. Implementation revision `b84c5214b62f97b12705219005ffd8545f0effa2`; HTML source SHA-256 `b674503697e4dafaedb97ff2a440baacf9f51f288dda6b37bc7bf05b508a2de4`.
 
 ### Reported-issue coverage
 
 | Reported issue or review correction | Implementation / verification |
 |---|---|
-| Intermittent `NoScreen` and dead dashboard pane | 105, 112 |
-| Token/session/API alignment; identity/path, branch/change parentheses and color; blank rows; Slots labels; TASKS heading | 106, 112 |
-| Green Engine running/red Engine stopped; grey Last when stopped; concise No decisions needed | 106, 112 |
-| Multiple Recent tasks without dependency decoration | 107, 112 |
-| Escape clears selection; remove duplicate Enter inspect; keep inline details accessible; detach hint after actions | 107, 109, 112 |
-| Popups overlap the dashboard; `Esc ×`; remove Situation, Usage self-link, Answer Evidence and task-detail actions duplication | 108, 112 |
-| No dispatch window switch; separate vertical Leader/Implementer/shell 40/40/20; no pane preview | 109, 112 |
-| Remove redundant top chrome; project-aware terminal/session title; `0:dashboard`; preserve task window titles | 109, 112 |
-| Host/Shikiru/Agents CPU and RAM with exact dot separators and truthful instance/agent scopes | 110, 112 |
-| Unknown billing mode versus explicit subscription/API and unreported charges | 111, 112 |
+| Intermittent `NoScreen` and dead dashboard pane | 105, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+| Token/session/API alignment; identity/path, branch/change parentheses and color; blank rows; Slots labels; TASKS heading | 106, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+| Green Engine running/red Engine stopped; grey Last when stopped; concise No decisions needed | 106, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+| Multiple Recent tasks without dependency decoration | 107, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+| Escape clears selection; remove duplicate Enter inspect; keep inline details accessible; detach hint after actions | 107, 109, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+| Popups overlap the dashboard; `Esc ×`; remove Situation, Usage self-link, Answer Evidence and task-detail actions duplication | 108, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+| No dispatch window switch; separate vertical Leader/Implementer/shell 40/40/20; no pane preview | 109, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+| Remove redundant top chrome; project-aware terminal/session title; `0:dashboard`; preserve task window titles | 109, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+| Host/Shikiru/Agents CPU and RAM with exact dot separators and truthful instance/agent scopes | 110, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
+| Unknown billing mode versus explicit subscription/API and unreported charges | 111, 112 ([release evidence](../docs/release-readiness-2026-10-07-phase11.md)) |
