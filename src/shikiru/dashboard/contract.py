@@ -230,6 +230,9 @@ class RecordedUsageView:
     unknown_billing_sessions: int
     subscription_sessions: int
     subscription_agents: tuple[str, ...]
+    unknown_billing_operator_config_sessions: int = 0
+    unknown_billing_provider_reported_sessions: int = 0
+    unknown_billing_source_unknown_sessions: int = 0
 
 
 @dataclass(frozen=True)

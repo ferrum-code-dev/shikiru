@@ -11,6 +11,9 @@ from shikiru.agents.contracts import (
     BILLING_MODE_API,
     BILLING_MODE_SUBSCRIPTION,
     BILLING_MODE_UNKNOWN,
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    BILLING_SOURCE_PROVIDER_REPORTED,
+    BILLING_SOURCE_UNKNOWN,
     COST_BASIS_UNKNOWN,
     FailureKind,
 )
@@ -1710,6 +1713,21 @@ def _recorded_usage(runs: Sequence[Run]) -> RecordedUsageView:
         subscription_sessions=sum(run.billing_mode == BILLING_MODE_SUBSCRIPTION for run in runs),
         subscription_agents=tuple(
             sorted({run.agent for run in runs if run.billing_mode == BILLING_MODE_SUBSCRIPTION})
+        ),
+        unknown_billing_operator_config_sessions=sum(
+            run.billing_mode == BILLING_MODE_UNKNOWN
+            and run.billing_source == BILLING_SOURCE_OPERATOR_CONFIG
+            for run in runs
+        ),
+        unknown_billing_provider_reported_sessions=sum(
+            run.billing_mode == BILLING_MODE_UNKNOWN
+            and run.billing_source == BILLING_SOURCE_PROVIDER_REPORTED
+            for run in runs
+        ),
+        unknown_billing_source_unknown_sessions=sum(
+            run.billing_mode == BILLING_MODE_UNKNOWN
+            and run.billing_source == BILLING_SOURCE_UNKNOWN
+            for run in runs
         ),
     )
 

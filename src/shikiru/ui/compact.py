@@ -14,6 +14,10 @@ from rich.text import Text
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
     BILLING_MODE_SUBSCRIPTION,
+    BILLING_MODE_UNKNOWN,
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    BILLING_SOURCE_PROVIDER_REPORTED,
+    BILLING_SOURCE_UNKNOWN,
     COST_BASIS_API_EQUIVALENT,
     COST_BASIS_BILLED,
     COST_BASIS_UNKNOWN,
@@ -127,6 +131,15 @@ class _RecordedUsage(Protocol):
 
     @property
     def unknown_billing_sessions(self) -> int: ...
+
+    @property
+    def unknown_billing_operator_config_sessions(self) -> int: ...
+
+    @property
+    def unknown_billing_provider_reported_sessions(self) -> int: ...
+
+    @property
+    def unknown_billing_source_unknown_sessions(self) -> int: ...
 
     @property
     def subscription_sessions(self) -> int: ...
@@ -406,6 +419,15 @@ class _TaskUsage(Protocol):
     def unknown_billing_sessions(self) -> int: ...
 
     @property
+    def unknown_billing_operator_config_sessions(self) -> int: ...
+
+    @property
+    def unknown_billing_provider_reported_sessions(self) -> int: ...
+
+    @property
+    def unknown_billing_source_unknown_sessions(self) -> int: ...
+
+    @property
     def subscription_sessions(self) -> int: ...
 
     @property
@@ -663,7 +685,46 @@ class ProjectUsageDetails:
                     style=SECONDARY_TEXT_COLOR,
                 )
             )
+            lines.extend(_unknown_billing_source_lines(usage))
+        lines.append(
+            Text(
+                f'New sessions: set [agents.<name>.options].billing_mode to "{BILLING_MODE_API}", '
+                f'"{BILLING_MODE_SUBSCRIPTION}" or "{BILLING_MODE_UNKNOWN}".',
+                style=SECONDARY_TEXT_COLOR,
+            )
+        )
+        lines.append(
+            Text("Existing sessions keep their recorded declaration.", style=SECONDARY_TEXT_COLOR)
+        )
         return Group(*lines)
+
+
+def _unknown_billing_source_lines(usage: _RecordedUsage) -> list[Text]:
+    sources = (
+        (
+            usage.unknown_billing_operator_config_sessions,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+            f"explicitly set to {BILLING_MODE_UNKNOWN}",
+        ),
+        (
+            usage.unknown_billing_provider_reported_sessions,
+            BILLING_SOURCE_PROVIDER_REPORTED,
+            f"provider-reported {BILLING_MODE_UNKNOWN}",
+        ),
+        (
+            usage.unknown_billing_source_unknown_sessions,
+            f"{BILLING_SOURCE_UNKNOWN} source",
+            "declaration unavailable/not recorded",
+        ),
+    )
+    return [
+        Text(
+            f"{source} · {_session_count(count)} {description}",
+            style=SECONDARY_TEXT_COLOR,
+        )
+        for count, source, description in sources
+        if count
+    ]
 
 
 def _primary_billing_summary(usage: _RecordedUsage, *, home: bool = False) -> str:

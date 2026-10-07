@@ -21,6 +21,7 @@ from shikiru.agents.contracts import (
     BILLING_MODE_SUBSCRIPTION,
     BILLING_MODE_UNKNOWN,
     BILLING_SOURCE_OPERATOR_CONFIG,
+    BILLING_SOURCE_PROVIDER_REPORTED,
     BILLING_SOURCE_UNKNOWN,
     BillingDeclaration,
     QuotaWindow,
@@ -251,7 +252,7 @@ async def _assert_compact_readouts(context: WidgetContext) -> None:
         assert "$1.50" in usage_text
         assert "1 subscription agent" in usage_text
         assert "claude" in usage_text
-        assert "3 billing modes unknown" in usage_text
+        assert "5 billing modes unknown" in usage_text
         assert all(cell_len(line) <= COMPACT_READOUT_WIDTH for line in usage_lines)
 
     resource_widget = cast("ResourcesPanel", ResourcesWidget().create(context))
@@ -706,6 +707,24 @@ async def test_project_usage_projects_persisted_coverage_without_inventing_api_s
         Rung("unknown-agent", "model", "low"),
     )
     runs.record_usage(unknown_equivalent.id, Usage(50, 0, 0, 0, 1.5, "api_equivalent", None))
+    operator_unknown = runs.start(
+        task.id,
+        Role.LEADER,
+        Rung("codex", "model", "low"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_UNKNOWN,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    runs.start(
+        task.id,
+        Role.IMPLEMENTER,
+        Rung("provider-agent", "model", "low"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_UNKNOWN,
+            BILLING_SOURCE_PROVIDER_REPORTED,
+        ),
+    )
     legacy = runs.start(task.id, Role.LEADER, Rung("legacy-agent", "model", "low"))
     runs.record_usage(legacy.id, Usage(60, 0, 0, 0, None, "unknown", None))
     connection.execute("UPDATE runs SET usage_reported = NULL WHERE id = ?", (legacy.id,))
@@ -724,11 +743,11 @@ async def test_project_usage_projects_persisted_coverage_without_inventing_api_s
     context = widget_context(reader, project_dir, clock)
     projection = context.views.project_usage()
 
-    assert projection.session_count == 7
+    assert projection.session_count == 9
     assert projection.input_tokens == 210
     assert projection.reported_sessions == 5
     assert projection.legacy_token_sessions == 1
-    assert projection.unknown_token_sessions == 1
+    assert projection.unknown_token_sessions == 3
     assert projection.billed_cost_usd == 2.5
     assert projection.billed_cost_sessions == 2
     assert projection.api_billed_cost_usd == 0.0
@@ -736,11 +755,42 @@ async def test_project_usage_projects_persisted_coverage_without_inventing_api_s
     assert projection.api_cost_unreported_sessions == 1
     assert projection.api_equivalent_cost_usd == 1.5
     assert projection.api_equivalent_cost_sessions == 1
-    assert projection.unknown_billing_sessions == 3
+    assert projection.unknown_billing_sessions == 5
+    assert projection.unknown_billing_operator_config_sessions == 1
+    assert projection.unknown_billing_provider_reported_sessions == 1
+    assert projection.unknown_billing_source_unknown_sessions == 3
     assert projection.subscription_sessions == 2
     assert projection.subscription_agents == ("claude",)
 
+    await _assert_unknown_billing_source_views(context, task.id, operator_unknown.id)
     await _assert_compact_readouts(context)
+
+
+async def _assert_unknown_billing_source_views(
+    context: WidgetContext,
+    task_id: str,
+    operator_unknown_run_id: int,
+) -> None:
+    task_detail = await context.views.task_detail(task_id, include_timeline=False)
+    assert task_detail is not None
+    assert task_detail.usage is not None
+    operator_unknown_session = next(
+        session for session in task_detail.sessions if session.run_id == operator_unknown_run_id
+    )
+    assert operator_unknown_session.billing_mode == BILLING_MODE_UNKNOWN
+    assert operator_unknown_session.billing_source == BILLING_SOURCE_OPERATOR_CONFIG
+    assert task_detail.usage.unknown_billing_operator_config_sessions == 1
+    assert task_detail.usage.unknown_billing_provider_reported_sessions == 1
+    assert task_detail.usage.unknown_billing_source_unknown_sessions == 3
+
+    widget = cast("UsagePanel", UsageWidget().create(context))
+    async with WidgetHostApp(widget).run_test(size=(COMPACT_READOUT_WIDTH, USAGE_DETAIL_HEIGHT)):
+        text = " ".join(_rendered_widget_lines(widget))
+        assert "Billing mode unknown · 5 sessions" in text
+        assert "operator_config" in text
+        assert "provider_reported" in text
+        assert "unknown source" in text
+        assert "API charges unreported · 1 session" in text
 
 
 async def test_resource_sampling_failure_is_stale_and_task_navigation_still_works(

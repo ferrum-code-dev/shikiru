@@ -12,6 +12,14 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Label, ListItem, ListView, Select, Static
 
+from shikiru.agents.contracts import (
+    BILLING_MODE_API,
+    BILLING_MODE_SUBSCRIPTION,
+    BILLING_MODE_UNKNOWN,
+    BILLING_SOURCE_OPERATOR_CONFIG,
+    BILLING_SOURCE_PROVIDER_REPORTED,
+    BILLING_SOURCE_UNKNOWN,
+)
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
     DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
@@ -418,6 +426,29 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Task browser: / search, Up/Down select, v opens filters, "
                 "Escape clears search first"
             )
+        lines.extend(
+            (
+                "Usage separates unknown billing modes from unreported API charges",
+                (
+                    f"{BILLING_SOURCE_OPERATOR_CONFIG} + {BILLING_MODE_UNKNOWN} means "
+                    f"explicitly set to {BILLING_MODE_UNKNOWN}"
+                ),
+                (
+                    f"{BILLING_SOURCE_PROVIDER_REPORTED} + {BILLING_MODE_UNKNOWN} means "
+                    f"a provider-reported {BILLING_MODE_UNKNOWN}"
+                ),
+                (
+                    f"{BILLING_SOURCE_UNKNOWN} + {BILLING_MODE_UNKNOWN} means "
+                    "unavailable/not recorded; historic cause unknown"
+                ),
+                (
+                    "Set [agents.<name>.options].billing_mode to "
+                    f"{BILLING_MODE_API}, {BILLING_MODE_SUBSCRIPTION} or "
+                    f"{BILLING_MODE_UNKNOWN} for new sessions"
+                ),
+                "Existing sessions keep the mode and source recorded when they started",
+            )
+        )
         with Vertical(id="workspace-help-frame"):
             with Horizontal(id="workspace-help-header"):
                 yield Label(f"Help · {view}", id=_HELP_CONTEXT)

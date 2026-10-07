@@ -36,7 +36,9 @@ import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
     BILLING_MODE_SUBSCRIPTION,
+    BILLING_MODE_UNKNOWN,
     BILLING_SOURCE_OPERATOR_CONFIG,
+    BILLING_SOURCE_PROVIDER_REPORTED,
     COST_BASIS_API_EQUIVALENT,
     COST_BASIS_BILLED,
     COST_BASIS_UNKNOWN,
@@ -1697,6 +1699,31 @@ def _record_mixed_billing(runs: RunStore, task_id: str) -> None:
             _API_EQUIVALENT_ESTIMATE_USD,
             COST_BASIS_API_EQUIVALENT,
             None,
+        ),
+    )
+
+
+def _seed_task111_usage(connection: Connection, clock: SystemClock) -> None:
+    task = seed_task(connection, clock, title="Project totals with mixed billing")
+    runs = RunStore(connection, clock)
+    _record_mixed_billing(runs, task.id)
+    runs.start(
+        task.id,
+        Role.LEADER,
+        Rung("codex", "gpt-6", "high"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_UNKNOWN,
+            BILLING_SOURCE_OPERATOR_CONFIG,
+        ),
+    )
+    runs.start(task.id, Role.IMPLEMENTER, Rung("legacy-agent", "model", "low"))
+    runs.start(
+        task.id,
+        Role.HELPER,
+        Rung("provider-agent", "model", "low"),
+        billing_declaration=BillingDeclaration(
+            BILLING_MODE_UNKNOWN,
+            BILLING_SOURCE_PROVIDER_REPORTED,
         ),
     )
 
@@ -5351,9 +5378,9 @@ async def test_configured_usage_and_docker_views_remain_reachable(
     tmp_path: Path,
     size: tuple[int, int],
 ) -> None:
-    del connection
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
+    _seed_task111_usage(connection, clock)
     reader = StateReader(database, clock)
 
     class CachedResources(StubServices):
@@ -5388,11 +5415,22 @@ async def test_configured_usage_and_docker_views_remain_reachable(
             await wait_until(lambda: app.screen is not home_screen, timeout=2)
             assert home_screen.is_mounted
             usage = app.screen.query_one("#usage", Static)
-            assert "Token values unknown" in plain_text(usage.content)
-            _capture_task99(app, f"task108-project-totals-{size[0]}x{size[1]}-color.svg")
+            usage_text = plain_text(usage.content)
+            assert "Project" in usage_text
+            assert "API billed" in usage_text
+            assert "Subscription" in usage_text
+            assert "API charges unreported" in usage_text
+            assert "API-equivalent estimate" in usage_text
+            assert "Billing mode unknown · 3 sessions" in usage_text
+            assert "operator_config" in usage_text
+            assert "provider_reported" in usage_text
+            assert "unknown source" in usage_text
+            _capture_task99(app, f"task111-project-totals-{size[0]}x{size[1]}-color.svg")
             await pilot.click("#context-widget-close")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
 
+            app.query_one("#resources", Static).scroll_visible(animate=False, force=True)
+            await pilot.pause()
             assert await pilot.click("#resources")
             await wait_until(lambda: app.screen is not home_screen, timeout=2)
             assert home_screen.is_mounted
