@@ -312,6 +312,69 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
         assert "ready" not in rendered_rows[queued.id]
 
 
+async def test_focus_recent_shows_bounded_terminal_history_without_dependency_rows(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    parent = seed_task(connection, clock, title="Dependency parent")
+    old = seed_task(connection, clock, title="Old completed task")
+    _finish_task(connection, clock, old.id)
+    clock.advance(1)
+    dependent = seed_task(connection, clock, title="Completed dependent task")
+    _finish_task(connection, clock, dependent.id)
+    TaskStore(connection, clock).set_depends_on(dependent.id, (parent.id,))
+    clock.advance(1)
+    cancelled = seed_task(connection, clock, title="Cancelled task")
+    TaskStore(connection, clock).apply_transition(
+        cancelled.id,
+        Transition.stay(cancelled, step=None, status=Status.CANCELLED),
+    )
+    clock.advance(1)
+    newest = seed_task(connection, clock, title="Newest completed task")
+    _finish_task(connection, clock, newest.id)
+    widget = cast(
+        "QueuePanel",
+        QueueWidget().create(
+            replace(
+                widget_context(reader, project_dir, clock, services=StubServices()),
+                placement=WidgetPlacement.TASK_LIST,
+            )
+        ),
+    )
+
+    async with WidgetHostApp(widget).run_test(size=(100, 35)):
+        list_view = widget.query_one("#task-browser-list", ListView)
+        await wait_until(
+            lambda: all(
+                widget.query(f"#task-row-{task_id}")
+                for task_id in (old.id, dependent.id, cancelled.id, newest.id)
+            ),
+            timeout=5.0,
+        )
+        terminal_rows = [
+            item.id.removeprefix("task-row-")
+            for item in list_view.children
+            if item.id is not None and item.id.startswith("task-row-")
+        ]
+        recent_ids = (newest.id, cancelled.id, dependent.id, old.id)
+        assert tuple(task_id for task_id in terminal_rows if task_id in recent_ids) == recent_ids
+        recent_heading_index = next(
+            index
+            for index, item in enumerate(list_view.children)
+            if item.id == "task-browser-recent-heading"
+        )
+        first_recent_index = next(
+            index
+            for index, item in enumerate(list_view.children)
+            if item.id == f"task-row-{newest.id}"
+        )
+        assert recent_heading_index < first_recent_index
+        dependent_row = _static_text(widget.query_one(f"#task-row-{dependent.id} > Static", Static))
+        assert "depends on" not in dependent_row
+        assert widget.query_one("#task-browser-family-context", Static).display is False
+
+
 async def test_browser_keeps_selection_while_search_filter_state_and_history_change(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
@@ -492,8 +555,7 @@ async def test_unsearched_all_load_more_stops_after_queued_tasks_and_recent_hist
         )
         visible_ids = _loaded_task_ids(task_list)
         assert len(visible_ids & {task.id for task in queued}) == PAGE_SIZE
-        assert terminal[-1].id in visible_ids
-        assert terminal[0].id not in visible_ids
+        assert {task.id for task in terminal} <= visible_ids
         load_more = widget.query_one("#task-browser-more", Button)
         assert not load_more.disabled
 
@@ -506,7 +568,7 @@ async def test_unsearched_all_load_more_stops_after_queued_tasks_and_recent_hist
             timeout=5.0,
         )
         visible_ids = _loaded_task_ids(task_list)
-        assert visible_ids == {task.id for task in queued} | {terminal[-1].id}
+        assert visible_ids == {task.id for task in queued} | {task.id for task in terminal}
         assert widget.query_one("#task-browser-more", Button).disabled
 
 
@@ -571,7 +633,9 @@ async def test_home_search_preserves_matching_terminal_tasks_across_loaded_pages
         task_list.index = 0
         first_task_id = first_page_ids[0]
         await pilot.press("enter")
-        await wait_until(lambda: first_task_id in opened_task_ids, timeout=5.0)
+        await pilot.pause()
+        assert opened_task_ids == []
+        assert widget.query_one(f"#task-row-{first_task_id}")
 
         await widget.load_more()
         await wait_until(
@@ -586,7 +650,9 @@ async def test_home_search_preserves_matching_terminal_tasks_across_loaded_pages
         assert last_task_id != first_task_id
         task_list.index = len(task_list.children) - 1
         await pilot.press("enter")
-        await wait_until(lambda: last_task_id in opened_task_ids, timeout=5.0)
+        await pilot.pause()
+        assert opened_task_ids == []
+        assert widget.query_one(f"#task-row-{last_task_id}")
 
 
 async def test_history_load_more_reconciles_a_new_task_before_watch_poll(

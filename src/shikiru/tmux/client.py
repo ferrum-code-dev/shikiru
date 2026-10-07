@@ -24,6 +24,12 @@ _SESSION_SEPARATOR = ":"
 _HORIZONTAL_AXIS = "h"
 _FLAG_TRUE = "1"
 _PRIVATE_SOCKET_SUFFIX_LENGTH = 8
+_PREFIX_MODIFIER_LABELS = {"C": "Ctrl", "M": "Alt", "S": "Shift"}
+_SPACE_KEY_NAME = "Space"
+_TMUX_KEY_SEPARATOR = "-"
+_KEY_LABEL_SEPARATOR = "+"
+_PREFIX_OPTION = "prefix"
+_DETACH_CLIENT_COMMAND = "detach-client"
 
 FORMAT_PANE_ID = "#{pane_id}"
 FORMAT_PANE_PID = "#{pane_pid}"
@@ -46,6 +52,21 @@ def private_socket_name(prefix: str) -> str:
 def exact_target(name: str) -> str:
     """Build the exact-match target (`=<name>`) tmux uses for a session, window or pane name."""
     return f"={name}"
+
+
+def tmux_key_label(key: str) -> str:
+    """Format a tmux key such as `C-b` for an operator-facing hint."""
+    parts = key.split(_TMUX_KEY_SEPARATOR)
+    modifiers = parts[:-1]
+    if any(modifier not in _PREFIX_MODIFIER_LABELS for modifier in modifiers):
+        return key
+    name = parts[-1]
+    key_name = (
+        name.upper() if len(name) == 1 else _SPACE_KEY_NAME if name == _SPACE_KEY_NAME else name
+    )
+    return _KEY_LABEL_SEPARATOR.join(
+        (*(_PREFIX_MODIFIER_LABELS[modifier] for modifier in modifiers), key_name)
+    )
 
 
 def _session_scoped(target: str) -> str:
@@ -133,6 +154,19 @@ class Tmux:
         if not separator:
             return None
         return value
+
+    async def current_prefix(self) -> str:
+        """Return the active tmux server's configured prefix key."""
+        result = await self._run("show-options", "-gqv", _PREFIX_OPTION)
+        prefix = result.stdout.strip()
+        if not prefix:
+            message = "tmux returned an empty prefix key"
+            raise ValueError(message)
+        return prefix
+
+    async def detach_current_client(self) -> None:
+        """Detach the client running this command from its current session."""
+        await self._run(_DETACH_CLIENT_COMMAND)
 
     async def set_session_option(self, target: str, name: str, value: str) -> None:
         """Set session option `name` on `target`.

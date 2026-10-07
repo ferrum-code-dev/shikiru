@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -114,9 +115,9 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.docker import DockerSampler
 from shikiru.telemetry.resources import ResourceSampler
-from shikiru.tmux.client import Tmux, exact_target
+from shikiru.tmux.client import FORMAT_SESSION_NAME, Tmux, exact_target, tmux_key_label
 from shikiru.tmux.layout import LayoutBuilder
-from shikiru.tmux.session import SessionView, session_name
+from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SessionView, session_name
 from shikiru.workspace.base_refs import BaseRefs, FetchedBaseRefs, LocalBaseRefs
 from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.facts import GitFacts
@@ -124,6 +125,8 @@ from shikiru.workspace.git import Git
 from shikiru.workspace.github import GitHub
 from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import TaskRootBuilder
+
+_TMUX_PANE_ENVIRONMENT_VARIABLE = "TMUX_PANE"
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -299,6 +302,19 @@ async def run_dashboard(
         lock_path = engine_lock_path(project_root)
         session_target = exact_target(session_name(settings.project.name))
         tmux = Tmux(runner)
+        tmux_detach_hint = None
+        detach_tmux_client = None
+        current_pane = os.environ.get(_TMUX_PANE_ENVIRONMENT_VARIABLE)
+        if current_pane is not None and await tmux.pane_exists(current_pane):
+            current_session = await tmux.display(current_pane, FORMAT_SESSION_NAME)
+            session_project_root = await tmux.show_session_environment(
+                exact_target(current_session), PROJECT_DIR_ENV_VAR
+            )
+            if current_session == session_name(
+                settings.project.name
+            ) and session_project_root == str(project_root):
+                tmux_detach_hint = tmux_key_label(await tmux.current_prefix())
+                detach_tmux_client = tmux.detach_current_client
         dashboard_services = dashboard_services_module.DashboardServices(
             dashboard_services_module.GitRepoStatusService(
                 git,
@@ -393,6 +409,8 @@ async def run_dashboard(
             navigate_task_window=navigation.task_window,
             navigate_role_pane=navigate_role_pane,
             navigate_home=navigation.home,
+            tmux_detach_hint=tmux_detach_hint,
+            detach_tmux_client=detach_tmux_client,
         )
         await app_instance.run_async()
     finally:

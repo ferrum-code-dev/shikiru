@@ -9,7 +9,7 @@ from textual.widgets import Button, Input, ListView, Select, Static
 
 from shikiru.agents.contracts import QuotaWindow, Rung
 from shikiru.config.loader import load_settings
-from shikiru.dashboard.app import DashboardApp
+from shikiru.dashboard.app import DashboardApp, TaskDetailScreen, TaskPaletteRoute
 from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter, TaskTimelineCategory
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BODY,
@@ -280,13 +280,18 @@ async def _open_browser_task(
     title: str,
     task_id: str,
 ) -> None:
+    home = app.screen
     search = app.query_one("#task-browser-search", Input)
     search.value = title
     await pilot.pause()
-    task_list = app.query_one("#task-browser-list", ListView)
-    task_list.focus()
-    task_list.index = 0
-    await pilot.press("enter")
+    await pilot.click(f"#task-row-{task_id}")
+    await wait_until(
+        lambda: task_id in _static_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+        timeout=5.0,
+    )
+    assert app.screen is home
+    app.route_task_palette(task_id, TaskPaletteRoute.INSPECT)
+    await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=5.0)
     await wait_until(
         lambda: task_id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
         timeout=5.0,
@@ -580,10 +585,7 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
         search = app.query_one("#task-browser-search", Input)
         search.value = root.title
         await pilot.pause()
-        task_list = app.query_one("#task-browser-list", ListView)
-        task_list.focus()
-        task_list.index = 0
-        await pilot.press("enter")
+        app.route_task_palette(root.id, TaskPaletteRoute.INSPECT)
         await wait_until(
             lambda: (
                 root.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
@@ -634,8 +636,15 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
         await pilot.press("escape")
         root_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
         await wait_until(lambda: root_panel.active_view == TASK_VIEW_SUMMARY, timeout=5.0)
+        root_screen = app.screen
         await pilot.press("escape")
-        await pilot.pause()
+        await wait_until(
+            lambda: (
+                app.screen is not root_screen
+                and root.id in _static_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            ),
+            timeout=5.0,
+        )
 
         assert search.value == root.title
         assert root.id in _static_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
@@ -738,10 +747,7 @@ async def test_blocked_dependency_navigation_returns_to_the_original_browser_sel
         search = app.query_one("#task-browser-search", Input)
         search.value = blocked.title
         await pilot.pause()
-        task_list = app.query_one("#task-browser-list", ListView)
-        task_list.focus()
-        task_list.index = 0
-        await pilot.press("enter")
+        app.route_task_palette(blocked.id, TaskPaletteRoute.INSPECT)
         await wait_until(
             lambda: (
                 blocked.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))

@@ -13,7 +13,7 @@ from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 from shikiru.bootstrap import build_engine
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
-from shikiru.dashboard.app import DashboardApp
+from shikiru.dashboard.app import DashboardApp, TaskPaletteRoute
 from shikiru.dashboard.detail import (
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_SITUATION,
@@ -470,6 +470,10 @@ async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message
             await pilot.press("enter")
             await runtime.wait_for(lambda: app.focused is task_list)
             await pilot.press("enter")
+            await runtime.wait_for(
+                lambda: task_id in _plain(app.query_one("#task-detail-identity", Static))
+            )
+            app.route_task_palette(task_id, TaskPaletteRoute.INSPECT)
             await runtime.wait_for(lambda: isinstance(app.screen, TaskDetailScreen))
             detail_verdict = app.screen.query_one("#task-detail-verdict", Static)
             await runtime.wait_for(lambda: "changes_requested" in _plain(detail_verdict))

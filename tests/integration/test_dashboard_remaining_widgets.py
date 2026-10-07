@@ -27,7 +27,7 @@ from shikiru.agents.contracts import (
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.activity import RoleViewTail
-from shikiru.dashboard.app import DashboardApp, TaskDetailScreen
+from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import DiagnosticSampleState
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.services import DashboardServices, GitRepoStatusService
@@ -765,12 +765,14 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         task_row = app.query_one(f"#task-row-{task.id} > Static", Static)
         assert task.title in plain_text(task_row.content)
 
+        home_screen = app.screen
         task_list = app.query_one("#task-browser-list", ListView)
         task_list.focus()
         task_list.index = 0
         await pilot.press("enter")
-        await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
-        identity = app.screen.query_one("#task-detail-identity", Static)
+        identity = app.query_one("#task-detail-identity", Static)
+        await wait_until(lambda: task.id in plain_text(identity.content), timeout=2)
+        assert app.screen is home_screen
         assert task.id in plain_text(identity.content)
 
 
@@ -920,9 +922,9 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         task_list.focus()
         task_list.index = 0
         await pilot.press("enter")
-        await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
-        identity = app.screen.query_one("#task-detail-identity", Static)
-        assert task.id in plain_text(identity.content)
+        identity = app.query_one("#task-detail-identity", Static)
+        await wait_until(lambda: task.id in plain_text(identity.content), timeout=2)
+        assert app.screen is home_screen
 
 
 async def test_resources_service_samples_every_pane_in_the_project_session(

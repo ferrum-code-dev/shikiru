@@ -55,7 +55,6 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_USAGE,
     TASK_VIEW_WORKSPACE,
     TaskDetailPanel,
-    TaskDetailScreen,
     TaskDetailViewsScreen,
 )
 from shikiru.dashboard.palette import PaletteScreen
@@ -1901,7 +1900,7 @@ async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
     assert _milestone_state(incomplete, Step.VERIFY) == "current"
 
 
-async def test_enter_opens_shared_detail_and_escape_restores_browser_selection_and_scroll(
+async def test_enter_keeps_inline_selection_and_popup_close_restores_browser_scroll(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -1932,13 +1931,14 @@ async def test_enter_opens_shared_detail_and_escape_restores_browser_selection_a
             home_screen = app.screen
 
             await pilot.press("enter")
-            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
-            detail_screen = app.screen
             await wait_until(
-                lambda: (
-                    "Browser task 8"
-                    in _text(detail_screen.query_one("#task-detail-identity", Static))
-                ),
+                lambda: "Browser task 8" in _text(app.query_one("#task-detail-identity", Static)),
+                timeout=2,
+            )
+            assert app.screen is home_screen
+            await pilot.press("?")
+            await wait_until(
+                lambda: bool(app.screen.query("#workspace-help-copy")),
                 timeout=2,
             )
             await pilot.press("escape")
@@ -2026,20 +2026,15 @@ async def test_pushed_task_detail_ctrl_p_carries_task_context(
         app = _dashboard_app(
             reader,
             project_root,
-            focus_task=None,
+            focus_task=task.id,
             widget_names=TASK_DETAIL_WIDGETS,
             open_palette_context=open_palette_context,
         )
         async with app.run_test(size=(80, 40)) as pilot:
-            browser = app.query_one("#task-browser-list", ListView)
-            browser.focus()
-            await pilot.press("enter")
-            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
-            detail = app.screen
             await wait_until(
                 lambda: (
                     "Pushed detail action target"
-                    in _text(detail.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                    in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
                 ),
                 timeout=2,
             )

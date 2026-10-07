@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.errors import ConfigError
-from shikiru.tmux.client import Tmux, exact_target
+from shikiru.tmux.client import Tmux, exact_target, tmux_key_label
 from shikiru.tmux.session import (
     DETACHED_SIZE,
     HOME_WINDOW_NAME,
@@ -27,6 +27,15 @@ _HOME_COMMAND = ("sh", "-c", "sleep 300")
 
 def _tmux(server: TmuxServer) -> Tmux:
     return Tmux(server.runner, socket=server.socket_name)
+
+
+async def test_current_prefix_reads_and_formats_the_private_server_configuration(
+    tmux_server: TmuxServer,
+) -> None:
+    tmux = _tmux(tmux_server)
+    await tmux_server.run("set-option", "-g", "prefix", "C-a")
+
+    assert tmux_key_label(await tmux.current_prefix()) == "Ctrl+A"
 
 
 async def test_ensure_creates_the_session_with_the_project_env_var(

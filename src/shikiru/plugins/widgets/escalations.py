@@ -159,8 +159,8 @@ class EscalationsPanel(Static):
             if await self._move_decision(_DECISION_MOVE_STEPS[event.key]):
                 event.stop()
         elif event.key == _OPEN_TASK_KEY:
-            if self._focus_row and self._selected_decision() is not None:
-                await self._resolve_decision(event)
+            if self._focus_row:
+                await self._activate_focus_task(event)
             else:
                 await self._open_task_detail(event)
         elif event.key == _OPEN_KEY:
@@ -178,6 +178,8 @@ class EscalationsPanel(Static):
         if group.escalations:
             decision = self._selected_decision() or group.escalations[0]
             await self._open_resolution(decision)
+        elif self._focus_row and group.task_id is not None:
+            event.stop()
         elif group.task_id is not None and self._widget_context.open_task_detail is not None:
             await self._widget_context.open_task_detail(group.task_id)
         else:
@@ -217,6 +219,16 @@ class EscalationsPanel(Static):
                 on_task_selected(group.task_id)
             await self._widget_context.open_task_detail(group.task_id)
             event.stop()
+
+    async def _activate_focus_task(self, event: events.Key) -> None:
+        decision = self._selected_decision()
+        if decision is not None:
+            await self._resolve_decision(event)
+            return
+        group = self._attention.groups[self._selected]
+        if group.task_id is not None and self._widget_context.on_task_selected is not None:
+            self._widget_context.on_task_selected(group.task_id)
+        event.stop()
 
     def _open_evidence(self, event: events.Key) -> None:
         decision = self._selected_decision()
@@ -372,7 +384,7 @@ class EscalationsPanel(Static):
         if self._summary is None:
             return Text("○ Engine status unavailable", style=SECONDARY_TEXT_COLOR)
         decision = self._selected_decision()
-        action_hint = "Enter inspect ↵ · Ctrl+P actions"
+        action_hint = "Ctrl+P actions"
         if self._focus_row and decision is not None:
             action_hint = "Enter answer ↵" if decision.answer_available else "Enter resolve ↵"
         return FocusAttentionStatus(

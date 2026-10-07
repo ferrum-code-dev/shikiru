@@ -20,7 +20,7 @@ from shikiru.dashboard.contract import (
     TaskBrowserView,
     WidgetPlacement,
 )
-from shikiru.ui.screen import widget_is_attached, widget_is_current
+from shikiru.ui.screen import widget_is_current
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import WidgetContext
 
 BROWSER_PAGE_SIZE = 24
-RECENT_TASK_LIMIT = 1
+RECENT_TASK_LIMIT = BROWSER_PAGE_SIZE
 REFERENCE_FONT_SIZE_PIXELS = 12
 REFERENCE_LINE_HEIGHT_RATIO = 1.65
 REFERENCE_LINE_HEIGHT_PIXELS = REFERENCE_FONT_SIZE_PIXELS * REFERENCE_LINE_HEIGHT_RATIO
@@ -74,6 +74,7 @@ TASK_STATUS_ESCALATED = "escalated"
 TASK_MARKER_STALL = "!"
 TASK_MARKER_RECENT = "Recent"
 TASK_RECENT_HEADING_ID = "task-browser-recent-heading"
+QUEUE_REFRESH_WORKER = "task-browser-refresh"
 STEP_LABELS = {
     "triage": "Triaging",
     "plan": "Planning",
@@ -184,7 +185,6 @@ class _TaskBrowserListView(ListView):
         item = self.highlighted_child
         if isinstance(item, _BrowserListItem):
             self._select_task(item.task_id)
-            self.run_worker(self._open_task(item.task_id))
 
 
 def _row_text(row: TaskBrowserRow) -> str:
@@ -288,7 +288,11 @@ def _focus_row_details(
     details: list[tuple[str, str]] = [(state, state_style)]
     if row.acting_role and not stage:
         details.append((row.acting_role.title(), SECONDARY_TEXT_COLOR))
-    if row.dependencies and row.wait_reason != WAIT_REASON_DEPENDENCY:
+    if (
+        row.status not in TASK_TERMINAL_STATUSES
+        and row.dependencies
+        and row.wait_reason != WAIT_REASON_DEPENDENCY
+    ):
         details.append((f"depends on {', '.join(row.dependencies)}", SECONDARY_TEXT_COLOR))
     details.extend((hold, AMBER) for hold in row.holds)
     if row.diagnosed_stall:
@@ -365,6 +369,7 @@ class QueuePanel(Vertical):
         self._filter = TaskBrowserFilter.ALL
         self._search = ""
         self._selected_task_id = context.focus_task
+        self._selection_cleared = False
         self._loaded_page_count = 1
         self._view: TaskBrowserView | None = None
         self._refreshing = False
@@ -417,7 +422,7 @@ class QueuePanel(Vertical):
         self._sync_task_row_outline()
         await self._refresh()
         self.run_worker(
-            self._widget_context.on_change(self._refresh_if_attached),
+            self._widget_context.on_change(self._refresh_if_current),
             exclusive=True,
         )
         self._remove_motion_callback = self._widget_context.on_motion(self._refresh_while_active)
@@ -435,9 +440,17 @@ class QueuePanel(Vertical):
         if widget_is_current(self) and cast("App[object]", self.app).is_running:
             await self._refresh()
 
-    async def _refresh_if_attached(self) -> None:
-        if widget_is_attached(self):
+    async def _refresh_if_current(self) -> None:
+        if widget_is_current(self):
             await self._refresh()
+
+    def refresh_after_resume(self) -> None:
+        if widget_is_current(self):
+            self.run_worker(
+                self._refresh_if_current(),
+                group=QUEUE_REFRESH_WORKER,
+                exclusive=True,
+            )
 
     def _sync_task_row_outline(self) -> None:
         if not self._focus_layout or not self.is_mounted:
@@ -531,9 +544,12 @@ class QueuePanel(Vertical):
             return
         current = next(
             (index for index, item in enumerate(rows) if item.task_id == self._selected_task_id),
-            0,
+            None,
         )
-        item = rows[(current + step) % len(rows)]
+        next_index = (
+            (len(rows) - 1 if step < 0 else 0) if current is None else (current + step) % len(rows)
+        )
+        item = rows[next_index]
         self.select_task(item.task_id)
         list_view.index = list_view.children.index(item)
         list_view.scroll_to_widget(item, animate=False, immediate=True)
@@ -546,6 +562,7 @@ class QueuePanel(Vertical):
     def select_task(self, task_id: str) -> None:
         """Select a task and update the Home inspector without opening a route."""
         self._selected_task_id = task_id
+        self._selection_cleared = False
         callback = self._widget_context.on_task_selected
         if callback is not None:
             callback(task_id)
@@ -563,6 +580,44 @@ class QueuePanel(Vertical):
             selected_task_matches=True,
         )
         self._render_view(self._view)
+
+    def clear_selection(self) -> None:
+        """Clear the Home inspector until an operator selects another task."""
+        self._selected_task_id = None
+        self._selection_cleared = True
+        if self._view is not None:
+            self._view = replace(
+                self._view,
+                selected_task=None,
+                selected_task_missing=False,
+                selected_task_matches=False,
+            )
+        list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
+        list_view.index = None
+        callback = self._widget_context.on_task_selected
+        if callback is not None:
+            callback(None)
+
+    def sync_context_selection(self, task_id: str | None) -> None:
+        """Keep list identity aligned with another Home widget's task selection."""
+        if task_id == self._selected_task_id:
+            return
+        self._selected_task_id = task_id
+        self._selection_cleared = task_id is None
+        if not widget_is_current(self):
+            return
+        list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
+        item = next(
+            (
+                candidate
+                for candidate in list_view.children
+                if isinstance(candidate, _BrowserListItem) and candidate.task_id == task_id
+            ),
+            None,
+        )
+        list_view.index = list_view.children.index(item) if item is not None else None
+        if item is not None:
+            list_view.scroll_to_widget(item, animate=False, immediate=True)
 
     async def _reveal_selected_task(self) -> None:
         if self._selected_task_id is None or self._view is None:
@@ -585,7 +640,7 @@ class QueuePanel(Vertical):
         reset_pages: bool = False,
     ) -> None:
         async with self._refresh_lock:
-            if not widget_is_attached(self):
+            if not widget_is_current(self):
                 return
             self._refreshing = True
             try:
@@ -596,7 +651,7 @@ class QueuePanel(Vertical):
                 if reset_pages:
                     self._loaded_page_count = 1
                 view = self._load_next_page() if append_page else self._load_pages()
-                if self._selected_task_id is None and view.rows:
+                if self._selected_task_id is None and view.rows and not self._selection_cleared:
                     self._selected_task_id = view.rows[0].task_id
                     view = replace(
                         view,
@@ -609,7 +664,7 @@ class QueuePanel(Vertical):
                     callback(self._selected_task_id)
                 list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
                 await self._sync_list_rows(list_view, view.rows)
-                if not widget_is_attached(self):
+                if not widget_is_current(self):
                     return
                 self._render_view(view)
             finally:
@@ -634,7 +689,10 @@ class QueuePanel(Vertical):
                     ancestors[ancestor.task_id] = ancestor
         view = pages[-1]
         selected_task = view.selected_task
-        if self._focus_layout and self._filter is TaskBrowserFilter.ALL and not self._search:
+        is_focus_recent = (
+            self._focus_layout and self._filter is TaskBrowserFilter.ALL and not self._search
+        )
+        if is_focus_recent:
             recent_pages = self._widget_context.views.task_browser_pages(
                 task_filter=TaskBrowserFilter.HISTORY,
                 search=self._search,
@@ -648,9 +706,6 @@ class QueuePanel(Vertical):
             )
             recent_by_id = {row.task_id: row for row in recent_rows}
             matched_ids.update(row.task_id for row in recent_rows)
-            for ancestor in recent_page.ancestor_context:
-                if ancestor.task_id not in matched_ids:
-                    ancestors[ancestor.task_id] = ancestor
             active_rows = tuple(
                 row
                 for row in rows
@@ -674,7 +729,7 @@ class QueuePanel(Vertical):
             view,
             rows=rows,
             selected_task=selected_task,
-            ancestor_context=tuple(ancestors.values()),
+            ancestor_context=() if is_focus_recent else tuple(ancestors.values()),
         )
 
     def _load_next_page(self) -> TaskBrowserView:
@@ -719,7 +774,7 @@ class QueuePanel(Vertical):
             wanted_ids,
             recent_task_id,
         )
-        if not widget_is_attached(self):
+        if not widget_is_current(self):
             return
         self._update_browser_items(items, rows)
         desired_children, heading = self._ordered_list_items(
@@ -729,7 +784,7 @@ class QueuePanel(Vertical):
             recent_task_id,
         )
         await self._place_list_items(list_view, desired_children)
-        if not widget_is_attached(self):
+        if not widget_is_current(self):
             return
         self._sync_selection(list_view, rows)
         self._restore_list_position_after_refresh(
@@ -825,7 +880,7 @@ class QueuePanel(Vertical):
         additions = [child for child in desired_children if child.parent is None]
         if additions:
             await list_view.extend(additions)
-            if not widget_is_attached(self):
+            if not widget_is_current(self):
                 return
         for index, child in enumerate(desired_children):
             if list_view.children[index] is not child:

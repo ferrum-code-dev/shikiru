@@ -47,7 +47,7 @@ from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from textual import events
     from textual.app import ComposeResult
@@ -96,24 +96,25 @@ _COMMAND_HISTORY_PAGE = "command-history-page"
 _COMMAND_HISTORY_PAGE_SIZE = 20
 _COMMAND_HISTORY_ALL = "all"
 _COMMAND_STATUS_LINE_MAX_CHARS = 96
-_INSPECT_KEY = "enter"
 _COMMAND_HISTORY_PREVIOUS_KEY = "left"
 _COMMAND_HISTORY_NEXT_KEY = "right"
 COMMAND_ACTION_SAY = "Say"
 _SEARCH_KEY = "slash"
 _ACTIONS_KEY = "ctrl+p"
-_HOME_FOOTER_INSPECT = "focus-footer-inspect"
+_HOME_FOOTER_CLEAR = "focus-footer-clear"
 _HOME_FOOTER_ACTIONS = "focus-footer-actions"
 _HOME_FOOTER_HELP = "focus-footer-help"
+_HOME_FOOTER_DETACH = "focus-footer-detach"
 _EVIDENCE_KEY = "e"
 _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
 HOME_SPLIT_MIN_COLUMNS = 73
-FOCUS_INSPECTOR_STACKED_MIN_COLUMNS = 54
 FOCUS_FOOTER_GROUP_MIN_COLUMNS = 54
 FOCUS_FOOTER_STACKED_COLUMN_COUNT = 1
 FOCUS_FOOTER_GROUP_COUNT = 2
+FOCUS_FOOTER_WIDE_COLUMN_COUNT = 3
+FOCUS_FOOTER_ITEM_COUNT = 5
 FOCUS_SUMMARY_MAX_ROWS = 12
 FOCUS_MAIN_MIN_ROWS = 3
 FOCUS_COMPACT_MAIN_ROWS = 8
@@ -122,8 +123,6 @@ FOCUS_MIN_TASK_LIST_ROWS = 9
 FOCUS_COMMAND_STATUS_ROWS = 1
 FOCUS_FRAME_BORDER_ROWS = 2
 FOCUS_FOOTER_MIN_HEIGHT = 9
-FOCUS_FOOTER_HEIGHT = 2
-FOCUS_COMPACT_FOOTER_HEIGHT = 3
 FOCUS_ATTENTION_HEIGHT = 3
 FOCUS_SHORT_HOME_HEIGHT = 14
 FOCUS_COMPACT_SHORT_HOME_HEIGHT = 20
@@ -147,6 +146,12 @@ class _TaskBrowserNavigation(Protocol):
     async def activate_filter(self, task_filter: TaskBrowserFilter) -> None: ...
 
     async def reveal_selected_task(self) -> None: ...
+
+    def refresh_after_resume(self) -> None: ...
+
+    def clear_selection(self) -> None: ...
+
+    def sync_context_selection(self, task_id: str | None) -> None: ...
 
 
 class _AttentionPanelNavigation(Protocol):
@@ -345,10 +350,12 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
         self,
         task_id: str | None,
         widget_names: Sequence[str],
+        tmux_detach_hint: str | None,
     ) -> None:
         super().__init__()
         self._task_id = task_id
         self._widget_names = tuple(widget_names)
+        self._tmux_detach_hint = tmux_detach_hint
 
     def compose(self) -> ComposeResult:
         """Render help for Home or the selected task workspace."""
@@ -367,21 +374,25 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
         else:
             lines = [
                 "Up/Down: select a task",
-                "Enter: inspect selected task",
-                "Escape: return from detail or close this view",
+                "Escape: close popup, clear search, then clear task selection",
                 "Ctrl+P: open contextual operator actions",
                 "/: search task ID or title",
                 "v: open filters, history and configured secondary views",
-                "Mouse: select or open a task; Views includes Actions and Help",
+                "Mouse: select a task; use its detail controls for views and actions",
                 "?: show this help",
             ]
+            if self._tmux_detach_hint is None:
+                lines.append("tmux detach is unavailable outside the project session")
+            else:
+                lines.append(f"{self._tmux_detach_hint} d: detach from tmux")
         if _WIDGET_ESCALATIONS in self._widget_names:
             lines.append("Escalations: Up/Down select, o opens evidence, r opens resolution")
         if _WIDGET_DIALOGUE in self._widget_names:
             lines.append("Dialogue: Enter opens full text")
         if _WIDGET_QUEUE in self._widget_names and self._task_id is None:
             lines.append(
-                "Task browser: / search, Up/Down select, v opens filters, Escape clears search"
+                "Task browser: / search, Up/Down select, v opens filters, "
+                "Escape clears search first"
             )
         with Vertical(id="workspace-help-frame"):
             yield Label(f"Help · {view}", id=_HELP_CONTEXT)
@@ -589,10 +600,9 @@ class _HomeAttentionStatus(Static):
             else:
                 await self._widget_context.open_palette(request.action or "")
             event.stop()
-        elif group.task_id is not None and self._widget_context.open_task_detail is not None:
+        elif group.task_id is not None:
             if self._widget_context.on_task_selected is not None:
                 self._widget_context.on_task_selected(group.task_id)
-            await self._widget_context.open_task_detail(group.task_id)
             event.stop()
         elif self._widget_context.open_contextual_view is not None:
             await self._widget_context.open_contextual_view(FOCUS_FAULTS_VIEW)
@@ -622,25 +632,41 @@ class _HomeAttentionStatus(Static):
 class _HomeFooter(Grid):
     can_focus = True
 
+    def __init__(self, tmux_detach_hint: str | None) -> None:
+        super().__init__(id="focus-footer")
+        self._tmux_detach_hint = tmux_detach_hint
+
     def compose(self) -> ComposeResult:
-        with Horizontal():
-            yield Static(
-                Text.assemble(("↑↓", STEEL_BLUE), (" select", SECONDARY_TEXT_COLOR)),
-                markup=False,
+        yield Static(
+            Text.assemble(("↑↓", STEEL_BLUE), (" select", SECONDARY_TEXT_COLOR)),
+            markup=False,
+        )
+        yield Button(
+            Text.assemble(("Esc", STEEL_BLUE), (" clear", SECONDARY_TEXT_COLOR)),
+            id=_HOME_FOOTER_CLEAR,
+        )
+        yield Button(
+            Text.assemble(("Ctrl+P", STEEL_BLUE), (" actions", SECONDARY_TEXT_COLOR)),
+            id=_HOME_FOOTER_ACTIONS,
+        )
+        detach_hint = (
+            Text.assemble(
+                (self._tmux_detach_hint, STEEL_BLUE),
+                (" d", STEEL_BLUE),
+                (" detach", SECONDARY_TEXT_COLOR),
             )
-            yield Button(
-                Text.assemble(("Enter", STEEL_BLUE), (" inspect", SECONDARY_TEXT_COLOR)),
-                id=_HOME_FOOTER_INSPECT,
-            )
-        with Horizontal():
-            yield Button(
-                Text.assemble(("Ctrl+P", STEEL_BLUE), (" actions", SECONDARY_TEXT_COLOR)),
-                id=_HOME_FOOTER_ACTIONS,
-            )
-            yield Button(
-                Text.assemble(("?", STEEL_BLUE), (" help", SECONDARY_TEXT_COLOR)),
-                id=_HOME_FOOTER_HELP,
-            )
+            if self._tmux_detach_hint is not None
+            else Text("tmux detach unavailable", style=SECONDARY_TEXT_COLOR)
+        )
+        yield Button(
+            detach_hint,
+            id=_HOME_FOOTER_DETACH,
+            disabled=self._tmux_detach_hint is None,
+        )
+        yield Button(
+            Text.assemble(("?", STEEL_BLUE), (" help", SECONDARY_TEXT_COLOR)),
+            id=_HOME_FOOTER_HELP,
+        )
 
 
 class DashboardApp(App[None]):
@@ -691,11 +717,10 @@ class DashboardApp(App[None]):
     #task-view-root #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
     #focus-footer {
-        layout: grid; grid-size: 2 0; grid-columns: auto auto; grid-gutter: 0 0;
+        layout: grid; grid-size: 3 0; grid-columns: auto auto auto; grid-gutter: 0 0;
         height: auto; min-height: 2; padding: 0; margin-top: 0; border-top: solid $neutral-border;
         background: $background; color: $secondary-text;
     }
-    #focus-footer Horizontal { width: auto; height: auto; }
     #focus-footer Static { width: auto; height: auto; padding: 0 1; color: $secondary-text; }
     #focus-footer Button {
         width: auto; min-width: 1; height: auto; min-height: 1; margin: 0; padding: 0;
@@ -724,6 +749,8 @@ class DashboardApp(App[None]):
         navigate_role_pane: NavigateRolePane | None = None,
         navigate_home: NavigateHome | None = None,
         timeline_refresh_seconds: float = DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
+        tmux_detach_hint: str | None = None,
+        detach_tmux_client: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Build the home or task workspace with the configured widgets."""
         super().__init__()
@@ -743,6 +770,8 @@ class DashboardApp(App[None]):
         self._navigate_task_window = navigate_task_window
         self._navigate_role_pane = navigate_role_pane
         self._navigate_home = navigate_home
+        self._tmux_detach_hint = tmux_detach_hint
+        self._detach_tmux_client = detach_tmux_client
         self._configured_widget_names = tuple(widget_names)
         self._widget_names = self._configured_widget_names
         self._motion_callbacks: list[OnChange] = []
@@ -815,7 +844,7 @@ class DashboardApp(App[None]):
                 else:
                     yield Static("Task list is not configured.", id="focus-empty", markup=False)
             yield _CommandStatusLine(self._views, self._on_change)
-            yield _HomeFooter(id="focus-footer")
+            yield _HomeFooter(self._tmux_detach_hint)
 
     def _compose_task_workspace(self) -> ComposeResult:
         context = self._widget_context()
@@ -1207,8 +1236,17 @@ class DashboardApp(App[None]):
         self._selected_task_id = task_id
         if self._home_detail_panel is not None:
             self._home_detail_panel.select_task(task_id)
-        if self._focus_task is None:
-            self.query_one(f"#{_HOME_FOOTER_INSPECT}", Button).disabled = task_id is None
+        queue = self._widget_instances.get(_WIDGET_QUEUE)
+        if queue is not None:
+            cast("_TaskBrowserNavigation", queue).sync_context_selection(task_id)
+
+    def _clear_home_selection(self) -> None:
+        queue = self._widget_instances.get(_WIDGET_QUEUE)
+        if queue is None:
+            self._select_task_context(None)
+            return
+        cast("_TaskBrowserNavigation", queue).clear_selection()
+        self.query_one("#task-browser-list", ListView).focus()
 
     async def on_mount(self) -> None:
         """Focus the task browser or task view and start signal-driven refresh."""
@@ -1219,9 +1257,6 @@ class DashboardApp(App[None]):
                 task_list.first() if task_list else self.query_one("#focus-footer", _HomeFooter)
             )
             self.set_focus(target)
-            self.query_one(f"#{_HOME_FOOTER_INSPECT}", Button).disabled = (
-                self._selected_task_id is None
-            )
         else:
             self.set_focus(self.query_one("#task-detail-body"))
         if self._motion_interval_seconds is not None:
@@ -1234,6 +1269,10 @@ class DashboardApp(App[None]):
         """Refresh task detail mounted in the screen that resumed after an overlay."""
         if not self.is_running:
             return
+        if self._focus_task is None:
+            queue = self._widget_instances.get(_WIDGET_QUEUE)
+            if queue is not None:
+                cast("_TaskBrowserNavigation", queue).refresh_after_resume()
         panels = self.screen.query(TaskDetailPanel)
         if panels:
             panels.first().refresh_after_resume()
@@ -1250,30 +1289,18 @@ class DashboardApp(App[None]):
                 event.prevent_default()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == _HOME_FOOTER_INSPECT:
-            if self._selected_task_id is not None:
-                await self._open_task_detail(self._selected_task_id)
+        if event.button.id == _HOME_FOOTER_CLEAR:
+            self._clear_home_selection()
         elif event.button.id == _HOME_FOOTER_ACTIONS:
             await self.action_open_palette()
+        elif event.button.id == _HOME_FOOTER_DETACH and self._detach_tmux_client is not None:
+            await self._detach_tmux_client()
         elif event.button.id == _HOME_FOOTER_HELP:
             await self.action_show_help()
 
     async def _dispatch_workspace_key(self, event: events.Key) -> bool:
         if event.key == _ACTIONS_KEY:
             await self.action_open_palette()
-        elif event.key == _INSPECT_KEY:
-            task_list = self.query("#task-browser-list")
-            focused = self.focused
-            if (
-                not task_list
-                or focused is None
-                or (focused is not task_list.first() and task_list.first() not in focused.ancestors)
-                or self._selected_task_id is None
-            ):
-                return False
-            event.stop()
-            event.prevent_default()
-            await self._open_task_detail(self._selected_task_id)
         elif event.key == TASK_DETAIL_ESCAPE:
             await self.action_return_from_section()
         elif event.key == TASK_DETAIL_HELP_KEY:
@@ -1352,10 +1379,13 @@ class DashboardApp(App[None]):
             footer_columns = (
                 FOCUS_FOOTER_STACKED_COLUMN_COUNT
                 if width < FOCUS_FOOTER_GROUP_MIN_COLUMNS
+                else FOCUS_FOOTER_WIDE_COLUMN_COUNT
+                if wide
                 else FOCUS_FOOTER_GROUP_COUNT
             )
             footer.styles.grid_size_columns = footer_columns
             footer.styles.grid_columns = " ".join("auto" for _ in range(footer_columns))
+            footer_rows = (FOCUS_FOOTER_ITEM_COUNT + footer_columns - 1) // footer_columns
             readouts.styles.max_height = (
                 None
                 if not wide and height < FOCUS_FOOTER_MIN_HEIGHT
@@ -1365,7 +1395,7 @@ class DashboardApp(App[None]):
                         FOCUS_SUMMARY_MAX_ROWS,
                         height
                         - minimum_main_height
-                        - (FOCUS_FOOTER_HEIGHT if wide else FOCUS_COMPACT_FOOTER_HEIGHT)
+                        - footer_rows
                         - FOCUS_ATTENTION_HEIGHT
                         - FOCUS_COMMAND_STATUS_ROWS
                         - FOCUS_FRAME_BORDER_ROWS,
@@ -1376,25 +1406,29 @@ class DashboardApp(App[None]):
             if task_list:
                 task_list.first().styles.height = "1fr" if wide else FOCUS_COMPACT_TASK_LIST_ROWS
             if self._home_detail_panel is not None:
-                was_visible = self._home_detail_panel.display
-                show_inspector = width >= FOCUS_INSPECTOR_STACKED_MIN_COLUMNS
-                self._home_detail_panel.display = wide or show_inspector
+                self._home_detail_panel.display = True
                 self._home_detail_panel.styles.height = "100%" if wide else "auto"
-                if wide != was_wide or was_visible != self._home_detail_panel.display:
+                if wide != was_wide:
                     self._home_detail_panel.refresh_after_resume()
             return
         return
 
     async def action_return_from_section(self) -> None:
         """Return from task-scoped details or the fixed task view."""
+        if self._focus_task is None and not isinstance(self.screen, TaskDetailScreen):
+            panel = self._context_task_detail_panel()
+            if panel is not None and panel.active_view != TASK_VIEW_SUMMARY:
+                panel.close_contextual_view()
+                return
+            self._clear_home_selection()
+            return
         panel = self._context_task_detail_panel()
         if panel is None:
             return
         if panel.active_view != TASK_VIEW_SUMMARY:
             panel.close_contextual_view()
             return
-        if self._focus_task is not None or isinstance(self.screen, TaskDetailScreen):
-            await panel.return_from_detail()
+        await panel.return_from_detail()
 
     async def action_show_help(self) -> None:
         """Show the bindings and current home or task workspace context."""
@@ -1407,6 +1441,7 @@ class DashboardApp(App[None]):
                 _WorkspaceHelpScreen(
                     None,
                     self._widget_names,
+                    self._tmux_detach_hint,
                 ),
                 callback=lambda _: self.refresh_task_detail_after_resume(),
             )
@@ -1415,6 +1450,7 @@ class DashboardApp(App[None]):
             _WorkspaceHelpScreen(
                 self._focus_task,
                 self._widget_names,
+                self._tmux_detach_hint,
             ),
             callback=lambda _: self.refresh_task_detail_after_resume(),
         )
@@ -1425,6 +1461,7 @@ class DashboardApp(App[None]):
             _WorkspaceHelpScreen(
                 task_id,
                 self._widget_names,
+                self._tmux_detach_hint,
             ),
             callback=lambda _: self.refresh_task_detail_after_resume(),
         )
@@ -1466,7 +1503,6 @@ class DashboardApp(App[None]):
         if (
             self._focus_task is None
             and self._home_detail_panel is not None
-            and self.size.width >= FOCUS_INSPECTOR_STACKED_MIN_COLUMNS
             and self._selected_task_id is not None
         ):
             self._home_detail_panel.select_task(self._selected_task_id)
@@ -1492,7 +1528,6 @@ class DashboardApp(App[None]):
         if (
             self._focus_task is None
             and self._home_detail_panel is not None
-            and self.size.width >= FOCUS_INSPECTOR_STACKED_MIN_COLUMNS
             and self._selected_task_id is not None
         ):
             self._home_detail_panel.select_task(self._selected_task_id)

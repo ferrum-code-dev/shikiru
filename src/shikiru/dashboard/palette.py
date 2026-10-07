@@ -218,13 +218,11 @@ _PALETTE_ROUTE_EVIDENCE = "palette-menu-view-evidence"
 _PALETTE_ROUTE_USAGE = "palette-menu-view-usage"
 _PALETTE_ROUTE_VIEWS = "palette-menu-view-secondary"
 _PALETTE_ROUTE_ANSWER = "palette-menu-answer"
-_PALETTE_ROUTE_INSPECT = "palette-menu-inspect"
 _PALETTE_ROUTE_COMMANDS = "palette-menu-commands"
 _PALETTE_ROUTE_DIAGNOSTICS = "palette-menu-diagnostics"
 _PALETTE_MENU_PRIMARY = "palette-menu-primary"
 _PRIMARY_TASK_ACTIONS = frozenset({_ACTION_MESSAGE, _ACTION_TAKE_OVER, _ACTION_HAND_BACK})
 _TASK_PALETTE_ROUTES = {
-    _PALETTE_ROUTE_INSPECT: TaskPaletteRoute.INSPECT,
     _PALETTE_ROUTE_EVIDENCE: TaskPaletteRoute.EVIDENCE,
     _PALETTE_ROUTE_USAGE: TaskPaletteRoute.USAGE,
     _PALETTE_ROUTE_VIEWS: TaskPaletteRoute.VIEWS,
@@ -501,10 +499,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 yield Button(
                     _context_menu_entry("Answer decision", "Answer the recorded decision"),
                     id=_PALETTE_ROUTE_ANSWER,
-                )
-                yield Button(
-                    _context_menu_entry("Inspect task", "Read situation and stage"),
-                    id=_PALETTE_ROUTE_INSPECT,
                 )
                 yield Button(
                     _context_menu_entry(
@@ -1154,7 +1148,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             task_exists and self._task_routes_available and self._more_actions_expanded
         )
         for route_id in (
-            _PALETTE_ROUTE_INSPECT,
             _PALETTE_ROUTE_EVIDENCE,
             _PALETTE_ROUTE_USAGE,
             _PALETTE_ROUTE_COMMANDS,
