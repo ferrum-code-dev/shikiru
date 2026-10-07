@@ -51,7 +51,8 @@ HOME_TARGET_OPENED = "opened home workspace"
 
 @dataclass(frozen=True)
 class _CachedRepoStatus:
-    fetched_at: datetime
+    checked_at: datetime
+    sampled_at: datetime | None
     status: RepoStatus
 
 
@@ -70,32 +71,74 @@ class GitRepoStatusService:
         """Read `project_dir`'s checkout, configured by `repo`, through `git` when asked."""
         self._git = git
         self._repo = repo
-        self._project_dir = project_dir
+        self._project_dir = project_dir.resolve()
         self._clock = clock
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cache: _CachedRepoStatus | None = None
 
     async def repo_status(self) -> RepoStatus:
-        """Return the checkout's branch, ahead/behind `base` and dirty count."""
+        """Return the cached checkout identity, tracked line changes and observation state."""
         now = self._clock.now()
         if self._cache is not None:
-            age = (now - self._cache.fetched_at).total_seconds()
+            age = (now - self._cache.checked_at).total_seconds()
             if age < self._cache_ttl_seconds:
-                return replace(self._cache.status, sampled_ago=format_age(age))
-        status = await self._status()
-        self._cache = _CachedRepoStatus(fetched_at=now, status=status)
-        return replace(status, sampled_ago=format_age(0))
+                return self._with_sample_age(self._cache)
+        try:
+            status = await self._status()
+        except (OSError, ShikiruError) as error:
+            if self._cache is None or self._cache.sampled_at is None:
+                status = RepoStatus(
+                    branch=None,
+                    ahead=None,
+                    behind=None,
+                    dirty=None,
+                    root=str(self._project_dir),
+                    state=DiagnosticSampleState.FAILED,
+                    error=str(error),
+                )
+                self._cache = _CachedRepoStatus(checked_at=now, sampled_at=None, status=status)
+            else:
+                status = replace(
+                    self._cache.status,
+                    state=DiagnosticSampleState.STALE,
+                    error=str(error),
+                )
+                self._cache = _CachedRepoStatus(
+                    checked_at=now,
+                    sampled_at=self._cache.sampled_at,
+                    status=status,
+                )
+            return self._with_sample_age(self._cache)
+        self._cache = _CachedRepoStatus(checked_at=now, sampled_at=now, status=status)
+        return self._with_sample_age(self._cache)
 
     async def _status(self) -> RepoStatus:
         repo = self._repo
         repo_dir = self._project_dir
         branch = await self._git.current_branch(repo_dir)
+        line_changes = await self._git.working_tree_line_changes(repo_dir)
         dirty = len(await self._git.status_porcelain(repo_dir))
         ahead, behind = 0, 0
         if repo.base is not None and repo.base != branch:
             ahead = len(await self._git.log_oneline(repo_dir, f"{repo.base}..{branch}"))
             behind = len(await self._git.log_oneline(repo_dir, f"{branch}..{repo.base}"))
-        return RepoStatus(branch=branch, ahead=ahead, behind=behind, dirty=dirty)
+        return RepoStatus(
+            branch=branch,
+            ahead=ahead,
+            behind=behind,
+            dirty=dirty,
+            root=str(repo_dir),
+            added_lines=line_changes.added_lines,
+            deleted_lines=line_changes.deleted_lines,
+            binary_entries=line_changes.binary_entries,
+            untracked_paths=line_changes.untracked_paths,
+        )
+
+    def _with_sample_age(self, cached: _CachedRepoStatus) -> RepoStatus:
+        if cached.sampled_at is None:
+            return cached.status
+        age = (self._clock.now() - cached.sampled_at).total_seconds()
+        return replace(cached.status, sampled_ago=format_age(age))
 
 
 class DashboardServices:

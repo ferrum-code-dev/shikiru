@@ -1181,7 +1181,6 @@ async def test_home_attention_count_updates_from_motion_without_database_changes
             status = app.query_one("#escalations", Static)
             await wait_until(clock.has_pending_sleep, timeout=1)
             assert "No decisions needed" in plain_text(status.content)
-            assert "Engine stopped" in plain_text(status.content)
             clock.advance(3)
             await wait_until(
                 lambda: task.id in plain_text(status.content),

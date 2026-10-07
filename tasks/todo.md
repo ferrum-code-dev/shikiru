@@ -177,7 +177,7 @@ Target: [Focus terminal parity correction](../docs/tui-parity.md); acceptance cr
 Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus-steel-approved.html); scope and acceptance criteria: [plan.md](plan.md#phase-11-real-project-tui-corrections). Implement Tasks 105–112 in order. Template review is complete; native fixes are pending. Preserve the historical Phase 10 evidence.
 
 - [x] Task 105: Prevent dashboard refresh callbacks from crashing during screen teardown
-- [ ] Task 106: Align dashboard identity, checkout, summaries and engine status with the reference
+- [x] Task 106: Align dashboard identity, checkout, summaries and engine status with the reference
 - [ ] Task 107: Show multiple recent tasks and make selection the single task-detail route
 - [ ] Task 108: Keep action and detail popups over the dashboard and remove redundant controls
 - [ ] Task 109: Preserve tmux focus and correct task panes, home naming and chrome

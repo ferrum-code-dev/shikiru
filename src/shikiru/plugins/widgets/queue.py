@@ -7,7 +7,6 @@ from dataclasses import replace
 from math import floor
 from typing import TYPE_CHECKING, cast
 
-from rich.cells import cell_len
 from rich.text import Text
 from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.widgets import Button, Input, ListItem, ListView, Static
@@ -114,18 +113,8 @@ FILTER_LABELS = {task_filter: label for task_filter, _, label in FILTER_BUTTONS}
 
 class _FocusTaskCount:
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        del console
-        count_label = " TASKS"
-        decision_label = "Decision first"
-        if options.max_width > cell_len(count_label) + cell_len(decision_label):
-            count = Text(count_label, style=STEEL_BLUE)
-            count.append(
-                " " * (options.max_width - cell_len(count_label) - cell_len(decision_label))
-            )
-            count.append(decision_label, style=STEEL_BLUE)
-            yield count
-        else:
-            yield Text("TASKS", style=STEEL_BLUE)
+        del console, options
+        yield Text("TASKS", style=STEEL_BLUE)
 
 
 class _BrowserListItem(ListItem):

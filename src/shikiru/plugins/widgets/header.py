@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
 
-from shikiru.dashboard.contract import WidgetPlacement
+from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
 from shikiru.ui.screen import widget_is_active, widget_is_attached
-from shikiru.ui.tokens import ALERT_COLOR, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    AMBER,
+    PRIMARY_TEXT_COLOR,
+    SAGE,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from rich.console import Console, ConsoleOptions, RenderResult
     from textual import events
     from textual.widget import Widget
 
@@ -25,10 +34,27 @@ SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
 SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR
 MIN_HEADER_GAP = 2
+RUNTIME_SEPARATOR_WIDTH = 3
 ENGINE_RUNNING_MARKER = "●"
 ENGINE_STOPPED_MARKER = "○"
 MERGE_INTEGRATION = "merge"
 PULL_REQUEST_INTEGRATION = "pr"
+
+
+@dataclass(frozen=True, slots=True)
+class _HeaderContent:
+    view: HeaderView
+    summary: WorkspaceSummaryView
+    include_alerts: bool
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        del console
+        yield _home_header_text(
+            self.view,
+            self.summary,
+            include_alerts=self.include_alerts,
+            width=options.max_width,
+        )
 
 
 def _duration_text(seconds: float) -> str:
@@ -42,44 +68,6 @@ def _duration_text(seconds: float) -> str:
     return f"{remainder}s"
 
 
-def _header_text(
-    view: HeaderView,
-    summary: WorkspaceSummaryView,
-    *,
-    include_alerts: bool,
-    width: int,
-) -> str:
-    uptime = (
-        f"Uptime {_duration_text(view.engine_uptime_seconds)}"
-        if view.engine_uptime_seconds is not None
-        else "Uptime unknown"
-    )
-    engine = (
-        f"{ENGINE_RUNNING_MARKER} Engine running · {uptime}"
-        if view.engine_up
-        else f"{ENGINE_STOPPED_MARKER} Engine stopped"
-    )
-    if not view.engine_up and view.previous_engine_run_seconds is not None:
-        engine = f"{engine} · previous {_duration_text(view.previous_engine_run_seconds)}"
-    repo = view.repo
-    identity = f"SHIKIRU  {view.project} / {repo.branch}"
-    identity_width = cell_len(identity)
-    engine_width = cell_len(engine)
-    gap = " " * max(MIN_HEADER_GAP, width - identity_width - engine_width)
-    checkout = "clean checkout" if repo.dirty == 0 else f"{repo.dirty} dirty"
-    if repo.ahead or repo.behind:
-        checkout = f"{checkout} · +{repo.ahead}/-{repo.behind}"
-    integration = _integration_label(view.integration_mode)
-    operations = (
-        f"Slots {view.occupied_slots}/{view.maximum_slots} · Running {summary.running} · "
-        f"Waiting {summary.waiting} · {integration} · {checkout}"
-    )
-    lines = [f"{identity}{gap}{engine}", operations]
-    if include_alerts:
-        lines.extend(view.alerts)
-    return "\n".join(lines)
-
-
 def _home_header_text(
     view: HeaderView,
     summary: WorkspaceSummaryView,
@@ -87,46 +75,141 @@ def _home_header_text(
     include_alerts: bool,
     width: int,
 ) -> Text:
-    uptime = (
-        f"Uptime {_duration_text(view.engine_uptime_seconds)}"
-        if view.engine_uptime_seconds is not None
-        else "Uptime unknown"
-    )
-    engine = (
+    identity = f"SHIKIRU {view.project}"
+    if view.repo.root is not None:
+        identity = f"{identity} ({view.repo.root})"
+    identity_width = cell_len(identity)
+    engine_label = (
         f"{ENGINE_RUNNING_MARKER} Engine running"
         if view.engine_up
         else f"{ENGINE_STOPPED_MARKER} Engine stopped"
     )
-    if not view.engine_up and view.previous_engine_run_seconds is not None:
-        engine = f"{engine} · previous {_duration_text(view.previous_engine_run_seconds)}"
-    identity = f"SHIKIRU  {view.project} / {view.repo.branch}"
-    engine_metadata = f"{engine} · {uptime}"
-    gap = " " * max(MIN_HEADER_GAP, width - cell_len(identity) - cell_len(engine_metadata))
-    repo = view.repo
-    checkout = "clean checkout" if repo.dirty == 0 else f"{repo.dirty} dirty"
-    if repo.ahead or repo.behind:
-        checkout = f"{checkout} · +{repo.ahead}/-{repo.behind}"
-    operations = Text.assemble(
-        ("Slots ", SECONDARY_TEXT_COLOR),
-        f"{view.occupied_slots}/{view.maximum_slots} · ",
-        ("Running ", SECONDARY_TEXT_COLOR),
-        f"{summary.running} · ",
-        ("Waiting ", SECONDARY_TEXT_COLOR),
-        f"{summary.waiting} · {_integration_label(view.integration_mode)} · {checkout}",
-    )
-    rendered = Text.assemble(
+    runtime_label = _runtime_label(view)
+    runtime_width = cell_len(engine_label) + cell_len(runtime_label) + RUNTIME_SEPARATOR_WIDTH
+    checkout = _checkout_text(view)
+    compact_header = identity_width + runtime_width + MIN_HEADER_GAP > width
+    identity_text = Text.assemble(
         ("SHIKIRU", STEEL_BLUE),
-        (f"  {view.project} / {view.repo.branch}", SECONDARY_TEXT_COLOR),
-        gap,
-        (engine, SAGE if view.engine_up else ALERT_COLOR),
-        (f" · {uptime}", SECONDARY_TEXT_COLOR),
-        "\n\n",
-        operations,
+        (f" {view.project}", PRIMARY_TEXT_COLOR),
     )
+    if view.repo.root is not None:
+        identity_text.append(f" ({view.repo.root})", style=SECONDARY_TEXT_COLOR)
+    rendered = _fold_text(identity_text, width)
+    if compact_header:
+        rendered.append("\n")
+        rendered.append_text(_runtime_text(engine_label, runtime_label, view.engine_up))
+        rendered.append("\n")
+        rendered.append_text(checkout)
+    else:
+        gap = " " * max(MIN_HEADER_GAP, width - identity_width - runtime_width)
+        rendered.append(gap)
+        rendered.append_text(_runtime_text(engine_label, runtime_label, view.engine_up))
+        rendered.append("\n")
+        rendered.append_text(checkout)
+    rendered.append("\n")
+    if view.repo.state is DiagnosticSampleState.STALE:
+        age = view.repo.sampled_ago or "age unavailable"
+        rendered.append(f"Checkout stale · sampled {age}", style=SECONDARY_TEXT_COLOR)
+        rendered.append("\n")
+        if view.repo.error is not None:
+            rendered.append(f"Checkout read failed · {view.repo.error}", style=ALERT_COLOR)
+            rendered.append("\n")
+    elif view.repo.state is DiagnosticSampleState.FAILED:
+        rendered.append("Checkout unavailable", style=SECONDARY_TEXT_COLOR)
+        if view.repo.error is not None:
+            rendered.append(f" · {view.repo.error}", style=ALERT_COLOR)
+        rendered.append("\n")
+    rendered.append("\n")
+    rendered.append_text(
+        Text.assemble(
+            ("Slots ", SECONDARY_TEXT_COLOR),
+            f"{view.occupied_slots}/{view.maximum_slots} · ",
+            ("Running ", SECONDARY_TEXT_COLOR),
+            f"{summary.running} · ",
+            ("Waiting ", SECONDARY_TEXT_COLOR),
+            f"{summary.waiting}",
+        )
+    )
+    rendered.append("\n")
     if include_alerts:
         for alert in view.alerts:
-            rendered.append("\n")
             rendered.append(alert, style=ALERT_COLOR)
+            rendered.append("\n")
+    return rendered
+
+
+def _fold_text(value: Text, width: int) -> Text:
+    if width <= 0:
+        return value
+    offsets: list[int] = []
+    current_width = 0
+    for index, character in enumerate(value.plain):
+        character_width = cell_len(character)
+        if current_width and current_width + character_width > width:
+            offsets.append(index)
+            current_width = 0
+        current_width += character_width
+    rendered = Text()
+    for index, line in enumerate(value.divide(offsets)):
+        if index:
+            rendered.append("\n")
+        rendered.append_text(line)
+    return rendered
+
+
+def _runtime_text(engine: str, runtime: str, running: bool) -> Text:
+    rendered = Text(engine, style=SAGE if running else ALERT_COLOR)
+    rendered.append(f" · {runtime}", style=SECONDARY_TEXT_COLOR)
+    return rendered
+
+
+def _runtime_label(view: HeaderView) -> str:
+    if view.engine_up:
+        if view.engine_uptime_seconds is None:
+            return "Uptime unavailable"
+        return f"Uptime {_duration_text(view.engine_uptime_seconds)}"
+    if view.previous_engine_run_seconds is None:
+        return "Last unavailable"
+    return f"Last {_duration_text(view.previous_engine_run_seconds)}"
+
+
+def _checkout_text(view: HeaderView) -> Text:
+    repo = view.repo
+    if repo.state is DiagnosticSampleState.FAILED or repo.branch is None:
+        rendered = Text("branch unavailable", style=SECONDARY_TEXT_COLOR)
+    elif repo.dirty == 0:
+        state = " (previously clean)" if repo.state is DiagnosticSampleState.STALE else " (clean)"
+        rendered = Text.assemble((repo.branch, PRIMARY_TEXT_COLOR), (state, PRIMARY_TEXT_COLOR))
+    elif repo.dirty is None or repo.added_lines is None or repo.deleted_lines is None:
+        rendered = Text(f"{repo.branch} (line counts unavailable)", style=AMBER)
+    else:
+        rendered = Text(f"{repo.branch} (+{repo.added_lines} -{repo.deleted_lines})", style=AMBER)
+    rendered.append(f" · {_integration_label(view.integration_mode)}", style=SECONDARY_TEXT_COLOR)
+    if (
+        repo.state is not DiagnosticSampleState.FAILED
+        and repo.branch is not None
+        and repo.dirty != 0
+    ):
+        if repo.binary_entries is None:
+            rendered.append(" · binary count unavailable", style=SECONDARY_TEXT_COLOR)
+        elif repo.binary_entries:
+            rendered.append(f" · {repo.binary_entries} binary uncounted", style=AMBER)
+        if repo.untracked_paths is None:
+            rendered.append(" · untracked count unavailable", style=SECONDARY_TEXT_COLOR)
+        elif repo.untracked_paths:
+            rendered.append(
+                f" · {repo.untracked_paths} untracked paths excluded from line totals",
+                style=AMBER,
+            )
+        if (
+            repo.dirty is not None
+            and repo.dirty > 0
+            and repo.added_lines == 0
+            and repo.deleted_lines == 0
+            and not repo.binary_entries
+            and not repo.untracked_paths
+        ):
+            rendered.append(f" · {repo.dirty} changed paths", style=AMBER)
     return rendered
 
 
@@ -167,24 +250,7 @@ class HeaderPanel(Static):
             self._widget_context.placement is not WidgetPlacement.IDENTITY
             or not self._widget_context.home_attention_present
         )
-        if self._widget_context.placement is WidgetPlacement.IDENTITY:
-            self.update(
-                _home_header_text(
-                    view,
-                    summary,
-                    include_alerts=include_alerts,
-                    width=self.size.width,
-                )
-            )
-            return
-        self.update(
-            _header_text(
-                view,
-                summary,
-                include_alerts=include_alerts,
-                width=self.size.width,
-            )
-        )
+        self.update(_HeaderContent(view, summary, include_alerts))
 
     async def on_resize(self, event: events.Resize) -> None:
         del event

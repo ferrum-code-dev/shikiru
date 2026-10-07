@@ -553,22 +553,21 @@ def _join_text(parts: list[Text]) -> Text:
 def _home_project_usage_text(usage: _RecordedUsage) -> Text:
     known_token_sessions = usage.reported_sessions + usage.legacy_token_sessions
     tokens = (
-        f"{_compact_count(usage.input_tokens + usage.output_tokens)} tok"
+        f"{_compact_count(usage.input_tokens + usage.output_tokens)} tokens"
         if known_token_sessions
         else "tokens unknown"
     )
-    coverage = "/".join(
-        f"{count} {label}"
-        for count, label in (
-            (usage.reported_sessions, "rep"),
-            (usage.legacy_token_sessions, "legacy"),
-            (usage.unknown_token_sessions, "unknown"),
-        )
-        if count
-    )
     text = Text(tokens, style=STEEL_BLUE if known_token_sessions else SECONDARY_TEXT_COLOR)
-    if coverage:
-        text.append(f" · {coverage}", style=SECONDARY_TEXT_COLOR)
+    if usage.session_count == 0:
+        session_coverage = "0 sessions"
+    elif usage.legacy_token_sessions:
+        session_coverage = (
+            f"{usage.reported_sessions} reported + {usage.legacy_token_sessions} legacy / "
+            f"{usage.session_count} sessions"
+        )
+    else:
+        session_coverage = f"{usage.reported_sessions}/{usage.session_count} sessions"
+    text.append(f" · {session_coverage}", style=SECONDARY_TEXT_COLOR)
     billing = _primary_billing_summary(usage, home=True)
     if billing:
         text.append(f" · {billing}", style=SECONDARY_TEXT_COLOR)
@@ -829,13 +828,7 @@ def attention_status_text(
         _append_held_task_states(status, summary)
         return status
     status = Text("✓ No decisions needed", style=SAGE)
-    if summary.engine_up is True and summary.held_tasks == 0 and summary.holds == ():
-        status.append(" · Automation continues", style=SAGE)
-    else:
-        _append_engine_state(status, summary, inline=True)
-        _append_held_task_states(status, summary, inline=True)
-        if summary.engine_up is None and not summary.held_task_states and not summary.held_tasks:
-            status.append(" · Automation status unavailable", style=SECONDARY_TEXT_COLOR)
+    _append_held_task_states(status, summary, inline=True)
     return status
 
 
@@ -975,17 +968,14 @@ def _append_task_hold_state(
 def _append_engine_state(
     status: Text,
     summary: _AttentionSummary,
-    *,
-    inline: bool = False,
 ) -> None:
     if summary.engine_up is False:
-        _append_status_line(status, "○ Engine stopped", SECONDARY_TEXT_COLOR, inline=inline)
+        _append_status_line(status, "○ Engine stopped", SECONDARY_TEXT_COLOR)
     elif summary.engine_up is None:
         _append_status_line(
             status,
             "○ Engine status unavailable",
             SECONDARY_TEXT_COLOR,
-            inline=inline,
         )
 
 

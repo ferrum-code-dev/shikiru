@@ -178,11 +178,18 @@ class TaskHistoryGap(StrEnum):
 class RepoStatus:
     """The project checkout's state, as shown by the `header` widget (06 §5.4)."""
 
-    branch: str
-    ahead: int
-    behind: int
-    dirty: int
-    sampled_ago: str = ""
+    branch: str | None
+    ahead: int | None
+    behind: int | None
+    dirty: int | None
+    sampled_ago: str | None = None
+    root: str | None = None
+    added_lines: int | None = None
+    deleted_lines: int | None = None
+    binary_entries: int | None = None
+    untracked_paths: int | None = None
+    state: DiagnosticSampleState = DiagnosticSampleState.AVAILABLE
+    error: str | None = None
 
 
 @dataclass(frozen=True)

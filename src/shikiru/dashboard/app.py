@@ -125,6 +125,9 @@ FOCUS_FOOTER_MIN_HEIGHT = 9
 FOCUS_FOOTER_HEIGHT = 2
 FOCUS_COMPACT_FOOTER_HEIGHT = 3
 FOCUS_ATTENTION_HEIGHT = 3
+FOCUS_SHORT_HOME_HEIGHT = 14
+FOCUS_COMPACT_SHORT_HOME_HEIGHT = 20
+FOCUS_COMPACT_SHORT_MAIN_ROWS = 7
 FOCUS_VIEWS_LIST = "focus-views-list"
 FOCUS_VIEW_PREFIX = "focus-view-"
 FOCUS_COMMAND_HISTORY = "commands"
@@ -651,7 +654,7 @@ class DashboardApp(App[None]):
         background: $background; scrollbar-size-vertical: 0;
     }
     #focus-readouts {
-        width: 100%; height: auto; max-height: 12; padding: 0; background: $background;
+        width: 100%; height: auto; padding: 0; background: $background;
         scrollbar-size-vertical: 0;
     }
     #header { height: auto; margin-bottom: 0; text-wrap: wrap; text-overflow: clip; }
@@ -1333,7 +1336,11 @@ class DashboardApp(App[None]):
                 self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST)
             )
             minimum_main_height = (
-                FOCUS_MIN_TASK_LIST_ROWS
+                FOCUS_MAIN_MIN_ROWS
+                if FOCUS_FOOTER_MIN_HEIGHT <= height <= FOCUS_SHORT_HOME_HEIGHT
+                else FOCUS_COMPACT_SHORT_MAIN_ROWS
+                if not wide and FOCUS_FOOTER_MIN_HEIGHT <= height <= FOCUS_COMPACT_SHORT_HOME_HEIGHT
+                else FOCUS_MIN_TASK_LIST_ROWS
                 if wide and task_list_configured
                 else FOCUS_COMPACT_MAIN_ROWS
                 if not wide and task_list_configured
@@ -1349,23 +1356,21 @@ class DashboardApp(App[None]):
             )
             footer.styles.grid_size_columns = footer_columns
             footer.styles.grid_columns = " ".join("auto" for _ in range(footer_columns))
-            readouts.styles.max_height = max(
-                1,
-                min(
-                    FOCUS_SUMMARY_MAX_ROWS,
-                    height
-                    - minimum_main_height
-                    - (
-                        FOCUS_FOOTER_HEIGHT
-                        if wide
-                        else FOCUS_COMPACT_FOOTER_HEIGHT
-                        if height >= FOCUS_FOOTER_MIN_HEIGHT
-                        else 0
-                    )
-                    - FOCUS_ATTENTION_HEIGHT
-                    - FOCUS_COMMAND_STATUS_ROWS
-                    - FOCUS_FRAME_BORDER_ROWS,
-                ),
+            readouts.styles.max_height = (
+                None
+                if not wide and height < FOCUS_FOOTER_MIN_HEIGHT
+                else max(
+                    1,
+                    min(
+                        FOCUS_SUMMARY_MAX_ROWS,
+                        height
+                        - minimum_main_height
+                        - (FOCUS_FOOTER_HEIGHT if wide else FOCUS_COMPACT_FOOTER_HEIGHT)
+                        - FOCUS_ATTENTION_HEIGHT
+                        - FOCUS_COMMAND_STATUS_ROWS
+                        - FOCUS_FRAME_BORDER_ROWS,
+                    ),
+                )
             )
             task_list = self.query("#task-browser-list")
             if task_list:

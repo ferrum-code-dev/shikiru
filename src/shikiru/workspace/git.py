@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from shikiru.errors import CommandFailed
+from shikiru.errors import CommandFailed, InvariantError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -29,6 +30,21 @@ _ENGINE_EMAIL = "shikiru@localhost"
 
 _MERGE_BASE_IS_ANCESTOR = 0
 _MERGE_BASE_IS_NOT_ANCESTOR = 1
+_NUMSTAT_BINARY_MARKER = "-"
+_NUMSTAT_RENAME_PATH_RECORDS = 2
+_NUMSTAT_SEPARATOR = "\t"
+_NUMSTAT_RECORD_SEPARATOR = "\0"
+_NUMSTAT_MALFORMED_RECORD = "git numstat returned a malformed record"
+
+
+@dataclass(frozen=True, slots=True)
+class LineChangeStats:
+    """Line additions, deletions and binary entries in the current checkout."""
+
+    added_lines: int
+    deleted_lines: int
+    binary_entries: int
+    untracked_paths: int
 
 
 class Git:
@@ -142,6 +158,16 @@ class Git:
         """
         result = await self._run(repo_dir, "diff", "--stat", commit_range)
         return result.stdout
+
+    async def working_tree_line_changes(self, repo_dir: Path) -> LineChangeStats:
+        """Count tracked line changes against `HEAD` and report untracked paths separately."""
+        tracked = await self._run(repo_dir, "diff", "--numstat", "-z", "HEAD")
+        added_lines, deleted_lines, binary_entries = _parse_numstat(tracked.stdout)
+        untracked = await self._run(repo_dir, "ls-files", "--others", "--exclude-standard", "-z")
+        untracked_paths = sum(
+            bool(path) for path in untracked.stdout.split(_NUMSTAT_RECORD_SEPARATOR)
+        )
+        return LineChangeStats(added_lines, deleted_lines, binary_entries, untracked_paths)
 
     async def diff_name_only(self, repo_dir: Path, commit_range: str) -> list[str]:
         """Return the full, unformatted path of every file changed in `commit_range`."""
@@ -360,3 +386,28 @@ class Git:
             input_text=input_text,
             stop_grace=GIT_STOP_GRACE if mutating else None,
         )
+
+
+def _parse_numstat(output: str) -> tuple[int, int, int]:
+    added_lines = 0
+    deleted_lines = 0
+    binary_entries = 0
+    records = output.split(_NUMSTAT_RECORD_SEPARATOR)
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        added, separator, remainder = record.partition(_NUMSTAT_SEPARATOR)
+        deleted, second_separator, path = remainder.partition(_NUMSTAT_SEPARATOR)
+        if not separator or not second_separator:
+            raise InvariantError(_NUMSTAT_MALFORMED_RECORD)
+        if _NUMSTAT_BINARY_MARKER in (added, deleted):
+            binary_entries += 1
+        else:
+            added_lines += int(added)
+            deleted_lines += int(deleted)
+        if not path and index + 1 < len(records):
+            index += _NUMSTAT_RENAME_PATH_RECORDS
+    return added_lines, deleted_lines, binary_entries

@@ -7,6 +7,7 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
 
+from shikiru.dashboard.contract import DiagnosticSampleState, RepoStatus
 from shikiru.domain.events import EventKind
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step
@@ -20,6 +21,7 @@ from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, WidgetHostApp, state_views, widget_context
+from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -34,7 +36,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _plain(content: object) -> str:
-    return content.plain if isinstance(content, Text) else str(content)
+    return plain_text(content)
 
 
 def _submit_task(
@@ -60,14 +62,76 @@ async def test_header_shows_project_name_engine_state_and_slots(
     widget = cast("HeaderPanel", HeaderWidget().create(context))
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
-        text = cast("str", widget.content)
+        text = _plain(widget.content)
         assert "demo" in text
-        assert "Engine running · Uptime unknown" in text
+        assert "Engine running · Uptime unavailable" in text
         assert "Running 1 · Waiting 0" in text
         assert "Slots 1/2" in text
         assert "Local merge" in text
-        assert "+1/-0" in text
-        assert "2 dirty" in text
+        assert "line counts unavailable" in text
+        assert "binary count unavailable" in text
+        assert "untracked count unavailable" in text
+        assert "+1/-0" not in text
+        assert "2 dirty" not in text
+
+
+async def test_header_preserves_stale_and_unavailable_checkout_facts(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    cases = (
+        (
+            RepoStatus(
+                branch="main",
+                ahead=0,
+                behind=0,
+                dirty=0,
+                sampled_ago="0:00:05",
+                root=str(project_dir.resolve()),
+                added_lines=0,
+                deleted_lines=0,
+                state=DiagnosticSampleState.STALE,
+                error="git temporarily unavailable",
+            ),
+            (
+                "main (previously clean)",
+                "Checkout stale · sampled 0:00:05",
+                "Checkout read failed · git temporarily unavailable",
+            ),
+        ),
+        (
+            RepoStatus(
+                branch=None,
+                ahead=None,
+                behind=None,
+                dirty=None,
+                root=str(project_dir.resolve()),
+                state=DiagnosticSampleState.FAILED,
+                error="not a repository",
+            ),
+            (
+                "branch unavailable",
+                "Checkout unavailable · not a repository",
+            ),
+        ),
+    )
+
+    for repo_status, expected_facts in cases:
+        context = widget_context(
+            reader,
+            project_dir,
+            clock,
+            services=StubServices(repo_status_value=repo_status),
+        )
+        widget = cast("HeaderPanel", HeaderWidget().create(context))
+        async with WidgetHostApp(widget).run_test() as pilot:
+            await pilot.pause()
+            rendered = _plain(widget.content)
+            assert "SHIKIRU demo" in rendered
+            assert str(project_dir.resolve()) in rendered
+            assert all(fact in rendered for fact in expected_facts)
 
 
 async def test_header_does_not_count_an_escalated_slot_as_occupied(
@@ -85,7 +149,7 @@ async def test_header_does_not_count_an_escalated_slot_as_occupied(
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
 
-        assert "Slots 0/2" in cast("str", widget.content)
+        assert "Slots 0/2" in _plain(widget.content)
 
 
 async def test_home_summary_separates_paused_and_external_waits_from_slot_occupancy(
@@ -135,13 +199,13 @@ async def test_header_shows_an_open_fault_streak_and_the_age_of_the_oldest_escal
     widget = cast("HeaderPanel", HeaderWidget().create(context))
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
-        text = cast("str", widget.content)
+        text = _plain(widget.content)
         assert "engine tick: CommandFailed x3" in text
         assert "oldest escalation 0:00:00" in text
 
         events.append(EventKind.ENGINE_RECOVERED, message="ok", data={"scope": "engine tick"})
 
-        await wait_until(lambda: "engine tick" not in cast("str", widget.content), timeout=5.0)
+        await wait_until(lambda: "engine tick" not in _plain(widget.content), timeout=5.0)
 
 
 async def test_header_refreshes_when_the_writer_commits(
@@ -154,11 +218,11 @@ async def test_header_refreshes_when_the_writer_commits(
     widget = cast("HeaderPanel", HeaderWidget().create(context))
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
-        assert "Slots 0/2" in cast("str", widget.content)
+        assert "Slots 0/2" in _plain(widget.content)
 
         _submit_task(connection, clock)
 
-        await wait_until(lambda: "Slots 1/2" in cast("str", widget.content), timeout=5.0)
+        await wait_until(lambda: "Slots 1/2" in _plain(widget.content), timeout=5.0)
 
 
 async def test_strips_shows_the_active_task_at_its_current_step(

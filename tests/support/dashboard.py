@@ -43,13 +43,17 @@ class StubServices:
         *,
         engine_running: bool = False,
         engine_process_identity: ProcessIdentity | None = None,
+        repo_status_value: RepoStatus | None = None,
     ) -> None:
         self.engine_running = engine_running
         self._engine_process_identity = engine_process_identity
+        self._repo_status_value = repo_status_value
         self.resource_observation: ResourceView | None = None
 
     async def repo_status(self) -> RepoStatus:
-        return RepoStatus(branch="main", ahead=REPO_AHEAD, behind=0, dirty=REPO_DIRTY)
+        return self._repo_status_value or RepoStatus(
+            branch="main", ahead=REPO_AHEAD, behind=0, dirty=REPO_DIRTY
+        )
 
     def engine_up(self) -> bool:
         return self.engine_running
