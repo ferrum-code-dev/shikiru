@@ -4414,6 +4414,9 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
                 lambda: task.title in str(identity.content),
                 timeout=2,
             )
+            task_list = home.query_one("#task-browser-list", ListView)
+            home_focus = home.focused
+            assert home_focus is not None
             await pilot.press("u")
             await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
             usage_screen = app.screen
@@ -4426,14 +4429,25 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
                 ),
                 timeout=2,
             )
-            _capture_task99(app, f"task108-usage-{app.size.width}x{app.size.height}-color.svg")
             usage_close = usage_screen.query_one("#task-detail-popup-close", Button)
             await wait_until(
-                lambda: usage_close.region.width > 0 and usage_close.region.height > 0,
+                lambda: (
+                    usage_close.region.width > 0
+                    and usage_close.region.height > 0
+                    and usage_close.region.x >= 0
+                    and usage_close.region.y >= 0
+                    and usage_close.region.right <= app.size.width
+                    and usage_close.region.bottom <= app.size.height
+                ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            await pilot.pause()
+            _capture_task99(app, f"task108-usage-{app.size.width}x{app.size.height}-color.svg")
             await pilot.click("#task-detail-popup-close")
             await wait_until(lambda: app.screen is home, timeout=2)
+            assert task_list.highlighted_child is not None
+            assert task_list.highlighted_child.id == f"task-row-{task.id}"
+            assert home.focused is home_focus
 
             await _assert_evidence_editor_shortcut_precedence(
                 app,
