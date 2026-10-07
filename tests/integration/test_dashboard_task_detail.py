@@ -36,6 +36,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BODY,
     TASK_DETAIL_CONTEXT_INFO,
+    TASK_DETAIL_EVIDENCE_INLINE_BUTTON,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_PROGRESS,
@@ -46,6 +47,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_ENTRY,
     TASK_DETAIL_TIMELINE_ROLE,
     TASK_DETAIL_TIMELINE_TURN,
+    TASK_DETAIL_USAGE_INLINE_BUTTON,
     TASK_DETAIL_VIEWS_CLOSE_BUTTON,
     TASK_VIEW_ACTIONS,
     TASK_VIEW_CONTEXT,
@@ -55,6 +57,7 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_USAGE,
     TASK_VIEW_WORKSPACE,
     TaskDetailPanel,
+    TaskDetailScreen,
     TaskDetailViewsScreen,
 )
 from shikiru.dashboard.palette import PaletteScreen
@@ -465,8 +468,9 @@ async def _open_task_view(
 ) -> None:
     if view_id == TASK_VIEW_USAGE:
         await pilot.press("u")
-        panel = app.query_one("#task-detail-panel", TaskDetailPanel)
-        await wait_until(lambda: panel.active_view == TASK_VIEW_USAGE, timeout=2)
+        await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        await wait_until(lambda: panel.active_view == view_id, timeout=2)
         return
     await pilot.press("v")
     await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
@@ -474,7 +478,13 @@ async def _open_task_view(
     choice.value = view_id
     await wait_until(lambda: choice.value == view_id, timeout=2)
     await pilot.press("tab", "enter")
-    await wait_until(lambda: not isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+    await wait_until(
+        lambda: (
+            isinstance(app.screen, TaskDetailScreen)
+            and app.screen.query_one("#task-detail-panel", TaskDetailPanel).active_view == view_id
+        ),
+        timeout=2,
+    )
 
 
 async def _open_task_context_choice(
@@ -533,7 +543,7 @@ async def _assert_task_context_extensions_and_workspace_are_available(
     assert app.screen.query_one("#task-view-extension-panel", Static).region.width > 0
     await pilot.press("escape")
     await _open_task_view(app, pilot, TASK_VIEW_WORKSPACE)
-    assert app.query_one("#task-detail-window", Button).region.width > 0
+    assert app.screen.query_one("#task-detail-window", Button).region.width > 0
 
 
 def _write_report_turn(
@@ -769,7 +779,7 @@ async def _assert_billing_details_are_visible(
     )
     async with app.run_test(size=(90, 42)) as pilot:
         await _open_task_view(app, pilot, TASK_VIEW_USAGE)
-        sessions_widget = app.query_one("#task-detail-sessions", Static)
+        sessions_widget = app.screen.query_one("#task-detail-sessions", Static)
         await wait_until(
             lambda: _has_billing_evidence(sessions_widget),
             timeout=_BILLING_WIDGET_WAIT_SECONDS,
@@ -832,7 +842,7 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
         async with app.run_test(size=(90, 42)) as pilot:
             await pilot.pause()
             await _open_task_view(app, pilot, TASK_VIEW_USAGE)
-            sessions = app.query_one("#task-detail-sessions", Static)
+            sessions = app.screen.query_one("#task-detail-sessions", Static)
             await wait_until(
                 lambda: "Billing declaration" in plain_text(sessions.content),
                 timeout=2,
@@ -978,9 +988,10 @@ async def _assert_task_history_rendering(
         lambda: task.title in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
         timeout=2,
     )
-    sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
+    sessions = app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
     assert "session-wide 13 tok" in plain_text(sessions.content)
     await pilot.press("u")
+    sessions = app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
     await wait_until(
         lambda: (
             "Recorded model turn observations · not model totals" in plain_text(sessions.content)
@@ -2053,21 +2064,25 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
     queue: CommandQueue,
     pending_before: list[QueuedCommand],
 ) -> None:
-    workspace_screen = app.screen
-    panel = app.query_one("#task-detail-panel", TaskDetailPanel)
     await _open_task_view(app, pilot, TASK_VIEW_EVIDENCE)
-    timeline_turn = app.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
+    workspace_screen = app.screen
+    panel = workspace_screen.query_one("#task-detail-panel", TaskDetailPanel)
+    timeline_turn = workspace_screen.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
     timeline_turn.value = "3"
     timeline_category = cast(
-        "Select[str]", app.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
+        "Select[str]", workspace_screen.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
     )
     timeline_category.value = TaskTimelineCategory.SIGNAL.value
-    timeline_role = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select))
+    timeline_role = cast(
+        "Select[str]", workspace_screen.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select)
+    )
     timeline_role.value = Role.LEADER.value
-    timeline_entry = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select))
+    timeline_entry = cast(
+        "Select[str]", workspace_screen.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select)
+    )
     await wait_until(lambda: timeline_entry.value != Select.BLANK, timeout=2)
     selected_entry = timeline_entry.value
-    body = app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+    body = workspace_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
     body.scroll_to_widget(timeline_turn, animate=False)
     timeline_turn.focus()
     await pilot.wait_for_scheduled_animations()
@@ -2097,12 +2112,12 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
         assert close_button.region.right <= width
         assert close_button.region.y >= 0
         assert close_button.region.bottom <= height
-        assert await pilot.click(close_button, offset=(1, 1))
+        assert await pilot.click(close_button, offset=(0, 0))
         await wait_until(
             lambda saved_scroll_position=saved_scroll_position: (
                 app.screen is workspace_screen
                 and body.scroll_target_y == saved_scroll_position
-                and app.focused is body
+                and workspace_screen.focused is body
             ),
             timeout=2,
         )
@@ -2160,6 +2175,7 @@ async def test_task_detail_views_mouse_opens_task_actions_and_help(
             await _close_task_views_preserving_evidence_at_narrow_sizes(
                 app, pilot, task.id, queue, pending_before
             )
+            task_detail_screen = app.screen
             await pilot.resize_terminal(100, 40)
             await pilot.wait_for_scheduled_animations()
             app.set_focus(None)
@@ -2177,7 +2193,7 @@ async def test_task_detail_views_mouse_opens_task_actions_and_help(
             assert queue.pending() == pending_before
 
             await pilot.press("escape")
-            await wait_until(lambda: app.screen is workspace_screen, timeout=2)
+            await wait_until(lambda: app.screen is task_detail_screen, timeout=2)
             app.set_focus(None)
             await pilot.press("v")
             await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
@@ -2190,6 +2206,8 @@ async def test_task_detail_views_mouse_opens_task_actions_and_help(
             )
             assert queue.pending() == pending_before
             await pilot.click("#workspace-help-close")
+            await wait_until(lambda: app.screen is task_detail_screen, timeout=2)
+            await pilot.press("escape")
             await wait_until(lambda: app.screen is workspace_screen, timeout=2)
     finally:
         reader.close()
@@ -2205,7 +2223,6 @@ async def _assert_responsive_task_sections(
     identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
     ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
     situation = app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)
-    sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
     assert task.id in _text(identity)
     assert task.title in _text(identity)
     body.scroll_to_widget(identity, animate=False)
@@ -2224,13 +2241,17 @@ async def _assert_responsive_task_sections(
     assert situation.region.overlaps(body.scrollable_content_region)
 
     await pilot.press("u")
+    await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+    detail_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+    detail_body = detail_panel.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+    detailed_sessions = detail_panel.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
     await wait_until(
-        lambda: sessions.display and run.agent in plain_text(sessions.content),
+        lambda: detailed_sessions.display and run.agent in plain_text(detailed_sessions.content),
         timeout=_BILLING_WIDGET_WAIT_SECONDS,
     )
-    body.scroll_to_widget(sessions, animate=False)
+    detail_body.scroll_to_widget(detailed_sessions, animate=False)
     await pilot.pause()
-    assert sessions.region.overlaps(body.scrollable_content_region)
+    assert detailed_sessions.region.overlaps(detail_body.scrollable_content_region)
     await pilot.press("escape")
 
 
@@ -2278,7 +2299,9 @@ async def _assert_task_context_keeps_priority(app: DashboardApp, pilot: Pilot[No
     await pilot.press("tab", "enter")
     await wait_until(
         lambda: (
-            "Dispatch priority · 5" in _text(app.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static))
+            isinstance(app.screen, TaskDetailScreen)
+            and "Dispatch priority · 5"
+            in _text(app.screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static))
         ),
         timeout=2,
     )
@@ -2359,6 +2382,7 @@ async def test_task_usage_details_are_contextual_and_return_to_compact_summary(
             widget_names=TASK_DETAIL_WIDGETS,
         )
         async with app.run_test(size=(80, 40)) as pilot:
+            dashboard_screen = app.screen
             await wait_until(
                 lambda: (
                     "Task usage details" in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
@@ -2370,15 +2394,17 @@ async def test_task_usage_details_are_contextual_and_return_to_compact_summary(
             sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
             assert "Session-wide cumulative totals" not in plain_text(sessions.content)
             await pilot.press("u")
+            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+            sessions = app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
             await wait_until(
                 lambda: "Session-wide cumulative totals" in plain_text(sessions.content),
                 timeout=2,
             )
+            assert not app.screen.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}", Button).display
             await pilot.press("escape")
-            await wait_until(
-                lambda: "Session-wide cumulative totals" not in plain_text(sessions.content),
-                timeout=2,
-            )
+            await wait_until(lambda: app.screen is dashboard_screen, timeout=2)
+            sessions = dashboard_screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
+            assert "Session-wide cumulative totals" not in plain_text(sessions.content)
     finally:
         reader.close()
 
@@ -2474,8 +2500,12 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
                 timeout=_BILLING_WIDGET_WAIT_SECONDS,
             )
             await _open_task_view(app, pilot, TASK_VIEW_EVIDENCE)
-            timeline_turn = app.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
-            detail_body = app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+            detail_screen = app.screen
+            timeline_turn = detail_screen.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
+            detail_body = detail_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+            assert not detail_screen.query_one(
+                f"#{TASK_DETAIL_EVIDENCE_INLINE_BUTTON}", Button
+            ).display
 
             def filter_visible() -> bool:
                 return (
@@ -2498,7 +2528,7 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
             await wait_until(clock.has_pending_sleep, timeout=_BILLING_WIDGET_WAIT_SECONDS)
             clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
-            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+            ownership = detail_screen.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
             await wait_until(
                 lambda: Hold.PAUSED.value in _text(ownership),
                 timeout=_BILLING_WIDGET_WAIT_SECONDS,
@@ -2539,9 +2569,9 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
     try:
         app = _operator_task_app(reader, project_root, task.id, queue, clock)
         async with app.run_test(size=(36, 20)) as pilot:
-            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
             dashboard_screen = app.screen
+            identity = dashboard_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            ownership = dashboard_screen.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
             await wait_until(lambda: task.title in _text(identity), timeout=2)
             await wait_until(clock.has_pending_sleep, timeout=2)
 
@@ -2556,19 +2586,22 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
                 lambda: Hold.PAUSED.value in _text(ownership),
                 timeout=2,
             )
-            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            identity = dashboard_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
             assert task.id in _text(identity)
             assert task.title in _text(identity)
             assert "queued" in _text(identity).casefold()
             assert Hold.PAUSED.value in _text(ownership)
             await _open_task_view(app, pilot, TASK_VIEW_CONTEXT)
+            detail_screen = app.screen
             assert "Project attention" in _text(
-                app.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
+                detail_screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
             )
             await pilot.press("escape")
-            body = app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+            await wait_until(lambda: app.screen is dashboard_screen, timeout=2)
             await _open_task_view(app, pilot, TASK_VIEW_RELATIONSHIPS)
-            blocker = app.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+            detail_screen = app.screen
+            body = detail_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
+            blocker = detail_screen.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
             body.scroll_to_widget(blocker, animate=False)
             await pilot.pause()
             assert blocker.display
@@ -2841,7 +2874,7 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
             assert len(app.query("#task-browser-list")) == 0
             await _open_task_view(app, pilot, TASK_VIEW_CONTEXT)
             assert "Project attention · 1 decisions · 1 engine faults" in _text(
-                app.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
+                app.screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
             )
             await pilot.press("escape")
             await _assert_task_dialogue_is_scoped(app, pilot)

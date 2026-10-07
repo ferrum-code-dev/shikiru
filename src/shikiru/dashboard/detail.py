@@ -11,7 +11,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Label, Select, Static
 
 from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED
 from shikiru.dashboard.contract import (
@@ -73,7 +73,6 @@ TASK_DETAIL_WORKER_GROUP = "task-detail-updates"
 TASK_DETAIL_ESCAPE = "escape"
 SESSION_STATE_CURRENT = "Current"
 SESSION_STATE_USED = "Used"
-TASK_DETAIL_BACK_BUTTON = "task-detail-back"
 TASK_DETAIL_WINDOW_BUTTON = "task-detail-window"
 TASK_DETAIL_LEADER_BUTTON = "task-detail-leader"
 TASK_DETAIL_IMPLEMENTER_BUTTON = "task-detail-implementer"
@@ -85,7 +84,12 @@ TASK_DETAIL_SIGNAL = "task-detail-signal"
 TASK_DETAIL_SUMMARY_USAGE = "task-detail-summary-usage"
 TASK_DETAIL_USAGE_INLINE_BUTTON = "task-detail-usage-inline"
 TASK_DETAIL_EVIDENCE_INLINE_BUTTON = "task-detail-evidence-inline"
-TASK_DETAIL_ACTIONS_INLINE_BUTTON = "task-detail-actions-inline"
+TASK_DETAIL_POPUP_FRAME = "task-detail-popup-frame"
+TASK_DETAIL_POPUP_HEADER = "task-detail-popup-header"
+TASK_DETAIL_POPUP_TITLE = "task-detail-popup-title"
+TASK_DETAIL_POPUP_CLOSE = "task-detail-popup-close"
+TASK_DETAIL_POPUP_CLOSE_LABEL = "Esc \u00d7"
+TASK_DETAIL_POPUP_CLOSE_CLASS = "popup-close-control"
 TASK_DETAIL_REQUEST = "task-detail-request"
 TASK_DETAIL_CRITERIA = "task-detail-criteria"
 TASK_DETAIL_REPORT = "task-detail-report"
@@ -368,7 +372,6 @@ class TaskDetailPanel(Vertical):
             yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section")
             with Horizontal(id="task-detail-evidence-link"):
                 yield Button("e Evidence", id=TASK_DETAIL_EVIDENCE_INLINE_BUTTON)
-                yield Button("Ctrl+P actions", id=TASK_DETAIL_ACTIONS_INLINE_BUTTON)
             yield Static(
                 "", id=TASK_DETAIL_CONTEXT_INFO, classes="task-detail-section", markup=False
             )
@@ -593,16 +596,18 @@ class TaskDetailPanel(Vertical):
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == TASK_DETAIL_USAGE_INLINE_BUTTON:
-            self.open_usage_details()
+            if self._task_id is not None and self._widget_context.open_task_detail_view is not None:
+                await self._widget_context.open_task_detail_view(self._task_id, TASK_VIEW_USAGE)
+            else:
+                self.open_usage_details()
             return
         if event.button.id == TASK_DETAIL_EVIDENCE_INLINE_BUTTON:
-            self._show_task_view(TASK_VIEW_EVIDENCE)
-            return
-        if event.button.id == TASK_DETAIL_ACTIONS_INLINE_BUTTON:
-            await self.open_palette()
+            if self._task_id is not None and self._widget_context.open_task_detail_view is not None:
+                await self._widget_context.open_task_detail_view(self._task_id, TASK_VIEW_EVIDENCE)
+            else:
+                self.open_evidence()
             return
         handlers = {
-            TASK_DETAIL_BACK_BUTTON: self._back,
             TASK_DETAIL_WINDOW_BUTTON: self._navigate_task_window,
             TASK_DETAIL_LEADER_BUTTON: lambda: self._navigate_role_pane(Role.LEADER),
             TASK_DETAIL_IMPLEMENTER_BUTTON: lambda: self._navigate_role_pane(Role.IMPLEMENTER),
@@ -886,6 +891,9 @@ class TaskDetailPanel(Vertical):
     def open_evidence(self) -> None:
         self._show_task_view(TASK_VIEW_EVIDENCE)
 
+    def open_view(self, view_id: str) -> None:
+        self._show_task_view(view_id)
+
     def close_contextual_view(self) -> None:
         if self._active_view != TASK_VIEW_SUMMARY:
             self._show_task_view(TASK_VIEW_SUMMARY)
@@ -899,8 +907,19 @@ class TaskDetailPanel(Vertical):
             return
         self._views_return_state = None
         if selected in TASK_VIEW_WIDGETS:
-            self._queue_refresh()
-            self._show_task_view(selected)
+            if isinstance(self.screen, TaskDetailScreen):
+                self._queue_refresh()
+                self._show_task_view(selected)
+            elif (
+                self._task_id is not None and self._widget_context.open_task_detail_view is not None
+            ):
+                self.run_worker(
+                    self._widget_context.open_task_detail_view(self._task_id, selected),
+                    group=TASK_DETAIL_WORKER_GROUP,
+                )
+            else:
+                self._queue_refresh()
+                self._show_task_view(selected)
         elif selected == TASK_VIEW_ACTIONS:
             self.run_worker(self.open_palette(), group=TASK_DETAIL_WORKER_GROUP)
         elif selected == TASK_VIEW_HELP:
@@ -937,6 +956,8 @@ class TaskDetailPanel(Vertical):
         if view_id not in TASK_VIEW_WIDGETS:
             return
         self._active_view = view_id
+        if isinstance(self.screen, TaskDetailScreen):
+            self.screen.set_view_heading(view_id)
         if self._view is None or not self.is_mounted:
             return
         if view_id == TASK_VIEW_RELATIONSHIPS:
@@ -1144,6 +1165,12 @@ class TaskDetailPanel(Vertical):
         visible = set(TASK_VIEW_WIDGETS[self._active_view])
         for widget_id in detail_widgets:
             self.query_one(f"#{widget_id}").display = widget_id in visible
+        self.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}").display = (
+            self._active_view != TASK_VIEW_USAGE
+        )
+        self.query_one(f"#{TASK_DETAIL_EVIDENCE_INLINE_BUTTON}").display = (
+            self._active_view != TASK_VIEW_EVIDENCE
+        )
         self.query_one(f"#{TASK_DETAIL_BLOCKER}").display = (
             blocker_visible and self._active_view == TASK_VIEW_RELATIONSHIPS
         )
@@ -1358,9 +1385,9 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Back")]
     DEFAULT_CSS = """
-    TaskDetailViewsScreen { align: center middle; }
+    TaskDetailViewsScreen { align: center middle; background: transparent; padding: 1; }
     #task-detail-views-frame {
-        width: 100%; height: auto; max-height: 100%; max-width: 80; padding: 0 1;
+        width: 100%; height: auto; max-height: 90%; max-width: 64; padding: 0 1;
         border: solid $neutral-border; background: $surface; color: $primary-text;
     }
     #task-detail-views-frame Select { width: 100%; }
@@ -1369,7 +1396,7 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
     #task-detail-views-title {
         width: 1fr; height: 1; text-wrap: nowrap; text-overflow: ellipsis;
     }
-    #task-detail-views-close { width: 9; min-width: 9; height: auto; padding: 0 1; }
+    #task-detail-views-close { width: auto; min-width: 5; height: 1; padding: 0; }
     #task-detail-views-open { width: 100%; height: auto; min-width: 1; padding: 0; }
     """
 
@@ -1384,7 +1411,11 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
                 yield Static(
                     f"Task views · {self._task_id}", id="task-detail-views-title", markup=False
                 )
-                yield Button("Close", id=TASK_DETAIL_VIEWS_CLOSE_BUTTON)
+                yield Button(
+                    TASK_DETAIL_POPUP_CLOSE_LABEL,
+                    id=TASK_DETAIL_VIEWS_CLOSE_BUTTON,
+                    classes=TASK_DETAIL_POPUP_CLOSE_CLASS,
+                )
             with VerticalScroll(id=TASK_DETAIL_VIEWS_CONTENT):
                 yield Select(self._choices, value=TASK_VIEW_USAGE, id="task-detail-view-choice")
                 yield Button("Open", id=TASK_DETAIL_VIEWS_OPEN_BUTTON)
@@ -1415,15 +1446,18 @@ class TaskDetailScreen(ModalScreen[None]):
     """Show a selected task's shared detail over the Home browser."""
 
     DEFAULT_CSS = """
-    TaskDetailScreen { width: 100%; height: 100%; background: $background; }
-    #task-detail-panel { height: 100%; }
-    #task-detail-panel #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
-    TaskDetailScreen.wide-overlay { align: center middle; background: $background 80%; }
-    TaskDetailScreen.wide-overlay #task-detail-panel {
-        width: 100%; max-width: 64; height: auto; max-height: 90%; min-height: 7;
-        padding: 1 2; border: solid $focus; background: $surface;
+    TaskDetailScreen { align: center middle; background: transparent; padding: 1; }
+    #task-detail-popup-frame {
+        width: 100%; max-width: 64; height: auto; max-height: 90%; min-height: 1;
+        padding: 0 1; border: solid $neutral-border; background: $surface;
     }
-    TaskDetailScreen.wide-overlay #task-detail-body { background: $surface; }
+    #task-detail-popup-header { width: 100%; height: 1; }
+    #task-detail-popup-title { width: 1fr; height: 1; color: $steel-blue; }
+    #task-detail-popup-close { width: auto; min-width: 5; height: 1; padding: 0; }
+    #task-detail-panel { width: 100%; height: 1fr; min-height: 0; }
+    #task-detail-panel #task-detail-body {
+        height: 1fr; min-height: 0; max-height: 1fr; background: $surface;
+    }
     """
 
     def __init__(
@@ -1432,25 +1466,30 @@ class TaskDetailScreen(ModalScreen[None]):
         task_id: str,
         *,
         initial_view: str = TASK_VIEW_SUMMARY,
-        wide_overlay: bool = False,
         open_views_on_mount: bool = False,
     ) -> None:
         super().__init__()
-        if wide_overlay:
-            self.add_class("wide-overlay")
         self._widget_context = context
         self._task_id = task_id
         self._initial_view = initial_view
         self._open_views_on_mount = open_views_on_mount
 
     def compose(self) -> ComposeResult:
-        yield TaskDetailPanel(
-            self._widget_context,
-            self._task_id,
-            fixed=False,
-            close_detail=self._close,
-            initial_view=self._initial_view,
-        )
+        with Vertical(id=TASK_DETAIL_POPUP_FRAME):
+            with Horizontal(id=TASK_DETAIL_POPUP_HEADER):
+                yield Label(self._heading(), id=TASK_DETAIL_POPUP_TITLE)
+                yield Button(
+                    TASK_DETAIL_POPUP_CLOSE_LABEL,
+                    id=TASK_DETAIL_POPUP_CLOSE,
+                    classes=TASK_DETAIL_POPUP_CLOSE_CLASS,
+                )
+            yield TaskDetailPanel(
+                self._widget_context,
+                self._task_id,
+                fixed=False,
+                close_detail=self._close,
+                initial_view=self._initial_view,
+            )
 
     async def on_mount(self) -> None:
         panel = self.query_one("#task-detail-panel", TaskDetailPanel)
@@ -1463,6 +1502,30 @@ class TaskDetailScreen(ModalScreen[None]):
         if self._open_views_on_mount:
             await panel.open_contextual_views()
 
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == TASK_DETAIL_POPUP_CLOSE:
+            self.dismiss()
+
+    def _heading(self) -> str:
+        return self._view_heading(self._initial_view)
+
+    def _view_heading(self, view_id: str) -> str:
+        name = {
+            TASK_VIEW_SUMMARY: "Task details",
+            TASK_VIEW_USAGE: "Usage",
+            TASK_VIEW_EVIDENCE: "Evidence",
+            TASK_VIEW_CONTEXT: "Task context",
+            TASK_VIEW_REPORTS: "Reports and decisions",
+            TASK_VIEW_REQUEST: "Request and criteria",
+            TASK_VIEW_RELATIONSHIPS: "Blockers and relationships",
+            TASK_VIEW_FACTS: "Engine facts",
+            TASK_VIEW_WORKSPACE: "Workspace targets",
+        }.get(view_id, "Task details")
+        return f"{name} · {self._task_id}"
+
+    def set_view_heading(self, view_id: str) -> None:
+        self.query_one(f"#{TASK_DETAIL_POPUP_TITLE}", Label).update(self._view_heading(view_id))
+
     async def _close(self) -> None:
         self.dismiss()
 
@@ -1473,10 +1536,6 @@ class TaskDetailScreen(ModalScreen[None]):
         self.query_one("#task-detail-panel", TaskDetailPanel).open_usage_details()
 
     async def action_close(self) -> None:
-        panel = self.query_one("#task-detail-panel", TaskDetailPanel)
-        if panel.active_view != TASK_VIEW_SUMMARY:
-            panel.close_contextual_view()
-            return
         self.dismiss()
 
     async def action_open_palette(self) -> None:

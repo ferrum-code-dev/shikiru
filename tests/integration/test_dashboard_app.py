@@ -5,6 +5,7 @@ import json
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from html import unescape
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -51,7 +52,6 @@ from shikiru.dashboard.contract import (
     TaskPaletteRoute,
 )
 from shikiru.dashboard.detail import (
-    TASK_DETAIL_ACTIONS_INLINE_BUTTON,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_CRITERIA,
     TASK_DETAIL_EVIDENCE,
@@ -132,6 +132,7 @@ from tests.support.waiting import wait_until
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
+_DASHBOARD_DETAIL_VIEW_TIMEOUT_SECONDS = 5
 COMMAND_HISTORY_TEST_LIMIT = 10
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _LATER_EXTERNAL_WIDGET_NAME = "later-widget"
@@ -850,14 +851,21 @@ async def _assert_task99_live_age_and_routes(
     )
     await pilot.press("enter")
     await wait_until(
+        lambda: isinstance(app.screen, TaskDetailScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    evidence_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+    await wait_until(
         lambda: (
-            panel.active_view == TASK_VIEW_EVIDENCE
+            evidence_panel.active_view == TASK_VIEW_EVIDENCE
             and "Evidence"
-            in _task99_widget_text(app.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static))
+            in _task99_widget_text(app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static))
         ),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    timeline_entry = cast("Select[str]", app.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select))
+    timeline_entry = cast(
+        "Select[str]", app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select)
+    )
     await wait_until(
         lambda: timeline_entry.value != Select.BLANK,
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -865,7 +873,7 @@ async def _assert_task99_live_age_and_routes(
     _capture_task99(app, f"task-evidence-{size[0]}x{size[1]}-color.svg")
     await pilot.press("escape")
     await wait_until(
-        lambda: panel.active_view == TASK_VIEW_SUMMARY,
+        lambda: not isinstance(app.screen, TaskDetailScreen),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     usage_button = panel.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}", Button)
@@ -876,11 +884,17 @@ async def _assert_task99_live_age_and_routes(
     )
     await pilot.press("enter")
     await wait_until(
-        lambda: (
-            panel.active_view == TASK_VIEW_USAGE
-            and "API" in _task99_widget_text(app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static))
-        ),
+        lambda: isinstance(app.screen, TaskDetailScreen),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    usage_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+    await wait_until(
+        lambda: (
+            usage_panel.active_view == TASK_VIEW_USAGE
+            and "API"
+            in _task99_widget_text(app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static))
+        ),
+        timeout=_DASHBOARD_DETAIL_VIEW_TIMEOUT_SECONDS,
     )
     _capture_task99(app, f"task-usage-{size[0]}x{size[1]}-color.svg")
 
@@ -2324,10 +2338,12 @@ async def test_focus_attention_opens_durable_decision_evidence(
         reader.close()
 
 
+@pytest.mark.parametrize("size", [_STANDARD_HOME_SIZE, _COMPACT_HOME_SIZE])
 async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
@@ -2365,7 +2381,7 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             open_palette_context=open_palette_context,
         )
         app_instances.append(app)
-        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
+        async with app.run_test(size=size) as pilot:
             attention = app.query_one("#escalations", EscalationsPanel)
             await wait_until(lambda: attention.display, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
             row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
@@ -2373,6 +2389,7 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             caller = app.screen
 
             screen = await _open_attention_answer_form(app, pilot, row)
+            assert caller.is_mounted
             _assert_attention_answer_target(screen, task.id, escalation.id, escalation.headline)
             title = screen.query_one("#palette-title", Static)
             assert task.id in _rendered_text(title)
@@ -2380,7 +2397,7 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             assert "missing-packet.md" in _rendered_text(
                 screen.query_one("#palette-evidence-error", Static)
             )
-            _capture_task99(app, "task101-answer-missing-packet-100x35-color.svg")
+            _capture_task99(app, f"task108-answer-{size[0]}x{size[1]}-color.svg")
             assert queue.pending() == []
 
             guidance = "Preserve the existing call pattern."
@@ -2957,6 +2974,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             history_scroll.scroll_to(y=history_scroll.max_scroll_y, animate=False)
             await pilot.pause()
             scroll_before_refresh = history_scroll.scroll_y
+            assert scroll_before_refresh == history_scroll.max_scroll_y
             focus_before_refresh = app.focused
 
             engine = database.connect()
@@ -2973,7 +2991,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             )
             await pilot.pause()
             assert app.focused is focus_before_refresh
-            assert history_scroll.scroll_y == scroll_before_refresh
+            assert history_scroll.scroll_y == history_scroll.max_scroll_y
             assert app.screen is not home_screen
     finally:
         reader.close()
@@ -3339,16 +3357,21 @@ async def _exercise_contextual_draft_and_evidence_route(
     await _resize_contextual_message_form(app, pilot, palette, guidance)
     await pilot.click("#palette-back-to-menu")
     await _click_palette_menu_button(pilot, palette, "palette-menu-view-evidence")
-    panel = app.query_one("#task-detail-panel", TaskDetailPanel)
     await wait_until(
-        lambda: panel.active_view == TASK_VIEW_EVIDENCE,
+        lambda: isinstance(app.screen, TaskDetailScreen),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    evidence_screen = app.screen
+    evidence_panel = evidence_screen.query_one("#task-detail-panel", TaskDetailPanel)
+    await wait_until(
+        lambda: evidence_panel.active_view == TASK_VIEW_EVIDENCE,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert task.id in _rendered_text(evidence_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
     assert queue.pending() == []
     await pilot.press("escape")
     await wait_until(
-        lambda: panel.active_view == TASK_VIEW_SUMMARY,
+        lambda: app.screen is home,
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     list_view.focus()
@@ -3423,7 +3446,8 @@ async def _exercise_inspector_mouse_and_native_escape(
     search = app.query_one("#task-browser-search", Input)
     await _select_home_task(app, task.id)
     assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-    await pilot.click(f"#{TASK_DETAIL_ACTIONS_INLINE_BUTTON}")
+    app.query_one(f"#{TASK_DETAIL_EVIDENCE_INLINE_BUTTON}", Button).focus()
+    await pilot.press("ctrl+p")
     await wait_until(
         lambda: isinstance(app.screen, PaletteScreen),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -3483,20 +3507,32 @@ async def _exercise_task_secondary_menu_routes(
     home_screen = app.screen
     search = app.query_one("#task-browser-search", Input)
     list_view = app.query_one("#task-browser-list", ListView)
-    panel = app.query_one("#task-detail-panel", TaskDetailPanel)
     await _select_home_task(app, task.id)
-    for route_button, expected_view in (
+    for route_button, expected_view in [
         ("#palette-menu-view-evidence", TASK_VIEW_EVIDENCE),
         ("#palette-menu-view-usage", TASK_VIEW_USAGE),
-    ):
+    ]:
         await _open_task_context_menu(app, pilot, list_view)
         await pilot.click(route_button)
         await wait_until(
-            lambda expected_view=expected_view: panel.active_view == expected_view,
+            lambda: isinstance(app.screen, TaskDetailScreen),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        detail_screen = app.screen
+        detail_panel = detail_screen.query_one("#task-detail-panel", TaskDetailPanel)
+        await wait_until(
+            lambda expected_view=expected_view, detail_panel=detail_panel: (
+                detail_panel.active_view == expected_view
+            ),
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
         assert search.value == task.title
         assert queue.pending() == []
+        await pilot.press("escape")
+        await wait_until(
+            lambda: app.screen is home_screen,
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
 
     await _open_task_context_menu(app, pilot, list_view)
     assert not app.screen.query("#palette-menu-inspect")
@@ -4120,21 +4156,20 @@ async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
             choice.value = TASK_VIEW_EVIDENCE
             await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
             await wait_until(
-                lambda: (
-                    app.screen is home
-                    and app.query_one("#task-detail-panel", TaskDetailPanel).active_view
-                    == TASK_VIEW_EVIDENCE
-                ),
+                lambda: isinstance(app.screen, TaskDetailScreen),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            evidence_screen = app.screen
+            evidence_panel = evidence_screen.query_one("#task-detail-panel", TaskDetailPanel)
+            assert evidence_panel.active_view == TASK_VIEW_EVIDENCE
+            assert task.id in _rendered_text(
+                evidence_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            )
+            assert home.is_mounted
             assert queue.pending() == []
             await pilot.press("escape")
             await wait_until(
-                lambda: (
-                    app.query_one("#task-detail-panel", TaskDetailPanel).active_view
-                    == TASK_VIEW_SUMMARY
-                ),
+                lambda: app.screen is home,
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
             await pilot.press("escape")
@@ -4245,25 +4280,35 @@ async def _assert_home_inline_secondary_routes(
     reader: StateReader,
     before_commands: int,
 ) -> None:
-    panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+    home_screen = app.screen
     await pilot.press("e")
     await wait_until(
-        lambda: panel.active_view == TASK_VIEW_EVIDENCE,
+        lambda: isinstance(app.screen, TaskDetailScreen),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    assert task_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    evidence_screen = app.screen
+    assert evidence_screen.query_one("#task-detail-panel", TaskDetailPanel).active_view == (
+        TASK_VIEW_EVIDENCE
+    )
+    assert task_id in _rendered_text(evidence_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    assert home_screen.is_mounted
+    _capture_task99(app, f"task108-evidence-{app.size.width}x{app.size.height}-color.svg")
     await pilot.press("escape")
-    await wait_until(
-        lambda: panel.active_view == TASK_VIEW_SUMMARY,
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
+    await wait_until(lambda: app.screen is home_screen, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
     await pilot.press("u")
     await wait_until(
-        lambda: panel.active_view == TASK_VIEW_USAGE,
+        lambda: isinstance(app.screen, TaskDetailScreen),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    assert task_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    usage_screen = app.screen
+    assert usage_screen.query_one("#task-detail-panel", TaskDetailPanel).active_view == (
+        TASK_VIEW_USAGE
+    )
+    assert task_id in _rendered_text(usage_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    _capture_task99(app, f"task108-usage-{app.size.width}x{app.size.height}-color.svg")
     assert reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == before_commands
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home_screen, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
 
 
 def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> None:
@@ -4301,6 +4346,40 @@ async def test_home_help_works_with_keyboard_without_color(
         reader.close()
 
 
+async def _assert_evidence_editor_shortcut_precedence(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task_id: str,
+    palette_requests: list[PaletteRequest],
+) -> None:
+    await pilot.press("e")
+    await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+    evidence_screen = app.screen
+    _capture_task99(app, f"task108-evidence-{app.size.width}x{app.size.height}-color.svg")
+    native_select = cast(
+        "Select[str]", evidence_screen.query_one("#task-detail-timeline-category", Select)
+    )
+    await wait_until(lambda: native_select.display, timeout=2)
+    native_select.focus()
+    await pilot.press("ctrl+p")
+    assert palette_requests == []
+    assert app.screen is evidence_screen
+    await pilot.press("enter")
+    await pilot.pause()
+    await pilot.press("ctrl+p")
+    assert palette_requests == []
+    assert native_select.expanded
+    assert app.screen is evidence_screen
+    await pilot.press("escape")
+    await wait_until(lambda: not native_select.expanded, timeout=2)
+    assert app.screen is evidence_screen
+    await pilot.press("escape")
+    await wait_until(lambda: not isinstance(app.screen, TaskDetailScreen), timeout=2)
+    app.query_one("#task-detail-body").focus()
+    await pilot.press("ctrl+p")
+    assert palette_requests[-1].task_id == task_id
+
+
 async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
     database: Database,
     connection: Connection,
@@ -4322,6 +4401,7 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
             open_palette_context=open_palette_context,
         )
         async with app.run_test(size=(36, 20)) as pilot:
+            home = app.screen
             search = app.query_one("#task-browser-search", Input)
             search.value = task.id
             search.focus()
@@ -4329,40 +4409,116 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
             await pilot.pause()
             await pilot.press("enter")
             assert not isinstance(app.screen, TaskDetailScreen)
-            identity = app.query_one("#task-detail-identity", Static)
+            identity = home.query_one("#task-detail-identity", Static)
             await wait_until(
                 lambda: task.title in str(identity.content),
                 timeout=2,
             )
             await pilot.press("u")
-            sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
+            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+            usage_screen = app.screen
+            usage_panel = usage_screen.query_one("#task-detail-panel", TaskDetailPanel)
+            sessions = usage_screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
             await wait_until(
-                lambda: "recorded usage" in plain_text(sessions.content),
+                lambda: (
+                    usage_panel.active_view == TASK_VIEW_USAGE
+                    and "recorded usage" in plain_text(sessions.content)
+                ),
                 timeout=2,
             )
-            await pilot.press("e")
-            native_select = cast(
-                "Select[str]", app.query_one("#task-detail-timeline-category", Select)
+            _capture_task99(app, f"task108-usage-{app.size.width}x{app.size.height}-color.svg")
+            usage_close = usage_screen.query_one("#task-detail-popup-close", Button)
+            await wait_until(
+                lambda: usage_close.region.width > 0 and usage_close.region.height > 0,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            await wait_until(lambda: native_select.display, timeout=2)
-            native_select.focus()
-            await pilot.press("ctrl+p")
-            assert palette_requests == []
-            assert not isinstance(app.screen, TaskDetailScreen)
+            await pilot.click("#task-detail-popup-close")
+            await wait_until(lambda: app.screen is home, timeout=2)
 
-            await pilot.press("enter")
-            await pilot.pause()
-            await pilot.press("ctrl+p")
-            assert palette_requests == []
-            assert native_select.expanded
-            assert not isinstance(app.screen, TaskDetailScreen)
+            await _assert_evidence_editor_shortcut_precedence(
+                app,
+                pilot,
+                task.id,
+                palette_requests,
+            )
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE])
+async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Mounted palette route")
+    queued_before = CommandQueue(connection, clock).pending()
+    reader = StateReader(database, clock)
+    app_instances: list[DashboardApp] = []
+
+    async def open_palette_context(request: PaletteRequest) -> None:
+        app = app_instances[0]
+        await app.push_screen(
+            _palette_screen_for_app(
+                reader,
+                connection,
+                project_dir,
+                clock,
+                request,
+                remember_contextual_draft=app.remember_contextual_palette_draft,
+                task_routes_available=True,
+            )
+        )
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue"],
+            open_palette_context=open_palette_context,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=size) as pilot:
+            home = app.screen
+            await wait_until(
+                lambda: bool(home.query(f"#task-row-{task.id}")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await _select_home_task(app, task.id)
+            search = home.query_one("#task-browser-search", Input)
+            _capture_task99(app, f"task108-dashboard-{size[0]}x{size[1]}-color.svg")
+            search.focus()
+
+            await pilot.press("f12")
+            await wait_until(
+                lambda: isinstance(app.screen, PaletteScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            palette = cast("PaletteScreen", app.screen)
+            home_row = home.query_one(f"#task-row-{task.id}")
+            assert home.is_mounted
+            assert home_row.visible
+            assert home_row.region.width > 0
+            assert task.id in _rendered_text(palette.query_one("#palette-menu-context", Static))
+            screenshot_text = unescape(app.export_screenshot()).replace("\xa0", " ")
+            _capture_task99(app, f"task108-actions-{size[0]}x{size[1]}-color.svg")
+            if size == _WIDE_HOME_SIZE:
+                assert task.title in screenshot_text
+            else:
+                assert "Ctrl+P" in screenshot_text
+                assert "tmux detach unavailable" in screenshot_text
+            assert "Shikiru actions" in screenshot_text
             await pilot.press("escape")
-            await wait_until(lambda: not native_select.expanded, timeout=2)
-            assert not isinstance(app.screen, TaskDetailScreen)
-
-            app.query_one("#task-detail-body").focus()
-            await pilot.press("ctrl+p")
-            assert palette_requests[-1].task_id == task.id
+            await wait_until(
+                lambda: app.screen is home and home.is_mounted,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert app.focused is search
+            assert task.id in _rendered_text(home.query_one("#task-detail-identity", Static))
+            assert CommandQueue(connection, clock).pending() == queued_before
     finally:
         reader.close()
 
@@ -4700,8 +4856,12 @@ async def test_dashboard_activity_widget_is_openable_by_keyboard_and_back(
         reader.close()
 
 
+@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE])
 async def test_configured_usage_and_docker_views_remain_reachable(
-    database: Database, connection: Connection, tmp_path: Path
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
     del connection
     project_dir = write_minimal_project(tmp_path)
@@ -4728,7 +4888,7 @@ async def test_configured_usage_and_docker_views_remain_reachable(
             services=services,
             clock=clock,
         )
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=size) as pilot:
             home_screen = app.screen
             await wait_until(
                 lambda: "CPU 37%" in _rendered_text(app.query_one("#resources", Static)),
@@ -4738,23 +4898,29 @@ async def test_configured_usage_and_docker_views_remain_reachable(
 
             assert await pilot.click("#usage")
             await wait_until(lambda: app.screen is not home_screen, timeout=2)
+            assert home_screen.is_mounted
             usage = app.screen.query_one("#usage", Static)
             assert "Token values unknown" in plain_text(usage.content)
-            await pilot.press("escape")
+            _capture_task99(app, f"task108-project-totals-{size[0]}x{size[1]}-color.svg")
+            await pilot.click("#context-widget-close")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
 
             assert await pilot.click("#resources")
             await wait_until(lambda: app.screen is not home_screen, timeout=2)
+            assert home_screen.is_mounted
             resources = app.screen.query_one("#resources", Static)
             assert "CPU 37%" in _rendered_text(resources)
             assert services.resource_reads == 1
-            await pilot.press("escape")
+            _capture_task99(app, f"task108-resource-details-{size[0]}x{size[1]}-color.svg")
+            await pilot.click("#context-widget-close")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
 
             await _choose_focus_view(app, pilot, "Diagnostics · Docker")
+            assert home_screen.is_mounted
             docker = app.screen.query_one("#docker", Static)
             assert docker.region.width > 0
             assert _rendered_text(docker)
+            _capture_task99(app, f"task108-diagnostics-{size[0]}x{size[1]}-color.svg")
     finally:
         reader.close()
 
@@ -4816,7 +4982,7 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
             await pilot.pause()
             assert app.screen is not workspace_screen
             assert app.screen.query_one("#workspace-help-copy", Static).region.height > 0
-            assert await pilot.click("#workspace-help-close", offset=(6, 1))
+            assert await pilot.click("#workspace-help-close")
             await pilot.pause()
             assert app.screen is workspace_screen
     finally:

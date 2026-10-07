@@ -93,6 +93,7 @@ _COMMAND_HISTORY_FILTER = "command-history-filter"
 _COMMAND_HISTORY_PREVIOUS = "command-history-previous"
 _COMMAND_HISTORY_NEXT = "command-history-next"
 _COMMAND_HISTORY_PAGE = "command-history-page"
+_COMMAND_HISTORY_HEADER = "command-history-header"
 _COMMAND_HISTORY_PAGE_SIZE = 20
 _COMMAND_HISTORY_ALL = "all"
 _COMMAND_STATUS_LINE_MAX_CHARS = 96
@@ -105,7 +106,14 @@ _HOME_FOOTER_CLEAR = "focus-footer-clear"
 _HOME_FOOTER_ACTIONS = "focus-footer-actions"
 _HOME_FOOTER_HELP = "focus-footer-help"
 _HOME_FOOTER_DETACH = "focus-footer-detach"
+_CONTEXT_VIEWS_HEADER = "context-views-header"
+_CONTEXT_VIEWS_CLOSE = "context-views-close"
+_CONTEXT_WIDGET_HEADER = "context-widget-header"
+_CONTEXT_WIDGET_CLOSE = "context-widget-close"
+_POPUP_CLOSE_LABEL = "Esc \u00d7"
+_POPUP_CLOSE_CLASS = "popup-close-control"
 _EVIDENCE_KEY = "e"
+_DASHBOARD_PALETTE_EVENT_KEY = "f12"
 _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
@@ -219,12 +227,14 @@ class _ContextChoice:
 class _ContextViewsScreen(ModalScreen[str]):
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
     DEFAULT_CSS = """
-    _ContextViewsScreen { align: center middle; background: $background; }
+    _ContextViewsScreen { align: center middle; background: transparent; padding: 1; }
     #context-views-frame {
-        width: 60%; max-width: 76; height: 70%; max-height: 24;
+        width: 100%; max-width: 64; height: 70%; max-height: 24;
         padding: 1; border: solid $neutral-border; background: $surface;
     }
-    #context-views-title { height: 1; color: $primary-text; text-style: bold; }
+    #context-views-header { width: 100%; height: 1; }
+    #context-views-title { width: 1fr; height: 1; color: $primary-text; }
+    #context-views-close { width: auto; min-width: 5; height: 1; padding: 0; }
     #focus-views-list { height: 1fr; border: none; background: $surface; }
     #context-views-hint { height: 1; color: $secondary-text; }
     """
@@ -237,7 +247,11 @@ class _ContextViewsScreen(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="context-views-frame"):
-            yield Label("Views and filters", id="context-views-title")
+            with Horizontal(id=_CONTEXT_VIEWS_HEADER):
+                yield Label("Views and filters", id="context-views-title")
+                yield Button(
+                    _POPUP_CLOSE_LABEL, id=_CONTEXT_VIEWS_CLOSE, classes=_POPUP_CLOSE_CLASS
+                )
             items = [
                 ListItem(Label(choice.label), id=choice_id)
                 for choice_id, choice in self._choices.items()
@@ -250,6 +264,10 @@ class _ContextViewsScreen(ModalScreen[str]):
         if choice_id is not None and choice_id in self._choices:
             self.dismiss(self._choices[choice_id].choice_id)
 
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == _CONTEXT_VIEWS_CLOSE:
+            self.dismiss(EMPTY_CONTEXT_CHOICE)
+
     async def action_close(self) -> None:
         self.dismiss("")
 
@@ -257,14 +275,15 @@ class _ContextViewsScreen(ModalScreen[str]):
 class _ContextWidgetScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
     DEFAULT_CSS = """
-    _ContextWidgetScreen { background: $background; }
-    #context-widget-frame { height: 100%; padding: 0 1; }
-    #context-widget-title {
-        height: 1; padding: 0 1; color: $primary-text;
-        border-bottom: solid $neutral-border;
+    _ContextWidgetScreen { align: center middle; background: transparent; padding: 1; }
+    #context-widget-frame {
+        width: 100%; max-width: 64; height: auto; max-height: 90%; min-height: 5;
+        padding: 1; border: solid $neutral-border; background: $surface;
     }
-    #context-widget-content { height: 1fr; padding: 1 0; }
-    #context-widget-hint { height: 1; color: $secondary-text; }
+    #context-widget-header { width: 100%; height: 1; }
+    #context-widget-title { width: 1fr; height: 1; color: $primary-text; }
+    #context-widget-close { width: auto; min-width: 5; height: 1; padding: 0; }
+    #context-widget-content { height: auto; max-height: 1fr; min-height: 0; padding: 1 0; }
     """
 
     def __init__(self, label: str, widget: Widget) -> None:
@@ -274,10 +293,17 @@ class _ContextWidgetScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="context-widget-frame"):
-            yield Label(self._label, id="context-widget-title")
+            with Horizontal(id=_CONTEXT_WIDGET_HEADER):
+                yield Label(self._label, id="context-widget-title")
+                yield Button(
+                    _POPUP_CLOSE_LABEL, id=_CONTEXT_WIDGET_CLOSE, classes=_POPUP_CLOSE_CLASS
+                )
             with VerticalScroll(id="context-widget-content"):
                 yield self._widget
-            yield Static("Esc back to Focus", id="context-widget-hint")
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == _CONTEXT_WIDGET_CLOSE:
+            self.dismiss()
 
     async def action_close(self) -> None:
         self.dismiss()
@@ -330,19 +356,18 @@ def _command_summary_text(history: CommandHistoryView) -> str:
 class _WorkspaceHelpScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
     DEFAULT_CSS = """
-    _WorkspaceHelpScreen { align: center middle; }
+    _WorkspaceHelpScreen { align: center middle; background: transparent; padding: 1; }
     #workspace-help-frame {
-        width: 90%;
-        height: 90%;
-        max-width: 76;
-        border: round $neutral-border;
+        width: 100%; height: auto; max-height: 90%; max-width: 64;
+        border: solid $neutral-border;
         padding: 0 1;
         background: $surface;
     }
-    #workspace-help-context { height: 1; }
+    #workspace-help-header { width: 100%; height: 1; }
+    #workspace-help-context { width: 1fr; height: 1; }
+    #workspace-help-close { width: auto; min-width: 5; height: 1; padding: 0; }
     #workspace-help-scroll { height: 1fr; }
     #workspace-help-copy { height: auto; color: $primary-text; }
-    #workspace-help-close { height: 3; }
     """
 
     def __init__(
@@ -394,10 +419,11 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Escape clears search first"
             )
         with Vertical(id="workspace-help-frame"):
-            yield Label(f"Help · {view}", id=_HELP_CONTEXT)
+            with Horizontal(id="workspace-help-header"):
+                yield Label(f"Help · {view}", id=_HELP_CONTEXT)
+                yield Button(_POPUP_CLOSE_LABEL, id=_HELP_CLOSE_BUTTON, classes=_POPUP_CLOSE_CLASS)
             with VerticalScroll(id="workspace-help-scroll"):
                 yield Static("\n".join(lines), id="workspace-help-copy", markup=False)
-            yield Button("Close help", id=_HELP_CLOSE_BUTTON)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Close help when its button is activated."""
@@ -416,12 +442,15 @@ class _CommandHistoryScreen(ModalScreen[None]):
         (_COMMAND_HISTORY_NEXT_KEY, "next_page", "Older history"),
     ]
     DEFAULT_CSS = """
-    _CommandHistoryScreen { align: center middle; }
+    _CommandHistoryScreen { align: center middle; background: transparent; padding: 1; }
     #command-history-frame {
-        width: 90%; height: 85%; max-width: 100;
-        border: round $neutral-border; padding: 1 2;
+        width: 100%; height: auto; max-height: 90%; max-width: 64;
+        border: solid $neutral-border; padding: 1 2;
         background: $surface; color: $primary-text;
     }
+    #command-history-header { width: 100%; height: 1; }
+    #command-history-title { width: 1fr; height: 1; }
+    #command-history-close { width: auto; min-width: 5; height: 1; padding: 0; }
     #command-history-filter { width: 100%; height: 3; }
     #command-history-scroll { height: 1fr; border: round $neutral-border; }
     #command-history-copy { height: auto; padding: 1; }
@@ -440,7 +469,13 @@ class _CommandHistoryScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="command-history-frame"):
-            yield Label("Command history · left/right or page controls")
+            with Horizontal(id=_COMMAND_HISTORY_HEADER):
+                yield Label(
+                    "Command history · left/right or page controls", id="command-history-title"
+                )
+                yield Button(
+                    _POPUP_CLOSE_LABEL, id=_COMMAND_HISTORY_CLOSE, classes=_POPUP_CLOSE_CLASS
+                )
             yield Select(
                 (
                     ("All statuses", _COMMAND_HISTORY_ALL),
@@ -455,7 +490,6 @@ class _CommandHistoryScreen(ModalScreen[None]):
             with HorizontalScroll(id="command-history-controls"):
                 yield Button("Newer", id=_COMMAND_HISTORY_PREVIOUS, disabled=True)
                 yield Button("Older", id=_COMMAND_HISTORY_NEXT, disabled=True)
-                yield Button("Back", id=_COMMAND_HISTORY_CLOSE)
 
     async def on_mount(self) -> None:
         self._display_history()
@@ -502,6 +536,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
     def _display_history(self, *, preserve_scroll: bool = False) -> None:
         scroll = self.query_one(f"#{_COMMAND_HISTORY_SCROLL}", VerticalScroll)
         scroll_y = scroll.scroll_y if preserve_scroll and self.is_mounted else 0
+        scroll_at_bottom = preserve_scroll and scroll_y >= scroll.max_scroll_y
         history = self._views.command_history(
             expanded=True,
             limit=_COMMAND_HISTORY_PAGE_SIZE,
@@ -531,7 +566,12 @@ class _CommandHistoryScreen(ModalScreen[None]):
         self.query_one(f"#{_COMMAND_HISTORY_PREVIOUS}", Button).disabled = history.offset == 0
         self.query_one(f"#{_COMMAND_HISTORY_NEXT}", Button).disabled = not history.has_more
         if preserve_scroll:
-            self.call_after_refresh(lambda: scroll.scroll_to(y=scroll_y, animate=False))
+            self.call_after_refresh(
+                lambda: scroll.scroll_to(
+                    y=scroll.max_scroll_y if scroll_at_bottom else scroll_y,
+                    animate=False,
+                )
+            )
 
 
 class _CommandStatusLine(Static):
@@ -673,7 +713,11 @@ class DashboardApp(App[None]):
 
     ENABLE_COMMAND_PALETTE = False
     CSS = """
-    Screen { background: $background; color: $primary-text; }
+    Screen { color: $primary-text; }
+    .popup-close-control {
+        border: none; background: $surface; color: $secondary-text; text-style: none;
+    }
+    .popup-close-control:focus { color: $primary-text; text-style: reverse; }
     #focus-root {
         height: 100%; border: solid $neutral-border; padding: 0 1;
         background: $background; scrollbar-size-vertical: 0;
@@ -883,6 +927,9 @@ class DashboardApp(App[None]):
         async def open_task_detail(task_id: str) -> None:
             await self._open_task_detail(task_id)
 
+        async def open_task_detail_view(task_id: str, view_id: str) -> None:
+            await self.open_task_detail_view(task_id, view_id)
+
         return WidgetContext(
             views=self._views,
             focus_task=self._focus_task,
@@ -895,6 +942,7 @@ class DashboardApp(App[None]):
             open_palette=self._open_palette,
             open_palette_context=self._open_contextual_palette,
             open_task_detail=open_task_detail,
+            open_task_detail_view=open_task_detail_view,
             navigate_task_window=self._navigate_task_window,
             navigate_role_pane=self._navigate_role_pane,
             navigate_home=self._navigate_home,
@@ -1182,7 +1230,12 @@ class DashboardApp(App[None]):
             return
         await self._show_context_widget(choice)
 
-    async def _open_task_detail(self, task_id: str) -> None:
+    async def _open_task_detail(
+        self,
+        task_id: str,
+        *,
+        initial_view: str = TASK_VIEW_SUMMARY,
+    ) -> None:
         def refresh_resumed_detail(_: None) -> None:
             self.refresh_task_detail_after_resume()
 
@@ -1190,9 +1243,7 @@ class DashboardApp(App[None]):
             TaskDetailScreen(
                 self._widget_context(),
                 task_id,
-                wide_overlay=(
-                    self._focus_task is None and self.size.width >= HOME_SPLIT_MIN_COLUMNS
-                ),
+                initial_view=initial_view,
             ),
             callback=refresh_resumed_detail,
         )
@@ -1278,6 +1329,15 @@ class DashboardApp(App[None]):
 
     async def on_key(self, event: events.Key) -> None:
         task_detail_screen = isinstance(self.screen, TaskDetailScreen)
+        if event.key == TASK_DETAIL_ESCAPE and self._focused_select_is_expanded():
+            return
+        if event.key == _DASHBOARD_PALETTE_EVENT_KEY:
+            if isinstance(self.screen, ModalScreen) and not task_detail_screen:
+                return
+            await self.action_open_palette()
+            event.stop()
+            event.prevent_default()
+            return
         if (native_editor_has_focus(self.focused) and event.key != TASK_DETAIL_ESCAPE) or (
             isinstance(self.screen, ModalScreen) and not task_detail_screen
         ):
@@ -1286,6 +1346,14 @@ class DashboardApp(App[None]):
             event.stop()
             if event.key in {_ACTIONS_KEY, TASK_DETAIL_ESCAPE}:
                 event.prevent_default()
+
+    def _focused_select_is_expanded(self) -> bool:
+        focused = self.focused
+        while focused is not None:
+            if isinstance(focused, Select):
+                return focused.expanded
+            focused = focused.parent
+        return False
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == _HOME_FOOTER_CLEAR:
@@ -1415,6 +1483,9 @@ class DashboardApp(App[None]):
 
     async def action_return_from_section(self) -> None:
         """Return from task-scoped details or the fixed task view."""
+        if isinstance(self.screen, TaskDetailScreen):
+            self.screen.dismiss()
+            return
         if self._focus_task is None and not isinstance(self.screen, TaskDetailScreen):
             panel = self._context_task_detail_panel()
             if panel is not None and panel.active_view != TASK_VIEW_SUMMARY:
@@ -1497,52 +1568,30 @@ class DashboardApp(App[None]):
     async def action_open_task_usage(self) -> None:
         """Open recorded usage details for the selected task or task view."""
         panel = self._context_task_detail_panel()
-        if panel is not None:
-            panel.open_usage_details()
+        task_id = panel.task_id if panel is not None else self._selected_task_id
+        if task_id is None:
             return
-        if (
-            self._focus_task is None
-            and self._home_detail_panel is not None
-            and self._selected_task_id is not None
-        ):
-            self._home_detail_panel.select_task(self._selected_task_id)
-            self._home_detail_panel.open_usage_details()
-            return
-        if self._selected_task_id is None:
-            return
-        await self.push_screen(
-            TaskDetailScreen(
-                self._widget_context(),
-                self._selected_task_id,
-                initial_view=TASK_VIEW_USAGE,
-            ),
-            callback=lambda _: self.refresh_task_detail_after_resume(),
-        )
+        await self.open_task_detail_view(task_id, TASK_VIEW_USAGE)
 
     async def action_open_task_evidence(self) -> None:
         """Open retained evidence for the selected task or task view."""
         panel = self._context_task_detail_panel()
-        if panel is not None:
-            panel.open_evidence()
+        task_id = panel.task_id if panel is not None else self._selected_task_id
+        if task_id is None:
             return
+        await self.open_task_detail_view(task_id, TASK_VIEW_EVIDENCE)
+
+    async def open_task_detail_view(self, task_id: str, view_id: str) -> None:
+        """Open a task detail view over Home or switch views in the active task popup."""
+        panel = self._context_task_detail_panel()
         if (
-            self._focus_task is None
-            and self._home_detail_panel is not None
-            and self._selected_task_id is not None
+            isinstance(self.screen, TaskDetailScreen)
+            and panel is not None
+            and panel.task_id == task_id
         ):
-            self._home_detail_panel.select_task(self._selected_task_id)
-            self._home_detail_panel.open_evidence()
+            panel.open_view(view_id)
             return
-        if self._selected_task_id is None:
-            return
-        await self.push_screen(
-            TaskDetailScreen(
-                self._widget_context(),
-                self._selected_task_id,
-                initial_view=TASK_VIEW_EVIDENCE,
-            ),
-            callback=lambda _: self.refresh_task_detail_after_resume(),
-        )
+        await self._open_task_detail(task_id, initial_view=view_id)
 
     def _context_task_detail_panel(self) -> TaskDetailPanel | None:
         if isinstance(self.screen, TaskDetailScreen):

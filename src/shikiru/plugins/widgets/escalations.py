@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.console import Group, RenderableType
 from rich.text import Text
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.geometry import Region
 from textual.screen import ModalScreen
-from textual.widgets import Static
+from textual.widgets import Button, Label, Static
 
 from shikiru.dashboard.contract import (
     FOCUS_FAULTS_VIEW,
@@ -42,6 +42,8 @@ _OPEN_KEY = "o"
 _RESOLVE_KEY = "r"
 MAX_ESCALATION_PANEL_HEIGHT = 12
 MINIMUM_GROUPED_DECISIONS = 2
+PACKET_CLOSE_BUTTON = "escalation-packet-close"
+_PACKET_CLOSE_LABEL = "Esc \u00d7"
 
 
 class PacketScreen(ModalScreen[None]):
@@ -49,14 +51,22 @@ class PacketScreen(ModalScreen[None]):
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
     DEFAULT_CSS = """
-    PacketScreen { background: $background; }
+    PacketScreen { align: center middle; background: transparent; padding: 1; }
+    #escalation-packet-frame {
+        width: 100%; max-width: 64; height: auto; max-height: 90%;
+        border: solid $border; padding: 1; background: $surface;
+    }
+    #escalation-packet-header { width: 100%; height: 1; }
+    #escalation-packet-title { width: 1fr; height: 1; color: $foreground; }
+    #escalation-packet-close {
+        width: auto; min-width: 5; height: 1; padding: 0;
+        border: none; background: $surface; color: $foreground; text-style: none;
+    }
+    #escalation-packet-scroll { height: auto; max-height: 1fr; min-height: 0; }
     #escalation-packet {
         background: $surface;
         color: $foreground;
-        border: round $border;
-        padding: 1 2;
     }
-    #escalation-packet:focus { border: round $accent; text-style: bold reverse; }
     """
 
     def __init__(self, packet: str) -> None:
@@ -66,8 +76,16 @@ class PacketScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         """Render the full packet in a scrollable view."""
-        with VerticalScroll():
-            yield Static(self._packet, markup=False, id="escalation-packet")
+        with Vertical(id="escalation-packet-frame"):
+            with Horizontal(id="escalation-packet-header"):
+                yield Label("Decision evidence", id="escalation-packet-title")
+                yield Button(_PACKET_CLOSE_LABEL, id=PACKET_CLOSE_BUTTON)
+            with VerticalScroll(id="escalation-packet-scroll"):
+                yield Static(self._packet, markup=False, id="escalation-packet")
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == PACKET_CLOSE_BUTTON:
+            self.dismiss()
 
     async def action_close(self) -> None:
         """Close the packet modal."""

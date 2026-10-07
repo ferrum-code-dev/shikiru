@@ -193,7 +193,10 @@ async def test_start_reports_that_an_existing_engine_was_reused(
     binding = next(line for line in key_lines.stdout.splitlines() if " Space " in line)
     binding_tokens = shlex.split(binding)
     if_shell_index = binding_tokens.index("if-shell")
-    run_shell_tokens = shlex.split(binding_tokens[if_shell_index + 3])
+    dashboard_route = shlex.split(binding_tokens[if_shell_index + 3])
+    assert dashboard_route[0:2] == ["if-shell", "-F"]
+    assert shlex.split(dashboard_route[3]) == ["send-keys", "F12"]
+    run_shell_tokens = shlex.split(dashboard_route[4])
     popup_command = shlex.split(run_shell_tokens[1])
     assert popup_command == ["tmux", "display-popup", "-E", *PALETTE_COMMAND]
 

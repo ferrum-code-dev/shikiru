@@ -898,7 +898,7 @@ async def test_task_usage_details_tick_quota_age_and_reset_without_motion_eviden
                 timeout=2,
             )
             await pilot.press("u")
-            sessions = app.query_one("#task-detail-sessions", Static)
+            sessions = app.screen.query_one("#task-detail-sessions", Static)
             await wait_until(
                 lambda: (
                     "reset 10s" in plain_text(sessions.content)

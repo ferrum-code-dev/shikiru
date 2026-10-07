@@ -111,6 +111,7 @@ OpenPalette = Callable[[str], Awaitable[None]]
 OpenPaletteContext = Callable[[PaletteRequest], Awaitable[None]]
 SelectTaskContext = Callable[[str | None], None]
 OpenTaskDetail = Callable[[str], Awaitable[None]]
+OpenTaskDetailView = Callable[[str, str], Awaitable[None]]
 NavigateTaskWindow = Callable[[str], Awaitable[str]]
 NavigateRolePane = Callable[[str, str], Awaitable[str]]
 NavigateHome = Callable[[], Awaitable[str]]
@@ -876,6 +877,7 @@ class WidgetContext:
     open_palette: OpenPalette
     open_palette_context: OpenPaletteContext | None = None
     open_task_detail: OpenTaskDetail | None = None
+    open_task_detail_view: OpenTaskDetailView | None = None
     navigate_task_window: NavigateTaskWindow | None = None
     navigate_role_pane: NavigateRolePane | None = None
     navigate_home: NavigateHome | None = None

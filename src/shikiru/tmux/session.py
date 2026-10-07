@@ -23,6 +23,7 @@ HOME_WINDOW_NAME = "shikiru"
 DETACHED_SIZE = (240, 64)
 
 _PALETTE_KEY = "Space"
+_DASHBOARD_PALETTE_EVENT = "F12"
 _TMUX_COMMAND = "tmux"
 _GLOB_SPECIAL_CHARS = "\\[]*?"
 
@@ -50,21 +51,29 @@ _WINDOW_SCOPED_OPTIONS: dict[str, str] = {
 
 
 async def bind_palette_key(tmux: Tmux, palette_command: Sequence[str]) -> None:
-    """Bind prefix+Space to open `palette_command` in a popup, only in `[shikiru]` sessions.
+    """Bind prefix+Space to the mounted Home dashboard or the contextual popup.
 
-    Elsewhere the key keeps tmux's own default, `next-layout` (06 §5.2): there is no global
-    override, only this one conditional binding.
+    The Home dashboard receives a dedicated F12 terminal event. Other Shikiru panes retain the
+    standalone palette popup and originating pane context. Elsewhere the key keeps tmux's own
+    default, `next-layout` (06 §5.2): there is no global override, only this one conditional
+    binding.
     """
     popup_command = f"{_TMUX_COMMAND} display-popup -E " + " ".join(
         shlex.quote(part) for part in palette_command
     )
     expanded_popup_command = f"run-shell {shlex.quote(popup_command)}"
+    dashboard_pane = "#{&&:#{m:*dash --home*,#{pane_start_command}},#{!=:#{pane_dead},1}}"
+    dashboard_command = f"send-keys {_DASHBOARD_PALETTE_EVENT}"
+    contextual_command = (
+        f"if-shell -F {shlex.quote(dashboard_pane)} "
+        f"{shlex.quote(dashboard_command)} {shlex.quote(expanded_popup_command)}"
+    )
     await tmux.bind_key(
         _PALETTE_KEY,
         "if-shell",
         "-F",
         SHIKIRU_SESSION_PATTERN,
-        expanded_popup_command,
+        contextual_command,
         _DEFAULT_PALETTE_KEY_COMMAND,
     )
 

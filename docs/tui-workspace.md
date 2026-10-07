@@ -6,6 +6,8 @@ This document specifies the TUI for [Phase 8](../tasks/plan.md#phase-8--operator
 
 This remains the historical Phase 8 specification and delivery record. Tasks 93–96 ship the [Compact Operator TUI](tui-focus.md) as Home's primary presentation, convert shared task detail to compact identity, stage/activity and combined session usage, complete responsive compatibility and record Phase 9 release verification. Phase 8 completion, evidence and its independently open historical review gates remain unchanged. See the [Phase 9 release record](release-readiness-2026-10-04-phase9.md).
 
+Task 107 and Phase 11's [operator interface rules](design/06-operator.md#54-workspace-shell-and-widgets) supersede conflicting historical Home routes here: selecting a task updates the shared inline detail, Escape clears the selection after closing an overlay, and Home's prefix+Space routes to the mounted dashboard. Separate role panes keep the standalone palette popup and its task/role context.
+
 The workspace refines [06 · Operator Interfaces](design/06-operator.md), especially §5.4–5.5 and §6: the system pane becomes a navigable workspace with distinct home and task views, contextual actions, and persistent command feedback. The comic strip remains the task's expanded progress view. The architecture and workflow in [02](design/02-architecture.md) and [03](design/03-workflow.md) govern all state changes.
 
 The implementation stays on Python, Textual, Rich, SQLite and tmux. The engine remains the single writer. Human actions use the same operator services as MCP; remote access continues over SSH. Existing role panes remain structured live views and run the agent's native TUI during takeover.
@@ -172,7 +174,7 @@ Resize changes use the dashboard pane dimensions and keep the selected task, sea
 
 Reserve a compact footer for the focused section and its available controls. Keep the complete key bindings in help so the footer stays bounded in narrow panes. Focus uses a border or marker plus a text cue under `NO_COLOR`. New task data never steals focus or opens a modal automatically.
 
-tmux keeps its normal bindings. `prefix + Space` remains the conditional palette popup. The binding resolves the originating pane ID before launching the popup; the palette derives task and role through the existing project/pane mapping. The home context offers a task picker. No global key overrides or automatic pane rearrangement are added.
+tmux keeps its normal bindings outside Shikiru sessions. In a Home pane, `prefix + Space` sends F12 to the running `DashboardApp`, which opens its contextual palette over Home. Other Shikiru panes keep the standalone palette popup; it resolves task and role through the originating pane's project mapping. This conditional binding adds no global key override or automatic pane rearrangement.
 
 ## 8. Contextual palette and action semantics
 

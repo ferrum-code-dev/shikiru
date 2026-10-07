@@ -381,7 +381,6 @@ async def _prepare_export_form(
     project_root: Path,
     destination: str,
 ) -> Select[str]:
-    form = screen.query_one("#palette-form")
     screen.query_one("#export-destination", Input).value = destination
     cast("Select[str]", screen.query_one("#export-format", Select)).value = EXPORT_FORMAT_JSON
     cast("Select[str]", screen.query_one("#export-signals", Select)).value = "exclude"
@@ -413,7 +412,7 @@ async def _prepare_export_form(
         await pilot.pause()
         await wait_until(
             lambda control=control: (
-                control.region.y >= form.region.y and control.region.bottom <= form.region.bottom
+                control.region.y >= 0 and control.region.bottom <= screen.size.height
             ),
             timeout=EXPORT_WAIT_SECONDS,
         )

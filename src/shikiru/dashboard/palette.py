@@ -80,6 +80,7 @@ _FIELD_EXPORT_DESTINATION = "export-destination"
 _FIELD_EXPORT_FORMAT = "export-format"
 _FIELD_EXPORT_OVERWRITE = "export-overwrite"
 _FIELD_EXPORT_SIGNALS = "export-signals"
+_POPUP_CLOSE_LABEL = "Esc \u00d7"
 _EXPORT_REFUSE = "refuse"
 _EXPORT_OVERWRITE = "overwrite"
 _EXPORT_SIGNALS_EXCLUDE = "exclude"
@@ -233,7 +234,10 @@ _PALETTE_ESCAPE_KEY = "escape"
 _PALETTE_SHORT_PANE_MAX_ROWS = 18
 _PALETTE_SHORT_PANE_MAX_COLUMNS = 40
 _PALETTE_TINY_PANE_MAX_ROWS = 8
+_PALETTE_SHORT_OVERLAY_MAX_ROWS = 20
+_PALETTE_SHORT_OVERLAY_MAX_COLUMNS = 48
 _PALETTE_ACTION_BUTTON_MIN_COLUMNS = 16
+_PALETTE_SHORT_OVERLAY_HEIGHT = "80%"
 _PALETTE_COMPACT_TEXT_AREA_HEIGHT = 3
 _PALETTE_COMPACT_RESULT_MAX_HEIGHT = 3
 _PALETTE_RESULT_MAX_HEIGHT = 12
@@ -335,18 +339,18 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     """Render operator actions, dispatch commands and show their acknowledgements."""
 
     DEFAULT_CSS = """
-    PaletteScreen { align: center middle; background: $background 80%; }
+    PaletteScreen { align: center middle; background: transparent; padding: 1; }
     #palette-frame {
         width: 100%;
         height: auto;
         max-height: 100%;
         max-width: 64;
-        border: solid $focus;
+        border: solid $neutral-border;
         padding: 1 2;
         background: $surface;
         color: $primary-text;
     }
-    #palette-menu { height: auto; max-height: 1fr; }
+    #palette-menu { height: auto; max-height: 1fr; min-height: 0; }
     #palette-menu-primary { height: auto; }
     #palette-menu-context { height: 1; color: $secondary-text; }
     #palette-heading { height: 1; }
@@ -485,7 +489,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         with Vertical(id="palette-frame"):
             with Horizontal(id="palette-heading"):
                 yield Label("Shikiru operator actions", id="palette-title")
-                yield Button("Close", id=_PALETTE_CLOSE)
+                yield Button(_POPUP_CLOSE_LABEL, id=_PALETTE_CLOSE)
             yield from self._compose_menu()
             yield from self._compose_form()
             with Vertical(id="palette-actions"):
@@ -657,6 +661,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                     event.widget,
                     animate=False,
                     immediate=True,
+                    force=True,
                 )
                 return
             parent = parent.parent
@@ -968,6 +973,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             or self.size.width <= _PALETTE_SHORT_PANE_MAX_COLUMNS
         )
         narrow_pane = self.size.width <= _PALETTE_SHORT_PANE_MAX_COLUMNS
+        compact_overlay = (
+            not narrow_pane
+            and self.size.height <= _PALETTE_SHORT_OVERLAY_MAX_ROWS
+            and self.size.width <= _PALETTE_SHORT_OVERLAY_MAX_COLUMNS
+        )
         frame = self.query_one("#palette-frame")
         actions = self.query_one("#palette-actions", Vertical)
         actions.styles.layout = "horizontal" if tiny_pane or not narrow_pane else "vertical"
@@ -1007,7 +1017,13 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self.query_one(f"#{_SUBMIT_ID}", Button).label = compact_submit_label
         else:
             self._update_fields(self._selected_value(_FIELD_ACTION))
-        frame.styles.height = "auto" if visible or not short_pane else "100%"
+        frame.styles.height = (
+            _PALETTE_SHORT_OVERLAY_HEIGHT
+            if visible and compact_overlay
+            else "auto"
+            if visible or not short_pane
+            else "100%"
+        )
         menu.display = visible
         form.display = not visible
         self.query_one(f"#{_PALETTE_BACK_TO_MENU}", Button).display = (
@@ -1325,7 +1341,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             field = self.query_one(f"#{candidate}")
             if self._is_visible_in_form(field) and field.can_focus:
                 field.focus()
-                form.scroll_to_widget(field, animate=False, immediate=True)
+                form.scroll_to_widget(field, animate=False, immediate=True, force=True)
                 return
         submit = self.query_one(f"#{_SUBMIT_ID}", Button)
         if submit.display:
