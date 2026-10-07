@@ -162,10 +162,7 @@ async def dashboard_tmux_binding(
         return None, None
     session_target = exact_target(current_session)
     project_path = str(project_root)
-    if (
-        await tmux.show_session_environment(session_target, PROJECT_DIR_ENV_VAR) != project_path
-        or await tmux.client_for_pane(session_target, pane_target) is None
-    ):
+    if await tmux.show_session_environment(session_target, PROJECT_DIR_ENV_VAR) != project_path:
         return None, None
     hint = tmux_key_label(await tmux.current_prefix(session_target))
 

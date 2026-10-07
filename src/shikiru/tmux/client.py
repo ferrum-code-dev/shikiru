@@ -164,7 +164,7 @@ class Tmux:
     async def current_prefix(self, target: str) -> str:
         """Return the effective prefix key for session `target`."""
         result = await self._run(
-            "show-options", "-qv", "-t", _session_scoped(target), _PREFIX_OPTION
+            "show-options", "-Aqv", "-t", _session_scoped(target), _PREFIX_OPTION
         )
         prefix = result.stdout.strip()
         if not prefix:

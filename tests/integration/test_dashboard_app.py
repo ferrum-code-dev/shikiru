@@ -3980,20 +3980,21 @@ async def test_home_footer_detach_uses_the_configured_prefix_and_action(
         await tmux_server.run("list-panes", "-s", "-t", project_session, "-F", "#{pane_id}")
     ).stdout.strip()
     await tmux_server.run("set-option", "-g", "prefix", _GLOBAL_TMUX_PREFIX)
+    assert await tmux.current_prefix(project_session) == _GLOBAL_TMUX_PREFIX
     await tmux.set_session_option(project_session, "prefix", _SESSION_TMUX_PREFIX)
     reader = StateReader(database, SystemClock())
 
     try:
+        prefix_hint, detach_project_client = await dashboard_tmux_binding(
+            tmux, project_pane, project_dir, _PROJECT_SESSION_NAME
+        )
+        assert prefix_hint == tmux_key_label(_SESSION_TMUX_PREFIX)
+        assert prefix_hint is not None
+        assert detach_project_client is not None
         async with (
             attach_tmux_client(tmux_server, project_session),
             attach_tmux_client(tmux_server, unrelated_session),
         ):
-            prefix_hint, detach_project_client = await dashboard_tmux_binding(
-                tmux, project_pane, project_dir, _PROJECT_SESSION_NAME
-            )
-            assert prefix_hint == tmux_key_label(_SESSION_TMUX_PREFIX)
-            assert prefix_hint is not None
-            assert detach_project_client is not None
             app = _app(
                 reader,
                 project_dir,

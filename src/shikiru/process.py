@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import shutil
 import signal
@@ -263,9 +264,11 @@ class SpawnedTerminalProcess:
                     return
             except BlockingIOError:
                 return
-            except OSError:
-                self._loop.remove_reader(self._master_fd)
-                return
+            except OSError as error:
+                if error.errno == errno.EIO:
+                    self._loop.remove_reader(self._master_fd)
+                    return
+                raise
 
 
 class SubprocessRunner:
