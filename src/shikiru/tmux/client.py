@@ -30,6 +30,9 @@ _TMUX_KEY_SEPARATOR = "-"
 _KEY_LABEL_SEPARATOR = "+"
 _PREFIX_OPTION = "prefix"
 _DETACH_CLIENT_COMMAND = "detach-client"
+_LIST_CLIENTS_COMMAND = "list-clients"
+_NO_CLIENTS = "no clients"
+_CLIENT_FIELD_SEPARATOR = "\t"
 
 FORMAT_PANE_ID = "#{pane_id}"
 FORMAT_PANE_PID = "#{pane_pid}"
@@ -37,6 +40,9 @@ FORMAT_PANE_DEAD = "#{pane_dead}"
 FORMAT_WINDOW_ID = "#{window_id}"
 FORMAT_SOCKET_PATH = "#{socket_path}"
 FORMAT_SESSION_NAME = "#{session_name}"
+FORMAT_CLIENT_TTY = "#{client_tty}"
+FORMAT_CLIENT_SESSION = "#{client_session}"
+FORMAT_CLIENT_PANE_ID = "#{pane_id}"
 NO_SERVER_RUNNING = "no server running on "
 ERROR_CONNECTING = "error connecting to "
 SOCKET_MISSING = "(No such file or directory)"
@@ -155,18 +161,63 @@ class Tmux:
             return None
         return value
 
-    async def current_prefix(self) -> str:
-        """Return the active tmux server's configured prefix key."""
-        result = await self._run("show-options", "-gqv", _PREFIX_OPTION)
+    async def current_prefix(self, target: str) -> str:
+        """Return the effective prefix key for session `target`."""
+        result = await self._run(
+            "show-options", "-qv", "-t", _session_scoped(target), _PREFIX_OPTION
+        )
         prefix = result.stdout.strip()
         if not prefix:
             message = "tmux returned an empty prefix key"
             raise ValueError(message)
         return prefix
 
-    async def detach_current_client(self) -> None:
-        """Detach the client running this command from its current session."""
-        await self._run(_DETACH_CLIENT_COMMAND)
+    async def client_for_pane(self, session_target: str, pane_target: str) -> str | None:
+        """Return the unique client in `session_target` currently showing `pane_target`."""
+        if not await self.pane_exists(pane_target):
+            return None
+        session_name = await self.display(pane_target, FORMAT_SESSION_NAME)
+        if exact_target(session_name) != session_target:
+            return None
+        clients = await self.list_clients(
+            session_target,
+            _CLIENT_FIELD_SEPARATOR.join(
+                (FORMAT_CLIENT_TTY, FORMAT_CLIENT_SESSION, FORMAT_CLIENT_PANE_ID)
+            ),
+        )
+        matching_clients = [
+            client_target
+            for client_target, client_session, client_pane in (
+                line.split(_CLIENT_FIELD_SEPARATOR) for line in clients
+            )
+            if client_session == session_name and client_pane == pane_target
+        ]
+        if len(matching_clients) != 1:
+            return None
+        return matching_clients[0]
+
+    async def detach_client_for_pane(self, session_target: str, pane_target: str) -> bool:
+        """Detach the unique client still showing `pane_target` in `session_target`."""
+        client_target = await self.client_for_pane(session_target, pane_target)
+        if client_target is None:
+            return False
+        if await self.client_for_pane(session_target, pane_target) != client_target:
+            return False
+        await self.detach_client(client_target)
+        return True
+
+    async def list_clients(self, target: str, fmt: str) -> list[str]:
+        """List client formats for `target`, returning no rows when it has no clients."""
+        result = await self._run(_LIST_CLIENTS_COMMAND, "-t", target, "-F", fmt, check=False)
+        if result.returncode == 0:
+            return result.stdout.splitlines()
+        if result.stderr.strip() == _NO_CLIENTS:
+            return []
+        raise CommandFailed(result.argv, result.returncode, result.stderr)
+
+    async def detach_client(self, target: str) -> None:
+        """Detach only the explicitly named tmux client `target`."""
+        await self._run(_DETACH_CLIENT_COMMAND, "-t", target)
 
     async def set_session_option(self, target: str, name: str, value: str) -> None:
         """Set session option `name` on `target`.

@@ -38,6 +38,7 @@ from shikiru.agents.contracts import (
     Usage,
     role_dir,
 )
+from shikiru.bootstrap import dashboard_tmux_binding
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, WidgetPluginError
@@ -116,6 +117,8 @@ from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.resources import ResourceSampler
+from shikiru.tmux.client import Tmux, exact_target, tmux_key_label
+from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.view_log import view_log_path
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -123,6 +126,7 @@ from tests.support.dashboard import StubServices, ignore_palette_action, state_v
 from tests.support.entry_points import FakeDistribution, ambiguous_entry_points
 from tests.support.render import plain_text
 from tests.support.store import seed_task
+from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import wait_until
 
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -132,6 +136,10 @@ COMMAND_HISTORY_TEST_LIMIT = 10
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _LATER_EXTERNAL_WIDGET_NAME = "later-widget"
 _WIDE_HOME_SIZE = (120, 40)
+_PROJECT_SESSION_NAME = "project"
+_GLOBAL_TMUX_PREFIX = "C-b"
+_SESSION_TMUX_PREFIX = "C-a"
+_TMUX_CLIENT_TTY_FORMAT = "#{client_tty}"
 _MEASURED_HOME_SIZE = (101, 35)
 _STANDARD_HOME_SIZE = (100, 35)
 _SHORT_WIDE_HOME_SIZE = (80, 24)
@@ -976,6 +984,7 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import OpenPalette, OpenPaletteContext, WidgetContext
     from shikiru.store.database import Database
     from tests.support.store import Connection
+    from tests.support.tmux import TmuxServer
 
 
 def _open_agent_error_escalation(
@@ -1171,7 +1180,7 @@ def _app(
     clock: Clock | None = None,
     settings: Settings | None = None,
     tmux_detach_hint: str | None = None,
-    detach_tmux_client: Callable[[], Awaitable[None]] | None = None,
+    detach_tmux_client: Callable[[], Awaitable[bool]] | None = None,
 ) -> DashboardApp:
     settings = settings or load_settings(project_dir)
     clock = clock or SystemClock()
@@ -3952,49 +3961,86 @@ async def test_home_footer_detach_uses_the_configured_prefix_and_action(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    tmux_server: TmuxServer,
 ) -> None:
     del connection
     project_dir = write_minimal_project(tmp_path)
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
+    project_session = exact_target(_PROJECT_SESSION_NAME)
+    unrelated_session = exact_target(tmux_server.session)
+    await tmux_server.run("new-session", "-d", "-s", _PROJECT_SESSION_NAME, "-x", "80", "-y", "24")
+    await tmux_server.run(
+        "set-environment",
+        "-t",
+        project_session,
+        PROJECT_DIR_ENV_VAR,
+        str(project_dir),
+    )
+    project_pane = (
+        await tmux_server.run("list-panes", "-s", "-t", project_session, "-F", "#{pane_id}")
+    ).stdout.strip()
+    await tmux_server.run("set-option", "-g", "prefix", _GLOBAL_TMUX_PREFIX)
+    await tmux.set_session_option(project_session, "prefix", _SESSION_TMUX_PREFIX)
     reader = StateReader(database, SystemClock())
-    detach_requests: list[None] = []
-
-    async def detach_current_client() -> None:
-        detach_requests.append(None)
 
     try:
-        app = _app(
-            reader,
-            project_dir,
-            widget_names=["queue"],
-            tmux_detach_hint="Ctrl+A",
-            detach_tmux_client=detach_current_client,
-        )
-        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
-            footer = app.query_one("#focus-footer", Grid)
-            detach = app.query_one("#focus-footer-detach", Button)
-            actions_index = next(
-                index
-                for index, child in enumerate(footer.children)
-                if child.id == "focus-footer-actions"
+        async with (
+            attach_tmux_client(tmux_server, project_session),
+            attach_tmux_client(tmux_server, unrelated_session),
+        ):
+            prefix_hint, detach_project_client = await dashboard_tmux_binding(
+                tmux, project_pane, project_dir, _PROJECT_SESSION_NAME
             )
-            detach_index = next(
-                index
-                for index, child in enumerate(footer.children)
-                if child.id == "focus-footer-detach"
+            assert prefix_hint == tmux_key_label(_SESSION_TMUX_PREFIX)
+            assert prefix_hint is not None
+            assert detach_project_client is not None
+            app = _app(
+                reader,
+                project_dir,
+                widget_names=["queue"],
+                tmux_detach_hint=prefix_hint,
+                detach_tmux_client=detach_project_client,
             )
-            help_index = next(
-                index
-                for index, child in enumerate(footer.children)
-                if child.id == "focus-footer-help"
-            )
-            assert actions_index < detach_index < help_index
-            assert "Ctrl+A" in plain_text(detach.label)
-            assert not detach.disabled
+            async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+                footer = app.query_one("#focus-footer", Grid)
+                detach = app.query_one("#focus-footer-detach", Button)
+                assert len({child.region.y for child in footer.children}) == 1
+                actions_index = next(
+                    index
+                    for index, child in enumerate(footer.children)
+                    if child.id == "focus-footer-actions"
+                )
+                detach_index = next(
+                    index
+                    for index, child in enumerate(footer.children)
+                    if child.id == "focus-footer-detach"
+                )
+                help_index = next(
+                    index
+                    for index, child in enumerate(footer.children)
+                    if child.id == "focus-footer-help"
+                )
+                assert actions_index < detach_index < help_index
+                assert prefix_hint in plain_text(detach.label)
+                assert not detach.disabled
+                assert await tmux.client_for_pane(project_session, project_pane) is not None
 
-            await pilot.click(detach)
-            await wait_until(lambda: bool(detach_requests), timeout=2)
+                await pilot.click(detach)
+
+                await wait_until(
+                    lambda: _no_tmux_clients(tmux, project_session),
+                    timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+                )
+                unrelated_clients = await tmux.list_clients(
+                    unrelated_session, _TMUX_CLIENT_TTY_FORMAT
+                )
+                assert len(unrelated_clients) == 1
     finally:
         reader.close()
+
+
+async def _no_tmux_clients(tmux: Tmux, target: str) -> bool:
+    return not await tmux.list_clients(target, _TMUX_CLIENT_TTY_FORMAT)
 
 
 async def test_compact_contextual_views_open_the_shared_task_detail_and_return(

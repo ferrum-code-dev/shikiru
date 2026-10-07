@@ -29,13 +29,15 @@ def _tmux(server: TmuxServer) -> Tmux:
     return Tmux(server.runner, socket=server.socket_name)
 
 
-async def test_current_prefix_reads_and_formats_the_private_server_configuration(
+async def test_current_prefix_uses_the_matching_session_override(
     tmux_server: TmuxServer,
 ) -> None:
     tmux = _tmux(tmux_server)
-    await tmux_server.run("set-option", "-g", "prefix", "C-a")
+    target = exact_target(tmux_server.session)
+    await tmux_server.run("set-option", "-g", "prefix", "C-b")
+    await tmux.set_session_option(target, "prefix", "C-a")
 
-    assert tmux_key_label(await tmux.current_prefix()) == "Ctrl+A"
+    assert tmux_key_label(await tmux.current_prefix(target)) == "Ctrl+A"
 
 
 async def test_ensure_creates_the_session_with_the_project_env_var(
@@ -61,6 +63,16 @@ async def test_show_session_environment_reads_a_removed_variable_as_unset(
     await tmux_server.run("set-environment", "-t", target, "-r", PROJECT_DIR_ENV_VAR)
 
     assert await _tmux(tmux_server).show_session_environment(target, PROJECT_DIR_ENV_VAR) is None
+
+
+async def test_detach_requires_an_attributable_attached_client(tmux_server: TmuxServer) -> None:
+    tmux = _tmux(tmux_server)
+    target = exact_target(tmux_server.session)
+    pane = (await tmux.list_panes(target, "#{pane_id}"))[0]
+
+    assert await tmux.client_for_pane(target, pane) is None
+    assert not await tmux.detach_client_for_pane(target, pane)
+    assert await tmux.target_exists(target)
 
 
 async def test_ensure_recreates_the_home_window_once_it_has_been_killed(

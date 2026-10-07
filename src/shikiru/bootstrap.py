@@ -129,7 +129,7 @@ from shikiru.workspace.roots import TaskRootBuilder
 _TMUX_PANE_ENVIRONMENT_VARIABLE = "TMUX_PANE"
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
     from mcp.server.fastmcp import FastMCP
@@ -146,6 +146,44 @@ class _PaletteContext(Protocol):
     task_id: str | None
     role: str | None
     drafts: tuple[object, ...]
+
+
+async def dashboard_tmux_binding(
+    tmux: Tmux,
+    pane_target: str | None,
+    project_root: Path,
+    expected_session: str,
+) -> tuple[str | None, Callable[[], Awaitable[bool]] | None]:
+    """Return the session prefix and a revalidated action for this project pane."""
+    if pane_target is None or not await tmux.pane_exists(pane_target):
+        return None, None
+    current_session = await tmux.display(pane_target, FORMAT_SESSION_NAME)
+    if current_session != expected_session:
+        return None, None
+    session_target = exact_target(current_session)
+    project_path = str(project_root)
+    if (
+        await tmux.show_session_environment(session_target, PROJECT_DIR_ENV_VAR) != project_path
+        or await tmux.client_for_pane(session_target, pane_target) is None
+    ):
+        return None, None
+    hint = tmux_key_label(await tmux.current_prefix(session_target))
+
+    async def detach_project_client() -> bool:
+        if not await tmux.pane_exists(pane_target):
+            return False
+        active_session = await tmux.display(pane_target, FORMAT_SESSION_NAME)
+        if active_session != expected_session:
+            return False
+        active_session_target = exact_target(active_session)
+        if (
+            await tmux.show_session_environment(active_session_target, PROJECT_DIR_ENV_VAR)
+            != project_path
+        ):
+            return False
+        return await tmux.detach_client_for_pane(active_session_target, pane_target)
+
+    return hint, detach_project_client
 
 
 def build_clock() -> Clock:
@@ -302,19 +340,12 @@ async def run_dashboard(
         lock_path = engine_lock_path(project_root)
         session_target = exact_target(session_name(settings.project.name))
         tmux = Tmux(runner)
-        tmux_detach_hint = None
-        detach_tmux_client = None
-        current_pane = os.environ.get(_TMUX_PANE_ENVIRONMENT_VARIABLE)
-        if current_pane is not None and await tmux.pane_exists(current_pane):
-            current_session = await tmux.display(current_pane, FORMAT_SESSION_NAME)
-            session_project_root = await tmux.show_session_environment(
-                exact_target(current_session), PROJECT_DIR_ENV_VAR
-            )
-            if current_session == session_name(
-                settings.project.name
-            ) and session_project_root == str(project_root):
-                tmux_detach_hint = tmux_key_label(await tmux.current_prefix())
-                detach_tmux_client = tmux.detach_current_client
+        tmux_detach_hint, detach_tmux_client = await dashboard_tmux_binding(
+            tmux,
+            os.environ.get(_TMUX_PANE_ENVIRONMENT_VARIABLE),
+            project_root,
+            session_name(settings.project.name),
+        )
         dashboard_services = dashboard_services_module.DashboardServices(
             dashboard_services_module.GitRepoStatusService(
                 git,

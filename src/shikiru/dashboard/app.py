@@ -113,7 +113,6 @@ HOME_SPLIT_MIN_COLUMNS = 73
 FOCUS_FOOTER_GROUP_MIN_COLUMNS = 54
 FOCUS_FOOTER_STACKED_COLUMN_COUNT = 1
 FOCUS_FOOTER_GROUP_COUNT = 2
-FOCUS_FOOTER_WIDE_COLUMN_COUNT = 3
 FOCUS_FOOTER_ITEM_COUNT = 5
 FOCUS_SUMMARY_MAX_ROWS = 12
 FOCUS_MAIN_MIN_ROWS = 3
@@ -750,7 +749,7 @@ class DashboardApp(App[None]):
         navigate_home: NavigateHome | None = None,
         timeline_refresh_seconds: float = DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
         tmux_detach_hint: str | None = None,
-        detach_tmux_client: Callable[[], Awaitable[None]] | None = None,
+        detach_tmux_client: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         """Build the home or task workspace with the configured widgets."""
         super().__init__()
@@ -1294,7 +1293,8 @@ class DashboardApp(App[None]):
         elif event.button.id == _HOME_FOOTER_ACTIONS:
             await self.action_open_palette()
         elif event.button.id == _HOME_FOOTER_DETACH and self._detach_tmux_client is not None:
-            await self._detach_tmux_client()
+            if not await self._detach_tmux_client():
+                self._show_navigation_feedback("No project tmux client is currently showing Home.")
         elif event.button.id == _HOME_FOOTER_HELP:
             await self.action_show_help()
 
@@ -1379,7 +1379,7 @@ class DashboardApp(App[None]):
             footer_columns = (
                 FOCUS_FOOTER_STACKED_COLUMN_COUNT
                 if width < FOCUS_FOOTER_GROUP_MIN_COLUMNS
-                else FOCUS_FOOTER_WIDE_COLUMN_COUNT
+                else FOCUS_FOOTER_ITEM_COUNT
                 if wide
                 else FOCUS_FOOTER_GROUP_COUNT
             )

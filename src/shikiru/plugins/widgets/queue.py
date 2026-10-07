@@ -158,13 +158,11 @@ class _TaskBrowserListView(ListView):
         focus_layout: bool,
         move_selection: Callable[[int], Awaitable[None]],
         select_task: Callable[[str], None],
-        open_task: Callable[[str], Awaitable[None]],
     ) -> None:
         super().__init__(id=widget_id)
         self._focus_layout = focus_layout
         self._move_selection = move_selection
         self._select_task = select_task
-        self._open_task = open_task
 
     def action_cursor_up(self) -> None:
         if not self._focus_layout:
@@ -397,7 +395,6 @@ class QueuePanel(Vertical):
             focus_layout=self._focus_layout,
             move_selection=self._move_selection,
             select_task=self.select_task,
-            open_task=self._open_task,
         )
         if self._focus_layout:
             task_list.add_class(FOCUS_LIST_CLASS)

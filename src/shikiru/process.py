@@ -31,6 +31,7 @@ STDOUT_FILENO = 1
 STDERR_FILENO = 2
 _STDERR_READ_SIZE = 65536
 _STDOUT_READ_SIZE = 65536
+_TERMINAL_READ_SIZE = 65536
 _STDERR_TAIL_CHARS = 4000
 STDERR_KEPT_BYTES = 1024 * 1024
 START_TIME_TOLERANCE_SECONDS = 10.0
@@ -226,6 +227,47 @@ class SpawnedProcess:
             del self._stderr_tail[:-STDERR_KEPT_BYTES]
 
 
+class SpawnedTerminalProcess:
+    """A process attached to a private pseudo-terminal."""
+
+    def __init__(self, process: asyncio.subprocess.Process, master_fd: int) -> None:
+        self._process = process
+        self._master_fd = master_fd
+        os.set_blocking(master_fd, False)
+        self._loop = asyncio.get_running_loop()
+        self._loop.add_reader(master_fd, self._drain_terminal)
+        self._stop_lock = asyncio.Lock()
+        self._terminal_closed = False
+
+    @property
+    def returncode(self) -> int | None:
+        """Return the terminal process's exit code when it has finished."""
+        return self._process.returncode
+
+    async def stop(self, *, grace: float = TURN_STOP_GRACE) -> None:
+        """Stop the process group and close the private pseudo-terminal."""
+        async with self._stop_lock:
+            try:
+                await _end_process(self._process, grace=grace)
+            finally:
+                if not self._terminal_closed:
+                    self._terminal_closed = True
+                    self._loop.remove_reader(self._master_fd)
+                    os.close(self._master_fd)
+
+    def _drain_terminal(self) -> None:
+        while True:
+            try:
+                if not os.read(self._master_fd, _TERMINAL_READ_SIZE):
+                    self._loop.remove_reader(self._master_fd)
+                    return
+            except BlockingIOError:
+                return
+            except OSError:
+                self._loop.remove_reader(self._master_fd)
+                return
+
+
 class SubprocessRunner:
     """Runs argv lists as subprocesses, never through a shell."""
 
@@ -317,6 +359,41 @@ class SubprocessRunner:
         finally:
             os.close(gate_write)
         return spawned
+
+    async def spawn_terminal(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> SpawnedTerminalProcess:
+        """Start `argv` with a private terminal connected to standard input and output."""
+        argv_tuple = tuple(argv)
+        master_fd, slave_fd = os.openpty()
+        starting = asyncio.ensure_future(
+            asyncio.create_subprocess_exec(
+                *argv_tuple,
+                cwd=cwd,
+                env=env,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+            )
+        )
+        try:
+            try:
+                process = await asyncio.shield(starting)
+            except asyncio.CancelledError:
+                process = await starting
+                await self._end_and_wait(process, grace=None)
+                raise
+        except BaseException:
+            os.close(master_fd)
+            raise
+        finally:
+            os.close(slave_fd)
+        return SpawnedTerminalProcess(process, master_fd)
 
     def spawn_detached(
         self,
