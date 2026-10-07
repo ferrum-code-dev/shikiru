@@ -374,7 +374,7 @@ grep -Fq -- '- [x] A1' "$WORK_PROJECT/tasks/todo.md"
 [[ "$("$GIT_BIN" -C "$WORK_PROJECT" branch --show-current)" == main ]]
 [[ "$("$GIT_BIN" -C "$WORK_PROJECT" log -1 --format=%s)" == fake:* ]]
 "$GIT_BIN" -C "$WORK_PROJECT" show HEAD:tasks/todo.md | grep -Fq -- '- [x] A1'
-HOME_PANE="$(tmux_run list-panes -t '=[shikiru] quickstart:shikiru' -F '#{pane_id}' | sed -n '1p')"
+HOME_PANE="$(tmux_run list-panes -t '=[shikiru] quickstart:dashboard' -F '#{pane_id}' | sed -n '1p')"
 [[ -n "$HOME_PANE" ]]
 [[ "$(tmux_run display-message -p -t "$HOME_PANE" '#{pane_dead}')" == 0 ]]
 tmux_run capture-pane -p -t "$HOME_PANE" -S - > "$RUN_ROOT/home-dashboard.txt"
@@ -404,14 +404,15 @@ record env -i \
     "$PACKAGE_PYTHON" -m pytest -q -c /dev/null --import-mode=importlib \
     -o asyncio_mode=auto \
     "$ROOT/tests/integration/test_workspace_walkthroughs.py::test_fake_agent_workspace_finds_verdict_and_applies_contextual_message" \
-    "$ROOT/tests/integration/test_dashboard_task_detail.py::test_enter_opens_shared_detail_and_escape_restores_browser_selection_and_scroll" \
+    "$ROOT/tests/integration/test_dashboard_app.py::test_home_row_click_and_enter_keep_the_shared_inspector_on_home" \
+    "$ROOT/tests/integration/test_dashboard_app.py::test_home_escape_clears_selection_after_search_and_keeps_compact_detail_access" \
     "$ROOT/tests/integration/test_dashboard_app.py::test_home_resizes_through_the_terminal_matrix_without_losing_selection_or_focus" \
     "$ROOT/tests/integration/test_dashboard_app.py::test_task_detail_contextual_controls_are_reachable_at_narrow_width" \
     "$ROOT/tests/integration/test_dashboard_task_detail.py::test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resize" \
     "$ROOT/tests/integration/test_dashboard_task_detail.py::test_task_evidence_filter_and_reading_position_survive_resize_and_refresh" \
     "$ROOT/tests/integration/test_dashboard_motion.py::test_disabled_animations_keep_countdowns_live_without_animating_frames"
 cd "$ROOT"
-WORKSPACE_NAVIGATION_CHECK="seven installed-interpreter Textual boundary tests under TERM=xterm-256color and NO_COLOR=1: fake-agent contextual message reaches Applied; Enter/Escape restores detail selection and scroll; Home resize 120x40 through 20x8 preserves selection/focus; narrow detail controls stay reachable; palette cursor/form survives resize; Evidence filter/reading position survives resize and refresh; disabled motion keeps countdown live; private-tmux installed Home launch and attach-picker checks are separate"
+WORKSPACE_NAVIGATION_CHECK="eight installed-interpreter Textual boundary tests under TERM=xterm-256color and NO_COLOR=1: fake-agent contextual message reaches Applied; click/Enter keep inline Home detail mounted; Escape clears Home selection after overlays/search; Home resize 120x40 through 20x8 preserves selection/focus; narrow detail controls stay reachable; palette cursor/form survives resize; Evidence filter/reading position survives resize and refresh; disabled motion keeps countdown live; private-tmux installed Home launch and attach-picker checks are separate"
 
 SMOKE_STAGE="session listing and attach"
 record app "$SECONDARY_PROJECT" start
