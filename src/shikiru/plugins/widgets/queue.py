@@ -459,8 +459,7 @@ class QueuePanel(Vertical):
 
     async def _refresh_while_active(self) -> None:
         if (
-            not self._widget_context.animations
-            or not self.is_mounted
+            not self.is_mounted
             or not widget_is_current(self)
             or not cast("App[object]", self.app).is_running
         ):
@@ -471,7 +470,7 @@ class QueuePanel(Vertical):
         list_view = self.query(f"#{TASK_LIST_ID}")
         if not list_view:
             return
-        if not self._widget_context.views.engine_up():
+        if not self._widget_context.animations or not self._widget_context.views.engine_up():
             self._status_bright = False
             for item in list_view.first().children:
                 if isinstance(item, _BrowserListItem):

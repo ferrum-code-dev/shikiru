@@ -70,7 +70,6 @@ class MotionState:
     animations: bool
     timeouts: TimeoutsConfig
     refresh_hz: int
-    stream_active_seconds: float
     stamp_flash_seconds: float
     escalation_pulse_hz: int
     tasks: tuple[TaskMotionState, ...] = ()

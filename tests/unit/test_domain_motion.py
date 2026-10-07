@@ -41,7 +41,6 @@ def _state(
         animations=animations,
         timeouts=_TIMEOUTS,
         refresh_hz=4,
-        stream_active_seconds=10,
         stamp_flash_seconds=0.4,
         escalation_pulse_hz=1,
         engine_running=engine_running,
@@ -86,7 +85,7 @@ def test_stream_state_uses_activity_kind_and_does_not_spin_while_held(
     assert result.agent_processing is agent_processing
 
 
-def test_spinner_keeps_cycling_after_the_stream_window_without_refreshing_signal_age() -> None:
+def test_quiet_live_tool_keeps_cycling_without_refreshing_signal_age() -> None:
     clock = FakeClock(_START)
     task = TaskMotionState("T-1", _START, last_signal_at=_START, turn_active=True)
     state = _state(tasks=(task,))
@@ -103,7 +102,6 @@ def test_spinner_keeps_cycling_after_the_stream_window_without_refreshing_signal
             git_command=120,
         ),
         refresh_hz=state.refresh_hz,
-        stream_active_seconds=state.stream_active_seconds,
         stamp_flash_seconds=state.stamp_flash_seconds,
         escalation_pulse_hz=state.escalation_pulse_hz,
         tasks=state.tasks,
@@ -141,7 +139,6 @@ def test_static_frames_hold_phase_and_hide_outcome_flashes() -> None:
             animations=state.animations,
             timeouts=state.timeouts,
             refresh_hz=state.refresh_hz,
-            stream_active_seconds=state.stream_active_seconds,
             stamp_flash_seconds=state.stamp_flash_seconds,
             escalation_pulse_hz=state.escalation_pulse_hz,
             tasks=(
@@ -172,7 +169,6 @@ def test_animated_spinner_phase_is_capped_at_four_hertz() -> None:
         animations=state.animations,
         timeouts=state.timeouts,
         refresh_hz=90,
-        stream_active_seconds=state.stream_active_seconds,
         stamp_flash_seconds=state.stamp_flash_seconds,
         escalation_pulse_hz=state.escalation_pulse_hz,
         tasks=state.tasks,
@@ -234,7 +230,6 @@ def test_non_stream_activity_does_not_show_a_spinner() -> None:
             animations=True,
             timeouts=settings.orchestration.timeouts,
             refresh_hz=4,
-            stream_active_seconds=10,
             stamp_flash_seconds=0.4,
             escalation_pulse_hz=1,
             tasks=(task,),

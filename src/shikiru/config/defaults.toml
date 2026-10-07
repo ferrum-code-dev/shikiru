@@ -56,7 +56,6 @@ timeline_refresh_seconds = 1
 
 [dashboard.motion]
 refresh_hz = 4
-stream_active_seconds = 10
 stamp_flash_milliseconds = 400
 escalation_pulse_hz = 1
 task_event_limit = 50

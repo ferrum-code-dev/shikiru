@@ -115,11 +115,15 @@ configuration migration rewrites an operator's layout.
 
 [dashboard.motion]
 refresh_hz = 4                                  # at most 4
-stream_active_seconds = 10                      # a panel spinner runs this long after the last stream signal
 stamp_flash_milliseconds = 400
 escalation_pulse_hz = 1
 task_event_limit = 50                           # events read per task for the motion state
 merge_event_limit = 20
+
+Older project files may still set `stream_active_seconds`; it is accepted for configuration
+compatibility but deprecated and no longer affects live-agent motion. Activity is based on a
+recorded current turn, engine liveness, holds and diagnosed stall deadlines, while signal age
+continues to report the last recorded observation.
 
 [dashboard.titles]                              # fields: 06 §5.3
 window = "{task_id} {title:.24}"

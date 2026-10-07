@@ -348,7 +348,6 @@ class DashboardMotion:
             animations=self._settings.dashboard.animations,
             timeouts=self._settings.orchestration.timeouts,
             refresh_hz=config.refresh_hz,
-            stream_active_seconds=config.stream_active_seconds,
             stamp_flash_seconds=config.stamp_flash_milliseconds / _MILLISECONDS_PER_SECOND,
             escalation_pulse_hz=config.escalation_pulse_hz,
             tasks=tasks,

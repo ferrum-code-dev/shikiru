@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Select, Static
+from textual.widgets import ListView, Select, Static
 
 from shikiru.agents.contracts import (
     QuotaWindow,
@@ -26,6 +26,7 @@ from shikiru.dashboard.app import FOCUS_COMMAND_HISTORY, FOCUS_USAGE_DETAILS, Da
 from shikiru.dashboard.detail import (
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
+    TASK_DETAIL_SIGNAL,
     TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TaskDetailViewsScreen,
 )
@@ -41,6 +42,7 @@ from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
+from shikiru.plugins.widgets.queue import QueuePanel
 from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.plugins.widgets.usage import UsagePanel
 from shikiru.store.escalations import EscalationStore
@@ -74,7 +76,7 @@ from tests.support.dashboard import (
 )
 from tests.support.render import plain_text
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_until, yield_control
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
@@ -99,7 +101,6 @@ _CURRENT_ITERATION = 2
 _INITIAL_USAGE_COST = 0.42
 _QUIET_STALL_SECONDS = 30
 _QUIET_TOOL_SECONDS = 60
-_QUIET_STREAM_SECONDS = 1
 _QUIET_TOOL_ELAPSED_SECONDS = 10.5
 _STATUS_MOTION_TICKS = 5
 _STATUS_MOTION_PHASES = 2
@@ -647,13 +648,6 @@ async def test_quiet_current_tool_keeps_cycling_without_changing_recorded_signal
                     )
                 }
             ),
-            "dashboard": base_settings.dashboard.model_copy(
-                update={
-                    "motion": base_settings.dashboard.motion.model_copy(
-                        update={"stream_active_seconds": _QUIET_STREAM_SECONDS}
-                    )
-                }
-            ),
         }
     )
     task, _ = _seed_dashboard_state(connection, clock)
@@ -702,6 +696,12 @@ async def test_slow_motion_callback_does_not_block_or_overlap_other_callbacks(
         async def fast_refresh() -> None:
             fast_frames.append(clock.now())
 
+        scheduled_calls = 0
+
+        async def scheduled_refresh() -> None:
+            nonlocal scheduled_calls
+            scheduled_calls += 1
+
         async def open_palette(action: str) -> None:
             del action
 
@@ -738,6 +738,12 @@ async def test_slow_motion_callback_does_not_block_or_overlap_other_callbacks(
                 )
             assert len(fast_frames) == 5
             unsubscribe_fast()
+            unsubscribe_scheduled = app.register_motion_callback(scheduled_refresh)
+            await wait_until(clock.has_pending_sleep, timeout=1)
+            clock.advance(interval)
+            unsubscribe_scheduled()
+            await yield_control()
+            assert scheduled_calls == 0
     finally:
         reader.close()
 
@@ -765,9 +771,6 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
                 update={
                     "animations": animations,
                     "widgets": ["queue"],
-                    "motion": base_settings.dashboard.motion.model_copy(
-                        update={"stream_active_seconds": _QUIET_STREAM_SECONDS}
-                    ),
                 }
             ),
         }
@@ -824,8 +827,8 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
                 return bool(rendered.get_style_at_offset(offset).bold) is expected_bold
 
             active_text = status_content(row)
-            state_offset = active_text.plain.index("Implementing")
-            initial_bold = active_text.get_style_at_offset(state_offset).bold is True
+            initial_offset = active_text.plain.index("Implementing")
+            initial_bold = active_text.get_style_at_offset(initial_offset).bold is True
             other_initial = status_content(other_row)
             other_offset = other_initial.plain.index("Implementing")
             other_initial_bold = other_initial.get_style_at_offset(other_offset).bold is True
@@ -840,19 +843,196 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
                     timeout=_TASK_ACTIVITY_WAIT_SECONDS,
                 )
 
-            _capture_home_status(app, animations=animations)
-
             rendered = status_content(row)
             assert "Implementing" in rendered.plain
             assert initial_bold is False
             assert other_initial_bold is False
+            app.query_one("#queue", QueuePanel).select_task(task.id)
+            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
+            await wait_until(
+                lambda: (
+                    task.id in plain_text(identity.content)
+                    and "loading selected task" not in plain_text(identity.content).casefold()
+                ),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await wait_until(
+                lambda: "Last recorded signal ·" in plain_text(signal.content),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            _capture_home_status(app, animations=animations)
             if animations:
                 detail = await views.task_detail(task.id, include_timeline=False)
                 assert detail is not None
                 assert detail.latest_signal == VIEW_TOOL_STARTED_SIGNAL
                 assert detail.latest_signal_at == _START
-            else:
-                assert not rendered.get_style_at_offset(state_offset).bold
+    finally:
+        reader.close()
+
+
+async def test_static_home_refreshes_stall_and_signal_age(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    base_settings = _motion_settings(project_dir)
+    settings = base_settings.model_copy(
+        update={
+            "orchestration": base_settings.orchestration.model_copy(
+                update={
+                    "timeouts": base_settings.orchestration.timeouts.model_copy(
+                        update={"stall": _QUIET_STALL_SECONDS, "tool": _QUIET_TOOL_SECONDS}
+                    )
+                }
+            ),
+            "dashboard": base_settings.dashboard.model_copy(
+                update={"animations": False, "widgets": ["queue"]}
+            ),
+        }
+    )
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        views = state_views(
+            reader,
+            project_dir,
+            clock,
+            StubServices(engine_running=True),
+            settings=settings,
+        )
+        _write_current_turn_log(project_dir, task, views)
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        interval = 1 / settings.dashboard.motion.refresh_hz
+        app = DashboardApp(
+            focus_task=None,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=interval,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            animations=False,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        async with app.run_test(size=(120, 40)):
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{task.id} > Static")),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            row = app.query_one(f"#task-row-{task.id} > Static", Static)
+            app.query_one("#queue", QueuePanel).select_task(task.id)
+            signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
+            await wait_until(
+                lambda: "Last recorded signal · 0s ago" in plain_text(signal.content),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+
+            clock.advance(_QUIET_TOOL_SECONDS + 1)
+            await wait_until(
+                lambda: "stalled" in cast("Content", row.render()).plain,
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await wait_until(
+                lambda: "Last recorded signal · 1m ago" in plain_text(signal.content),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            row_content = cast("Content", row.render())
+            state_offset = row_content.plain.index("Implementing")
+            assert row_content.get_style_at_offset(state_offset).bold is not True
+            assert app.is_running
+    finally:
+        reader.close()
+
+
+async def test_queue_refresh_survives_child_teardown_and_updates_after_recompose(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    base_settings = _motion_settings(project_dir)
+    settings = base_settings.model_copy(
+        update={
+            "dashboard": base_settings.dashboard.model_copy(
+                update={"animations": False, "widgets": ["queue"]}
+            )
+        }
+    )
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+        views = _build_views(reader, project_dir, settings, clock, task)
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        interval = 1 / settings.dashboard.motion.refresh_hz
+        app = DashboardApp(
+            focus_task=None,
+            views=views,
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=interval,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            animations=False,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        async with app.run_test(size=(120, 40)):
+            await wait_until(
+                lambda: bool(app.query("#task-browser-count")),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            queue = app.query_one("#queue", QueuePanel)
+            queued_during_recompose = seed_task(
+                connection,
+                clock,
+                title="Added during queue teardown",
+                mode=Mode.IMPLEMENT,
+            )
+            count_removal = queue.query_one("#task-browser-count", Static).remove()
+            list_removal = queue.query_one("#task-browser-list", ListView).remove()
+            clock.advance(interval)
+            await asyncio.gather(count_removal, list_removal)
+            await queue.recompose()
+
+            await wait_until(
+                lambda: (
+                    bool(queue.query("#task-browser-count"))
+                    and bool(queue.query("#task-browser-list"))
+                ),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            clock.advance(interval)
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{queued_during_recompose.id} > Static")),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+
+            added_after_recompose = seed_task(
+                connection,
+                clock,
+                title="Added after queue teardown",
+                mode=Mode.IMPLEMENT,
+            )
+            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            clock.advance(interval)
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{added_after_recompose.id} > Static")),
+                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+            )
+            assert app.is_running
     finally:
         reader.close()
 

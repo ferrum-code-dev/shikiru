@@ -1450,7 +1450,7 @@ class DashboardApp(App[None]):
             await self._clock.sleep(interval)
             for registration in tuple(self._motion_callbacks):
                 worker = registration.worker
-                if worker is not None and worker.is_running:
+                if worker is not None and not worker.is_finished:
                     continue
                 registration.worker = self.run_worker(
                     registration.callback(),
@@ -1467,14 +1467,14 @@ class DashboardApp(App[None]):
             self._motion_callbacks = [
                 item for item in self._motion_callbacks if item is not registration
             ]
-            if registration.worker is not None and registration.worker.is_running:
+            if registration.worker is not None and not registration.worker.is_finished:
                 registration.worker.cancel()
 
         return unsubscribe
 
     def on_unmount(self) -> None:
         for registration in self._motion_callbacks:
-            if registration.worker is not None and registration.worker.is_running:
+            if registration.worker is not None and not registration.worker.is_finished:
                 registration.worker.cancel()
         self._motion_callbacks.clear()
 

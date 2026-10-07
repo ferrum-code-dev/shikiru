@@ -169,10 +169,16 @@ class TitlesConfig(ConfigModel):
 
 
 class DashboardMotionConfig(ConfigModel):
-    """Motion cadence and signal windows for the dashboard."""
+    """Motion cadence and presentation timings for the dashboard."""
 
     refresh_hz: int = Field(gt=0, le=MAX_MOTION_REFRESH_HZ)
-    stream_active_seconds: float = Field(gt=0)
+    stream_active_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Deprecated compatibility setting; signal freshness no longer controls live motion."
+        ),
+    )
     stamp_flash_milliseconds: int = Field(gt=0)
     escalation_pulse_hz: int = Field(gt=0)
     task_event_limit: int = Field(gt=0)
