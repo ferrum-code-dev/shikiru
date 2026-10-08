@@ -86,10 +86,13 @@ from tests.support.waiting import wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from textual.pilot import Pilot
+    from textual.widget import Widget
+
     from shikiru.agents.contracts import BillingMode
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
-    from shikiru.dashboard.contract import WidgetContext
+    from shikiru.dashboard.contract import ResourceView, WidgetContext
     from shikiru.dashboard.views import DashboardSources
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -273,6 +276,93 @@ async def _assert_compact_readouts(context: WidgetContext) -> None:
 def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
     lines = widget.render_lines(Region(0, 0, widget.region.width, widget.region.height))
     return tuple(line.text.rstrip() for line in lines if line.text.strip())
+
+
+def _project_diagnostics_text(screen: Widget) -> str:
+    widget_ids = (
+        "project-diagnostics-scope",
+        "resources",
+        "project-diagnostics-resource-details",
+        "project-diagnostics-engine-lock",
+        "project-diagnostics-engine-faults",
+    )
+    content = "\n".join(
+        plain_text(screen.query_one(f"#{widget_id}", Static).content) for widget_id in widget_ids
+    )
+    docker_panel = screen.query("#docker")
+    docker = (
+        plain_text(screen.query_one("#docker", Static).content)
+        if docker_panel
+        else plain_text(screen.query_one("#project-diagnostics-docker", Static).content)
+    )
+    return f"{content}\n{docker}"
+
+
+def _assert_project_diagnostics_facts(
+    screen: Widget,
+    *,
+    fault_count: int,
+    fault_error: str,
+    docker_state: str,
+    resource_error: str | None = None,
+    docker_error: str | None = None,
+) -> str:
+    diagnostics = _project_diagnostics_text(screen)
+    assert plain_text(screen.query_one("#context-widget-title", Static).render()) == (
+        "Project Diagnostics"
+    )
+    assert "Scope · current Shikiru project" in diagnostics
+    assert "Engine lock · not held" in diagnostics
+    assert f"Open engine faults · {fault_count} recorded" in diagnostics
+    assert fault_error in diagnostics
+    assert docker_state in diagnostics
+    if resource_error is not None:
+        assert resource_error in diagnostics
+    if docker_error is not None:
+        assert docker_error in diagnostics
+    return diagnostics
+
+
+def _record_open_engine_fault(
+    connection: Connection,
+    clock: FakeClock,
+    task_id: str,
+    *,
+    scope: str,
+    error: str,
+    repeats: int,
+) -> None:
+    EventLog(connection, clock).append(
+        EventKind.ENGINE_FAULT,
+        task_id=task_id,
+        message=error,
+        data={"scope": scope, "error": error, "recoverable": True, "repeat": repeats},
+    )
+
+
+async def _assert_home_task_opens(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    home_screen: Widget,
+    task_id: str,
+    title: str,
+) -> None:
+    task_list = app.query_one("#task-browser-list", ListView)
+    task_list.focus()
+    task_list.index = 0
+    await pilot.press("enter")
+    identity = app.query_one("#task-detail-identity", Static)
+    await wait_until(lambda: task_id in plain_text(identity.content), timeout=2)
+    assert app.screen is home_screen
+    assert task_id in plain_text(identity.content)
+    assert title in plain_text(identity.content)
+
+
+def _assert_resource_sample_retained(sources: DashboardSources, expected: ResourceView) -> None:
+    retained = sources.resource_sample()
+    assert retained is not None
+    assert retained.state is DiagnosticSampleState.STALE
+    assert retained.sampled_at == expected.sampled_at
 
 
 async def test_escalations_open_full_packet_and_route_resolution_action(
@@ -848,6 +938,14 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
     sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
     initial = await sources.resources()
     assert initial.state is DiagnosticSampleState.AVAILABLE
+    _record_open_engine_fault(
+        connection,
+        clock,
+        task.id,
+        scope="resource test",
+        error="recorded diagnostic failure",
+        repeats=2,
+    )
 
     clock.advance(settings.orchestration.resources.sample_seconds)
 
@@ -890,14 +988,21 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         assert task.title in plain_text(task_row.content)
 
         home_screen = app.screen
-        task_list = app.query_one("#task-browser-list", ListView)
-        task_list.focus()
-        task_list.index = 0
-        await pilot.press("enter")
-        identity = app.query_one("#task-detail-identity", Static)
-        await wait_until(lambda: task.id in plain_text(identity.content), timeout=2)
-        assert app.screen is home_screen
-        assert task.id in plain_text(identity.content)
+        assert await pilot.click("#resources")
+        await wait_until(lambda: bool(app.screen.query("#context-widget-frame")), timeout=2)
+        diagnostics = _assert_project_diagnostics_facts(
+            app.screen,
+            fault_count=1,
+            fault_error="recorded diagnostic failure",
+            docker_state="Docker · not configured",
+            resource_error=RESOURCE_SAMPLE_FAILURE,
+        )
+        assert task.id in diagnostics
+        _assert_resource_sample_retained(sources, initial)
+        await pilot.click("#context-widget-close")
+        await wait_until(lambda: app.screen is home_screen, timeout=2)
+
+        await _assert_home_task_opens(app, pilot, home_screen, task.id, task.title)
 
 
 async def test_process_sampling_failure_retains_the_last_complete_tree_sample(
@@ -991,6 +1096,14 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Queue remains usable")
+    _record_open_engine_fault(
+        connection,
+        clock,
+        task.id,
+        scope="docker test",
+        error="recorded docker diagnostic failure",
+        repeats=1,
+    )
     tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
     sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
     monkeypatch.setenv("PATH", str(tmp_path))
@@ -1005,6 +1118,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
     docker.chmod(EXECUTABLE_MODE)
     clock.advance(settings.dashboard.docker_refresh_seconds)
     views = _dashboard_views(reader, project_dir, clock, settings, sources)
+    command_history_before = views.command_history().entries
 
     async def open_palette(action: str) -> None:
         del action
@@ -1018,7 +1132,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         open_palette=open_palette,
-        widget_names=["queue", "docker"],
+        widget_names=["queue", "resources", "docker"],
     )
     async with app.run_test(size=(100, 50)) as pilot:
         home_screen = app.screen
@@ -1047,13 +1161,21 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
 
         await pilot.press("escape")
         await wait_until(lambda: app.screen is home_screen, timeout=2)
-        task_list = app.query_one("#task-browser-list", ListView)
-        task_list.focus()
-        task_list.index = 0
-        await pilot.press("enter")
-        identity = app.query_one("#task-detail-identity", Static)
-        await wait_until(lambda: task.id in plain_text(identity.content), timeout=2)
-        assert app.screen is home_screen
+        assert await pilot.click("#resources")
+        await wait_until(lambda: bool(app.screen.query("#context-widget-frame")), timeout=2)
+        diagnostics = _assert_project_diagnostics_facts(
+            app.screen,
+            fault_count=1,
+            fault_error="recorded docker diagnostic failure",
+            docker_state="Docker failed",
+            docker_error="invalid JSON",
+        )
+        assert "Host CPU" in diagnostics
+        assert views.command_history().entries == command_history_before
+
+        await pilot.press("escape")
+        await wait_until(lambda: app.screen is home_screen, timeout=2)
+        await _assert_home_task_opens(app, pilot, home_screen, task.id, task.title)
 
 
 async def _start_resource_test_panes(

@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.text import Text
 from textual.widgets import Static
 
-from shikiru.dashboard.contract import FOCUS_RESOURCES_VIEW, WidgetPlacement
+from shikiru.dashboard.contract import FOCUS_PROJECT_DIAGNOSTICS_VIEW, WidgetPlacement
 from shikiru.ui.compact import render_resource_metric
 from shikiru.ui.screen import widget_is_attached
 
@@ -42,7 +42,7 @@ class ResourcesPanel(Static):
             return
         open_view = self._widget_context.open_contextual_view
         if open_view is not None:
-            await open_view(FOCUS_RESOURCES_VIEW)
+            await open_view(FOCUS_PROJECT_DIAGNOSTICS_VIEW)
             event.stop()
 
     async def on_key(self, event: events.Key) -> None:
@@ -51,7 +51,7 @@ class ResourcesPanel(Static):
             and self._widget_context.placement is WidgetPlacement.RESOURCES
             and self._widget_context.open_contextual_view is not None
         ):
-            await self._widget_context.open_contextual_view(FOCUS_RESOURCES_VIEW)
+            await self._widget_context.open_contextual_view(FOCUS_PROJECT_DIAGNOSTICS_VIEW)
             event.stop()
 
     def on_resize(self, event: events.Resize) -> None:

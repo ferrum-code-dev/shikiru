@@ -2305,7 +2305,6 @@ async def _assert_cached_resource_views(
     services: DashboardServices,
     size: tuple[int, int],
 ) -> None:
-    home_screen = app.screen
     home_resources = app.query_one("#resources", Static)
     expected_resource_rows = len(expected_groups) if size == _COMPACT_HOME_SIZE else 1
     await wait_until(
@@ -2319,7 +2318,7 @@ async def _assert_cached_resource_views(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     await pilot.pause()
-    _capture_task99(app, f"task110-resource-home-{size[0]}x{size[1]}-color.svg")
+    _capture_task99(app, f"task117-resource-home-{size[0]}x{size[1]}-color.svg")
     if size == _COMPACT_HOME_SIZE:
         readouts = app.query_one("#focus-readouts", VerticalScroll)
         readouts.focus()
@@ -2331,7 +2330,7 @@ async def _assert_cached_resource_views(
             ),
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
-        _capture_task99(app, "task110-resource-home-48x20-scrolled-color.svg")
+        _capture_task99(app, "task117-resource-home-48x20-scrolled-color.svg")
         await pilot.press("home")
         await wait_until(lambda: readouts.scroll_y == 0, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
         readouts.post_message(
@@ -2359,35 +2358,62 @@ async def _assert_cached_resource_views(
         readouts.scroll_to(y=0, animate=False, immediate=True)
         await wait_until(lambda: readouts.scroll_y == 0, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
     assert await pilot.click("#resources")
-    await wait_until(lambda: app.screen is not home_screen, timeout=2)
+    await _assert_project_diagnostics_view(app, pilot, expected_groups=expected_groups, size=size)
+    assert sampler.latest().sampled_at == sample.sampled_at
+    cached = services.resource_sample()
+    assert cached is not None
+    assert cached.sampled_at == sample.sampled_at
+    assert cached.shikiru_cpu_pct == sample.shikiru_cpu_pct
+    assert cached.agents_cpu_pct == sample.agents_cpu_pct
+
+
+async def _assert_project_diagnostics_view(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    *,
+    expected_groups: tuple[str, ...],
+    size: tuple[int, int],
+) -> None:
+    home_resources = app.query_one("#resources", Static)
+    await wait_until(lambda: bool(app.screen.query("#context-widget-frame")), timeout=2)
     diagnostic_resources = app.screen.query_one("#resources", Static)
+    diagnostic_details = app.screen.query_one("#project-diagnostics-resource-details", Static)
+    diagnostic_lock = app.screen.query_one("#project-diagnostics-engine-lock", Static)
+    diagnostic_faults = app.screen.query_one("#project-diagnostics-engine-faults", Static)
+    diagnostic_docker = app.screen.query_one("#project-diagnostics-docker", Static)
+    diagnostic_scope = app.screen.query_one("#project-diagnostics-scope", Static)
+    assert plain_text(app.screen.query_one("#context-widget-title", Static).render()) == (
+        "Project Diagnostics"
+    )
+    assert plain_text(diagnostic_scope.content) == "Scope · current Shikiru project"
+    assert plain_text(diagnostic_lock.content) == "Engine lock · not held"
+    assert plain_text(diagnostic_faults.content) == "Open engine faults · 0 recorded"
+    assert plain_text(diagnostic_docker.content) == "Docker · not configured"
     await wait_until(
-        lambda: all(
-            group in "\n".join(_rendered_widget_lines(diagnostic_resources))
-            for group in expected_groups
-        ),
+        lambda: all(group in plain_text(diagnostic_resources.content) for group in expected_groups),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    await wait_until(
-        lambda: (
-            "process RSS/host total, not a per-process limit"
-            in plain_text(diagnostic_resources.content)
-        ),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
+    if size == _WIDE_HOME_SIZE:
+        home_text = plain_text(home_resources.content)
+        assert " · Shikiru CPU " in home_text
+        assert " · Agents CPU " in home_text
+        await wait_until(
+            lambda: "Process RSS/host total" in plain_text(diagnostic_details.content),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
     await pilot.pause()
     await wait_until(
         lambda: all(group in _exported_screen_text(app) for group in expected_groups),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    _capture_task99(app, f"task110-resource-diagnostics-{size[0]}x{size[1]}-color.svg")
-    explanation = "not a per-process limit"
+    _capture_task99(app, f"task117-project-diagnostics-{size[0]}x{size[1]}-color.svg")
+    explanation = "Process RSS/host total"
 
     def diagnostics_text() -> str:
         return " ".join(_exported_screen_text(app).replace("│", " ").split())
 
     if explanation not in diagnostics_text():
-        diagnostics_content = cast("VerticalScroll", diagnostic_resources.parent)
+        diagnostics_content = app.screen.query_one("#context-widget-content", VerticalScroll)
         diagnostics_content.focus()
         await pilot.press("pagedown")
         await wait_until(
@@ -2396,15 +2422,20 @@ async def _assert_cached_resource_views(
         )
         _capture_task99(
             app,
-            f"task110-resource-diagnostics-{size[0]}x{size[1]}-scrolled-color.svg",
+            f"task117-project-diagnostics-{size[0]}x{size[1]}-scrolled-color.svg",
         )
     assert explanation in diagnostics_text()
-    assert sampler.latest().sampled_at == sample.sampled_at
-    cached = services.resource_sample()
-    assert cached is not None
-    assert cached.sampled_at == sample.sampled_at
-    assert cached.shikiru_cpu_pct == sample.shikiru_cpu_pct
-    assert cached.agents_cpu_pct == sample.agents_cpu_pct
+    if size == _COMPACT_HOME_SIZE:
+        await pilot.pause()
+        visible_text = _exported_screen_text(app)
+        assert all(
+            fact in visible_text
+            for fact in (
+                "Engine lock · not held",
+                "Open engine faults · 0 recorded",
+                "Docker · not configured",
+            )
+        ), visible_text
 
 
 async def test_resource_diagnostics_preserves_a_missing_sample(
@@ -2429,10 +2460,11 @@ async def test_resource_diagnostics_preserves_a_missing_sample(
         assert await pilot.click("#resources")
         await wait_until(lambda: bool(app.screen.query("#resources")), timeout=2)
         diagnostic_resources = app.screen.query_one("#resources", Static)
+        diagnostic_details = app.screen.query_one("#project-diagnostics-resource-details", Static)
         await wait_until(
             lambda: (
                 "no sample recorded" in plain_text(diagnostic_resources.content)
-                and "not a per-process limit" in plain_text(diagnostic_resources.content)
+                and "Process RSS/host total" in plain_text(diagnostic_details.content)
             ),
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
@@ -4485,7 +4517,9 @@ async def _exercise_task_secondary_menu_routes(
         frame_selector="#context-widget-frame",
         body_selector="#context-widget-content",
     )
-    assert "Diagnostics" in _rendered_text(widget_screen.query_one("#context-widget-title", Static))
+    assert _rendered_text(widget_screen.query_one("#context-widget-title", Static)) == (
+        "Project Diagnostics"
+    )
     assert queue.pending() == []
     await pilot.click("#context-widget-close")
     await wait_until(lambda: app.screen is home_screen, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)

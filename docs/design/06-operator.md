@@ -178,7 +178,9 @@ Task 92 ships shared Rich renderables in `ui.compact`: `ProjectUsageMetric` show
 
 `WidgetContext.open_palette` remains available for existing widgets. `open_palette_context` carries an optional action, task ID and role to the shared screen; `on_task_selected` reports browser identity to the dashboard; `open_contextual_view` opens a compatible secondary view. `WidgetPlacement` is an optional widget capability from `dashboard.contract`; a widget without it defaults to Extensions, and unsupported placements fail by configured name. The dashboard owns current navigation state and exposes no services or typed workflow commands to widgets.
 
-Widgets re-read their view when `on_change` fires. Samplers such as resources and docker have their own interval.
+Widgets re-read their view when `on_change` fires. Samplers such as resources and Docker have their own interval. The Home resource strip keeps its top rule directly above the wrapped Host, Shikiru and Agents groups, preserving the single-space dot separators when groups fit on one line. Groups wrap at their boundaries in compact cells.
+
+Clicking or pressing Enter on the Home resource strip opens Project Diagnostics over the mounted workspace. The popup combines `DashboardViews.resource_sample()` with the current engine-lock view and open engine-fault view; it never starts another resource sample. It includes Docker facts only when the `docker` widget is configured, using the existing Docker sampling interval while the popup is open. An unconfigured Docker source is labeled as such, while a configured but unavailable source remains unavailable. Views continues to expose each configured diagnostic widget directly.
 
 | Placement | Widget or view | Content and access |
 |---|---|---|
@@ -188,7 +190,7 @@ Widgets re-read their view when `on_change` fires. Samplers such as resources an
 | Focus attention | `escalations` | Conditional row for grouped decisions, diagnosed stalls and recorded faults; selection updates inline detail, `r` opens resolution and `o` opens evidence |
 | Focus task list and inspector | `queue` | Searchable, selectable task browser: Active, Waiting, History and All; queued tasks use dispatch order, history uses latest finish first, and selection/reading position survive refresh and reorder |
 | Activity | `dialogue` | Last 20 speech bubbles (§6.3); `Enter` shows full text |
-| Diagnostics | `docker`, `faults` | Container observations plus open engine-fault streaks, reachable from Views |
+| Diagnostics | `docker`, `faults`, Project Diagnostics | Configured Docker observations and open engine-fault streaks remain directly reachable from Views; the resource strip and task-context Project diagnostics route open the composite Project Diagnostics popup |
 | Workflow | `strips` | Active tasks as strips (§6.2); reachable from Views when configured |
 | Extensions | Configured third-party widgets | Each configured extension in relative configured order, using its existing entry point and context |
 

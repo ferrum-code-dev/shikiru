@@ -24,6 +24,7 @@ from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
     DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
     FOCUS_FAULTS_VIEW,
+    FOCUS_PROJECT_DIAGNOSTICS_VIEW,
     FOCUS_RESOURCES_VIEW,
     WIDGET_ENTRY_POINT_GROUP,
     CommandFeedbackEntryView,
@@ -47,6 +48,7 @@ from shikiru.dashboard.detail import (
     TaskDetailPanel,
     TaskDetailScreen,
 )
+from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.errors import ConfigError
 from shikiru.ui.compact import FocusAttentionStatus
@@ -78,6 +80,7 @@ if TYPE_CHECKING:
 
 _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
 _WIDGET_DIALOGUE = "dialogue"
+_WIDGET_DOCKER = "docker"
 _WIDGET_ESCALATIONS = "escalations"
 _WIDGET_QUEUE = "queue"
 _WIDGET_RESOURCES = "resources"
@@ -1160,6 +1163,9 @@ class DashboardApp(App[None]):
     async def _open_contextual_view(self, choice_id: str) -> None:
         if choice_id == EMPTY_CONTEXT_CHOICE:
             return
+        if choice_id == FOCUS_PROJECT_DIAGNOSTICS_VIEW:
+            await self._show_project_diagnostics()
+            return
         choice = self._find_context_choice(choice_id)
         if choice is None and choice_id == FOCUS_FAULTS_VIEW:
             self._show_navigation_feedback(
@@ -1173,6 +1179,22 @@ class DashboardApp(App[None]):
             message = f"unknown contextual dashboard view {choice_id!r}"
             raise ValueError(message)
         await self._run_context_choice(choice)
+
+    async def _show_project_diagnostics(self) -> None:
+        docker_widget = (
+            self._create_widget(_WIDGET_DOCKER, placement=WidgetPlacement.DIAGNOSTICS)
+            if _WIDGET_DOCKER in self._widget_plugins
+            else None
+        )
+        panel = ProjectDiagnosticsPanel(
+            self._views,
+            self._on_change,
+            docker_widget,
+        )
+        await self.push_screen(
+            _ContextWidgetScreen("Project Diagnostics", panel),
+            callback=lambda _: self.refresh_task_detail_after_resume(),
+        )
 
     async def _open_contextual_palette(self, request: PaletteRequest) -> None:
         callback = self._open_palette_context
@@ -1235,7 +1257,7 @@ class DashboardApp(App[None]):
                 callback=lambda _: self.refresh_task_detail_after_resume(),
             )
         elif route is TaskPaletteRoute.DIAGNOSTICS:
-            await self._open_contextual_view(FOCUS_RESOURCES_VIEW)
+            await self._open_contextual_view(FOCUS_PROJECT_DIAGNOSTICS_VIEW)
         else:
             panel = self._context_task_detail_panel()
             if (
