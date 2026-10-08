@@ -669,6 +669,39 @@ def _exported_screen_text(app: DashboardApp) -> str:
     return " ".join(text.split())
 
 
+def _rendered_palette_header_text(app: DashboardApp) -> str:
+    elements: list[tuple[str, str]] = []
+    for attributes, content in re.findall(
+        r"<text\b([^>]*)>(.*?)</text>", app.export_screenshot(), re.DOTALL
+    ):
+        y = re.search(r'\by="([^"]+)"', attributes)
+        label = " ".join(unescape(content).replace("\xa0", " ").split())
+        if y is not None and label:
+            elements.append((y.group(1), label))
+    close_row = next((y for y, label in elements if "Esc \u00d7" in label), None)
+    assert close_row is not None
+    return " ".join(label for y, label in elements if y == close_row)
+
+
+async def _assert_rendered_palette_header_identity(
+    app: DashboardApp,
+    task_id: str,
+    escalation_id: str,
+) -> None:
+    await wait_until(
+        lambda: (
+            task_id in _rendered_palette_header_text(app)
+            and escalation_id in _rendered_palette_header_text(app)
+            and "Esc \u00d7" in _rendered_palette_header_text(app)
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    header = _rendered_palette_header_text(app)
+    assert task_id in header
+    assert escalation_id in header
+    assert "Esc \u00d7" in header
+
+
 def _rendered_home_origins(app: DashboardApp) -> tuple[tuple[float, float], ...]:
     elements: list[tuple[str, float, float]] = []
     for attributes, content in re.findall(
@@ -1200,6 +1233,8 @@ def _assert_missing_packet_resolution_form(
 async def _capture_compact_resolution_context(
     app: DashboardApp,
     target: Select[str],
+    task_id: str,
+    escalation_id: str,
 ) -> None:
     target.focus()
     await wait_until(lambda: app.focused is target, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
@@ -1210,6 +1245,7 @@ async def _capture_compact_resolution_context(
         ),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
+    await _assert_rendered_palette_header_identity(app, task_id, escalation_id)
     _capture_task99(app, "task118-resolution-context-48x20-color.svg")
 
 
@@ -1237,7 +1273,10 @@ async def _assert_compact_resolution_controls(
     screen: PaletteScreen,
     size: tuple[int, int],
     queue: CommandQueue,
-) -> None:
+    *,
+    task_id: str,
+    escalation_id: str,
+) -> Input:
     frame = screen.query_one("#palette-frame")
     for button_id in ("palette-back-to-menu", "palette-submit"):
         button = screen.query_one(f"#{button_id}", Button)
@@ -1256,8 +1295,10 @@ async def _assert_compact_resolution_controls(
         lambda: app.focused is retry_rung and "Evidence error:" in _exported_screen_text(app),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
+    await _assert_rendered_palette_header_identity(app, task_id, escalation_id)
     _capture_task99(app, "task118-resolution-error-48x20-color.svg")
     assert queue.pending() == []
+    return retry_rung
 
 
 async def _unexpected_pane_selection(pane_id: str) -> None:
@@ -3413,9 +3454,12 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             title = screen.query_one("#palette-title", Static)
             assert task.id in _rendered_text(title)
             assert escalation.id in _rendered_text(title)
+            await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
             assert "missing-packet.md" in _rendered_text(
                 screen.query_one("#palette-evidence-error", Static)
             )
+            if size == _TINY_HOME_SIZE:
+                _capture_task99(app, "task118-answer-20x8-color.svg")
             _capture_task99(app, f"task108-answer-{size[0]}x{size[1]}-color.svg")
             assert queue.pending() == []
 
@@ -3691,13 +3735,29 @@ async def test_home_list_enter_opens_the_selected_resolution_without_dispatching
                 task.id,
                 escalation,
             )
+            await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
             assert queue.pending() == []
             if size == _COMPACT_HOME_SIZE:
-                await _capture_compact_resolution_context(app, target)
+                await _capture_compact_resolution_context(app, target, task.id, escalation.id)
             await _exercise_native_resolution_select(app, pilot, resolution, queue)
+            await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
             if size == _COMPACT_HOME_SIZE:
                 _capture_task99(app, f"task118-resolution-{size[0]}x{size[1]}-color.svg")
-                await _assert_compact_resolution_controls(app, screen, size, queue)
+                retry_rung = await _assert_compact_resolution_controls(
+                    app,
+                    screen,
+                    size,
+                    queue,
+                    task_id=task.id,
+                    escalation_id=escalation.id,
+                )
+                await pilot.resize_terminal(*_TINY_HOME_SIZE)
+                await wait_until(
+                    lambda: app.size == _TINY_HOME_SIZE and app.focused is retry_rung,
+                    timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+                )
+                await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
+                _capture_task99(app, "task118-resolution-20x8-color.svg")
             else:
                 _capture_task99(app, f"task118-resolution-{size[0]}x{size[1]}-color.svg")
             assert queue.pending() == []
@@ -3785,6 +3845,7 @@ async def test_home_list_enter_uses_the_selected_decision_when_one_task_has_seve
             assert decisions[0].id not in _rendered_text(
                 keyboard_screen.query_one("#palette-title", Static)
             )
+            await _assert_rendered_palette_header_identity(app, task.id, decisions[1].id)
             assert queue.pending() == []
 
             await pilot.press("escape")

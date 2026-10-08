@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import TYPE_CHECKING, cast, get_args
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual.app import App
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -361,6 +362,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         width: auto; min-width: 5; height: 1; margin: 0; padding: 0 1;
         border: none; background: $surface; color: $primary-text; text-style: none;
     }
+    #palette-frame.tiny #palette-close { padding: 0; }
     #palette-close:focus { color: $primary-text; text-style: reverse; }
     #palette-menu-task-actions, #palette-menu-project-actions {
         height: auto; margin-top: 1; color: $secondary-text;
@@ -1038,6 +1040,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             title.update("Shikiru actions")
         else:
             title.update(self._context_form_title())
+        self.call_after_refresh(self._refresh_context_form_title)
         self._refresh_context_menu()
 
     def _context_form_title(self) -> str:
@@ -1051,13 +1054,28 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             escalation_id = self._selected_value(_FIELD_ESCALATION)
             if escalation_id is not None:
                 target = f"{escalation_id} · {task_id}"
-            if self._answer_resolution_route:
-                return f"Answer decision · {target}"
-        elif action in _FORM_ROLE_ACTIONS:
+            label = "Answer decision" if self._answer_resolution_route else "Resolve escalation"
+            full_title = f"{label} · {target}"
+            available_cells = self.query_one("#palette-title", Label).region.width
+            if cell_len(full_title) <= available_cells:
+                return full_title
+            short_label = "Answer" if self._answer_resolution_route else "Resolve"
+            short_title = f"{short_label} · {target}"
+            if cell_len(short_title) <= available_cells:
+                return short_title
+            if escalation_id is not None:
+                return f"{task_id} {escalation_id}"
+            return task_id
+        if action in _FORM_ROLE_ACTIONS:
             role = self._selected_value(_FIELD_ROLE)
             if role is not None:
                 target = f"{task_id} · {role.title()}"
         return f"{label} · {target}"
+
+    def _refresh_context_form_title(self) -> None:
+        if not self.is_mounted or self._menu_visible:
+            return
+        self.query_one("#palette-title", Label).update(self._context_form_title())
 
     def _remember_form_draft(self) -> None:
         task_id = self._initial_context.task_id
