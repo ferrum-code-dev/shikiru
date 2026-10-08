@@ -68,15 +68,17 @@ def _pane_state(task: Task, role: Role, *, taken_over: bool) -> tuple[str, str]:
     return ROLE_COLORS[role], ROLE_GLYPHS[role]
 
 
-def _flags(task: Task) -> str:
-    tokens: list[str] = []
+def _flags(task: Task, *, taken_over: bool = False, include_glyphs: bool = True) -> str:
+    flags: list[tuple[str, str]] = []
     if Hold.PAUSED in task.holds:
-        tokens.append(f"{GLYPH_PAUSED} paused")
-    if Hold.INTERVENTION in task.holds:
-        tokens.append(f"{GLYPH_OPERATOR} operator")
+        flags.append((GLYPH_PAUSED, "paused"))
+    if taken_over or Hold.INTERVENTION in task.holds:
+        flags.append((GLYPH_OPERATOR, "operator"))
     if task.status is Status.ESCALATED:
-        tokens.append(f"{GLYPH_ESCALATED} escalated")
-    return " ".join(tokens)
+        flags.append((GLYPH_ESCALATED, "escalated"))
+    if include_glyphs:
+        return " ".join(f"{glyph} {word}" for glyph, word in flags)
+    return " ".join(word for _, word in flags)
 
 
 class TaskTitles:
@@ -130,6 +132,7 @@ class TaskTitles:
             "context": context_title(usage),
             "cost": cost_title(usage),
             "flags": _flags(task),
+            "flags_text": _flags(task, taken_over=taken_over, include_glyphs=False),
         }
         await self._decorator.set_pane_title(pane_id, template, fields)
         color, glyph = _pane_state(task, role, taken_over=taken_over)

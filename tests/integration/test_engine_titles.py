@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import Rung
+from shikiru.config.loader import validate_project_config_text
 from shikiru.config.settings import (
     AgentConfig,
     TitlesConfig,
@@ -46,6 +47,22 @@ _TITLES = TitlesConfig(  # noqa: S604 -- `shell=` is `TitlesConfig`'s field name
     system="Shikiru",
     shell="Shell",
 )
+
+_PACKAGED_TITLE_SETTINGS = """
+[project]
+name = "title-defaults"
+
+[agents.fake]
+
+[roles.leader]
+ladder = [{ agent = "fake", model = "model", effort = "high" }]
+
+[roles.implementer]
+ladder = [{ agent = "fake", model = "model", effort = "high" }]
+
+[roles.helper]
+ladder = [{ agent = "fake", model = "model", effort = "high" }]
+"""
 
 
 def _titled_settings(*, max_iterations: int = 5) -> Settings:
@@ -182,3 +199,39 @@ async def test_a_taken_over_pane_shows_the_operator_with_the_runs_usage(
     assert title.startswith(GLYPH_OPERATOR)
     assert f"ctx {context_title(run.usage)}" in title
     assert await engine_env.tmux.display(pane, f"#{{{PANE_COLOR_OPTION}}}") == OPERATOR_COLOR
+
+
+async def test_packaged_agent_titles_keep_role_and_ownership_words_without_glyph_prefixes(
+    engine_env: EngineEnv,
+) -> None:
+    settings = _titled_settings()
+    packaged_titles = validate_project_config_text(_PACKAGED_TITLE_SETTINGS).dashboard.titles
+    settings = settings.model_copy(
+        update={"dashboard": settings.dashboard.model_copy(update={"titles": packaged_titles})}
+    )
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    flow_env = build_flow(engine_env, settings)
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    implementer_pane = final.panes[Role.IMPLEMENTER]
+    run = engine_env.runs.get_live(final.id, Role.IMPLEMENTER)
+    assert run is not None
+    engine_env.runs.mark_taken_over(run.id)
+    engine_env.tasks.set_holds(final.id, frozenset({Hold.PAUSED}))
+    paused = engine_env.tasks.get(final.id)
+    assert paused is not None
+    await flow_env.titles.refresh(paused)
+
+    title = await engine_env.tmux.display(implementer_pane, "#{pane_title}")
+    assert title.startswith("Implementer ·")
+    assert f"{FAKE_RUNG.agent}:{FAKE_RUNG.model}/" in title
+    assert "iter 1" in title
+    assert f"ctx {context_title(run.usage)}" in title
+    assert "operator" in title
+    assert "paused" in title
+    assert GLYPH_OPERATOR not in title
+    assert GLYPH_PAUSED not in title
