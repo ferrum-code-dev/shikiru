@@ -385,16 +385,12 @@ def _command_entry_text(entry: CommandFeedbackEntryView, *, engine_up: bool) -> 
 def _command_result_data(entry: CommandFeedbackEntryView) -> dict[str, object] | None:
     if entry.result is None:
         return None
-    try:
-        result = json.loads(entry.result)
-    except json.JSONDecodeError:
-        return None
-    return cast("dict[str, object]", result) if isinstance(result, dict) else None
+    return cast("dict[str, object]", json.loads(entry.result))
 
 
 def _command_applied_effect(
     entry: CommandFeedbackEntryView,
-    result: dict[str, object] | None = None,
+    result: dict[str, object] | None,
 ) -> str:
     if entry.action == COMMAND_ACTION_SAY:
         return "guidance queued for the selected role's next turn"
