@@ -18,6 +18,7 @@ from shikiru.engine.handlers.base import HandlerContext
 from shikiru.engine.handlers.tasks import SetRungHandler
 from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import (
+    ConflictRecovery,
     IntegrationMetadata,
     IntegrationStrategy,
     IntegrationSummary,
@@ -63,9 +64,9 @@ class _NoOpIntegrationCoordinator:
         task: Task,
         resolve_conflicts: object,
         metadata: IntegrationMetadata,
-        resume_resolved_report: Callable[[Task], bool] | None = None,
+        conflict_recovery: Callable[[Task], ConflictRecovery] | None = None,
     ) -> IntegrationSummary:
-        del task, resolve_conflicts, resume_resolved_report
+        del task, resolve_conflicts, conflict_recovery
         return IntegrationSummary(summary=metadata.summary, residual_risks=metadata.residual_risks)
 
     async def continue_rebase(self, task: Task) -> None:

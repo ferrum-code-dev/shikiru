@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import role_dir
@@ -11,6 +12,7 @@ from shikiru.domain.recovery import TurnCounters
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     DECISION_ACCEPT,
+    DECISION_CHANGES_REQUESTED,
     STATUS_COMPLETED,
     ConsultAnswer,
     ImplementationReport,
@@ -20,6 +22,7 @@ from shikiru.domain.reports import (
 from shikiru.domain.steps import CONFLICT_ROUNDS, Transition
 from shikiru.domain.tasks import EscalationReason, Role, Step, Task
 from shikiru.engine.integration import (
+    ConflictRecovery,
     IntegrationBlocked,
     IntegrationConflict,
     IntegrationCoordinator,
@@ -79,18 +82,14 @@ class IntegrationTurns:
         async def resolve_conflicts(
             current: Task,
             continue_rebase: Callable[[], Awaitable[None]],
-            resumed_report: bool,
+            recovery: ConflictRecovery,
         ) -> tuple[Task, IntegrationMetadata]:
-            resolved = await self._resolve_conflicts(
-                current, continue_rebase, resolved=resumed_report
-            )
+            resolved = await self._resolve_conflicts(current, continue_rebase, recovery)
             return resolved, self._history.integration_metadata(resolved)
 
         try:
             metadata = self._history.integration_metadata(task)
-            await self._coordinator.run(
-                task, resolve_conflicts, metadata, self._resume_resolved_report
-            )
+            await self._coordinator.run(task, resolve_conflicts, metadata, self._conflict_recovery)
         except TurnStopped, IntegrationHeld:
             return
         except (
@@ -104,13 +103,8 @@ class IntegrationTurns:
             transition = Transition.escalate(current, error.reason, step=Step.INTEGRATE)
             await self._escalations.escalate(current, transition, None, question=str(error))
 
-    def _resume_resolved_report(self, task: Task) -> bool:
+    def _conflict_recovery(self, task: Task) -> ConflictRecovery:
         history = self._history.load(task.id)
-        if task.step is not Step.INTEGRATE or not history:
-            return False
-        label, report = history[-1]
-        if not isinstance(report, ImplementationReport) or report.status != STATUS_COMPLETED:
-            return False
         events = self._events.since(
             0,
             task_id=task.id,
@@ -120,51 +114,88 @@ class IntegrationTurns:
                 EventKind.INTEGRATION_STARTED,
                 EventKind.ESCALATION,
                 EventKind.ESCALATION_RESOLVED,
+                EventKind.TASK_RETRIED,
             ),
         )
-        completed = [
+        implementer_turns = [
             event
             for event in events
             if event.kind is EventKind.TURN_COMPLETED
-            and event.data.get("turn") == label
             and event.data.get("step") == Step.INTEGRATE.value
             and event.data.get("role") == Role.IMPLEMENTER.value
             and event.data.get("outcome") == STATUS_COMPLETED
         ]
-        turn_started = [
+        turn_starts = [
             event
             for event in events
             if event.kind is EventKind.TURN_STARTED
-            and event.data.get("turn") == label
             and event.data.get("step") == Step.INTEGRATE.value
             and event.data.get("role") == Role.IMPLEMENTER.value
         ]
-        if not completed and not turn_started:
-            return False
-        report_event = completed[-1] if completed else turn_started[-1]
-        integration_starts = [
-            event for event in events if event.kind is EventKind.INTEGRATION_STARTED
-        ]
-        latest_start = integration_starts[-1].id if integration_starts else 0
-        if report_event.id > latest_start and (completed or self._current_turn_is(task, label)):
-            return True
         escalations = {
             event.data.get("escalation_id"): event
             for event in events
             if event.kind is EventKind.ESCALATION
         }
-        for event in reversed(events):
-            if event.kind is not EventKind.ESCALATION_RESOLVED:
-                continue
-            escalation = escalations.get(event.data.get("escalation_id"))
-            if (
-                event.data.get("resolution") == ResolutionKind.RETRY.value
-                and escalation is not None
-                and escalation.data.get("reason") == EscalationReason.INTEGRATION_BLOCKED.value
-                and report_event.id < escalation.id < event.id
-            ):
-                return True
-        return False
+        retry_events = [
+            event
+            for event in events
+            if event.kind is EventKind.TASK_RETRIED
+            or (
+                event.kind is EventKind.ESCALATION_RESOLVED
+                and event.data.get("resolution") == ResolutionKind.RETRY.value
+                and (escalation := escalations.get(event.data.get("escalation_id"))) is not None
+                and escalation.data.get("reason")
+                in {
+                    EscalationReason.INTEGRATION_BLOCKED.value,
+                    EscalationReason.INTEGRATION_CONFLICT.value,
+                }
+            )
+        ]
+        reset_events = [
+            event
+            for event in events
+            if event.kind is EventKind.INTEGRATION_STARTED
+            or (
+                event.kind is EventKind.TURN_COMPLETED
+                and event.data.get("step") == Step.INTEGRATE.value
+                and event.data.get("role") == Role.LEADER.value
+                and event.data.get("outcome") == DECISION_CHANGES_REQUESTED
+            )
+        ] + retry_events
+        latest_reset = max((event.id for event in reset_events), default=0)
+        completed_turns = sum(event.id > latest_reset for event in implementer_turns)
+        recovery = ConflictRecovery(completed_turns=completed_turns)
+        if task.step is not Step.INTEGRATE or not history:
+            return recovery
+        label, report = history[-1]
+        if not isinstance(report, ImplementationReport) or report.status != STATUS_COMPLETED:
+            return recovery
+        completed = [event for event in implementer_turns if event.data.get("turn") == label]
+        started = [event for event in turn_starts if event.data.get("turn") == label]
+        if not completed and not started:
+            return recovery
+        report_event = completed[-1] if completed else started[-1]
+        latest_start = max(
+            (event.id for event in events if event.kind is EventKind.INTEGRATION_STARTED),
+            default=0,
+        )
+        later_turn_started = any(event.id > report_event.id for event in turn_starts)
+        if completed and not later_turn_started:
+            recovery = replace(recovery, force_new_turn=True)
+        if (
+            report_event.id > latest_start
+            and (completed or self._current_turn_is(task, label))
+            and not later_turn_started
+        ):
+            return replace(recovery, resumed_report=True)
+        retry_after_report = any(
+            report_event.id < event.id
+            and event.id > latest_start
+            and not any(start.id > event.id for start in turn_starts)
+            for event in retry_events
+        )
+        return replace(recovery, resumed_report=retry_after_report)
 
     def _current_turn_is(self, task: Task, label: str) -> bool:
         current_turn = (
@@ -178,25 +209,29 @@ class IntegrationTurns:
         self,
         task: Task,
         continue_rebase: Callable[[], Awaitable[None]],
-        *,
-        resolved: bool = False,
+        recovery: ConflictRecovery,
     ) -> Task:
         current = task
         context = ""
-        conflict_turns = int(resolved)
+        conflict_turns = max(recovery.completed_turns, int(recovery.resumed_report))
+        resolved = recovery.resumed_report
         while True:
             if not resolved:
                 if conflict_turns >= CONFLICT_ROUNDS:
                     raise IntegrationConflict.unresolved_rebase(current.id, conflict_turns, context)
-                current, context, resolved = await self._conflict_turn(current, context)
+                current, context, resolved = await self._conflict_turn(
+                    current, context, recovery.force_new_turn
+                )
                 if resolved:
                     conflict_turns += 1
+                    recovery = replace(recovery, force_new_turn=False)
                 continue
             try:
                 await continue_rebase()
             except RebaseConflict as error:
                 context = str(error)
                 resolved = False
+                recovery = replace(recovery, resumed_report=False, force_new_turn=True)
                 continue
             current, verdict = await self._verify_conflicts(current)
             if verdict.decision == DECISION_ACCEPT:
@@ -204,15 +239,18 @@ class IntegrationTurns:
             context = "; ".join(issue.description for issue in verdict.issues)
             conflict_turns = 0
             resolved = False
+            recovery = ConflictRecovery()
 
-    async def _conflict_turn(self, task: Task, context: str) -> tuple[Task, str, bool]:
+    async def _conflict_turn(
+        self, task: Task, context: str, force_new_turn: bool
+    ) -> tuple[Task, str, bool]:
         step = Step.CONSULT if task.step is Step.CONSULT else Step.INTEGRATE
         current, _, stopped = await self._steps.run_step(
             task,
             step,
             TurnCounters(),
             conflict_context=context,
-            force_new_turn=step is Step.INTEGRATE,
+            force_new_turn=step is Step.INTEGRATE and force_new_turn,
         )
         if stopped:
             raise TurnStopped

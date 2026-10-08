@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
@@ -169,8 +170,12 @@ class _MergeCandidate:
 
 
 @dataclass(frozen=True, slots=True)
-class _ConflictRecovery:
-    resumed_report: bool
+class ConflictRecovery:
+    """Durable conflict-turn progress passed from the integration flow to its coordinator."""
+
+    resumed_report: bool = False
+    completed_turns: int = 0
+    force_new_turn: bool = False
 
 
 class _PrecheckFailed(Exception):
@@ -185,9 +190,9 @@ class _CheckoutDirty(_PrecheckFailed):
 
 type ContinueRebase = Callable[[], Awaitable[None]]
 type ConflictResolver = Callable[
-    [Task, ContinueRebase, bool], Awaitable[tuple[Task, IntegrationMetadata]]
+    [Task, ContinueRebase, ConflictRecovery], Awaitable[tuple[Task, IntegrationMetadata]]
 ]
-type ResumeResolvedReport = Callable[[Task], bool]
+type ConflictRecoveryLoader = Callable[[Task], ConflictRecovery]
 type TaskFinisher = Callable[[Task], Awaitable[Path | None]]
 
 
@@ -224,7 +229,7 @@ class IntegrationCoordinator(Protocol):
         task: Task,
         resolve_conflicts: ConflictResolver,
         metadata: IntegrationMetadata,
-        resume_resolved_report: ResumeResolvedReport | None = None,
+        conflict_recovery: ConflictRecoveryLoader | None = None,
     ) -> IntegrationSummary:
         """Integrate `task` and finalize it, resolving conflicts through TaskFlow."""
         ...
@@ -570,7 +575,7 @@ class Integrator:
         task: Task,
         resolve_conflicts: ConflictResolver,
         metadata: IntegrationMetadata,
-        resume_resolved_report: ResumeResolvedReport | None = None,
+        conflict_recovery: ConflictRecoveryLoader | None = None,
     ) -> IntegrationSummary:
         """Rebase and integrate `task`, delegating conflict turns to TaskFlow.
 
@@ -585,7 +590,7 @@ class Integrator:
         commits = self._strategy.started(task.id)
         if commits is None:
             current, current_metadata, commits = await self._apply(
-                task, repo, resolve_conflicts, metadata, resume_resolved_report
+                task, repo, resolve_conflicts, metadata, conflict_recovery
             )
         await self._strategy.settle(current.id, repo, lambda: self._is_held(current.id))
         summary = IntegrationSummary(
@@ -622,47 +627,51 @@ class Integrator:
         repo: RepoState,
         resolve_conflicts: ConflictResolver,
         metadata: IntegrationMetadata,
-        resume_resolved_report: ResumeResolvedReport | None,
+        conflict_recovery: ConflictRecoveryLoader | None,
     ) -> tuple[Task, IntegrationMetadata, tuple[str, ...]]:
         async with self._lock:
             self._require_not_held(task.id)
-            resume_report = (
-                resume_resolved_report(task) if resume_resolved_report is not None else False
-            )
-            self._events.append(
-                EventKind.INTEGRATION_STARTED,
-                task_id=task.id,
-                message=f"{task.id} integration started",
-                data={"branch": repo.branch, "base": repo.base},
+            recovery_state = (
+                conflict_recovery(task) if conflict_recovery is not None else ConflictRecovery()
             )
             current = task
             current_metadata = metadata
             task_dir = task_root(self._project_root, current.id)
+            in_progress = await self._git.is_rebase_in_progress(task_dir)
+            if not in_progress and not recovery_state.resumed_report:
+                self._events.append(
+                    EventKind.INTEGRATION_STARTED,
+                    task_id=task.id,
+                    message=f"{task.id} integration started",
+                    data={"branch": repo.branch, "base": repo.base},
+                )
+                recovery_state = ConflictRecovery(force_new_turn=recovery_state.force_new_turn)
             await self._require_integrable(current, repo, task_dir)
             base_ref = await self._resolve_base(repo)
             base_sha = await self._git.rev_parse(task_dir, base_ref)
             branch_sha = await self._git.rev_parse(task_dir, repo.branch)
-            in_progress = await self._git.is_rebase_in_progress(task_dir)
             recovery = None
             if in_progress:
                 recovery = await self._try_rebase(
                     task_dir,
                     base_ref,
                     current,
-                    resume_report,
+                    recovery_state,
                 )
-            elif resume_report and (
+            elif recovery_state.resumed_report and (
                 base_sha == branch_sha
                 or await self._git.merge_base_is_ancestor(task_dir, base_ref, repo.branch)
             ):
-                recovery = _ConflictRecovery(resumed_report=True)
+                recovery = recovery_state
             elif base_sha != branch_sha:
-                recovery = await self._try_rebase(task_dir, base_ref, current, False)
+                recovery = await self._try_rebase(task_dir, base_ref, current, recovery_state)
+                if recovery is None and recovery_state.resumed_report:
+                    recovery = recovery_state
             if recovery is not None:
                 current, current_metadata = await resolve_conflicts(
                     current,
                     lambda: self._continue_rebase(current.id, task_dir),
-                    recovery.resumed_report,
+                    recovery,
                 )
                 await self._continue_rebase(current.id, task_dir)
             await self._require_integrable(current, repo, task_dir)
@@ -716,14 +725,14 @@ class Integrator:
         task_dir: Path,
         base: str,
         task: Task,
-        resume_report: bool,
-    ) -> _ConflictRecovery | None:
+        recovery_state: ConflictRecovery,
+    ) -> ConflictRecovery | None:
         if await self._git.is_rebase_in_progress(task_dir):
             paths = await self._git.unmerged_paths(task_dir)
             if paths:
-                return _ConflictRecovery(resumed_report=False)
-            if resume_report:
-                return _ConflictRecovery(resumed_report=True)
+                return dataclasses.replace(recovery_state, resumed_report=False)
+            if recovery_state.resumed_report:
+                return recovery_state
             await self._git.rebase_abort(task_dir)
         try:
             await self._git.rebase(task_dir, base)
@@ -733,7 +742,7 @@ class Integrator:
         except CommandFailed as error:
             paths = await self._git.unmerged_paths(task_dir)
             if paths:
-                return _ConflictRecovery(resumed_report=False)
+                return dataclasses.replace(recovery_state, resumed_report=False)
             raise IntegrationBlocked(_git_failure_message(task.id, "rebase", error)) from error
         return None
 

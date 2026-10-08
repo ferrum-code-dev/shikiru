@@ -26,10 +26,11 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
+from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step, Task
 from shikiru.engine.handlers.base import HandlerContext
 from shikiru.engine.handlers.escalations import ResolveHandler
 from shikiru.engine.integration import (
+    ConflictRecovery,
     IntegrationBlocked,
     IntegrationMetadata,
     IntegrationSummary,
@@ -77,6 +78,38 @@ async def _repo(path: Path, filename: str = "README.md") -> Path:
     (path / filename).write_text("base\n")
     await commit_all(_RUNNER, path, "initial")
     return path
+
+
+def _record_completed_conflict_turn(
+    project_root: Path, events: EventLog, task: Task, label: str
+) -> None:
+    turn_dir = turns_dir(project_root, task.id) / label
+    turn_dir.mkdir(parents=True)
+    (turn_dir / REPORT_KIND_FILENAME).write_text(ReportKind.IMPLEMENTATION.value)
+    (turn_dir / REPORT_FILENAME).write_text(
+        ImplementationReport(
+            status="completed",
+            summary="conflict resolution submitted",
+            commits=[],
+            tests=[],
+            trackers_updated=True,
+        ).model_dump_json()
+    )
+    for kind, message in (
+        (EventKind.TURN_STARTED, "conflict turn started"),
+        (EventKind.TURN_COMPLETED, "conflict turn completed"),
+    ):
+        events.append(
+            kind,
+            task_id=task.id,
+            message=message,
+            data={
+                "turn": label,
+                "step": Step.INTEGRATE.value,
+                "role": Role.IMPLEMENTER.value,
+                **({"outcome": "completed"} if kind is EventKind.TURN_COMPLETED else {}),
+            },
+        )
 
 
 def _local_merge(
@@ -358,9 +391,9 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     async def resolve(
         task_value: Task,
         continue_rebase: Callable[[], Awaitable[None]],
-        resumed_report: bool,
+        recovery: ConflictRecovery,
     ) -> tuple[Task, IntegrationMetadata]:
-        assert not resumed_report
+        assert not recovery.resumed_report
         task_path = task_root / "README.md"
         task_path.write_text("resolved\n")
         await commit_all(_RUNNER, task_root, "resolve conflict")
@@ -418,9 +451,9 @@ def _integrator(connection: Connection, project_root: Path) -> Integrator:
 async def _resolve_nothing(
     task: Task,
     continue_rebase: Callable[[], Awaitable[None]],
-    resumed_report: bool,
+    recovery: ConflictRecovery,
 ) -> tuple[Task, IntegrationMetadata]:
-    del continue_rebase, resumed_report
+    del continue_rebase, recovery
     return task, IntegrationMetadata("resolved")
 
 
@@ -739,35 +772,15 @@ async def test_rebase_uses_fresh_fake_turns_for_each_unmerged_commit(
         await git.rebase(task_root, "main")
     assert await git.unmerged_paths(task_root) == ["README.md"]
 
-    stale_turn = turns_dir(engine_env.project_root, task.id) / _STALE_CONFLICT_TURN
-    stale_turn.mkdir(parents=True)
-    (stale_turn / REPORT_KIND_FILENAME).write_text(ReportKind.IMPLEMENTATION.value)
-    (stale_turn / REPORT_FILENAME).write_text(
-        ImplementationReport(
-            status="completed",
-            summary="stale resolution report",
-            commits=[],
-            tests=[],
-            trackers_updated=True,
-        ).model_dump_json()
-    )
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+    _record_completed_conflict_turn(
+        engine_env.project_root, flow_env.events, task, _STALE_CONFLICT_TURN
+    )
     flow_env.events.append(
         EventKind.INTEGRATION_STARTED,
         task_id=task.id,
         message=f"{task.id} integration started",
         data={"branch": task.repo.branch, "base": task.repo.base},
-    )
-    flow_env.events.append(
-        EventKind.TURN_COMPLETED,
-        task_id=task.id,
-        message="stale conflict turn completed",
-        data={
-            "turn": _STALE_CONFLICT_TURN,
-            "step": Step.INTEGRATE.value,
-            "role": Role.IMPLEMENTER.value,
-            "outcome": "completed",
-        },
     )
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}, {"kind": "accept"}])
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
@@ -903,6 +916,7 @@ async def test_completed_conflict_reports_cannot_hide_unmerged_paths_beyond_the_
 ) -> None:
     await init_project_repo(engine_env.project_root)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    assert task.repo is not None
     task_root = engine_env.project_root / ".shikiru" / "worktrees" / task.id
     engine_env.tasks.apply_transition(
         task.id,
@@ -936,8 +950,17 @@ async def test_completed_conflict_reports_cannot_hide_unmerged_paths_beyond_the_
         timeout=GIT_COMMAND_TIMEOUT,
         cwd=engine_env.project_root,
     )
-    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}, {"kind": "accept"}])
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+    flow_env.events.append(
+        EventKind.INTEGRATION_STARTED,
+        task_id=task.id,
+        message=f"{task.id} integration started before interruption",
+        data={"branch": task.repo.branch, "base": task.repo.base},
+    )
+    _record_completed_conflict_turn(
+        engine_env.project_root, flow_env.events, task, _STALE_CONFLICT_TURN
+    )
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
 
     await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
 
@@ -957,7 +980,10 @@ async def test_completed_conflict_reports_cannot_hide_unmerged_paths_beyond_the_
         if event.data.get("step") == Step.INTEGRATE.value
         and event.data.get("role") == Role.IMPLEMENTER.value
     ]
-    assert len(implementer_turns) == 2
+    assert [event.data["turn"] for event in implementer_turns] == [
+        _STALE_CONFLICT_TURN,
+        "02-integrate-i0",
+    ]
 
 
 async def test_uncommitted_changes_at_integration_send_the_task_back_to_implement(
@@ -985,6 +1011,145 @@ async def test_uncommitted_changes_at_integration_send_the_task_back_to_implemen
         "accept",
     ]
     assert "leader_edit.py" in verdicts[1].data["issues"][0]["description"]
+
+
+async def test_a_pending_conflict_report_is_reviewed_after_a_clean_rebase_onto_a_moved_base(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    assert task.repo is not None
+    task_root = engine_env.project_root / ".shikiru" / "worktrees" / task.id
+    engine_env.tasks.apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING),
+    )
+    (task_root / "task.txt").write_text("task change\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (engine_env.project_root / "base.txt").write_text("base advanced\n")
+    await commit_all(_RUNNER, engine_env.project_root, "advance base")
+    flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+    flow_env.events.append(
+        EventKind.INTEGRATION_STARTED,
+        task_id=task.id,
+        message=f"{task.id} integration started",
+        data={"branch": task.repo.branch, "base": task.repo.base},
+    )
+    _record_completed_conflict_turn(
+        engine_env.project_root, flow_env.events, task, _STALE_CONFLICT_TURN
+    )
+    await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    final = engine_env.tasks.require(task.id)
+    assert final.status is Status.DONE
+    assert (engine_env.project_root / "task.txt").read_text() == "task change\n"
+    integration_implementer_turns = [
+        event
+        for event in flow_env.events.since(0, kinds=[EventKind.TURN_COMPLETED], task_id=task.id)
+        if event.data.get("step") == Step.INTEGRATE.value
+        and event.data.get("role") == Role.IMPLEMENTER.value
+    ]
+    assert [event.data["turn"] for event in integration_implementer_turns] == [_STALE_CONFLICT_TURN]
+    leader_turns = [
+        event
+        for event in flow_env.events.since(0, kinds=[EventKind.TURN_COMPLETED], task_id=task.id)
+        if event.data.get("step") == Step.INTEGRATE.value
+        and event.data.get("role") == Role.LEADER.value
+    ]
+    [done] = flow_env.events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
+    assert len(leader_turns) == 1
+    assert leader_turns[0].id < done.id
+    assert (
+        len(flow_env.events.since(0, kinds=[EventKind.INTEGRATION_STARTED], task_id=task.id)) == 1
+    )
+
+
+async def test_a_new_integration_attempt_does_not_reuse_a_report_authorized_by_an_old_retry(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    assert task.repo is not None
+    task_root = engine_env.project_root / ".shikiru" / "worktrees" / task.id
+    engine_env.tasks.apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING),
+    )
+    (task_root / "README.md").write_text("task change\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (engine_env.project_root / "README.md").write_text("base change\n")
+    await commit_all(_RUNNER, engine_env.project_root, "base change")
+    git = _git()
+    with pytest.raises(CommandFailed):
+        await git.rebase(task_root, "main")
+    assert await git.unmerged_paths(task_root) == ["README.md"]
+    (task_root / "README.md").write_text("old resolution\n")
+    await _RUNNER.run(["git", "add", "README.md"], cwd=task_root, timeout=10, check=True)
+    assert await git.unmerged_paths(task_root) == []
+
+    flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+    for message in ("first integration attempt", "superseding integration attempt"):
+        flow_env.events.append(
+            EventKind.INTEGRATION_STARTED,
+            task_id=task.id,
+            message=f"{task.id} {message}",
+            data={"branch": task.repo.branch, "base": task.repo.base},
+        )
+        if message == "first integration attempt":
+            _record_completed_conflict_turn(
+                engine_env.project_root, flow_env.events, task, _STALE_CONFLICT_TURN
+            )
+            flow_env.events.append(
+                EventKind.ESCALATION,
+                task_id=task.id,
+                message=f"{task.id} integration blocked",
+                data={
+                    "escalation_id": "E-previous",
+                    "reason": EscalationReason.INTEGRATION_BLOCKED.value,
+                },
+            )
+            flow_env.events.append(
+                EventKind.ESCALATION_RESOLVED,
+                task_id=task.id,
+                message="E-previous retried",
+                data={
+                    "escalation_id": "E-previous",
+                    "resolution": "retry",
+                },
+            )
+    pre_commit = engine_env.project_root / ".git" / "hooks" / "pre-commit"
+    pre_commit.write_text(
+        "#!/bin/sh\n"
+        "git show :README.md | grep -q '^<<<<<<<' || exit 0\n"
+        "printf 'fresh resolution\\n' > README.md\n"
+        "git add README.md\n"
+    )
+    pre_commit.chmod(pre_commit.stat().st_mode | stat.S_IXUSR)
+    await _RUNNER.run(
+        ["git", "config", "core.hooksPath", str(engine_env.project_root / ".git" / "hooks")],
+        timeout=GIT_COMMAND_TIMEOUT,
+        cwd=engine_env.project_root,
+    )
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
+    await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    final = engine_env.tasks.require(task.id)
+    assert final.status is Status.DONE
+    assert (engine_env.project_root / "README.md").read_text() == "fresh resolution\n"
+    implementer_turns = [
+        event
+        for event in flow_env.events.since(0, kinds=[EventKind.TURN_COMPLETED], task_id=task.id)
+        if event.data.get("step") == Step.INTEGRATE.value
+        and event.data.get("role") == Role.IMPLEMENTER.value
+    ]
+    assert [event.data["turn"] for event in implementer_turns] == [
+        _STALE_CONFLICT_TURN,
+        "02-integrate-i0",
+    ]
 
 
 async def test_taskflow_conflict_round_limit_escalates_after_two_changes_requested_verdicts(
@@ -1048,9 +1213,9 @@ async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict
     async def resolve(
         task_value: Task,
         continue_rebase: Callable[[], Awaitable[None]],
-        resumed_report: bool,
+        recovery: ConflictRecovery,
     ) -> tuple[Task, IntegrationMetadata]:
-        del continue_rebase, resumed_report
+        del continue_rebase, recovery
         conflicts_resolved.append(task_value.id)
         return task_value, IntegrationMetadata("resolved")
 
@@ -1115,9 +1280,9 @@ class _RebaseScenario:
         self,
         task_value: Task,
         continue_rebase: Callable[[], Awaitable[None]],
-        resumed_report: bool,
+        recovery: ConflictRecovery,
     ) -> tuple[Task, IntegrationMetadata]:
-        del continue_rebase, resumed_report
+        del continue_rebase, recovery
         self.conflicts_resolved.append(task_value.id)
         return task_value, IntegrationMetadata("resolved")
 
@@ -1193,9 +1358,9 @@ async def test_a_rebase_stopped_on_conflicts_is_still_handed_to_the_conflict_tur
     async def resolve(
         task_value: Task,
         continue_rebase: Callable[[], Awaitable[None]],
-        resumed_report: bool,
+        recovery: ConflictRecovery,
     ) -> tuple[Task, IntegrationMetadata]:
-        assert not resumed_report
+        assert not recovery.resumed_report
         conflicts_resolved.append(task_value.id)
         (task_root / "README.md").write_text("resolved\n")
         await _RUNNER.run(
