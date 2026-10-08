@@ -241,10 +241,9 @@ _PALETTE_SHORT_OVERLAY_HEIGHT = "80%"
 _PALETTE_COMPACT_TEXT_AREA_HEIGHT = 3
 _PALETTE_COMPACT_RESULT_MAX_HEIGHT = 3
 _PALETTE_RESULT_MAX_HEIGHT = 12
-_PALETTE_VERTICAL_PADDING = 1
-_PALETTE_HORIZONTAL_PADDING = 2
-_PALETTE_FORM_STANDARD_FIXED_ROWS = 8
-_PALETTE_FORM_TINY_FIXED_ROWS = 4
+_PALETTE_FORM_STANDARD_FIXED_ROWS = 9
+_PALETTE_FORM_SHORT_FIXED_ROWS = 8
+_PALETTE_FORM_TINY_FIXED_ROWS = 3
 _PALETTE_INLINE_ACTIONS_ROWS = 1
 _PALETTE_STACKED_ACTIONS_ROWS = 2
 _PALETTE_TEXT_AREA_HEIGHTS = (
@@ -339,17 +338,19 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     """Render operator actions, dispatch commands and show their acknowledgements."""
 
     DEFAULT_CSS = """
-    PaletteScreen { align: center middle; background: transparent; padding: 1; }
+    PaletteScreen { align: center middle; background: transparent; padding: 0; }
     #palette-frame {
         width: 100%;
         height: auto;
         max-height: 100%;
         max-width: 64;
-        border: solid $neutral-border;
+        margin: 1 2;
+        border: solid $steel-blue;
         padding: 1 2;
         background: $surface;
         color: $primary-text;
     }
+    #palette-frame.tiny { margin: 0; padding: 0 2; }
     #palette-menu { height: auto; max-height: 1fr; min-height: 0; }
     #palette-menu-primary { height: auto; }
     #palette-menu-context { height: 1; color: $secondary-text; }
@@ -357,7 +358,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     #palette-title { width: 1fr; height: 1; color: $steel-blue; }
     #palette-close {
         width: auto; min-width: 5; height: 1; margin: 0; padding: 0 1;
-        border: none; background: $surface; color: $secondary-text; text-style: none;
+        border: none; background: $surface; color: $primary-text; text-style: none;
     }
     #palette-close:focus { color: $primary-text; text-style: reverse; }
     #palette-menu-task-actions, #palette-menu-project-actions {
@@ -384,7 +385,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         height: auto; max-height: 1fr; min-height: 0; margin-top: 1; padding-top: 0;
         border-top: solid $neutral-border;
     }
-    #palette-form.tiny { border-top: none; }
+    #palette-form.tiny { margin-top: 0; border-top: none; }
     #field-palette-escalation-summary { height: auto; }
     .palette-field { height: auto; margin-bottom: 1; }
     .palette-field Label { height: 1; color: $secondary-text; text-style: none; }
@@ -411,6 +412,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     #palette-actions {
         layout: horizontal; width: 100%; height: auto; margin-top: 1; align-horizontal: right;
     }
+    #palette-actions.short { margin-top: 0; }
     #palette-actions Button {
         width: auto; max-width: 100%; height: auto; min-height: 1; padding: 0;
         text-wrap: wrap; text-style: none;
@@ -772,10 +774,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     def _set_text_area_heights(self, width: int, height: int) -> None:
         compact = height <= _PALETTE_SHORT_PANE_MAX_ROWS
         compact_layout = compact or width <= _PALETTE_SHORT_PANE_MAX_COLUMNS
-        self.query_one("#palette-frame").styles.padding = (
-            _PALETTE_VERTICAL_PADDING,
-            _PALETTE_HORIZONTAL_PADDING,
-        )
         self.query_one("#palette-result-scroll").styles.max_height = (
             _PALETTE_COMPACT_RESULT_MAX_HEIGHT if compact_layout else _PALETTE_RESULT_MAX_HEIGHT
         )
@@ -981,20 +979,20 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         frame = self.query_one("#palette-frame")
         actions = self.query_one("#palette-actions", Vertical)
         actions.styles.layout = "horizontal" if tiny_pane or not narrow_pane else "vertical"
-        actions.styles.height = "auto"
-        actions.styles.margin = (0 if tiny_pane else 1, 0, 0, 0)
+        actions.set_class(short_pane, "short")
+        frame.set_class(tiny_pane, "tiny")
         form.set_class(tiny_pane, "tiny")
-        frame.styles.padding = (
-            (0, _PALETTE_HORIZONTAL_PADDING)
+        fixed_rows = (
+            _PALETTE_FORM_TINY_FIXED_ROWS
             if tiny_pane
-            else (_PALETTE_VERTICAL_PADDING, _PALETTE_HORIZONTAL_PADDING)
+            else _PALETTE_FORM_SHORT_FIXED_ROWS
+            if short_pane
+            else _PALETTE_FORM_STANDARD_FIXED_ROWS
         )
-        form.styles.margin = (0 if tiny_pane else 1, 0, 0, 0)
-        form.styles.padding = (0, 0, 0, 0)
         form.styles.max_height = max(
             1,
             self.size.height
-            - (_PALETTE_FORM_TINY_FIXED_ROWS if tiny_pane else _PALETTE_FORM_STANDARD_FIXED_ROWS)
+            - fixed_rows
             - (_PALETTE_STACKED_ACTIONS_ROWS if narrow_pane else _PALETTE_INLINE_ACTIONS_ROWS),
         )
         for button_id in (_PALETTE_BACK_TO_MENU, _SUBMIT_ID):

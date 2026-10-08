@@ -13,8 +13,9 @@ from typing import TYPE_CHECKING, cast
 import psutil
 import pytest
 from rich.cells import cell_len
+from textual.containers import Vertical, VerticalScroll
 from textual.geometry import Region
-from textual.widgets import DataTable, Label, ListItem, ListView, Static
+from textual.widgets import Button, DataTable, Label, ListItem, ListView, Static
 
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
@@ -329,17 +330,35 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
     widget = cast("EscalationsPanel", EscalationsWidget().create(context))
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
+        home = pilot.app.screen
         widget.focus()
         assert pilot.app.focused is widget
         await pilot.press("o")
-        await pilot.pause()
-        packet_view = cast("Static", pilot.app.screen.query_one("#escalation-packet"))
+        await wait_until(
+            lambda: bool(pilot.app.screen.query("#escalation-packet-close")),
+            timeout=2,
+        )
+        packet_screen = pilot.app.screen
+        packet_close = packet_screen.query_one("#escalation-packet-close", Button)
+        packet_frame = packet_screen.query_one("#escalation-packet-frame", Vertical)
+        packet_scroll = packet_screen.query_one("#escalation-packet-scroll", VerticalScroll)
+        await wait_until(
+            lambda: (
+                packet_close.region.width > 0
+                and packet_close.region.height > 0
+                and packet_frame.region.contains_region(packet_close.region)
+                and packet_screen.region.contains_region(packet_close.region)
+                and not packet_scroll.scrollable_content_region.contains_region(packet_close.region)
+            ),
+            timeout=2,
+        )
+        packet_view = cast("Static", packet_screen.query_one("#escalation-packet"))
         packet_copy = cast("str", packet_view.content)
         assert "E-1 · T-1 · decision needed" in packet_copy
         assert "Evidence error:" in packet_copy
         assert f"Original packet:\n{packet}" in packet_copy
-        await pilot.press("escape")
-        await pilot.pause()
+        await pilot.click("#escalation-packet-close")
+        await wait_until(lambda: pilot.app.screen is home, timeout=2)
         widget.focus()
         await pilot.press("r")
         assert actions == ["resolve E-1"]
@@ -544,13 +563,35 @@ async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(
     widget = cast("DialoguePanel", DialogueWidget().create(context))
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
+        home = pilot.app.screen
         table = cast("DataTable[object]", widget.query_one("#dialogue-table", DataTable))
         table.move_cursor(row=table.row_count - 2)
         table.focus()
         await pilot.press("enter")
-        await pilot.pause()
-        full_text = cast("Static", pilot.app.screen.query_one("#dialogue-full-text"))
+        await wait_until(
+            lambda: bool(pilot.app.screen.query("#dialogue-text-close")),
+            timeout=2,
+        )
+        dialogue_screen = pilot.app.screen
+        dialogue_close = dialogue_screen.query_one("#dialogue-text-close", Button)
+        dialogue_frame = dialogue_screen.query_one("#dialogue-text-frame", Vertical)
+        dialogue_scroll = dialogue_screen.query_one("#dialogue-text-scroll", VerticalScroll)
+        await wait_until(
+            lambda: (
+                dialogue_close.region.width > 0
+                and dialogue_close.region.height > 0
+                and dialogue_frame.region.contains_region(dialogue_close.region)
+                and dialogue_screen.region.contains_region(dialogue_close.region)
+                and not dialogue_scroll.scrollable_content_region.contains_region(
+                    dialogue_close.region
+                )
+            ),
+            timeout=2,
+        )
+        full_text = cast("Static", dialogue_screen.query_one("#dialogue-full-text"))
         assert cast("str", full_text.content) == bubbles[-2].text
+        await pilot.click("#dialogue-text-close")
+        await wait_until(lambda: pilot.app.screen is home, timeout=2)
 
 
 async def test_usage_projection_keeps_project_and_task_scope_and_cost_evidence_separate(

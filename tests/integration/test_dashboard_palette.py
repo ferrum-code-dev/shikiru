@@ -40,6 +40,8 @@ from shikiru.engine.handlers.escalations import ResolveHandler
 from shikiru.engine.handlers.tasks import CancelHandler
 from shikiru.errors import CommandRejectedError, ConfigError
 from shikiru.operator.commands import COMMAND_ACK_WAIT_SECONDS, OperatorCommands
+from shikiru.operator.evidence_export import TaskEvidenceExporter
+from shikiru.operator.evidence_writer import LocalEvidenceWriter
 from shikiru.operator.queries import OperatorQueries
 from shikiru.store.commands import CommandOutcome, CommandQueue, QueuedCommand
 from shikiru.store.database import transaction
@@ -547,7 +549,6 @@ async def test_context_menu_answers_the_recorded_question_without_a_target_picke
             expected_answer="Keep the recorded call pattern.\n and update callers.",
         )
 
-        await pilot.click("#palette-submit")
         await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
         command = queue.pending()[0].command
         assert isinstance(command, Resolve)
@@ -568,18 +569,113 @@ async def _resize_recorded_answer_form(
 ) -> None:
     for width, height in ((48, 20), (36, 14), (20, 8)):
         await pilot.resize_terminal(width, height)
-        await wait_until(lambda: app.focused is answer, timeout=2)
+        close = screen.query_one("#palette-close", Button)
+        frame = screen.query_one("#palette-frame")
+        form = screen.query_one("#palette-form", VerticalScroll)
+        await wait_until(
+            lambda target_width=width, target_height=height, popup_close=close, popup_frame=frame: (
+                (app.size.width, app.size.height) == (target_width, target_height)
+                and app.focused is answer
+                and popup_close.region.width > 0
+                and popup_frame.content_region.contains_region(popup_close.region)
+                and screen.region.contains_region(popup_close.region)
+            ),
+            timeout=2,
+        )
+        assert close.region.width > 0
+        assert close.region.height > 0
+        assert close.region.x >= 0
+        assert close.region.right <= width
+        assert close.region.y >= 0
+        assert close.region.bottom <= height
+        assert frame.region.contains_region(close.region)
+        assert not form.scrollable_content_region.contains_region(close.region)
         for button_id in ("palette-back-to-menu", "palette-submit"):
             button = screen.query_one(f"#{button_id}", Button)
             assert button.display
+            assert frame.content_region.contains_region(button.region)
             assert button.region.right <= width
             assert button.region.bottom < height
         assert answer.text == expected_answer
         assert queue.pending() == []
         if width == 20:
             _capture_palette(app, "task101-answer-healthy-recorded-packet-20x8-color.svg")
+            assert await pilot.click("#palette-submit")
+            return
     await pilot.resize_terminal(*_APP_SIZE)
-    await wait_until(lambda: app.focused is answer, timeout=2)
+    submit = screen.query_one("#palette-submit", Button)
+    frame = screen.query_one("#palette-frame")
+    await wait_until(
+        lambda: (
+            (app.size.width, app.size.height) == _APP_SIZE
+            and app.focused is answer
+            and not submit.disabled
+            and submit.visible
+            and frame.content_region.contains_region(submit.region)
+        ),
+        timeout=2,
+    )
+    assert submit.region.x >= 0
+    assert submit.region.right <= app.size.width
+    assert submit.region.y >= 0
+    assert submit.region.bottom <= app.size.height
+
+
+async def test_palette_export_results_are_reachable_in_a_compact_form(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Compact export result")
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = PaletteApp(
+        commands,
+        queries,
+        _selection_must_not_run,
+        on_change=reader.watch,
+        initial_context=PaletteRequest(action="export", task_id=task.id),
+        evidence_exporter=TaskEvidenceExporter(queries, LocalEvidenceWriter(tmp_path), clock),
+    )
+
+    async with app.run_test(size=(48, 14)) as pilot:
+        screen = _screen(app)
+        await wait_until(
+            lambda: screen.query_one("#export-destination", Input).display,
+            timeout=2,
+        )
+        frame = screen.query_one("#palette-frame")
+        form = screen.query_one("#palette-form", VerticalScroll)
+        result_scroll = screen.query_one("#palette-result-scroll", VerticalScroll)
+        submit = screen.query_one("#palette-submit", Button)
+        back = screen.query_one("#palette-back-to-menu", Button)
+        await wait_until(
+            lambda: (
+                submit.display
+                and back.display
+                and not submit.disabled
+                and frame.content_region.contains_region(submit.region)
+                and frame.content_region.contains_region(back.region)
+            ),
+            timeout=2,
+        )
+        cast("Select[str]", screen.query_one("#export-overwrite", Select)).value = "refuse"
+
+        for destination, expected in (
+            ("evidence.md", "Exported MARKDOWN"),
+            ("missing/evidence.md", "No such file or directory"),
+        ):
+            screen.query_one("#export-destination", Input).value = destination
+            await pilot.click(submit)
+            await wait_until(
+                lambda expected_text=expected: (
+                    expected_text in _static_text(screen, "#palette-result")
+                    and result_scroll.region.height > 0
+                    and form.content_region.contains_region(result_scroll.region)
+                ),
+                timeout=2,
+            )
+        assert queue.pending() == []
 
 
 async def test_project_context_menu_has_no_task_targets(

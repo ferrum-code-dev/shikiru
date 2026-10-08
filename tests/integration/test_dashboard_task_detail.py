@@ -2093,6 +2093,14 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
         if (app.size.width, app.size.height) != (width, height):
             await pilot.resize_terminal(width, height)
             await pilot.wait_for_scheduled_animations()
+        await _assert_popup_close_reachable(
+            workspace_screen,
+            close_id="task-detail-popup-close",
+            frame_id="task-detail-popup-frame",
+            body_id=TASK_DETAIL_BODY,
+            width=width,
+            height=height,
+        )
         timeline_turn.focus()
         await pilot.press("right")
         await pilot.press("v")
@@ -2106,12 +2114,14 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
         await pilot.press("v")
         await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
         await pilot.wait_for_scheduled_animations()
-        close_button = app.screen.query_one(f"#{TASK_DETAIL_VIEWS_CLOSE_BUTTON}", Button)
-        assert close_button.visible
-        assert close_button.region.x >= 0
-        assert close_button.region.right <= width
-        assert close_button.region.y >= 0
-        assert close_button.region.bottom <= height
+        close_button = await _assert_popup_close_reachable(
+            app.screen,
+            close_id=TASK_DETAIL_VIEWS_CLOSE_BUTTON,
+            frame_id="task-detail-views-frame",
+            body_id="task-detail-views-content",
+            width=width,
+            height=height,
+        )
         assert await pilot.click(close_button, offset=(0, 0))
         await wait_until(
             lambda saved_scroll_position=saved_scroll_position: (
@@ -2140,6 +2150,35 @@ async def _assert_native_views_shortcut_precedence(
     await pilot.pause()
     assert not isinstance(pilot.app.screen, TaskDetailViewsScreen)
     body.focus()
+
+
+async def _assert_popup_close_reachable(
+    screen: Widget,
+    *,
+    close_id: str,
+    frame_id: str,
+    body_id: str,
+    width: int,
+    height: int,
+) -> Button:
+    close = screen.query_one(f"#{close_id}", Button)
+    frame = screen.query_one(f"#{frame_id}")
+    body = screen.query_one(f"#{body_id}", VerticalScroll)
+    await wait_until(
+        lambda: (
+            close.region.width > 0
+            and close.region.height > 0
+            and frame.region.contains_region(close.region)
+            and frame.content_region.contains_region(close.region)
+            and screen.region.contains_region(close.region)
+        ),
+        timeout=2,
+    )
+    assert close.visible
+    assert close.region.right <= width
+    assert close.region.bottom <= height
+    assert not body.scrollable_content_region.contains_region(close.region)
+    return close
 
 
 async def test_task_detail_views_mouse_opens_task_actions_and_help(
@@ -2535,7 +2574,7 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
             )
             assert app.focused is timeline_turn
             assert timeline_turn.value == "3"
-            assert filter_visible()
+            await wait_until(filter_visible, timeout=_SCROLL_SETTLE_TIMEOUT_SECONDS)
 
             timeline_turn.focus()
             await pilot.wait_for_scheduled_animations()

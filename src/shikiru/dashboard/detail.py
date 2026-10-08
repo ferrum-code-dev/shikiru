@@ -107,7 +107,7 @@ TASK_DETAIL_VIEWS_BUTTON = "task-detail-views"
 TASK_DETAIL_VIEWS_OPEN_BUTTON = "task-detail-views-open"
 TASK_DETAIL_VIEWS_CLOSE_BUTTON = "task-detail-views-close"
 TASK_DETAIL_VIEWS_CONTENT = "task-detail-views-content"
-TASK_DETAIL_VIEWS_TINY_MAX_ROWS = 8
+TASK_DETAIL_TINY_MAX_ROWS = 8
 TASK_DETAIL_VIEWS_KEY = "v"
 TASK_DETAIL_VIEWS_ACTION = "open_contextual_views"
 TASK_USAGE_KEY = "u"
@@ -1385,19 +1385,29 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Back")]
     DEFAULT_CSS = """
-    TaskDetailViewsScreen { align: center middle; background: transparent; padding: 1; }
+    TaskDetailViewsScreen { align: center middle; background: transparent; padding: 0; }
     #task-detail-views-frame {
-        width: 100%; height: auto; max-height: 90%; max-width: 64; padding: 0 1;
-        border: solid $neutral-border; background: $surface; color: $primary-text;
+        width: 100%; height: auto; max-height: 100%; max-width: 64; margin: 1 2;
+        padding: 1 2; border: solid $steel-blue; background: $surface; color: $primary-text;
     }
     #task-detail-views-frame Select { width: 100%; }
     #task-detail-views-content { height: auto; max-height: 1fr; min-height: 0; }
     #task-detail-views-heading { width: 100%; height: auto; }
     #task-detail-views-title {
-        width: 1fr; height: 1; text-wrap: nowrap; text-overflow: ellipsis;
+        width: 1fr; height: 1; color: $steel-blue; text-wrap: nowrap; text-overflow: ellipsis;
     }
-    #task-detail-views-close { width: auto; min-width: 5; height: 1; padding: 0; }
-    #task-detail-views-open { width: 100%; height: auto; min-width: 1; padding: 0; }
+    #task-detail-views-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
+    #task-detail-views-open {
+        width: 100%; height: auto; min-width: 1; padding: 0; border: none;
+    }
+    #task-detail-views-frame.tiny #task-detail-view-choice,
+    #task-detail-views-frame.tiny #task-detail-views-open {
+        height: 1; border: none;
+    }
+    #task-detail-views-frame.tiny {
+        height: 100%; margin: 0; padding: 0 1;
+    }
+    #task-detail-views-frame.tiny #task-detail-views-content { height: 1fr; }
     """
 
     def __init__(self, task_id: str, extra_choices: tuple[tuple[str, str], ...]) -> None:
@@ -1429,10 +1439,7 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
 
     def _apply_tiny_layout(self, height: int) -> None:
         frame = self.query_one("#task-detail-views-frame", Vertical)
-        tiny = height <= TASK_DETAIL_VIEWS_TINY_MAX_ROWS
-        self.styles.padding = 0 if tiny else 1
-        frame.styles.max_height = height if tiny else "90%"
-        frame.styles.height = height if tiny else "auto"
+        frame.set_class(height <= TASK_DETAIL_TINY_MAX_ROWS, "tiny")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == TASK_DETAIL_VIEWS_CLOSE_BUTTON:
@@ -1449,14 +1456,17 @@ class TaskDetailScreen(ModalScreen[None]):
     """Show a selected task's shared detail over the Home browser."""
 
     DEFAULT_CSS = """
-    TaskDetailScreen { align: center middle; background: transparent; padding: 1; }
+    TaskDetailScreen { align: center middle; background: transparent; padding: 0; }
     #task-detail-popup-frame {
-        width: 100%; max-width: 64; height: auto; max-height: 90%; min-height: 1;
-        padding: 0 1; border: solid $neutral-border; background: $surface;
+        width: 100%; max-width: 64; height: auto; max-height: 100%; min-height: 1; margin: 1 2;
+        padding: 1 2; border: solid $steel-blue; background: $surface;
+    }
+    #task-detail-popup-frame.tiny {
+        height: 100%; margin: 0; padding: 0;
     }
     #task-detail-popup-header { width: 100%; height: 1; }
     #task-detail-popup-title { width: 1fr; height: 1; color: $steel-blue; }
-    #task-detail-popup-close { width: auto; min-width: 5; height: 1; padding: 0; }
+    #task-detail-popup-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
     #task-detail-panel { width: 100%; height: 1fr; min-height: 0; }
     #task-detail-panel #task-detail-body {
         height: 1fr; min-height: 0; max-height: 1fr; background: $surface;
@@ -1495,6 +1505,7 @@ class TaskDetailScreen(ModalScreen[None]):
             )
 
     async def on_mount(self) -> None:
+        self._apply_tiny_layout(self.size.height)
         panel = self.query_one("#task-detail-panel", TaskDetailPanel)
         target = (
             panel.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}", Button)
@@ -1504,6 +1515,13 @@ class TaskDetailScreen(ModalScreen[None]):
         self.set_focus(target)
         if self._open_views_on_mount:
             await panel.open_contextual_views()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._apply_tiny_layout(event.size.height)
+
+    def _apply_tiny_layout(self, height: int) -> None:
+        frame = self.query_one(f"#{TASK_DETAIL_POPUP_FRAME}", Vertical)
+        frame.set_class(height <= TASK_DETAIL_TINY_MAX_ROWS, "tiny")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == TASK_DETAIL_POPUP_CLOSE:

@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import sys
+from collections import Counter
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from html import unescape
@@ -17,7 +18,7 @@ import psutil
 import pytest
 from fake_agent.turns import FAKE_COMPACT_AT_PCT_ENV_VAR
 from rich.cells import cell_len
-from textual.containers import Grid, Horizontal, VerticalScroll
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.events import MouseScrollDown
 from textual.geometry import Region
 from textual.widgets import (
@@ -663,6 +664,186 @@ def _exported_screen_text(app: DashboardApp) -> str:
     return " ".join(text.split())
 
 
+def _exported_text_cells(app: DashboardApp) -> Counter[tuple[str, str, str]]:
+    cells: Counter[tuple[str, str, str]] = Counter()
+    for element in re.finditer(r"<text\b([^>]*)>(.*?)</text>", app.export_screenshot(), re.DOTALL):
+        x = re.search(r'\bx="([^"]+)"', element.group(1))
+        y = re.search(r'\by="([^"]+)"', element.group(1))
+        assert x is not None
+        assert y is not None
+        text = re.sub(r"<[^>]+>", "", element.group(2))
+        text = unescape(text).replace("\xa0", " ")
+        cells[(x.group(1), y.group(1), text)] += 1
+    return cells
+
+
+def _terminal_text_cells(
+    cells: Counter[tuple[str, str, str]],
+    size: tuple[int, int],
+    reference: Counter[tuple[str, str, str]],
+) -> Counter[tuple[int, int, str]]:
+    corners = [cell for cell in reference if cell[2] in {"┌", "┐", "└", "┘"}]
+    assert corners
+    left = min(float(x) for x, _, text in corners if text in {"┌", "└"})
+    right = max(float(x) for x, _, text in corners if text in {"┐", "┘"})
+    top = min(float(y) for _, y, _ in corners)
+    bottom = max(float(y) for _, y, _ in corners)
+    cell_width = (right - left) / (size[0] - 1)
+    cell_height = (bottom - top) / (size[1] - 1)
+    terminal_cells: Counter[tuple[int, int, str]] = Counter()
+    for x, y, text in cells.elements():
+        column = round((float(x) - left) / cell_width)
+        row = round((float(y) - top) / cell_height)
+        offset = 0
+        for character in text:
+            if character == "\n":
+                continue
+            terminal_cells[(column + offset, row, character)] += 1
+            offset += cell_len(character)
+    return terminal_cells
+
+
+def _text_cells_outside_region(
+    cells: Counter[tuple[int, int, str]],
+    region: Region,
+) -> Counter[tuple[int, int, str]]:
+    return Counter(
+        {
+            cell: count
+            for cell, count in cells.items()
+            if cell[2]
+            and "\n" not in cell[2]
+            and (
+                cell[1] < region.y
+                or cell[1] >= region.bottom
+                or cell[0] + cell_len(cell[2]) <= region.x
+                or cell[0] >= region.right
+            )
+        }
+    )
+
+
+def _home_frame_cells(
+    cells: Counter[tuple[str, str, str]],
+) -> Counter[tuple[str, str, str]]:
+    corners = [cell for cell in cells if cell[2] in {"┌", "┐", "└", "┘"}]
+    assert corners
+    left = min(float(x) for x, _, text in corners if text in {"┌", "└"})
+    right = max(float(x) for x, _, text in corners if text in {"┐", "┘"})
+    top = min(float(y) for _, y, _ in corners)
+    bottom = max(float(y) for _, y, _ in corners)
+    return Counter(
+        {
+            cell: count
+            for cell, count in cells.items()
+            if (float(cell[0]), float(cell[1]), cell[2])
+            in {
+                (left, top, "┌"),
+                (right, top, "┐"),
+                (left, bottom, "└"),
+                (right, bottom, "┘"),
+            }
+        }
+    )
+
+
+async def _wait_for_settled_composition(app: DashboardApp, root: VerticalScroll) -> None:
+    previous: tuple[float, float, tuple[tuple[tuple[str, str, str], int], ...]] | None = None
+    stable_observations = 0
+
+    def settled() -> bool:
+        nonlocal previous, stable_observations
+        current = (
+            root.scroll_y,
+            root.scroll_target_y,
+            tuple(sorted(_exported_text_cells(app).items())),
+        )
+        stable_observations = stable_observations + 1 if current == previous else 0
+        previous = current
+        return stable_observations >= 3
+
+    await wait_until(settled, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+
+
+async def _assert_popup_close_reachable(
+    screen: Widget,
+    *,
+    close_selector: str,
+    frame_selector: str,
+    body_selector: str,
+) -> None:
+    close = screen.query_one(close_selector, Button)
+    frame = screen.query_one(frame_selector)
+    body = screen.query_one(body_selector, VerticalScroll)
+    await wait_until(
+        lambda: (
+            close.region.width > 0
+            and close.region.height > 0
+            and frame.region.contains_region(close.region)
+            and frame.content_region.contains_region(close.region)
+            and screen.region.contains_region(close.region)
+            and not body.scrollable_content_region.contains_region(close.region)
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+
+
+def _assert_home_frame_stationary(
+    before: Counter[tuple[str, str, str]],
+    current: Counter[tuple[str, str, str]],
+) -> None:
+    assert _home_frame_cells(before) == _home_frame_cells(current)
+
+
+def _assert_exposed_home_text_stationary(
+    before: Counter[tuple[int, int, str]],
+    current: Counter[tuple[int, int, str]],
+    popup_region: Region,
+) -> None:
+    assert _text_cells_outside_region(before, popup_region) == _text_cells_outside_region(
+        current,
+        popup_region,
+    )
+
+
+def _assert_home_reading_state(
+    root: VerticalScroll,
+    *,
+    expected_scroll: float,
+    home: Screen[object],
+    expected_focus: Widget | None,
+    task_list: ListView,
+    expected_selection: int | None,
+) -> None:
+    assert root.scroll_y == expected_scroll
+    assert home.focused is expected_focus
+    assert task_list.index == expected_selection
+
+
+def _assert_last_command_history_page(page: Static) -> None:
+    page_text = _rendered_text(page)
+    assert "page 3" in page_text
+    assert "rows 41-52 of 52" in page_text
+
+
+def _assert_home_text_stationary(
+    before: Counter[tuple[str, str, str]],
+    after: Counter[tuple[str, str, str]],
+    before_terminal: Counter[tuple[int, int, str]],
+    size: tuple[int, int],
+) -> None:
+    _assert_home_frame_stationary(before, after)
+    assert before_terminal == _terminal_text_cells(after, size, before)
+
+
+async def _open_help_with_keyboard(app: DashboardApp, pilot: Pilot[None]) -> None:
+    await pilot.press("?")
+    await wait_until(
+        lambda: bool(app.screen.query("#workspace-help-close")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+
+
 def _task99_settings(project_dir: Path) -> Settings:
     settings = load_settings(project_dir)
     dashboard = settings.dashboard.model_copy(
@@ -1040,6 +1221,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from textual.pilot import Pilot
+    from textual.screen import Screen
     from textual.widget import Widget
 
     from shikiru.clock import Clock
@@ -1291,6 +1473,12 @@ async def _choose_focus_view(
         await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
     views_screen = app.screen
     view_list = app.screen.query_one("#focus-views-list", ListView)
+    await _assert_popup_close_reachable(
+        views_screen,
+        close_selector="#context-views-close",
+        frame_selector="#context-views-frame",
+        body_selector="#focus-views-list",
+    )
     items = [item for item in view_list.children if isinstance(item, ListItem)]
     selected = next(
         index
@@ -2316,19 +2504,23 @@ async def _assert_cached_resource_views(
     )
     _capture_task99(app, f"task110-resource-diagnostics-{size[0]}x{size[1]}-color.svg")
     explanation = "not a per-process limit"
-    if explanation not in _exported_screen_text(app):
+
+    def diagnostics_text() -> str:
+        return " ".join(_exported_screen_text(app).replace("│", " ").split())
+
+    if explanation not in diagnostics_text():
         diagnostics_content = cast("VerticalScroll", diagnostic_resources.parent)
         diagnostics_content.focus()
         await pilot.press("pagedown")
         await wait_until(
-            lambda: explanation in _exported_screen_text(app),
+            lambda: explanation in diagnostics_text(),
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
         _capture_task99(
             app,
             f"task110-resource-diagnostics-{size[0]}x{size[1]}-scrolled-color.svg",
         )
-    assert explanation in _exported_screen_text(app)
+    assert explanation in diagnostics_text()
     assert sampler.latest().sampled_at == sample.sampled_at
     cached = services.resource_sample()
     assert cached is not None
@@ -3462,6 +3654,12 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             history_screen = app.screen
             history_copy = history_screen.query_one("#command-history-copy", Static)
             history_scroll = history_screen.query_one("#command-history-scroll", VerticalScroll)
+            await _assert_popup_close_reachable(
+                history_screen,
+                close_selector="#command-history-close",
+                frame_selector="#command-history-frame",
+                body_selector="#command-history-scroll",
+            )
             page = cast("Static", history_screen.query_one("#command-history-page"))
             await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
             assert f"#{pending.id} · Pending" not in _rendered_text(history_copy)
@@ -3477,9 +3675,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
                 _rendered_text(page),
                 _rendered_text(history_copy),
             )
-            page_text = _rendered_text(page)
-            assert "page 3" in page_text
-            assert "rows 41-52 of 52" in page_text
+            _assert_last_command_history_page(page)
             history_scroll.scroll_to(y=history_scroll.max_scroll_y, animate=False)
             await pilot.pause()
             scroll_before_refresh = history_scroll.scroll_y
@@ -3501,7 +3697,8 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             await pilot.pause()
             assert app.focused is focus_before_refresh
             assert history_scroll.scroll_y == history_scroll.max_scroll_y
-            assert app.screen is not home_screen
+            await pilot.click("#command-history-close")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
     finally:
         reader.close()
 
@@ -3909,6 +4106,7 @@ async def _resize_contextual_message_form(
     guidance: str,
 ) -> None:
     message = palette.query_one("#message", TextArea)
+    frame = palette.query_one("#palette-frame")
     cursor = message.cursor_location
     for width, height in ((48, 20), (36, 14), (20, 8)):
         await pilot.resize_terminal(width, height)
@@ -3919,6 +4117,7 @@ async def _resize_contextual_message_form(
         for button_id in ("palette-back-to-menu", "palette-submit"):
             button = palette.query_one(f"#{button_id}", Button)
             assert button.display
+            assert frame.content_region.contains_region(button.region)
             assert button.region.right <= width
             assert button.region.bottom < height
         _capture_task99(app, f"task101-message-form-{width}x{height}-color.svg")
@@ -4004,7 +4203,14 @@ async def _open_task_context_menu(
         lambda: isinstance(app.screen, PaletteScreen),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    return cast("PaletteScreen", app.screen)
+    palette = cast("PaletteScreen", app.screen)
+    await _assert_popup_close_reachable(
+        palette,
+        close_selector="#palette-close",
+        frame_selector="#palette-frame",
+        body_selector="#palette-menu",
+    )
+    return palette
 
 
 async def _exercise_task_secondary_menu_routes(
@@ -4060,9 +4266,16 @@ async def _exercise_task_secondary_menu_routes(
         lambda: bool(app.screen.query("#context-widget-frame")),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    assert "Diagnostics" in _rendered_text(app.screen.query_one("#context-widget-title", Static))
+    widget_screen = app.screen
+    await _assert_popup_close_reachable(
+        widget_screen,
+        close_selector="#context-widget-close",
+        frame_selector="#context-widget-frame",
+        body_selector="#context-widget-content",
+    )
+    assert "Diagnostics" in _rendered_text(widget_screen.query_one("#context-widget-title", Static))
     assert queue.pending() == []
-    await pilot.press("escape")
+    await pilot.click("#context-widget-close")
     await wait_until(lambda: app.screen is home_screen, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
 
     await _open_task_context_menu(app, pilot, list_view)
@@ -4705,6 +4918,7 @@ async def _open_compact_task_evidence_route(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     views = app.screen
+    views_frame = views.query_one("#task-detail-views-frame")
     choice = cast("Select[str]", views.query_one("#task-detail-view-choice", Select))
     choice.value = TASK_VIEW_EVIDENCE
     views_content = views.query_one("#task-detail-views-content", VerticalScroll)
@@ -4712,11 +4926,12 @@ async def _open_compact_task_evidence_route(
     close_button = views.query_one("#task-detail-views-close", Button)
     await pilot.press("tab")
     await pilot.pause()
-    if size == _TINY_HOME_SIZE:
-        assert views_content.max_scroll_y > 0
-        views_content.scroll_to_widget(open_button, animate=False, immediate=True)
-        await pilot.pause()
+    await wait_until(
+        lambda: views_frame.content_region.contains_region(open_button.region),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
     assert pilot.app.focused is open_button
+    assert views_frame.content_region.contains_region(open_button.region)
     assert views_content.scrollable_content_region.contains_region(open_button.region)
     assert views.region.contains_region(close_button.region)
     _capture_task99(app, f"task112-task-views-{size[0]}x{size[1]}-color.svg")
@@ -4885,6 +5100,95 @@ async def test_home_help_works_with_keyboard_without_color(
             await pilot.pause()
             assert app.screen.query_one("#workspace-help-copy", Static).display
             await pilot.press("escape")
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize(
+    "size",
+    [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE, _SHORT_HOME_SIZE, _NARROW_TASK_SIZE, _TINY_HOME_SIZE],
+)
+async def test_home_help_preserves_composited_home_cells_and_close_reachability(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_TEST_START)
+    task = seed_task(connection, clock, title="Popup underlay task")
+    reader = StateReader(database, clock)
+    settings = _task99_settings(project_dir)
+    app = _app(
+        reader,
+        project_dir,
+        widget_names=["header", "queue", "usage", "resources"],
+        services=StubServices(engine_running=False),
+        clock=clock,
+        settings=settings,
+    )
+    try:
+        async with app.run_test(size=size) as pilot:
+            home = app.screen
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{task.id}")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            if size != _TINY_HOME_SIZE:
+                await _select_home_task(app, task.id)
+                await wait_until(
+                    lambda: task.title in _exported_screen_text(app),
+                    timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+                )
+            home_root = app.query_one("#focus-root", VerticalScroll)
+            task_list = app.query_one("#task-browser-list", ListView)
+            await _wait_for_settled_composition(app, home_root)
+            home_scroll_y = home_root.scroll_y
+            home_selection = task_list.index
+            home_focus = home.focused
+            before = _exported_text_cells(app)
+            before_terminal = _terminal_text_cells(before, size, before)
+            _capture_task99(app, f"task115-home-before-{size[0]}x{size[1]}-color.svg")
+
+            await _open_help_with_keyboard(app, pilot)
+            help_screen = app.screen
+            await _assert_popup_close_reachable(
+                help_screen,
+                close_selector="#workspace-help-close",
+                frame_selector="#workspace-help-frame",
+                body_selector="#workspace-help-scroll",
+            )
+            frame = help_screen.query_one("#workspace-help-frame", Vertical)
+            await _wait_for_settled_composition(app, home_root)
+            during = _exported_text_cells(app)
+            during_terminal = _terminal_text_cells(during, size, before)
+            _assert_home_frame_stationary(before, during)
+            _capture_task99(app, f"task115-help-{size[0]}x{size[1]}-color.svg")
+            if size != _TINY_HOME_SIZE:
+                _assert_exposed_home_text_stationary(before_terminal, during_terminal, frame.region)
+            assert home_root.scroll_y == home_scroll_y
+
+            await pilot.click("#workspace-help-close")
+            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+            await _wait_for_settled_composition(app, home_root)
+            after = _exported_text_cells(app)
+            _assert_home_text_stationary(before, after, before_terminal, size)
+            _assert_home_reading_state(
+                home_root,
+                expected_scroll=home_scroll_y,
+                home=home,
+                expected_focus=home_focus,
+                task_list=task_list,
+                expected_selection=home_selection,
+            )
+            _capture_task99(app, f"task115-home-after-{size[0]}x{size[1]}-color.svg")
+            await _open_help_with_keyboard(app, pilot)
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+            if size != _TINY_HOME_SIZE:
+                assert task.title in _rendered_text(
+                    app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+                )
     finally:
         reader.close()
 
@@ -5065,7 +5369,7 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
             if size == _WIDE_HOME_SIZE:
                 assert task.title in screenshot_text
             else:
-                assert "Ctrl+P" in screenshot_text
+                assert "✓ No decisions needed" in screenshot_text
                 assert "tmux detach unavailable" in screenshot_text
             assert "Shikiru actions" in screenshot_text
             await pilot.press("escape")

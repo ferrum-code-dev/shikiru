@@ -242,14 +242,14 @@ class _ContextChoice:
 class _ContextViewsScreen(ModalScreen[str]):
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
     DEFAULT_CSS = """
-    _ContextViewsScreen { align: center middle; background: transparent; padding: 1; }
+    _ContextViewsScreen { align: center middle; background: transparent; padding: 0; }
     #context-views-frame {
-        width: 100%; max-width: 64; height: 70%; max-height: 24;
-        padding: 1; border: solid $neutral-border; background: $surface;
+        width: 100%; max-width: 64; height: auto; max-height: 100%; margin: 1 2;
+        padding: 1 2; border: solid $steel-blue; background: $surface;
     }
     #context-views-header { width: 100%; height: 1; }
-    #context-views-title { width: 1fr; height: 1; color: $primary-text; }
-    #context-views-close { width: auto; min-width: 5; height: 1; padding: 0; }
+    #context-views-title { width: 1fr; height: 1; color: $steel-blue; }
+    #context-views-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
     #focus-views-list { height: 1fr; border: none; background: $surface; }
     #context-views-hint { height: 1; color: $secondary-text; }
     """
@@ -290,15 +290,15 @@ class _ContextViewsScreen(ModalScreen[str]):
 class _ContextWidgetScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
     DEFAULT_CSS = """
-    _ContextWidgetScreen { align: center middle; background: transparent; padding: 1; }
+    _ContextWidgetScreen { align: center middle; background: transparent; padding: 0; }
     #context-widget-frame {
-        width: 100%; max-width: 64; height: auto; max-height: 90%; min-height: 5;
-        padding: 1; border: solid $neutral-border; background: $surface;
+        width: 100%; max-width: 64; height: auto; max-height: 100%; margin: 1 2;
+        padding: 1 2; border: solid $steel-blue; background: $surface;
     }
     #context-widget-header { width: 100%; height: 1; }
-    #context-widget-title { width: 1fr; height: 1; color: $primary-text; }
-    #context-widget-close { width: auto; min-width: 5; height: 1; padding: 0; }
-    #context-widget-content { height: auto; max-height: 1fr; min-height: 0; padding: 1 0; }
+    #context-widget-title { width: 1fr; height: 1; color: $steel-blue; }
+    #context-widget-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
+    #context-widget-content { height: auto; max-height: 1fr; min-height: 0; padding: 0; }
     """
 
     def __init__(self, label: str, widget: Widget) -> None:
@@ -371,16 +371,14 @@ def _command_summary_text(history: CommandHistoryView) -> str:
 class _WorkspaceHelpScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
     DEFAULT_CSS = """
-    _WorkspaceHelpScreen { align: center middle; background: transparent; padding: 1; }
+    _WorkspaceHelpScreen { align: center middle; background: transparent; padding: 0; }
     #workspace-help-frame {
-        width: 100%; height: auto; max-height: 90%; max-width: 64;
-        border: solid $neutral-border;
-        padding: 0 1;
-        background: $surface;
+        width: 100%; height: auto; max-height: 100%; max-width: 64; margin: 1 2;
+        border: solid $steel-blue; padding: 1 2; background: $surface;
     }
     #workspace-help-header { width: 100%; height: 1; }
-    #workspace-help-context { width: 1fr; height: 1; }
-    #workspace-help-close { width: auto; min-width: 5; height: 1; padding: 0; }
+    #workspace-help-context { width: 1fr; height: 1; color: $steel-blue; }
+    #workspace-help-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
     #workspace-help-scroll { height: 1fr; }
     #workspace-help-copy { height: auto; color: $primary-text; }
     """
@@ -480,18 +478,18 @@ class _CommandHistoryScreen(ModalScreen[None]):
         (_COMMAND_HISTORY_NEXT_KEY, "next_page", "Older history"),
     ]
     DEFAULT_CSS = """
-    _CommandHistoryScreen { align: center middle; background: transparent; padding: 1; }
+    _CommandHistoryScreen { align: center middle; background: transparent; padding: 0; }
     #command-history-frame {
-        width: 100%; height: auto; max-height: 90%; max-width: 64;
-        border: solid $neutral-border; padding: 1 2;
+        width: 100%; height: auto; max-height: 100%; max-width: 64; margin: 1 2;
+        border: solid $steel-blue; padding: 1 2;
         background: $surface; color: $primary-text;
     }
     #command-history-header { width: 100%; height: 1; }
-    #command-history-title { width: 1fr; height: 1; }
-    #command-history-close { width: auto; min-width: 5; height: 1; padding: 0; }
+    #command-history-title { width: 1fr; height: 1; color: $steel-blue; }
+    #command-history-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
     #command-history-filter { width: 100%; height: 3; }
-    #command-history-scroll { height: 1fr; border: round $neutral-border; }
-    #command-history-copy { height: auto; padding: 1; }
+    #command-history-scroll { height: 1fr; border: none; }
+    #command-history-copy { height: auto; padding: 0; }
     #command-history-page { height: 1; }
     #command-history-controls { height: 3; width: 100%; }
     """
@@ -753,7 +751,7 @@ class DashboardApp(App[None]):
     CSS = """
     Screen { color: $primary-text; }
     .popup-close-control {
-        border: none; background: $surface; color: $secondary-text; text-style: none;
+        border: none; background: $surface; color: $primary-text; text-style: none;
     }
     .popup-close-control:focus { color: $primary-text; text-style: reverse; }
     #focus-root {

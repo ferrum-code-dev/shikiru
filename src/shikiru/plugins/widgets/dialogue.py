@@ -27,16 +27,16 @@ class DialogueTextScreen(ModalScreen[None]):
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
     DEFAULT_CSS = """
-    DialogueTextScreen { align: center middle; background: transparent; padding: 1; }
+    DialogueTextScreen { align: center middle; background: transparent; padding: 0; }
     #dialogue-text-frame {
-        width: 100%; max-width: 64; height: auto; max-height: 90%;
-        border: solid $border; padding: 1; background: $surface;
+        width: 100%; max-width: 64; height: auto; max-height: 100%; margin: 1 2;
+        border: solid $steel-blue; padding: 1 2; background: $surface;
     }
     #dialogue-text-header { width: 100%; height: 1; }
-    #dialogue-text-title { width: 1fr; height: 1; color: $foreground; }
+    #dialogue-text-title { width: 1fr; height: 1; color: $steel-blue; }
     #dialogue-text-close {
-        width: auto; min-width: 5; height: 1; padding: 0;
-        border: none; background: $surface; color: $foreground; text-style: none;
+        width: auto; min-width: 5; height: 1; padding: 0 1;
+        border: none; background: $surface; color: $primary-text; text-style: none;
     }
     #dialogue-text-scroll { height: auto; max-height: 1fr; min-height: 0; }
     #dialogue-full-text {

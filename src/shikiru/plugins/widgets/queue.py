@@ -973,7 +973,19 @@ class QueuePanel(Vertical):
         render_version: int,
         settled: bool,
     ) -> None:
-        changed = self._focus_layout and self._apply_reference_row_spacing(list_view)
+        changed = self._apply_reference_row_spacing(list_view) if self._focus_layout else False
+        if changed is None:
+            if self._list_view_is_current(list_view):
+                cast("App[object]", self.app).call_after_refresh(
+                    self._restore_list_position,
+                    list_view,
+                    anchor,
+                    anchor_offset,
+                    render_version,
+                    settled,
+                )
+                list_view.refresh(layout=True)
+            return
         if changed:
             cast("App[object]", self.app).call_after_refresh(
                 self._restore_list_position,
@@ -1028,7 +1040,7 @@ class QueuePanel(Vertical):
             )
             list_view.refresh(layout=True)
 
-    def _apply_reference_row_spacing(self, list_view: ListView) -> bool:
+    def _apply_reference_row_spacing(self, list_view: ListView) -> bool | None:
         if self._view is None or self._view.filter is not TaskBrowserFilter.ALL or self._search:
             changed = False
             for item in list_view.children:
@@ -1039,10 +1051,20 @@ class QueuePanel(Vertical):
         native_height_cells = floor(
             source_height_pixels / REFERENCE_LINE_HEIGHT_PIXELS + HALF_CELL_ROUNDING
         )
+        line_counts: dict[_BrowserListItem, int] = {}
+        for item in list_view.children:
+            if isinstance(item, _BrowserListItem):
+                row_content = next(
+                    (child for child in item.children if isinstance(child, Static)),
+                    None,
+                )
+                if row_content is None:
+                    return None
+                line_counts[item] = row_content.region.height
         changed = False
         for index, item in enumerate(list_view.children):
             if isinstance(item, _BrowserListItem):
-                line_count = item.query_one(Static).region.height
+                line_count = line_counts[item]
                 source_height_pixels += (
                     line_count * REFERENCE_LINE_HEIGHT_PIXELS + TASK_ROW_VERTICAL_PADDING_PIXELS
                 )

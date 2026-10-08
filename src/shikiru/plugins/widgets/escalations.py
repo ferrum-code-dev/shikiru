@@ -51,16 +51,16 @@ class PacketScreen(ModalScreen[None]):
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
     DEFAULT_CSS = """
-    PacketScreen { align: center middle; background: transparent; padding: 1; }
+    PacketScreen { align: center middle; background: transparent; padding: 0; }
     #escalation-packet-frame {
-        width: 100%; max-width: 64; height: auto; max-height: 90%;
-        border: solid $border; padding: 1; background: $surface;
+        width: 100%; max-width: 64; height: auto; max-height: 100%; margin: 1 2;
+        border: solid $steel-blue; padding: 1 2; background: $surface;
     }
     #escalation-packet-header { width: 100%; height: 1; }
-    #escalation-packet-title { width: 1fr; height: 1; color: $foreground; }
+    #escalation-packet-title { width: 1fr; height: 1; color: $steel-blue; }
     #escalation-packet-close {
-        width: auto; min-width: 5; height: 1; padding: 0;
-        border: none; background: $surface; color: $foreground; text-style: none;
+        width: auto; min-width: 5; height: 1; padding: 0 1;
+        border: none; background: $surface; color: $primary-text; text-style: none;
     }
     #escalation-packet-scroll { height: auto; max-height: 1fr; min-height: 0; }
     #escalation-packet {
