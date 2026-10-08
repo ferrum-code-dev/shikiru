@@ -2827,14 +2827,21 @@ async def _assert_recent_scroll_and_keyboard_selection(
     active_last_id = active_list.children[-1].id
     assert active_last_id is not None
     active_last_id = active_last_id.removeprefix("task-row-")
+    active_last = app.query_one(f"#task-row-{active_last_id}", ListItem)
     await pilot.press("up")
     await wait_until(
-        lambda: active_last_id in _rendered_text(detail_identity),
+        lambda: (
+            active_last_id in _rendered_text(detail_identity)
+            and app.screen.can_view_partial(active_last)
+        ),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     await pilot.press("down")
     await wait_until(
-        lambda: expected_recent_ids[0] in _rendered_text(detail_identity),
+        lambda: (
+            expected_recent_ids[0] in _rendered_text(detail_identity)
+            and app.screen.can_view_partial(first_recent)
+        ),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     await pilot.press("escape")
