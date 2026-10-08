@@ -6,7 +6,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
-from textual.widgets import Button, Input, ListView, Static
+from textual.content import Content
+from textual.style import Style
+from textual.widgets import Button, Input, ListItem, ListView, Static
 
 from shikiru.agents.contracts import role_dir
 from shikiru.config.loader import load_settings
@@ -25,6 +27,7 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore, fetch_task_browser_pages
+from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 from shikiru.view_log import (
     VIEW_SESSION_STARTED_SIGNAL,
     VIEW_SIGNAL_KEY,
@@ -292,6 +295,8 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
 
     async with WidgetHostApp(widget).run_test(size=(90, 35)):
         list_view = widget.query_one("#task-browser-list", ListView)
+        recent_heading = widget.query_one("#task-browser-recent-heading", Static)
+        recent_list = widget.query_one("#task-browser-recent-list", ListView)
         await wait_until(
             lambda: all(
                 f"task-row-{task_id}" in {item.id for item in list_view.children}
@@ -299,6 +304,10 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
             ),
             timeout=5.0,
         )
+        assert not recent_heading.display
+        assert not recent_list.children
+        assert recent_list.max_scroll_y == 0
+        assert not recent_list.show_vertical_scrollbar
         rendered_rows = {
             task_id: _static_text(widget.query_one(f"#task-row-{task_id} > Static", Static))
             for task_id in (implementing.id, verifying.id, waiting.id, queued.id)
@@ -344,7 +353,7 @@ async def test_focus_recent_shows_bounded_terminal_history_without_dependency_ro
     )
 
     async with WidgetHostApp(widget).run_test(size=(100, 35)):
-        list_view = widget.query_one("#task-browser-list", ListView)
+        recent_list = widget.query_one("#task-browser-recent-list", ListView)
         await wait_until(
             lambda: all(
                 widget.query(f"#task-row-{task_id}")
@@ -354,22 +363,38 @@ async def test_focus_recent_shows_bounded_terminal_history_without_dependency_ro
         )
         terminal_rows = [
             item.id.removeprefix("task-row-")
-            for item in list_view.children
+            for item in recent_list.children
             if item.id is not None and item.id.startswith("task-row-")
         ]
         recent_ids = (newest.id, cancelled.id, dependent.id, old.id)
         assert tuple(task_id for task_id in terminal_rows if task_id in recent_ids) == recent_ids
-        recent_heading_index = next(
-            index
-            for index, item in enumerate(list_view.children)
-            if item.id == "task-browser-recent-heading"
-        )
-        first_recent_index = next(
-            index
-            for index, item in enumerate(list_view.children)
-            if item.id == f"task-row-{newest.id}"
-        )
-        assert recent_heading_index < first_recent_index
+        assert recent_list.max_scroll_y == 0
+        assert not recent_list.show_vertical_scrollbar
+        recent_heading = widget.query_one("#task-browser-recent-heading", Static)
+        newest_row = widget.query_one(f"#task-row-{newest.id}", ListItem)
+        assert recent_heading.region.y < newest_row.region.y
+        assert newest_row.parent is recent_list
+        for task_id, status in ((newest.id, "Done"), (cancelled.id, "Cancelled")):
+            rendered_status = widget.query_one(f"#task-row-{task_id} > Static", Static).render()
+            assert isinstance(rendered_status, Content)
+            marker = "✓ " if task_id == newest.id else "○ "
+            assert rendered_status.plain.startswith(marker)
+            status_offset = rendered_status.plain.rindex(status)
+            status_style = next(
+                span.style
+                for span in rendered_status.spans
+                if span.start <= status_offset < span.end
+            )
+            status_style = (
+                Style.parse(status_style) if isinstance(status_style, str) else status_style
+            )
+            status_color = status_style.foreground
+            assert status_color is not None
+            assert status_color.hex.lower() == SECONDARY_TEXT_COLOR, (
+                task_id,
+                rendered_status.plain,
+                rendered_status.spans,
+            )
         dependent_row = _static_text(widget.query_one(f"#task-row-{dependent.id} > Static", Static))
         assert "depends on" not in dependent_row
         assert widget.query_one("#task-browser-family-context", Static).display is False
@@ -546,14 +571,19 @@ async def test_unsearched_all_load_more_stops_after_queued_tasks_and_recent_hist
 
     async with WidgetHostApp(widget).run_test(size=(100, 35)) as pilot:
         task_list = widget.query_one("#task-browser-list", ListView)
+        recent_list = widget.query_one("#task-browser-recent-list", ListView)
+
+        def loaded_ids() -> set[str]:
+            return _loaded_task_ids(task_list) | _loaded_task_ids(recent_list)
+
         await wait_until(
             lambda: (
-                terminal[-1].id in _loaded_task_ids(task_list)
-                and len(_loaded_task_ids(task_list) & {task.id for task in queued}) == PAGE_SIZE
+                terminal[-1].id in loaded_ids()
+                and len(loaded_ids() & {task.id for task in queued}) == PAGE_SIZE
             ),
             timeout=5.0,
         )
-        visible_ids = _loaded_task_ids(task_list)
+        visible_ids = loaded_ids()
         assert len(visible_ids & {task.id for task in queued}) == PAGE_SIZE
         assert {task.id for task in terminal} <= visible_ids
         load_more = widget.query_one("#task-browser-more", Button)
@@ -567,7 +597,7 @@ async def test_unsearched_all_load_more_stops_after_queued_tasks_and_recent_hist
             ),
             timeout=5.0,
         )
-        visible_ids = _loaded_task_ids(task_list)
+        visible_ids = loaded_ids()
         assert visible_ids == {task.id for task in queued} | {task.id for task in terminal}
         assert widget.query_one("#task-browser-more", Button).disabled
 

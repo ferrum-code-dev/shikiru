@@ -134,7 +134,8 @@ FOCUS_SUMMARY_MAX_ROWS = 12
 FOCUS_MAIN_MIN_ROWS = 3
 FOCUS_COMPACT_MAIN_ROWS = 8
 FOCUS_COMPACT_TASK_LIST_ROWS = 6
-FOCUS_MIN_TASK_LIST_ROWS = 9
+FOCUS_MIN_TASK_LIST_ROWS = 12
+FOCUS_TASK_LIST_RECENT_RESERVE_ROWS = 3
 FOCUS_COMMAND_STATUS_ROWS = 1
 FOCUS_FRAME_BORDER_ROWS = 2
 FOCUS_FOOTER_MIN_HEIGHT = 9
@@ -1512,12 +1513,12 @@ class DashboardApp(App[None]):
                 self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST)
             )
             minimum_main_height = (
-                FOCUS_MAIN_MIN_ROWS
-                if FOCUS_FOOTER_MIN_HEIGHT <= height <= FOCUS_SHORT_HOME_HEIGHT
+                FOCUS_MIN_TASK_LIST_ROWS
+                if wide and task_list_configured
                 else FOCUS_COMPACT_SHORT_MAIN_ROWS
                 if not wide and FOCUS_FOOTER_MIN_HEIGHT <= height <= FOCUS_COMPACT_SHORT_HOME_HEIGHT
-                else FOCUS_MIN_TASK_LIST_ROWS
-                if wide and task_list_configured
+                else FOCUS_MAIN_MIN_ROWS
+                if FOCUS_FOOTER_MIN_HEIGHT <= height <= FOCUS_SHORT_HOME_HEIGHT
                 else FOCUS_COMPACT_MAIN_ROWS
                 if not wide and task_list_configured
                 else FOCUS_MAIN_MIN_ROWS
@@ -1535,6 +1536,11 @@ class DashboardApp(App[None]):
             footer.styles.grid_size_columns = footer_columns
             footer.styles.grid_columns = " ".join("auto" for _ in range(footer_columns))
             footer_rows = (FOCUS_FOOTER_ITEM_COUNT + footer_columns - 1) // footer_columns
+            readout_main_height = (
+                minimum_main_height - FOCUS_TASK_LIST_RECENT_RESERVE_ROWS
+                if wide and task_list_configured
+                else minimum_main_height
+            )
             readouts.styles.max_height = (
                 None
                 if not wide and height < FOCUS_FOOTER_MIN_HEIGHT
@@ -1543,7 +1549,7 @@ class DashboardApp(App[None]):
                     min(
                         FOCUS_SUMMARY_MAX_ROWS,
                         height
-                        - minimum_main_height
+                        - readout_main_height
                         - footer_rows
                         - FOCUS_ATTENTION_HEIGHT
                         - FOCUS_COMMAND_STATUS_ROWS
