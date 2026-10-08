@@ -250,7 +250,9 @@ class _ContextViewsScreen(ModalScreen[str]):
     #context-views-header { width: 100%; height: 1; }
     #context-views-title { width: 1fr; height: 1; color: $steel-blue; }
     #context-views-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
-    #focus-views-list { height: 1fr; border: none; background: $surface; }
+    #focus-views-list {
+        height: auto; max-height: 1fr; min-height: 0; border: none; background: $surface;
+    }
     #context-views-hint { height: 1; color: $secondary-text; }
     """
 
@@ -379,7 +381,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
     #workspace-help-header { width: 100%; height: 1; }
     #workspace-help-context { width: 1fr; height: 1; color: $steel-blue; }
     #workspace-help-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
-    #workspace-help-scroll { height: 1fr; }
+    #workspace-help-scroll { height: auto; max-height: 1fr; min-height: 0; }
     #workspace-help-copy { height: auto; color: $primary-text; }
     """
 
@@ -488,7 +490,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
     #command-history-title { width: 1fr; height: 1; color: $steel-blue; }
     #command-history-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
     #command-history-filter { width: 100%; height: 3; }
-    #command-history-scroll { height: 1fr; border: none; }
+    #command-history-scroll { height: auto; min-height: 0; border: none; }
     #command-history-copy { height: auto; padding: 0; }
     #command-history-page { height: 1; }
     #command-history-controls { height: 3; width: 100%; }
@@ -529,8 +531,26 @@ class _CommandHistoryScreen(ModalScreen[None]):
 
     async def on_mount(self) -> None:
         self._display_history()
+        self.call_after_refresh(self._limit_history_body, self.size.height)
         self._change_worker = self.run_worker(
             self._on_change(self._refresh), group=_COMMAND_HISTORY_WORKER
+        )
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.call_after_refresh(self._limit_history_body, event.size.height)
+
+    def _limit_history_body(self, viewport_height: int) -> None:
+        if not self.is_mounted:
+            return
+        frame = self.query_one("#command-history-frame")
+        body = self.query_one("#command-history-scroll", VerticalScroll)
+        fixed_height = sum(child.region.height for child in frame.children if child is not body)
+        body.styles.max_height = max(
+            0,
+            viewport_height
+            - frame.styles.margin.height
+            - frame.styles.gutter.height
+            - fixed_height,
         )
 
     def on_unmount(self) -> None:

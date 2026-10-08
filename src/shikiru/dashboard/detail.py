@@ -1183,12 +1183,21 @@ class TaskDetailPanel(Vertical):
         focused: Widget | None,
     ) -> None:
         if (
-            self._screen_is_active()
-            and focus_generation == self._body_focus_generation
-            and self.screen.focused is focused
-            and body.scroll_target_y == scroll_y
+            not self._screen_is_active()
+            or focus_generation != self._body_focus_generation
+            or self.screen.focused is not focused
+            or body.scroll_target_y != scroll_y
         ):
-            body.scroll_to(y=scroll_y, animate=False, immediate=True)
+            return
+        body.scroll_to(y=scroll_y, animate=False, immediate=True)
+        if (
+            focused is not None
+            and focused.is_mounted
+            and focused.display
+            and body in focused.ancestors
+            and not body.can_view_entire(focused)
+        ):
+            body.scroll_to_center(focused, animate=False)
 
     def _render_timeline(self, page: TaskTimelinePageView | None) -> None:
         self._timeline_page = page

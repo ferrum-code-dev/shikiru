@@ -1353,6 +1353,7 @@ async def _choose_focus_view(
         body_selector="#focus-views-list",
     )
     items = [item for item in view_list.children if isinstance(item, ListItem)]
+    assert view_list.region.height <= sum(item.region.height for item in items)
     selected = next(
         index
         for index, item in enumerate(items)
@@ -3525,8 +3526,15 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
             await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
             history_screen = app.screen
+            history_frame = history_screen.query_one("#command-history-frame")
+            history_controls = history_screen.query_one("#command-history-controls")
             history_copy = history_screen.query_one("#command-history-copy", Static)
             history_scroll = history_screen.query_one("#command-history-scroll", VerticalScroll)
+            _assert_command_history_controls_reachable(
+                app.screen,
+                history_frame,
+                history_controls,
+            )
             await _assert_popup_close_reachable(
                 history_screen,
                 close_selector="#command-history-close",
@@ -3536,8 +3544,6 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             page = cast("Static", history_screen.query_one("#command-history-page"))
             await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
             assert f"#{pending.id} · Pending" not in _rendered_text(history_copy)
-            assert history_scroll.max_scroll_y > 0
-
             await pilot.click("#command-history-next")
             await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
             next_button = history_screen.query_one("#command-history-next", Button)
@@ -3552,7 +3558,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             history_scroll.scroll_to(y=history_scroll.max_scroll_y, animate=False)
             await pilot.pause()
             scroll_before_refresh = history_scroll.scroll_y
-            assert scroll_before_refresh == history_scroll.max_scroll_y
+            assert scroll_before_refresh == history_scroll.max_scroll_y > 0
             focus_before_refresh = app.focused
 
             engine = database.connect()
@@ -3570,10 +3576,54 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             await pilot.pause()
             assert app.focused is focus_before_refresh
             assert history_scroll.scroll_y == history_scroll.max_scroll_y
-            await pilot.click("#command-history-close")
-            await wait_until(lambda: app.screen is home_screen, timeout=2)
+            await _resize_command_history_to_compact_and_close(
+                app,
+                pilot,
+                home_screen=home_screen,
+                frame=history_frame,
+                controls=history_controls,
+                scroll=history_scroll,
+            )
     finally:
         reader.close()
+
+
+async def _resize_command_history_to_compact_and_close(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    *,
+    home_screen: Widget,
+    frame: Widget,
+    controls: Widget,
+    scroll: VerticalScroll,
+) -> None:
+    await pilot.resize_terminal(*_COMPACT_HOME_SIZE)
+    await wait_until(
+        lambda: (
+            app.size == _COMPACT_HOME_SIZE
+            and frame.content_region.contains_region(controls.region)
+            and app.screen.region.contains_region(controls.region)
+        ),
+        timeout=2,
+    )
+    await _assert_popup_close_reachable(
+        app.screen,
+        close_selector="#command-history-close",
+        frame_selector="#command-history-frame",
+        body_selector="#command-history-scroll",
+    )
+    assert scroll.max_scroll_y > 0
+    assert await pilot.click("#command-history-close")
+    await wait_until(lambda: app.screen is home_screen, timeout=2)
+
+
+def _assert_command_history_controls_reachable(
+    screen: Widget,
+    frame: Widget,
+    controls: Widget,
+) -> None:
+    assert frame.content_region.contains_region(controls.region)
+    assert screen.region.contains_region(controls.region)
 
 
 @pytest.mark.parametrize("width", [36, 48])
@@ -4856,6 +4906,10 @@ async def test_project_fault_attention_without_faults_extension_opens_existing_h
                 lambda: bool(app.screen.query("#command-history-page")),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            history_screen = app.screen
+            history_scroll = history_screen.query_one("#command-history-scroll", VerticalScroll)
+            history_copy = history_screen.query_one("#command-history-copy", Static)
+            assert history_scroll.region.height <= history_copy.region.height
             assert queue.pending() == []
             assert reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == 0
             await pilot.press("escape")
@@ -4897,6 +4951,10 @@ async def test_stopped_project_attention_without_rows_opens_command_history(
                 lambda: bool(app.screen.query("#command-history-page")),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            history_screen = app.screen
+            history_scroll = history_screen.query_one("#command-history-scroll", VerticalScroll)
+            history_copy = history_screen.query_one("#command-history-copy", Static)
+            assert history_scroll.region.height <= history_copy.region.height
             assert queue.pending() == []
     finally:
         reader.close()
@@ -4966,7 +5024,18 @@ async def test_home_help_works_with_keyboard_without_color(
         async with app.run_test(size=size) as pilot:
             await pilot.press("?")
             await pilot.pause()
-            assert app.screen.query_one("#workspace-help-copy", Static).display
+            help_screen = app.screen
+            help_scroll = help_screen.query_one("#workspace-help-scroll", VerticalScroll)
+            help_copy = help_screen.query_one("#workspace-help-copy", Static)
+            assert help_copy.display
+            await _assert_popup_close_reachable(
+                help_screen,
+                close_selector="#workspace-help-close",
+                frame_selector="#workspace-help-frame",
+                body_selector="#workspace-help-scroll",
+            )
+            assert help_scroll.region.height < help_copy.region.height
+            _capture_task99(app, f"task115-help-{size[0]}x{size[1]}-color.svg")
             await pilot.press("escape")
             await pilot.pause()
             await pilot.press("?")
@@ -5027,6 +5096,9 @@ async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
                 frame_selector="#workspace-help-frame",
                 body_selector="#workspace-help-scroll",
             )
+            help_scroll = help_screen.query_one("#workspace-help-scroll", VerticalScroll)
+            help_copy = help_screen.query_one("#workspace-help-copy", Static)
+            assert help_scroll.region.height <= help_copy.region.height
             during_origins = _rendered_home_origins(app)
             assert during_origins == before_origins
             assert home_root.scroll_y == home_scroll_y

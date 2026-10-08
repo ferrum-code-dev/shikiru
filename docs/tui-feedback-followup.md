@@ -1,6 +1,6 @@
 # Phase 11 follow-up: real-project review
 
-Status: Task 113 was accepted at `5178286`, and Task 113a was accepted at `bad4ec5` with the revised HTML reference. Tasks 105–112 and their release evidence remain historical acceptance of the first delivery. Tasks 114–121 remain sequential follow-up work and must pass their own implementation and verification. This specification refines active presentation and interaction in Design 06 §5–6 and Focus, and integration failure handling in Design 03 §6. The operator's latest requests take precedence over conflicting prototype spacing and earlier interaction choices.
+Status: Task 113 was accepted at `5178286`, Task 113a was accepted at `e48b4e7` with the revised HTML reference, and Task 114 was accepted at `06b094c`. Task 115 is pending root review. Tasks 105–112 and their release evidence remain historical acceptance of the first delivery. Tasks 116–121 remain sequential follow-up work and must pass their own implementation and verification. This specification refines active presentation and interaction in Design 06 §5–6 and Focus, and integration failure handling in Design 03 §6. The operator's latest requests take precedence over conflicting prototype spacing and earlier interaction choices.
 
 ## Investigation and evidence
 
