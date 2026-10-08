@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"session-tool-error","model":"claude-haiku-4-5-20251001"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tool-error-1","name":"Bash"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-error-1","content":"report rejected","is_error":true}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"The report command returned an error."}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"The report command returned an error.","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}

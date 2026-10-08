@@ -31,7 +31,9 @@ class CheckResult:     name: str; ok: bool; detail: str
 @dataclass(frozen=True) class SessionStarted: session_id: str
 @dataclass(frozen=True) class Message:        text: str
 @dataclass(frozen=True) class ToolStarted:    name: str; detail: str
-@dataclass(frozen=True) class ToolFinished:   name: str
+class ToolOutcome(StrEnum): SUCCESS = auto(); FAILURE = auto()
+@dataclass(frozen=True) class ToolFinished:   name: str; outcome: ToolOutcome | None = None
+                                            exit_code: int | None = None
 @dataclass(frozen=True) class UsageReported:  usage: Usage                       # session totals
 @dataclass(frozen=True) class QuotaReported:  windows: tuple[QuotaWindow, ...]
 @dataclass(frozen=True) class Compacted:      pre_tokens: int | None; post_tokens: int | None
@@ -75,6 +77,15 @@ type AgentFactory = Callable[[AgentContext], Agent]   # entry-point target; vali
 def shikiru_command(*arguments: str) -> str: ...   # `<python> -P -m shikiru <arguments>` for this installation
 def module_command(module: str, *arguments: str) -> str: ...   # the same for a plugin's own module, e.g. a hook
 ```
+
+`ToolFinished.outcome` and `exit_code` are additive normalized facts. Plugins populate each only
+when the native result supplies it reliably; an absent value stays `None`, including older saved
+rows and third-party results. Codex command results retain their native exit code, where zero is
+success and any non-zero code is failure even if the item status says `completed`; an explicit
+`failed` status without an exit code still records failure. A `completed` status by itself does
+not establish command success. Claude tool results map an explicit native `is_error` boolean to
+success or failure and do not invent an exit code. A failed tool is not a `TurnFailed`: only a
+native turn failure or the existing process-exit-without-terminal path ends a turn.
 
 **Optional billing declaration capability.** Billing is separate from monetary basis: `Usage.cost_basis` remains `billed`, `api_equivalent` or `unknown`. A plugin may additionally implement this additive capability; it is not a required member of `Agent`, so existing third-party plugins continue to load:
 
@@ -176,7 +187,7 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 | `system/init` | `SessionStarted(session_id)` |
 | `assistant` text block | `Message` |
 | `assistant` `tool_use` block | `ToolStarted(name, input summary)` |
-| `user` `tool_result` block | `ToolFinished` |
+| `user` `tool_result` block | `ToolFinished`; an explicit `is_error` boolean supplies its outcome |
 | `system/compact_boundary` | `Compacted(compact_metadata.pre_tokens, post_tokens)` |
 | `rate_limit_event` | `QuotaReported` (`five_hour`, `seven_day`: utilization, `resetsAt`) |
 | `result`, not `is_error` | `UsageReported`, then `TurnEnded(result)` |
@@ -240,7 +251,7 @@ codex exec resume <thread_id> --json -m <m> -c model_reasoning_effort="<e>" <the
 |---|---|
 | `thread.started` | `SessionStarted(thread_id)` |
 | `item.completed` `agent_message` | `Message` |
-| `item.started` / `item.completed` for commands, file changes and MCP tool calls | `ToolStarted` / `ToolFinished` |
+| `item.started` / `item.completed` for commands, file changes and MCP tool calls | `ToolStarted` / `ToolFinished`; command exit codes supply outcome and exit code, an explicit failed status supplies failure, and completed without an exit code stays unknown |
 | `turn.completed` | `UsageReported`, then `TurnEnded(last agent_message)` |
 | `turn.failed`, `error` | `TurnFailed` |
 

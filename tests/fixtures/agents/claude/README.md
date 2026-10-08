@@ -37,8 +37,8 @@ usage increased by $0.01826925 for the attempt after its aggregate usage settled
 Claude Code's separate cost estimate had an unknown cost basis.
 
 The remaining `turn_*.jsonl` fixtures are synthetic protocol scenarios. They
-cover quota windows, list-priced usage, an unknown cost basis, rate limiting,
-credit exhaustion, and an unrecognised model. The quota-window fixture is not
+cover quota windows, list-priced usage, an unknown cost basis, explicit tool
+result errors, rate limiting, credit exhaustion, and an unrecognised model. The quota-window fixture is not
 evidence that subscription-style windows are emitted during API access; no
 genuine `rate_limit_event` capture is present. Their names describe stream
 behavior, not Shikiru access modes. The genuine OpenRouter capture reports

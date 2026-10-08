@@ -78,6 +78,12 @@ class NoReportStep(_StepModel):
     kind: Literal["no_report"] = "no_report"
 
 
+class FailedReportSubmissionStep(_StepModel):
+    """Submit invalid report JSON, record the command result, then remain silent."""
+
+    kind: Literal["failed_report_submission"] = "failed_report_submission"
+
+
 class FailStep(_StepModel):
     """Emit `TurnFailed` directly, without submitting a report."""
 
@@ -110,6 +116,7 @@ type TurnStep = (
     | ChangesRequestedStep
     | NeedsDecisionStep
     | NoReportStep
+    | FailedReportSubmissionStep
     | FailStep
     | CrashStep
     | StallStep

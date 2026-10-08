@@ -30,6 +30,7 @@ from shikiru.agents.contracts import (
     Rung,
     SessionStarted,
     ToolFinished,
+    ToolOutcome,
     ToolStarted,
     TurnEnded,
     TurnFailed,
@@ -78,6 +79,7 @@ _OPENROUTER_MODEL = "anthropic/claude-haiku-4-5"
 _OPENROUTER_LIVE_SESSION_ID = "session-openrouter-live-redacted"
 _OPENROUTER_LIVE_RESPONSE = "[redacted live response]"
 _OPENROUTER_REPORT_LIVE_SESSION_ID = "session-openrouter-report-live-redacted"
+_TOOL_ERROR_SESSION_ID = "session-tool-error"
 _OPENROUTER_REPORT_LIVE_RESPONSE = "[redacted live report response]"
 _SESSION_RESUMED = "session-resumed"
 _HOOK_SESSION = "session-hook-live-redacted"
@@ -306,15 +308,30 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     SessionStarted(_OPENROUTER_REPORT_LIVE_SESSION_ID),
                     Message(_OPENROUTER_REPORT_LIVE_RESPONSE),
                     ToolStarted("Read", '{"file_path":"[redacted scratch prompt path]"}'),
-                    ToolFinished("Read"),
+                    ToolFinished("Read", ToolOutcome.SUCCESS),
                     Message(_OPENROUTER_REPORT_LIVE_RESPONSE),
                     ToolStarted("Bash", '{"command":"[redacted shikiru report command]"}'),
-                    ToolFinished("Bash"),
+                    ToolFinished("Bash", ToolOutcome.SUCCESS),
                     Message(_OPENROUTER_REPORT_LIVE_RESPONSE),
                     UsageReported(openrouter_report_usage),
                     TurnEnded(_OPENROUTER_REPORT_LIVE_RESPONSE),
                 ],
                 session_id=_OPENROUTER_REPORT_LIVE_SESSION_ID,
+            ),
+            RecordedStream(
+                name="turn_tool_error.jsonl",
+                stdout=_FIXTURES_DIR / "turn_tool_error.jsonl",
+                stderr=empty_stderr,
+                exit_code=0,
+                expected_signals=[
+                    SessionStarted(_TOOL_ERROR_SESSION_ID),
+                    ToolStarted("Bash", ""),
+                    ToolFinished("Bash", ToolOutcome.FAILURE),
+                    Message("The report command returned an error."),
+                    UsageReported(Usage(10, 5, 0, 0, None, "unknown", None)),
+                    TurnEnded("The report command returned an error."),
+                ],
+                session_id=_TOOL_ERROR_SESSION_ID,
             ),
             RecordedStream(
                 name="turn_hook_stop_live_redacted.jsonl",

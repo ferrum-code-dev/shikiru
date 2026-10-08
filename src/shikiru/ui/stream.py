@@ -12,6 +12,7 @@ from shikiru.agents.contracts import (
     QuotaReported,
     SessionStarted,
     ToolFinished,
+    ToolOutcome,
     ToolStarted,
     TurnEnded,
     TurnFailed,
@@ -31,6 +32,10 @@ type ViewRow = Mapping[str, Any]
 _TOOL_GLYPH = "▸"
 _RUNG_SEPARATOR = ":"
 _EFFORT_SEPARATOR = "/"
+_DETAIL_SEPARATOR = " · "
+_OUTCOME_FIELD = "outcome"
+_EXIT_CODE_FIELD = "exit_code"
+_EXIT_LABEL = "exit"
 
 
 class UnknownViewSignalError(ValueError):
@@ -48,7 +53,7 @@ class StreamLine:
             SessionStarted.__name__: _session_started,
             Message.__name__: _message,
             ToolStarted.__name__: _tool_started,
-            ToolFinished.__name__: _silent,
+            ToolFinished.__name__: _tool_finished,
             UsageReported.__name__: _usage,
             QuotaReported.__name__: _silent,
             Compacted.__name__: _compacted,
@@ -98,6 +103,31 @@ def _message(row: ViewRow) -> Text:
 def _tool_started(row: ViewRow) -> Text:
     detail = f" {row['detail']}" if row["detail"] else ""
     return Text(f"{_TOOL_GLYPH} {row['name']}{detail}", style=IDLE_COLOR)
+
+
+def _tool_finished(row: ViewRow) -> Text | None:
+    outcome = row.get(_OUTCOME_FIELD)
+    exit_code = row.get(_EXIT_CODE_FIELD)
+    if (
+        outcome not in (ToolOutcome.SUCCESS.value, ToolOutcome.FAILURE.value)
+        and type(exit_code) is not int
+    ):
+        return None
+    details = [row["name"]]
+    if outcome in (ToolOutcome.SUCCESS.value, ToolOutcome.FAILURE.value):
+        details.append(outcome)
+    if type(exit_code) is int:
+        details.append(f"{_EXIT_LABEL} {exit_code}")
+    style = _tool_outcome_style(outcome)
+    return Text(f"{_TOOL_GLYPH} {_DETAIL_SEPARATOR.join(details)}", style=style)
+
+
+def _tool_outcome_style(outcome: object) -> str:
+    if outcome == ToolOutcome.FAILURE.value:
+        return ALERT_COLOR
+    if outcome == ToolOutcome.SUCCESS.value:
+        return IDLE_COLOR
+    return STYLE_DIM
 
 
 def _usage(row: ViewRow) -> Text:

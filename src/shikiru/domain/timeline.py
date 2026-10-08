@@ -55,6 +55,12 @@ MALFORMED_SIGNAL_SUMMARY = "Malformed normalized signal evidence"
 MISSING_SIGNAL_SUMMARY = "Normalized signal evidence is unavailable"
 MISSING_TIMESTAMP = "recorded timestamp is missing"
 TIMELINE_JSON_INDENT = 2
+_TOOL_FINISHED_SIGNAL = "ToolFinished"
+_OUTCOME_FIELD = "outcome"
+_EXIT_CODE_FIELD = "exit_code"
+_SUCCESS_OUTCOME = "success"
+_FAILURE_OUTCOME = "failure"
+_SUMMARY_SEPARATOR = " · "
 
 
 @dataclass(frozen=True)
@@ -119,6 +125,9 @@ def parse_signal_row(
     signal = data.get("signal")
     timestamp, timestamp_error = _timestamp(data.get("ts"))
     signal_name = signal if isinstance(signal, str) else None
+    summary = signal_name or MISSING_SIGNAL_SUMMARY
+    if signal_name == _TOOL_FINISHED_SIGNAL:
+        summary = _tool_finished_summary(data)
     return ParsedSignal(
         role=role,
         turn=turn if isinstance(turn, str) else None,
@@ -126,12 +135,23 @@ def parse_signal_row(
         category=signal_category(signal_name),
         timestamp=timestamp,
         timestamp_error=timestamp_error,
-        summary=signal_name or MISSING_SIGNAL_SUMMARY,
+        summary=summary,
         detail=json.dumps(data, ensure_ascii=False, sort_keys=True, indent=TIMELINE_JSON_INDENT),
         start_offset=start_offset,
         end_offset=end_offset,
         incomplete=incomplete,
     )
+
+
+def _tool_finished_summary(data: dict[str, object]) -> str:
+    values = [_TOOL_FINISHED_SIGNAL]
+    outcome = data.get(_OUTCOME_FIELD)
+    if isinstance(outcome, str) and outcome in (_SUCCESS_OUTCOME, _FAILURE_OUTCOME):
+        values.append(outcome)
+    exit_code = data.get(_EXIT_CODE_FIELD)
+    if type(exit_code) is int:
+        values.append(f"exit {exit_code}")
+    return _SUMMARY_SEPARATOR.join(values)
 
 
 def signal_category(signal: str | None) -> str:

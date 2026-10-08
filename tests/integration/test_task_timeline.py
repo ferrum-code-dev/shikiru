@@ -78,6 +78,7 @@ TIMELINE_CATEGORY_ALL = "all"
 TIMELINE_CATEGORY_TOOL = "tool"
 TIMELINE_CATEGORY_EVIDENCE = "evidence"
 TIMELINE_CATEGORY_TRANSITION = "transition"
+FAILED_COMMAND_EXIT_CODE = 2
 
 
 async def _open_timeline_view(panel: TaskDetailPanel, pilot: Pilot[None]) -> None:
@@ -293,7 +294,14 @@ async def test_timeline_filters_roles_turns_categories_and_missing_files(
     signal_path = run_dir(project_root, task.id) / Role.IMPLEMENTER.value / "view.jsonl"
     signal_path.parent.mkdir(parents=True)
     signals = (
-        {"ts": clock.now().isoformat(), "turn": TIMELINE_TURN, "signal": "ToolFinished"},
+        {
+            "ts": clock.now().isoformat(),
+            "turn": TIMELINE_TURN,
+            "signal": "ToolFinished",
+            "name": "shikiru report",
+            "outcome": "failure",
+            "exit_code": FAILED_COMMAND_EXIT_CODE,
+        },
         {"ts": clock.now().isoformat(), "turn": "turn-other", "signal": "Message"},
         {"ts": clock.now().isoformat(), "turn": TIMELINE_TURN, "signal": "TurnFailed"},
     )
@@ -338,6 +346,8 @@ async def test_timeline_filters_roles_turns_categories_and_missing_files(
     assert tool_page is not None
     assert [entry.identity for entry in tool_page.entries] == ["signal:implementer:0"]
     assert all(entry.category == TIMELINE_CATEGORY_TOOL for entry in tool_page.entries)
+    assert "failure" in tool_page.entries[0].summary
+    assert f"exit {FAILED_COMMAND_EXIT_CODE}" in tool_page.entries[0].summary
     assert transition_page is not None
     assert {entry.identity for entry in transition_page.entries if entry.event_id is not None} == {
         f"engine:{event.id}"

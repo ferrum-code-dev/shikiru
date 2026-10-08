@@ -5,16 +5,18 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import fcntl
+import json
 import logging
 import stat
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from shikiru.agents.contracts import Rung
+from shikiru.agents.contracts import Rung, role_dir
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import (
     LoggingConfig,
@@ -40,6 +42,7 @@ from shikiru.domain.commands import (
 )
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import (
     Counters,
@@ -68,9 +71,11 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.decorator import PANE_COLOR_OPTION
 from shikiru.tmux.session import SessionView
+from shikiru.ui.stream import StreamLine
 from shikiru.ui.tokens import HOLD_COLOR, OPERATOR_COLOR
-from shikiru.view_log import CLI_VIEW_COMMAND
+from shikiru.view_log import CLI_VIEW_COMMAND, view_log_path
 from shikiru.workspace.github import GitHub, PullRequestState
+from shikiru.workspace.reports import load_turn_report
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
 from tests.support.engine import (
@@ -106,6 +111,7 @@ _RESPAWN_PANE = "respawn-pane"
 _READ_ONLY_DIRECTORY = 0o500
 _WRITABLE_DIRECTORY = 0o700
 _SECOND_RUNG = Rung(agent="fake", model="fake-2", effort=None)
+_FAILED_REPORT_EXIT_CODE = 2
 
 
 @dataclass(frozen=True)
@@ -1069,6 +1075,183 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
         assert resumed is not None
         assert resumed.id == run.id
         assert resumed.session_id == session_id
+    finally:
+        if not engine_task.done():
+            engine_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await engine_task
+        connection.close()
+
+
+def _failed_report_row(signal_path: Path) -> dict[str, Any] | None:
+    if not signal_path.is_file():
+        return None
+    rows = [json.loads(line) for line in signal_path.read_text().splitlines()]
+    return next(
+        (
+            row
+            for row in rows
+            if row.get("signal") == "ToolFinished"
+            and row.get("outcome") == "failure"
+            and row.get("exit_code") == _FAILED_REPORT_EXIT_CODE
+        ),
+        None,
+    )
+
+
+async def _assert_failed_report_is_live(
+    *,
+    tmp_path: Path,
+    task_id: str,
+    other_id: str,
+    role_path: Path,
+    other_role_path: Path,
+    signal_path: Path,
+    tasks: TaskStore,
+    events: EventLog,
+) -> tuple[dict[str, Any], Path]:
+    await wait_until(lambda: _failed_report_row(signal_path) is not None, timeout=10)
+    failed_row = _failed_report_row(signal_path)
+    assert failed_row is not None
+    failed_turn = failed_row["turn"]
+    failed_turn_dir = run_dir(tmp_path, task_id) / "turns" / failed_turn
+    assert not (failed_turn_dir / REPORT_FILENAME).exists()
+    assert (role_path / "turn.pid").is_file()
+    assert (other_role_path / "turn.pid").is_file()
+    assert _required_task(tasks, task_id).status is Status.RUNNING
+    assert _required_task(tasks, other_id).status is Status.RUNNING
+    assert not any(
+        event.kind is EventKind.TURN_FAILED for event in events.since(0, task_id=task_id)
+    )
+    assert not any(event.kind is EventKind.NUDGE for event in events.since(0, task_id=task_id))
+    failure_view = StreamLine(Role.IMPLEMENTER).render(failed_row)[-1].plain
+    assert "failure" in failure_view
+    assert f"exit {_FAILED_REPORT_EXIT_CODE}" in failure_view
+    assert str(failed_turn_dir) not in failure_view
+    return failed_row, failed_turn_dir
+
+
+async def _assert_targeted_takeover(
+    *,
+    task_id: str,
+    other_id: str,
+    run: Run,
+    session_id: str,
+    failed_row: dict[str, Any],
+    settings: Any,
+    tasks: TaskStore,
+    runs: RunStore,
+    queue: CommandQueue,
+    clock: FakeClock,
+) -> None:
+    takeover = await _append_and_wait(
+        TakeOver(task_id=task_id, role=Role.IMPLEMENTER), queue, clock
+    )
+    assert takeover.status is CommandStatus.DONE
+    assert Hold.INTERVENTION in _required_task(tasks, task_id).holds
+    assert Hold.INTERVENTION not in _required_task(tasks, other_id).holds
+    taken_run = runs.get_taken_over(task_id, Role.IMPLEMENTER)
+    assert taken_run is not None
+    assert taken_run.id == run.id
+    assert taken_run.session_id == session_id
+    failed_at = datetime.fromisoformat(failed_row["ts"])
+    assert clock.now() < failed_at + timedelta(seconds=settings.orchestration.timeouts.stall)
+
+
+async def _assert_same_session_handback(
+    *,
+    task_id: str,
+    role_path: Path,
+    run: Run,
+    session_id: str,
+    failed_turn_dir: Path,
+    runs: RunStore,
+    queue: CommandQueue,
+    clock: FakeClock,
+) -> None:
+    handed_back = await _append_and_wait(
+        HandBack(task_id=task_id, role=Role.IMPLEMENTER), queue, clock
+    )
+    assert handed_back.status is CommandStatus.DONE
+    current_turn = role_path / CURRENT_TURN_LINK_NAME
+
+    async def resumed_report_is_valid() -> bool:
+        return current_turn.is_symlink() and load_turn_report(current_turn.resolve()) is not None
+
+    await wait_until(resumed_report_is_valid, timeout=10)
+    resumed = runs.get_live(task_id, Role.IMPLEMENTER)
+    assert resumed is not None
+    assert resumed.id == run.id
+    assert resumed.session_id == session_id
+    assert current_turn.resolve() != failed_turn_dir
+
+
+async def test_failed_report_command_stays_live_until_targeted_takeover_and_same_session_handback(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(tmp_path)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "failed_report_submission"}])
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    runs = RunStore(connection, clock)
+    events = EventLog(connection, clock)
+    queue = CommandQueue(connection, clock)
+    engine_task = asyncio.create_task(engine.run())
+    try:
+        task_id = await _submit(
+            Submit(title="failed report", request="failed report", mode=Mode.IMPLEMENT),
+            queue,
+            clock,
+        )
+        other_id = await _submit(
+            Submit(title="other task", request="other task", mode=Mode.IMPLEMENT),
+            queue,
+            clock,
+        )
+        run = await _wait_for_session(runs, clock, task_id)
+        await _wait_for_session(runs, clock, other_id)
+        session_id = run.session_id
+        assert session_id is not None
+        role_path = role_dir(run_dir(tmp_path, task_id), Role.IMPLEMENTER.value)
+        other_role_path = role_dir(run_dir(tmp_path, other_id), Role.IMPLEMENTER.value)
+        signal_path = view_log_path(run_dir(tmp_path, task_id), Role.IMPLEMENTER.value)
+        failed_row, failed_turn_dir = await _assert_failed_report_is_live(
+            tmp_path=tmp_path,
+            task_id=task_id,
+            other_id=other_id,
+            role_path=role_path,
+            other_role_path=other_role_path,
+            signal_path=signal_path,
+            tasks=tasks,
+            events=events,
+        )
+        await _assert_targeted_takeover(
+            task_id=task_id,
+            other_id=other_id,
+            run=run,
+            session_id=session_id,
+            failed_row=failed_row,
+            settings=settings,
+            tasks=tasks,
+            runs=runs,
+            queue=queue,
+            clock=clock,
+        )
+        await _assert_same_session_handback(
+            task_id=task_id,
+            role_path=role_path,
+            run=run,
+            session_id=session_id,
+            failed_turn_dir=failed_turn_dir,
+            runs=runs,
+            queue=queue,
+            clock=clock,
+        )
     finally:
         if not engine_task.done():
             engine_task.cancel()

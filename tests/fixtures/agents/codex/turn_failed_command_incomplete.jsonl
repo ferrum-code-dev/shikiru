@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"session-failed-command-incomplete"}
+{"type":"item.started","item":{"type":"command_execution","id":"item-failed","status":"in_progress"}}
+{"type":"item.completed","item":{"type":"command_execution","id":"item-failed","status":"failed","exit_code":2}}

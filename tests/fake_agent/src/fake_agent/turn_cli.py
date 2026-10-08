@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,6 +14,7 @@ from typing import TYPE_CHECKING
 from fake_agent.script import (
     AcceptStep,
     CrashStep,
+    FailedReportSubmissionStep,
     FailStep,
     NoReportStep,
     Script,
@@ -44,7 +46,7 @@ from fake_agent.turns import (
     THRESHOLD_REACHED_EVENT,
     WORK_CONTEXT_USAGE_PERCENT,
 )
-from shikiru.agents.contracts import role_dir
+from shikiru.agents.contracts import ToolOutcome, role_dir, shikiru_command
 from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 
@@ -70,6 +72,7 @@ _PROMPT_ARGUMENT = "--prompt"
 _MODEL_ARGUMENT = "--model"
 _EFFORT_ARGUMENT = "--effort"
 _WAIT_PROMPT = "wait for the next instruction"
+_REPORT_COMMAND_TIMEOUT_SECONDS = 10.0
 CRASH_STDERR = "fake agent crashed as scripted"
 _INPUT_TOKENS_FIELD = "input_tokens"
 _OUTPUT_TOKENS_FIELD = "output_tokens"
@@ -78,6 +81,8 @@ _CACHE_WRITE_TOKENS_FIELD = "cache_write_tokens"
 _COST_USD_FIELD = "cost_usd"
 _COST_BASIS_FIELD = "cost_basis"
 _CONTEXT_USED_PCT_FIELD = "context_used_pct"
+_REPORT_DRAFT_FILENAME = "report.draft.json"
+_INVALID_REPORT_JSON = "{"
 
 
 def _emit(entry: Mapping[str, object]) -> None:
@@ -144,6 +149,27 @@ async def _report(context: ScriptContext, step: TurnStep, prompt: str, current_t
         await asyncio.Event().wait()
 
 
+async def _failed_report_submission(context: ScriptContext, current_turn: Path) -> None:
+    draft_path = current_turn / _REPORT_DRAFT_FILENAME
+    await asyncio.to_thread(draft_path.write_text, _INVALID_REPORT_JSON)
+    _emit({"event": _EVENT_TOOL_STARTED, "name": _REPORT_TOOL_NAME, "detail": _REPORT_TOOL_DETAIL})
+    result = await context.runner.run(
+        shlex.split(shikiru_command("report", "--file", str(draft_path))),
+        timeout=_REPORT_COMMAND_TIMEOUT_SECONDS,
+        cwd=context.cwd,
+    )
+    outcome = ToolOutcome.SUCCESS if result.returncode == 0 else ToolOutcome.FAILURE
+    _emit(
+        {
+            "event": _EVENT_TOOL_FINISHED,
+            "name": _REPORT_TOOL_NAME,
+            "outcome": outcome.value,
+            "exit_code": result.returncode,
+        }
+    )
+    await asyncio.Event().wait()
+
+
 async def _run_turn(session_id: str, prompt: str, compact_at_pct: float | None) -> int:
     context = build_context()
     state = load_session_state(context.state_path)
@@ -183,7 +209,10 @@ async def _run_turn(session_id: str, prompt: str, compact_at_pct: float | None) 
     _emit({"event": _EVENT_MESSAGE, "text": response})
     current_turn = role_dir(context.run_dir, context.role) / CURRENT_TURN_LINK_NAME
     if current_turn.is_symlink() and not isinstance(step, NoReportStep):
-        await _report(context, step, prompt, current_turn)
+        if isinstance(step, FailedReportSubmissionStep):
+            await _failed_report_submission(context, current_turn)
+        else:
+            await _report(context, step, prompt, current_turn)
     state[_INPUT_TOKENS_FIELD] = int(state[_INPUT_TOKENS_FIELD]) + INPUT_TOKENS_PER_TURN
     state[_OUTPUT_TOKENS_FIELD] = int(state[_OUTPUT_TOKENS_FIELD]) + OUTPUT_TOKENS_PER_TURN
     state[_CACHE_READ_TOKENS_FIELD] = (

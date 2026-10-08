@@ -57,3 +57,10 @@ key evidence, not a direct OpenAI API-key sample.
 No genuine headless usage-limit failure or direct OpenAI API-key turn was
 available. Error-classification cases and null-rate-limit handling remain
 synthetic offline coverage for those cases.
+
+`turn_tool_outcomes.jsonl` and `turn_failed_command_incomplete.jsonl` are
+synthetic protocol replays based on the observed Codex command item fields. They
+cover `status: failed` with exit code 2, a `completed` item with a non-zero exit
+code, older completed items without an exit code, a successful command, and a
+stream that exits without a terminal turn event. They are not captured T-35
+transcripts.

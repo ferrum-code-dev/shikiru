@@ -16,6 +16,7 @@ from shikiru.agents.contracts import (
     QuotaWindow,
     SessionStarted,
     ToolFinished,
+    ToolOutcome,
     ToolStarted,
     TurnEnded,
     TurnFailed,
@@ -64,6 +65,9 @@ _ITEM_COMPLETED = "item.completed"
 _ITEM_FIELD = "item"
 _ITEM_ID_FIELD = "id"
 _ITEM_TYPE_FIELD = "type"
+_ITEM_STATUS_FIELD = "status"
+_EXIT_CODE_FIELD = "exit_code"
+_FAILED_STATUS = "failed"
 _AGENT_MESSAGE_TYPE = "agent_message"
 _MESSAGE_TEXT_FIELD = "text"
 _TURN_COMPLETED = "turn.completed"
@@ -117,6 +121,7 @@ _COMMAND_TOOL_NAME = "command"
 _FILE_CHANGE_TOOL_NAME = "file_change"
 _MCP_TOOL_NAME = "mcp_tool"
 _ZERO_TOKENS = 0
+_ZERO_EXIT_CODE = 0
 _UNKNOWN_COST = "unknown"
 
 
@@ -272,7 +277,12 @@ class CodexTurnParser:
         if isinstance(item_id, str):
             name = self._tools.pop(item_id, None)
             if name is not None:
-                signals.append(ToolFinished(name))
+                item_type = item.get(_ITEM_TYPE_FIELD)
+                exit_code = (
+                    _command_exit_code(item) if item_type == _COMMAND_EXECUTION_TYPE else None
+                )
+                outcome = _tool_outcome(item.get(_ITEM_STATUS_FIELD), exit_code)
+                signals.append(ToolFinished(name, outcome, exit_code))
         if item.get(_ITEM_TYPE_FIELD) == _AGENT_MESSAGE_TYPE:
             text = item.get(_MESSAGE_TEXT_FIELD)
             if isinstance(text, str):
@@ -654,6 +664,19 @@ def _tool_detail(item: Mapping[str, Any]) -> str:
     if isinstance(value, str):
         return value
     return ""
+
+
+def _command_exit_code(item: Mapping[str, Any]) -> int | None:
+    value = item.get(_EXIT_CODE_FIELD)
+    return value if type(value) is int else None
+
+
+def _tool_outcome(status: object, exit_code: int | None) -> ToolOutcome | None:
+    if status == _FAILED_STATUS:
+        return ToolOutcome.FAILURE
+    if exit_code is None:
+        return None
+    return ToolOutcome.SUCCESS if exit_code == _ZERO_EXIT_CODE else ToolOutcome.FAILURE
 
 
 def _unique_paths(paths: Sequence[Path | None]) -> tuple[Path, ...]:

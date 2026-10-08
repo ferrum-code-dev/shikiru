@@ -30,6 +30,7 @@ from shikiru.agents.contracts import (
     Rung,
     SessionStarted,
     ToolFinished,
+    ToolOutcome,
     ToolStarted,
     TurnEnded,
     TurnFailed,
@@ -140,6 +141,9 @@ _CODEX_ENV_CAPTURE = "SHIKIRU_CODEX_ENV_CAPTURE"
 _CODEX_BUNDLED_MODELS_JSON_ENV = "SHIKIRU_CODEX_BUNDLED_MODELS_JSON"
 _CODEX_BUNDLED_MODELS_EXIT_CODE_ENV = "SHIKIRU_CODEX_BUNDLED_MODELS_EXIT_CODE"
 _FAKE_TURN_SESSION_ID = "bundled-catalog-session"
+_TOOL_OUTCOMES_SESSION_ID = "session-tool-outcomes"
+_FAILED_COMMAND_EXIT_CODE = 2
+_COMPLETED_NONZERO_COMMAND_EXIT_CODE = 7
 _SYNTHETIC_OPENAI_KEY = "synthetic-openai-key"
 _SYNTHETIC_CODEX_KEY = "synthetic-codex-key"
 _SYNTHETIC_PROVIDER_KEY = "synthetic-provider-key"
@@ -156,11 +160,11 @@ _FIRST_SIGNALS = [
     SessionStarted(_SESSION_FIRST),
     Message("Working on the change."),
     ToolStarted("command", ""),
-    ToolFinished("command"),
+    ToolFinished("command", ToolOutcome.SUCCESS, 0),
     ToolStarted("file_change", ""),
     ToolFinished("file_change"),
     ToolStarted("command", ""),
-    ToolFinished("command"),
+    ToolFinished("command", ToolOutcome.SUCCESS, 0),
     Message("Change committed."),
     QuotaReported(
         (
@@ -175,11 +179,11 @@ _RESUMED_SIGNALS = [
     SessionStarted(_SESSION_RESUMED),
     Message("Working on the change."),
     ToolStarted("command", ""),
-    ToolFinished("command"),
+    ToolFinished("command", ToolOutcome.SUCCESS, 0),
     ToolStarted("file_change", ""),
     ToolFinished("file_change"),
     ToolStarted("command", ""),
-    ToolFinished("command"),
+    ToolFinished("command", ToolOutcome.SUCCESS, 0),
     Message("Change committed."),
     QuotaReported(
         (
@@ -205,7 +209,7 @@ _MIDTURN_SIGNALS = [
         for part in _MIDTURN_PARTS
         for signal in (
             ToolStarted("command", f"cat [redacted]/part{part}.txt"),
-            ToolFinished("command"),
+            ToolFinished("command", ToolOutcome.SUCCESS, 0),
             Message(f"part{part}.txt ends at line 400."),
         )
     ),
@@ -321,6 +325,25 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 expected_signals=_MIDTURN_SIGNALS,
             ),
             _record(
+                "turn_tool_outcomes.jsonl",
+                None,
+                session_id=_TOOL_OUTCOMES_SESSION_ID,
+                expected_signals=[
+                    SessionStarted(_TOOL_OUTCOMES_SESSION_ID),
+                    ToolStarted("command", ""),
+                    ToolFinished("command", ToolOutcome.FAILURE, _FAILED_COMMAND_EXIT_CODE),
+                    ToolStarted("command", ""),
+                    ToolFinished(
+                        "command", ToolOutcome.FAILURE, _COMPLETED_NONZERO_COMMAND_EXIT_CODE
+                    ),
+                    ToolStarted("command", ""),
+                    ToolFinished("command"),
+                    ToolStarted("command", ""),
+                    ToolFinished("command", ToolOutcome.SUCCESS, 0),
+                    TurnEnded(""),
+                ],
+            ),
+            _record(
                 "turn_openrouter_live_redacted.jsonl",
                 "rollout_openrouter_live_redacted.jsonl",
                 session_id=_SESSION_OPENROUTER_LIVE,
@@ -371,6 +394,35 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
     def error_streams(self) -> Sequence[RecordedStream]:
         return []
+
+    def test_failed_command_does_not_end_an_incomplete_native_stream(self, tmp_path: Path) -> None:
+        home = tmp_path / "codex-home"
+        home.mkdir()
+        clock = FakeClock(_SAMPLE_NOW)
+        parser = CodexTurnParser(
+            session_id=None,
+            initial_usage=None,
+            home=home,
+            clock=clock,
+            reset_time=ResetTimeParser(clock),
+        )
+        fixture = _FIXTURES_DIR / "turn_failed_command_incomplete.jsonl"
+
+        signals = [
+            signal
+            for line in fixture.read_text(encoding="utf-8").splitlines()
+            for signal in parser.feed(line)
+        ]
+
+        [failed_tool] = [signal for signal in signals if isinstance(signal, ToolFinished)]
+        assert failed_tool.outcome is ToolOutcome.FAILURE
+        assert failed_tool.exit_code == _FAILED_COMMAND_EXIT_CODE
+        assert not any(isinstance(signal, TurnFailed) for signal in signals)
+
+        terminal = parser.finish(0, "")
+
+        [failure] = [signal for signal in terminal if isinstance(signal, TurnFailed)]
+        assert failure.kind is FailureKind.UNKNOWN
 
     def invocation_cases(self, tmp_path: Path) -> Sequence[InvocationCase]:
         new_spec = self.build_spec(tmp_path / "new", resume_session_id=None)

@@ -1,0 +1,10 @@
+{"type":"thread.started","thread_id":"session-tool-outcomes"}
+{"type":"item.started","item":{"type":"command_execution","id":"item-failed","status":"in_progress"}}
+{"type":"item.completed","item":{"type":"command_execution","id":"item-failed","status":"failed","exit_code":2}}
+{"type":"item.started","item":{"type":"command_execution","id":"item-completed-nonzero","status":"in_progress"}}
+{"type":"item.completed","item":{"type":"command_execution","id":"item-completed-nonzero","status":"completed","exit_code":7}}
+{"type":"item.started","item":{"type":"command_execution","id":"item-older","status":"in_progress"}}
+{"type":"item.completed","item":{"type":"command_execution","id":"item-older","status":"completed"}}
+{"type":"item.started","item":{"type":"command_execution","id":"item-success","status":"in_progress"}}
+{"type":"item.completed","item":{"type":"command_execution","id":"item-success","status":"completed","exit_code":0}}
+{"type":"turn.completed"}

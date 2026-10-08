@@ -20,6 +20,7 @@ from shikiru.agents.contracts import (
     QuotaWindow,
     SessionStarted,
     ToolFinished,
+    ToolOutcome,
     ToolStarted,
     TurnEnded,
     TurnFailed,
@@ -119,7 +120,9 @@ def _tool_started(entry: Mapping[str, Any]) -> AgentSignal:
 
 
 def _tool_finished(entry: Mapping[str, Any]) -> AgentSignal:
-    return ToolFinished(entry["name"])
+    outcome = ToolOutcome(entry["outcome"]) if "outcome" in entry else None
+    exit_code = entry.get("exit_code", None)
+    return ToolFinished(entry["name"], outcome, exit_code)
 
 
 def _usage_reported(entry: Mapping[str, Any]) -> AgentSignal:

@@ -19,6 +19,7 @@ from shikiru.agents.contracts import (
     QuotaWindow,
     SessionStarted,
     ToolFinished,
+    ToolOutcome,
     ToolStarted,
     TurnEnded,
     TurnFailed,
@@ -328,7 +329,15 @@ class ClaudeTurnParser:
                 if tool_id in self._tool_ids:
                     self._tool_ids.remove(tool_id)
                 if name is not None:
-                    signals.append(ToolFinished(name))
+                    is_error = item.get(_IS_ERROR_FIELD)
+                    outcome = (
+                        ToolOutcome.FAILURE
+                        if is_error is True
+                        else ToolOutcome.SUCCESS
+                        if is_error is False
+                        else None
+                    )
+                    signals.append(ToolFinished(name, outcome))
         return signals
 
     def _rate_limit(self, payload: Mapping[str, Any]) -> list[AgentSignal]:

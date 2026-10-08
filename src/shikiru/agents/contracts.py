@@ -172,11 +172,20 @@ class ToolStarted:
     detail: str
 
 
+class ToolOutcome(StrEnum):
+    """A tool result the agent can reliably classify as successful or failed."""
+
+    SUCCESS = auto()
+    FAILURE = auto()
+
+
 @dataclass(frozen=True)
 class ToolFinished:
     """A named agent tool finished."""
 
     name: str
+    outcome: ToolOutcome | None = None
+    exit_code: int | None = None
 
 
 @dataclass(frozen=True)
