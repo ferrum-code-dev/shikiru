@@ -186,7 +186,7 @@ layers = [
   "(shikiru.domain)",
   "(shikiru.config) : (shikiru.agents.contracts) : (shikiru.agents.sdk)",
   "shikiru.process | shikiru.clock",
-  "shikiru.errors",
+  "shikiru.errors | shikiru.palette",
 ]
 
 [[tool.importlinter.contracts]]
@@ -228,6 +228,7 @@ forbidden_modules = [
   "shikiru.mcp",
   "shikiru.operator",
   "shikiru.paths",
+  "shikiru.palette",
   "shikiru.plugins.agents",
   "shikiru.private",
   "shikiru.process",
@@ -261,6 +262,7 @@ forbidden_modules = [
   "shikiru.domain",
   "shikiru.config",
   "shikiru.paths",
+  "shikiru.palette",
   "shikiru.private",
   "shikiru.view_log",
   "shikiru.__main__",

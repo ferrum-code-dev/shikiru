@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.errors import ConfigError
+from shikiru.palette import PRIMARY_TEXT_COLOR, SELECTED_SURFACE_COLOR, SURFACE_COLOR
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -16,12 +17,17 @@ PANE_GLYPH_OPTION = "@shk_glyph"
 WINDOW_STATE_COLOR_OPTION = "@shk_state_color"
 WINDOW_STATE_GLYPH_OPTION = "@shk_state_glyph"
 
-PANE_BORDER_FORMAT = f" #[fg=#{{{PANE_COLOR_OPTION}}}]#{{{PANE_GLYPH_OPTION}}} #{{pane_title}} "
+PANE_BORDER_FORMAT = f"#[fg={PRIMARY_TEXT_COLOR},bg={SURFACE_COLOR}] #{{pane_title}} #[default]"
 WINDOW_STATUS_FORMAT = (
-    f" #[fg=#{{{WINDOW_STATE_COLOR_OPTION}}}]#{{{WINDOW_STATE_GLYPH_OPTION}}} #{{window_name}} "
+    f"#[fg=#{{{WINDOW_STATE_COLOR_OPTION}}},bg={SURFACE_COLOR}] "
+    f"#{{{WINDOW_STATE_GLYPH_OPTION}}} "
+    f"#[fg={PRIMARY_TEXT_COLOR},bg={SURFACE_COLOR}]#{{window_name}} #[default]"
 )
 WINDOW_STATUS_CURRENT_FORMAT = (
-    f"[#[fg=#{{{WINDOW_STATE_COLOR_OPTION}}}]#{{{WINDOW_STATE_GLYPH_OPTION}}} #{{window_name}}]"
+    f"#[fg={PRIMARY_TEXT_COLOR},bg={SELECTED_SURFACE_COLOR},bold]["
+    f"#[fg=#{{{WINDOW_STATE_COLOR_OPTION}}},bg={SELECTED_SURFACE_COLOR}]"
+    f"#{{{WINDOW_STATE_GLYPH_OPTION}}} "
+    f"#[fg={PRIMARY_TEXT_COLOR},bg={SELECTED_SURFACE_COLOR}]#{{window_name}} ]#[default]"
 )
 
 _PANE_BORDER_FORMAT_OPTION = "pane-border-format"

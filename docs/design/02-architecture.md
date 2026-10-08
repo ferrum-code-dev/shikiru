@@ -57,9 +57,9 @@ workspace · tmux · prompts · helper · ui · telemetry · agents.registry
 store
 domain
 config · agents.contracts · agents.sdk
-errors                                      lowest; no internal imports
 process                                     imports errors
 clock                                       no internal imports
+palette · errors                            lowest; no internal imports; palette shares semantic colors
 ───────────────────────────────────────────
 plugins.agents.*  → agents.contracts, agents.sdk, process, clock, errors only; loaded by agents.registry from bootstrap
 plugins.widgets.* → dashboard.contract, ui only (all data arrives as view models through WidgetContext, 06 §5.4); enforced as an exact whitelist
@@ -67,6 +67,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 
 | Package | Responsibility | Key types |
 |---|---|---|
+| `palette` | Shared semantic color values for dashboard and terminal surfaces; no internal imports | Surface, text, border and state colors |
 | `errors` | Error hierarchy with exit codes | `ShikiruError`, `ConfigError`, … |
 | `process` | The only subprocess gateway: argv lists, timeouts, typed errors from `errors`, async; `spawn` for long-running processes with stdin closed, line-streamed stdout and terminate; every `run` leads its own process group, which is SIGKILLed on a timeout or cancellation, one arriving while the process is still being started included, so no descendant (hook, MCP server) leaks; `run` can also stop gracefully on cancel, which mutating git calls do, so a cancelled call leaves neither a lock nor a running hook | `SubprocessRunner`, `CommandFailed` |
 | `clock` | Injectable time for every timer | `Clock`, `SystemClock` |
@@ -81,7 +82,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `tmux` | tmux client; session, windows, layout; pane decorations; pane respawn and liveness | `Tmux`, `SessionView`, `LayoutBuilder`, `PaneDecorator` |
 | `prompts` | Jinja2 templates (packaged, overridable) | `PromptRenderer` |
 | `helper` | Joshu calls | `Helper` |
-| `ui` | Semantic colors, Textual theme and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.theme`, `ui.glyphs`, `ui.compact`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
+| `ui` | Semantic role/state mapping, Textual theme and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.theme`, `ui.glyphs`, `ui.compact`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
 | `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
 | `engine` | Orchestration (below) | — |
 | `operator` | Use cases for interfaces; current task-action and escalation-resolution applicability and disabled reasons; bounded task-target search, command history/status and task-evidence pages over SQL events and recorded normalized signal files; paginated read-only evidence export with an injected atomic local file writer; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `TaskEvidenceExporter`, `LocalEvidenceWriter`, `EventFeed`, `detectors` |
@@ -146,7 +147,7 @@ Tasks 93–94 shipped Focus Home and the shared compact task-detail composition 
 ```
 pyproject.toml
 src/shikiru/
-  bootstrap.py  process.py  clock.py  errors.py  paths.py  private.py  view_log.py  __main__.py
+  bootstrap.py  process.py  clock.py  palette.py  errors.py  paths.py  private.py  view_log.py  __main__.py
   config/       settings.py loader.py defaults.toml
   domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py runs.py timeline.py evidence_export.py fencing.py faults.py motion.py
   store/        database.py migrations/ tasks.py runs.py escalations.py quotas.py events.py commands.py reader.py retention.py notification_cursor.py

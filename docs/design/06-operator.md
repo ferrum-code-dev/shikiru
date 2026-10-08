@@ -97,11 +97,13 @@ The CLI gets an Operator into a project, in and out of its session, and back out
   - `task_id`, `title`, `project`, `role`, `glyph`, `agent`, `model`, `effort`
   - `iteration`, `step`, `status`
   - `context`, `cost`: preformatted (`42%`, `$1.84`), `–` when the agent reports no value (04 §1)
+  - `flags`: glyph-prefixed hold and state words for existing templates; `flags_text`: the same readable words without glyphs, including `operator` while a role is taken over
   - `active`, `queued`, `max_parallel`, `cwd`
-  - `flags`: `⏸︎ paused`, `⌨ operator`, `⧗ quota`, `‼ escalated`, `⚠︎ stalled`
+- Packaged Leader and Implementer titles use the role word and `flags_text` without role or state glyph prefixes. The `glyph` and `flags` fields retain their existing values, so an explicit custom template that uses them keeps its chosen glyphs; Shikiru does not rewrite project configuration.
 - **Decorations** follow §6.1:
-  - Pane options `@shk_color` and `@shk_glyph` feed `pane-border-format " #[fg=#{@shk_color}]#{@shk_glyph} #{pane_title} "`.
-  - Window options `@shk_state_color` and `@shk_state_glyph` feed the window-status formats.
+  - Task-window pane-border titles use primary text on the graphite surface. Window-status titles use the graphite surface when inactive and the selected graphite surface when current; the current window keeps its bracket and bold distinction. The formats are set on each task window, leaving global tmux styles and unrelated sessions unchanged.
+  - Window options `@shk_state_color` and `@shk_state_glyph` feed the window-status formats; pane options `@shk_color` and `@shk_glyph` remain available to explicit custom formats.
+  - Shikiru leaves the status line and its inherited wall clock unchanged.
   - `TurnMonitor` and `TaskFlow` update them on change.
 
 ### 5.4 Workspace shell and widgets

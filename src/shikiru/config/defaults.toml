@@ -71,8 +71,8 @@ panes = [
 
 [dashboard.titles]
 window = "{task_id} {title:.24}"
-leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
-implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
+leader = "Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
+implementer = "Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
 system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
 shell = "Project folder · {cwd}"
 
