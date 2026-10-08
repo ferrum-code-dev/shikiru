@@ -42,6 +42,13 @@ if TYPE_CHECKING:
 BROWSER_PAGE_SIZE = 24
 RECENT_TASK_LIMIT = BROWSER_PAGE_SIZE
 TASK_ROW_OUTLINE_MIN_WIDTH = 18
+FOCUS_MAIN_CONTAINER_ID = "focus-main"
+TASK_LIST_MIN_ROWS = 2
+BROWSER_COUNT_RESERVE_ROWS = 2
+RECENT_HEADING_MIN_ROWS = 2
+RECENT_BODY_MIN_ROWS = 2
+RECENT_BODY_MAX_ROWS = 8
+RECENT_SECTION_MIN_ROWS = RECENT_HEADING_MIN_ROWS + RECENT_BODY_MIN_ROWS
 TASK_STATE_DECISION_NEEDED = "decision needed"
 WAIT_REASON_DEPENDENCY = "dependency"
 FOCUS_LIST_CLASS = "focus-list"
@@ -350,7 +357,7 @@ class QueuePanel(Vertical):
         padding: 0; color: $muted-text;
     }
     #task-browser-recent-list {
-        display: none; height: auto; min-height: 2; max-height: 8; border: none;
+        display: none; height: auto; min-height: 2; border: none;
         padding: 0; background: $background; scrollbar-size-vertical: 1;
     }
     #task-browser-recent-list > ListItem {
@@ -425,6 +432,7 @@ class QueuePanel(Vertical):
             move_selection=self._move_selection,
             select_task=self.select_task,
         )
+        recent_list.styles.max_height = RECENT_BODY_MAX_ROWS
         if self._focus_layout:
             recent_list.add_class(FOCUS_LIST_CLASS)
         recent_list.display = False
@@ -508,6 +516,36 @@ class QueuePanel(Vertical):
                 list_view.size.width < TASK_ROW_OUTLINE_MIN_WIDTH,
                 NO_TASK_ROW_OUTLINE_CLASS,
             )
+        self._sync_focus_task_list_height()
+
+    def _sync_focus_task_list_height(self) -> None:
+        if not self._focus_layout or not self.is_mounted:
+            return
+        active_list = self.query(f"#{TASK_LIST_ID}")
+        recent_heading = self.query(f"#{TASK_RECENT_HEADING_ID}")
+        recent_list = self.query(f"#{TASK_RECENT_LIST_ID}")
+        if not active_list or not recent_heading or not recent_list:
+            return
+        active_list_view = cast("ListView", active_list.first())
+        recent_heading_widget = cast("Static", recent_heading.first())
+        recent_list_view = cast("ListView", recent_list.first())
+        focus_main = next(
+            (ancestor for ancestor in self.ancestors if ancestor.id == FOCUS_MAIN_CONTAINER_ID),
+            None,
+        )
+        if focus_main is None or not focus_main.has_class("wide"):
+            active_list_view.styles.max_height = None
+            return
+        recent_section_height = 0
+        if recent_list_view.display:
+            recent_section_height = max(
+                RECENT_SECTION_MIN_ROWS,
+                recent_heading_widget.region.height + recent_list_view.region.height,
+            )
+        active_list_view.styles.max_height = max(
+            TASK_LIST_MIN_ROWS,
+            self.region.height - BROWSER_COUNT_RESERVE_ROWS - recent_section_height,
+        )
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != SEARCH_INPUT_ID:
@@ -516,7 +554,21 @@ class QueuePanel(Vertical):
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == SEARCH_INPUT_ID:
-            self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
+            self.focus_task_results()
+
+    def focus_task_results(self) -> None:
+        """Focus the visible task list, keeping empty result sets usable."""
+        list_view = next((item for item in self._browser_list_views() if item.display), None)
+        if list_view is not None:
+            list_view.focus()
+            return
+        search = self.query_one(f"#{SEARCH_INPUT_ID}", Input)
+        if search.display:
+            search.focus()
+            return
+        app = cast("App[object]", self.app)
+        footer_buttons = app.query("#focus-footer Button")
+        app.set_focus(footer_buttons.first() if footer_buttons else None)
 
     def open_search(self) -> None:
         """Focus the task search from contextual keyboard navigation."""
@@ -533,7 +585,7 @@ class QueuePanel(Vertical):
         selected_filter = FILTER_BY_BUTTON_ID.get(button_id)
         if selected_filter is not None:
             await self._refresh(task_filter=selected_filter, reset_pages=True)
-            self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
+            self.focus_task_results()
         elif button_id == CLEAR_BUTTON_ID:
             search = self.query_one(f"#{SEARCH_INPUT_ID}", Input)
             search.value = ""
@@ -542,14 +594,14 @@ class QueuePanel(Vertical):
             search.focus()
         elif button_id == MORE_BUTTON_ID:
             await self._refresh(append_page=True)
-            self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
+            self.focus_task_results()
         elif button_id == REVEAL_BUTTON_ID:
             await self._reveal_selected_task()
 
     async def activate_filter(self, task_filter: TaskBrowserFilter) -> None:
         """Navigate to a task category while retaining search and selected identity."""
         await self._refresh(task_filter=task_filter, reset_pages=True)
-        self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
+        self.focus_task_results()
 
     async def load_more(self) -> None:
         """Append the next bounded browser page."""
@@ -582,7 +634,7 @@ class QueuePanel(Vertical):
             else:
                 if self._focus_layout:
                     focused.display = False
-                self.query_one(f"#{TASK_LIST_ID}", ListView).focus()
+                self.focus_task_results()
             return
         if isinstance(focused, Input):
             return
@@ -590,8 +642,9 @@ class QueuePanel(Vertical):
     async def _move_selection(self, step: int) -> None:
         rows = tuple(
             item
-            for row in (self._view.rows if self._view is not None else ())
-            for item in self._browser_row_items(row.task_id)
+            for list_view in self._browser_list_views()
+            for item in list_view.children
+            if isinstance(item, _BrowserListItem)
         )
         if not rows:
             return
@@ -643,14 +696,6 @@ class QueuePanel(Vertical):
         )
         return tuple(cast("ListView", list_view.first()) for list_view in list_views)
 
-    def _browser_row_items(self, task_id: str) -> tuple[_BrowserListItem, ...]:
-        return tuple(
-            item
-            for list_view in self._browser_list_views()
-            for item in list_view.children
-            if isinstance(item, _BrowserListItem) and item.task_id == task_id
-        )
-
     def clear_selection(self) -> None:
         """Clear the Home inspector until an operator selects another task."""
         self._selected_task_id = None
@@ -698,8 +743,7 @@ class QueuePanel(Vertical):
         task_filter = _filter_for_task(selected)
         self.query_one(f"#{SEARCH_INPUT_ID}", Input).value = ""
         await self._refresh(task_filter=task_filter, search="", reset_pages=True)
-        list_view = self.query_one(f"#{TASK_LIST_ID}", ListView)
-        list_view.focus()
+        self.focus_task_results()
 
     async def _refresh(
         self,
@@ -824,12 +868,21 @@ class QueuePanel(Vertical):
         active_list = self.query_one(f"#{TASK_LIST_ID}", ListView)
         recent_list = self.query_one(f"#{TASK_RECENT_LIST_ID}", ListView)
         recent_heading = self.query_one(f"#{TASK_RECENT_HEADING_ID}", Static)
+        active_list.display = bool(active_rows) or not self._focus_layout
         recent_heading.display = bool(recent_rows)
         recent_list.display = bool(recent_rows)
         await self._sync_list_rows(active_list, active_rows)
         await self._sync_list_rows(recent_list, recent_rows)
+        self._sync_focus_task_list_height()
+        if self._focus_layout:
+            self.call_after_refresh(self._sync_focus_task_list_height)
         if self._list_view_is_current(active_list) and self._list_view_is_current(recent_list):
             self._sync_selection(active_list, recent_list)
+            focused = cast("App[object]", self.app).focused
+            if (focused is active_list and not active_list.display) or (
+                focused is recent_list and not recent_list.display
+            ):
+                self.focus_task_results()
 
     async def _sync_list_rows(
         self,
@@ -1066,13 +1119,13 @@ class QueuePanel(Vertical):
             FAMILY_CONTEXT_ID,
             MORE_BUTTON_ID,
             TASK_LIST_ID,
+            TASK_RECENT_HEADING_ID,
+            TASK_RECENT_LIST_ID,
         )
         if self._focus_layout:
             target_ids = (
                 *target_ids,
                 TASK_PREVIEW_ID,
-                TASK_RECENT_HEADING_ID,
-                TASK_RECENT_LIST_ID,
             )
         else:
             target_ids = (

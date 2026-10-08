@@ -2631,6 +2631,7 @@ async def test_home_task_list_keeps_a_recent_completed_history_row(
             task_list = app.query_one("#task-browser-list", ListView)
             recent_list = app.query_one("#task-browser-recent-list", ListView)
             recent_heading = app.query_one("#task-browser-recent-heading", Static)
+            active_row = app.query_one(f"#task-row-{active.id}", ListItem)
             await wait_until(
                 lambda: any(item.id == f"task-row-{completed.id}" for item in recent_list.children),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -2646,8 +2647,90 @@ async def test_home_task_list_keeps_a_recent_completed_history_row(
                 recent_heading.region.y
                 < app.query_one(f"#task-row-{completed.id}", ListItem).region.y
             )
+            assert recent_heading.region.y == active_row.region.bottom
+            assert task_list.max_scroll_y == 0
+            assert not task_list.show_vertical_scrollbar
+            assert recent_list.max_scroll_y == 0
+            assert not recent_list.show_vertical_scrollbar
             assert recent_row.startswith("✓ ")
             assert "Done" in recent_row
+    finally:
+        reader.close()
+
+
+async def test_home_recent_only_keeps_list_focus_and_cross_row_navigation(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_TEST_START)
+    completed = seed_task(connection, clock, title="Recent completed request")
+    cancelled = seed_task(connection, clock, title="Recent cancelled request")
+    task_store = TaskStore(connection, clock)
+    task_store.apply_transition(
+        completed.id,
+        Transition.stay(completed, step=None, status=Status.DONE),
+    )
+    task_store.apply_transition(
+        cancelled.id,
+        Transition.stay(cancelled, step=None, status=Status.CANCELLED),
+    )
+    expected_recent_ids = (cancelled.id, completed.id)
+    reader = StateReader(database, clock)
+
+    try:
+        command_count = reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count
+        app = _app(reader, project_dir, widget_names=["queue"], clock=clock)
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            active_list = app.query_one("#task-browser-list", ListView)
+            recent_heading = app.query_one("#task-browser-recent-heading", Static)
+            recent_list = app.query_one("#task-browser-recent-list", ListView)
+            detail_identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            await wait_until(
+                lambda: (
+                    tuple(
+                        item.id.removeprefix("task-row-")
+                        for item in recent_list.children
+                        if item.id is not None
+                    )
+                    == expected_recent_ids
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert not active_list.display
+            assert active_list.region.height == 0
+            assert recent_heading.display
+            assert recent_list.max_scroll_y == 0
+            assert not recent_list.show_vertical_scrollbar
+            await wait_until(
+                lambda: (
+                    app.focused is recent_list
+                    and expected_recent_ids[0] in _rendered_text(detail_identity)
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.press("down")
+            await wait_until(
+                lambda: expected_recent_ids[1] in _rendered_text(detail_identity),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.press("up")
+            await wait_until(
+                lambda: expected_recent_ids[0] in _rendered_text(detail_identity),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.press("escape")
+            await wait_until(
+                lambda: (
+                    recent_list.index is None
+                    and expected_recent_ids[0] not in _rendered_text(detail_identity)
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == (
+                command_count
+            )
     finally:
         reader.close()
 
@@ -2667,16 +2750,62 @@ async def _assert_recent_scroll_and_keyboard_selection(
         lambda: recent_heading.region.height > 0,
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    heading_offset = recent_heading.region.y - recent_list.region.y
-    last_recent = app.query_one(f"#task-row-{expected_recent_ids[-1]}", ListItem)
-    recent_list.scroll_to_widget(last_recent, animate=False, immediate=True)
     await wait_until(
-        lambda: last_recent.region.overlaps(recent_list.scrollable_content_region),
+        lambda: focus_root.scroll_y == focus_root.scroll_target_y,
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    assert recent_heading.region.y - recent_list.region.y == heading_offset
-
     first_recent = app.query_one(f"#task-row-{expected_recent_ids[0]}", ListItem)
+    last_recent = app.query_one(f"#task-row-{expected_recent_ids[-1]}", ListItem)
+    recent_list.scroll_to(y=0, animate=False, immediate=True)
+    await wait_until(
+        lambda: first_recent.region.overlaps(recent_list.scrollable_content_region),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.pause()
+    heading_origin = (recent_heading.region.x, recent_heading.region.y)
+    visible_before = tuple(
+        (
+            item.id.removeprefix("task-row-"),
+            _rendered_text(item.query_one(Static)),
+        )
+        for item in recent_list.children
+        if item.id is not None and item.region.overlaps(recent_list.scrollable_content_region)
+    )
+    recent_list.scroll_to(y=recent_list.max_scroll_y, animate=False, immediate=True)
+    await wait_until(
+        lambda: (
+            last_recent.region.overlaps(recent_list.scrollable_content_region)
+            and not first_recent.region.overlaps(recent_list.scrollable_content_region)
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.pause()
+    assert (recent_heading.region.x, recent_heading.region.y) == heading_origin, (
+        heading_origin,
+        recent_heading.region,
+        focus_root.scrollable_content_region,
+        focus_root.scroll_y,
+        focus_root.scroll_target_y,
+        app.query_one("#focus-main", Horizontal).scroll_y,
+        app.query_one("#queue").region,
+        recent_list.region,
+        recent_list.scroll_y,
+    )
+    visible_after = tuple(
+        (
+            item.id.removeprefix("task-row-"),
+            _rendered_text(item.query_one(Static)),
+        )
+        for item in recent_list.children
+        if item.id is not None and item.region.overlaps(recent_list.scrollable_content_region)
+    )
+    visible_before_ids = tuple(task_id for task_id, _ in visible_before)
+    visible_after_ids = tuple(task_id for task_id, _ in visible_after)
+    assert expected_recent_ids[0] in visible_before_ids
+    assert expected_recent_ids[0] not in visible_after_ids
+    assert expected_recent_ids[-1] in visible_after_ids
+    assert visible_after != visible_before
+
     recent_list.scroll_to_widget(first_recent, animate=False, immediate=True)
     focus_root.scroll_to_widget(first_recent, animate=False, immediate=True)
     await wait_until(
@@ -2778,7 +2907,12 @@ async def test_home_recent_body_scrolls_independently_and_selection_crosses_sect
                 ),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            assert active_list.max_scroll_y > 0
+            assert recent_list.max_scroll_y > 0
+            assert active_list.show_vertical_scrollbar
+            assert recent_list.show_vertical_scrollbar
             assert recent_heading.display
+            assert recent_heading.region.y == active_list.region.bottom
             assert len(recent_list.children) == RECENT_LIST_LIMIT
             assert recent_list.region.height <= RECENT_BODY_MAX_ROWS
             assert recent_list.styles.scrollbar_size_vertical == 1

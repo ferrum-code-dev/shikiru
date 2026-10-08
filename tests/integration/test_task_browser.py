@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -48,6 +49,7 @@ from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from shikiru.domain.tasks import Task
@@ -59,6 +61,7 @@ PAGE_SIZE = 24
 PAGE_COUNT = 2
 PAGE_SELECT_STATEMENTS = 3
 STALL_SECONDS = 2
+TASK_BROWSER_WAIT_TIMEOUT_SECONDS = 5.0
 STALL_TURN_NAME = "001-implement-i1"
 READING_INDEX = 10
 READING_SCROLL_POSITION = 20
@@ -831,6 +834,65 @@ async def test_state_refresh_preserves_visible_list_position_and_selected_task(
 
         assert list_view.has_focus
         assert selected.id in _static_text(widget.query_one("#task-browser-preview", Static))
+
+
+async def test_nonfocus_refresh_waits_for_recent_targets_after_teardown(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    refresh_count = 0
+
+    async def watch(callback: Callable[[], Awaitable[None]]) -> None:
+        async def refresh() -> None:
+            nonlocal refresh_count
+            await callback()
+            refresh_count += 1
+
+        await reader.watch(refresh)
+
+    context = replace(
+        widget_context(reader, project_dir, clock),
+        placement=WidgetPlacement.EXTENSIONS,
+        on_change=watch,
+    )
+    widget = cast("QueuePanel", QueueWidget().create(context))
+
+    app = WidgetHostApp(widget)
+    async with app.run_test(size=(90, 24)):
+        recent_heading = widget.query_one("#task-browser-recent-heading", Static)
+        recent_list = widget.query_one("#task-browser-recent-list", ListView)
+        await wait_until(
+            lambda: widget.is_mounted and bool(widget.query("#task-browser-list")),
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
+        await asyncio.gather(recent_heading.remove(), recent_list.remove())
+        first_update = seed_task(connection, clock, title="Added while Recent targets are absent")
+        await wait_until(
+            lambda: refresh_count == 1,
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
+
+        await widget.recompose()
+        await wait_until(
+            lambda: (
+                bool(widget.query("#task-browser-recent-heading"))
+                and bool(widget.query("#task-browser-recent-list"))
+            ),
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
+        second_update = seed_task(connection, clock, title="Added after Recent targets return")
+        await wait_until(
+            lambda: (
+                refresh_count == 2
+                and bool(widget.query(f"#task-row-{first_update.id} > Static"))
+                and bool(widget.query(f"#task-row-{second_update.id} > Static"))
+            ),
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
+        assert app.is_running
 
 
 async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(

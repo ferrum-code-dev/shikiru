@@ -168,6 +168,8 @@ class _MotionCallback:
 class _TaskBrowserNavigation(Protocol):
     async def activate_filter(self, task_filter: TaskBrowserFilter) -> None: ...
 
+    def focus_task_results(self) -> None: ...
+
     async def reveal_selected_task(self) -> None: ...
 
     def refresh_after_resume(self) -> None: ...
@@ -801,7 +803,7 @@ class DashboardApp(App[None]):
     #focus-main.wide #queue {
         width: 100%; min-width: 0; height: 100%;
     }
-    #focus-main.wide #task-browser-list { height: 1fr; min-height: 3; }
+    #focus-main.wide #task-browser-list { height: auto; min-height: 2; }
     #focus-main.wide #task-detail-panel {
         width: 58%; min-width: 0; height: 100%; padding-left: 2;
         border-left: solid $neutral-border;
@@ -1355,18 +1357,22 @@ class DashboardApp(App[None]):
         if queue is None:
             self._select_task_context(None)
             return
-        cast("_TaskBrowserNavigation", queue).clear_selection()
-        self.query_one("#task-browser-list", ListView).focus()
+        browser = cast("_TaskBrowserNavigation", queue)
+        browser.clear_selection()
+        browser.focus_task_results()
 
     async def on_mount(self) -> None:
         """Focus the task browser or task view and start signal-driven refresh."""
         self._apply_layout(self.size.width, self.size.height)
         if self._focus_task is None:
             task_list = self.query("#task-browser-list")
-            target = (
-                task_list.first() if task_list else self.query_one("#focus-footer", _HomeFooter)
-            )
-            self.set_focus(target)
+            queue = self._widget_instances.get(_WIDGET_QUEUE)
+            if queue is not None:
+                cast("_TaskBrowserNavigation", queue).focus_task_results()
+            elif task_list:
+                self.set_focus(task_list.first())
+            else:
+                self.set_focus(self.query_one("#focus-footer", _HomeFooter))
         else:
             self.set_focus(self.query_one("#task-detail-body"))
         if self._motion_interval_seconds is not None:
@@ -1559,7 +1565,7 @@ class DashboardApp(App[None]):
             )
             task_list = self.query("#task-browser-list")
             if task_list:
-                task_list.first().styles.height = "1fr" if wide else FOCUS_COMPACT_TASK_LIST_ROWS
+                task_list.first().styles.height = "auto" if wide else FOCUS_COMPACT_TASK_LIST_ROWS
             if self._home_detail_panel is not None:
                 self._home_detail_panel.display = True
                 self._home_detail_panel.styles.height = "100%" if wide else "auto"
