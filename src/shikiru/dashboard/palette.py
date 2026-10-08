@@ -246,6 +246,7 @@ _PALETTE_RESULT_MAX_HEIGHT = 12
 _PALETTE_FORM_STANDARD_FIXED_ROWS = 9
 _PALETTE_FORM_SHORT_FIXED_ROWS = 8
 _PALETTE_FORM_TINY_FIXED_ROWS = 3
+_PALETTE_TEXT_AREA_MINIMUM_WIDTH = 5
 _PALETTE_INLINE_ACTIONS_ROWS = 1
 _PALETTE_STACKED_ACTIONS_ROWS = 2
 _PALETTE_TEXT_AREA_HEIGHTS = (
@@ -2279,7 +2280,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     def _text_area_field(label: str, field_id: str, placeholder: str) -> ComposeResult:
         with Vertical(id=f"field-{field_id}", classes="palette-field"):
             yield Label(label)
-            yield TextArea(placeholder=placeholder, id=field_id)
+            text_area = TextArea(placeholder=placeholder, id=field_id)
+            text_area.styles.min_width = _PALETTE_TEXT_AREA_MINIMUM_WIDTH
+            yield text_area
 
 
 class PaletteApp(App[None]):

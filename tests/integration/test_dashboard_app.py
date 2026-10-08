@@ -184,6 +184,13 @@ _COMPACT_TASK_SIZES = (_COMPACT_HOME_SIZE, _NARROW_TASK_SIZE)
 _SHORT_HOME_SIZE = (36, 14)
 _COMPACT_SHORT_WIDE_HOME_SIZE = (48, 14)
 _TINY_HOME_SIZE = (20, 8)
+_PALETTE_NARROW_SAFE_SIZE = (17, 20)
+_PALETTE_ZERO_WIDTH_SIZE = (16, 20)
+_PALETTE_ZERO_WIDTH_REPRODUCTION_SIZES = (
+    _PALETTE_NARROW_SAFE_SIZE,
+    _PALETTE_ZERO_WIDTH_SIZE,
+    _PALETTE_NARROW_SAFE_SIZE,
+)
 ACTIVE_OVERFLOW_TASK_COUNT = 14
 RECENT_OVERFLOW_TASK_COUNT = 30
 RECENT_LIST_LIMIT = 24
@@ -5227,8 +5234,17 @@ async def _resize_contextual_message_form(
     message = palette.query_one("#message", TextArea)
     frame = palette.query_one("#palette-frame")
     cursor = message.cursor_location
-    for width, height in ((48, 20), (36, 14), (20, 8)):
+    for width, height in (
+        *_PALETTE_ZERO_WIDTH_REPRODUCTION_SIZES,
+        (48, 20),
+        (36, 14),
+        _TINY_HOME_SIZE,
+    ):
         await pilot.resize_terminal(width, height)
+        if (width, height) == _PALETTE_ZERO_WIDTH_SIZE:
+            await pilot.pause()
+            assert message.text == guidance
+            continue
         await wait_until(
             lambda: app.focused is message and message.cursor_location == cursor,
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -5246,6 +5262,51 @@ async def _resize_contextual_message_form(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     assert message.text == guidance
+
+
+async def _resize_blank_palette_text_area(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+    text_area: TextArea,
+    queue: CommandQueue,
+) -> None:
+    for size in (*_PALETTE_ZERO_WIDTH_REPRODUCTION_SIZES, _TINY_HOME_SIZE, _WIDE_HOME_SIZE):
+        await pilot.resize_terminal(*size)
+        await pilot.pause()
+        assert text_area.text == ""
+        assert queue.pending() == []
+        if size != _PALETTE_ZERO_WIDTH_SIZE:
+            assert app.focused is text_area
+        if size == _TINY_HOME_SIZE:
+            await _assert_popup_close_reachable(
+                palette,
+                close_selector="#palette-close",
+                frame_selector="#palette-frame",
+                body_selector="#palette-form",
+            )
+            frame = palette.query_one("#palette-frame")
+            for button_id in ("palette-back-to-menu", "palette-submit"):
+                button = palette.query_one(f"#{button_id}", Button)
+                assert button.display
+                assert frame.content_region.contains_region(button.region)
+                assert button.region.right <= _TINY_HOME_SIZE[0]
+                assert button.region.bottom < _TINY_HOME_SIZE[1]
+            if text_area.id == "message":
+                role = cast("Select[str]", palette.query_one("#role", Select))
+                role.focus()
+                await pilot.press("enter")
+                await wait_until(
+                    lambda target=role: target.expanded,
+                    timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+                )
+                await pilot.press("escape")
+                await wait_until(
+                    lambda target=role: not target.expanded,
+                    timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+                )
+                assert app.screen is palette
+                text_area.focus()
 
 
 async def _exercise_home_help_route(app: DashboardApp, pilot: Pilot[None], task: Task) -> None:
@@ -5647,6 +5708,7 @@ async def test_contextual_message_draft_survives_answer_form_for_another_task(
                 lambda: app.focused is answer,
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
+            await _resize_blank_palette_text_area(app, pilot, answer_palette, answer, queue)
             await pilot.press(*"Preserve the typed answer for the second task.")
             assert queue.pending() == []
             await pilot.press("escape")
@@ -5726,19 +5788,15 @@ async def test_contextual_message_draft_survives_back_and_action_change(
                 lambda: role.value == Role.IMPLEMENTER.value,
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            guidance = "Keep the explicitly selected implementer message."
             message = palette.query_one("#message", TextArea)
             message.focus()
+            await _resize_blank_palette_text_area(app, pilot, palette, message, queue)
+            assert role.value == Role.IMPLEMENTER.value
+            guidance = "Keep the explicitly selected implementer message."
             await pilot.press(*guidance)
             assert queue.pending() == []
 
-            await _back_to_context_actions(pilot, palette, queue)
-            await _click_palette_menu_button(pilot, palette, "palette-menu-action-submit")
-            await wait_until(
-                lambda: palette.query_one("#palette-form", VerticalScroll).display,
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            await _close_palette_to_caller(app, pilot, home, queue)
+            await _exercise_submit_request_form_resize(app, pilot, palette, home, queue)
 
             palette = await _open_home_task_action_menu(app, pilot, task)
             await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
@@ -5762,6 +5820,28 @@ async def test_contextual_message_draft_survives_back_and_action_change(
             await _close_palette_to_caller(app, pilot, home, queue)
     finally:
         reader.close()
+
+
+async def _exercise_submit_request_form_resize(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+    home: object,
+    queue: CommandQueue,
+) -> None:
+    await _back_to_context_actions(pilot, palette, queue)
+    await _click_palette_menu_button(pilot, palette, "palette-menu-action-submit")
+    await wait_until(
+        lambda: palette.query_one("#palette-form", VerticalScroll).display,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    request = palette.query_one("#request", TextArea)
+    await wait_until(
+        lambda: app.focused is request,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await _resize_blank_palette_text_area(app, pilot, palette, request, queue)
+    await _close_palette_to_caller(app, pilot, home, queue)
 
 
 @pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE, _NARROW_TASK_SIZE])

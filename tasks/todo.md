@@ -197,7 +197,7 @@ Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus
 
 Third-review scope and evidence: [third real-project review](../docs/tui-feedback-third-review.md). Continue sequential GPT-6-Luna xhigh implementation and root review; preserve earlier acceptance and independently open gates.
 
-- [ ] Task 122: Prevent narrow popup inputs from crashing the dashboard
+- [x] Task 122: Prevent narrow popup inputs from crashing the dashboard
 - [ ] Task 123: Retain reliable tool outcomes without changing turn recovery
 - [ ] Task 124: Revise the HTML reference for the third review
 - [ ] Task 125: Style the complete project tmux chrome
