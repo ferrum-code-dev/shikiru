@@ -199,7 +199,7 @@ Third-review scope and evidence: [third real-project review](../docs/tui-feedbac
 
 - [x] Task 122: Prevent narrow popup inputs from crashing the dashboard
 - [x] Task 123: Retain reliable tool outcomes without changing turn recovery (accepted by root 2026-10-09)
-- [ ] Task 124: Revise the HTML reference for the third review
+- [x] Task 124: Revise the HTML reference for the third review (accepted by root 2026-10-09)
 - [ ] Task 125: Style the complete project tmux chrome
 - [ ] Task 126: Unify popup styling and actual keyboard controls
 - [ ] Task 127: Keep popup frames stable through content changes
