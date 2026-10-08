@@ -185,7 +185,7 @@ Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus
 - [x] Task 111: Make unknown billing modes understandable and preserve declared subscription facts
 - [x] Task 112: Verify every reported issue and record native reference alignment
 - [x] Task 113: Keep live agent motion responsive and animate active task status
-- [ ] Task 113a: Update the HTML reference for the second review
+- [x] Task 113a: Update the HTML reference for the second review
 - [ ] Task 114: Correct tmux title contrast and agent labels while preserving the clock
 - [ ] Task 115: Keep popup underlays stationary and align frames and close controls
 - [ ] Task 116: Make Recent fixed and scrollable with contiguous task rows

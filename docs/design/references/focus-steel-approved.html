@@ -928,9 +928,10 @@ html&gt;body{padding:0}&lt;/style&gt;
       &lt;/select&gt;
     &lt;/label&gt;
     &lt;label class=&quot;form-check&quot; for=&quot;shk-mono&quot;&gt;&lt;input class=&quot;form-check-input&quot; type=&quot;checkbox&quot; id=&quot;shk-mono&quot;&gt;&lt;span class=&quot;form-check-label&quot;&gt;No color&lt;/span&gt;&lt;/label&gt;
+    &lt;label class=&quot;form-check&quot; for=&quot;shk-static-motion&quot;&gt;&lt;input class=&quot;form-check-input&quot; type=&quot;checkbox&quot; id=&quot;shk-static-motion&quot;&gt;&lt;span class=&quot;form-check-label&quot;&gt;Static motion&lt;/span&gt;&lt;/label&gt;
     &lt;button class=&quot;btn&quot; type=&quot;button&quot; id=&quot;shk-signal&quot;&gt;Next demo signal&lt;/button&gt;
   &lt;/div&gt;
-  &lt;div class=&quot;text-small text-muted&quot; id=&quot;shk-sample&quot; aria-live=&quot;polite&quot;&gt;B layout · A palette · sample workload&lt;/div&gt;
+  &lt;div class=&quot;text-small text-muted&quot; id=&quot;shk-sample&quot; aria-live=&quot;polite&quot;&gt;Prototype preview data · sample values · no live engine connection&lt;/div&gt;
   &lt;div id=&quot;shk-concepts&quot;&gt;&lt;/div&gt;
 &lt;/div&gt;
 &lt;style&gt;
@@ -1035,6 +1036,41 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-compact .shk-lane:nth-child(2) { border-right:0; }
 #shikiru-focus-steel .shk-compact .shk-modal-wrap { position:absolute; inset:0; margin:0; padding:12px; }
 #shikiru-focus-steel .shk-compact .shk-modal { padding:12px; }
+#shikiru-focus-steel .shk-terminal .shk-active-mark { display:inline-block; color:var(--shk-accent); animation:shk-active-status 1s steps(2,end) infinite; }
+@keyframes shk-active-status { 50% { opacity:.3; } }
+@media(prefers-reduced-motion:reduce) { #shikiru-focus-steel .shk-terminal .shk-active-mark { animation:none; } }
+#shikiru-focus-steel .shk-terminal.shk-static .shk-active-mark { animation:none; }
+#shikiru-focus-steel .shk-terminal button:focus-visible,
+#shikiru-focus-steel .shk-terminal textarea:focus-visible,
+#shikiru-focus-steel .shk-terminal select:focus-visible { outline:1px solid var(--shk-accent); outline-offset:2px; }
+#shikiru-focus-steel .shk-focus-list &gt; .shk-task-heading { margin:0; padding:0 7px 3px; }
+#shikiru-focus-steel .shk-task-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:baseline; gap:2px 9px; padding:2px 7px !important; line-height:1.4; }
+#shikiru-focus-steel .shk-row-title { min-width:0; }
+#shikiru-focus-steel .shk-row-state { min-width:0; padding:0; text-align:right; }
+#shikiru-focus-steel .shk-focus-list .shk-recent { border-top:1px solid var(--shk-edge); }
+#shikiru-focus-steel .shk-recent-heading { display:flex; flex-wrap:wrap; align-items:center; gap:2px 9px; padding:3px 7px; }
+#shikiru-focus-steel .shk-recent-heading .shk-heading { margin:0; }
+#shikiru-focus-steel .shk-preview-label { font-size:.9em; }
+#shikiru-focus-steel .shk-recent-cues { display:flex; gap:7px; margin-left:auto; }
+#shikiru-focus-steel .shk-recent-cues[hidden] { display:none; }
+#shikiru-focus-steel .shk-recent-body { max-height:8.5em; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--shk-dim) var(--shk-surface); }
+#shikiru-focus-steel .shk-recent-body::-webkit-scrollbar { width:7px; }
+#shikiru-focus-steel .shk-recent-body::-webkit-scrollbar-track { background:var(--shk-surface); }
+#shikiru-focus-steel .shk-recent-body::-webkit-scrollbar-thumb { background:var(--shk-dim); }
+#shikiru-focus-steel .shk-recent-body .shk-row-state.shk-good { color:var(--shk-dim); }
+#shikiru-focus-steel .shk-footer .shk-latest-command { flex:1 1 280px; max-width:100%; margin-left:auto; overflow-wrap:anywhere; text-align:right; }
+#shikiru-focus-steel .shk-modal { display:flex; flex-direction:column; overflow:hidden; }
+#shikiru-focus-steel .shk-modal-head { flex:0 0 auto; flex-wrap:nowrap; align-items:flex-start; gap:8px; margin:0; }
+#shikiru-focus-steel .shk-modal-head h4 { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-modal-head button { flex:0 0 auto; margin:0; padding:2px 4px; color:var(--shk-ink); white-space:nowrap; }
+#shikiru-focus-steel .shk-modal-body { min-height:0; flex:1 1 auto; overflow-y:auto; overscroll-behavior:contain; }
+#shikiru-focus-steel .shk-modal-body .shk-validation { color:var(--shk-bad); }
+#shikiru-focus-steel .shk-modal-body .shk-modal-controls { margin-bottom:2px; }
+#shikiru-focus-steel .shk-modal-body::-webkit-scrollbar { width:7px; }
+#shikiru-focus-steel .shk-modal-body::-webkit-scrollbar-thumb { background:var(--shk-edge); }
+@media(max-width:520px) {
+  #shikiru-focus-steel .shk-footer .shk-latest-command { flex-basis:100%; padding-top:5px; border-top:1px solid var(--shk-edge); text-align:left; }
+}
 @media(max-width:520px) {
   #shikiru-focus-steel .shk-top { grid-template-columns:minmax(0,1fr); }
   #shikiru-focus-steel .shk-top-branch { grid-column:1; grid-row:2; }
@@ -1057,6 +1093,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   const width = root.querySelector(&#x27;#shk-width&#x27;);
   const checkout = root.querySelector(&#x27;#shk-checkout&#x27;);
   const mono = root.querySelector(&#x27;#shk-mono&#x27;);
+  const staticMotion = root.querySelector(&#x27;#shk-static-motion&#x27;);
   const sample = root.querySelector(&#x27;#shk-sample&#x27;);
   const concepts = [
     { id:&#x27;B&#x27;, name:&#x27;Focus&#x27;, subtitle:&#x27;B layout · A palette&#x27;, layout:&#x27;focus&#x27;, palette:[[&#x27;Graphite&#x27;,&#x27;#11151b&#x27;],[&#x27;Steel blue&#x27;,&#x27;#83bddd&#x27;],[&#x27;Sage&#x27;,&#x27;#90cba6&#x27;],[&#x27;Amber&#x27;,&#x27;#dfb16c&#x27;]] }
@@ -1069,10 +1106,22 @@ html&gt;body{padding:0}&lt;/style&gt;
     { id:&#x27;T-46&#x27;, title:&#x27;Refresh operator docs&#x27;, state:&#x27;Queued · ready&#x27;, tone:&#x27;dim&#x27;, step:&#x27;Queued&#x27;, role:&#x27;—&#x27;, age:&#x27;3m&#x27;, note:&#x27;Next eligible task in dispatch order&#x27;, detail:&#x27;Queued. Dispatch order is shown without a promised start time.&#x27;, evidence:&#x27;Engine queue · eligible for the next scheduler dispatch. No agent report exists yet.&#x27;, lane:&#x27;Next&#x27; },
     { id:&#x27;T-47&#x27;, title:&#x27;Improve report output&#x27;, state:&#x27;Paused&#x27;, tone:&#x27;wait&#x27;, step:&#x27;Implement&#x27;, role:&#x27;Implementer&#x27;, age:&#x27;16m&#x27;, note:&#x27;Operator pause · still occupies a slot&#x27;, detail:&#x27;Paused at Implement. This task keeps its slot and will not start another turn until resumed.&#x27;, evidence:&#x27;Engine event · pause applied. No recent signal is treated as inactivity rather than a new escalation.&#x27;, lane:&#x27;Build&#x27; },
     { id:&#x27;T-41&#x27;, title:&#x27;Recover queued messages&#x27;, state:&#x27;Done&#x27;, tone:&#x27;good&#x27;, step:&#x27;Merged&#x27;, role:&#x27;—&#x27;, age:&#x27;6m ago&#x27;, note:&#x27;Merged into main&#x27;, detail:&#x27;Completed and merged. Retained reports remain accessible after the task window closes.&#x27;, evidence:&#x27;Leader verdict: accepted. Engine event: task_done; integration recorded on main.&#x27;, lane:&#x27;Done&#x27; },
-    { id:&#x27;T-40&#x27;, title:&#x27;Clarify quota waits&#x27;, state:&#x27;Done&#x27;, tone:&#x27;good&#x27;, step:&#x27;Merged&#x27;, role:&#x27;—&#x27;, age:&#x27;19m ago&#x27;, note:&#x27;Merged into main&#x27;, detail:&#x27;Completed and merged. Task evidence is retained independently of its tmux window.&#x27;, evidence:&#x27;Leader verdict: accepted. Engine event: task_done; integration recorded on main.&#x27;, lane:&#x27;Done&#x27; }
+    { id:&#x27;T-40&#x27;, title:&#x27;Clarify quota waits&#x27;, state:&#x27;Done&#x27;, tone:&#x27;good&#x27;, step:&#x27;Merged&#x27;, role:&#x27;—&#x27;, age:&#x27;19m ago&#x27;, note:&#x27;Merged into main&#x27;, detail:&#x27;Completed and merged. Task evidence is retained independently of its tmux window.&#x27;, evidence:&#x27;Leader verdict: accepted. Engine event: task_done; integration recorded on main.&#x27;, lane:&#x27;Done&#x27; },
+    { id:&#x27;T-39&#x27;, title:&#x27;Document retry outcomes&#x27;, state:&#x27;Done&#x27;, tone:&#x27;good&#x27;, step:&#x27;Merged&#x27;, role:&#x27;—&#x27;, age:&#x27;25m ago&#x27;, note:&#x27;Merged into main&#x27;, detail:&#x27;Preview task completed and merged. Its retained report remains available after cleanup.&#x27;, evidence:&#x27;Preview record · task completed and merged.&#x27;, lane:&#x27;Done&#x27; },
+    { id:&#x27;T-38&#x27;, title:&#x27;Keep old run records&#x27;, state:&#x27;Cancelled&#x27;, tone:&#x27;dim&#x27;, step:&#x27;Queued&#x27;, role:&#x27;—&#x27;, age:&#x27;31m ago&#x27;, note:&#x27;Cancelled before dispatch&#x27;, detail:&#x27;Preview task was cancelled while queued and never started an agent turn.&#x27;, evidence:&#x27;Preview record · cancellation recorded before dispatch.&#x27;, lane:&#x27;Done&#x27; },
+    { id:&#x27;T-37&#x27;, title:&#x27;Display host totals&#x27;, state:&#x27;Done&#x27;, tone:&#x27;good&#x27;, step:&#x27;Merged&#x27;, role:&#x27;—&#x27;, age:&#x27;42m ago&#x27;, note:&#x27;Merged into main&#x27;, detail:&#x27;Preview task completed and merged. Its retained report remains available after cleanup.&#x27;, evidence:&#x27;Preview record · task completed and merged.&#x27;, lane:&#x27;Done&#x27; },
+    { id:&#x27;T-36&#x27;, title:&#x27;Retain role messages&#x27;, state:&#x27;Done&#x27;, tone:&#x27;good&#x27;, step:&#x27;Merged&#x27;, role:&#x27;—&#x27;, age:&#x27;51m ago&#x27;, note:&#x27;Merged into main&#x27;, detail:&#x27;Preview task completed and merged. Its retained report remains available after cleanup.&#x27;, evidence:&#x27;Preview record · task completed and merged.&#x27;, lane:&#x27;Done&#x27; },
+    { id:&#x27;T-35&#x27;, title:&#x27;Confirm task panes&#x27;, state:&#x27;Cancelled&#x27;, tone:&#x27;dim&#x27;, step:&#x27;Queued&#x27;, role:&#x27;—&#x27;, age:&#x27;1h ago&#x27;, note:&#x27;Cancelled before dispatch&#x27;, detail:&#x27;Preview task was cancelled while queued and never started an agent turn.&#x27;, evidence:&#x27;Preview record · cancellation recorded before dispatch.&#x27;, lane:&#x27;Done&#x27; },
+    { id:&#x27;T-34&#x27;, title:&#x27;Preserve merge evidence&#x27;, state:&#x27;Done&#x27;, tone:&#x27;good&#x27;, step:&#x27;Merged&#x27;, role:&#x27;—&#x27;, age:&#x27;1h 12m ago&#x27;, note:&#x27;Merged into main&#x27;, detail:&#x27;Preview task completed and merged. Its retained report remains available after cleanup.&#x27;, evidence:&#x27;Preview record · task completed and merged.&#x27;, lane:&#x27;Done&#x27; }
   ];
   const selections = Object.fromEntries(concepts.map(c =&gt; [c.id,&#x27;T-43&#x27;]));
   const overlays = {};
+  const recentScrollTop = {};
+  const modalDrafts = {};
+  const modalSelections = {};
+  const modalScrollTop = {};
+  let modalFocus = null;
+  let selectEscapePending = false;
   let signal = 0;
   let chosen = &#x27;&#x27;;
   const signals = [&#x27;Reviewing redirect edge cases&#x27;,&#x27;Running redirect tests&#x27;,&#x27;Implementation report inspected&#x27;,&#x27;Verdict: changes requested · missing URL edge case&#x27;];
@@ -1089,10 +1138,13 @@ html&gt;body{padding:0}&lt;/style&gt;
     const task = tasks.find(item =&gt; item.id === id);
     return task ? effective(task) : null;
   };
-  const marker = task =&gt; task.state === &#x27;Done&#x27; ? &#x27;✓&#x27; : task.state.includes(&#x27;Decision&#x27;) ? &#x27;!&#x27; : task.state.includes(&#x27;Paused&#x27;) ? &#x27;=&#x27; : task.state.includes(&#x27;Operator&#x27;) ? &#x27;@&#x27; : task.step === &#x27;Queued&#x27; ? &#x27;·&#x27; : scene.value === &#x27;stopped&#x27; ? &#x27;○&#x27; : [&#x27;⠋&#x27;,&#x27;⠙&#x27;,&#x27;⠹&#x27;,&#x27;⠸&#x27;][signal];
+  const isAgentProcessing = task =&gt; scene.value !== &#x27;stopped&#x27; &amp;&amp; [&#x27;Implementing&#x27;,&#x27;Verifying&#x27;].includes(task.state);
+  const marker = task =&gt; task.state === &#x27;Done&#x27; ? &#x27;✓&#x27; : task.state === &#x27;Cancelled&#x27; ? &#x27;×&#x27; : task.state.includes(&#x27;Decision&#x27;) ? &#x27;!&#x27; : task.state.includes(&#x27;Paused&#x27;) ? &#x27;=&#x27; : task.state.includes(&#x27;Operator&#x27;) ? &#x27;@&#x27; : task.state === &#x27;Reworking&#x27; ? &#x27;↺&#x27; : isAgentProcessing(task) ? &#x27;●&#x27; : task.step === &#x27;Queued&#x27; ? &#x27;·&#x27; : &#x27;○&#x27;;
+  const markerMarkup = task =&gt; isAgentProcessing(task) ? &#x27;&lt;span class=&quot;shk-active-mark&quot; aria-hidden=&quot;true&quot;&gt;●&lt;/span&gt;&#x27; : marker(task);
+  const isTerminal = task =&gt; [&#x27;Done&#x27;,&#x27;Cancelled&#x27;].includes(task.state);
   const stateText = task =&gt; scene.value === &#x27;stopped&#x27; &amp;&amp; [&#x27;T-43&#x27;,&#x27;T-44&#x27;].includes(task.id) ? &#x27;Stopped · resume on engine start&#x27; : task.state;
   const stateClass = task =&gt; scene.value === &#x27;stopped&#x27; &amp;&amp; [&#x27;T-43&#x27;,&#x27;T-44&#x27;].includes(task.id) ? &#x27;wait&#x27; : task.tone;
-  const buttonRow = (task, id) =&gt; `&lt;button type=&quot;button&quot; class=&quot;shk-task-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-row-title&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${marker(task)}&lt;/span&gt; ${task.id} ${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-row-state shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`;
+  const buttonRow = (task, id) =&gt; `&lt;button type=&quot;button&quot; class=&quot;shk-task-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-row-title&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)}&lt;/span&gt; ${task.id} ${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-row-state shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`;
   const stages = task =&gt; {
     if (task.step === &#x27;Queued&#x27;) return &#x27;&lt;div class=&quot;shk-stages shk-dim&quot;&gt;Triage · Implement · Verify · Merge&lt;/div&gt;&#x27;;
     return `&lt;div class=&quot;shk-stages&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;✓ Triage&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Implement&#x27; ? &#x27;shk-accent&#x27; : &#x27;shk-good&#x27;}&quot;&gt;${task.step === &#x27;Implement&#x27; ? &#x27;›&#x27; : &#x27;✓&#x27;} Implement&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Verify&#x27; ? &#x27;shk-accent&#x27; : &#x27;shk-dim&#x27;}&quot;&gt;${task.step === &#x27;Verify&#x27; ? &#x27;›&#x27; : task.step === &#x27;Merged&#x27; ? &#x27;✓&#x27; : &#x27;·&#x27;} Verify&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Merged&#x27; ? &#x27;shk-good&#x27; : &#x27;shk-dim&#x27;}&quot;&gt;${task.step === &#x27;Merged&#x27; ? &#x27;✓&#x27; : &#x27;·&#x27;} Merge&lt;/span&gt;&lt;/div&gt;`;
@@ -1130,6 +1182,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   };
   const taskUsage = (task, showDetails=true) =&gt; {
     const usage=sampleUsage[task.id];
+    if (!usage) return &#x27;&lt;div class=&quot;shk-task-usage shk-dim&quot;&gt;Usage details are omitted from this preview.&lt;/div&gt;&#x27;;
     const details=showDetails?&#x27;&lt;button type=&quot;button&quot; class=&quot;shk-space shk-inline-action&quot; data-open=&quot;usage&quot;&gt;u Details&lt;/button&gt;&#x27;:&#x27;&#x27;;
     return `&lt;div class=&quot;shk-task-usage&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;&lt;span&gt;${usage.tokens===&#x27;—&#x27;?&#x27;No sessions yet&#x27;:`${usage.tokens} tokens · ${usage.cost}`}&lt;/span&gt;${details}&lt;/div&gt;${usage.sessions.length?usage.sessions.map(session=&gt;`&lt;div class=&quot;shk-agent&quot;&gt;&lt;span&gt;&lt;span class=&quot;shk-dim&quot; style=&quot;display:inline&quot;&gt;${session.role} · ${agentState(session,task)}&lt;/span&gt;&lt;/span&gt;&lt;span&gt;&lt;span class=&quot;shk-accent&quot; style=&quot;display:inline&quot;&gt;${session.agent}/${session.model}&lt;/span&gt; · ${session.tokens} tokens · &lt;span class=&quot;shk-good&quot; style=&quot;display:inline&quot;&gt;${session.billing}&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;):&#x27;&lt;div class=&quot;shk-dim&quot;&gt;Not started&lt;/div&gt;&#x27;}&lt;/div&gt;`;
   };
@@ -1139,16 +1192,18 @@ html&gt;body{padding:0}&lt;/style&gt;
     const own=scene.value===&#x27;owned&#x27;;
     return `&lt;button type=&quot;button&quot; class=&quot;shk-resources&quot; data-open=&quot;diagnostics&quot; aria-label=&quot;Inspect host, Shikiru, and agent resource usage&quot;&gt;&lt;span class=&quot;shk-resource&quot;&gt;Host CPU &lt;span class=&quot;shk-accent&quot;&gt;22%&lt;/span&gt; RAM 5.1/16 GiB&lt;/span&gt;&lt;span class=&quot;shk-resource-separator&quot;&gt; · &lt;/span&gt;&lt;span class=&quot;shk-resource&quot;&gt;Shikiru CPU &lt;span class=&quot;shk-accent&quot;&gt;${stopped?&#x27;0.2%&#x27;:own?&#x27;3%&#x27;:&#x27;4%&#x27;}&lt;/span&gt; RAM ${stopped?&#x27;0.2&#x27;:own?&#x27;0.6&#x27;:&#x27;0.7&#x27;}/16 GiB&lt;/span&gt;&lt;span class=&quot;shk-resource-separator&quot;&gt; · &lt;/span&gt;&lt;span class=&quot;shk-resource&quot;&gt;Agents CPU &lt;span class=&quot;shk-accent&quot;&gt;${stopped?&#x27;0%&#x27;:own?&#x27;9%&#x27;:&#x27;8%&#x27;}&lt;/span&gt; RAM ${stopped?&#x27;0.0&#x27;:own?&#x27;0.5&#x27;:&#x27;0.7&#x27;}/16 GiB&lt;/span&gt;&lt;/button&gt;`;
   };
-  const focusedDetail = task =&gt; task ? `&lt;div class=&quot;shk-heading&quot;&gt;${task.id} · ${esc(task.title)}&lt;/div&gt;&lt;div class=&quot;shk-${stateClass(task)}&quot;&gt;${marker(task)} ${esc(stateText(task))}&lt;/div&gt;${stages(task)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${esc(task.role)} · ${esc(task.step)} · ${esc(task.age)}&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;${esc(task.detail)}&lt;/div&gt;&lt;div class=&quot;shk-signal&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;›&lt;/span&gt;&lt;span&gt;${esc(task.note)}&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id === &#x27;T-43&#x27; ? &#x27;Last recorded signal · just now&#x27; : &#x27;Evidence available in detail&#x27;}&lt;/div&gt;${taskUsage(task)}` : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No task selected · use ↑↓ to select a task&lt;/div&gt;&#x27;;
+  const focusedDetail = task =&gt; task ? `&lt;div class=&quot;shk-heading&quot;&gt;${task.id} · ${esc(task.title)}&lt;/div&gt;&lt;div class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)} ${esc(stateText(task))}&lt;/div&gt;${stages(task)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${esc(task.role)} · ${esc(task.step)} · ${esc(task.age)}&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;${esc(task.detail)}&lt;/div&gt;&lt;div class=&quot;shk-signal&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;›&lt;/span&gt;&lt;span&gt;${esc(task.note)}&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id === &#x27;T-43&#x27; ? &#x27;Last recorded signal · just now&#x27; : &#x27;Evidence available in detail&#x27;}&lt;/div&gt;${taskUsage(task)}` : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No task selected · use ↑↓ to select a task&lt;/div&gt;&#x27;;
   const deck = id =&gt; {
     const active = (scene.value===&#x27;quiet&#x27;?[&#x27;T-42&#x27;,&#x27;T-43&#x27;,&#x27;T-44&#x27;]:[&#x27;T-43&#x27;,&#x27;T-44&#x27;]).map(getTask);
     const selected = getTask(selections[id]);
     const selectedSummary = selected ? `&lt;div class=&quot;shk-heading&quot;&gt;${selected.id} · ${esc(selected.title)}&lt;/div&gt;${stages(selected)}&lt;div class=&quot;shk-subline&quot;&gt;› ${esc(selected.note)}&lt;/div&gt;` : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No task selected · use ↑↓ to select a task&lt;/div&gt;&#x27;;
-    return `&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;IN FLIGHT &lt;span class=&quot;shk-space shk-dim&quot;&gt;Role / elapsed&lt;/span&gt;&lt;/div&gt;${active.map(task=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-deck-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${marker(task)} ${task.id}&lt;/span&gt;&lt;span&gt;${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;${esc(task.age)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))} · ${esc(task.role)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;${selectedSummary}&lt;/div&gt;&lt;div class=&quot;shk-deck-bottom&quot;&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;WAITING&lt;/div&gt;${[&#x27;T-45&#x27;,&#x27;T-46&#x27;,&#x27;T-47&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;RECENTLY FINISHED&lt;/div&gt;${[&#x27;T-41&#x27;,&#x27;T-40&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Reports retained after merge&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;IN FLIGHT &lt;span class=&quot;shk-space shk-dim&quot;&gt;Role / elapsed&lt;/span&gt;&lt;/div&gt;${active.map(task=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-deck-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)} ${task.id}&lt;/span&gt;&lt;span&gt;${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;${esc(task.age)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))} · ${esc(task.role)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;${selectedSummary}&lt;/div&gt;&lt;div class=&quot;shk-deck-bottom&quot;&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;WAITING&lt;/div&gt;${[&#x27;T-45&#x27;,&#x27;T-46&#x27;,&#x27;T-47&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;RECENTLY FINISHED&lt;/div&gt;${[&#x27;T-41&#x27;,&#x27;T-40&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Reports retained after merge&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;`;
   };
   const focus = id =&gt; {
     const selected = getTask(selections[id]);
-    return `&lt;div class=&quot;shk-focus-grid&quot;&gt;&lt;div class=&quot;shk-focus-list&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;TASKS&lt;/div&gt;${tasks.slice(0,6).map(task=&gt;buttonRow(effective(task),id)).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Recent&lt;/div&gt;${buttonRow(getTask(&#x27;T-41&#x27;),id)}${buttonRow(getTask(&#x27;T-40&#x27;),id)}&lt;/div&gt;&lt;div class=&quot;shk-focus-detail&quot;&gt;${focusedDetail(selected)}${selected?&#x27;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;button class=&quot;shk-inline-action&quot; type=&quot;button&quot; data-open=&quot;evidence&quot;&gt;e Evidence&lt;/button&gt;&#x27;:&#x27;&#x27;}&lt;/div&gt;&lt;/div&gt;`;
+    const activeRows = tasks.filter(task=&gt;!isTerminal(task)).map(task=&gt;buttonRow(getTask(task.id),id)).join(&#x27;&#x27;);
+    const recentRows = tasks.filter(isTerminal).map(task=&gt;buttonRow(getTask(task.id),id)).join(&#x27;&#x27;);
+    return `&lt;div class=&quot;shk-focus-grid&quot;&gt;&lt;div class=&quot;shk-focus-list&quot;&gt;&lt;div class=&quot;shk-heading shk-task-heading&quot;&gt;TASKS&lt;/div&gt;&lt;div class=&quot;shk-task-list&quot;&gt;${activeRows}&lt;/div&gt;&lt;section class=&quot;shk-recent&quot;&gt;&lt;div class=&quot;shk-recent-heading&quot;&gt;&lt;span class=&quot;shk-heading&quot;&gt;Recent&lt;/span&gt;&lt;span class=&quot;shk-preview-label shk-dim&quot;&gt;Preview records&lt;/span&gt;&lt;span class=&quot;shk-recent-cues shk-dim&quot; aria-live=&quot;polite&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-recent-body&quot; role=&quot;region&quot; aria-label=&quot;Recent preview records&quot; tabindex=&quot;0&quot;&gt;${recentRows}&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;&lt;div class=&quot;shk-focus-detail&quot;&gt;${focusedDetail(selected)}${selected?&#x27;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;button class=&quot;shk-inline-action&quot; type=&quot;button&quot; data-open=&quot;evidence&quot;&gt;e Evidence&lt;/button&gt;&#x27;:&#x27;&#x27;}&lt;/div&gt;&lt;/div&gt;`;
   };
   const stream = id =&gt; {
     const selected = getTask(selections[id]);
@@ -1189,22 +1244,115 @@ html&gt;body{padding:0}&lt;/style&gt;
     let content=&#x27;&#x27;;
     if (kind===&#x27;menu&#x27;) content=menu(task);
     if (kind===&#x27;evidence&#x27; &amp;&amp; task) content=`&lt;div class=&quot;shk-insight&quot;&gt;${esc(task.evidence)}&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Recorded sources · sample data&lt;/div&gt;`;
-    if (kind===&#x27;resolve&#x27; &amp;&amp; task) content=&#x27;&lt;div class=&quot;shk-wait&quot;&gt;Which failures should the parser retry?&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;Leader suggests: retry transient I/O errors. Syntax errors should fail immediately.&lt;/div&gt;&lt;label for=&quot;shk-answer-&#x27;+id+&#x27;&quot;&gt;Answer · guidance for the Leader&lt;/label&gt;&lt;textarea id=&quot;shk-answer-&#x27;+id+&#x27;&quot; rows=&quot;2&quot; placeholder=&quot;Retry transient I/O errors only.&quot;&gt;&lt;/textarea&gt;&lt;div class=&quot;shk-dim&quot;&gt;Answer → consult → continue implementation&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;answer&quot; class=&quot;shk-inline-action&quot;&gt;Enter submit answer&lt;/button&gt;&lt;/div&gt;&#x27;;
-    if (kind===&#x27;message&#x27; &amp;&amp; task) content=`&lt;label for=&quot;shk-role-${id}&quot;&gt;Role&lt;/label&gt;&lt;select id=&quot;shk-role-${id}&quot;&gt;&lt;option&gt;Leader&lt;/option&gt;&lt;option&gt;Implementer&lt;/option&gt;&lt;/select&gt;&lt;label for=&quot;shk-message-${id}&quot;&gt;Guidance&lt;/label&gt;&lt;textarea id=&quot;shk-message-${id}&quot; rows=&quot;2&quot; placeholder=&quot;Add the missing redirect edge case.&quot;&gt;&lt;/textarea&gt;&lt;div class=&quot;shk-dim&quot;&gt;Queued for this role&#x27;s next turn&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;message&quot; class=&quot;shk-inline-action&quot;&gt;Enter queue message&lt;/button&gt;&lt;/div&gt;`;
-    if (kind===&#x27;takeover&#x27; &amp;&amp; task) content=`&lt;label for=&quot;shk-take-role-${id}&quot;&gt;Role&lt;/label&gt;&lt;select id=&quot;shk-take-role-${id}&quot;&gt;&lt;option&gt;${esc(task.role)}&lt;/option&gt;&lt;option&gt;${task.role===&#x27;Leader&#x27;?&#x27;Implementer&#x27;:&#x27;Leader&#x27;}&lt;/option&gt;&lt;/select&gt;&lt;div class=&quot;shk-insight&quot;&gt;Stop this task&#x27;s current turn and open the role session interactively. This task stays held until you hand back every role.&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;takeover&quot; class=&quot;shk-inline-action&quot;&gt;Enter take over&lt;/button&gt;&lt;/div&gt;`;
+    if (kind===&#x27;resolve&#x27; &amp;&amp; task) {
+      const answer = modalDrafts[id]?.answer || &#x27;&#x27;;
+      content=&#x27;&lt;div class=&quot;shk-wait&quot;&gt;Which failures should the parser retry?&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;Leader suggests: retry transient I/O errors. Syntax errors should fail immediately.&lt;/div&gt;&lt;label for=&quot;shk-answer-&#x27;+id+&#x27;&quot;&gt;Answer · guidance for the Leader&lt;/label&gt;&lt;textarea id=&quot;shk-answer-&#x27;+id+&#x27;&quot; data-draft=&quot;answer&quot; rows=&quot;2&quot; placeholder=&quot;Retry transient I/O errors only.&quot;&gt;&#x27;+esc(answer)+&#x27;&lt;/textarea&gt;&lt;div class=&quot;shk-dim&quot;&gt;Answer → consult → continue implementation&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;answer&quot; class=&quot;shk-inline-action&quot;&gt;Enter submit answer&lt;/button&gt;&lt;/div&gt;&#x27;;
+    }
+    if (kind===&#x27;message&#x27; &amp;&amp; task) {
+      const drafts = modalDrafts[id] || {};
+      content=`&lt;label for=&quot;shk-role-${id}&quot;&gt;Role&lt;/label&gt;&lt;select id=&quot;shk-role-${id}&quot; data-draft=&quot;messageRole&quot;&gt;&lt;option${drafts.messageRole === &#x27;Leader&#x27; || !drafts.messageRole ? &#x27; selected&#x27; : &#x27;&#x27;}&gt;Leader&lt;/option&gt;&lt;option${drafts.messageRole === &#x27;Implementer&#x27; ? &#x27; selected&#x27; : &#x27;&#x27;}&gt;Implementer&lt;/option&gt;&lt;/select&gt;&lt;label for=&quot;shk-message-${id}&quot;&gt;Guidance&lt;/label&gt;&lt;textarea id=&quot;shk-message-${id}&quot; data-draft=&quot;message&quot; rows=&quot;2&quot; placeholder=&quot;Add the missing redirect edge case.&quot;&gt;${esc(drafts.message || &#x27;&#x27;)}&lt;/textarea&gt;&lt;div class=&quot;shk-dim&quot;&gt;Queued for this role&#x27;s next turn&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;message&quot; class=&quot;shk-inline-action&quot;&gt;Enter queue message&lt;/button&gt;&lt;/div&gt;`;
+    }
+    if (kind===&#x27;takeover&#x27; &amp;&amp; task) {
+      const takeoverRole = modalDrafts[id]?.takeoverRole || task.role;
+      content=`&lt;label for=&quot;shk-take-role-${id}&quot;&gt;Role&lt;/label&gt;&lt;select id=&quot;shk-take-role-${id}&quot; data-draft=&quot;takeoverRole&quot;&gt;&lt;option${takeoverRole === task.role ? &#x27; selected&#x27; : &#x27;&#x27;}&gt;${esc(task.role)}&lt;/option&gt;&lt;option${takeoverRole !== task.role ? &#x27; selected&#x27; : &#x27;&#x27;}&gt;${task.role===&#x27;Leader&#x27;?&#x27;Implementer&#x27;:&#x27;Leader&#x27;}&lt;/option&gt;&lt;/select&gt;&lt;div class=&quot;shk-insight&quot;&gt;Stop this task&#x27;s current turn and open the role session interactively. This task stays held until you hand back every role.&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;takeover&quot; class=&quot;shk-inline-action&quot;&gt;Enter take over&lt;/button&gt;&lt;/div&gt;`;
+    }
     if (kind===&#x27;handback&#x27; &amp;&amp; task) content=&#x27;&lt;div class=&quot;shk-insight&quot;&gt;Hand the Leader session back to automation. Another role ownership or pause would still hold this task.&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-submit=&quot;handback&quot; class=&quot;shk-inline-action&quot;&gt;Enter hand back&lt;/button&gt;&lt;/div&gt;&#x27;;
-    if (kind===&#x27;usage&#x27; &amp;&amp; task) content=taskUsage(task,false)+`&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id===&#x27;T-43&#x27;?&#x27;Claude: 9k input / 2k output · subscription&lt;br&gt;Codex: 18k input / 3k output · $0.46 reported API charge&#x27;:&#x27;Recorded usage grouped by role, agent and model&#x27;}&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Subscription fees belong to the account. No per-task subscription charge is reported.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Billing mode: explicitly declared · sample declaration&lt;/div&gt;`;
+    if (kind===&#x27;usage&#x27; &amp;&amp; task) content=sampleUsage[task.id]?taskUsage(task,false)+`&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id===&#x27;T-43&#x27;?&#x27;Claude: 9k input / 2k output · subscription&lt;br&gt;Codex: 18k input / 3k output · $0.46 reported API charge&#x27;:&#x27;Recorded usage grouped by role, agent and model&#x27;}&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Subscription fees belong to the account. No per-task subscription charge is reported.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Billing mode: explicitly declared · sample declaration&lt;/div&gt;`:&#x27;&lt;div class=&quot;shk-dim&quot;&gt;Usage details are omitted from this preview.&lt;/div&gt;&#x27;;
     if (kind===&#x27;projectusage&#x27;) content=&#x27;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Recorded tokens&lt;/span&gt;&lt;span class=&quot;shk-space shk-accent&quot;&gt;412k&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;12 of 14 sessions reported usage; 2 not reported&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Reported API charges&lt;/span&gt;&lt;span class=&quot;shk-space shk-good&quot;&gt;$4.82&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;5 API charges reported; 2 API charges unreported&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-heading&quot;&gt;HISTORICAL DECLARED MODES · 2 AGENTS&lt;/div&gt;&lt;div class=&quot;shk-agent&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;Claude · historical subscription declaration&lt;/span&gt;&lt;span&gt;5h window 38% used · resets in 1h 40m&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-agent&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;Codex · historical subscription declaration&lt;/span&gt;&lt;span&gt;5h window 62% used · resets in 2h 15m&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Sample quota observations · 2m ago&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Subscription fees&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Not recorded · account level&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Only explicit billing declarations appear; missing modes stay unknown.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Project retained runs · includes previous engine runs&lt;/div&gt;&#x27;;
     if (kind===&#x27;commands&#x27;) content=&#x27;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;✓ Applied&lt;/span&gt;&lt;span&gt;Pause · T-47&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;✓ Applied&lt;/span&gt;&lt;span&gt;Message · T-43 Leader&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Message applied = queued for the next role turn&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span class=&quot;shk-bad&quot;&gt;× Rejected&lt;/span&gt;&lt;span&gt;Answer · E-6 already resolved&lt;/span&gt;&lt;/div&gt;&#x27;;
     if (kind===&#x27;diagnostics&#x27;) content=resourceMetrics()+&#x27;&lt;div class=&quot;shk-observation&quot;&gt;Sample 4s ago · CPU % of host capacity · RAM is process RSS / host RAM total; Shikiru excludes agents.&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Engine lock&lt;/span&gt;&lt;span class=&quot;shk-space&quot;&gt;&#x27;+(scene.value===&#x27;stopped&#x27;?&#x27;Not held&#x27;:&#x27;Held&#x27;)+&#x27;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Open engine faults&lt;/span&gt;&lt;span class=&quot;shk-space&quot;&gt;0 recorded&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Docker plugin&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Unavailable&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Sample split: Shikiru excludes agent trees; Agents includes all instance agent trees.&lt;/div&gt;&#x27;;
     if (kind===&#x27;submitted&#x27;) content=&#x27;&lt;div class=&quot;shk-feedback&quot;&gt;✓ Local preview complete&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;A real command result appears here as Pending, Applied or Rejected.&lt;/div&gt;&lt;div class=&quot;shk-modal-controls&quot;&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Esc return&lt;/button&gt;&lt;/div&gt;&#x27;;
     if (kind===&#x27;help&#x27;) content=&#x27;&lt;div&gt;↑ ↓ Select task&lt;/div&gt;&lt;div&gt;Esc Close popup · Esc clear selection&lt;/div&gt;&lt;div&gt;Ctrl+P Contextual actions&lt;/div&gt;&lt;div&gt;Ctrl+B then d Detach tmux&lt;/div&gt;&lt;div&gt;e Evidence · u Usage · ? Help&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Ctrl+B is tmux prefix; custom prefixes remain active.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;! Decision · = Paused · @ Operator owns role&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;✓ Done · ○ Stopped · · Queued&lt;/div&gt;&#x27;;
-    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]} · ${!task || [&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;].includes(kind)?&#x27;shikiru&#x27;:task.id}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;Esc ×&lt;/button&gt;&lt;/div&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]} · ${!task || [&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;].includes(kind)?&#x27;shikiru&#x27;:task.id}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;Esc ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-body&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;`;
+  };
+  const storeModalSelection = (field,id) =&gt; {
+    if (field.tagName !== &#x27;TEXTAREA&#x27;) return;
+    modalSelections[id] ||= {};
+    modalSelections[id][field.dataset.draft] = {start:field.selectionStart,end:field.selectionEnd,direction:field.selectionDirection};
+  };
+  const focusElement = (field,id) =&gt; {
+    if (!field) return;
+    field.focus();
+    if (field.tagName === &#x27;TEXTAREA&#x27;) {
+      const selection = modalSelections[id]?.[field.dataset.draft];
+      if (selection) field.setSelectionRange(selection.start,selection.end,selection.direction);
+    }
+  };
+  const rememberModalState = () =&gt; {
+    for (const concept of root.querySelectorAll(&#x27;[data-concept]&#x27;)) {
+      const id = concept.dataset.concept;
+      const body = concept.querySelector(&#x27;.shk-modal-body&#x27;);
+      if (body) modalScrollTop[id] = body.scrollTop;
+      const fields = concept.querySelectorAll(&#x27;.shk-modal [data-draft]&#x27;);
+      if (fields.length) {
+        modalDrafts[id] ||= {};
+        for (const field of fields) modalDrafts[id][field.dataset.draft] = field.value;
+      }
+    }
+    const field = document.activeElement;
+    const concept = field.closest?.(&#x27;[data-concept]&#x27;);
+    if (concept &amp;&amp; field.matches(&#x27;.shk-modal [data-draft]&#x27;)) {
+      storeModalSelection(field,concept.dataset.concept);
+      modalFocus = {id:concept.dataset.concept, key:field.dataset.draft, start:field.selectionStart, end:field.selectionEnd, direction:field.selectionDirection};
+    } else modalFocus = null;
+  };
+  const updateRecentCue = body =&gt; {
+    const cue = body.closest(&#x27;.shk-recent&#x27;).querySelector(&#x27;.shk-recent-cues&#x27;);
+    const atTop = body.scrollTop &lt;= 1;
+    const atBottom = body.scrollTop + body.clientHeight &gt;= body.scrollHeight - 1;
+    cue.textContent = `${atTop ? &#x27;&#x27; : &#x27;↑ Earlier&#x27;}${!atTop &amp;&amp; !atBottom ? &#x27; · &#x27; : &#x27;&#x27;}${atBottom ? &#x27;&#x27; : &#x27;↓ More&#x27;}`;
+    cue.hidden = atTop &amp;&amp; atBottom;
   };
   const render = () =&gt; {
-    mount.innerHTML=concepts.map(concept=&gt;`&lt;section class=&quot;shk-concept&quot; data-concept=&quot;${concept.id}&quot;&gt;&lt;div class=&quot;shk-titlebar&quot;&gt;&lt;h3&gt;${concept.id} · ${concept.name}&lt;/h3&gt;&lt;span class=&quot;text-small text-muted&quot;&gt;${concept.subtitle}&lt;/span&gt;&lt;span class=&quot;text-small text-muted&quot;&gt;Selected direction&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-colors text-small text-muted&quot;&gt;${concept.palette.map(([name,color])=&gt;`&lt;span class=&quot;shk-color&quot;&gt;&lt;span class=&quot;shk-chip&quot; style=&quot;--swatch:${color}&quot; aria-hidden=&quot;true&quot;&gt;&lt;/span&gt;${name}&lt;/span&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-terminal ${width.value===&#x27;compact&#x27;?&#x27;shk-compact&#x27;:&#x27;&#x27;} ${mono.checked?&#x27;shk-mono&#x27;:&#x27;&#x27;}&quot; data-layout=&quot;${concept.layout}&quot;&gt;${top()}${metadata()}${projectUsage()}${resourceMetrics()}${attention()}${({deck,focus,stream,board}[concept.layout])(concept.id)}&lt;div class=&quot;shk-footer&quot;&gt;&lt;span&gt;&lt;span class=&quot;shk-key&quot;&gt;↑↓&lt;/span&gt; select&lt;/span&gt;&lt;span&gt;&lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; clear&lt;/span&gt;&lt;button type=&quot;button&quot; data-open=&quot;menu&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;Ctrl+P&lt;/span&gt; actions&lt;/button&gt;&lt;span&gt;&lt;span class=&quot;shk-key&quot;&gt;Ctrl+B d&lt;/span&gt; detach&lt;/span&gt;&lt;button type=&quot;button&quot; data-open=&quot;help&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;?&lt;/span&gt; help&lt;/button&gt;&lt;/div&gt;${modal(concept.id,getTask(selections[concept.id]))}&lt;/div&gt;&lt;/section&gt;`).join(&#x27;&#x27;);
+    rememberModalState();
+    mount.innerHTML=concepts.map(concept=&gt;`&lt;section class=&quot;shk-concept&quot; data-concept=&quot;${concept.id}&quot;&gt;&lt;div class=&quot;shk-titlebar&quot;&gt;&lt;h3&gt;${concept.id} · ${concept.name}&lt;/h3&gt;&lt;span class=&quot;text-small text-muted&quot;&gt;${concept.subtitle}&lt;/span&gt;&lt;span class=&quot;text-small text-muted&quot;&gt;Selected direction&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-colors text-small text-muted&quot;&gt;${concept.palette.map(([name,color])=&gt;`&lt;span class=&quot;shk-color&quot;&gt;&lt;span class=&quot;shk-chip&quot; style=&quot;--swatch:${color}&quot; aria-hidden=&quot;true&quot;&gt;&lt;/span&gt;${name}&lt;/span&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-terminal ${width.value===&#x27;compact&#x27;?&#x27;shk-compact&#x27;:&#x27;&#x27;} ${mono.checked?&#x27;shk-mono&#x27;:&#x27;&#x27;} ${staticMotion.checked?&#x27;shk-static&#x27;:&#x27;&#x27;}&quot; data-layout=&quot;${concept.layout}&quot;&gt;${top()}${metadata()}${projectUsage()}${resourceMetrics()}${attention()}${({deck,focus,stream,board}[concept.layout])(concept.id)}&lt;div class=&quot;shk-footer&quot;&gt;&lt;span&gt;&lt;span class=&quot;shk-key&quot;&gt;↑↓&lt;/span&gt; select&lt;/span&gt;&lt;span&gt;&lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; clear&lt;/span&gt;&lt;button type=&quot;button&quot; data-open=&quot;menu&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;Ctrl+P&lt;/span&gt; actions&lt;/button&gt;&lt;span&gt;&lt;span class=&quot;shk-key&quot;&gt;Ctrl+B d&lt;/span&gt; detach&lt;/span&gt;&lt;button type=&quot;button&quot; data-open=&quot;help&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;?&lt;/span&gt; help&lt;/button&gt;&lt;span class=&quot;shk-latest-command&quot; aria-label=&quot;Latest command: Applied, Pause task T-47, task paused&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;✓ Applied&lt;/span&gt; · Pause · T-47 · task paused&lt;/span&gt;&lt;/div&gt;${modal(concept.id,getTask(selections[concept.id]))}&lt;/div&gt;&lt;/section&gt;`).join(&#x27;&#x27;);
+    for (const concept of root.querySelectorAll(&#x27;[data-concept]&#x27;)) {
+      const id = concept.dataset.concept;
+      const recent = concept.querySelector(&#x27;.shk-recent-body&#x27;);
+      if (recent) {
+        recent.scrollTop = recentScrollTop[id] || 0;
+        updateRecentCue(recent);
+      }
+      const body = concept.querySelector(&#x27;.shk-modal-body&#x27;);
+      if (body) body.scrollTop = modalScrollTop[id] || 0;
+    }
+    if (modalFocus &amp;&amp; overlays[modalFocus.id]) {
+      const concept = root.querySelector(`[data-concept=&quot;${modalFocus.id}&quot;]`);
+      const field = concept?.querySelector(`.shk-modal [data-draft=&quot;${modalFocus.key}&quot;]`);
+      if (field) {
+        field.focus({preventScroll:true});
+        if (field.tagName === &#x27;TEXTAREA&#x27; &amp;&amp; Number.isInteger(modalFocus.start)) field.setSelectionRange(modalFocus.start, modalFocus.end, modalFocus.direction);
+      }
+    }
   };
+  const saveDraft = event =&gt; {
+    const field = event.target.closest?.(&#x27;.shk-modal [data-draft]&#x27;);
+    const concept = field?.closest(&#x27;[data-concept]&#x27;);
+    if (!field || !concept) return;
+    modalDrafts[concept.dataset.concept] ||= {};
+    modalDrafts[concept.dataset.concept][field.dataset.draft] = field.value;
+    if (field.tagName === &#x27;TEXTAREA&#x27;) {
+      storeModalSelection(field,concept.dataset.concept);
+      modalFocus = {id:concept.dataset.concept, key:field.dataset.draft, start:field.selectionStart, end:field.selectionEnd, direction:field.selectionDirection};
+    }
+  };
+  root.addEventListener(&#x27;input&#x27;, saveDraft);
+  root.addEventListener(&#x27;change&#x27;, saveDraft);
+  root.addEventListener(&#x27;select&#x27;, saveDraft);
+  root.addEventListener(&#x27;keyup&#x27;, saveDraft);
+  root.addEventListener(&#x27;mouseup&#x27;, saveDraft);
+  root.addEventListener(&#x27;scroll&#x27;, event =&gt; {
+    const body = event.target.closest?.(&#x27;.shk-recent-body&#x27;);
+    if (!body) return;
+    const concept = body.closest(&#x27;[data-concept]&#x27;);
+    recentScrollTop[concept.dataset.concept] = body.scrollTop;
+    updateRecentCue(body);
+  }, true);
+  window.addEventListener(&#x27;resize&#x27;, () =&gt; {
+    for (const body of root.querySelectorAll(&#x27;.shk-recent-body&#x27;)) updateRecentCue(body);
+  });
   root.addEventListener(&#x27;click&#x27;, event =&gt; {
+    selectEscapePending=false;
     const button=event.target.closest(&#x27;button&#x27;);
     if (!button || !root.contains(button)) return;
     if (button.dataset.choose) {
@@ -1231,8 +1379,8 @@ html&gt;body{padding:0}&lt;/style&gt;
     }
     render();
     const updated=root.querySelector(`[data-concept=&quot;${id}&quot;]`);
-    const focusTarget=overlays[id]?updated.querySelector(&#x27;.shk-modal textarea, .shk-modal select, .shk-menu-item, .shk-modal button&#x27;):updated.querySelector(`[data-task=&quot;${selections[id]}&quot;]`)||updated.querySelector(&#x27;button[data-task]&#x27;);
-    if (focusTarget) focusTarget.focus();
+    const focusTarget=overlays[id]?updated.querySelector(&#x27;.shk-modal [data-draft], .shk-menu-item, .shk-modal button:not([data-close])&#x27;):updated.querySelector(`[data-task=&quot;${selections[id]}&quot;]`)||updated.querySelector(&#x27;button[data-task]&#x27;);
+    focusElement(focusTarget,id);
   });
   root.addEventListener(&#x27;keydown&#x27;, event =&gt; {
     const concept=event.target.closest(&#x27;[data-concept]&#x27;);
@@ -1240,9 +1388,14 @@ html&gt;body{padding:0}&lt;/style&gt;
     const id=concept.dataset.concept;
     const editing=[&#x27;INPUT&#x27;,&#x27;TEXTAREA&#x27;,&#x27;SELECT&#x27;].includes(event.target.tagName);
     let handled=true;
+    if (event.key===&#x27;Escape&#x27; &amp;&amp; event.target.tagName===&#x27;SELECT&#x27; &amp;&amp; overlays[id]) {
+      if (!selectEscapePending) {selectEscapePending=true;return;}
+      selectEscapePending=false;
+    } else if (event.key!==&#x27;Escape&#x27;) selectEscapePending=false;
     if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]) delete overlays[id];
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; selections[id]) selections[id]=null;
     else if (editing) return;
+    else if (event.key===&#x27;Enter&#x27; &amp;&amp; !overlays[id] &amp;&amp; scene.value!==&#x27;quiet&#x27; &amp;&amp; scene.value!==&#x27;stopped&#x27; &amp;&amp; !event.target.closest(&#x27;button[data-open]&#x27;)) {selections[id]=&#x27;T-42&#x27;;overlays[id]=&#x27;resolve&#x27;;}
     else if (event.ctrlKey &amp;&amp; event.key.toLowerCase()===&#x27;p&#x27;) overlays[id]=&#x27;menu&#x27;;
     else if (event.key.toLowerCase()===&#x27;e&#x27; &amp;&amp; selections[id]) overlays[id]=&#x27;evidence&#x27;;
     else if (event.key.toLowerCase()===&#x27;u&#x27; &amp;&amp; selections[id]) overlays[id]=&#x27;usage&#x27;;
@@ -1257,15 +1410,17 @@ html&gt;body{padding:0}&lt;/style&gt;
     event.preventDefault();
     render();
     const updated=root.querySelector(`[data-concept=&quot;${id}&quot;]`);
-    const target=overlays[id]?updated.querySelector(&#x27;.shk-modal textarea, .shk-menu-item, .shk-modal button&#x27;):updated.querySelector(`[data-task=&quot;${selections[id]}&quot;]`)||updated.querySelector(&#x27;button[data-task]&#x27;);
-    if (target) target.focus();
+    const target=overlays[id]?updated.querySelector(&#x27;.shk-modal [data-draft], .shk-menu-item, .shk-modal button:not([data-close])&#x27;):updated.querySelector(`[data-task=&quot;${selections[id]}&quot;]`)||updated.querySelector(&#x27;button[data-task]&#x27;);
+    focusElement(target,id);
   });
   scene.addEventListener(&#x27;change&#x27;,()=&gt;{for(const id of Object.keys(overlays))delete overlays[id];render();});
   width.addEventListener(&#x27;change&#x27;,render);
   checkout.addEventListener(&#x27;change&#x27;,render);
   mono.addEventListener(&#x27;change&#x27;,render);
-  root.querySelector(&#x27;#shk-signal&#x27;).addEventListener(&#x27;click&#x27;,()=&gt;{signal=(signal+1)%signals.length;sample.textContent=`Demo signal: ${signals[signal]} · sample workload`;render();});
+  staticMotion.addEventListener(&#x27;change&#x27;,render);
+  root.querySelector(&#x27;#shk-signal&#x27;).addEventListener(&#x27;click&#x27;,()=&gt;{signal=(signal+1)%signals.length;sample.textContent=`Preview sample signal: ${signals[signal]} · no live engine connection`;render();});
   render();
+  root.querySelector(&#x27;[data-concept=&quot;B&quot;] [data-task=&quot;T-43&quot;]&#x27;).focus();
 })();
 &lt;/script&gt;
 
