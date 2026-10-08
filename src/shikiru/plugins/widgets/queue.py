@@ -166,11 +166,13 @@ class _TaskBrowserListView(ListView):
         focus_layout: bool,
         move_selection: Callable[[int], Awaitable[None]],
         select_task: Callable[[str], None],
+        activate_attention_decision: Callable[[], Awaitable[bool]] | None,
     ) -> None:
         super().__init__(id=widget_id)
         self._focus_layout = focus_layout
         self._move_selection = move_selection
         self._select_task = select_task
+        self._activate_attention_decision = activate_attention_decision
 
     def action_cursor_up(self) -> None:
         if not self._focus_layout:
@@ -189,7 +191,21 @@ class _TaskBrowserListView(ListView):
             super().action_select_cursor()
             return
         item = self.highlighted_child
-        if isinstance(item, _BrowserListItem):
+        self.run_worker(
+            self._activate_decision_or_select(item if isinstance(item, _BrowserListItem) else None)
+        )
+
+    async def _activate_decision_or_select(self, item: _BrowserListItem | None) -> None:
+        if not widget_is_current(self):
+            return
+        if (
+            self._activate_attention_decision is not None
+            and await self._activate_attention_decision()
+        ):
+            return
+        if not widget_is_current(self):
+            return
+        if item is not None and item.parent is self:
             self._select_task(item.task_id)
 
 
@@ -420,6 +436,7 @@ class QueuePanel(Vertical):
             focus_layout=self._focus_layout,
             move_selection=self._move_selection,
             select_task=self.select_task,
+            activate_attention_decision=self._widget_context.activate_attention_decision,
         )
         if self._focus_layout:
             task_list.add_class(FOCUS_LIST_CLASS)
@@ -431,6 +448,7 @@ class QueuePanel(Vertical):
             focus_layout=self._focus_layout,
             move_selection=self._move_selection,
             select_task=self.select_task,
+            activate_attention_decision=self._widget_context.activate_attention_decision,
         )
         recent_list.styles.max_height = RECENT_BODY_MAX_ROWS
         if self._focus_layout:

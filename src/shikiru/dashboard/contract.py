@@ -117,6 +117,7 @@ NavigateTaskWindow = Callable[[str], Awaitable[str]]
 NavigateRolePane = Callable[[str, str], Awaitable[str]]
 NavigateHome = Callable[[], Awaitable[str]]
 OpenContextualView = Callable[[str], Awaitable[None]]
+ActivateAttentionDecision = Callable[[], Awaitable[bool]]
 
 
 class TaskBrowserFilter(StrEnum):
@@ -903,3 +904,4 @@ class WidgetContext:
     open_contextual_view: OpenContextualView | None = None
     task_contextual_views: tuple[tuple[str, str], ...] = ()
     animations: bool = True
+    activate_attention_decision: ActivateAttentionDecision | None = None

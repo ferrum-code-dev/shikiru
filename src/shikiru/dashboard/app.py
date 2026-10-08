@@ -52,7 +52,7 @@ from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.errors import ConfigError
 from shikiru.ui.compact import FocusAttentionStatus
-from shikiru.ui.screen import widget_is_active, widget_is_attached
+from shikiru.ui.screen import widget_is_active, widget_is_attached, widget_is_current
 from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
 
@@ -184,6 +184,8 @@ class _TaskBrowserNavigation(Protocol):
 
 class _AttentionPanelNavigation(Protocol):
     def activate_attention(self) -> None: ...
+
+    async def activate_selected_decision(self) -> bool: ...
 
 
 class WidgetPluginError(ConfigError):
@@ -1013,6 +1015,7 @@ class DashboardApp(App[None]):
             navigate_home=self._navigate_home,
             on_task_selected=self._select_task_context,
             activate_home_summary=self._activate_home_summary,
+            activate_attention_decision=self._activate_attention_decision,
             placement=placement,
             home_attention_present=self._focus_task is None,
             open_contextual_view=self._open_contextual_view,
@@ -1044,6 +1047,14 @@ class DashboardApp(App[None]):
             self._show_navigation_feedback("Task browser is not configured.")
             return
         await cast("_TaskBrowserNavigation", browser).activate_filter(task_filter)
+
+    async def _activate_attention_decision(self) -> bool:
+        if self._focus_task is not None:
+            return False
+        panel = self._widget_instances.get(_WIDGET_ESCALATIONS)
+        if panel is None or not widget_is_current(panel):
+            return False
+        return await cast("_AttentionPanelNavigation", panel).activate_selected_decision()
 
     def _show_navigation_feedback(self, message: str) -> None:
         status = self.query_one("#workspace-command-status", Static)

@@ -190,7 +190,7 @@ Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus
 - [x] Task 115: Keep popup underlays stationary and align frames and close controls
 - [x] Task 116: Make Recent fixed and scrollable with contiguous task rows
 - [x] Task 117: Align the resource strip and composed Project Diagnostics popup
-- [ ] Task 118: Remove escalation identity duplication and make Enter resolve truthful
+- [x] Task 118: Remove escalation identity duplication and make Enter resolve truthful
 - [ ] Task 119: Resolve rebase conflicts through bounded turns and classify continuation failures
 - [ ] Task 120: Move clear durable command feedback into the footer
 - [ ] Task 121: Verify the second review end to end and reconcile Phase 11 evidence

@@ -922,6 +922,13 @@ def attention_status_text(
     return status
 
 
+def display_escalation_headline(task_id: str | None, headline: str) -> str:
+    """Remove only an already-present leading task identity from a headline."""
+    if task_id is None:
+        return headline
+    return headline.removeprefix(f"{task_id} · ")
+
+
 @dataclass(frozen=True)
 class FocusAttentionStatus:
     """Render a cached Home attention projection against the current terminal width."""
@@ -957,10 +964,12 @@ def _attention_group_status(
             (item for item in group.escalations if item.escalation_id == selected_escalation_id),
             group.escalations[0],
         )
+        task_id = group.task_id or "Project"
+        headline = display_escalation_headline(group.task_id, decision.headline)
         status = Text.assemble(
             ("! ", AMBER),
             (decision.escalation_id, AMBER),
-            (f" · {group.task_id or 'Project'} · {decision.headline}", PRIMARY_TEXT_COLOR),
+            (f" · {task_id} · {headline}", PRIMARY_TEXT_COLOR),
         )
         gap = max(
             width - cell_len(status.plain) - cell_len(action_hint)

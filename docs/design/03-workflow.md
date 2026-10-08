@@ -321,6 +321,8 @@ Commands that only set a value (`prioritize`) are naturally repeatable.
 - the Leader's question and typed agent-proposed alternatives, each with its recorded consequences and exactly one ★
 - applicable engine resolution kinds with consequences and exactly one ★; these remain separate from the agent's alternatives
 
+When no agent proposal was recorded, the packet says so explicitly. Engine recovery actions remain under `Options`; they do not stand in for agent alternatives.
+
 **Resolution**: the palette presents the question and recommended agent alternative before expandable evidence. It offers only the engine resolution kinds stored on the escalation row: `answer TEXT`, `retry [rung]`, `accept` or `cancel`, through the palette (06 §5.5) or `resolve_escalation` (06 §4). An agent alternative's wording never selects or implies a command. `answer` requires non-empty guidance; `retry` may include an allowed rung override.
 - `answer` runs a consult turn (the Leader receives the Operator's text), then continues with implement at the same iteration; for `iterations_exhausted` the next verify is again a final round.
 - `retry` re-runs the failed step.

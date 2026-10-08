@@ -446,12 +446,14 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
         "- `answer` ★: Give the Leader guidance\n"
     )
     packet_path.write_text(packet)
+    related = seed_task(connection, clock, title="Related parser task")
+    headline = f"{task.id} · Reuse the parser from {related.id}."
     EscalationStore(connection, clock).open(
         task.id,
         escalation_id="E-1",
         step=None,
         reason=EscalationReason.DECISION_REQUIRED,
-        headline="decision needed",
+        headline=headline,
         packet_path=str(packet_path),
         options=options_for(EscalationReason.DECISION_REQUIRED),
     )
@@ -482,6 +484,10 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
         home = pilot.app.screen
+        group_text = plain_text(widget.query_one("#escalation-panels").query(Static)[0].content)
+        assert group_text.count(task.id) == 1
+        assert related.id in group_text
+        assert "E-1 · Reuse the parser from" in group_text
         widget.focus()
         assert pilot.app.focused is widget
         await pilot.press("o")
@@ -505,7 +511,7 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
         )
         packet_view = cast("Static", packet_screen.query_one("#escalation-packet"))
         packet_copy = cast("str", packet_view.content)
-        assert "E-1 · T-1 · decision needed" in packet_copy
+        assert f"E-1 · {task.id} · Reuse the parser from {related.id}." in packet_copy
         assert "Evidence error:" in packet_copy
         assert f"Original packet:\n{packet}" in packet_copy
         await pilot.click("#escalation-packet-close")
@@ -523,6 +529,7 @@ async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packe
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Choose retry behavior")
+    related = seed_task(connection, clock, title="Related retry task")
     TaskStore(connection, clock).apply_transition(
         task.id,
         Transition.stay(task, step=task.step, status=Status.ESCALATED),
@@ -548,7 +555,7 @@ async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packe
         task.id,
         step=task.step,
         reason=EscalationReason.DECISION_REQUIRED,
-        headline="Choose whether to retry",
+        headline=f"{task.id} · Choose whether to retry like {related.id}",
         packet_path=".shikiru/escalations/missing-packet.md",
         options=options_for(EscalationReason.DECISION_REQUIRED),
     )
@@ -559,7 +566,7 @@ async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packe
     assert any(item.text == "engine recovered" for item in context.views.dialogue())
     assert decision.escalation_id == escalation.id
     assert decision.task_id == task.id
-    assert decision.headline == "Choose whether to retry"
+    assert decision.headline == f"{task.id} · Choose whether to retry like {related.id}"
     assert decision.resolution_actions == ("answer", "cancel")
     assert decision.answer_available
     assert decision.evidence_error is not None
@@ -574,12 +581,18 @@ async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packe
             ),
             timeout=2,
         )
+        group_text = plain_text(panel.query_one("#escalation-panels").query(Static)[0].content)
+        assert group_text.count(task.id) == 1
+        assert related.id in group_text
+        assert "E-1 · Choose whether to retry like" in group_text
         panel.focus()
         await pilot.press("o")
         await pilot.pause()
         evidence = cast("Static", pilot.app.screen.query_one("#escalation-packet"))
         evidence_text = plain_text(evidence.render())
         assert escalation.id in evidence_text
+        assert evidence_text.count(task.id) == 1
+        assert related.id in evidence_text
         assert "answer, cancel" in evidence_text
         assert "Evidence error" in evidence_text
         current = EscalationStore(connection, clock).get(escalation.id)

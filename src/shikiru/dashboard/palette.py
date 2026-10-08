@@ -37,6 +37,7 @@ from shikiru.operator.queries import (
     TASK_ACTION_ROLES,
     OperatorTaskAction,
 )
+from shikiru.ui.compact import display_escalation_headline
 from shikiru.ui.screen import widget_is_on_screen
 from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
@@ -1619,7 +1620,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     def _escalation_select_options(self) -> list[tuple[str, str]]:
         return [
             (
-                f"{item.escalation.id} · {item.escalation.headline}"
+                f"{item.escalation.id} · {item.escalation.task_id} · "
+                f"{display_escalation_headline(item.escalation.task_id, item.escalation.headline)}"
                 + (" · resolved" if item.escalation.status is not EscalationStatus.OPEN else ""),
                 item.escalation.id,
             )
@@ -1966,7 +1968,10 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         packet: EscalationPacket | None,
         question: str | None,
     ) -> str:
-        identity = f"{item.escalation.task_id} · {item.escalation.id} · {item.escalation.headline}"
+        identity = (
+            f"{item.escalation.task_id} · {item.escalation.id} · "
+            f"{display_escalation_headline(item.escalation.task_id, item.escalation.headline)}"
+        )
         if self._answer_resolution_route:
             lines = [identity, f"Question: {question or 'unavailable'}"]
             if packet is not None and packet.agent_request is not None:

@@ -20,6 +20,9 @@ _FACTS = "Facts"
 _RECENT_SIGNALS = "Recent turn signals"
 _SESSIONS = "Sessions"
 _NONE_RECORDED = "(none recorded)"
+_NO_AGENT_PROPOSAL = (
+    "No agent proposal was recorded. Engine recovery actions are listed separately."
+)
 _TOP_LEVEL_PREFIX = "## "
 _SUBSECTION_PREFIX = "### "
 _OPTION_PREFIX = "- `"
@@ -107,7 +110,7 @@ def _agent_request(packet: str, errors: list[str]) -> EscalationRequest | None:
     if not _section_exists(packet, _AGENT_ALTERNATIVES):
         return None
     section = _section(packet, _AGENT_ALTERNATIVES, _RESOLUTIONS, errors)
-    if section == _NONE_RECORDED:
+    if section in {_NONE_RECORDED, _NO_AGENT_PROPOSAL}:
         return None
     if section is None:
         return None

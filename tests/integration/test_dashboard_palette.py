@@ -50,6 +50,7 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
 from tests.support.clock import FakeClock
+from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -1476,6 +1477,63 @@ async def test_palette_routes_structured_escalation_to_validated_resolution(
         escalation_id=escalation.id,
         expected_type=expected_type,
     )
+
+
+async def test_resolution_target_keeps_task_identity_once_when_headline_has_a_prefix(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    clock = FakeClock(_START)
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    task = seed_task(connection, clock, title="Normalize the resolution target")
+    reason = EscalationReason.AGENT_ERROR
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.escalate(task, reason, step=Step.IMPLEMENT),
+    )
+    suffix = "The implementation step could not continue."
+    escalation = EscalationStore(connection, clock).open(
+        task.id,
+        step=Step.IMPLEMENT,
+        reason=reason,
+        headline=f"{task.id} · {suffix}",
+        packet_path=str(tmp_path / "missing-resolution-packet.md"),
+        options=options_for(reason),
+    )
+    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(action="resolve", task_id=task.id),
+    )
+
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        target = cast("Select[str]", screen.query_one("#escalation", Select))
+        assert target.display
+        target.value = escalation.id
+        target.focus()
+        await pilot.press("enter")
+        await wait_until(lambda: target.expanded, timeout=2)
+        options = target.query_one(OptionList)
+        label = next(
+            plain_text(options.get_option_at_index(index).prompt)
+            for index in range(options.option_count)
+            if escalation.id in plain_text(options.get_option_at_index(index).prompt)
+        )
+        assert label.count(task.id) == 1
+        assert escalation.id in label
+        assert suffix in label
+        assert queue.pending() == []
+        await pilot.press("escape")
+        await wait_until(lambda: not target.expanded, timeout=2)
+        assert queue.pending() == []
 
 
 async def test_palette_preserves_resolution_form_after_unrelated_database_update(

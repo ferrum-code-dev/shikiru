@@ -21,7 +21,11 @@ from shikiru.dashboard.contract import (
     WorkspaceSummaryView,
 )
 from shikiru.ui import SplashPanel
-from shikiru.ui.compact import FOCUS_ATTENTION_MAX_HEIGHT, FocusAttentionStatus
+from shikiru.ui.compact import (
+    FOCUS_ATTENTION_MAX_HEIGHT,
+    FocusAttentionStatus,
+    display_escalation_headline,
+)
 from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
@@ -158,6 +162,15 @@ class EscalationsPanel(Static):
         self.display = True
         self.focus()
 
+    async def activate_selected_decision(self) -> bool:
+        if not self._focus_row or not widget_is_current(self):
+            return False
+        decision = self._selected_decision()
+        if decision is None:
+            return False
+        await self._open_resolution(decision)
+        return True
+
     async def on_key(self, event: events.Key) -> None:
         """Select a group, open its task or evidence, or request the first decision's resolution."""
         if not self._attention.groups:
@@ -263,6 +276,8 @@ class EscalationsPanel(Static):
         event.stop()
 
     async def _open_resolution(self, decision: EscalationPanelView) -> None:
+        if not widget_is_current(self):
+            return
         request = PaletteRequest(
             action=f"resolve {decision.escalation_id}",
             task_id=decision.task_id,
@@ -438,7 +453,10 @@ class EscalationsPanel(Static):
         lines.extend(f"  {reason}" for reason in group.reasons)
         content: list[RenderableType] = ["\n".join(lines)]
         for item in group.escalations:
-            headline = f"{item.escalation_id} · {item.headline} · {item.age}"
+            headline = (
+                f"{item.escalation_id} · "
+                f"{display_escalation_headline(item.task_id, item.headline)} · {item.age}"
+            )
             if index == self._selected and item.escalation_id == self._selected_escalation_id:
                 headline = f"{_SELECTED_MARKER}{headline}"
             content.append(
@@ -478,8 +496,9 @@ def _packet_copy(item: EscalationPanelView) -> str:
     if item.evidence_error is None:
         return item.packet
     actions = ", ".join(item.resolution_actions) or "none recorded"
+    headline = display_escalation_headline(item.task_id, item.headline)
     lines = [
-        f"{item.escalation_id} · {item.task_id} · {item.headline}",
+        f"{item.escalation_id} · {item.task_id} · {headline}",
         f"Allowed actions: {actions}",
         f"Evidence error: {item.evidence_error}",
     ]

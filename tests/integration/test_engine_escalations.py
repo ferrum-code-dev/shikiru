@@ -11,6 +11,7 @@ import pytest
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.clock import SystemClock
 from shikiru.domain.escalation import EscalationStatus, options_for
+from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     REPORT_FILENAME,
@@ -106,6 +107,12 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     assert stored is not None
     assert stored.packet_path == escalation.packet_path
     packet_text = await asyncio.to_thread(Path(escalation.packet_path).read_text)
+    parsed_packet = parse_escalation_packet(packet_text)
+    assert parsed_packet.agent_request is None
+    assert parsed_packet.errors == ()
+    assert tuple(option.kind for option in parsed_packet.resolutions) == tuple(
+        option.label for option in escalation.options
+    )
     assert "Should I accept this as-is?" in packet_text
     assert "changes_requested" in packet_text
     assert "abc123 do the thing" in packet_text

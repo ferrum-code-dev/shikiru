@@ -58,6 +58,9 @@ _REPORT_DATA = TypeAdapter(dict[str, object])
 _REPORT_DECISION_KEY = "decision"
 _VERDICT_SUMMARY_KEY = "summary"
 _CONSULT_ANSWER_KEY = "answer"
+_NO_AGENT_PROPOSAL = (
+    "No agent proposal was recorded. Engine recovery actions are listed separately."
+)
 
 _HEADLINE_SENTENCES: dict[EscalationReason, str] = {
     EscalationReason.DECISION_REQUIRED: "The Leader needs an Operator decision to continue.",
@@ -151,7 +154,7 @@ def render_packet(context: PacketContext) -> str:
     agent_alternatives = (
         context.agent_request.model_dump_json(indent=REPORT_JSON_INDENT)
         if context.agent_request
-        else "(none recorded)"
+        else _NO_AGENT_PROPOSAL
     )
     return (
         f"# {_headline(context)}\n\n"

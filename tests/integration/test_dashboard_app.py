@@ -94,6 +94,7 @@ from shikiru.dashboard.detail import (
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.services import DashboardServices, GitRepoStatusService
 from shikiru.domain.commands import (
+    AnswerResolution,
     CancelResolution,
     Prioritize,
     ResolutionKind,
@@ -3341,6 +3342,355 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             reopened = cast("PaletteScreen", app.screen)
             assert reopened.query_one("#resolution-text", TextArea).text == guidance
             assert cast("Select[str]", reopened.query_one("#resolution", Select)).value == "answer"
+            assert queue.pending() == []
+    finally:
+        reader.close()
+
+
+def _seed_home_answer_decision(
+    connection: Connection,
+    clock: Clock,
+) -> tuple[Task, Task, Escalation, CommandQueue]:
+    task = seed_task(connection, clock, title="Answer from the normal Home focus")
+    related = seed_task(connection, clock, title="Task referenced by the decision")
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=task.step, status=Status.ESCALATED),
+    )
+    headline = f"{task.id} · Keep the behavior used by {related.id}."
+    escalation = EscalationStore(connection, clock).open(
+        task.id,
+        step=task.step,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline=headline,
+        packet_path=".shikiru/escalations/missing-packet.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
+    return task, related, escalation, queue
+
+
+async def _assert_keyboard_answer_enter_and_cancel(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    screen: PaletteScreen,
+    *,
+    home_screen: object,
+    queue: CommandQueue,
+    size: tuple[int, int],
+) -> None:
+    answer = screen.query_one("#resolution-text", TextArea)
+    await wait_until(
+        lambda: app.focused is answer,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.pause()
+    _capture_task99(app, f"task118-answer-{size[0]}x{size[1]}-color.svg")
+    await pilot.press("enter")
+    assert answer.text == "\n"
+    assert queue.pending() == []
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home_screen, timeout=2)
+    assert queue.pending() == []
+
+
+async def _submit_mouse_opened_answer(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    row: Static,
+    *,
+    task: Task,
+    escalation: Escalation,
+    queue: CommandQueue,
+) -> None:
+    await pilot.click(row)
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    screen = cast("PaletteScreen", app.screen)
+    assert screen.query_one("#task-id", Input).value == task.id
+    assert screen.query_one("#palette-escalation-summary", Static).display
+    assert queue.pending() == []
+    screen.query_one("#resolution-text", TextArea).text = "Keep the existing behavior."
+    submit = screen.query_one("#palette-submit", Button)
+    await pilot.pause()
+    assert not submit.disabled
+    submit.focus()
+    await wait_until(
+        lambda: app.focused is submit,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.press("enter")
+    await wait_until(
+        lambda: bool(queue.pending()),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    (queued,) = queue.pending()
+    assert isinstance(queued.command, Resolve)
+    assert queued.command.escalation_id == escalation.id
+    assert isinstance(queued.command.resolution, AnswerResolution)
+
+
+@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE])
+async def test_home_list_enter_opens_the_attention_answer_and_waits_for_submit(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task, related, escalation, queue = _seed_home_answer_decision(connection, clock)
+    headline = f"{task.id} · Keep the behavior used by {related.id}."
+    reader = StateReader(database, clock)
+    app_instances: list[DashboardApp] = []
+    open_palette_context = _palette_context_opener(
+        reader,
+        connection,
+        project_dir,
+        clock,
+        app_instances,
+    )
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue", "escalations"],
+            open_palette_context=open_palette_context,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=size) as pilot:
+            home_screen = app.screen
+            task_list = app.query_one("#task-browser-list", ListView)
+            attention = app.query_one("#escalations", EscalationsPanel)
+            await wait_until(
+                lambda: (
+                    app.focused is task_list
+                    and escalation.id
+                    in _rendered_text(
+                        attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+                    )
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            attention_text = _rendered_text(row)
+            assert attention_text.count(task.id) == 1
+            assert related.id in attention_text
+            assert "Enter answer" in attention_text
+            assert queue.pending() == []
+            _capture_task99(app, f"task118-attention-{size[0]}x{size[1]}-color.svg")
+
+            await pilot.press("enter")
+            await wait_until(
+                lambda: isinstance(app.screen, PaletteScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            screen = cast("PaletteScreen", app.screen)
+            assert home_screen.is_mounted
+            _assert_fixed_context_target_picker_hidden(screen)
+            assert screen.query_one("#task-id", Input).value == task.id
+            summary = _rendered_text(screen.query_one("#palette-escalation-summary", Static))
+            assert summary.count(task.id) == 1
+            assert related.id in summary
+            assert escalation.id in summary
+            assert headline.removeprefix(f"{task.id} · ") in summary
+            stored = EscalationStore(connection, clock).get(escalation.id)
+            assert stored is not None
+            assert stored.headline == headline
+            assert queue.pending() == []
+            await _assert_keyboard_answer_enter_and_cancel(
+                app,
+                pilot,
+                screen,
+                home_screen=home_screen,
+                queue=queue,
+                size=size,
+            )
+            await _submit_mouse_opened_answer(
+                app,
+                pilot,
+                row,
+                task=task,
+                escalation=escalation,
+                queue=queue,
+            )
+    finally:
+        reader.close()
+
+
+async def test_home_list_enter_opens_the_selected_resolution_without_dispatching(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Resolve from the normal Home focus")
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=task.step, status=Status.ESCALATED),
+    )
+    escalation = EscalationStore(connection, clock).open(
+        task.id,
+        step=task.step,
+        reason=EscalationReason.AGENT_ERROR,
+        headline=f"{task.id} · Retry the failed step.",
+        packet_path=".shikiru/escalations/missing-resolution-packet.md",
+        options=options_for(EscalationReason.AGENT_ERROR),
+    )
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
+    reader = StateReader(database, clock)
+    app_instances: list[DashboardApp] = []
+    open_palette_context = _palette_context_opener(
+        reader,
+        connection,
+        project_dir,
+        clock,
+        app_instances,
+    )
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue", "escalations"],
+            open_palette_context=open_palette_context,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            home_screen = app.screen
+            task_list = app.query_one("#task-browser-list", ListView)
+            attention = app.query_one("#escalations", EscalationsPanel)
+            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            await wait_until(
+                lambda: (
+                    app.focused is task_list
+                    and escalation.id in _rendered_text(row)
+                    and "Enter resolve" in _rendered_text(row)
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert _rendered_text(row).count(task.id) == 1
+            await pilot.press("enter")
+            await wait_until(
+                lambda: isinstance(app.screen, PaletteScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            screen = cast("PaletteScreen", app.screen)
+            assert screen.query_one("#task-id", Input).value == task.id
+            target = cast("Select[str]", screen.query_one("#escalation", Select))
+            assert target.value == escalation.id
+            assert screen.query_one("#resolution", Select).display
+            summary = _rendered_text(screen.query_one("#palette-escalation-summary", Static))
+            assert summary.count(task.id) == 1
+            assert escalation.id in summary
+            assert "Retry the failed step." in summary
+            assert queue.pending() == []
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
+            assert queue.pending() == []
+    finally:
+        reader.close()
+
+
+async def test_home_list_enter_uses_the_selected_decision_when_one_task_has_several(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Choose between the two decisions")
+    TaskStore(connection, clock).apply_transition(
+        task.id,
+        Transition.stay(task, step=task.step, status=Status.ESCALATED),
+    )
+    escalations = EscalationStore(connection, clock)
+    decisions = tuple(
+        escalations.open(
+            task.id,
+            step=task.step,
+            reason=EscalationReason.DECISION_REQUIRED,
+            headline=f"{task.id} · {headline}",
+            packet_path=f".shikiru/escalations/{index}-missing.md",
+            options=options_for(EscalationReason.DECISION_REQUIRED),
+        )
+        for index, headline in enumerate(("First decision", "Second decision"))
+    )
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
+    reader = StateReader(database, clock)
+    app_instances: list[DashboardApp] = []
+    open_palette_context = _palette_context_opener(
+        reader,
+        connection,
+        project_dir,
+        clock,
+        app_instances,
+    )
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue", "escalations"],
+            open_palette_context=open_palette_context,
+        )
+        app_instances.append(app)
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            home_screen = app.screen
+            task_list = app.query_one("#task-browser-list", ListView)
+            attention = app.query_one("#escalations", EscalationsPanel)
+            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            await wait_until(
+                lambda: app.focused is task_list and decisions[0].id in _rendered_text(row),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            attention.focus()
+            await pilot.press("right")
+            await wait_until(
+                lambda: (
+                    decisions[1].id in _rendered_text(row)
+                    and decisions[0].id not in _rendered_text(row)
+                ),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            task_list.focus()
+            await pilot.press("enter")
+            await wait_until(
+                lambda: isinstance(app.screen, PaletteScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            keyboard_screen = cast("PaletteScreen", app.screen)
+            assert keyboard_screen.query_one("#task-id", Input).value == task.id
+            assert decisions[1].id in _rendered_text(
+                keyboard_screen.query_one("#palette-title", Static)
+            )
+            assert decisions[0].id not in _rendered_text(
+                keyboard_screen.query_one("#palette-title", Static)
+            )
+            assert queue.pending() == []
+
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
+            await pilot.click(row)
+            await wait_until(
+                lambda: isinstance(app.screen, PaletteScreen),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            mouse_screen = cast("PaletteScreen", app.screen)
+            assert mouse_screen.query_one("#task-id", Input).value == task.id
+            assert decisions[1].id in _rendered_text(
+                mouse_screen.query_one("#palette-title", Static)
+            )
             assert queue.pending() == []
     finally:
         reader.close()
