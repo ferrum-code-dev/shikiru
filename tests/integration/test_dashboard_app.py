@@ -228,6 +228,7 @@ _TASK99_CURRENT_TURN = "03-verify-i1"
 _TASK99_IMPLEMENT_TURN = "02-implement-i1"
 _TASK99_TRIAGE_TURN = "01-triage-i0"
 NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
+_FORM_CONTENT_TRAILING_GAP_ROWS = 3
 _RESOURCE_AGENT_SESSION_ID = "task110-resource-session"
 _RESOURCE_AGENT_PROMPT = "wait for the next instruction"
 _RESOURCE_AGENT_MODEL = "resource-test-model"
@@ -1169,6 +1170,94 @@ def _assert_non_answer_resolution_form(
     assert ResolutionKind.RETRY.value in summary
     assert ResolutionKind.CANCEL.value in summary
     return cast("Select[str]", screen.query_one("#resolution", Select))
+
+
+def _assert_missing_packet_resolution_form(
+    screen: PaletteScreen,
+    task_id: str,
+    escalation: Escalation,
+) -> tuple[Select[str], Select[str]]:
+    assert screen.query_one("#task-id", Input).value == task_id
+    target = cast("Select[str]", screen.query_one("#escalation", Select))
+    assert target.value == escalation.id
+    resolution = cast("Select[str]", screen.query_one("#resolution", Select))
+    assert resolution.display
+    assert resolution.value == ResolutionKind.RETRY.value
+    summary = _rendered_text(screen.query_one("#palette-escalation-summary", Static))
+    assert summary.count(task_id) == 1
+    assert escalation.id in summary
+    assert "Retry the failed step." in summary
+    assert "Question: unavailable" in summary
+    assert "Agent alternatives" in summary
+    assert "unavailable" in summary
+    assert ResolutionKind.CANCEL.value in summary
+    evidence_error = _rendered_text(screen.query_one("#palette-evidence-error", Static))
+    assert "Evidence error:" in evidence_error
+    assert "missing-resolution-packet.md" in evidence_error
+    return target, resolution
+
+
+async def _capture_compact_resolution_context(
+    app: DashboardApp,
+    target: Select[str],
+) -> None:
+    target.focus()
+    await wait_until(lambda: app.focused is target, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    await wait_until(
+        lambda: (
+            "Question: unavailable" in _exported_screen_text(app)
+            and "Agent alternatives" in _exported_screen_text(app)
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    _capture_task99(app, "task118-resolution-context-48x20-color.svg")
+
+
+async def _exercise_native_resolution_select(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    resolution: Select[str],
+    queue: CommandQueue,
+) -> None:
+    resolution.focus()
+    await wait_until(lambda: app.focused is resolution, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    await pilot.press("enter")
+    await wait_until(lambda: resolution.expanded, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    assert queue.pending() == []
+    await pilot.press("escape")
+    await wait_until(
+        lambda: not resolution.expanded and app.focused is resolution,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert queue.pending() == []
+
+
+async def _assert_compact_resolution_controls(
+    app: DashboardApp,
+    screen: PaletteScreen,
+    size: tuple[int, int],
+    queue: CommandQueue,
+) -> None:
+    frame = screen.query_one("#palette-frame")
+    for button_id in ("palette-back-to-menu", "palette-submit"):
+        button = screen.query_one(f"#{button_id}", Button)
+        assert button.display
+        assert frame.content_region.contains_region(button.region)
+        assert button.region.bottom <= size[1]
+    retry_rung = screen.query_one("#resolution-rung", Input)
+    retry_rung.focus()
+    screen.query_one("#palette-form", VerticalScroll).scroll_to_widget(
+        screen.query_one("#field-palette-evidence-error"),
+        animate=False,
+        immediate=True,
+        force=True,
+    )
+    await wait_until(
+        lambda: app.focused is retry_rung and "Evidence error:" in _exported_screen_text(app),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    _capture_task99(app, "task118-resolution-error-48x20-color.svg")
+    assert queue.pending() == []
 
 
 async def _unexpected_pane_selection(pane_id: str) -> None:
@@ -3503,6 +3592,17 @@ async def test_home_list_enter_opens_the_attention_answer_and_waits_for_submit(
             assert stored is not None
             assert stored.headline == headline
             assert queue.pending() == []
+            if size == _WIDE_HOME_SIZE:
+                frame = screen.query_one("#palette-frame")
+                evidence_error_field = screen.query_one("#field-palette-evidence-error")
+                evidence_error = screen.query_one("#palette-evidence-error", Static)
+                actions = screen.query_one("#palette-actions")
+                assert actions.region.bottom <= frame.content_region.bottom
+                assert evidence_error_field.region.height == evidence_error.region.height
+                assert (
+                    actions.region.y - evidence_error.region.bottom
+                    <= _FORM_CONTENT_TRAILING_GAP_ROWS
+                )
             await _assert_keyboard_answer_enter_and_cancel(
                 app,
                 pilot,
@@ -3523,10 +3623,12 @@ async def test_home_list_enter_opens_the_attention_answer_and_waits_for_submit(
         reader.close()
 
 
+@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE])
 async def test_home_list_enter_opens_the_selected_resolution_without_dispatching(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
@@ -3564,7 +3666,7 @@ async def test_home_list_enter_opens_the_selected_resolution_without_dispatching
             open_palette_context=open_palette_context,
         )
         app_instances.append(app)
-        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+        async with app.run_test(size=size) as pilot:
             home_screen = app.screen
             task_list = app.query_one("#task-browser-list", ListView)
             attention = app.query_one("#escalations", EscalationsPanel)
@@ -3584,14 +3686,20 @@ async def test_home_list_enter_opens_the_selected_resolution_without_dispatching
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
             screen = cast("PaletteScreen", app.screen)
-            assert screen.query_one("#task-id", Input).value == task.id
-            target = cast("Select[str]", screen.query_one("#escalation", Select))
-            assert target.value == escalation.id
-            assert screen.query_one("#resolution", Select).display
-            summary = _rendered_text(screen.query_one("#palette-escalation-summary", Static))
-            assert summary.count(task.id) == 1
-            assert escalation.id in summary
-            assert "Retry the failed step." in summary
+            target, resolution = _assert_missing_packet_resolution_form(
+                screen,
+                task.id,
+                escalation,
+            )
+            assert queue.pending() == []
+            if size == _COMPACT_HOME_SIZE:
+                await _capture_compact_resolution_context(app, target)
+            await _exercise_native_resolution_select(app, pilot, resolution, queue)
+            if size == _COMPACT_HOME_SIZE:
+                _capture_task99(app, f"task118-resolution-{size[0]}x{size[1]}-color.svg")
+                await _assert_compact_resolution_controls(app, screen, size, queue)
+            else:
+                _capture_task99(app, f"task118-resolution-{size[0]}x{size[1]}-color.svg")
             assert queue.pending() == []
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=2)

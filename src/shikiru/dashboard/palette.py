@@ -388,6 +388,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     }
     #palette-form.tiny { margin-top: 0; border-top: none; }
     #field-palette-escalation-summary { height: auto; }
+    #field-palette-escalation-status, #field-palette-evidence-error { height: auto; }
     .palette-field { height: auto; margin-bottom: 1; }
     .palette-field Label { height: 1; color: $secondary-text; text-style: none; }
     .palette-field Input, .palette-field Select { width: 100%; }
