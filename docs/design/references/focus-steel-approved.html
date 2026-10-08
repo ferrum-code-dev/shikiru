@@ -984,21 +984,52 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-panel { border:1px solid var(--shk-edge); padding:10px 11px; min-width:0; }
 #shikiru-focus-steel .shk-heading { display:flex; flex-wrap:wrap; gap:6px 15px; color:var(--shk-accent); margin-bottom:8px; font-weight:500; }
 #shikiru-focus-steel .shk-deck-row { display:grid; grid-template-columns:54px minmax(0,1fr) auto; gap:4px 9px; padding:5px 7px; width:100%; }
-#shikiru-focus-steel .shk-task-row { width:100%; display:block; padding:6px 7px !important; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-task-row { width:100%; display:block; padding:2px 7px !important; line-height:1.4; overflow-wrap:anywhere; }
 #shikiru-focus-steel .shk-task-row[aria-pressed=&quot;true&quot;],
 #shikiru-focus-steel .shk-deck-row[aria-pressed=&quot;true&quot;],
 #shikiru-focus-steel .shk-event[aria-pressed=&quot;true&quot;],
 #shikiru-focus-steel .shk-board-task[aria-pressed=&quot;true&quot;] { background:var(--shk-selected); }
 #shikiru-focus-steel .shk-row-title { display:block; }
 #shikiru-focus-steel .shk-row-state { display:block; color:var(--shk-dim); padding-left:18px; }
+#shikiru-focus-steel .shk-terminal .shk-active-mark { display:inline-block; width:1em; color:var(--shk-accent); }
+#shikiru-focus-steel .shk-terminal .shk-active-mark::before { content:&quot;⠋&quot;; animation:shk-active-spinner 1.2s steps(1,end) infinite; }
+#shikiru-focus-steel .shk-terminal .shk-active-status { animation:shk-active-status 1s steps(2,end) infinite; }
+@keyframes shk-active-spinner {
+  0%,24% { content:&quot;⠋&quot;; }
+  25%,49% { content:&quot;⠙&quot;; }
+  50%,74% { content:&quot;⠹&quot;; }
+  75%,100% { content:&quot;⠸&quot;; }
+}
+@keyframes shk-active-status { 50% { font-weight:700; } }
+@media(prefers-reduced-motion:reduce) {
+  #shikiru-focus-steel .shk-terminal .shk-active-mark::before,
+  #shikiru-focus-steel .shk-terminal .shk-active-status { animation:none; }
+}
+#shikiru-focus-steel .shk-terminal.shk-static .shk-active-mark::before,
+#shikiru-focus-steel .shk-terminal.shk-static .shk-active-status { animation:none; }
+#shikiru-focus-steel .shk-terminal button:focus-visible,
+#shikiru-focus-steel .shk-terminal textarea:focus-visible,
+#shikiru-focus-steel .shk-terminal select:focus-visible { outline:1px solid var(--shk-accent); outline-offset:2px; }
 #shikiru-focus-steel .shk-subline { padding-left:7px; color:var(--shk-dim); margin-bottom:9px; }
 #shikiru-focus-steel .shk-stages { display:flex; flex-wrap:wrap; gap:5px 10px; margin:6px 0; }
 #shikiru-focus-steel .shk-footer { display:flex; flex-wrap:wrap; align-items:center; gap:5px 17px; padding:9px 0; border-top:1px solid var(--shk-edge); margin-top:15px; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-footer .shk-latest-command { flex:1 1 280px; max-width:100%; margin-left:auto; overflow-wrap:anywhere; text-align:right; }
 #shikiru-focus-steel .shk-key { color:var(--shk-accent); }
 #shikiru-focus-steel .shk-deck-bottom { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
 #shikiru-focus-steel .shk-minirow { display:flex; flex-wrap:wrap; gap:4px 8px; padding:4px 0; }
 #shikiru-focus-steel .shk-focus-grid { display:grid; grid-template-columns:minmax(0,42%) minmax(0,58%); }
 #shikiru-focus-steel .shk-focus-list { padding-right:13px; border-right:1px solid var(--shk-edge); min-width:0; }
+#shikiru-focus-steel .shk-focus-list &gt; .shk-task-heading { margin:0; padding:0 7px 3px; }
+#shikiru-focus-steel .shk-focus-list .shk-recent { border-top:1px solid var(--shk-edge); }
+#shikiru-focus-steel .shk-recent-heading { display:flex; flex-wrap:wrap; align-items:center; gap:2px 9px; padding:3px 7px; }
+#shikiru-focus-steel .shk-recent-heading .shk-heading { margin:0; }
+#shikiru-focus-steel .shk-recent-cues { display:flex; gap:7px; margin-left:auto; }
+#shikiru-focus-steel .shk-recent-cues[hidden] { display:none; }
+#shikiru-focus-steel .shk-recent-body { max-height:8.5em; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--shk-dim) var(--shk-surface); }
+#shikiru-focus-steel .shk-recent-body::-webkit-scrollbar { width:7px; }
+#shikiru-focus-steel .shk-recent-body::-webkit-scrollbar-track { background:var(--shk-surface); }
+#shikiru-focus-steel .shk-recent-body::-webkit-scrollbar-thumb { background:var(--shk-dim); }
+#shikiru-focus-steel .shk-recent-body .shk-row-state.shk-good { color:var(--shk-dim); }
 #shikiru-focus-steel .shk-focus-detail { padding-left:16px; min-width:0; }
 #shikiru-focus-steel .shk-insight { margin:12px 0; overflow-wrap:anywhere; }
 #shikiru-focus-steel .shk-inline-action { color:var(--shk-accent) !important; }
@@ -1015,10 +1046,16 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-board-task span { display:block; }
 #shikiru-focus-steel .shk-board-caption { margin-top:16px; border-top:1px solid var(--shk-edge); padding-top:9px; overflow-wrap:anywhere; }
 #shikiru-focus-steel .shk-modal-wrap { position:absolute; inset:0; background:transparent; display:flex; align-items:center; justify-content:center; padding:14px; z-index:5; }
-#shikiru-focus-steel .shk-modal { width:100%; max-width:460px; max-height:calc(100% - 28px); overflow:auto; background:var(--shk-surface); color:var(--shk-ink); border:1px solid var(--shk-accent); padding:14px 16px; overflow-wrap:anywhere; }
-#shikiru-focus-steel .shk-modal-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 15px; margin-bottom:10px; }
-#shikiru-focus-steel .shk-modal-head button { margin-left:auto; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-modal { display:flex; flex-direction:column; width:100%; max-width:460px; max-height:calc(100% - 28px); overflow:hidden; background:var(--shk-surface); color:var(--shk-ink); border:1px solid var(--shk-accent); padding:14px 16px; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-modal-head { display:flex; flex:0 0 auto; flex-wrap:nowrap; align-items:flex-start; gap:8px; margin:0; }
+#shikiru-focus-steel .shk-modal-head button { flex:0 0 auto; margin:0; padding:2px 4px; color:var(--shk-ink); white-space:nowrap; }
 #shikiru-focus-steel .shk-modal h4 { font:inherit; font-weight:500; color:var(--shk-accent); margin:0; }
+#shikiru-focus-steel .shk-modal-head h4 { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-modal-body { min-height:0; flex:1 1 auto; overflow-y:auto; overscroll-behavior:contain; }
+#shikiru-focus-steel .shk-modal-body .shk-validation { color:var(--shk-bad); }
+#shikiru-focus-steel .shk-modal-body .shk-modal-controls { margin-bottom:2px; }
+#shikiru-focus-steel .shk-modal-body::-webkit-scrollbar { width:7px; }
+#shikiru-focus-steel .shk-modal-body::-webkit-scrollbar-thumb { background:var(--shk-edge); }
 #shikiru-focus-steel .shk-menu-item { display:flex; flex-wrap:wrap; gap:5px 12px; padding:6px 7px !important; width:100%; }
 #shikiru-focus-steel .shk-menu-item:first-child { background:var(--shk-selected); }
 #shikiru-focus-steel .shk-modal label { display:block; color:var(--shk-dim); margin:9px 0 4px; }
@@ -1036,42 +1073,8 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-compact .shk-lane:nth-child(2) { border-right:0; }
 #shikiru-focus-steel .shk-compact .shk-modal-wrap { position:absolute; inset:0; margin:0; padding:12px; }
 #shikiru-focus-steel .shk-compact .shk-modal { padding:12px; }
-#shikiru-focus-steel .shk-terminal .shk-active-mark { display:inline-block; color:var(--shk-accent); animation:shk-active-status 1s steps(2,end) infinite; }
-@keyframes shk-active-status { 50% { opacity:.3; } }
-@media(prefers-reduced-motion:reduce) { #shikiru-focus-steel .shk-terminal .shk-active-mark { animation:none; } }
-#shikiru-focus-steel .shk-terminal.shk-static .shk-active-mark { animation:none; }
-#shikiru-focus-steel .shk-terminal button:focus-visible,
-#shikiru-focus-steel .shk-terminal textarea:focus-visible,
-#shikiru-focus-steel .shk-terminal select:focus-visible { outline:1px solid var(--shk-accent); outline-offset:2px; }
-#shikiru-focus-steel .shk-focus-list &gt; .shk-task-heading { margin:0; padding:0 7px 3px; }
-#shikiru-focus-steel .shk-task-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:baseline; gap:2px 9px; padding:2px 7px !important; line-height:1.4; }
-#shikiru-focus-steel .shk-row-title { min-width:0; }
-#shikiru-focus-steel .shk-row-state { min-width:0; padding:0; text-align:right; }
-#shikiru-focus-steel .shk-focus-list .shk-recent { border-top:1px solid var(--shk-edge); }
-#shikiru-focus-steel .shk-recent-heading { display:flex; flex-wrap:wrap; align-items:center; gap:2px 9px; padding:3px 7px; }
-#shikiru-focus-steel .shk-recent-heading .shk-heading { margin:0; }
-#shikiru-focus-steel .shk-preview-label { font-size:.9em; }
-#shikiru-focus-steel .shk-recent-cues { display:flex; gap:7px; margin-left:auto; }
-#shikiru-focus-steel .shk-recent-cues[hidden] { display:none; }
-#shikiru-focus-steel .shk-recent-body { max-height:8.5em; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--shk-dim) var(--shk-surface); }
-#shikiru-focus-steel .shk-recent-body::-webkit-scrollbar { width:7px; }
-#shikiru-focus-steel .shk-recent-body::-webkit-scrollbar-track { background:var(--shk-surface); }
-#shikiru-focus-steel .shk-recent-body::-webkit-scrollbar-thumb { background:var(--shk-dim); }
-#shikiru-focus-steel .shk-recent-body .shk-row-state.shk-good { color:var(--shk-dim); }
-#shikiru-focus-steel .shk-footer .shk-latest-command { flex:1 1 280px; max-width:100%; margin-left:auto; overflow-wrap:anywhere; text-align:right; }
-#shikiru-focus-steel .shk-modal { display:flex; flex-direction:column; overflow:hidden; }
-#shikiru-focus-steel .shk-modal-head { flex:0 0 auto; flex-wrap:nowrap; align-items:flex-start; gap:8px; margin:0; }
-#shikiru-focus-steel .shk-modal-head h4 { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
-#shikiru-focus-steel .shk-modal-head button { flex:0 0 auto; margin:0; padding:2px 4px; color:var(--shk-ink); white-space:nowrap; }
-#shikiru-focus-steel .shk-modal-body { min-height:0; flex:1 1 auto; overflow-y:auto; overscroll-behavior:contain; }
-#shikiru-focus-steel .shk-modal-body .shk-validation { color:var(--shk-bad); }
-#shikiru-focus-steel .shk-modal-body .shk-modal-controls { margin-bottom:2px; }
-#shikiru-focus-steel .shk-modal-body::-webkit-scrollbar { width:7px; }
-#shikiru-focus-steel .shk-modal-body::-webkit-scrollbar-thumb { background:var(--shk-edge); }
 @media(max-width:520px) {
   #shikiru-focus-steel .shk-footer .shk-latest-command { flex-basis:100%; padding-top:5px; border-top:1px solid var(--shk-edge); text-align:left; }
-}
-@media(max-width:520px) {
   #shikiru-focus-steel .shk-top { grid-template-columns:minmax(0,1fr); }
   #shikiru-focus-steel .shk-top-branch { grid-column:1; grid-row:2; }
   #shikiru-focus-steel .shk-top-runtime { grid-column:1; grid-row:3; justify-self:start; width:100%; text-align:left; }
@@ -1140,11 +1143,12 @@ html&gt;body{padding:0}&lt;/style&gt;
   };
   const isAgentProcessing = task =&gt; scene.value !== &#x27;stopped&#x27; &amp;&amp; [&#x27;Implementing&#x27;,&#x27;Verifying&#x27;].includes(task.state);
   const marker = task =&gt; task.state === &#x27;Done&#x27; ? &#x27;✓&#x27; : task.state === &#x27;Cancelled&#x27; ? &#x27;×&#x27; : task.state.includes(&#x27;Decision&#x27;) ? &#x27;!&#x27; : task.state.includes(&#x27;Paused&#x27;) ? &#x27;=&#x27; : task.state.includes(&#x27;Operator&#x27;) ? &#x27;@&#x27; : task.state === &#x27;Reworking&#x27; ? &#x27;↺&#x27; : isAgentProcessing(task) ? &#x27;●&#x27; : task.step === &#x27;Queued&#x27; ? &#x27;·&#x27; : &#x27;○&#x27;;
-  const markerMarkup = task =&gt; isAgentProcessing(task) ? &#x27;&lt;span class=&quot;shk-active-mark&quot; aria-hidden=&quot;true&quot;&gt;●&lt;/span&gt;&#x27; : marker(task);
+  const activeStatusClass = task =&gt; isAgentProcessing(task) ? &#x27;shk-active-status&#x27; : &#x27;&#x27;;
+  const markerMarkup = task =&gt; isAgentProcessing(task) ? &#x27;&lt;span class=&quot;shk-active-mark&quot; aria-hidden=&quot;true&quot;&gt;&lt;/span&gt;&#x27; : marker(task);
   const isTerminal = task =&gt; [&#x27;Done&#x27;,&#x27;Cancelled&#x27;].includes(task.state);
   const stateText = task =&gt; scene.value === &#x27;stopped&#x27; &amp;&amp; [&#x27;T-43&#x27;,&#x27;T-44&#x27;].includes(task.id) ? &#x27;Stopped · resume on engine start&#x27; : task.state;
   const stateClass = task =&gt; scene.value === &#x27;stopped&#x27; &amp;&amp; [&#x27;T-43&#x27;,&#x27;T-44&#x27;].includes(task.id) ? &#x27;wait&#x27; : task.tone;
-  const buttonRow = (task, id) =&gt; `&lt;button type=&quot;button&quot; class=&quot;shk-task-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-row-title&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)}&lt;/span&gt; ${task.id} ${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-row-state shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`;
+  const buttonRow = (task, id) =&gt; `&lt;button type=&quot;button&quot; class=&quot;shk-task-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-row-title&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)}&lt;/span&gt; ${task.id} ${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-row-state shk-${stateClass(task)} ${activeStatusClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`;
   const stages = task =&gt; {
     if (task.step === &#x27;Queued&#x27;) return &#x27;&lt;div class=&quot;shk-stages shk-dim&quot;&gt;Triage · Implement · Verify · Merge&lt;/div&gt;&#x27;;
     return `&lt;div class=&quot;shk-stages&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;✓ Triage&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Implement&#x27; ? &#x27;shk-accent&#x27; : &#x27;shk-good&#x27;}&quot;&gt;${task.step === &#x27;Implement&#x27; ? &#x27;›&#x27; : &#x27;✓&#x27;} Implement&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Verify&#x27; ? &#x27;shk-accent&#x27; : &#x27;shk-dim&#x27;}&quot;&gt;${task.step === &#x27;Verify&#x27; ? &#x27;›&#x27; : task.step === &#x27;Merged&#x27; ? &#x27;✓&#x27; : &#x27;·&#x27;} Verify&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Merged&#x27; ? &#x27;shk-good&#x27; : &#x27;shk-dim&#x27;}&quot;&gt;${task.step === &#x27;Merged&#x27; ? &#x27;✓&#x27; : &#x27;·&#x27;} Merge&lt;/span&gt;&lt;/div&gt;`;
@@ -1192,18 +1196,18 @@ html&gt;body{padding:0}&lt;/style&gt;
     const own=scene.value===&#x27;owned&#x27;;
     return `&lt;button type=&quot;button&quot; class=&quot;shk-resources&quot; data-open=&quot;diagnostics&quot; aria-label=&quot;Inspect host, Shikiru, and agent resource usage&quot;&gt;&lt;span class=&quot;shk-resource&quot;&gt;Host CPU &lt;span class=&quot;shk-accent&quot;&gt;22%&lt;/span&gt; RAM 5.1/16 GiB&lt;/span&gt;&lt;span class=&quot;shk-resource-separator&quot;&gt; · &lt;/span&gt;&lt;span class=&quot;shk-resource&quot;&gt;Shikiru CPU &lt;span class=&quot;shk-accent&quot;&gt;${stopped?&#x27;0.2%&#x27;:own?&#x27;3%&#x27;:&#x27;4%&#x27;}&lt;/span&gt; RAM ${stopped?&#x27;0.2&#x27;:own?&#x27;0.6&#x27;:&#x27;0.7&#x27;}/16 GiB&lt;/span&gt;&lt;span class=&quot;shk-resource-separator&quot;&gt; · &lt;/span&gt;&lt;span class=&quot;shk-resource&quot;&gt;Agents CPU &lt;span class=&quot;shk-accent&quot;&gt;${stopped?&#x27;0%&#x27;:own?&#x27;9%&#x27;:&#x27;8%&#x27;}&lt;/span&gt; RAM ${stopped?&#x27;0.0&#x27;:own?&#x27;0.5&#x27;:&#x27;0.7&#x27;}/16 GiB&lt;/span&gt;&lt;/button&gt;`;
   };
-  const focusedDetail = task =&gt; task ? `&lt;div class=&quot;shk-heading&quot;&gt;${task.id} · ${esc(task.title)}&lt;/div&gt;&lt;div class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)} ${esc(stateText(task))}&lt;/div&gt;${stages(task)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${esc(task.role)} · ${esc(task.step)} · ${esc(task.age)}&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;${esc(task.detail)}&lt;/div&gt;&lt;div class=&quot;shk-signal&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;›&lt;/span&gt;&lt;span&gt;${esc(task.note)}&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id === &#x27;T-43&#x27; ? &#x27;Last recorded signal · just now&#x27; : &#x27;Evidence available in detail&#x27;}&lt;/div&gt;${taskUsage(task)}` : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No task selected · use ↑↓ to select a task&lt;/div&gt;&#x27;;
+  const focusedDetail = task =&gt; task ? `&lt;div class=&quot;shk-heading&quot;&gt;${task.id} · ${esc(task.title)}&lt;/div&gt;&lt;div class=&quot;shk-${stateClass(task)} ${activeStatusClass(task)}&quot;&gt;${markerMarkup(task)} ${esc(stateText(task))}&lt;/div&gt;${stages(task)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${esc(task.role)} · ${esc(task.step)} · ${esc(task.age)}&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;${esc(task.detail)}&lt;/div&gt;&lt;div class=&quot;shk-signal&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;›&lt;/span&gt;&lt;span&gt;${esc(task.note)}&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id === &#x27;T-43&#x27; ? &#x27;Last recorded signal · just now&#x27; : &#x27;Evidence available in detail&#x27;}&lt;/div&gt;${taskUsage(task)}` : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No task selected · use ↑↓ to select a task&lt;/div&gt;&#x27;;
   const deck = id =&gt; {
     const active = (scene.value===&#x27;quiet&#x27;?[&#x27;T-42&#x27;,&#x27;T-43&#x27;,&#x27;T-44&#x27;]:[&#x27;T-43&#x27;,&#x27;T-44&#x27;]).map(getTask);
     const selected = getTask(selections[id]);
     const selectedSummary = selected ? `&lt;div class=&quot;shk-heading&quot;&gt;${selected.id} · ${esc(selected.title)}&lt;/div&gt;${stages(selected)}&lt;div class=&quot;shk-subline&quot;&gt;› ${esc(selected.note)}&lt;/div&gt;` : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No task selected · use ↑↓ to select a task&lt;/div&gt;&#x27;;
-    return `&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;IN FLIGHT &lt;span class=&quot;shk-space shk-dim&quot;&gt;Role / elapsed&lt;/span&gt;&lt;/div&gt;${active.map(task=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-deck-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)} ${task.id}&lt;/span&gt;&lt;span&gt;${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;${esc(task.age)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))} · ${esc(task.role)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;${selectedSummary}&lt;/div&gt;&lt;div class=&quot;shk-deck-bottom&quot;&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;WAITING&lt;/div&gt;${[&#x27;T-45&#x27;,&#x27;T-46&#x27;,&#x27;T-47&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;RECENTLY FINISHED&lt;/div&gt;${[&#x27;T-41&#x27;,&#x27;T-40&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Reports retained after merge&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;IN FLIGHT &lt;span class=&quot;shk-space shk-dim&quot;&gt;Role / elapsed&lt;/span&gt;&lt;/div&gt;${active.map(task=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-deck-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)} ${task.id}&lt;/span&gt;&lt;span&gt;${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;${esc(task.age)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;span class=&quot;shk-${stateClass(task)} ${activeStatusClass(task)}&quot;&gt;${esc(stateText(task))} · ${esc(task.role)}&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;${selectedSummary}&lt;/div&gt;&lt;div class=&quot;shk-deck-bottom&quot;&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;WAITING&lt;/div&gt;${[&#x27;T-45&#x27;,&#x27;T-46&#x27;,&#x27;T-47&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-panel&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;RECENTLY FINISHED&lt;/div&gt;${[&#x27;T-41&#x27;,&#x27;T-40&#x27;].map(taskId=&gt;buttonRow(getTask(taskId),id)).join(&#x27;&#x27;)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Reports retained after merge&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;`;
   };
   const focus = id =&gt; {
     const selected = getTask(selections[id]);
     const activeRows = tasks.filter(task=&gt;!isTerminal(task)).map(task=&gt;buttonRow(getTask(task.id),id)).join(&#x27;&#x27;);
     const recentRows = tasks.filter(isTerminal).map(task=&gt;buttonRow(getTask(task.id),id)).join(&#x27;&#x27;);
-    return `&lt;div class=&quot;shk-focus-grid&quot;&gt;&lt;div class=&quot;shk-focus-list&quot;&gt;&lt;div class=&quot;shk-heading shk-task-heading&quot;&gt;TASKS&lt;/div&gt;&lt;div class=&quot;shk-task-list&quot;&gt;${activeRows}&lt;/div&gt;&lt;section class=&quot;shk-recent&quot;&gt;&lt;div class=&quot;shk-recent-heading&quot;&gt;&lt;span class=&quot;shk-heading&quot;&gt;Recent&lt;/span&gt;&lt;span class=&quot;shk-preview-label shk-dim&quot;&gt;Preview records&lt;/span&gt;&lt;span class=&quot;shk-recent-cues shk-dim&quot; aria-live=&quot;polite&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-recent-body&quot; role=&quot;region&quot; aria-label=&quot;Recent preview records&quot; tabindex=&quot;0&quot;&gt;${recentRows}&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;&lt;div class=&quot;shk-focus-detail&quot;&gt;${focusedDetail(selected)}${selected?&#x27;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;button class=&quot;shk-inline-action&quot; type=&quot;button&quot; data-open=&quot;evidence&quot;&gt;e Evidence&lt;/button&gt;&#x27;:&#x27;&#x27;}&lt;/div&gt;&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-focus-grid&quot;&gt;&lt;div class=&quot;shk-focus-list&quot;&gt;&lt;div class=&quot;shk-heading shk-task-heading&quot;&gt;TASKS&lt;/div&gt;&lt;div class=&quot;shk-task-list&quot;&gt;${activeRows}&lt;/div&gt;&lt;section class=&quot;shk-recent&quot;&gt;&lt;div class=&quot;shk-recent-heading&quot;&gt;&lt;span class=&quot;shk-heading&quot;&gt;Recent&lt;/span&gt;&lt;span class=&quot;shk-recent-cues shk-dim&quot; aria-live=&quot;polite&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-recent-body&quot; role=&quot;region&quot; aria-label=&quot;Recent tasks&quot; tabindex=&quot;0&quot;&gt;${recentRows}&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;&lt;div class=&quot;shk-focus-detail&quot;&gt;${focusedDetail(selected)}${selected?&#x27;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;button class=&quot;shk-inline-action&quot; type=&quot;button&quot; data-open=&quot;evidence&quot;&gt;e Evidence&lt;/button&gt;&#x27;:&#x27;&#x27;}&lt;/div&gt;&lt;/div&gt;`;
   };
   const stream = id =&gt; {
     const selected = getTask(selections[id]);
@@ -1222,7 +1226,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     const selected = getTask(selections[id]);
     const lanes = [&#x27;Next&#x27;,&#x27;Build&#x27;,&#x27;Review&#x27;,&#x27;Done&#x27;].map(lane=&gt;{
       const list=tasks.map(effective).filter(task=&gt;task.lane===lane);
-      return `&lt;div class=&quot;shk-lane&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;${lane.toUpperCase()} &lt;span class=&quot;shk-dim&quot;&gt;${list.length}&lt;/span&gt;&lt;/div&gt;${list.map(task=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-board-task&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id]===task.id}&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${marker(task)} ${task.id}&lt;/span&gt;&lt;span&gt;${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
+      return `&lt;div class=&quot;shk-lane&quot;&gt;&lt;div class=&quot;shk-heading&quot;&gt;${lane.toUpperCase()} &lt;span class=&quot;shk-dim&quot;&gt;${list.length}&lt;/span&gt;&lt;/div&gt;${list.map(task=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-board-task&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id]===task.id}&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)} ${task.id}&lt;/span&gt;&lt;span&gt;${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-${stateClass(task)} ${activeStatusClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
     }).join(&#x27;&#x27;);
     const caption = selected ? `&lt;div class=&quot;shk-board-caption&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;› ${selected.id}&lt;/span&gt; ${esc(selected.note)}&lt;span class=&quot;shk-dim&quot;&gt; · ${esc(selected.role)}&lt;/span&gt;&lt;/div&gt;` : &#x27;&lt;div class=&quot;shk-board-caption shk-dim&quot;&gt;No task selected&lt;/div&gt;&#x27;;
     return `&lt;div class=&quot;shk-board&quot;&gt;${lanes}&lt;/div&gt;${caption}`;
