@@ -1,8 +1,29 @@
 # E2E results
 
-The release summary of full `SHIKIRU_E2E=1 uv run poe e2e` invocations (07 section 5). It is copied by hand from git-ignored artifacts under `build/e2e/` and refreshed with each release-readiness document. Agent costs are the agents' own estimates, not billing.
+The release summary of full `SHIKIRU_E2E=1 uv run poe e2e` invocations (07 section 5), with later explicitly partial scenario records when a release warrants them. It is copied by hand from git-ignored artifacts under `build/e2e/` and refreshed with each release-readiness document. Agent costs are the agents' own estimates, not billing.
 
-## Latest fresh invocation — 2026-10-04 (passed)
+## Latest partial invocation — 2026-10-08 (E3 passed)
+
+This is one bounded E3 scenario, not a current E1–E6 suite result. The full suite record below remains the latest full invocation.
+
+| | |
+|---|---|
+| Source commit / tree | `dd8b49bafad2701fbcd621038c70a7d14c0260f2`, clean (`source_dirty` false) |
+| Started / finished (UTC) | 2026-10-08 16:34:25.101 / 16:38:01.922; artifact duration 216.78 s |
+| Exit status | 0; one selected E3 scenario passed |
+| Scenario | `tests/e2e/test_real_agents.py::test_real_agents_e3_plans_and_runs_dependent_tasks_in_parallel` |
+| Attempts | One attempt, no rerun; cost null (unknown, not zero) |
+| Artifact | `build/e2e/20261008T163425Z.json`, schema 5 |
+| Tools | Python 3.14.7, Claude Code 2.1.292, Codex CLI 0.160.1, tmux 3.7c, git 2.55.0 |
+| Agent ladders | Codex `gpt-6-luna`, low effort for Leader, Implementer and Helper |
+| Sandbox | Codex `workspace-write`; project parent `/Users/pavel/.cache/shikiru-e2e`, outside `$TMPDIR`; `approvals_reviewer=auto_review` |
+| Invocation correction | Inherited `PYTEST_ADDOPTS` was explicitly removed so the parent `-k` selector could not deselect fixture-project pytest cases. The exact E3 node ID was first confirmed via command-line collection and then passed as a task argument; no `-k` selector was used. The original full shell line was not retained. |
+
+The preceding invocation, `build/e2e/20261008T162210Z.json`, failed after 581.47 seconds across two attempts. Its diagnostics are preserved in `build/e2e/diagnostics/20261008T162209Z/`. The original invocation put a scenario `-k` selector in inherited `PYTEST_ADDOPTS`, which reached fixture-project pytest and deselected four project tests. Every agent task completed, the fixture project tree was clean, and there was no `engine_fault`. The harness mislabeled the assertion as “agent skipped a rule” and used its configured automatic rerun; the diagnostics establish the invocation-environment error instead. Root authorized one fresh corrected invocation after that concrete diagnosis. This was not an unchanged retry; no further E3 run was made. Costs are null in both artifacts, so cost is unknown.
+
+**Reproduction command (not a verbatim transcript of the executed line):** from the checkout, run `env -u PYTEST_ADDOPTS SHIKIRU_E2E=1 uv run poe e2e tests/e2e/test_real_agents.py::test_real_agents_e3_plans_and_runs_dependent_tasks_in_parallel`. The corrected invocation retained the existing E3 20-minute per-attempt budget, 60-minute invocation limit, four-minute no-event/no-process watchdog, and one-rerun policy; it changed only the selection/environment handling after root diagnosed and authorized the correction.
+
+## Latest full invocation — 2026-10-04 (passed)
 
 | | |
 |---|---|
