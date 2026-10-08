@@ -8,6 +8,7 @@ import shutil
 import signal
 import stat
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,10 +16,19 @@ from fake_agent.scripted import FAKE_CHANGE_FILENAME
 
 from shikiru.clock import SystemClock
 from shikiru.config.settings import RepoConfig
+from shikiru.domain.commands import Resolve, RetryResolution
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import (
+    REPORT_FILENAME,
+    REPORT_KIND_FILENAME,
+    ImplementationReport,
+    ReportKind,
+)
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
+from shikiru.engine.handlers.base import HandlerContext
+from shikiru.engine.handlers.escalations import ResolveHandler
 from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationMetadata,
@@ -31,7 +41,9 @@ from shikiru.engine.integration import (
 )
 from shikiru.engine.notifier import Notifier
 from shikiru.errors import CommandFailed, CommandTimeoutError
+from shikiru.paths import turns_dir
 from shikiru.process import SubprocessRunner
+from shikiru.store.database import transaction
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog, fetch_timeline_events
 from shikiru.store.tasks import TaskStore
@@ -48,7 +60,6 @@ from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
-    from pathlib import Path
 
     from shikiru.clock import Clock
     from shikiru.domain.tasks import RepoState, Task
@@ -58,6 +69,7 @@ if TYPE_CHECKING:
 
 _RUNNER = SubprocessRunner()
 TIMELINE_EVENT_LIMIT = 40
+_STALE_CONFLICT_TURN = "01-integrate-i0"
 
 
 async def _repo(path: Path, filename: str = "README.md") -> Path:
@@ -346,7 +358,9 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     async def resolve(
         task_value: Task,
         continue_rebase: Callable[[], Awaitable[None]],
+        resumed_report: bool,
     ) -> tuple[Task, IntegrationMetadata]:
+        assert not resumed_report
         task_path = task_root / "README.md"
         task_path.write_text("resolved\n")
         await commit_all(_RUNNER, task_root, "resolve conflict")
@@ -402,9 +416,11 @@ def _integrator(connection: Connection, project_root: Path) -> Integrator:
 
 
 async def _resolve_nothing(
-    task: Task, continue_rebase: Callable[[], Awaitable[None]]
+    task: Task,
+    continue_rebase: Callable[[], Awaitable[None]],
+    resumed_report: bool,
 ) -> tuple[Task, IntegrationMetadata]:
-    del continue_rebase
+    del continue_rebase, resumed_report
     return task, IntegrationMetadata("resolved")
 
 
@@ -688,6 +704,262 @@ async def test_taskflow_fake_agent_resolves_conflict_and_repeats_changes_request
     assert integration_verdicts >= 1
 
 
+async def test_rebase_uses_fresh_fake_turns_for_each_unmerged_commit(
+    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    assert task.repo is not None
+    task_root = engine_env.project_root / ".shikiru" / "worktrees" / task.id
+    engine_env.tasks.apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING),
+    )
+    for content, subject in (("task first\n", "task first"), ("task second\n", "task second")):
+        (task_root / "README.md").write_text(content)
+        await commit_all(_RUNNER, task_root, subject)
+    (engine_env.project_root / "README.md").write_text("base advanced\n")
+    await commit_all(_RUNNER, engine_env.project_root, "advance base")
+
+    resolution_count = tmp_path / "resolution-count"
+    pre_commit = engine_env.project_root / ".git" / "hooks" / "pre-commit"
+    pre_commit.write_text(
+        "#!/bin/sh\n"
+        "git show :README.md | grep -q '^<<<<<<<' || exit 0\n"
+        f"count=0\n[ ! -f '{resolution_count}' ] || count=$(cat '{resolution_count}')\n"
+        "count=$((count + 1))\n"
+        f"printf '%s' \"$count\" > '{resolution_count}'\n"
+        "printf 'resolved-%s\\n' \"$count\" > README.md\n"
+        "git add README.md\n"
+    )
+    pre_commit.chmod(pre_commit.stat().st_mode | stat.S_IXUSR)
+
+    git = _git()
+    with pytest.raises(CommandFailed):
+        await git.rebase(task_root, "main")
+    assert await git.unmerged_paths(task_root) == ["README.md"]
+
+    stale_turn = turns_dir(engine_env.project_root, task.id) / _STALE_CONFLICT_TURN
+    stale_turn.mkdir(parents=True)
+    (stale_turn / REPORT_KIND_FILENAME).write_text(ReportKind.IMPLEMENTATION.value)
+    (stale_turn / REPORT_FILENAME).write_text(
+        ImplementationReport(
+            status="completed",
+            summary="stale resolution report",
+            commits=[],
+            tests=[],
+            trackers_updated=True,
+        ).model_dump_json()
+    )
+    flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+    flow_env.events.append(
+        EventKind.INTEGRATION_STARTED,
+        task_id=task.id,
+        message=f"{task.id} integration started",
+        data={"branch": task.repo.branch, "base": task.repo.base},
+    )
+    flow_env.events.append(
+        EventKind.TURN_COMPLETED,
+        task_id=task.id,
+        message="stale conflict turn completed",
+        data={
+            "turn": _STALE_CONFLICT_TURN,
+            "step": Step.INTEGRATE.value,
+            "role": Role.IMPLEMENTER.value,
+            "outcome": "completed",
+        },
+    )
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}, {"kind": "accept"}])
+    await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.DONE
+    assert (engine_env.project_root / "README.md").read_text() == "resolved-2\n"
+    assert "<<<<<<<" not in (engine_env.project_root / "README.md").read_text()
+    assert resolution_count.read_text() == "2"
+    implementer_turns = [
+        event
+        for event in flow_env.events.since(0, kinds=[EventKind.TURN_COMPLETED], task_id=task.id)
+        if event.data.get("step") == Step.INTEGRATE.value
+        and event.data.get("role") == Role.IMPLEMENTER.value
+    ]
+    assert [event.data["turn"] for event in implementer_turns] == [
+        _STALE_CONFLICT_TURN,
+        "02-integrate-i0",
+        "03-integrate-i0",
+    ]
+
+
+async def test_noncontent_continue_failure_keeps_rebase_and_retry_finishes_after_remedy(
+    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    assert task.repo is not None
+    task_root = engine_env.project_root / ".shikiru" / "worktrees" / task.id
+    (task_root / "README.md").write_text("task change\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (engine_env.project_root / "README.md").write_text("base change\n")
+    await commit_all(_RUNNER, engine_env.project_root, "base change")
+    git_dir = await _RUNNER.run(
+        ["git", "rev-parse", "--absolute-git-dir"],
+        timeout=GIT_COMMAND_TIMEOUT,
+        cwd=task_root,
+    )
+    index_lock = Path(git_dir.stdout.strip()) / "index.lock"
+    resolution_marker = tmp_path / "resolved-conflict"
+    pre_commit = engine_env.project_root / ".git" / "hooks" / "pre-commit"
+    pre_commit.write_text(
+        "#!/bin/sh\n"
+        "git show :README.md | grep -q '^<<<<<<<' || exit 0\n"
+        "printf 'resolved by the fake agent\\n' > README.md\n"
+        "git add README.md\n"
+        f": > '{resolution_marker}'\n"
+    )
+    pre_commit.chmod(pre_commit.stat().st_mode | stat.S_IXUSR)
+    post_commit = engine_env.project_root / ".git" / "hooks" / "post-commit"
+    post_commit.write_text(
+        "#!/bin/sh\n"
+        f"[ -f '{resolution_marker}' ] || exit 0\n"
+        f"rm '{resolution_marker}'\n"
+        f": > '{index_lock}'\n"
+    )
+    post_commit.chmod(post_commit.stat().st_mode | stat.S_IXUSR)
+    await _RUNNER.run(
+        ["git", "config", "core.hooksPath", str(engine_env.project_root / ".git" / "hooks")],
+        timeout=GIT_COMMAND_TIMEOUT,
+        cwd=engine_env.project_root,
+    )
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}, {"kind": "accept"}])
+    await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
+    flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    [blocked] = fetch_open_escalations(engine_env.connection)
+    assert blocked.reason is EscalationReason.INTEGRATION_BLOCKED
+    packet = await asyncio.to_thread(Path(blocked.packet_path).read_text)
+    assert "git rebase --continue" in packet
+    assert "index.lock" in packet
+    question = packet.split("## Question\n\n", 1)[1].split("\n\n## Agent alternatives", 1)[0]
+    assert len(question) < 4500
+    assert engine_env.tasks.require(task.id).status is Status.ESCALATED
+    assert await _git().is_rebase_in_progress(task_root)
+    assert await _git().unmerged_paths(task_root) == []
+    assert index_lock.is_file()
+    assert {option.label.value for option in blocked.options} == {"retry", "cancel"}
+
+    index_lock.unlink()
+
+    async def ignore_task_id(task_id: str) -> None:
+        del task_id
+
+    async def ignore_finished_task(task_value: Task) -> None:
+        del task_value
+
+    context = HandlerContext(
+        tasks=engine_env.tasks,
+        escalations=flow_env.escalations,
+        events=flow_env.events,
+        runs=engine_env.runs,
+        project_root=engine_env.project_root,
+        cancel_task=ignore_task_id,
+        start_task=ignore_task_id,
+        finish_task=ignore_finished_task,
+        stop_engine=lambda: None,
+        refresh_titles=ignore_finished_task,
+        atomically=lambda: transaction(engine_env.connection),
+    )
+    await ResolveHandler(context).handle(
+        Resolve(
+            escalation_id=blocked.id,
+            resolution=RetryResolution(),
+            command_id=1,
+        )
+    )
+    retried = engine_env.tasks.require(task.id)
+    engine_env.tasks.apply_transition(
+        task.id,
+        Transition.stay(retried, step=Step.INTEGRATE, status=Status.INTEGRATING),
+    )
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    final = engine_env.tasks.require(task.id)
+    assert final.status is Status.DONE
+    assert (engine_env.project_root / "README.md").read_text() == "resolved by the fake agent\n"
+    assert len(fetch_open_escalations(engine_env.connection)) == 0
+    resolved_events = flow_env.events.since(
+        0, kinds=[EventKind.ESCALATION_RESOLVED], task_id=task.id
+    )
+    assert resolved_events[-1].data["resolution"] == "retry"
+
+
+async def test_completed_conflict_reports_cannot_hide_unmerged_paths_beyond_the_turn_bound(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    task_root = engine_env.project_root / ".shikiru" / "worktrees" / task.id
+    engine_env.tasks.apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING),
+    )
+    (task_root / "README.md").write_text("task change\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    (engine_env.project_root / "README.md").write_text("base change\n")
+    await commit_all(_RUNNER, engine_env.project_root, "base change")
+
+    git = _git()
+    with pytest.raises(CommandFailed):
+        await git.rebase(task_root, "main")
+    unmerged_index = await _RUNNER.run(
+        ["git", "ls-files", "-u", "--", "README.md"],
+        timeout=GIT_COMMAND_TIMEOUT,
+        cwd=task_root,
+    )
+    assert unmerged_index.stdout
+    post_commit = engine_env.project_root / ".git" / "hooks" / "post-commit"
+    post_commit.write_text(
+        "#!/bin/sh\n"
+        "git update-index --force-remove README.md\n"
+        "git update-index --index-info <<'SHIKIRU_INDEX'\n"
+        f"{unmerged_index.stdout.rstrip()}\n"
+        "SHIKIRU_INDEX\n"
+    )
+    post_commit.chmod(post_commit.stat().st_mode | stat.S_IXUSR)
+    await _RUNNER.run(
+        ["git", "config", "core.hooksPath", str(engine_env.project_root / ".git" / "hooks")],
+        timeout=GIT_COMMAND_TIMEOUT,
+        cwd=engine_env.project_root,
+    )
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}, {"kind": "accept"}])
+    flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+
+    final = engine_env.tasks.require(task.id)
+    assert final.status is Status.ESCALATED
+    [escalation] = fetch_open_escalations(engine_env.connection)
+    assert escalation.reason is EscalationReason.INTEGRATION_CONFLICT
+    packet = await asyncio.to_thread(Path(escalation.packet_path).read_text)
+    assert "README.md" in packet
+    assert "2 conflict turns" in packet
+    assert task_root.is_dir()
+    assert await git.is_rebase_in_progress(task_root)
+    assert await git.unmerged_paths(task_root) == ["README.md"]
+    implementer_turns = [
+        event
+        for event in flow_env.events.since(0, kinds=[EventKind.TURN_COMPLETED], task_id=task.id)
+        if event.data.get("step") == Step.INTEGRATE.value
+        and event.data.get("role") == Role.IMPLEMENTER.value
+    ]
+    assert len(implementer_turns) == 2
+
+
 async def test_uncommitted_changes_at_integration_send_the_task_back_to_implement(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
@@ -774,9 +1046,11 @@ async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict
     conflicts_resolved: list[str] = []
 
     async def resolve(
-        task_value: Task, continue_rebase: Callable[[], Awaitable[None]]
+        task_value: Task,
+        continue_rebase: Callable[[], Awaitable[None]],
+        resumed_report: bool,
     ) -> tuple[Task, IntegrationMetadata]:
-        del continue_rebase
+        del continue_rebase, resumed_report
         conflicts_resolved.append(task_value.id)
         return task_value, IntegrationMetadata("resolved")
 
@@ -838,9 +1112,12 @@ class _RebaseScenario:
         )
 
     async def resolve(
-        self, task_value: Task, continue_rebase: Callable[[], Awaitable[None]]
+        self,
+        task_value: Task,
+        continue_rebase: Callable[[], Awaitable[None]],
+        resumed_report: bool,
     ) -> tuple[Task, IntegrationMetadata]:
-        del continue_rebase
+        del continue_rebase, resumed_report
         self.conflicts_resolved.append(task_value.id)
         return task_value, IntegrationMetadata("resolved")
 
@@ -914,8 +1191,11 @@ async def test_a_rebase_stopped_on_conflicts_is_still_handed_to_the_conflict_tur
     conflicts_resolved: list[str] = []
 
     async def resolve(
-        task_value: Task, continue_rebase: Callable[[], Awaitable[None]]
+        task_value: Task,
+        continue_rebase: Callable[[], Awaitable[None]],
+        resumed_report: bool,
     ) -> tuple[Task, IntegrationMetadata]:
+        assert not resumed_report
         conflicts_resolved.append(task_value.id)
         (task_root / "README.md").write_text("resolved\n")
         await _RUNNER.run(

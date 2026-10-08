@@ -58,8 +58,11 @@ class StepRunner:
         counters: TurnCounters,
         *,
         conflict_context: str | None = None,
+        force_new_turn: bool = False,
     ) -> tuple[Task, TurnCounters, bool]:
         """Run one domain step through its turn and recovery loop; report whether it stopped."""
+        if force_new_turn:
+            self._loop.forget_resume(task.id)
         result = await self._loop.run(
             task, step, counters, TurnOverrides(conflict_context=conflict_context)
         )

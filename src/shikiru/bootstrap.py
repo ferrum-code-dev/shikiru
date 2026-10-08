@@ -536,6 +536,7 @@ def build_mcp_server(
 
 def _build_flow(
     *,
+    project_root: Path,
     tasks: TaskStore,
     events: EventLog,
     runs: RunStore,
@@ -577,7 +578,13 @@ def _build_flow(
         turn_loop=turn_loop,
         escalations=filer,
         integration_turns=IntegrationTurns(
-            coordinator=integrator, history=history, tasks=tasks, steps=steps, escalations=filer
+            coordinator=integrator,
+            events=events,
+            history=history,
+            project_root=project_root,
+            tasks=tasks,
+            steps=steps,
+            escalations=filer,
         ),
     )
 
@@ -744,6 +751,7 @@ def build_engine(
         settings=resolved_settings,
     )
     flow = _build_flow(
+        project_root=project_root,
         tasks=tasks,
         events=events,
         runs=runs,

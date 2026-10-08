@@ -46,6 +46,7 @@ from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from shikiru.clock import Clock
@@ -58,9 +59,13 @@ if TYPE_CHECKING:
 
 class _NoOpIntegrationCoordinator:
     async def run(
-        self, task: Task, resolve_conflicts: object, metadata: IntegrationMetadata
+        self,
+        task: Task,
+        resolve_conflicts: object,
+        metadata: IntegrationMetadata,
+        resume_resolved_report: Callable[[Task], bool] | None = None,
     ) -> IntegrationSummary:
-        del task, resolve_conflicts
+        del task, resolve_conflicts, resume_resolved_report
         return IntegrationSummary(summary=metadata.summary, residual_risks=metadata.residual_risks)
 
     async def continue_rebase(self, task: Task) -> None:
@@ -243,7 +248,9 @@ def build_flow(
         escalations=filer,
         integration_turns=IntegrationTurns(
             coordinator=coordinator,
+            events=system.events,
             history=history,
+            project_root=env.project_root,
             tasks=env.tasks,
             steps=steps,
             escalations=filer,
