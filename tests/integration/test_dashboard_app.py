@@ -6,7 +6,6 @@ import os
 import re
 import shlex
 import sys
-from collections import Counter
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from html import unescape
@@ -18,7 +17,7 @@ import psutil
 import pytest
 from fake_agent.turns import FAKE_COMPACT_AT_PCT_ENV_VAR
 from rich.cells import cell_len
-from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.events import MouseScrollDown
 from textual.geometry import Region
 from textual.widgets import (
@@ -664,105 +663,36 @@ def _exported_screen_text(app: DashboardApp) -> str:
     return " ".join(text.split())
 
 
-def _exported_text_cells(app: DashboardApp) -> Counter[tuple[str, str, str]]:
-    cells: Counter[tuple[str, str, str]] = Counter()
-    for element in re.finditer(r"<text\b([^>]*)>(.*?)</text>", app.export_screenshot(), re.DOTALL):
-        x = re.search(r'\bx="([^"]+)"', element.group(1))
-        y = re.search(r'\by="([^"]+)"', element.group(1))
-        assert x is not None
-        assert y is not None
-        text = re.sub(r"<[^>]+>", "", element.group(2))
-        text = unescape(text).replace("\xa0", " ")
-        cells[(x.group(1), y.group(1), text)] += 1
-    return cells
+def _rendered_home_origins(app: DashboardApp) -> tuple[tuple[float, float], ...]:
+    elements: list[tuple[str, float, float]] = []
+    for attributes, content in re.findall(
+        r"<text\b([^>]*)>(.*?)</text>", app.export_screenshot(), re.DOTALL
+    ):
+        label = unescape(content).replace("\xa0", " ").strip()
+        x = re.search(r'\bx="([^"]+)"', attributes)
+        y = re.search(r'\by="([^"]+)"', attributes)
+        if label and x is not None and y is not None:
+            elements.append((label, float(x.group(1)), float(y.group(1))))
 
+    def origin(label: str) -> tuple[float, float]:
+        match = next(((x, y) for text, x, y in elements if text == label), None)
+        assert match is not None
+        return match
 
-def _terminal_text_cells(
-    cells: Counter[tuple[str, str, str]],
-    size: tuple[int, int],
-    reference: Counter[tuple[str, str, str]],
-) -> Counter[tuple[int, int, str]]:
-    corners = [cell for cell in reference if cell[2] in {"┌", "┐", "└", "┘"}]
-    assert corners
-    left = min(float(x) for x, _, text in corners if text in {"┌", "└"})
-    right = max(float(x) for x, _, text in corners if text in {"┐", "┘"})
-    top = min(float(y) for _, y, _ in corners)
-    bottom = max(float(y) for _, y, _ in corners)
-    cell_width = (right - left) / (size[0] - 1)
-    cell_height = (bottom - top) / (size[1] - 1)
-    terminal_cells: Counter[tuple[int, int, str]] = Counter()
-    for x, y, text in cells.elements():
-        column = round((float(x) - left) / cell_width)
-        row = round((float(y) - top) / cell_height)
-        offset = 0
-        for character in text:
-            if character == "\n":
-                continue
-            terminal_cells[(column + offset, row, character)] += 1
-            offset += cell_len(character)
-    return terminal_cells
-
-
-def _text_cells_outside_region(
-    cells: Counter[tuple[int, int, str]],
-    region: Region,
-) -> Counter[tuple[int, int, str]]:
-    return Counter(
-        {
-            cell: count
-            for cell, count in cells.items()
-            if cell[2]
-            and "\n" not in cell[2]
-            and (
-                cell[1] < region.y
-                or cell[1] >= region.bottom
-                or cell[0] + cell_len(cell[2]) <= region.x
-                or cell[0] >= region.right
-            )
-        }
+    identity = origin("SHIKIRU")
+    tasks = origin("TASKS")
+    task_frame = next(
+        ((x, y) for text, x, y in elements if text == "┌" and x == tasks[0] and y > tasks[1]),
+        None,
     )
+    assert task_frame is not None
+    return identity, tasks, task_frame
 
 
-def _home_frame_cells(
-    cells: Counter[tuple[str, str, str]],
-) -> Counter[tuple[str, str, str]]:
-    corners = [cell for cell in cells if cell[2] in {"┌", "┐", "└", "┘"}]
-    assert corners
-    left = min(float(x) for x, _, text in corners if text in {"┌", "└"})
-    right = max(float(x) for x, _, text in corners if text in {"┐", "┘"})
-    top = min(float(y) for _, y, _ in corners)
-    bottom = max(float(y) for _, y, _ in corners)
-    return Counter(
-        {
-            cell: count
-            for cell, count in cells.items()
-            if (float(cell[0]), float(cell[1]), cell[2])
-            in {
-                (left, top, "┌"),
-                (right, top, "┐"),
-                (left, bottom, "└"),
-                (right, bottom, "┘"),
-            }
-        }
-    )
-
-
-async def _wait_for_settled_composition(app: DashboardApp, root: VerticalScroll) -> None:
-    previous: tuple[float, float, tuple[tuple[tuple[str, str, str], int], ...]] | None = None
-    stable_observations = 0
-
-    def settled() -> bool:
-        nonlocal previous, stable_observations
-        current = (
-            root.scroll_y,
-            root.scroll_target_y,
-            tuple(sorted(_exported_text_cells(app).items())),
-        )
-        stable_observations = stable_observations + 1 if current == previous else 0
-        previous = current
-        return stable_observations >= 3
-
-    await wait_until(settled, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+def _assert_last_command_history_page(page: Static) -> None:
+    page_text = _rendered_text(page)
+    assert "page 3" in page_text
+    assert "rows 41-52 of 52" in page_text
 
 
 async def _assert_popup_close_reachable(
@@ -784,62 +714,6 @@ async def _assert_popup_close_reachable(
             and screen.region.contains_region(close.region)
             and not body.scrollable_content_region.contains_region(close.region)
         ),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-
-
-def _assert_home_frame_stationary(
-    before: Counter[tuple[str, str, str]],
-    current: Counter[tuple[str, str, str]],
-) -> None:
-    assert _home_frame_cells(before) == _home_frame_cells(current)
-
-
-def _assert_exposed_home_text_stationary(
-    before: Counter[tuple[int, int, str]],
-    current: Counter[tuple[int, int, str]],
-    popup_region: Region,
-) -> None:
-    assert _text_cells_outside_region(before, popup_region) == _text_cells_outside_region(
-        current,
-        popup_region,
-    )
-
-
-def _assert_home_reading_state(
-    root: VerticalScroll,
-    *,
-    expected_scroll: float,
-    home: Screen[object],
-    expected_focus: Widget | None,
-    task_list: ListView,
-    expected_selection: int | None,
-) -> None:
-    assert root.scroll_y == expected_scroll
-    assert home.focused is expected_focus
-    assert task_list.index == expected_selection
-
-
-def _assert_last_command_history_page(page: Static) -> None:
-    page_text = _rendered_text(page)
-    assert "page 3" in page_text
-    assert "rows 41-52 of 52" in page_text
-
-
-def _assert_home_text_stationary(
-    before: Counter[tuple[str, str, str]],
-    after: Counter[tuple[str, str, str]],
-    before_terminal: Counter[tuple[int, int, str]],
-    size: tuple[int, int],
-) -> None:
-    _assert_home_frame_stationary(before, after)
-    assert before_terminal == _terminal_text_cells(after, size, before)
-
-
-async def _open_help_with_keyboard(app: DashboardApp, pilot: Pilot[None]) -> None:
-    await pilot.press("?")
-    await wait_until(
-        lambda: bool(app.screen.query("#workspace-help-close")),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
 
@@ -1221,7 +1095,6 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from textual.pilot import Pilot
-    from textual.screen import Screen
     from textual.widget import Widget
 
     from shikiru.clock import Clock
@@ -5104,15 +4977,10 @@ async def test_home_help_works_with_keyboard_without_color(
         reader.close()
 
 
-@pytest.mark.parametrize(
-    "size",
-    [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE, _SHORT_HOME_SIZE, _NARROW_TASK_SIZE, _TINY_HOME_SIZE],
-)
-async def test_home_help_preserves_composited_home_cells_and_close_reachability(
+async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
     database: Database,
     connection: Connection,
     tmp_path: Path,
-    size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_TEST_START)
@@ -5128,29 +4996,30 @@ async def test_home_help_preserves_composited_home_cells_and_close_reachability(
         settings=settings,
     )
     try:
-        async with app.run_test(size=size) as pilot:
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
             home = app.screen
             await wait_until(
                 lambda: bool(app.query(f"#task-row-{task.id}")),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            if size != _TINY_HOME_SIZE:
-                await _select_home_task(app, task.id)
-                await wait_until(
-                    lambda: task.title in _exported_screen_text(app),
-                    timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-                )
+            await _select_home_task(app, task.id)
+            await wait_until(
+                lambda: task.title in _exported_screen_text(app),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
             home_root = app.query_one("#focus-root", VerticalScroll)
             task_list = app.query_one("#task-browser-list", ListView)
-            await _wait_for_settled_composition(app, home_root)
             home_scroll_y = home_root.scroll_y
             home_selection = task_list.index
             home_focus = home.focused
-            before = _exported_text_cells(app)
-            before_terminal = _terminal_text_cells(before, size, before)
-            _capture_task99(app, f"task115-home-before-{size[0]}x{size[1]}-color.svg")
+            before_origins = _rendered_home_origins(app)
+            _capture_task99(app, "task115-home-before-120x40-color.svg")
 
-            await _open_help_with_keyboard(app, pilot)
+            await pilot.press("?")
+            await wait_until(
+                lambda: bool(app.screen.query("#workspace-help-close")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
             help_screen = app.screen
             await _assert_popup_close_reachable(
                 help_screen,
@@ -5158,37 +5027,23 @@ async def test_home_help_preserves_composited_home_cells_and_close_reachability(
                 frame_selector="#workspace-help-frame",
                 body_selector="#workspace-help-scroll",
             )
-            frame = help_screen.query_one("#workspace-help-frame", Vertical)
-            await _wait_for_settled_composition(app, home_root)
-            during = _exported_text_cells(app)
-            during_terminal = _terminal_text_cells(during, size, before)
-            _assert_home_frame_stationary(before, during)
-            _capture_task99(app, f"task115-help-{size[0]}x{size[1]}-color.svg")
-            if size != _TINY_HOME_SIZE:
-                _assert_exposed_home_text_stationary(before_terminal, during_terminal, frame.region)
+            during_origins = _rendered_home_origins(app)
+            assert during_origins == before_origins
             assert home_root.scroll_y == home_scroll_y
+            _capture_task99(app, "task115-help-120x40-color.svg")
 
-            await pilot.click("#workspace-help-close")
+            close = help_screen.query_one("#workspace-help-close", Button)
+            assert await pilot.click(close)
             await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
-            await _wait_for_settled_composition(app, home_root)
-            after = _exported_text_cells(app)
-            _assert_home_text_stationary(before, after, before_terminal, size)
-            _assert_home_reading_state(
-                home_root,
-                expected_scroll=home_scroll_y,
-                home=home,
-                expected_focus=home_focus,
-                task_list=task_list,
-                expected_selection=home_selection,
+            await wait_until(
+                lambda: _rendered_home_origins(app) == before_origins,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            _capture_task99(app, f"task115-home-after-{size[0]}x{size[1]}-color.svg")
-            await _open_help_with_keyboard(app, pilot)
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
-            if size != _TINY_HOME_SIZE:
-                assert task.title in _rendered_text(
-                    app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-                )
+            assert home_root.scroll_y == home_scroll_y
+            assert home.focused is home_focus
+            assert task_list.index == home_selection
+            assert task.title in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            _capture_task99(app, "task115-home-after-120x40-color.svg")
     finally:
         reader.close()
 

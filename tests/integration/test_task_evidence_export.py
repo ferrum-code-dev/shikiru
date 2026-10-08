@@ -453,8 +453,21 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
         await pilot.pause()
         screen = cast("PaletteScreen", app.screen)
         form = screen.query_one("#palette-form")
+        frame = screen.query_one("#palette-frame")
+        submit = screen.query_one("#palette-submit", Button)
         overwrite_choice = await _prepare_export_form(pilot, screen, project_root, destination)
-        await pilot.click("#palette-submit")
+        await wait_until(
+            lambda: (
+                submit.visible
+                and submit.region.width > 0
+                and frame.content_region.contains_region(submit.region)
+                and screen.region.contains_region(submit.region)
+            ),
+            timeout=EXPORT_WAIT_SECONDS,
+        )
+        assert submit.region.right <= screen.size.width
+        assert submit.region.bottom <= screen.size.height
+        assert await pilot.click(submit)
         expected_result = "Exported JSON" if write_succeeds else "missing-parent"
         await wait_until(
             lambda: expected_result in str(screen.query_one("#palette-result", Static).content),
@@ -472,11 +485,15 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
             lambda: (
                 result_scroll.region.y >= form.region.y
                 and result_scroll.region.bottom <= screen.size.height
+                and frame.content_region.contains_region(result_scroll.region)
+                and form.content_region.contains_region(result_scroll.region)
             ),
             timeout=EXPORT_WAIT_SECONDS,
         )
         assert result_scroll.region.y >= form.region.y
         assert result_scroll.region.bottom <= screen.size.height
+        assert frame.content_region.contains_region(result_scroll.region)
+        assert form.content_region.contains_region(result_scroll.region)
         assert result_scroll.max_scroll_y > 0
         result_scroll.scroll_end(animate=False)
         await pilot.pause()

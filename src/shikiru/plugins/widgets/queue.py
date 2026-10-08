@@ -973,18 +973,19 @@ class QueuePanel(Vertical):
         render_version: int,
         settled: bool,
     ) -> None:
+        if render_version != self._list_render_version or not self._list_view_is_current(list_view):
+            return
         changed = self._apply_reference_row_spacing(list_view) if self._focus_layout else False
         if changed is None:
-            if self._list_view_is_current(list_view):
-                cast("App[object]", self.app).call_after_refresh(
-                    self._restore_list_position,
-                    list_view,
-                    anchor,
-                    anchor_offset,
-                    render_version,
-                    settled,
-                )
-                list_view.refresh(layout=True)
+            cast("App[object]", self.app).call_after_refresh(
+                self._restore_list_position,
+                list_view,
+                anchor,
+                anchor_offset,
+                render_version,
+                settled,
+            )
+            list_view.refresh(layout=True)
             return
         if changed:
             cast("App[object]", self.app).call_after_refresh(
@@ -995,8 +996,6 @@ class QueuePanel(Vertical):
                 render_version,
                 False,
             )
-            return
-        if render_version != self._list_render_version:
             return
         if anchor is not None and anchor.parent is list_view:
             anchor_index = list_view.children.index(anchor)
