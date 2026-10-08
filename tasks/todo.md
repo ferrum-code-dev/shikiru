@@ -194,3 +194,13 @@ Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus
 - [x] Task 119: Resolve rebase conflicts through bounded turns and classify continuation failures
 - [x] Task 120: Move clear durable command feedback into the footer
 - [x] Task 121: Verify the second review end to end and reconcile Phase 11 evidence (accepted by root 2026-10-08)
+
+Third-review scope and evidence: [third real-project review](../docs/tui-feedback-third-review.md). Continue sequential GPT-6-Luna xhigh implementation and root review; preserve earlier acceptance and independently open gates.
+
+- [ ] Task 122: Prevent narrow popup inputs from crashing the dashboard
+- [ ] Task 123: Retain reliable tool outcomes without changing turn recovery
+- [ ] Task 124: Revise the HTML reference for the third review
+- [ ] Task 125: Style the complete project tmux chrome
+- [ ] Task 126: Unify popup styling and actual keyboard controls
+- [ ] Task 127: Keep popup frames stable through content changes
+- [ ] Task 128: Verify the third review and reconcile Phase 11 evidence

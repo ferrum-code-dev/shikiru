@@ -1249,3 +1249,54 @@ The bounded existing real-agent E3 node `tests/e2e/test_real_agents.py::test_rea
 | Escalation repeats task ID; Enter resolve does not work | 118, 121 |
 | Rebase conflict auto-resolution, repeated continuation, absent structured alternatives | 118, 119, 121 |
 | Last command belongs right of actions with clearer meaning | 113a, 120, 121 |
+
+### Third-review follow-up
+
+Scope: [third real-project review](../docs/tui-feedback-third-review.md). Preserve the accepted Tasks 105–121 source/evidence and independently open Tasks 59/74h/74p. Execute Tasks 122–128 sequentially using a fresh GPT-6-Luna xhigh agent per task, root review after completion, and corrections by the same agent. The reported T-35 provider silence remains unexplained; failed report JSON and takeover cancellation are distinct observed facts.
+
+### Task 122: Prevent narrow popup inputs from crashing the dashboard
+Refs: third-review resize reproduction; 06 §5.4–5.5, 07 §3; `dashboard/palette.py` Message/Answer fields, shared popup layouts and mounted resize tests.
+- [ ] Reproduce Home → contextual actions → Message at 120×40 → 16×20 with the exact zero-step `range` exception, then fix the Shikiru layout/rendering boundary so empty and populated popup TextAreas cannot reach invalid zero-width wrapping. Cover other reachable forms sharing that boundary; no dependency patch, blanket exception suppression or speculative version upgrade.
+- [ ] Preserve drafts, selected task/role, native editing, Select Escape precedence and close/Submit reachability at the supported 20×8 floor, including repeated narrow/wide resizes. Below the floor degrade without crashing, without claiming full usability.
+- [ ] Extend meaningful mounted real SQLite/Textual resize/form regressions at the failing width and neighboring safe boundary; verify observable content/draft/focus recovery. Pass the complete gate and record exact source/proof plus owned-resource cleanup.
+
+### Task 123: Retain reliable tool outcomes without changing turn recovery
+Refs: retained T-35 episode; 03 §4.2–4.3/§9, 04 §1, 06 evidence contract, 07 §3; `agents/contracts.py`, Codex parser, normalized role logs/timeline and existing monitor/takeover tests.
+- [ ] Add backward-compatible optional tool outcome/exit-code facts to normalized tool completion when native protocol supplies them. Map Codex command results accurately; unknown/older/other-plugin results remain unknown. Keep engine imports agent-neutral and report validation unchanged.
+- [ ] Show recorded success/failure and available exit code in existing role views/task evidence without adding raw command/output/prompt/path content. Older logs and third-party contracts remain readable; a failed tool never becomes a terminal `TurnFailed` solely from its exit status.
+- [ ] Verify native failed-command parser replay and one meaningful real SQLite/Git/private-tmux/fake-agent boundary: failed report command followed by silence remains active until configured stall or takeover, takeover holds only its task, and handback resumes the same session to a valid report. Reuse existing helpers and distinguish invalid completed reports from failed submission tools.
+- [ ] Preserve configured stall/nudge/rebuild/retry budgets, current state and retained user project. Document established T-35 cancellation/timing and unknown silence cause; pass the complete gate and clean owned resources.
+
+### Task 124: Revise the HTML reference for the third review
+Refs: third-review presentation contract; current `docs/design/references/focus-steel-approved.html`; Tasks 113a/122–123 and planned 125–127.
+- [ ] Update the existing reference to demonstrate indexed task window labels, dark full tmux chrome, wall time/date with seconds/full year/no hostname, and distinguishable glyph-free pane-title parts. Preserve task-name text, separate task windows and no-focus-steal semantics.
+- [ ] Demonstrate coherent popup header/body/control/dropdown styling, visible header `Esc ×`, separating rule, conditional narrow scrollbar and advertised working navigation shortcuts. Initial content-appropriate frames remain stationary across pagination/filter/update; compact/tiny navigation and draft/native-select semantics remain coherent in the prototype.
+- [ ] Preserve the original color palette and historical PNG, keep prototype facts illustrative, and retain the prior HTML in Git. Review browser-rendered wide/compact color/mono interactions and geometry; record proof and pass the complete gate before committing the reference/design changes.
+
+### Task 125: Style the complete project tmux chrome
+Refs: third-review tmux style inheritance and corrected option-scope investigation; revised Task124 HTML; 05 dashboard titles, 06 §5.3/§6.1, 07 §3; `tmux/decorator.py`, session/layout wiring, title rendering/defaults and private attached-client tests.
+- [ ] Set missing session status and per-window status styles locally, retaining the existing correct window scope for task formats and adding coherent Home formats. Use the approved dark palette for the full line and blank fill, active/inactive labels and status-left/right; no green inherited background, hostname, global-option mutation or other-session change.
+- [ ] Display actual window index before each existing task title while retaining `0:dashboard`, configured task-name templates and explicit custom layouts. Keep seconds and four-digit-year wall time/date, without engine-uptime substitution or additional update loop.
+- [ ] Distinguish pane role, agent/model, iteration, context and ownership/state parts using existing palette tokens and truthful semantic colors. Keep words/glyph-free shipped defaults, unchanged title values and explicit custom templates without heuristic text parsing.
+- [ ] Verify real attached private-tmux rendered line/SGR, including blank fill and inherited-green baseline, window indices, clock/date/no-host, colored pane parts, two-session/global isolation, custom templates and no focus steal. Stored option reads alone are insufficient. Pass the complete gate and remove owned processes/sockets.
+
+### Task 126: Unify popup styling and actual keyboard controls
+Refs: third-review popup contract and native Select proof; revised Task124 HTML; 06 §5.4–5.5/§6.1, 07 §3; app/detail/palette popup routes and existing integration matrix.
+- [ ] Share the repeated popup presentation contract across actual Help/Actions/Views/History/Usage/Evidence/Diagnostics/Answer/Resolve and configured-widget routes: consistent title case/weight, body/secondary text, header rule, button/dropdown focus/disabled styling and visible `Esc ×`, preserving the palette and stationary underlay.
+- [ ] Use a one-column vertical scrollbar only when the popup body overflows. Render straight, coherent native Select left/right borders in collapsed, focused and expanded states; keep native selection behavior and Escape precedence.
+- [ ] Advertise and implement useful page/control shortcuts with actual action semantics, disabled boundaries and coherent labels. Preserve Input/TextArea/Select editing, drafts, task/role context and explicit form submission; no shortcut consumes entered text or bypasses validation.
+- [ ] Extend the existing mounted real SQLite/Textual route tests for keyboard/mouse equivalence, pagination boundaries and native selector/input behavior. Review settled wide/compact color/mono renders against Task124, including focused/expanded dropdowns and conditional scrollbars; pass the complete gate.
+
+### Task 127: Keep popup frames stable through content changes
+Refs: third-review History page1/page2 and tiny-controls reproductions; revised Task124 HTML; 06 popup contract, 07 §3; shared popup sizing, mounted routes and paginated body projections.
+- [ ] Choose content-appropriate initial popup dimensions, then preserve outer frame size/origin through pagination, filters, live content and dropdown expansion. Reuse a small shared sizing contract where necessary; no duplicated per-page sizing or speculative UI framework.
+- [ ] Keep header/title/`Esc ×` and applicable controls fixed outside the scrolling body and inside the visible frame, including History navigation at 20×8. Constrain on terminal resize and regain the initial preferred dimensions when space returns, while preserving drafts, selection, reading position and originating context.
+- [ ] Verify actual rendered frame/header/control and Home-underlay coordinates before/after full→short/empty pages and updates with real SQLite/Textual. Cover representative natural Help/Views, History and form routes, wide/compact/20×8, and mounted/standalone compatibility; assertions must test usability and stability rather than constants alone.
+- [ ] Review color/mono native renders using matching facts against Task124, pass the complete gate and retain honest proof/cleanup evidence.
+
+### Task 128: Verify the third review and reconcile Phase 11 evidence
+Refs: every third-review issue, Tasks122–127; 07 §3/§5; updated HTML and accepted second-review record.
+- [ ] Run connected fake-agent/private-tmux/operator walkthroughs for failed-tool evidence and unchanged recovery, safe resizing, scoped indexed/colored tmux chrome, popup shortcuts/native Select and stable geometry. Include configured/custom widgets/layouts, paused/stopped/restarted and no-focus-steal cases.
+- [ ] Review source-matched native color/mono Home, popup and attached-tmux proof at wide, compact and 20×8 plus the 16-column failing boundary. Verify actual frame/underlay/control coordinates across pagination/updates and restored viewport, conditional one-column scrollbars and truthful retained tool facts against Task124 HTML.
+- [ ] Run complete normal and `TERM=dumb NO_COLOR=1` quality gates and existing macOS clean-install/attach/navigation smoke on the final implementation. Assess bounded real-agent verification under 07 §5 for actual changed execution behavior only; record source/versions/limits/failures and make no unrun platform or provider-cause claims.
+- [ ] Reconcile active design/operator/Focus/parity/README and issue outcomes in a new third-review release record, preserving accepted prior evidence/PNG and open59/74h/74p. Tick only satisfied ACs after root review; audit/clean only owned processes/private sockets/cache/profiles and leave the retained user project/resources untouched.

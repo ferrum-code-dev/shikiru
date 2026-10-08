@@ -16,3 +16,5 @@
 Read the docs in order. Each doc is normative. When a later doc refines an earlier one, it names the section it refines.
 
 The second real-project review is specified in [Phase 11 follow-up](../tui-feedback-followup.md): accepted Tasks 113, 113a and 114–121 refine the first delivery with motion, task-list, tmux, popup, diagnostics, attention, integration and feedback behavior. Root accepted Task 121 verification on 2026-10-08. The [2026-10-08 release record](../release-readiness-2026-10-08-phase11-followup.md) records current evidence and remaining limits.
+
+The [third real-project review](../tui-feedback-third-review.md) plans Tasks 122–128 for safe narrow inputs, reliable tool-outcome evidence, the revised HTML, full tmux chrome and coherent stable popups. These tasks remain pending; earlier accepted release evidence does not demonstrate these newly reported boundaries are corrected.
