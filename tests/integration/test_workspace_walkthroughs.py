@@ -70,6 +70,7 @@ if TYPE_CHECKING:
 
     from rich.text import Text
     from textual.pilot import Pilot
+    from textual.widget import Widget
 
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import PaletteRequest
@@ -95,7 +96,7 @@ GUIDANCE_MESSAGE = "Keep the existing parser contract."
 EXPORT_DESTINATION = "exports/terminal-task.json"
 
 
-def _plain(widget: Static) -> str:
+def _plain(widget: Widget) -> str:
     return cast("Text", widget.render()).plain
 
 
@@ -694,11 +695,15 @@ async def test_dashboard_queued_submit_survives_engine_and_dashboard_restarts_on
         assert len(TaskStore(runtime.connection, runtime.clock).list_all()) == 1
         restarted = runtime.app()
         async with restarted.run_test(size=HOME_SIZE) as pilot:
-            status = restarted.query_one("#workspace-command-status", Static)
-            await runtime.wait_for(lambda: f"#{pending.id} · Applied" in _plain(status))
+            status = restarted.query_one("#workspace-command-status", Button)
+            await runtime.wait_for(
+                lambda: "Applied" in _plain(status) and "Submit" in _plain(status)
+            )
             await choose_focus_view(pilot, "Command history · Pending, Applied and Rejected")
             history = restarted.screen.query_one("#command-history-copy", Static)
-            await runtime.wait_for(lambda: f"#{pending.id} · Applied" in _plain(history))
+            await runtime.wait_for(
+                lambda: f"#{pending.id} · Applied" in _plain(history) and task_id in _plain(history)
+            )
     finally:
         await runtime.close()
 

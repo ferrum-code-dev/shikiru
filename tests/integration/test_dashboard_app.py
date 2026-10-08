@@ -100,6 +100,7 @@ from shikiru.domain.commands import (
     ResolutionKind,
     Resolve,
     RetryResolution,
+    Say,
     Stop,
     Submit,
 )
@@ -298,8 +299,9 @@ class _InvalidPlacementEntryPoint:
         return _InvalidPlacementWidget
 
 
-def _rendered_text(widget: Static) -> str:
-    return plain_text(widget.content)
+def _rendered_text(widget: Static | Button) -> str:
+    content = widget.label if isinstance(widget, Button) else widget.content
+    return plain_text(content)
 
 
 def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
@@ -4240,7 +4242,7 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
             open_palette_context=open_palette_context,
         )
         active_apps[:] = [first_app]
-        async with first_app.run_test(size=(100, 34)) as pilot:
+        async with first_app.run_test(size=(120, 40)) as pilot:
             dashboard_screen = first_app.screen
             await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(first_app.screen, PaletteScreen), timeout=2)
@@ -4258,16 +4260,17 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
             assert isinstance(queue.pending()[0].command, Stop)
             await pilot.press("escape")
             await wait_until(lambda: first_app.screen is dashboard_screen, timeout=2)
+            status = first_app.query_one("#workspace-command-status", Button)
             await wait_until(
                 lambda: (
-                    f"#{pending_id} · Pending"
-                    in _rendered_text(first_app.query_one("#workspace-command-status", Static))
+                    status.display
+                    and "Pending · Stop " in _rendered_text(status)
+                    and "queued" in _rendered_text(status)
+                    and "ago" in _rendered_text(status)
                 ),
                 timeout=2,
             )
-            await _choose_focus_view(
-                first_app, pilot, "Command history · Pending, Applied and Rejected"
-            )
+            await pilot.click(status)
             await wait_until(
                 lambda: bool(first_app.screen.query("#command-history-page")), timeout=2
             )
@@ -4276,8 +4279,18 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
             await pilot.pause()
             assert "Loading" not in _rendered_text(history_copy), type(history_screen).__name__
             assert f"#{pending_id} · Pending" in _rendered_text(history_copy)
+            assert "engine currently stopped" in _rendered_text(history_copy)
+            assert "original acknowledgement wait context unknown" in _rendered_text(history_copy)
             await pilot.press("escape")
             await wait_until(lambda: first_app.screen is dashboard_screen, timeout=2)
+            queue.mark_done(pending_id, {"stopping": True})
+            await wait_until(
+                lambda: (
+                    "Applied · Stop " in _rendered_text(status)
+                    and "shutdown requested" in _rendered_text(status)
+                ),
+                timeout=2,
+            )
     finally:
         reader.close()
 
@@ -4334,7 +4347,14 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
         async with first_app.run_test(size=(100, 34)):
             pass
 
+        task = seed_task(connection, clock, title="Message delivery feedback")
+        for submitted in queue.pending():
+            queue.mark_done(submitted.id, {"task_id": task.id})
         pending = queue.append(Stop())
+        say = queue.append(
+            Say(task_id=task.id, role=Role.IMPLEMENTER, text="Review this on your next turn.")
+        )
+        queue.mark_done(say.id, {"task_id": task.id, "role": Role.IMPLEMENTER.value})
         other_client = database.connect()
         try:
             other_queue = CommandQueue(other_client, clock)
@@ -4344,13 +4364,30 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
         finally:
             other_client.close()
 
-        restarted_app = _app(reader, project_dir, widget_names=[])
-        async with restarted_app.run_test(size=(100, 34)) as pilot:
-            status = restarted_app.query_one("#workspace-command-status", Static)
+        restarted_app = _app(
+            reader,
+            project_dir,
+            widget_names=[],
+            services=StubServices(engine_running=True),
+        )
+        async with restarted_app.run_test(size=(120, 40)) as pilot:
+            status = restarted_app.query_one("#workspace-command-status", Button)
+            await pilot.pause()
+            assert status.display, (status.label, status.size, status.content_size)
+            assert "Rejected" in _rendered_text(status), (
+                status.label,
+                status.size,
+                status.content_size,
+            )
+            assert "Rejected · Prioritize T-404" in _rendered_text(status), (
+                status.label,
+                status.size,
+                status.content_size,
+            )
             await wait_until(
                 lambda: (
-                    f"#{rejected.id}" in _rendered_text(status)
-                    and "Rejected" in _rendered_text(status)
+                    "Rejected · Prioritize T-404" in _rendered_text(status)
+                    and "fake engine" in _rendered_text(status)
                 ),
                 timeout=2,
             )
@@ -4372,8 +4409,168 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
             )
             history_text = _rendered_text(history_copy)
             assert f"#{rejected.id} · Rejected" in history_text
+            assert f"#{say.id} · Applied" in history_text
+            assert "guidance queued" in history_text
+            assert "consumed" not in history_text
+            assert "engine currently running" in history_text
             assert "T-404" in history_text
             assert rejection["error"] in history_text
+    finally:
+        reader.close()
+
+
+def _seed_command_feedback_task(
+    connection: Connection,
+    clock: SystemClock,
+) -> tuple[Task, int]:
+    task = seed_task(connection, clock, title="Footer feedback task")
+    queue = CommandQueue(connection, clock)
+    for submitted in queue.pending():
+        queue.mark_done(submitted.id, {"task_id": task.id})
+    prioritize = queue.append(Prioritize(task_id=task.id, priority=4))
+    TaskStore(connection, clock).set_priority(task.id, 4)
+    queue.mark_done(prioritize.id, {"task_id": task.id, "priority": 4})
+    return task, prioritize.id
+
+
+def _assert_rendered_command_summary(
+    app: DashboardApp,
+    status: Button,
+    *,
+    mono: bool,
+) -> None:
+    if mono:
+        rendered = _exported_screen_text(app)
+        assert "Rejected · Prioritize T-404" in rendered, (
+            status.region,
+            status.content_size,
+            _rendered_text(status),
+            rendered,
+        )
+        assert "…" in rendered, (
+            f"status label {_rendered_text(status)!r}, content {status.content_size}, "
+            f"region {status.region}, exported {rendered!r}"
+        )
+    else:
+        assert "priority 4" in _rendered_text(status)
+
+
+async def _assert_command_feedback_footer(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+    command_id: int,
+    render_case: tuple[tuple[int, int], bool],
+) -> None:
+    size, mono = render_case
+    identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+    await wait_until(
+        lambda: task.title in _rendered_text(identity),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    status = app.query_one("#workspace-command-status", Button)
+    actions = app.query_one("#focus-footer-actions", Button)
+    help_button = app.query_one("#focus-footer-help", Button)
+    footer = app.query_one("#focus-footer", Grid)
+    await wait_until(lambda: status.display and status.size.width > 0, timeout=2)
+    if not mono:
+        await wait_until(lambda: "priority 4" in _rendered_text(status), timeout=2)
+    else:
+        await wait_until(lambda: "…" in _rendered_text(status), timeout=2)
+    status_text = _rendered_text(status)
+    assert status.region.bottom <= size[1]
+    assert footer.region.right <= size[0]
+    assert footer.region.contains_region(status.region)
+    assert app.query_one("#focus-main", Horizontal).size.height > 0
+    assert task.title in _rendered_text(identity)
+    if mono:
+        assert "Rejected · Prioritize T-404" in status_text
+        assert "does not exist" not in status_text
+        assert status.region.y > help_button.region.y or status.region.x >= help_button.region.right
+    else:
+        assert "Applied · Prioritize T-1" in status_text
+        assert task.id in status_text
+        assert "priority 4" in status_text
+        assert status.region.y == actions.region.y
+        assert status.region.x > help_button.region.x
+        assert status.region.x >= help_button.region.right
+    resized_size = _WIDE_HOME_SIZE if mono else _COMPACT_HOME_SIZE
+    await pilot.resize_terminal(*resized_size)
+    await wait_until(
+        lambda: (
+            app.size.width == resized_size[0]
+            and status.size.width > 0
+            and app.query_one("#focus-footer", Grid).region.contains_region(status.region)
+        ),
+        timeout=2,
+    )
+    assert task.title in _rendered_text(identity)
+    await pilot.resize_terminal(*size)
+    await wait_until(
+        lambda: app.size.width == size[0] and status.region.bottom <= size[1], timeout=2
+    )
+    await pilot.pause()
+    _assert_rendered_command_summary(app, status, mono=mono)
+    _capture_task99(
+        app, "task120-compact-footer-mono.svg" if mono else "task120-wide-footer-color.svg"
+    )
+    home_screen = app.screen
+    if mono:
+        await pilot.click(status)
+    else:
+        status.focus()
+        await pilot.press("enter")
+    await wait_until(lambda: app.screen is not home_screen, timeout=2)
+    history_copy = app.screen.query_one("#command-history-copy", Static)
+    expected_detail = "task T-404 does not exist" if mono else "priority 4"
+    expected_status = "Rejected" if mono else "Applied"
+    await wait_until(
+        lambda: (
+            f"#{command_id} · {expected_status}" in _rendered_text(history_copy)
+            and expected_detail in _rendered_text(history_copy)
+        ),
+        timeout=2,
+    )
+
+
+@pytest.mark.parametrize(
+    "render_case",
+    [(_WIDE_HOME_SIZE, False), (_COMPACT_HOME_SIZE, True)],
+)
+async def test_durable_command_feedback_footer_matches_home_facts_and_resizes(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    render_case: tuple[tuple[int, int], bool],
+) -> None:
+    size, mono = render_case
+    project_dir = write_minimal_project(tmp_path)
+    if mono:
+        monkeypatch.setenv("NO_COLOR", "1")
+    else:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
+        monkeypatch.setenv("TERM", "xterm-256color")
+    clock = SystemClock()
+    task, command_id = _seed_command_feedback_task(connection, clock)
+    if mono:
+        queue = CommandQueue(connection, clock)
+        rejected = queue.append(Prioritize(task_id="T-404", priority=4))
+        queue.mark_rejected(rejected.id, {"error": "task T-404 does not exist"})
+        command_id = rejected.id
+    reader = StateReader(database, clock)
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["header", "queue", "usage", "resources", "escalations"],
+            clock=clock,
+        )
+        async with app.run_test(size=size) as pilot:
+            await _select_home_task(app, task.id)
+            await _assert_command_feedback_footer(app, pilot, task, command_id, render_case)
     finally:
         reader.close()
 
@@ -4443,6 +4640,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
                 lambda: (
                     f"#{pending.id} · Applied" in _rendered_text(history_copy)
                     and "applied once" in _rendered_text(history_copy)
+                    and '"effect": "applied once"' in _rendered_text(history_copy)
                 ),
                 timeout=2,
             )
@@ -4499,38 +4697,55 @@ def _assert_command_history_controls_reachable(
     assert screen.region.contains_region(controls.region)
 
 
-@pytest.mark.parametrize("width", [36, 48])
+@pytest.mark.parametrize("size", [(36, 20), (48, 20), (20, 8)])
 async def test_narrow_home_keeps_keyboard_routes_reachable(
     database: Database,
     connection: Connection,
     tmp_path: Path,
-    width: int,
+    size: tuple[int, int],
 ) -> None:
+    width, height = size
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
     reader = StateReader(database, clock)
+    task = seed_task(connection, clock, title="Task120 native Home task")
     queue = CommandQueue(connection, clock)
+    for submitted in queue.pending():
+        queue.mark_done(submitted.id, {"task_id": task.id})
     for _ in range(3):
         queue.append(Stop())
 
     try:
-        app = _app(reader, project_dir, widget_names=[])
-        async with app.run_test(size=(width, 20)) as pilot:
+        app = _app(reader, project_dir, widget_names=["header", "queue"])
+        async with app.run_test(size=size) as pilot:
             await pilot.pause()
-            status = app.query_one("#workspace-command-status", Static)
-            assert status.size.height == 1
+            status = app.query_one("#workspace-command-status", Button)
             footer = app.query_one("#focus-footer", Grid)
-            assert footer.region.bottom <= 20
+            assert footer.display is (height >= 9)
+            assert not status.is_on_screen if height < 9 else status.region.bottom <= height
             assert footer.region.right <= width
-            _capture_task99(app, f"task101-home-footer-{width}x20-color.svg")
+            _capture_task99(app, f"task120-home-footer-{width}x{height}-color.svg")
             home_screen = app.screen
-            await pilot.press("v")
-            await wait_until(lambda: app.screen is not home_screen, timeout=2)
-            await pilot.pause()
+            if height >= 9:
+                assert status.display, (status.label, status.size, status.content_size)
+                assert "Pending · Stop" in _rendered_text(status)
+                await pilot.click(status)
+                await wait_until(lambda: app.screen is not home_screen, timeout=2)
+                history_screen = app.screen
+                history_copy = history_screen.query_one("#command-history-copy", Static)
+                await wait_until(lambda: "#4 · Pending" in _rendered_text(history_copy), timeout=2)
+                await pilot.press("escape")
+                await wait_until(lambda: app.screen is home_screen, timeout=2)
+            else:
+                assert not status.is_on_screen
             await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
             await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
             page = cast("Static", app.screen.query_one("#command-history-page"))
             assert "all statuses" in _rendered_text(page)
+            history_copy = app.screen.query_one("#command-history-copy", Static)
+            await wait_until(
+                lambda: "engine currently stopped" in _rendered_text(history_copy), timeout=2
+            )
     finally:
         reader.close()
 
@@ -5519,8 +5734,9 @@ async def test_home_footer_detach_uses_the_configured_prefix_and_action(
     tmp_path: Path,
     tmux_server: TmuxServer,
 ) -> None:
-    del connection
     project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    CommandQueue(connection, clock).append(Stop())
     tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
     project_session = exact_target(_PROJECT_SESSION_NAME)
     unrelated_session = exact_target(tmux_server.session)
@@ -5538,7 +5754,7 @@ async def test_home_footer_detach_uses_the_configured_prefix_and_action(
     await tmux_server.run("set-option", "-g", "prefix", _GLOBAL_TMUX_PREFIX)
     assert await tmux.current_prefix(project_session) == _GLOBAL_TMUX_PREFIX
     await tmux.set_session_option(project_session, "prefix", _SESSION_TMUX_PREFIX)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
 
     try:
         prefix_hint, detach_project_client = await dashboard_tmux_binding(
@@ -5561,6 +5777,7 @@ async def test_home_footer_detach_uses_the_configured_prefix_and_action(
             async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
                 footer = app.query_one("#focus-footer", Grid)
                 detach = app.query_one("#focus-footer-detach", Button)
+                status = app.query_one("#workspace-command-status", Button)
                 assert len({child.region.y for child in footer.children}) == 1
                 actions_index = next(
                     index
@@ -5577,7 +5794,14 @@ async def test_home_footer_detach_uses_the_configured_prefix_and_action(
                     for index, child in enumerate(footer.children)
                     if child.id == "focus-footer-help"
                 )
-                assert actions_index < detach_index < help_index
+                status_index = next(
+                    index
+                    for index, child in enumerate(footer.children)
+                    if child.id == "workspace-command-status"
+                )
+                assert actions_index < detach_index < help_index < status_index
+                assert status.display
+                assert "Pending · Stop " in _rendered_text(status)
                 assert prefix_hint in plain_text(detach.label)
                 assert not detach.disabled
                 assert await tmux.client_for_pane(project_session, project_pane) is not None
@@ -5789,11 +6013,8 @@ async def test_project_fault_attention_without_faults_extension_opens_existing_h
             assert reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == 0
             await pilot.press("escape")
             await wait_until(
-                lambda: app.screen.query_one("#workspace-command-status", Static).display,
+                lambda: app.screen.query_one("#workspace-command-status", Button).display,
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            assert "Fault history extension is not configured" in _rendered_text(
-                app.screen.query_one("#workspace-command-status", Static)
             )
     finally:
         reader.close()
@@ -6166,13 +6387,17 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
             assert home_row.visible
             assert home_row.region.width > 0
             assert task.id in _rendered_text(palette.query_one("#palette-menu-context", Static))
-            screenshot_text = unescape(app.export_screenshot()).replace("\xa0", " ")
+            screenshot_text = _exported_screen_text(app)
             _capture_task99(app, f"task108-actions-{size[0]}x{size[1]}-color.svg")
             if size == _WIDE_HOME_SIZE:
                 assert task.title in screenshot_text
             else:
                 assert "✓ No decisions needed" in screenshot_text
-                assert "tmux detach unavailable" in screenshot_text
+                detach = home.query_one("#focus-footer-detach", Button)
+                assert detach.disabled
+                assert detach.region.width > 0
+                assert detach.region.right <= size[0]
+                assert detach.region.bottom <= size[1]
             assert "Shikiru actions" in screenshot_text
             await pilot.press("escape")
             await wait_until(

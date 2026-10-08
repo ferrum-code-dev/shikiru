@@ -192,5 +192,5 @@ Target: the operator-reviewed [Focus Steel HTML](../docs/design/references/focus
 - [x] Task 117: Align the resource strip and composed Project Diagnostics popup
 - [x] Task 118: Remove escalation identity duplication and make Enter resolve truthful
 - [x] Task 119: Resolve rebase conflicts through bounded turns and classify continuation failures
-- [ ] Task 120: Move clear durable command feedback into the footer
+- [x] Task 120: Move clear durable command feedback into the footer
 - [ ] Task 121: Verify the second review end to end and reconcile Phase 11 evidence

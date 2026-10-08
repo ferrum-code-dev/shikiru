@@ -485,7 +485,8 @@ class CommandFeedbackEntryView:
     action: str
     target: str
     status: CommandFeedbackStatus
-    result: str | None
+    result: dict[str, object] | None
+    pending_age: str | None = None
 
 
 @dataclass(frozen=True)

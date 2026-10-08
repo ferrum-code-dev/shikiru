@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
@@ -54,7 +55,7 @@ from shikiru.errors import ConfigError
 from shikiru.ui.compact import FocusAttentionStatus
 from shikiru.ui.screen import widget_is_active, widget_is_attached, widget_is_current
 from shikiru.ui.theme import install_theme
-from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
+from shikiru.ui.tokens import AMBER, DUSTY_ROSE, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -106,17 +107,25 @@ _COMMAND_HISTORY_NEXT = "command-history-next"
 _COMMAND_HISTORY_PAGE = "command-history-page"
 _COMMAND_HISTORY_HEADER = "command-history-header"
 _COMMAND_HISTORY_PAGE_SIZE = 20
+_COMMAND_STATUS_RENDER_CLIP_COLUMNS = 2
 _COMMAND_HISTORY_ALL = "all"
-_COMMAND_STATUS_LINE_MAX_CHARS = 96
 _COMMAND_HISTORY_PREVIOUS_KEY = "left"
 _COMMAND_HISTORY_NEXT_KEY = "right"
 COMMAND_ACTION_SAY = "Say"
+COMMAND_RESULT_TASK_ID = "task_id"
+COMMAND_RESULT_STATUS = "status"
+COMMAND_RESULT_EFFECT = "effect"
+COMMAND_RESULT_STOPPING = "stopping"
+COMMAND_RESULT_PRIORITY = "priority"
+COMMAND_RESULT_PAUSED = "paused"
+COMMAND_RESULT_NOW = "now"
 _SEARCH_KEY = "slash"
 _ACTIONS_KEY = "ctrl+p"
 _HOME_FOOTER_CLEAR = "focus-footer-clear"
 _HOME_FOOTER_ACTIONS = "focus-footer-actions"
 _HOME_FOOTER_HELP = "focus-footer-help"
 _HOME_FOOTER_DETACH = "focus-footer-detach"
+_HOME_FOOTER_COMMAND_STATUS = "workspace-command-status"
 _CONTEXT_VIEWS_HEADER = "context-views-header"
 _CONTEXT_VIEWS_CLOSE = "context-views-close"
 _CONTEXT_WIDGET_HEADER = "context-widget-header"
@@ -129,17 +138,19 @@ _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
 _SUMMARY_WAITING = "waiting"
 HOME_SPLIT_MIN_COLUMNS = 73
-FOCUS_FOOTER_GROUP_MIN_COLUMNS = 54
+FOCUS_FOOTER_GROUP_MIN_COLUMNS = 48
+FOCUS_FOOTER_STATUS_WIDE_LABEL_MIN_COLUMNS = 54
+FOCUS_FOOTER_COMPACT_CONTROL_COLUMN_WIDTH = 13
+FOCUS_FOOTER_COMPACT_WRAP_ROWS = 1
 FOCUS_FOOTER_STACKED_COLUMN_COUNT = 1
 FOCUS_FOOTER_GROUP_COUNT = 2
-FOCUS_FOOTER_ITEM_COUNT = 5
+FOCUS_FOOTER_ACTION_COUNT = 5
 FOCUS_SUMMARY_MAX_ROWS = 12
 FOCUS_MAIN_MIN_ROWS = 3
 FOCUS_COMPACT_MAIN_ROWS = 8
 FOCUS_COMPACT_TASK_LIST_ROWS = 6
 FOCUS_MIN_TASK_LIST_ROWS = 12
 FOCUS_TASK_LIST_RECENT_RESERVE_ROWS = 3
-FOCUS_COMMAND_STATUS_ROWS = 1
 FOCUS_FRAME_BORDER_ROWS = 2
 FOCUS_FOOTER_MIN_HEIGHT = 9
 FOCUS_ATTENTION_HEIGHT = 3
@@ -345,37 +356,102 @@ def _command_history_text(history: CommandHistoryView) -> str:
 def _command_entry_text(entry: CommandFeedbackEntryView, *, engine_up: bool) -> str:
     if entry.status is CommandFeedbackStatus.PENDING:
         engine_state = "running" if engine_up else "stopped"
-        detail = f"engine currently {engine_state}; original acknowledgement wait context unknown"
+        pending_age = f"queued {entry.pending_age}; " if entry.pending_age is not None else ""
+        detail = (
+            f"{pending_age}engine currently {engine_state}; "
+            "original acknowledgement wait context unknown"
+        )
     elif entry.status is CommandFeedbackStatus.APPLIED:
-        detail = (
-            "guidance queued for the selected role's next turn"
-            if entry.action == COMMAND_ACTION_SAY
-            else "engine applied the command effect"
-        )
+        detail = _command_applied_effect(entry)
         if entry.result is not None:
-            detail = f"{detail}; returned {entry.result}"
+            detail = f"{detail}; returned {_command_result_json(entry.result)}"
     else:
-        detail = (
-            f"returned {entry.result}"
-            if entry.result is not None
-            else "engine rejected the command without a returned result"
-        )
+        detail = _command_rejection_cause(entry)
+        if entry.result is not None and isinstance(entry.result.get("error"), str):
+            detail = f"{detail}; returned {_command_result_json(entry.result)}"
     return (
         f"#{entry.command_id} · {entry.status.value} · {entry.action} · {entry.target} · {detail}"
     )
 
 
-def _command_summary_text(history: CommandHistoryView) -> str:
+def _command_applied_effect(entry: CommandFeedbackEntryView) -> str:
+    if entry.action == COMMAND_ACTION_SAY:
+        return "guidance queued for the selected role's next turn"
+    result = entry.result
+    if result is None:
+        return "engine applied the command effect"
+    effect = result.get(COMMAND_RESULT_EFFECT)
+    if isinstance(effect, str):
+        return effect
+    if result.get(COMMAND_RESULT_STOPPING) is True:
+        return "shutdown requested"
+    task_id = result.get(COMMAND_RESULT_TASK_ID)
+    if not isinstance(task_id, str):
+        return json.dumps(result, ensure_ascii=False, sort_keys=True)
+    return (
+        _task_command_effect(result, task_id, entry.target) or "engine applied the command effect"
+    )
+
+
+def _command_result_json(result: dict[str, object]) -> str:
+    return json.dumps(result, ensure_ascii=False, sort_keys=True)
+
+
+def _task_command_effect(result: dict[str, object], task_id: str, target: str) -> str | None:
+    task_prefix = "" if task_id == target else f"{task_id} "
+    status = result.get(COMMAND_RESULT_STATUS)
+    if isinstance(status, str):
+        return f"{task_prefix}{status}"
+    priority = result.get(COMMAND_RESULT_PRIORITY)
+    if isinstance(priority, int) and not isinstance(priority, bool):
+        return f"{task_prefix}priority {priority}"
+    paused = result.get(COMMAND_RESULT_PAUSED)
+    if paused is True:
+        suffix = " now" if result.get(COMMAND_RESULT_NOW) is True else ""
+        return f"{task_prefix}paused{suffix}"
+    if paused is False:
+        return f"{task_prefix}resumed"
+    return None
+
+
+def _command_rejection_cause(entry: CommandFeedbackEntryView) -> str:
+    result = entry.result
+    if result is None:
+        return "engine rejected the command without a returned result"
+    error = result.get("error")
+    if isinstance(error, str):
+        return error
+    return json.dumps(result, ensure_ascii=False, sort_keys=True)
+
+
+def _command_summary_text(history: CommandHistoryView) -> Text:
     entry = history.entries[0]
-    engine = (
-        f" · engine {'running' if history.engine_up else 'stopped'}"
-        if entry.status is CommandFeedbackStatus.PENDING
-        else ""
+    summary = Text()
+    summary.append(
+        entry.status.value,
+        style={
+            CommandFeedbackStatus.PENDING: f"{AMBER} bold",
+            CommandFeedbackStatus.APPLIED: f"{SAGE} bold",
+            CommandFeedbackStatus.REJECTED: f"{DUSTY_ROSE} bold",
+        }[entry.status],
     )
-    summary = (
-        f"#{entry.command_id} · {entry.status.value} · {entry.action} · {entry.target}{engine}"
-    )
-    return summary[:_COMMAND_STATUS_LINE_MAX_CHARS]
+    detail = f"{entry.action} {entry.target}"
+    if entry.status is CommandFeedbackStatus.PENDING:
+        age = f"queued {entry.pending_age} · " if entry.pending_age is not None else ""
+        engine = "running" if history.engine_up else "stopped"
+        detail = f"{detail} · {age}engine {engine}"
+    elif entry.status is CommandFeedbackStatus.APPLIED:
+        detail = f"{detail} · {_command_applied_effect(entry)}"
+    else:
+        detail = f"{detail} · {_command_rejection_cause(entry)}"
+    summary.append(f" · {detail}", style=SECONDARY_TEXT_COLOR)
+    return summary
+
+
+def _truncate_command_summary(summary: Text, width: int) -> Text:
+    truncated = summary.copy()
+    truncated.truncate(max(0, width), overflow="ellipsis")
+    return truncated
 
 
 class _WorkspaceHelpScreen(ModalScreen[None]):
@@ -638,25 +714,63 @@ class _CommandHistoryScreen(ModalScreen[None]):
             )
 
 
-class _CommandStatusLine(Static):
+class _CommandStatusLine(Button):
     def __init__(self, views: DashboardViews, on_change: OnChangeRegistration) -> None:
-        super().__init__("", id="workspace-command-status", markup=False)
+        super().__init__(
+            "",
+            id=_HOME_FOOTER_COMMAND_STATUS,
+            tooltip="Open full command history",
+            flat=True,
+        )
         self._views = views
         self._on_change = on_change
+        self._history: CommandHistoryView | None = None
+        self._transient_message: str | None = None
 
     async def on_mount(self) -> None:
         self._display_history()
+        self.call_after_refresh(self._render_status)
         self.run_worker(self._on_change(self._refresh), group=_COMMAND_HISTORY_WORKER)
+
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        self.call_after_refresh(self._render_status)
 
     async def _refresh(self) -> None:
         if widget_is_attached(self):
             self._display_history()
 
     def _display_history(self) -> None:
-        history = self._views.command_history()
-        self.display = bool(history.entries)
-        if history.entries:
-            self.update(_command_summary_text(history))
+        self._transient_message = None
+        self._history = self._views.command_history()
+        self._render_status()
+
+    def show_transient(self, message: str) -> None:
+        self._transient_message = message
+        self._render_status()
+
+    def _render_status(self) -> None:
+        was_displayed = self.display
+        if self._transient_message is not None:
+            self.label = _truncate_command_summary(
+                Text(self._transient_message, style=SECONDARY_TEXT_COLOR),
+                self._summary_render_width(),
+            )
+            self.display = True
+        else:
+            history = self._history
+            self.display = bool(history and history.entries)
+            if history is not None and history.entries:
+                self.label = _truncate_command_summary(
+                    _command_summary_text(history), self._summary_render_width()
+                )
+        if was_displayed != self.display and isinstance(self.parent, _HomeFooter):
+            app = cast("DashboardApp", self.app)
+            self.call_after_refresh(app.refresh_layout)
+            self.call_after_refresh(self._render_status)
+
+    def _summary_render_width(self) -> int:
+        return max(0, self.content_size.width - _COMMAND_STATUS_RENDER_CLIP_COLUMNS)
 
 
 class _HomeAttentionStatus(Static):
@@ -735,9 +849,16 @@ class _HomeAttentionStatus(Static):
 class _HomeFooter(Grid):
     can_focus = True
 
-    def __init__(self, tmux_detach_hint: str | None) -> None:
+    def __init__(
+        self,
+        tmux_detach_hint: str | None,
+        views: DashboardViews,
+        on_change: OnChangeRegistration,
+    ) -> None:
         super().__init__(id="focus-footer")
         self._tmux_detach_hint = tmux_detach_hint
+        self._views = views
+        self._on_change = on_change
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -770,6 +891,7 @@ class _HomeFooter(Grid):
             Text.assemble(("?", STEEL_BLUE), (" help", SECONDARY_TEXT_COLOR)),
             id=_HOME_FOOTER_HELP,
         )
+        yield _CommandStatusLine(self._views, self._on_change)
 
 
 class DashboardApp(App[None]):
@@ -825,7 +947,7 @@ class DashboardApp(App[None]):
     #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
     #focus-footer {
         layout: grid; grid-size: 3 0; grid-columns: auto auto auto; grid-gutter: 0 0;
-        height: auto; min-height: 2; padding: 0; margin-top: 0; border-top: solid $neutral-border;
+        height: auto; min-height: 1; padding: 0; margin-top: 0; border-top: solid $neutral-border;
         background: $background; color: $secondary-text;
     }
     #focus-footer Static { width: auto; height: auto; padding: 0 1; color: $secondary-text; }
@@ -836,7 +958,16 @@ class DashboardApp(App[None]):
     }
     #focus-footer Button:hover { color: $steel-blue; text-style: none; }
     #focus-footer Button:focus { color: $primary-text; text-style: reverse; }
-    #workspace-command-status { height: 1; padding: 0 1; color: $secondary-text; }
+    #workspace-command-status {
+        width: 100%; height: 1; min-width: 0; max-height: 1; padding: 0 1;
+        border: none; background: $background; color: $secondary-text;
+        content-align: right middle; text-align: right; text-wrap: nowrap;
+    }
+    #workspace-command-status:hover { color: $steel-blue; }
+    #workspace-command-status:focus { color: $primary-text; text-style: reverse; }
+    #focus-footer #workspace-command-status {
+        width: 1fr; min-width: 0; padding: 0; text-wrap: nowrap;
+    }
     """
 
     def __init__(
@@ -952,8 +1083,7 @@ class DashboardApp(App[None]):
                     yield self._home_detail_panel
                 else:
                     yield Static("Task list is not configured.", id="focus-empty", markup=False)
-            yield _CommandStatusLine(self._views, self._on_change)
-            yield _HomeFooter(self._tmux_detach_hint)
+            yield _HomeFooter(self._tmux_detach_hint, self._views, self._on_change)
 
     def _compose_task_workspace(self) -> ComposeResult:
         context = self._widget_context()
@@ -1057,9 +1187,9 @@ class DashboardApp(App[None]):
         return await cast("_AttentionPanelNavigation", panel).activate_selected_decision()
 
     def _show_navigation_feedback(self, message: str) -> None:
-        status = self.query_one("#workspace-command-status", Static)
-        status.update(message)
-        status.display = True
+        self.query_one(f"#{_HOME_FOOTER_COMMAND_STATUS}", _CommandStatusLine).show_transient(
+            message
+        )
 
     def _context_choices(self) -> tuple[_ContextChoice, ...]:
         choices = [
@@ -1179,9 +1309,7 @@ class DashboardApp(App[None]):
             return
         choice = self._find_context_choice(choice_id)
         if choice is None and choice_id == FOCUS_FAULTS_VIEW:
-            self._show_navigation_feedback(
-                "Fault history extension is not configured; showing command history."
-            )
+            self._show_navigation_feedback("Faults not configured")
             history = self._find_context_choice(FOCUS_COMMAND_HISTORY)
             if history is not None:
                 await self._run_context_choice(history)
@@ -1414,6 +1542,11 @@ class DashboardApp(App[None]):
     def on_resize(self, event: events.Resize) -> None:
         self._apply_layout(event.size.width, event.size.height)
 
+    def refresh_layout(self) -> None:
+        """Recalculate Home row allocations after a footer status becomes visible or hidden."""
+        if self.is_running and self._focus_task is None:
+            self._apply_layout(self.size.width, self.size.height)
+
     def refresh_task_detail_after_resume(self) -> None:
         """Refresh task detail mounted in the screen that resumed after an overlay."""
         if not self.is_running:
@@ -1464,6 +1597,11 @@ class DashboardApp(App[None]):
                 self._show_navigation_feedback("No project tmux client is currently showing Home.")
         elif event.button.id == _HOME_FOOTER_HELP:
             await self.action_show_help()
+        elif event.button.id == _HOME_FOOTER_COMMAND_STATUS:
+            await self.push_screen(
+                _CommandHistoryScreen(self._views, self._on_change),
+                callback=lambda _: self.refresh_task_detail_after_resume(),
+            )
 
     async def _dispatch_workspace_key(self, event: events.Key) -> bool:
         if event.key == _ACTIONS_KEY:
@@ -1568,13 +1706,31 @@ class DashboardApp(App[None]):
             footer_columns = (
                 FOCUS_FOOTER_STACKED_COLUMN_COUNT
                 if width < FOCUS_FOOTER_GROUP_MIN_COLUMNS
-                else FOCUS_FOOTER_ITEM_COUNT
+                else FOCUS_FOOTER_ACTION_COUNT + 1
                 if wide
                 else FOCUS_FOOTER_GROUP_COUNT
             )
             footer.styles.grid_size_columns = footer_columns
-            footer.styles.grid_columns = " ".join("auto" for _ in range(footer_columns))
-            footer_rows = (FOCUS_FOOTER_ITEM_COUNT + footer_columns - 1) // footer_columns
+            footer.styles.grid_columns = (
+                "auto auto auto auto auto 1fr"
+                if wide
+                else f"{FOCUS_FOOTER_COMPACT_CONTROL_COLUMN_WIDTH} 1fr"
+                if width < FOCUS_FOOTER_STATUS_WIDE_LABEL_MIN_COLUMNS
+                and footer_columns == FOCUS_FOOTER_GROUP_COUNT
+                else "auto 1fr"
+                if footer_columns == FOCUS_FOOTER_GROUP_COUNT
+                else "1fr"
+            )
+            status_visible = self.query_one(
+                f"#{_HOME_FOOTER_COMMAND_STATUS}", _CommandStatusLine
+            ).display
+            footer_items = FOCUS_FOOTER_ACTION_COUNT + int(status_visible)
+            footer_rows = (footer_items + footer_columns - 1) // footer_columns
+            if (
+                width < FOCUS_FOOTER_STATUS_WIDE_LABEL_MIN_COLUMNS
+                and footer_columns == FOCUS_FOOTER_GROUP_COUNT
+            ):
+                footer_rows += FOCUS_FOOTER_COMPACT_WRAP_ROWS
             readout_main_height = (
                 minimum_main_height - FOCUS_TASK_LIST_RECENT_RESERVE_ROWS
                 if wide and task_list_configured
@@ -1591,7 +1747,6 @@ class DashboardApp(App[None]):
                         - readout_main_height
                         - footer_rows
                         - FOCUS_ATTENTION_HEIGHT
-                        - FOCUS_COMMAND_STATUS_ROWS
                         - FOCUS_FRAME_BORDER_ROWS,
                     ),
                 )
