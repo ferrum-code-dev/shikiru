@@ -60,7 +60,7 @@ hint; at the 20×8 reachability floor, `Ctrl+P`, `?`, Escape and tmux prefix+`d`
 while the footer is hidden. `?` opens contextual help.
 
 The Phase 11 first-delivery record covers Tasks 105–112; the [2026-10-08 follow-up](docs/release-readiness-2026-10-08-phase11-followup.md)
-records accepted second-review work through Task 120 and Task 121 verification, current matched native captures,
+records accepted second-review work through Task 120 and Task 121 verification pending root review, current matched native captures,
 walkthroughs, test gates and limits. The [Focus specification](docs/tui-focus.md) describes current
 routes and evidence rules; the [parity record](docs/tui-parity.md) preserves the measured Phase 10
 audit and its historical artifacts.
@@ -115,7 +115,7 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 
 - Design: [`docs/design`](docs/design/README.md)
 - Operator Workspace: [`docs/tui-workspace.md`](docs/tui-workspace.md) — Phase 8 interaction and evidence specification. Tasks 75–88 are verified on macOS; a fresh Codex gpt-6-luna E1–E6 run, the normal and `TERM=dumb` full gates, and the clean-install/navigation smoke passed. GNU/Linux was not run and remains unverified. The older Task 59, 74h and 74p review gates remain open. See the [2026-10-03 release record](docs/release-readiness-2026-10-03-phase8.md).
-- Compact Operator TUI: [`docs/tui-focus.md`](docs/tui-focus.md) — current Focus routes plus the billing and usage evidence contract. [`docs/tui-parity.md`](docs/tui-parity.md) and the [Phase 10 release record](docs/release-readiness-2026-10-05-phase10.md) preserve the accepted Tasks 97–102 audit. The [Phase 11 first-delivery record](docs/release-readiness-2026-10-07-phase11.md) preserves Tasks 105–112; the [second-review follow-up](docs/release-readiness-2026-10-08-phase11-followup.md) records Tasks 113–121 and current verification. The [approved standalone mockup](docs/design/references/focus-steel-approved.html) and [selected 736-pixel view](docs/design/references/focus-steel-approved-736.png) remain unchanged.
+- Compact Operator TUI: [`docs/tui-focus.md`](docs/tui-focus.md) — current Focus routes plus the billing and usage evidence contract. [`docs/tui-parity.md`](docs/tui-parity.md) and the [Phase 10 release record](docs/release-readiness-2026-10-05-phase10.md) preserve the accepted Tasks 97–102 audit. The [Phase 11 first-delivery record](docs/release-readiness-2026-10-07-phase11.md) preserves Tasks 105–112; the [second-review follow-up](docs/release-readiness-2026-10-08-phase11-followup.md) records accepted Tasks 113–120 and Task 121 verification pending root review. The [approved standalone mockup](docs/design/references/focus-steel-approved.html) and [selected 736-pixel view](docs/design/references/focus-steel-approved-736.png) remain unchanged.
 - Phase 9 release evidence: [`docs/release-readiness-2026-10-04-phase9.md`](docs/release-readiness-2026-10-04-phase9.md) — macOS gates, connected fake-agent walkthroughs, fresh E1–E6, visual review, limits and host hygiene.
 - Phase 10 release evidence: [`docs/release-readiness-2026-10-05-phase10.md`](docs/release-readiness-2026-10-05-phase10.md) — connected correction walkthroughs, final gates, macOS clean-install/navigation smoke, native-cell review, limits and host hygiene.
 - Workspace walkthrough evidence: [`docs/workspace-walkthroughs-2026-10-03.md`](docs/workspace-walkthroughs-2026-10-03.md) — executed flows, fixtures and observed limits.
