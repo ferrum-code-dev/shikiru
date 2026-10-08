@@ -45,6 +45,12 @@ UNKNOWN_SAMPLE_AGE = "sample age unavailable"
 RECORDED_REPEATS = "repeats"
 FIRST_RECORDED = "First recorded"
 LATEST_RECORDED = "latest"
+REFRESH_TARGET_IDS = (
+    RESOURCE_PANEL_ID,
+    RESOURCE_DETAILS_ID,
+    ENGINE_LOCK_ID,
+    ENGINE_FAULTS_ID,
+)
 
 
 class ProjectDiagnosticsPanel(VerticalGroup):
@@ -94,10 +100,12 @@ class ProjectDiagnosticsPanel(VerticalGroup):
             self._update_resource()
 
     async def _refresh_project_facts_if_attached(self) -> None:
-        if widget_is_attached(self):
+        if self._ready_for_refresh():
             self._refresh_project_facts()
 
     def _refresh_project_facts(self) -> None:
+        if not self._ready_for_refresh():
+            return
         self._resource = self._views.resource_sample()
         engine_up = self._views.engine_up()
         faults = self._views.engine_faults()
@@ -108,6 +116,8 @@ class ProjectDiagnosticsPanel(VerticalGroup):
         self.query_one(f"#{ENGINE_FAULTS_ID}", Static).update(_faults_content(faults))
 
     def _update_resource(self) -> None:
+        if not self._ready_for_refresh():
+            return
         resource_panel = self.query_one(f"#{RESOURCE_PANEL_ID}", Static)
         width = resource_panel.size.width
         resource_panel.update(render_resource_metric(self._resource, width=width or None))
@@ -116,6 +126,11 @@ class ProjectDiagnosticsPanel(VerticalGroup):
         details.append("\n")
         details.append(RESOURCE_GUIDANCE, style=SECONDARY_TEXT_COLOR)
         self.query_one(f"#{RESOURCE_DETAILS_ID}", Static).update(details)
+
+    def _ready_for_refresh(self) -> bool:
+        return widget_is_attached(self) and all(
+            self.query(f"#{widget_id}") for widget_id in REFRESH_TARGET_IDS
+        )
 
 
 def _resource_observation(sample: ResourceView | None) -> Text:

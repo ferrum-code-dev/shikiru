@@ -2274,7 +2274,7 @@ async def test_headless_agent_resources_are_disjoint_and_diagnostics_reuses_the_
         app = _app(
             reader,
             project_dir,
-            widget_names=["resources"],
+            widget_names=["queue", "resources"],
             services=cast("StubServices", services),
             clock=clock,
             settings=settings,
@@ -2288,6 +2288,8 @@ async def test_headless_agent_resources_are_disjoint_and_diagnostics_reuses_the_
                 sampler=sampler,
                 services=services,
                 size=size,
+                task_id=task.id,
+                reader=reader,
             )
     finally:
         if process.returncode is None:
@@ -2304,6 +2306,8 @@ async def _assert_cached_resource_views(
     sampler: ResourceSampler,
     services: DashboardServices,
     size: tuple[int, int],
+    task_id: str,
+    reader: StateReader,
 ) -> None:
     home_resources = app.query_one("#resources", Static)
     expected_resource_rows = len(expected_groups) if size == _COMPACT_HOME_SIZE else 1
@@ -2357,8 +2361,37 @@ async def _assert_cached_resource_views(
         )
         readouts.scroll_to(y=0, animate=False, immediate=True)
         await wait_until(lambda: readouts.scroll_y == 0, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
-    assert await pilot.click("#resources")
-    await _assert_project_diagnostics_view(app, pilot, expected_groups=expected_groups, size=size)
+    if size == _WIDE_HOME_SIZE:
+        task_list = app.query_one("#task-browser-list", ListView)
+        selected_row = app.query_one(f"#task-row-{task_id}", ListItem)
+        await wait_until(
+            lambda: task_list.highlighted_child is selected_row,
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        home_screen = app.screen
+        command_count_before = reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count
+        assert pilot.app.focused is task_list
+        await pilot.press("shift+tab", "shift+tab")
+        await wait_until(
+            lambda: pilot.app.focused is home_resources,
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        await pilot.press("enter")
+        await _assert_project_diagnostics_view(
+            app, pilot, expected_groups=expected_groups, size=size
+        )
+        await pilot.press("escape")
+        await wait_until(lambda: app.screen is home_screen, timeout=2)
+        assert pilot.app.focused is home_resources
+        assert task_list.highlighted_child is selected_row
+        assert reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == (
+            command_count_before
+        )
+    else:
+        assert await pilot.click("#resources")
+        await _assert_project_diagnostics_view(
+            app, pilot, expected_groups=expected_groups, size=size
+        )
     assert sampler.latest().sampled_at == sample.sampled_at
     cached = services.resource_sample()
     assert cached is not None

@@ -28,6 +28,7 @@ class ResourcesPanel(Static):
     def __init__(self, context: WidgetContext) -> None:
         """Hold `context`; resource sampling starts on mount."""
         super().__init__(id="resources")
+        self.can_focus = context.placement is WidgetPlacement.RESOURCES
         self._widget_context = context
         self._sample: ResourceView | None = None
 

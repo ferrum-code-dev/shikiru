@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, cast
 import psutil
 import pytest
 from rich.cells import cell_len
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Vertical, VerticalGroup, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, DataTable, Label, ListItem, ListView, Static
 
@@ -53,7 +53,7 @@ from shikiru.store.database import Database
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
-from shikiru.store.reader import StateReader
+from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.docker import (
@@ -363,6 +363,67 @@ def _assert_resource_sample_retained(sources: DashboardSources, expected: Resour
     assert retained is not None
     assert retained.state is DiagnosticSampleState.STALE
     assert retained.sampled_at == expected.sampled_at
+
+
+async def _assert_diagnostics_refresh_after_child_recompose(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    *,
+    connection: Connection,
+    clock: FakeClock,
+    task_id: str,
+    sources: DashboardSources,
+    initial: ResourceView,
+) -> None:
+    diagnostics_panel = app.screen.query_one("#project-diagnostics", VerticalGroup)
+    await wait_until(clock.has_pending_sleep, timeout=2)
+    await diagnostics_panel.query_one("#project-diagnostics-engine-lock", Static).remove()
+    await pilot.resize_terminal(99, 50)
+    await wait_until(lambda: app.size.width == 99, timeout=2)
+    _record_open_engine_fault(
+        connection,
+        clock,
+        task_id,
+        scope="diagnostics teardown",
+        error="fault while diagnostics child is absent",
+        repeats=1,
+    )
+    clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
+    await pilot.pause()
+
+    await diagnostics_panel.recompose()
+    await wait_until(
+        lambda: bool(diagnostics_panel.query("#project-diagnostics-engine-lock")),
+        timeout=2,
+    )
+    _record_open_engine_fault(
+        connection,
+        clock,
+        task_id,
+        scope="diagnostics restored",
+        error="fault after diagnostics remount",
+        repeats=1,
+    )
+    await wait_until(clock.has_pending_sleep, timeout=2)
+    clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
+    await wait_until(
+        lambda: (
+            "Open engine faults · 3 recorded" in _project_diagnostics_text(app.screen)
+            and "fault while diagnostics child is absent" in _project_diagnostics_text(app.screen)
+            and "fault after diagnostics remount" in _project_diagnostics_text(app.screen)
+        ),
+        timeout=2,
+    )
+    diagnostics = _assert_project_diagnostics_facts(
+        app.screen,
+        fault_count=3,
+        fault_error="recorded diagnostic failure",
+        docker_state="Docker · not configured",
+        resource_error=RESOURCE_SAMPLE_FAILURE,
+    )
+    assert "fault while diagnostics child is absent" in diagnostics
+    assert "fault after diagnostics remount" in diagnostics
+    _assert_resource_sample_retained(sources, initial)
 
 
 async def test_escalations_open_full_packet_and_route_resolution_action(
@@ -999,7 +1060,17 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         )
         assert task.id in diagnostics
         _assert_resource_sample_retained(sources, initial)
-        await pilot.click("#context-widget-close")
+        await _assert_diagnostics_refresh_after_child_recompose(
+            app,
+            pilot,
+            connection=connection,
+            clock=clock,
+            task_id=task.id,
+            sources=sources,
+            initial=initial,
+        )
+
+        await pilot.press("escape")
         await wait_until(lambda: app.screen is home_screen, timeout=2)
 
         await _assert_home_task_opens(app, pilot, home_screen, task.id, task.title)
