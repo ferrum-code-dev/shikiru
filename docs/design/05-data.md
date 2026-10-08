@@ -116,8 +116,8 @@ merge_event_limit = 20
 
 [dashboard.titles]                              # fields: 06 §5.3
 window = "{task_id} {title:.24}"
-leader = "{glyph} Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
-implementer = "{glyph} Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags}"
+leader = "Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
+implementer = "Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
 system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
 shell = "Project folder · {cwd}"
 
@@ -145,6 +145,10 @@ project files that declare a layout keep that override unchanged; remove or edit
 adopt the packaged default. This creates Leader, Implementer and Project folder panes only; Home
 runs in the separate `dashboard` window and the default task window has no system pane. No
 configuration migration rewrites an operator's layout.
+
+Packaged Leader and Implementer title defaults use readable role words and `flags_text`. Explicit
+project templates that use `glyph` or glyph-prefixed `flags` keep those fields; Shikiru does not
+rewrite project configuration.
 
 Older project files may still set `stream_active_seconds`; it is accepted for configuration
 compatibility but deprecated and no longer affects live-agent motion. Activity is based on a
