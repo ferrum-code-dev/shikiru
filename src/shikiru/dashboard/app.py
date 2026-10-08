@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 from rich.text import Text
@@ -107,7 +108,6 @@ _COMMAND_HISTORY_NEXT = "command-history-next"
 _COMMAND_HISTORY_PAGE = "command-history-page"
 _COMMAND_HISTORY_HEADER = "command-history-header"
 _COMMAND_HISTORY_PAGE_SIZE = 20
-_COMMAND_STATUS_RENDER_CLIP_COLUMNS = 2
 _COMMAND_HISTORY_ALL = "all"
 _COMMAND_HISTORY_PREVIOUS_KEY = "left"
 _COMMAND_HISTORY_NEXT_KEY = "right"
@@ -353,31 +353,51 @@ def _command_history_text(history: CommandHistoryView) -> str:
     )
 
 
+def _command_queue_time(timestamp: str | None) -> str | None:
+    if timestamp is None:
+        return None
+    queued_at = datetime.fromisoformat(timestamp).astimezone(UTC)
+    return f"{queued_at.month}/{queued_at.day} {queued_at:%H:%M}Z"
+
+
 def _command_entry_text(entry: CommandFeedbackEntryView, *, engine_up: bool) -> str:
+    result = _command_result_data(entry)
     if entry.status is CommandFeedbackStatus.PENDING:
         engine_state = "running" if engine_up else "stopped"
-        pending_age = f"queued {entry.pending_age}; " if entry.pending_age is not None else ""
+        queued_at = f"queued at {entry.queued_at}; " if entry.queued_at is not None else ""
         detail = (
-            f"{pending_age}engine currently {engine_state}; "
+            f"{queued_at}engine currently {engine_state}; "
             "original acknowledgement wait context unknown"
         )
     elif entry.status is CommandFeedbackStatus.APPLIED:
-        detail = _command_applied_effect(entry)
+        detail = _command_applied_effect(entry, result)
         if entry.result is not None:
-            detail = f"{detail}; returned {_command_result_json(entry.result)}"
+            detail = f"{detail}; returned {entry.result}"
     else:
-        detail = _command_rejection_cause(entry)
-        if entry.result is not None and isinstance(entry.result.get("error"), str):
-            detail = f"{detail}; returned {_command_result_json(entry.result)}"
+        detail = _command_rejection_cause(entry, result)
+        if result is not None and isinstance(result.get("error"), str):
+            detail = f"{detail}; returned {entry.result}"
     return (
         f"#{entry.command_id} · {entry.status.value} · {entry.action} · {entry.target} · {detail}"
     )
 
 
-def _command_applied_effect(entry: CommandFeedbackEntryView) -> str:
+def _command_result_data(entry: CommandFeedbackEntryView) -> dict[str, object] | None:
+    if entry.result is None:
+        return None
+    try:
+        result = json.loads(entry.result)
+    except json.JSONDecodeError:
+        return None
+    return cast("dict[str, object]", result) if isinstance(result, dict) else None
+
+
+def _command_applied_effect(
+    entry: CommandFeedbackEntryView,
+    result: dict[str, object] | None = None,
+) -> str:
     if entry.action == COMMAND_ACTION_SAY:
         return "guidance queued for the selected role's next turn"
-    result = entry.result
     if result is None:
         return "engine applied the command effect"
     effect = result.get(COMMAND_RESULT_EFFECT)
@@ -387,14 +407,10 @@ def _command_applied_effect(entry: CommandFeedbackEntryView) -> str:
         return "shutdown requested"
     task_id = result.get(COMMAND_RESULT_TASK_ID)
     if not isinstance(task_id, str):
-        return json.dumps(result, ensure_ascii=False, sort_keys=True)
+        return "engine applied the command effect"
     return (
         _task_command_effect(result, task_id, entry.target) or "engine applied the command effect"
     )
-
-
-def _command_result_json(result: dict[str, object]) -> str:
-    return json.dumps(result, ensure_ascii=False, sort_keys=True)
 
 
 def _task_command_effect(result: dict[str, object], task_id: str, target: str) -> str | None:
@@ -414,14 +430,16 @@ def _task_command_effect(result: dict[str, object], task_id: str, target: str) -
     return None
 
 
-def _command_rejection_cause(entry: CommandFeedbackEntryView) -> str:
-    result = entry.result
+def _command_rejection_cause(
+    entry: CommandFeedbackEntryView,
+    result: dict[str, object] | None,
+) -> str:
     if result is None:
-        return "engine rejected the command without a returned result"
+        return entry.result or "engine rejected the command without a returned result"
     error = result.get("error")
     if isinstance(error, str):
         return error
-    return json.dumps(result, ensure_ascii=False, sort_keys=True)
+    return entry.result or "engine rejected the command without a returned result"
 
 
 def _command_summary_text(history: CommandHistoryView) -> Text:
@@ -437,14 +455,15 @@ def _command_summary_text(history: CommandHistoryView) -> Text:
     )
     detail = f"{entry.action} {entry.target}"
     if entry.status is CommandFeedbackStatus.PENDING:
-        age = f"queued {entry.pending_age} · " if entry.pending_age is not None else ""
-        engine = "running" if history.engine_up else "stopped"
-        detail = f"{detail} · {age}engine {engine}"
+        queued_at = _command_queue_time(entry.queued_at)
+        detail = f"{detail}: queued {queued_at}" if queued_at is not None else detail
     elif entry.status is CommandFeedbackStatus.APPLIED:
-        detail = f"{detail} · {_command_applied_effect(entry)}"
+        result = _command_result_data(entry)
+        detail = f"{detail}: {_command_applied_effect(entry, result)}"
     else:
-        detail = f"{detail} · {_command_rejection_cause(entry)}"
-    summary.append(f" · {detail}", style=SECONDARY_TEXT_COLOR)
+        result = _command_result_data(entry)
+        detail = f"{detail}: {_command_rejection_cause(entry, result)}"
+    summary.append(f": {detail}", style=SECONDARY_TEXT_COLOR)
     return summary
 
 
@@ -750,6 +769,8 @@ class _CommandStatusLine(Button):
         self._render_status()
 
     def _render_status(self) -> None:
+        if not widget_is_attached(self):
+            return
         was_displayed = self.display
         if self._transient_message is not None:
             self.label = _truncate_command_summary(
@@ -764,13 +785,17 @@ class _CommandStatusLine(Button):
                 self.label = _truncate_command_summary(
                     _command_summary_text(history), self._summary_render_width()
                 )
-        if was_displayed != self.display and isinstance(self.parent, _HomeFooter):
+        if (
+            was_displayed != self.display
+            and isinstance(self.parent, _HomeFooter)
+            and widget_is_attached(self.parent)
+        ):
             app = cast("DashboardApp", self.app)
             self.call_after_refresh(app.refresh_layout)
             self.call_after_refresh(self._render_status)
 
     def _summary_render_width(self) -> int:
-        return max(0, self.content_size.width - _COMMAND_STATUS_RENDER_CLIP_COLUMNS)
+        return max(0, self.content_size.width)
 
 
 class _HomeAttentionStatus(Static):
@@ -946,7 +971,7 @@ class DashboardApp(App[None]):
     #task-view-root #task-detail-body { height: 1fr; min-height: 0; max-height: 1fr; }
     #focus-empty { height: 1fr; padding: 1; color: $secondary-text; }
     #focus-footer {
-        layout: grid; grid-size: 3 0; grid-columns: auto auto auto; grid-gutter: 0 0;
+        layout: grid; grid-size: 3 0; grid-columns: auto auto auto; grid-gutter: 0 1;
         height: auto; min-height: 1; padding: 0; margin-top: 0; border-top: solid $neutral-border;
         background: $background; color: $secondary-text;
     }
@@ -1544,8 +1569,19 @@ class DashboardApp(App[None]):
 
     def refresh_layout(self) -> None:
         """Recalculate Home row allocations after a footer status becomes visible or hidden."""
-        if self.is_running and self._focus_task is None:
-            self._apply_layout(self.size.width, self.size.height)
+        if not self.is_running or self._focus_task is not None:
+            return
+        if any(
+            not self.query(selector)
+            for selector in (
+                "#focus-main",
+                "#focus-readouts",
+                "#focus-footer",
+                "#workspace-command-status",
+            )
+        ):
+            return
+        self._apply_layout(self.size.width, self.size.height)
 
     def refresh_task_detail_after_resume(self) -> None:
         """Refresh task detail mounted in the screen that resumed after an overlay."""

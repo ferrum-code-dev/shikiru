@@ -159,6 +159,7 @@ from tests.support.waiting import wait_until
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
+_COMMAND_FEEDBACK_CLOCK_ADVANCE_SECONDS = 120
 _DASHBOARD_DETAIL_VIEW_TIMEOUT_SECONDS = 5
 COMMAND_HISTORY_TEST_LIMIT = 10
 _EXTERNAL_WIDGET_NAME = "outside-widget"
@@ -254,8 +255,12 @@ class _ExternalWidget:
     name = _EXTERNAL_WIDGET_NAME
 
     def create(self, context: WidgetContext) -> Widget:
-        del context
-        return Static(id="external-widget-panel")
+        result_rows = tuple(
+            entry.result
+            for entry in context.views.command_history().entries
+            if entry.result is not None
+        )
+        return Static("\n".join(result_rows), id="external-widget-panel", markup=False)
 
 
 class _ExternalEntryPoint:
@@ -4258,15 +4263,17 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
                 timeout=2,
             )
             assert isinstance(queue.pending()[0].command, Stop)
+            queued_at = reader.command_history(limit=1).entries[0].ts
+            queued_time = datetime.fromisoformat(queued_at)
+            summary_time = f"queued {queued_time.month}/{queued_time.day} {queued_time:%H:%M}Z"
             await pilot.press("escape")
             await wait_until(lambda: first_app.screen is dashboard_screen, timeout=2)
             status = first_app.query_one("#workspace-command-status", Button)
             await wait_until(
                 lambda: (
                     status.display
-                    and "Pending · Stop " in _rendered_text(status)
-                    and "queued" in _rendered_text(status)
-                    and "ago" in _rendered_text(status)
+                    and "Pending: Stop " in _rendered_text(status)
+                    and summary_time in _rendered_text(status)
                 ),
                 timeout=2,
             )
@@ -4279,6 +4286,7 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
             await pilot.pause()
             assert "Loading" not in _rendered_text(history_copy), type(history_screen).__name__
             assert f"#{pending_id} · Pending" in _rendered_text(history_copy)
+            assert f"queued at {queued_at}" in _rendered_text(history_copy)
             assert "engine currently stopped" in _rendered_text(history_copy)
             assert "original acknowledgement wait context unknown" in _rendered_text(history_copy)
             await pilot.press("escape")
@@ -4286,11 +4294,103 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
             queue.mark_done(pending_id, {"stopping": True})
             await wait_until(
                 lambda: (
-                    "Applied · Stop " in _rendered_text(status)
+                    "Applied: Stop " in _rendered_text(status)
                     and "shutdown requested" in _rendered_text(status)
                 ),
                 timeout=2,
             )
+    finally:
+        reader.close()
+
+
+async def test_pending_feedback_keeps_recorded_queue_time_when_clock_advances_without_writes(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_TEST_START)
+    queue = CommandQueue(connection, clock)
+    queue.append(Stop())
+    reader = StateReader(database, clock)
+    queued_at = reader.command_history(limit=1).entries[0].ts
+    summary_time = f"queued {_TEST_START.month}/{_TEST_START.day} {_TEST_START:%H:%M}Z"
+    data_version = reader.data_version()
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=[],
+            services=StubServices(engine_running=False),
+            clock=clock,
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            status = app.query_one("#workspace-command-status", Button)
+            await wait_until(
+                lambda: status.display and summary_time in _rendered_text(status),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await pilot.pause()
+            displayed = _rendered_text(status)
+            clock.advance(_COMMAND_FEEDBACK_CLOCK_ADVANCE_SECONDS)
+            await pilot.pause()
+            assert reader.data_version() == data_version
+            assert _rendered_text(status) == displayed
+            assert "ago" not in displayed
+            assert summary_time in displayed
+
+            await pilot.click(status)
+            await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
+            history = app.screen.query_one("#command-history-copy", Static)
+            await wait_until(lambda: f"queued at {queued_at}" in _rendered_text(history), timeout=2)
+            assert "ago" not in _rendered_text(history)
+            assert "original acknowledgement wait context unknown" in _rendered_text(history)
+            assert reader.data_version() == data_version
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("removed_selector", ["#focus-footer", "#focus-main"])
+async def test_home_command_feedback_callbacks_survive_partial_home_teardown(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    removed_selector: str,
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    reader = StateReader(database, SystemClock())
+
+    async def refuse_detach() -> bool:
+        return False
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=[],
+            tmux_detach_hint=_GLOBAL_TMUX_PREFIX,
+            detach_tmux_client=refuse_detach,
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            status = app.query_one("#workspace-command-status", Button)
+            await pilot.click("#focus-footer-detach")
+            await wait_until(
+                lambda: status.display and "No project tmux client" in _rendered_text(status),
+                timeout=2,
+            )
+            removed = app.query_one(removed_selector)
+            removal = removed.remove()
+            await removal
+            await wait_until(lambda: not app.query(removed_selector), timeout=2)
+            await pilot.pause()
+            assert app.is_running
+            if removed_selector == "#focus-footer":
+                assert not app.query("#workspace-command-status")
+            else:
+                assert status.display
+                assert "No project tmux client" in _rendered_text(status)
     finally:
         reader.close()
 
@@ -4379,17 +4479,18 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
                 status.size,
                 status.content_size,
             )
-            assert "Rejected · Prioritize T-404" in _rendered_text(status), (
+            assert "Rejected: Prioritize T-404" in _rendered_text(status), (
                 status.label,
                 status.size,
                 status.content_size,
             )
             await wait_until(
-                lambda: (
-                    "Rejected · Prioritize T-404" in _rendered_text(status)
-                    and "fake engine" in _rendered_text(status)
-                ),
-                timeout=2,
+                lambda: "Rejected: Prioritize T-404" in _rendered_text(status), timeout=2
+            )
+            assert "fake engine" in _rendered_text(status), (
+                status.region,
+                status.content_size,
+                _rendered_text(status),
             )
             await _choose_focus_view(
                 restarted_app, pilot, "Command history · Pending, Applied and Rejected"
@@ -4441,7 +4542,13 @@ def _assert_rendered_command_summary(
 ) -> None:
     if mono:
         rendered = _exported_screen_text(app)
-        assert "Rejected · Prioritize T-404" in rendered, (
+        assert "Rejected" in rendered, (
+            status.region,
+            status.content_size,
+            _rendered_text(status),
+            rendered,
+        )
+        assert "Prioritize T-404" in rendered, (
             status.region,
             status.content_size,
             _rendered_text(status),
@@ -4484,16 +4591,17 @@ async def _assert_command_feedback_footer(
     assert app.query_one("#focus-main", Horizontal).size.height > 0
     assert task.title in _rendered_text(identity)
     if mono:
-        assert "Rejected · Prioritize T-404" in status_text
+        assert "Rejected: Prioritize T-404" in status_text
         assert "does not exist" not in status_text
         assert status.region.y > help_button.region.y or status.region.x >= help_button.region.right
     else:
-        assert "Applied · Prioritize T-1" in status_text
+        assert "Applied: Prioritize T-1" in status_text
         assert task.id in status_text
         assert "priority 4" in status_text
         assert status.region.y == actions.region.y
         assert status.region.x > help_button.region.x
-        assert status.region.x >= help_button.region.right
+        assert status.region.x - help_button.region.right >= 1
+        assert status.region.right <= footer.region.right
     resized_size = _WIDE_HOME_SIZE if mono else _COMPACT_HOME_SIZE
     await pilot.resize_terminal(*resized_size)
     await wait_until(
@@ -4728,7 +4836,7 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
             home_screen = app.screen
             if height >= 9:
                 assert status.display, (status.label, status.size, status.content_size)
-                assert "Pending · Stop" in _rendered_text(status)
+                assert "Pending: Stop" in _rendered_text(status)
                 await pilot.click(status)
                 await wait_until(lambda: app.screen is not home_screen, timeout=2)
                 history_screen = app.screen
@@ -5801,7 +5909,7 @@ async def test_home_footer_detach_uses_the_configured_prefix_and_action(
                 )
                 assert actions_index < detach_index < help_index < status_index
                 assert status.display
-                assert "Pending · Stop " in _rendered_text(status)
+                assert "Pending: Stop " in _rendered_text(status)
                 assert prefix_hint in plain_text(detach.label)
                 assert not detach.disabled
                 assert await tmux.client_for_pane(project_session, project_pane) is not None
@@ -6830,7 +6938,10 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del connection
+    clock = SystemClock()
+    queue = CommandQueue(connection, clock)
+    command = queue.append(Stop())
+    queue.mark_done(command.id, {"stopping": True})
     entry_points = registry_module.entry_points
 
     def entry_points_with_extension(*, group: str) -> list[object]:
@@ -6841,7 +6952,7 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
 
     monkeypatch.setattr(registry_module, "entry_points", entry_points_with_extension)
     project_dir = write_minimal_project(tmp_path)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     try:
         app = _app(
             reader,
@@ -6874,6 +6985,7 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
             assert app.screen is not workspace_screen
             extension_panel = app.screen.query_one("#external-widget-panel", Static)
             assert extension_panel.region.width > 0
+            assert _rendered_text(extension_panel) == '{"stopping": true}'
             await pilot.press("escape")
             await wait_until(lambda: app.screen is workspace_screen, timeout=2)
 

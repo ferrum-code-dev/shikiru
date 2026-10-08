@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
@@ -1388,7 +1389,6 @@ class StateDashboardViews:
             offset=offset,
             status=_stored_command_status(status),
         )
-        now = self._clock.now()
         return CommandHistoryView(
             engine_up=history.engine_up,
             entries=tuple(
@@ -1397,12 +1397,12 @@ class StateDashboardViews:
                     action=entry.action,
                     target=entry.target,
                     status=_command_feedback_status(entry.status),
-                    result=entry.result,
-                    pending_age=(
-                        _command_pending_age(datetime.fromisoformat(entry.timestamp), now)
-                        if entry.status is CommandStatus.PENDING
+                    result=(
+                        json.dumps(entry.result, ensure_ascii=False, sort_keys=True)
+                        if entry.result is not None
                         else None
                     ),
+                    queued_at=(entry.timestamp if entry.status is CommandStatus.PENDING else None),
                 )
                 for entry in history.entries
             ),
@@ -1592,22 +1592,6 @@ def _timeline_timestamp(value: str | None) -> datetime | None:
     except ValueError:
         return None
     return timestamp if timestamp.tzinfo is not None else None
-
-
-def _command_pending_age(timestamp: datetime, now: datetime) -> str:
-    elapsed = (now - timestamp).total_seconds()
-    if elapsed < 0:
-        return "future timestamp"
-    seconds = int(elapsed)
-    if seconds < SECONDS_PER_MINUTE:
-        return f"{seconds}s ago"
-    minutes = seconds // SECONDS_PER_MINUTE
-    if minutes < SECONDS_PER_MINUTE:
-        return f"{minutes}m ago"
-    hours = minutes // SECONDS_PER_MINUTE
-    if hours < HOURS_PER_DAY:
-        return f"{hours}h ago"
-    return f"{hours // HOURS_PER_DAY}d ago"
 
 
 def _task_workflow(
