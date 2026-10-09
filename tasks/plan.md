@@ -1288,10 +1288,10 @@ Refs: third-review tmux style inheritance and corrected option-scope investigati
 
 ### Task 126: Unify popup styling and actual keyboard controls
 Refs: third-review popup contract and native Select proof; revised Task124 HTML; 06 §5.4–5.5/§6.1, 07 §3; app/detail/palette popup routes and existing integration matrix.
-- [ ] Share the repeated popup presentation contract across actual Help/Actions/Views/History/Usage/Evidence/Diagnostics/Answer/Resolve and configured-widget routes: consistent title case/weight, body/secondary text, header rule, button/dropdown focus/disabled styling and visible `Esc ×`, preserving the palette and stationary underlay.
-- [ ] Use a one-column vertical scrollbar only when the popup body overflows. Render straight, coherent native Select left/right borders in collapsed, focused and expanded states; keep native selection behavior and Escape precedence.
-- [ ] Advertise and implement useful page/control shortcuts with actual action semantics, disabled boundaries and coherent labels. Preserve Input/TextArea/Select editing, drafts, task/role context and explicit form submission; no shortcut consumes entered text or bypasses validation.
-- [ ] Extend the existing mounted real SQLite/Textual route tests for keyboard/mouse equivalence, pagination boundaries and native selector/input behavior. Review settled wide/compact color/mono renders against Task124, including focused/expanded dropdowns and conditional scrollbars; pass the complete gate.
+- [x] Share the repeated popup presentation contract across actual Help/Actions/Views/History/Usage/Evidence/Diagnostics/Answer/Resolve and configured-widget routes: consistent title case/weight, body/secondary text, header rule, button/dropdown focus/disabled styling and visible `Esc ×`, preserving the palette and stationary underlay.
+- [x] Use a one-column vertical scrollbar only when the popup body overflows. Render straight, coherent native Select left/right borders in collapsed, focused and expanded states; keep native selection behavior and Escape precedence.
+- [x] Advertise and implement useful page/control shortcuts with actual action semantics, disabled boundaries and coherent labels. Preserve Input/TextArea/Select editing, drafts, task/role context and explicit form submission; no shortcut consumes entered text or bypasses validation.
+- [x] Extend the existing mounted real SQLite/Textual route tests for keyboard/mouse equivalence, pagination boundaries and native selector/input behavior. Review settled wide/compact color/mono renders against Task124, including focused/expanded dropdowns and conditional scrollbars; pass the complete gate.
 
 ### Task 127: Keep popup frames stable through content changes
 Refs: third-review History page1/page2 and tiny-controls reproductions; revised Task124 HTML; 06 popup contract, 07 §3; shared popup sizing, mounted routes and paginated body projections.

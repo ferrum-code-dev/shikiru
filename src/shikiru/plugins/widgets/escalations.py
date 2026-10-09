@@ -9,7 +9,7 @@ from rich.text import Text
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.geometry import Region
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static
+from textual.widgets import Button, Label, Rule, Static
 
 from shikiru.dashboard.contract import (
     FOCUS_FAULTS_VIEW,
@@ -25,6 +25,16 @@ from shikiru.ui.compact import (
     FOCUS_ATTENTION_MAX_HEIGHT,
     FocusAttentionStatus,
     display_escalation_headline,
+)
+from shikiru.ui.popup import (
+    POPUP_BODY_CLASS,
+    POPUP_CLOSE_CLASS,
+    POPUP_CSS,
+    POPUP_FRAME_CLASS,
+    POPUP_HEADER_CLASS,
+    POPUP_RULE_CLASS,
+    POPUP_TITLE_CLASS,
+    prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
@@ -54,37 +64,39 @@ class PacketScreen(ModalScreen[None]):
     """Show the complete escalation packet until the Operator dismisses it."""
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
-    DEFAULT_CSS = """
-    PacketScreen { align: center middle; background: transparent; padding: 0; }
-    #escalation-packet-frame {
-        width: 100%; max-width: 64; height: auto; max-height: 100%; margin: 1 2;
-        border: solid $steel-blue; padding: 1 2; background: $surface;
-    }
-    #escalation-packet-header { width: 100%; height: 1; }
-    #escalation-packet-title { width: 1fr; height: 1; color: $steel-blue; }
-    #escalation-packet-close {
-        width: auto; min-width: 5; height: 1; padding: 0 1;
-        border: none; background: $surface; color: $primary-text; text-style: none;
-    }
+    DEFAULT_CSS = (
+        POPUP_CSS
+        + """
     #escalation-packet-scroll { height: auto; max-height: 1fr; min-height: 0; }
     #escalation-packet {
         background: $surface;
         color: $foreground;
     }
     """
+    )
 
     def __init__(self, packet: str) -> None:
         """Hold the packet text to display in the modal."""
         super().__init__()
+        prepare_popup(self)
         self._packet = packet
 
     def compose(self) -> ComposeResult:
         """Render the full packet in a scrollable view."""
-        with Vertical(id="escalation-packet-frame"):
-            with Horizontal(id="escalation-packet-header"):
-                yield Label("Decision evidence", id="escalation-packet-title")
-                yield Button(_PACKET_CLOSE_LABEL, id=PACKET_CLOSE_BUTTON)
-            with VerticalScroll(id="escalation-packet-scroll"):
+        with Vertical(id="escalation-packet-frame", classes=POPUP_FRAME_CLASS):
+            with Horizontal(id="escalation-packet-header", classes=POPUP_HEADER_CLASS):
+                yield Label(
+                    "Decision evidence",
+                    id="escalation-packet-title",
+                    classes=POPUP_TITLE_CLASS,
+                )
+                yield Button(
+                    _PACKET_CLOSE_LABEL,
+                    id=PACKET_CLOSE_BUTTON,
+                    classes=POPUP_CLOSE_CLASS,
+                )
+            yield Rule(classes=POPUP_RULE_CLASS)
+            with VerticalScroll(id="escalation-packet-scroll", classes=POPUP_BODY_CLASS):
                 yield Static(self._packet, markup=False, id="escalation-packet")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:

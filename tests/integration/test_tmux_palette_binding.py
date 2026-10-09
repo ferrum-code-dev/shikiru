@@ -102,11 +102,12 @@ async def _exercise_live_home_palette_routes(
         return "SHIKIRU" in text and task.title in text
 
     async def actions_open() -> bool:
-        return "Shikiru actions" in await pane_text()
+        text = await pane_text()
+        return "Actions" in text
 
     async def actions_closed() -> bool:
         text = await pane_text()
-        return task.title in text and "Shikiru actions" not in text
+        return task.title in text and "Actions" not in text
 
     await wait_until(dashboard_ready, timeout=15)
     await tmux_server.run("select-window", "-t", pane_id)
@@ -126,7 +127,7 @@ async def _exercise_live_home_palette_routes(
         await tmux_server.run("send-keys", "-K", "-c", client_target, "Space")
         await wait_until(actions_open, timeout=5)
         actions_text = await pane_text()
-        assert "Shikiru actions" in actions_text
+        assert "Actions" in actions_text
         assert "TASKS" in actions_text
         native_directory = os.environ.get(_NATIVE_VISUAL_REVIEW_DIRECTORY)
         if native_directory is not None:
@@ -146,7 +147,7 @@ async def _exercise_live_home_palette_routes(
         await tmux_server.run("send-keys", "-t", pane_id, "C-p")
         await wait_until(actions_open, timeout=5)
         actions_text = await pane_text()
-        assert "Shikiru actions" in actions_text
+        assert "Actions" in actions_text
         assert "TASKS" in actions_text
         await tmux_server.run("send-keys", "-t", pane_id, "Escape")
         await wait_until(actions_closed, timeout=5)

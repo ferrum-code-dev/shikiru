@@ -11,7 +11,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Select, Static
+from textual.widgets import Button, Input, Label, Rule, Select, Static
 
 from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED
 from shikiru.dashboard.contract import (
@@ -33,6 +33,16 @@ from shikiru.ui.compact import (
     task_signal_text,
 )
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_STALLED
+from shikiru.ui.popup import (
+    POPUP_BODY_CLASS,
+    POPUP_CLOSE_CLASS,
+    POPUP_CSS,
+    POPUP_FRAME_CLASS,
+    POPUP_HEADER_CLASS,
+    POPUP_RULE_CLASS,
+    POPUP_TITLE_CLASS,
+    prepare_popup,
+)
 from shikiru.ui.screen import widget_is_active
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
@@ -89,7 +99,6 @@ TASK_DETAIL_POPUP_HEADER = "task-detail-popup-header"
 TASK_DETAIL_POPUP_TITLE = "task-detail-popup-title"
 TASK_DETAIL_POPUP_CLOSE = "task-detail-popup-close"
 TASK_DETAIL_POPUP_CLOSE_LABEL = "Esc \u00d7"
-TASK_DETAIL_POPUP_CLOSE_CLASS = "popup-close-control"
 TASK_DETAIL_REQUEST = "task-detail-request"
 TASK_DETAIL_CRITERIA = "task-detail-criteria"
 TASK_DETAIL_REPORT = "task-detail-report"
@@ -110,6 +119,10 @@ TASK_DETAIL_VIEWS_CONTENT = "task-detail-views-content"
 TASK_DETAIL_TINY_MAX_ROWS = 8
 TASK_DETAIL_VIEWS_KEY = "v"
 TASK_DETAIL_VIEWS_ACTION = "open_contextual_views"
+TASK_DETAIL_PREVIOUS_PAGE_KEY = "p"
+TASK_DETAIL_NEXT_PAGE_KEY = "n"
+TASK_DETAIL_PREVIOUS_PAGE_ACTION = "previous_page"
+TASK_DETAIL_NEXT_PAGE_ACTION = "next_page"
 TASK_USAGE_KEY = "u"
 TASK_DETAIL_HELP_KEY = "question_mark"
 TASK_DETAIL_WORKSPACE_TOOLS = "task-detail-workspace-tools"
@@ -265,7 +278,9 @@ class TaskDetailPanel(Vertical):
     """Render shared task detail from the injected dashboard view contract."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        (TASK_DETAIL_VIEWS_KEY, "open_contextual_views", "Views")
+        (TASK_DETAIL_VIEWS_KEY, TASK_DETAIL_VIEWS_ACTION, "Views"),
+        (TASK_DETAIL_PREVIOUS_PAGE_KEY, TASK_DETAIL_PREVIOUS_PAGE_ACTION, "Previous page"),
+        (TASK_DETAIL_NEXT_PAGE_KEY, TASK_DETAIL_NEXT_PAGE_ACTION, "Next page"),
     ]
 
     DEFAULT_CSS = """
@@ -391,8 +406,8 @@ class TaskDetailPanel(Vertical):
                     yield Button("Open related task", id=TASK_DETAIL_OPEN_RELATED)
                 yield Static("Page 1", id=TASK_DETAIL_RELATIONSHIP_PAGE)
                 with Horizontal():
-                    yield Button("Prev", id=TASK_DETAIL_PREVIOUS_RELATIONSHIPS)
-                    yield Button("More", id=TASK_DETAIL_MORE_RELATIONSHIPS)
+                    yield Button("p Previous", id=TASK_DETAIL_PREVIOUS_RELATIONSHIPS)
+                    yield Button("n Next", id=TASK_DETAIL_MORE_RELATIONSHIPS)
             yield Static(
                 "Evidence timeline",
                 id=TASK_DETAIL_TIMELINE_TITLE,
@@ -420,8 +435,8 @@ class TaskDetailPanel(Vertical):
                 yield Input(placeholder="Any turn", id=TASK_DETAIL_TIMELINE_TURN)
                 yield Button("Apply filters", id=TASK_DETAIL_TIMELINE_FILTER)
             with HorizontalScroll(id=TASK_DETAIL_TIMELINE_NAVIGATION):
-                yield Button("Newer", id=TASK_DETAIL_TIMELINE_NEWER)
-                yield Button("Older", id=TASK_DETAIL_TIMELINE_OLDER)
+                yield Button("p Previous", id=TASK_DETAIL_TIMELINE_NEWER)
+                yield Button("n Next", id=TASK_DETAIL_TIMELINE_OLDER)
                 yield Button("Follow latest", id=TASK_DETAIL_TIMELINE_FOLLOW)
             yield Static("", id=TASK_DETAIL_TIMELINE_STATUS, markup=False)
             yield Select(
@@ -879,11 +894,44 @@ class TaskDetailPanel(Vertical):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
-        if action == TASK_DETAIL_VIEWS_ACTION and native_editor_has_focus(
-            cast("App[None]", self.app).focused
-        ):
+        if action in {
+            TASK_DETAIL_VIEWS_ACTION,
+            TASK_DETAIL_PREVIOUS_PAGE_ACTION,
+            TASK_DETAIL_NEXT_PAGE_ACTION,
+        } and native_editor_has_focus(cast("App[None]", self.app).focused):
             return None
+        if action in {
+            TASK_DETAIL_PREVIOUS_PAGE_ACTION,
+            TASK_DETAIL_NEXT_PAGE_ACTION,
+        }:
+            if self._active_view == TASK_VIEW_EVIDENCE:
+                control_id = (
+                    TASK_DETAIL_TIMELINE_NEWER
+                    if action == TASK_DETAIL_PREVIOUS_PAGE_ACTION
+                    else TASK_DETAIL_TIMELINE_OLDER
+                )
+            elif self._active_view == TASK_VIEW_RELATIONSHIPS:
+                control_id = (
+                    TASK_DETAIL_PREVIOUS_RELATIONSHIPS
+                    if action == TASK_DETAIL_PREVIOUS_PAGE_ACTION
+                    else TASK_DETAIL_MORE_RELATIONSHIPS
+                )
+            else:
+                return None
+            return not self.query_one(f"#{control_id}", Button).disabled
         return True
+
+    async def action_previous_page(self) -> None:
+        if self._active_view == TASK_VIEW_EVIDENCE:
+            await self._newer_timeline_page()
+        elif self._active_view == TASK_VIEW_RELATIONSHIPS:
+            await self._previous_relationship_page()
+
+    async def action_next_page(self) -> None:
+        if self._active_view == TASK_VIEW_EVIDENCE:
+            await self._older_timeline_page()
+        elif self._active_view == TASK_VIEW_RELATIONSHIPS:
+            await self._next_relationship_page()
 
     def open_usage_details(self) -> None:
         self._show_task_view(TASK_VIEW_USAGE)
@@ -1393,19 +1441,11 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
     """Route task detail to its views, actions or help."""
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Back")]
-    DEFAULT_CSS = """
-    TaskDetailViewsScreen { align: center middle; background: transparent; padding: 0; }
-    #task-detail-views-frame {
-        width: 100%; height: auto; max-height: 100%; max-width: 64; margin: 1 2;
-        padding: 1 2; border: solid $steel-blue; background: $surface; color: $primary-text;
-    }
+    DEFAULT_CSS = (
+        POPUP_CSS
+        + """
     #task-detail-views-frame Select { width: 100%; }
     #task-detail-views-content { height: auto; max-height: 1fr; min-height: 0; }
-    #task-detail-views-heading { width: 100%; height: auto; }
-    #task-detail-views-title {
-        width: 1fr; height: 1; color: $steel-blue; text-wrap: nowrap; text-overflow: ellipsis;
-    }
-    #task-detail-views-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
     #task-detail-views-open {
         width: 100%; height: auto; min-width: 1; padding: 0; border: none;
     }
@@ -1418,24 +1458,30 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
     }
     #task-detail-views-frame.tiny #task-detail-views-content { height: 1fr; }
     """
+    )
 
     def __init__(self, task_id: str, extra_choices: tuple[tuple[str, str], ...]) -> None:
         super().__init__()
+        prepare_popup(self)
         self._task_id = task_id
         self._choices = (*TASK_VIEW_CHOICES, *extra_choices)
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="task-detail-views-frame"):
-            with Horizontal(id="task-detail-views-heading"):
+        with Vertical(id="task-detail-views-frame", classes=POPUP_FRAME_CLASS):
+            with Horizontal(id="task-detail-views-heading", classes=POPUP_HEADER_CLASS):
                 yield Static(
-                    f"Task views · {self._task_id}", id="task-detail-views-title", markup=False
+                    f"Task views · {self._task_id}",
+                    id="task-detail-views-title",
+                    classes=POPUP_TITLE_CLASS,
+                    markup=False,
                 )
                 yield Button(
                     TASK_DETAIL_POPUP_CLOSE_LABEL,
                     id=TASK_DETAIL_VIEWS_CLOSE_BUTTON,
-                    classes=TASK_DETAIL_POPUP_CLOSE_CLASS,
+                    classes=POPUP_CLOSE_CLASS,
                 )
-            with VerticalScroll(id=TASK_DETAIL_VIEWS_CONTENT):
+            yield Rule(classes=POPUP_RULE_CLASS)
+            with VerticalScroll(id=TASK_DETAIL_VIEWS_CONTENT, classes=POPUP_BODY_CLASS):
                 yield Select(self._choices, value=TASK_VIEW_USAGE, id="task-detail-view-choice")
                 yield Button("Open", id=TASK_DETAIL_VIEWS_OPEN_BUTTON)
 
@@ -1464,23 +1510,19 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
 class TaskDetailScreen(ModalScreen[None]):
     """Show a selected task's shared detail over the Home browser."""
 
-    DEFAULT_CSS = """
-    TaskDetailScreen { align: center middle; background: transparent; padding: 0; }
-    #task-detail-popup-frame {
-        width: 100%; max-width: 64; height: auto; max-height: 100%; min-height: 1; margin: 1 2;
-        padding: 1 2; border: solid $steel-blue; background: $surface;
-    }
+    DEFAULT_CSS = (
+        POPUP_CSS
+        + """
+    #task-detail-popup-frame { min-height: 1; }
     #task-detail-popup-frame.tiny {
         height: 100%; margin: 0; padding: 0;
     }
-    #task-detail-popup-header { width: 100%; height: 1; }
-    #task-detail-popup-title { width: 1fr; height: 1; color: $steel-blue; }
-    #task-detail-popup-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
     #task-detail-panel { width: 100%; height: 1fr; min-height: 0; }
     #task-detail-panel #task-detail-body {
         height: 1fr; min-height: 0; max-height: 1fr; background: $surface;
     }
     """
+    )
 
     def __init__(
         self,
@@ -1491,20 +1533,26 @@ class TaskDetailScreen(ModalScreen[None]):
         open_views_on_mount: bool = False,
     ) -> None:
         super().__init__()
+        prepare_popup(self)
         self._widget_context = context
         self._task_id = task_id
         self._initial_view = initial_view
         self._open_views_on_mount = open_views_on_mount
 
     def compose(self) -> ComposeResult:
-        with Vertical(id=TASK_DETAIL_POPUP_FRAME):
-            with Horizontal(id=TASK_DETAIL_POPUP_HEADER):
-                yield Label(self._heading(), id=TASK_DETAIL_POPUP_TITLE)
+        with Vertical(id=TASK_DETAIL_POPUP_FRAME, classes=POPUP_FRAME_CLASS):
+            with Horizontal(id=TASK_DETAIL_POPUP_HEADER, classes=POPUP_HEADER_CLASS):
+                yield Label(
+                    self._heading(),
+                    id=TASK_DETAIL_POPUP_TITLE,
+                    classes=POPUP_TITLE_CLASS,
+                )
                 yield Button(
                     TASK_DETAIL_POPUP_CLOSE_LABEL,
                     id=TASK_DETAIL_POPUP_CLOSE,
-                    classes=TASK_DETAIL_POPUP_CLOSE_CLASS,
+                    classes=POPUP_CLOSE_CLASS,
                 )
+            yield Rule(classes=POPUP_RULE_CLASS)
             yield TaskDetailPanel(
                 self._widget_context,
                 self._task_id,

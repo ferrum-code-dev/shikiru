@@ -6,10 +6,20 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Label, Static
+from textual.widgets import Button, DataTable, Label, Rule, Static
 
 from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui import SpeechBubble
+from shikiru.ui.popup import (
+    POPUP_BODY_CLASS,
+    POPUP_CLOSE_CLASS,
+    POPUP_CSS,
+    POPUP_FRAME_CLASS,
+    POPUP_HEADER_CLASS,
+    POPUP_RULE_CLASS,
+    POPUP_TITLE_CLASS,
+    prepare_popup,
+)
 from shikiru.ui.screen import widget_is_attached
 
 if TYPE_CHECKING:
@@ -26,37 +36,35 @@ class DialogueTextScreen(ModalScreen[None]):
     """Show the full text of one dialogue bubble."""
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
-    DEFAULT_CSS = """
-    DialogueTextScreen { align: center middle; background: transparent; padding: 0; }
-    #dialogue-text-frame {
-        width: 100%; max-width: 64; height: auto; max-height: 100%; margin: 1 2;
-        border: solid $steel-blue; padding: 1 2; background: $surface;
-    }
-    #dialogue-text-header { width: 100%; height: 1; }
-    #dialogue-text-title { width: 1fr; height: 1; color: $steel-blue; }
-    #dialogue-text-close {
-        width: auto; min-width: 5; height: 1; padding: 0 1;
-        border: none; background: $surface; color: $primary-text; text-style: none;
-    }
+    DEFAULT_CSS = (
+        POPUP_CSS
+        + """
     #dialogue-text-scroll { height: auto; max-height: 1fr; min-height: 0; }
     #dialogue-full-text {
         background: $surface;
         color: $foreground;
     }
     """
+    )
 
     def __init__(self, text: str) -> None:
         """Hold the full event text to display."""
         super().__init__()
+        prepare_popup(self)
         self._text = text
 
     def compose(self) -> ComposeResult:
         """Render the complete bubble text in a scrollable modal."""
-        with Vertical(id="dialogue-text-frame"):
-            with Horizontal(id="dialogue-text-header"):
-                yield Label("Dialogue", id="dialogue-text-title")
-                yield Button(_DIALOGUE_TEXT_CLOSE_LABEL, id=_DIALOGUE_TEXT_CLOSE_BUTTON)
-            with VerticalScroll(id="dialogue-text-scroll"):
+        with Vertical(id="dialogue-text-frame", classes=POPUP_FRAME_CLASS):
+            with Horizontal(id="dialogue-text-header", classes=POPUP_HEADER_CLASS):
+                yield Label("Dialogue", id="dialogue-text-title", classes=POPUP_TITLE_CLASS)
+                yield Button(
+                    _DIALOGUE_TEXT_CLOSE_LABEL,
+                    id=_DIALOGUE_TEXT_CLOSE_BUTTON,
+                    classes=POPUP_CLOSE_CLASS,
+                )
+            yield Rule(classes=POPUP_RULE_CLASS)
+            with VerticalScroll(id="dialogue-text-scroll", classes=POPUP_BODY_CLASS):
                 yield Static(self._text, markup=False, id="dialogue-full-text")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:

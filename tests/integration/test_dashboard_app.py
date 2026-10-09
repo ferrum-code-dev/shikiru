@@ -55,14 +55,21 @@ from shikiru.agents.contracts import (
 from shikiru.bootstrap import dashboard_tmux_binding
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
-from shikiru.dashboard.app import DashboardApp, WidgetPluginError
+from shikiru.dashboard.app import (
+    COMMAND_HISTORY_NEXT_SHORTCUT,
+    COMMAND_HISTORY_PREVIOUS_SHORTCUT,
+    DashboardApp,
+    WidgetPluginError,
+)
 from shikiru.dashboard.contract import (
     WIDGET_ENTRY_POINT_GROUP,
+    CommandFeedbackStatus,
     DiagnosticSampleState,
     PaletteDraft,
     PaletteRequest,
     ResourceView,
     TaskPaletteRoute,
+    TaskTimelineCategory,
 )
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
@@ -71,20 +78,28 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_EVIDENCE_INLINE_BUTTON,
     TASK_DETAIL_FACTS,
     TASK_DETAIL_IDENTITY,
+    TASK_DETAIL_MORE_RELATIONSHIPS,
+    TASK_DETAIL_NEXT_PAGE_KEY,
     TASK_DETAIL_OWNERSHIP,
+    TASK_DETAIL_PREVIOUS_PAGE_KEY,
+    TASK_DETAIL_PREVIOUS_RELATIONSHIPS,
     TASK_DETAIL_PROGRESS,
+    TASK_DETAIL_RELATIONSHIP_PAGE,
     TASK_DETAIL_REPORT,
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_SESSIONS,
     TASK_DETAIL_SIGNAL,
     TASK_DETAIL_SITUATION,
     TASK_DETAIL_TIMELINE_ENTRY,
+    TASK_DETAIL_TIMELINE_NEWER,
+    TASK_DETAIL_TIMELINE_OLDER,
     TASK_DETAIL_TIMELINE_TITLE,
     TASK_DETAIL_USAGE_INLINE_BUTTON,
     TASK_DETAIL_VERDICT,
     TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TASK_DETAIL_WORKSPACE,
     TASK_VIEW_EVIDENCE,
+    TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_SUMMARY,
     TASK_VIEW_USAGE,
     TaskDetailBody,
@@ -159,9 +174,14 @@ from tests.support.waiting import wait_until
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
+_COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS = 5
 _COMMAND_FEEDBACK_CLOCK_ADVANCE_SECONDS = 120
 _DASHBOARD_DETAIL_VIEW_TIMEOUT_SECONDS = 5
 COMMAND_HISTORY_TEST_LIMIT = 10
+TASK_PAGE_TEST_EVENT_COUNT = 2
+TASK_PAGE_TEST_RELATIONSHIP_COUNT = 25
+TASK_PAGE_TEST_TIMELINE_PAGE_SIZE = 1
+PAGE_BUTTON_CLICK_OFFSET = (2, 1)
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _LATER_EXTERNAL_WIDGET_NAME = "later-widget"
 _WIDE_HOME_SIZE = (120, 40)
@@ -1147,6 +1167,7 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from textual.content import Content
     from textual.pilot import Pilot
     from textual.widget import Widget
 
@@ -1250,8 +1271,20 @@ async def _capture_compact_resolution_context(
     task_id: str,
     escalation_id: str,
 ) -> None:
+    form = app.screen.query_one("#palette-form", VerticalScroll)
+    form.scroll_to(y=0, animate=False, immediate=True)
+    await wait_until(lambda: form.scroll_y == 0, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
     target.focus()
     await wait_until(lambda: app.focused is target, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+    form.scroll_to(
+        y=_COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS,
+        animate=False,
+        immediate=True,
+    )
+    await wait_until(
+        lambda: form.scroll_y == _COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
     await wait_until(
         lambda: (
             "Question: unavailable" in _exported_screen_text(app)
@@ -4690,6 +4723,142 @@ async def test_durable_command_feedback_footer_matches_home_facts_and_resizes(
         reader.close()
 
 
+async def _assert_command_history_initial_shortcuts(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    page: Static,
+    history_copy: Static,
+    pending_id: int,
+) -> None:
+    previous_button = app.screen.query_one("#command-history-previous", Button)
+    assert previous_button.disabled
+    await pilot.press("p")
+    assert "page 1" in _rendered_text(page)
+    next_button = app.screen.query_one("#command-history-next", Button)
+    await pilot.click(next_button, offset=PAGE_BUTTON_CLICK_OFFSET)
+    await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
+    next_button.focus()
+    await pilot.press("p")
+    await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
+    await pilot.press("n")
+    await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
+    assert f"#{pending_id} · Pending" not in _rendered_text(history_copy)
+
+
+async def _assert_command_history_filter_shortcuts(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    page: Static,
+    history_copy: Static,
+    applied_id: int,
+) -> None:
+    history_filter = cast("Select[str]", app.screen.query_one("#command-history-filter", Select))
+    history_filter.value = "all"
+    await wait_until(lambda: history_filter.value == "all", timeout=2)
+    previous_button = app.screen.query_one("#command-history-previous", Button)
+    previous_button.focus()
+    await pilot.press(COMMAND_HISTORY_PREVIOUS_SHORTCUT)
+    await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
+    await wait_until(lambda: f"#{applied_id} · Applied" in _rendered_text(history_copy), timeout=2)
+    await wait_until(
+        lambda: (
+            "all statuses" in _rendered_text(page)
+            and not app.screen.query_one("#command-history-next", Button).disabled
+        ),
+        timeout=2,
+    )
+    history_filter.focus()
+    await pilot.press("enter")
+    await wait_until(lambda: history_filter.expanded, timeout=2)
+    for shortcut in (COMMAND_HISTORY_PREVIOUS_SHORTCUT, COMMAND_HISTORY_NEXT_SHORTCUT):
+        await pilot.press(shortcut)
+        assert history_filter.expanded
+        assert "page 1" in _rendered_text(page)
+    await pilot.press("enter")
+    await wait_until(
+        lambda: history_filter.value == CommandFeedbackStatus.PENDING.value,
+        timeout=2,
+    )
+    assert "page 1" in _rendered_text(page)
+    history_filter.value = "all"
+    await wait_until(lambda: history_filter.value == "all", timeout=2)
+    await wait_until(lambda: f"#{applied_id} · Applied" in _rendered_text(history_copy), timeout=2)
+    await wait_until(lambda: not history_filter.expanded, timeout=2)
+    assert "page 1" in _rendered_text(page)
+    await wait_until(
+        lambda: (
+            "all statuses" in _rendered_text(page)
+            and not app.screen.query_one("#command-history-next", Button).disabled
+        ),
+        timeout=2,
+    )
+    app.screen.query_one("#command-history-next", Button).focus()
+
+
+async def _assert_command_history_last_page_and_refresh(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    *,
+    database: Database,
+    clock: SystemClock,
+    pending_id: int,
+    home_screen: Widget,
+    history_frame: Widget,
+    history_controls: Widget,
+    history_scroll: VerticalScroll,
+) -> None:
+    page = app.screen.query_one("#command-history-page", Static)
+    history_copy = app.screen.query_one("#command-history-copy", Static)
+    app.screen.query_one("#command-history-next", Button).focus()
+    await pilot.press("n")
+    await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
+    next_button = app.screen.query_one("#command-history-next", Button)
+    assert not next_button.disabled, _rendered_text(page)
+    next_button.focus()
+    await pilot.press("p")
+    await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
+    await pilot.press("n")
+    await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
+    await pilot.press("n")
+    await wait_until(lambda: "page 3" in _rendered_text(page), timeout=2)
+    assert app.screen.query_one("#command-history-next", Button).disabled
+    await pilot.press("n")
+    assert "page 3" in _rendered_text(page)
+    assert f"#{pending_id} · Pending" in _rendered_text(history_copy), (
+        _rendered_text(page),
+        _rendered_text(history_copy),
+    )
+    _assert_last_command_history_page(page)
+    history_scroll.scroll_to(y=history_scroll.max_scroll_y, animate=False)
+    await pilot.pause()
+    assert history_scroll.scroll_y == history_scroll.max_scroll_y > 0
+    focus_before_refresh = app.focused
+    engine = database.connect()
+    try:
+        CommandQueue(engine, clock).mark_done(pending_id, {"effect": "applied once"})
+    finally:
+        engine.close()
+    await wait_until(
+        lambda: (
+            f"#{pending_id} · Applied" in _rendered_text(history_copy)
+            and "applied once" in _rendered_text(history_copy)
+            and '"effect": "applied once"' in _rendered_text(history_copy)
+        ),
+        timeout=2,
+    )
+    await pilot.pause()
+    assert app.focused is focus_before_refresh
+    assert history_scroll.scroll_y == history_scroll.max_scroll_y
+    await _resize_command_history_to_compact_and_close(
+        app,
+        pilot,
+        home_screen=home_screen,
+        frame=history_frame,
+        controls=history_controls,
+        scroll=history_scroll,
+    )
+
+
 async def test_command_history_pages_recover_and_refresh_an_older_pending_command(
     database: Database,
     connection: Connection,
@@ -4700,7 +4869,9 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
     reader = StateReader(database, clock)
     queue = CommandQueue(connection, clock)
     pending = queue.append(Stop())
-    for index in range(51):
+    applied = queue.append(Stop())
+    queue.mark_done(applied.id, {"effect": 0})
+    for index in range(1, 51):
         applied = queue.append(Stop())
         queue.mark_done(applied.id, {"effect": index})
 
@@ -4710,66 +4881,178 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             home_screen = app.screen
             await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
             await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
-            history_screen = app.screen
-            history_frame = history_screen.query_one("#command-history-frame")
-            history_controls = history_screen.query_one("#command-history-controls")
-            history_copy = history_screen.query_one("#command-history-copy", Static)
-            history_scroll = history_screen.query_one("#command-history-scroll", VerticalScroll)
+            history_frame = app.screen.query_one("#command-history-frame")
+            history_controls = app.screen.query_one("#command-history-controls")
+            history_copy = app.screen.query_one("#command-history-copy", Static)
+            history_scroll = app.screen.query_one("#command-history-scroll", VerticalScroll)
             _assert_command_history_controls_reachable(
                 app.screen,
                 history_frame,
                 history_controls,
             )
             await _assert_popup_close_reachable(
-                history_screen,
+                app.screen,
                 close_selector="#command-history-close",
                 frame_selector="#command-history-frame",
                 body_selector="#command-history-scroll",
             )
-            page = cast("Static", history_screen.query_one("#command-history-page"))
+            page = app.screen.query_one("#command-history-page", Static)
             await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
             assert f"#{pending.id} · Pending" not in _rendered_text(history_copy)
-            await pilot.click("#command-history-next")
-            await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
-            next_button = history_screen.query_one("#command-history-next", Button)
-            assert not next_button.disabled, _rendered_text(page)
-            await pilot.press("right")
-            await wait_until(lambda: "page 3" in _rendered_text(page), timeout=2)
-            assert f"#{pending.id} · Pending" in _rendered_text(history_copy), (
-                _rendered_text(page),
-                _rendered_text(history_copy),
+            await _assert_command_history_initial_shortcuts(
+                app, pilot, page, history_copy, pending.id
             )
-            _assert_last_command_history_page(page)
-            history_scroll.scroll_to(y=history_scroll.max_scroll_y, animate=False)
-            await pilot.pause()
-            scroll_before_refresh = history_scroll.scroll_y
-            assert scroll_before_refresh == history_scroll.max_scroll_y > 0
-            focus_before_refresh = app.focused
-
-            engine = database.connect()
-            try:
-                CommandQueue(engine, clock).mark_done(pending.id, {"effect": "applied once"})
-            finally:
-                engine.close()
-            await wait_until(
-                lambda: (
-                    f"#{pending.id} · Applied" in _rendered_text(history_copy)
-                    and "applied once" in _rendered_text(history_copy)
-                    and '"effect": "applied once"' in _rendered_text(history_copy)
-                ),
-                timeout=2,
+            await _assert_command_history_filter_shortcuts(
+                app, pilot, page, history_copy, applied.id
             )
-            await pilot.pause()
-            assert app.focused is focus_before_refresh
-            assert history_scroll.scroll_y == history_scroll.max_scroll_y
-            await _resize_command_history_to_compact_and_close(
+            await _assert_command_history_last_page_and_refresh(
                 app,
                 pilot,
+                database=database,
+                clock=clock,
+                pending_id=pending.id,
                 home_screen=home_screen,
-                frame=history_frame,
-                controls=history_controls,
-                scroll=history_scroll,
+                history_frame=history_frame,
+                history_controls=history_controls,
+                history_scroll=history_scroll,
             )
+    finally:
+        reader.close()
+
+
+async def _assert_task_timeline_page_shortcuts(app: DashboardApp, pilot: Pilot[None]) -> None:
+    timeline_category = cast(
+        "Select[str]", app.screen.query_one("#task-detail-timeline-category", Select)
+    )
+    timeline_category.value = TaskTimelineCategory.ALL.value
+    timeline_status = app.screen.query_one("#task-detail-timeline-status", Static)
+    timeline_body = app.screen.query_one("#task-detail-body", TaskDetailBody)
+    previous = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_NEWER}", Button)
+    next_page = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_OLDER}", Button)
+    await wait_until(lambda: not next_page.disabled, timeout=2)
+    assert previous.disabled
+    assert "Recorded page route evidence 1" in _rendered_text(
+        app.screen.query_one("#task-detail-timeline-selected", Static)
+    )
+    timeline_body.focus()
+    await pilot.press("p")
+    assert "Following latest" in _rendered_text(timeline_status)
+    await pilot.press("n")
+    await wait_until(
+        lambda: "Follow paused while viewing older evidence" in _rendered_text(timeline_status),
+        timeout=2,
+    )
+    assert next_page.disabled
+    assert not previous.disabled
+    await pilot.press("n")
+    assert "Follow paused while viewing older evidence" in _rendered_text(timeline_status)
+    await pilot.press("p")
+    await wait_until(lambda: "Following latest" in _rendered_text(timeline_status), timeout=2)
+    assert previous.disabled
+    await pilot.click(next_page)
+    await wait_until(
+        lambda: "Follow paused while viewing older evidence" in _rendered_text(timeline_status),
+        timeout=2,
+    )
+    await pilot.click(previous)
+    await wait_until(lambda: "Following latest" in _rendered_text(timeline_status), timeout=2)
+    timeline_turn = app.screen.query_one("#task-detail-timeline-turn", Input)
+    status_before_editing = _rendered_text(timeline_status)
+    previous_disabled_before_editing = previous.disabled
+    next_disabled_before_editing = next_page.disabled
+    timeline_turn.value = "3"
+    timeline_turn.focus()
+    await pilot.press("right", TASK_DETAIL_PREVIOUS_PAGE_KEY, TASK_DETAIL_NEXT_PAGE_KEY)
+    await wait_until(lambda: timeline_turn.value == "3pn", timeout=2)
+    await pilot.wait_for_scheduled_animations()
+    assert _rendered_text(timeline_status) == status_before_editing
+    assert previous.disabled is previous_disabled_before_editing
+    assert next_page.disabled is next_disabled_before_editing
+    timeline_body.focus()
+
+
+async def _assert_task_relationship_page_shortcuts(app: DashboardApp, pilot: Pilot[None]) -> None:
+    page = app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static)
+    body = app.screen.query_one("#task-detail-body", TaskDetailBody)
+    previous = app.screen.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
+    next_page = app.screen.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
+    await wait_until(
+        lambda: "Page 1" in _rendered_text(page) and not next_page.disabled,
+        timeout=2,
+    )
+    assert previous.disabled
+    body.focus()
+    await pilot.press("p")
+    assert "Page 1" in _rendered_text(page)
+    await pilot.press("n")
+    await wait_until(lambda: "Page 2" in _rendered_text(page), timeout=2)
+    assert next_page.disabled
+    assert not previous.disabled
+    await pilot.press("n")
+    assert "Page 2" in _rendered_text(page)
+    await pilot.press("p")
+    await wait_until(lambda: "Page 1" in _rendered_text(page), timeout=2)
+    body.scroll_to_widget(next_page, animate=False)
+    await wait_until(lambda: body.can_view_entire(next_page), timeout=2)
+    await pilot.pause()
+    await pilot.click(next_page)
+    await wait_until(lambda: "Page 2" in _rendered_text(page), timeout=2)
+    body.scroll_to_widget(previous, animate=False)
+    await wait_until(lambda: body.can_view_entire(previous), timeout=2)
+    await pilot.pause()
+    await pilot.click(previous)
+    await wait_until(lambda: "Page 1" in _rendered_text(page), timeout=2)
+
+
+async def test_task_detail_page_shortcuts_match_page_buttons_and_stop_at_boundaries(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Page route target")
+    tasks = TaskStore(connection, clock)
+    for index in range(TASK_PAGE_TEST_RELATIONSHIP_COUNT):
+        dependent = seed_task(connection, clock, title=f"Page route dependent {index}")
+        tasks.set_depends_on(dependent.id, (task.id,))
+    events = EventLog(connection, clock)
+    for index in range(TASK_PAGE_TEST_EVENT_COUNT):
+        events.append(
+            EventKind.NUDGE,
+            task_id=task.id,
+            message=f"Recorded page route evidence {index}",
+        )
+    settings = load_settings(project_dir)
+    dashboard = settings.dashboard.model_copy(
+        update={"animations": False, "timeline_page_size": TASK_PAGE_TEST_TIMELINE_PAGE_SIZE}
+    )
+    settings = settings.model_copy(update={"dashboard": dashboard})
+    reader = StateReader(database, clock)
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=[],
+            focus_task=task.id,
+            settings=settings,
+        )
+        async with app.run_test(size=(100, 34)) as pilot:
+            await pilot.press("e")
+            await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
+            panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+            await wait_until(lambda: panel.active_view == TASK_VIEW_EVIDENCE, timeout=2)
+            await _assert_task_timeline_page_shortcuts(app, pilot)
+            await pilot.press("v")
+            await wait_until(lambda: bool(app.screen.query("#task-detail-view-choice")), timeout=2)
+            view_choice = cast(
+                "Select[str]", app.screen.query_one("#task-detail-view-choice", Select)
+            )
+            view_choice.value = TASK_VIEW_RELATIONSHIPS
+            await pilot.press("tab", "enter")
+            await wait_until(lambda: panel.active_view == TASK_VIEW_RELATIONSHIPS, timeout=2)
+            await _assert_task_relationship_page_shortcuts(app, pilot)
     finally:
         reader.close()
 
@@ -6389,6 +6672,12 @@ async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
             _capture_task99(app, "task115-help-120x40-color.svg")
 
             close = help_screen.query_one("#workspace-help-close", Button)
+            close.focus()
+            await wait_until(
+                lambda: help_screen.focused is close,
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            assert cast("Content", close.label).plain in _exported_screen_text(app)
             assert await pilot.click(close)
             await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
             await wait_until(
@@ -6414,6 +6703,19 @@ async def _assert_evidence_editor_shortcut_precedence(
     await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
     evidence_screen = app.screen
     _capture_task99(app, f"task108-evidence-{app.size.width}x{app.size.height}-color.svg")
+    role_select = cast(
+        "Select[str]", evidence_screen.query_one("#task-detail-timeline-role", Select)
+    )
+    role_select.focus()
+    await pilot.press("enter")
+    await wait_until(lambda: role_select.expanded, timeout=2)
+    await pilot.press("p")
+    assert role_select.expanded
+    assert role_select.value == Select.BLANK
+    await pilot.press("n")
+    assert role_select.expanded
+    await pilot.press("escape")
+    await wait_until(lambda: not role_select.expanded, timeout=2)
     native_select = cast(
         "Select[str]", evidence_screen.query_one("#task-detail-timeline-category", Select)
     )
@@ -6586,7 +6888,7 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
                 assert detach.region.width > 0
                 assert detach.region.right <= size[0]
                 assert detach.region.bottom <= size[1]
-            assert "Shikiru actions" in screenshot_text
+            assert "Actions" in screenshot_text
             await pilot.press("escape")
             await wait_until(
                 lambda: app.screen is home and home.is_mounted,

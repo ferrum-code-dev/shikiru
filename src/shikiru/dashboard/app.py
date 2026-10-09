@@ -12,7 +12,7 @@ from textual.app import App
 from textual.containers import Grid, Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Label, ListItem, ListView, Select, Static
+from textual.widgets import Button, Label, ListItem, ListView, Rule, Select, Static
 
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
@@ -54,6 +54,18 @@ from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.errors import ConfigError
 from shikiru.ui.compact import FocusAttentionStatus
+from shikiru.ui.popup import (
+    POPUP_BODY_CLASS,
+    POPUP_CLOSE_CLASS,
+    POPUP_CONTROL_CSS,
+    POPUP_CSS,
+    POPUP_FRAME_CLASS,
+    POPUP_HEADER_CLASS,
+    POPUP_RULE_CLASS,
+    POPUP_SECONDARY_CLASS,
+    POPUP_TITLE_CLASS,
+    prepare_popup,
+)
 from shikiru.ui.screen import widget_is_active, widget_is_attached, widget_is_current
 from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import AMBER, DUSTY_ROSE, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
@@ -111,6 +123,10 @@ _COMMAND_HISTORY_PAGE_SIZE = 20
 _COMMAND_HISTORY_ALL = "all"
 _COMMAND_HISTORY_PREVIOUS_KEY = "left"
 _COMMAND_HISTORY_NEXT_KEY = "right"
+COMMAND_HISTORY_PREVIOUS_SHORTCUT = "p"
+COMMAND_HISTORY_NEXT_SHORTCUT = "n"
+_COMMAND_HISTORY_PREVIOUS_ACTION = "previous_page"
+_COMMAND_HISTORY_NEXT_ACTION = "next_page"
 COMMAND_ACTION_SAY = "Say"
 COMMAND_RESULT_TASK_ID = "task_id"
 COMMAND_RESULT_STATUS = "status"
@@ -130,8 +146,10 @@ _CONTEXT_VIEWS_HEADER = "context-views-header"
 _CONTEXT_VIEWS_CLOSE = "context-views-close"
 _CONTEXT_WIDGET_HEADER = "context-widget-header"
 _CONTEXT_WIDGET_CLOSE = "context-widget-close"
+_CONTEXT_WIDGET_COMPACT_MAX_ROWS = 20
+_CONTEXT_WIDGET_COMPACT_MAX_COLUMNS = 48
+_CONTEXT_WIDGET_FRAME_VERTICAL_MARGIN_ROWS = 2
 _POPUP_CLOSE_LABEL = "Esc \u00d7"
-_POPUP_CLOSE_CLASS = "popup-close-control"
 _EVIDENCE_KEY = "e"
 _DASHBOARD_PALETTE_EVENT_KEY = "f12"
 _SUMMARY_ATTENTION = "attention"
@@ -260,40 +278,39 @@ class _ContextChoice:
 
 class _ContextViewsScreen(ModalScreen[str]):
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
-    DEFAULT_CSS = """
-    _ContextViewsScreen { align: center middle; background: transparent; padding: 0; }
-    #context-views-frame {
-        width: 100%; max-width: 64; height: auto; max-height: 100%; margin: 1 2;
-        padding: 1 2; border: solid $steel-blue; background: $surface;
-    }
-    #context-views-header { width: 100%; height: 1; }
-    #context-views-title { width: 1fr; height: 1; color: $steel-blue; }
-    #context-views-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
+    DEFAULT_CSS = (
+        POPUP_CSS
+        + """
     #focus-views-list {
         height: auto; max-height: 1fr; min-height: 0; border: none; background: $surface;
     }
-    #context-views-hint { height: 1; color: $secondary-text; }
+    #context-views-hint { height: 1; }
     """
+    )
 
     def __init__(self, choices: tuple[_ContextChoice, ...]) -> None:
         super().__init__()
+        prepare_popup(self)
         self._choices = {
             f"{FOCUS_VIEW_PREFIX}{index}": choice for index, choice in enumerate(choices)
         }
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="context-views-frame"):
-            with Horizontal(id=_CONTEXT_VIEWS_HEADER):
-                yield Label("Views and filters", id="context-views-title")
-                yield Button(
-                    _POPUP_CLOSE_LABEL, id=_CONTEXT_VIEWS_CLOSE, classes=_POPUP_CLOSE_CLASS
-                )
+        with Vertical(id="context-views-frame", classes=POPUP_FRAME_CLASS):
+            with Horizontal(id=_CONTEXT_VIEWS_HEADER, classes=POPUP_HEADER_CLASS):
+                yield Label("Views", id="context-views-title", classes=POPUP_TITLE_CLASS)
+                yield Button(_POPUP_CLOSE_LABEL, id=_CONTEXT_VIEWS_CLOSE, classes=POPUP_CLOSE_CLASS)
+            yield Rule(classes=POPUP_RULE_CLASS)
             items = [
                 ListItem(Label(choice.label), id=choice_id)
                 for choice_id, choice in self._choices.items()
             ]
-            yield ListView(*items, id=FOCUS_VIEWS_LIST)
-            yield Static("↑↓ select · Enter open · Esc back", id="context-views-hint")
+            yield ListView(*items, id=FOCUS_VIEWS_LIST, classes=POPUP_BODY_CLASS)
+            yield Static(
+                "↑↓ select · Enter open · Esc back",
+                id="context-views-hint",
+                classes=POPUP_SECONDARY_CLASS,
+            )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         choice_id = event.item.id
@@ -310,32 +327,48 @@ class _ContextViewsScreen(ModalScreen[str]):
 
 class _ContextWidgetScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
-    DEFAULT_CSS = """
-    _ContextWidgetScreen { align: center middle; background: transparent; padding: 0; }
-    #context-widget-frame {
-        width: 100%; max-width: 64; height: auto; max-height: 100%; margin: 1 2;
-        padding: 1 2; border: solid $steel-blue; background: $surface;
-    }
-    #context-widget-header { width: 100%; height: 1; }
-    #context-widget-title { width: 1fr; height: 1; color: $steel-blue; }
-    #context-widget-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
-    #context-widget-content { height: auto; max-height: 1fr; min-height: 0; padding: 0; }
+    DEFAULT_CSS = (
+        POPUP_CSS
+        + """
+    #context-widget-frame.compact { margin: 0 2; padding: 0 2; }
+    #context-widget-content { height: auto; max-height: 1fr; min-height: 0; }
     """
+    )
 
     def __init__(self, label: str, widget: Widget) -> None:
         super().__init__()
+        prepare_popup(self)
         self._label = label
         self._widget = widget
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="context-widget-frame"):
-            with Horizontal(id=_CONTEXT_WIDGET_HEADER):
-                yield Label(self._label, id="context-widget-title")
+        with Vertical(id="context-widget-frame", classes=POPUP_FRAME_CLASS):
+            with Horizontal(id=_CONTEXT_WIDGET_HEADER, classes=POPUP_HEADER_CLASS):
+                yield Label(self._label, id="context-widget-title", classes=POPUP_TITLE_CLASS)
                 yield Button(
-                    _POPUP_CLOSE_LABEL, id=_CONTEXT_WIDGET_CLOSE, classes=_POPUP_CLOSE_CLASS
+                    _POPUP_CLOSE_LABEL, id=_CONTEXT_WIDGET_CLOSE, classes=POPUP_CLOSE_CLASS
                 )
-            with VerticalScroll(id="context-widget-content"):
+            yield Rule(classes=POPUP_RULE_CLASS)
+            with VerticalScroll(id="context-widget-content", classes=POPUP_BODY_CLASS):
                 yield self._widget
+
+    def on_mount(self) -> None:
+        self._apply_compact_layout(self.size.width, self.size.height)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._apply_compact_layout(event.size.width, event.size.height)
+
+    def _apply_compact_layout(self, width: int, height: int) -> None:
+        frame = self.query_one("#context-widget-frame")
+        compact = (
+            height <= _CONTEXT_WIDGET_COMPACT_MAX_ROWS
+            or width <= _CONTEXT_WIDGET_COMPACT_MAX_COLUMNS
+        )
+        frame.set_class(compact, "compact")
+        frame.styles.max_height = max(
+            1,
+            height - (0 if compact else _CONTEXT_WIDGET_FRAME_VERTICAL_MARGIN_ROWS),
+        )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == _CONTEXT_WIDGET_CLOSE:
@@ -471,18 +504,13 @@ def _truncate_command_summary(summary: Text, width: int) -> Text:
 
 class _WorkspaceHelpScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
-    DEFAULT_CSS = """
-    _WorkspaceHelpScreen { align: center middle; background: transparent; padding: 0; }
-    #workspace-help-frame {
-        width: 100%; height: auto; max-height: 100%; max-width: 64; margin: 1 2;
-        border: solid $steel-blue; padding: 1 2; background: $surface;
-    }
-    #workspace-help-header { width: 100%; height: 1; }
-    #workspace-help-context { width: 1fr; height: 1; color: $steel-blue; }
-    #workspace-help-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
+    DEFAULT_CSS = (
+        POPUP_CSS
+        + """
     #workspace-help-scroll { height: auto; max-height: 1fr; min-height: 0; }
     #workspace-help-copy { height: auto; color: $primary-text; }
     """
+    )
 
     def __init__(
         self,
@@ -491,6 +519,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
         tmux_detach_hint: str | None,
     ) -> None:
         super().__init__()
+        prepare_popup(self)
         self._task_id = task_id
         self._widget_names = tuple(widget_names)
         self._tmux_detach_hint = tmux_detach_hint
@@ -504,6 +533,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "v: choose reports, request, evidence, relationships, workspace or plugins",
                 "u: open task usage Details",
                 "Ctrl+P: open applicable operator actions for this task",
+                "Evidence and relationships: p Previous · n Next",
                 "Mouse: Views offers task sections, Actions and Help",
                 "Navigation to task and role windows is under Workspace and existing role targets",
                 "Command Applied means queued/applied by the engine;",
@@ -516,6 +546,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Ctrl+P: open contextual operator actions",
                 "/: search task ID or title",
                 "v: open filters, history and configured secondary views",
+                "History: p Previous · n Next",
                 "Mouse: select a task; use its detail controls for views and actions",
                 "?: show this help",
             ]
@@ -555,11 +586,12 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Existing sessions keep the mode and source recorded when they started",
             )
         )
-        with Vertical(id="workspace-help-frame"):
-            with Horizontal(id="workspace-help-header"):
-                yield Label(f"Help · {view}", id=_HELP_CONTEXT)
-                yield Button(_POPUP_CLOSE_LABEL, id=_HELP_CLOSE_BUTTON, classes=_POPUP_CLOSE_CLASS)
-            with VerticalScroll(id="workspace-help-scroll"):
+        with Vertical(id="workspace-help-frame", classes=POPUP_FRAME_CLASS):
+            with Horizontal(id="workspace-help-header", classes=POPUP_HEADER_CLASS):
+                yield Label(f"Help · {view}", id=_HELP_CONTEXT, classes=POPUP_TITLE_CLASS)
+                yield Button(_POPUP_CLOSE_LABEL, id=_HELP_CLOSE_BUTTON, classes=POPUP_CLOSE_CLASS)
+            yield Rule(classes=POPUP_RULE_CLASS)
+            with VerticalScroll(id="workspace-help-scroll", classes=POPUP_BODY_CLASS):
                 yield Static("\n".join(lines), id="workspace-help-copy", markup=False)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -575,28 +607,25 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
 class _CommandHistoryScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         ("escape", "close", "Back"),
-        (_COMMAND_HISTORY_PREVIOUS_KEY, "previous_page", "Newer history"),
-        (_COMMAND_HISTORY_NEXT_KEY, "next_page", "Older history"),
+        (_COMMAND_HISTORY_PREVIOUS_KEY, _COMMAND_HISTORY_PREVIOUS_ACTION, "Newer history"),
+        (_COMMAND_HISTORY_NEXT_KEY, _COMMAND_HISTORY_NEXT_ACTION, "Older history"),
+        (COMMAND_HISTORY_PREVIOUS_SHORTCUT, _COMMAND_HISTORY_PREVIOUS_ACTION, "Previous page"),
+        (COMMAND_HISTORY_NEXT_SHORTCUT, _COMMAND_HISTORY_NEXT_ACTION, "Next page"),
     ]
-    DEFAULT_CSS = """
-    _CommandHistoryScreen { align: center middle; background: transparent; padding: 0; }
-    #command-history-frame {
-        width: 100%; height: auto; max-height: 100%; max-width: 64; margin: 1 2;
-        border: solid $steel-blue; padding: 1 2;
-        background: $surface; color: $primary-text;
-    }
-    #command-history-header { width: 100%; height: 1; }
-    #command-history-title { width: 1fr; height: 1; color: $steel-blue; }
-    #command-history-close { width: auto; min-width: 5; height: 1; padding: 0 1; }
+    DEFAULT_CSS = (
+        POPUP_CSS
+        + """
     #command-history-filter { width: 100%; height: 3; }
-    #command-history-scroll { height: auto; min-height: 0; border: none; }
+    #command-history-scroll { height: auto; min-height: 0; }
     #command-history-copy { height: auto; padding: 0; }
     #command-history-page { height: 1; }
     #command-history-controls { height: 3; width: 100%; }
     """
+    )
 
     def __init__(self, views: DashboardViews, on_change: OnChangeRegistration) -> None:
         super().__init__()
+        prepare_popup(self)
         self._views = views
         self._on_change = on_change
         self._offset = 0
@@ -605,14 +634,17 @@ class _CommandHistoryScreen(ModalScreen[None]):
         self._change_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="command-history-frame"):
-            with Horizontal(id=_COMMAND_HISTORY_HEADER):
+        with Vertical(id="command-history-frame", classes=POPUP_FRAME_CLASS):
+            with Horizontal(id=_COMMAND_HISTORY_HEADER, classes=POPUP_HEADER_CLASS):
                 yield Label(
-                    "Command history · left/right or page controls", id="command-history-title"
+                    "Command history",
+                    id="command-history-title",
+                    classes=POPUP_TITLE_CLASS,
                 )
                 yield Button(
-                    _POPUP_CLOSE_LABEL, id=_COMMAND_HISTORY_CLOSE, classes=_POPUP_CLOSE_CLASS
+                    _POPUP_CLOSE_LABEL, id=_COMMAND_HISTORY_CLOSE, classes=POPUP_CLOSE_CLASS
                 )
+            yield Rule(classes=POPUP_RULE_CLASS)
             yield Select(
                 (
                     ("All statuses", _COMMAND_HISTORY_ALL),
@@ -621,12 +653,12 @@ class _CommandHistoryScreen(ModalScreen[None]):
                 value=_COMMAND_HISTORY_ALL,
                 id=_COMMAND_HISTORY_FILTER,
             )
-            with VerticalScroll(id=_COMMAND_HISTORY_SCROLL):
+            with VerticalScroll(id=_COMMAND_HISTORY_SCROLL, classes=POPUP_BODY_CLASS):
                 yield Static("Loading command history…", id=_COMMAND_HISTORY_COPY, markup=False)
-            yield Label("", id=_COMMAND_HISTORY_PAGE)
+            yield Label("", id=_COMMAND_HISTORY_PAGE, classes=POPUP_SECONDARY_CLASS)
             with HorizontalScroll(id="command-history-controls"):
-                yield Button("Newer", id=_COMMAND_HISTORY_PREVIOUS, disabled=True)
-                yield Button("Older", id=_COMMAND_HISTORY_NEXT, disabled=True)
+                yield Button("p Previous", id=_COMMAND_HISTORY_PREVIOUS, disabled=True)
+                yield Button("n Next", id=_COMMAND_HISTORY_NEXT, disabled=True)
 
     async def on_mount(self) -> None:
         self._display_history()
@@ -656,6 +688,19 @@ class _CommandHistoryScreen(ModalScreen[None]):
         if self._change_worker is not None:
             self._change_worker.cancel()
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        del parameters
+        if action in {
+            _COMMAND_HISTORY_PREVIOUS_ACTION,
+            _COMMAND_HISTORY_NEXT_ACTION,
+        } and native_editor_has_focus(self.focused):
+            return None
+        if action == _COMMAND_HISTORY_PREVIOUS_ACTION:
+            return self._offset > 0
+        if action == _COMMAND_HISTORY_NEXT_ACTION:
+            return self._has_more
+        return True
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == _COMMAND_HISTORY_CLOSE:
             self.dismiss()
@@ -676,6 +721,8 @@ class _CommandHistoryScreen(ModalScreen[None]):
         self.dismiss()
 
     def action_previous_page(self) -> None:
+        if self._offset == 0:
+            return
         self._offset = max(0, self._offset - _COMMAND_HISTORY_PAGE_SIZE)
         self._display_history()
 
@@ -919,12 +966,10 @@ class DashboardApp(App[None]):
     """Present the configured Home focus or one shared task detail view."""
 
     ENABLE_COMMAND_PALETTE = False
-    CSS = """
+    CSS = (
+        POPUP_CONTROL_CSS
+        + """
     Screen { color: $primary-text; }
-    .popup-close-control {
-        border: none; background: $surface; color: $primary-text; text-style: none;
-    }
-    .popup-close-control:focus { color: $primary-text; text-style: reverse; }
     #focus-root {
         height: 100%; border: solid $neutral-border; padding: 0 1;
         background: $background; scrollbar-size-vertical: 0;
@@ -990,6 +1035,7 @@ class DashboardApp(App[None]):
         width: 1fr; min-width: 0; padding: 0; text-wrap: nowrap;
     }
     """
+    )
 
     def __init__(
         self,

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from datetime import UTC, datetime
+from html import unescape
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -58,6 +60,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from rich.text import Text
+    from textual.content import Content
     from textual.pilot import Pilot
 
     from shikiru.store.database import Database
@@ -128,6 +131,12 @@ def _capture_palette(app: PaletteApp, name: str) -> None:
     )
     path = capture_dir / name.replace("-color.svg", f"-{output_kind}.svg")
     path.write_text(app.export_screenshot(), encoding="utf-8")
+
+
+def _exported_screen_text(app: PaletteApp) -> str:
+    text_elements = re.findall(r"<text\b[^>]*>(.*?)</text>", app.export_screenshot(), re.DOTALL)
+    text = " ".join(unescape(content).replace("\xa0", " ") for content in text_elements)
+    return " ".join(text.split())
 
 
 async def _click_menu_button(
@@ -2162,6 +2171,10 @@ async def test_palette_preserves_invalid_and_missing_resolve_routes(
         )
         await pilot.pause()
         screen = _screen(app)
+        close = screen.query_one("#palette-close", Button)
+        close.focus()
+        await wait_until(lambda: app.focused is close, timeout=2)
+        assert cast("Content", close.label).plain in _exported_screen_text(app)
         assert screen.query_one("#palette-submit", Button).disabled
         assert expected in _static_text(screen, "#palette-result")
         assert not queue.pending()

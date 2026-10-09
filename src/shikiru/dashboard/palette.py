@@ -13,7 +13,7 @@ from textual.app import App
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Collapsible, Input, Label, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Label, Rule, Select, Static, TextArea
 
 from shikiru.agents.contracts import parse_rung
 from shikiru.config.settings import ComplexityName
@@ -39,6 +39,16 @@ from shikiru.operator.queries import (
     OperatorTaskAction,
 )
 from shikiru.ui.compact import display_escalation_headline
+from shikiru.ui.popup import (
+    POPUP_BODY_CLASS,
+    POPUP_CLOSE_CLASS,
+    POPUP_CSS,
+    POPUP_FRAME_CLASS,
+    POPUP_HEADER_CLASS,
+    POPUP_RULE_CLASS,
+    POPUP_TITLE_CLASS,
+    prepare_popup,
+)
 from shikiru.ui.screen import widget_is_on_screen
 from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
@@ -245,7 +255,9 @@ _PALETTE_COMPACT_RESULT_MAX_HEIGHT = 3
 _PALETTE_RESULT_MAX_HEIGHT = 12
 _PALETTE_FORM_STANDARD_FIXED_ROWS = 9
 _PALETTE_FORM_SHORT_FIXED_ROWS = 8
-_PALETTE_FORM_TINY_FIXED_ROWS = 3
+_PALETTE_FORM_TINY_FIXED_ROWS = 4
+_PALETTE_FRAME_VERTICAL_MARGIN_ROWS = 2
+_PALETTE_MENU_FIXED_CONTENT_ROWS = 2
 _PALETTE_TEXT_AREA_MINIMUM_WIDTH = 5
 _PALETTE_INLINE_ACTIONS_ROWS = 1
 _PALETTE_STACKED_ACTIONS_ROWS = 2
@@ -340,31 +352,17 @@ def _context_menu_entry(label: str, meaning: str) -> Text:
 class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     """Render operator actions, dispatch commands and show their acknowledgements."""
 
-    DEFAULT_CSS = """
-    PaletteScreen { align: center middle; background: transparent; padding: 0; }
-    #palette-frame {
-        width: 100%;
-        height: auto;
-        max-height: 100%;
-        max-width: 64;
-        margin: 1 2;
-        border: solid $steel-blue;
-        padding: 1 2;
-        background: $surface;
-        color: $primary-text;
-    }
-    #palette-frame.tiny { margin: 0; padding: 0 2; }
+    DEFAULT_CSS = (
+        POPUP_CSS
+        + """
+    #palette-frame.tiny { margin: 0; padding: 0 1; }
     #palette-menu { height: auto; max-height: 1fr; min-height: 0; }
     #palette-menu-primary { height: auto; }
     #palette-menu-context { height: 1; color: $secondary-text; }
-    #palette-heading { height: 1; }
-    #palette-title { width: 1fr; height: 1; color: $steel-blue; }
     #palette-close {
-        width: auto; min-width: 5; height: 1; margin: 0; padding: 0 1;
-        border: none; background: $surface; color: $primary-text; text-style: none;
+        width: auto; min-width: 5; height: 1; margin: 0;
     }
     #palette-frame.tiny #palette-close { padding: 0; }
-    #palette-close:focus { color: $primary-text; text-style: reverse; }
     #palette-menu-task-actions, #palette-menu-project-actions {
         height: auto; margin-top: 1; color: $secondary-text;
     }
@@ -386,10 +384,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         color: $primary-text; text-style: reverse;
     }
     #palette-form {
-        height: auto; max-height: 1fr; min-height: 0; margin-top: 1; padding-top: 0;
-        border-top: solid $neutral-border;
+        height: auto; max-height: 1fr; min-height: 0; margin-top: 0; padding-top: 0;
+        border-top: none;
     }
-    #palette-form.tiny { margin-top: 0; border-top: none; }
     #field-palette-escalation-summary { height: auto; }
     #field-palette-escalation-status, #field-palette-evidence-error { height: auto; }
     .palette-field { height: auto; margin-bottom: 1; }
@@ -401,7 +398,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         border: round $focus;
         text-style: reverse;
     }
-    .palette-field Select:focus > SelectCurrent { border: tall $focus; }
     #palette-result-scroll { height: auto; max-height: 12; margin-top: 1; }
     #palette-escalation-summary, #palette-escalation-status, #palette-evidence-error,
     #palette-original-packet, #palette-result { height: auto; }
@@ -420,12 +416,14 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     #palette-actions.short { margin-top: 0; }
     #palette-actions Button {
         width: auto; max-width: 100%; height: auto; min-height: 1; padding: 0;
+        border: none; border-top: none; border-bottom: none;
         text-wrap: wrap; text-style: none;
     }
     #palette-submit:focus, #palette-back-to-menu:focus {
         text-style: reverse;
     }
     """
+    )
 
     def __init__(
         self,
@@ -443,6 +441,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     ) -> None:
         """Use the operator services for actions and queries and inject pane selection."""
         super().__init__()
+        prepare_popup(self)
         self._commands = commands
         self._queries = queries
         self._contextual_palette = initial_context is not None
@@ -493,10 +492,15 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
 
     def compose(self) -> ComposeResult:
         """Show one compact form with fields enabled for the selected action."""
-        with Vertical(id="palette-frame"):
-            with Horizontal(id="palette-heading"):
-                yield Label("Shikiru operator actions", id="palette-title")
-                yield Button(_POPUP_CLOSE_LABEL, id=_PALETTE_CLOSE)
+        with Vertical(id="palette-frame", classes=POPUP_FRAME_CLASS):
+            with Horizontal(id="palette-heading", classes=POPUP_HEADER_CLASS):
+                yield Label("Actions", id="palette-title", classes=POPUP_TITLE_CLASS)
+                yield Button(
+                    _POPUP_CLOSE_LABEL,
+                    id=_PALETTE_CLOSE,
+                    classes=POPUP_CLOSE_CLASS,
+                )
+            yield Rule(classes=POPUP_RULE_CLASS)
             yield from self._compose_menu()
             yield from self._compose_form()
             with Vertical(id="palette-actions"):
@@ -504,7 +508,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 yield Button("Run action", id=_SUBMIT_ID, variant="primary")
 
     def _compose_menu(self) -> ComposeResult:
-        with VerticalScroll(id=_PALETTE_MENU_ID):
+        with VerticalScroll(id=_PALETTE_MENU_ID, classes=POPUP_BODY_CLASS):
             yield Static("", id=_PALETTE_MENU_CONTEXT, markup=False)
             with Vertical(id=_PALETTE_MENU_PRIMARY):
                 yield Button(
@@ -568,13 +572,13 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                         yield Button(label, id=f"{_PALETTE_MENU_ACTION_PREFIX}{action}")
 
     def _compose_form(self) -> ComposeResult:
-        with VerticalScroll(id=_PALETTE_FORM_ID):
+        with VerticalScroll(id=_PALETTE_FORM_ID, classes=POPUP_BODY_CLASS):
             yield from self._compose_action_target_fields()
             yield from self._compose_task_submission_fields()
             yield from self._compose_task_role_fields()
             yield from self._compose_resolution_fields()
             yield from self._compose_evidence_fields()
-            with VerticalScroll(id="palette-result-scroll"):
+            with VerticalScroll(id="palette-result-scroll", classes=POPUP_BODY_CLASS):
                 yield Static("", id="palette-result", markup=False)
 
     def _compose_action_target_fields(self) -> ComposeResult:
@@ -982,6 +986,10 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             and self.size.width <= _PALETTE_SHORT_OVERLAY_MAX_COLUMNS
         )
         frame = self.query_one("#palette-frame")
+        frame.styles.max_height = max(
+            1,
+            self.size.height - (0 if tiny_pane else _PALETTE_FRAME_VERTICAL_MARGIN_ROWS),
+        )
         actions = self.query_one("#palette-actions", Vertical)
         actions.styles.layout = "horizontal" if tiny_pane or not narrow_pane else "vertical"
         actions.set_class(short_pane, "short")
@@ -994,12 +1002,12 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             if short_pane
             else _PALETTE_FORM_STANDARD_FIXED_ROWS
         )
-        form.styles.max_height = max(
-            1,
-            self.size.height
-            - fixed_rows
-            - (_PALETTE_STACKED_ACTIONS_ROWS if narrow_pane else _PALETTE_INLINE_ACTIONS_ROWS),
+        action_rows = (
+            _PALETTE_STACKED_ACTIONS_ROWS
+            if narrow_pane and not tiny_pane
+            else _PALETTE_INLINE_ACTIONS_ROWS
         )
+        form.styles.max_height = max(1, self.size.height - fixed_rows - action_rows)
         for button_id in (_PALETTE_BACK_TO_MENU, _SUBMIT_ID):
             button = self.query_one(f"#{button_id}", Button)
             button.styles.width = "auto" if tiny_pane else "100%" if narrow_pane else "auto"
@@ -1038,11 +1046,22 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self.query_one(f"#{_SUBMIT_ID}", Button).display = not visible
         title = self.query_one("#palette-title", Label)
         if visible:
-            title.update("Shikiru actions")
+            title.update("Actions")
         else:
             title.update(self._context_form_title())
         self.call_after_refresh(self._refresh_context_form_title)
+        self.call_after_refresh(self._constrain_menu_to_frame)
         self._refresh_context_menu()
+
+    def _constrain_menu_to_frame(self) -> None:
+        if not self.is_mounted or not self._menu_visible:
+            return
+        frame = self.query_one("#palette-frame")
+        menu = self.query_one(f"#{_PALETTE_MENU_ID}", VerticalScroll)
+        menu.styles.max_height = max(
+            1,
+            frame.content_region.height - _PALETTE_MENU_FIXED_CONTENT_ROWS,
+        )
 
     def _context_form_title(self) -> str:
         action = self._selected_value(_FIELD_ACTION)

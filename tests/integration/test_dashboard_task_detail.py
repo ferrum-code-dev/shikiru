@@ -2102,11 +2102,11 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
             height=height,
         )
         timeline_turn.focus()
-        await pilot.press("right")
+        await pilot.press("right", "p", "n", "right")
         await pilot.press("v")
         await pilot.pause()
         assert not isinstance(app.screen, TaskDetailViewsScreen)
-        assert timeline_turn.value == "3v"
+        assert timeline_turn.value == "3pnv"
         timeline_turn.value = "3"
         body.scroll_to_widget(timeline_category, animate=False)
         saved_scroll_position = body.scroll_target_y
