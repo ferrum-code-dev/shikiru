@@ -90,7 +90,7 @@ from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
     from datetime import timedelta
 
     from shikiru.agents.contracts import QuotaWindow
@@ -172,6 +172,22 @@ class _StructuredEscalationCache:
     evidence: StructuredEscalationEvidence
 
 
+class _VersionedCache[K, V]:
+    def __init__(self, state: StateReader) -> None:
+        self._state = state
+        self._version: int | None = None
+        self._values: dict[K, V] = {}
+
+    def get(self, key: K, load: Callable[[], V]) -> V:
+        version = self._state.data_version()
+        if version != self._version:
+            self._version = version
+            self._values = {}
+        if key not in self._values:
+            self._values[key] = load()
+        return self._values[key]
+
+
 class DashboardSources(Protocol):
     """External information composed into dashboard view models."""
 
@@ -228,15 +244,21 @@ class StateDashboardViews:
         )
         self._project_usage_view_cache: RecordedUsageView | None = None
         self._task_usage_cache: dict[str, list[UsageView]] = {}
-        self._escalation_version = -1
-        self._escalation_cache: list[EscalationView] | None = None
+        self._task_cache: _VersionedCache[tuple[Status, ...] | None, list[Task]] = _VersionedCache(
+            state
+        )
         self._structured_escalation_cache: dict[str, _StructuredEscalationCache] = {}
         self._fault_version = -1
         self._fault_cache: tuple[FaultStreak, ...] | None = None
 
+    def _cached_tasks(self, *, statuses: tuple[Status, ...] | None = None) -> list[Task]:
+        return list(
+            self._task_cache.get(statuses, lambda: self._state.list_tasks(statuses=statuses))
+        )
+
     async def header(self) -> HeaderView:
         """Build the project, engine, slot and repository summary."""
-        tasks = self._state.list_tasks()
+        tasks = self._cached_tasks()
         engine_up = self.engine_up()
         process_identity = self._sources.engine_identity()
         identity = (
@@ -276,7 +298,7 @@ class StateDashboardViews:
     def workspace_summary(self) -> WorkspaceSummaryView:
         """Count home categories without treating them as disjoint task totals."""
         attention = self.attention()
-        tasks = self._state.list_tasks()
+        tasks = self._cached_tasks()
         active_tasks = [
             task for task in tasks if task.status not in (Status.DONE, Status.CANCELLED)
         ]
@@ -360,7 +382,7 @@ class StateDashboardViews:
     def strips(self) -> list[TaskStripData]:
         """Build the active task strips, placing the focused task first."""
         now = self._clock.now()
-        tasks = self._state.list_tasks(statuses=ACTIVE_STATUSES)
+        tasks = self._cached_tasks(statuses=ACTIVE_STATUSES)
         tasks.sort(key=lambda task: task.id != self._focus_task)
         recent_merges = self._motion.recent_merges(now)
         task_ids = {task.id for task in tasks}
@@ -374,7 +396,7 @@ class StateDashboardViews:
 
     def queue(self) -> list[QueueRow]:
         """Build queued-task rows in dispatch order."""
-        tasks = self._state.list_tasks(statuses=(Status.QUEUED,))
+        tasks = self._cached_tasks(statuses=(Status.QUEUED,))
         tasks.sort(key=dispatch_sort_key)
         return [
             QueueRow(
@@ -485,7 +507,7 @@ class StateDashboardViews:
         stalled_ids: set[str] = set()
         agent_processing_ids: set[str] = set()
         if task_filter in (TaskBrowserFilter.ACTIVE, TaskBrowserFilter.ALL):
-            current_turn_tasks = self._state.list_tasks(statuses=_ACTIVE_TURN_STATUSES)
+            current_turn_tasks = self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES)
             motion_task_ids.update(task.id for task in current_turn_tasks)
             frames = self._motion.frames(
                 tuple(current_turn_tasks), now, engine_running=self.engine_up()
@@ -499,7 +521,7 @@ class StateDashboardViews:
     def _quota_wait_task_ids(self, now: datetime) -> tuple[str, ...]:
         return tuple(
             task.id
-            for task in self._state.list_tasks(statuses=_ACTIVE_TURN_STATUSES)
+            for task in self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES)
             if self._running_quota_evidence(task, now) is not None
         )
 
@@ -645,21 +667,12 @@ class StateDashboardViews:
 
     def escalations(self) -> list[EscalationPanelView]:
         """Build every durable open decision, retaining its row when evidence is unreadable."""
-        return list(self._decision_views(self._clock.now()).values())
+        decisions = self._decision_views(self._clock.now(), self._queries.list_escalations())
+        return list(decisions.values())
 
-    def _cached_escalations(self) -> list[EscalationView]:
-        version = self._state.data_version()
-        if version != self._escalation_version:
-            self._escalation_version = version
-            self._escalation_cache = self._queries.list_escalations()
-        items = self._escalation_cache
-        if items is None:
-            message = "escalation cache was not initialized"
-            raise RuntimeError(message)
-        return items
-
-    def _decision_views(self, now: datetime) -> dict[str, EscalationPanelView]:
-        items = self._cached_escalations()
+    def _decision_views(
+        self, now: datetime, items: list[EscalationView]
+    ) -> dict[str, EscalationPanelView]:
         open_ids = {item.escalation.id for item in items}
         self._structured_escalation_cache = {
             escalation_id: cached
@@ -667,7 +680,7 @@ class StateDashboardViews:
             if escalation_id in open_ids
         }
         pulse = self._motion.frames((), now, escalations_open=bool(items)).escalation_red
-        tasks = {task.id: task for task in self._state.list_tasks()}
+        tasks = {task.id: task for task in self._cached_tasks()}
         result: dict[str, EscalationPanelView] = {}
         for item in items:
             escalation = item.escalation
@@ -748,14 +761,15 @@ class StateDashboardViews:
     def attention(self) -> AttentionView:
         """Group durable decisions, existing stall diagnoses and open fault streaks by task."""
         now = self._clock.now()
-        tasks = {task.id: task for task in self._state.list_tasks()}
-        decision_views = self._decision_views(now)
+        tasks = {task.id: task for task in self._cached_tasks()}
+        escalations = self._queries.list_escalations()
+        decision_views = self._decision_views(now, escalations)
         group_reasons: dict[str | None, list[str]] = {}
         group_decisions: dict[str | None, list[EscalationPanelView]] = {}
         decision_order: dict[str | None, tuple[datetime, str]] = {}
         group_titles: dict[str | None, str] = {}
 
-        for item in self._cached_escalations():
+        for item in escalations:
             task_id = item.escalation.task_id
             group_decisions.setdefault(task_id, []).append(decision_views[item.escalation.id])
             task = tasks.get(task_id)
@@ -764,7 +778,7 @@ class StateDashboardViews:
             if task_id not in decision_order or order < decision_order[task_id]:
                 decision_order[task_id] = order
 
-        active = self._state.list_tasks(statuses=_ACTIVE_TURN_STATUSES)
+        active = self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES)
         frames = self._motion.frames(tuple(active), now)
         stalled_ids = {item.task_id for item in frames.tasks if item.stalled}
         for task_id in stalled_ids:
@@ -1202,7 +1216,7 @@ class StateDashboardViews:
     def _slot_evidence(self) -> tuple[list[str], tuple[TaskReferenceView, ...]]:
         occupied = [
             task
-            for task in self._state.list_tasks(statuses=(Status.RUNNING, Status.INTEGRATING))
+            for task in self._cached_tasks(statuses=(Status.RUNNING, Status.INTEGRATING))
             if task.slot is not None
         ]
         lines = [
