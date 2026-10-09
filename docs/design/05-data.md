@@ -116,8 +116,8 @@ merge_event_limit = 20
 
 [dashboard.titles]                              # fields: 06 §5.3
 window = "{task_id} {title:.24}"
-leader = "Leader · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
-implementer = "Implementer · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
+leader = "{role_label} · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
+implementer = "{role_label} · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
 system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
 shell = "Project folder · {cwd}"
 

@@ -68,6 +68,27 @@ class CosmeticDecorator(PaneDecorator):
             "set_pane_title", super().set_pane_title(pane_target, template, fields)
         )
 
+    async def set_pane_title_styling(
+        self,
+        pane_target: str,
+        template: str,
+        fields: Mapping[str, object],
+        *,
+        field_colors: Mapping[str, str],
+        field_segments: Mapping[str, tuple[tuple[str, str], ...]],
+    ) -> None:
+        """Set pane-title component colors, logging a tmux failure."""
+        await self._cosmetic(
+            "set_pane_title_styling",
+            super().set_pane_title_styling(
+                pane_target,
+                template,
+                fields,
+                field_colors=field_colors,
+                field_segments=field_segments,
+            ),
+        )
+
     async def set_window_title(
         self, window_target: str, template: str, fields: Mapping[str, object]
     ) -> None:

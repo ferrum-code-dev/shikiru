@@ -47,6 +47,8 @@ FORMAT_PANE_DEAD = "#{pane_dead}"
 FORMAT_WINDOW_ID = "#{window_id}"
 FORMAT_WINDOW_NAME = "#{window_name}"
 FORMAT_WINDOW_INDEX = "#{window_index}"
+_TMUX_FORMAT_HASH = "#"
+_TMUX_FORMAT_OPEN_BRACE = "{"
 FORMAT_PANE_START_COMMAND = "#{pane_start_command}"
 FORMAT_SOCKET_PATH = "#{socket_path}"
 FORMAT_SESSION_NAME = "#{session_name}"
@@ -72,6 +74,26 @@ def private_socket_name(prefix: str) -> str:
 def exact_target(name: str) -> str:
     """Build the exact-match target (`=<name>`) tmux uses for a session, window or pane name."""
     return f"={name}"
+
+
+def _escape_pane_title_formats(title: str) -> str:
+    escaped: list[str] = []
+    index = 0
+    while index < len(title):
+        if title[index] != _TMUX_FORMAT_HASH:
+            escaped.append(title[index])
+            index += 1
+            continue
+        run_end = index
+        while run_end < len(title) and title[run_end] == _TMUX_FORMAT_HASH:
+            run_end += 1
+        hash_run = title[index:run_end]
+        if run_end < len(title) and title[run_end] == _TMUX_FORMAT_OPEN_BRACE:
+            escaped.append(hash_run + hash_run)
+        else:
+            escaped.append(hash_run)
+        index = run_end
+    return "".join(escaped)
 
 
 def tmux_key_label(key: str) -> str:
@@ -256,7 +278,8 @@ class Tmux:
 
     async def set_pane_title(self, target: str, title: str) -> None:
         """Set pane `target`'s title without changing the active pane."""
-        await self._run("select-pane", "-t", target, "-T", title)
+        escaped_title = _escape_pane_title_formats(title)
+        await self._run("select-pane", "-t", target, "-T", escaped_title)
 
     async def select_pane(self, target: str) -> None:
         """Select the window containing pane `target`, then make that pane active."""
@@ -389,6 +412,11 @@ class Tmux:
     async def list_session_panes(self, target: str, fmt: str) -> list[str]:
         """List every pane across every window of session `target`."""
         result = await self._run("list-panes", "-s", "-t", target, "-F", fmt)
+        return result.stdout.splitlines()
+
+    async def list_session_windows(self, target: str) -> list[str]:
+        """List the window ids belonging to `target` without selecting a window."""
+        result = await self._run("list-windows", "-t", target, "-F", FORMAT_WINDOW_ID)
         return result.stdout.splitlines()
 
     async def list_sessions(self) -> list[str]:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.runs import NO_USAGE, RunStatus, context_title, cost_title
 from shikiru.domain.steps import ACTING_ROLE
@@ -27,7 +28,18 @@ from shikiru.ui.glyphs import (
     STAGE_TRIAGE,
     STAGE_VERIFY,
 )
-from shikiru.ui.tokens import ALERT_COLOR, ENGINE_COLOR, HOLD_COLOR, OPERATOR_COLOR, ROLE_COLORS
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    AMBER,
+    ENGINE_COLOR,
+    HOLD_COLOR,
+    OPERATOR_COLOR,
+    PRIMARY_TEXT_COLOR,
+    ROLE_COLORS,
+    SAGE,
+    SECONDARY_TEXT_COLOR,
+    gauge_color,
+)
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
@@ -68,17 +80,32 @@ def _pane_state(task: Task, role: Role, *, taken_over: bool) -> tuple[str, str]:
     return ROLE_COLORS[role], ROLE_GLYPHS[role]
 
 
-def _flags(task: Task, *, taken_over: bool = False, include_glyphs: bool = True) -> str:
-    flags: list[tuple[str, str]] = []
+def _flag_parts(task: Task, *, taken_over: bool) -> list[tuple[str, str, str]]:
+    flags: list[tuple[str, str, str]] = []
     if Hold.PAUSED in task.holds:
-        flags.append((GLYPH_PAUSED, "paused"))
+        flags.append((GLYPH_PAUSED, "paused", HOLD_COLOR))
     if taken_over or Hold.INTERVENTION in task.holds:
-        flags.append((GLYPH_OPERATOR, "operator"))
+        flags.append((GLYPH_OPERATOR, "operator", OPERATOR_COLOR))
     if task.status is Status.ESCALATED:
-        flags.append((GLYPH_ESCALATED, "escalated"))
+        flags.append((GLYPH_ESCALATED, "escalated", ALERT_COLOR))
+    return flags
+
+
+def _flags(task: Task, *, taken_over: bool = False, include_glyphs: bool = True) -> str:
+    flags = _flag_parts(task, taken_over=taken_over)
     if include_glyphs:
-        return " ".join(f"{glyph} {word}" for glyph, word in flags)
-    return " ".join(word for _, word in flags)
+        return " ".join(f"{glyph} {word}" for glyph, word, _ in flags)
+    return " ".join(word for _, word, _ in flags)
+
+
+def _flag_segments(task: Task, *, taken_over: bool) -> tuple[tuple[str, str], ...]:
+    parts = _flag_parts(task, taken_over=taken_over)
+    segments: list[tuple[str, str]] = []
+    for index, (_, word, color) in enumerate(parts):
+        if index:
+            segments.append((" ", PRIMARY_TEXT_COLOR))
+        segments.append((word, color))
+    return tuple(segments)
 
 
 class TaskTitles:
@@ -116,12 +143,14 @@ class TaskTitles:
         run = self._active_run(task.id, role)
         taken_over = run is not None and run.status is RunStatus.TAKEN_OVER
         usage = run.usage if run is not None else NO_USAGE
+        usage_reported = run.usage_reported if run is not None else None
         template = getattr(self._settings.dashboard.titles, role.value)
         fields = {
             "task_id": task.id,
             "title": task.title,
             "project": self._settings.project.name,
             "role": role.value,
+            "role_label": role.value.capitalize(),
             "glyph": GLYPH_OPERATOR if taken_over else ROLE_GLYPHS[role],
             "agent": rung.agent,
             "model": rung.model,
@@ -135,6 +164,33 @@ class TaskTitles:
             "flags_text": _flags(task, taken_over=taken_over, include_glyphs=False),
         }
         await self._decorator.set_pane_title(pane_id, template, fields)
+        context_color = (
+            gauge_color(usage.context_used_pct)
+            if usage.context_used_pct is not None and usage_reported is not False
+            else SECONDARY_TEXT_COLOR
+        )
+        cost_color = SECONDARY_TEXT_COLOR
+        if usage.cost_usd is not None and usage_reported is not False:
+            if usage.cost_basis == COST_BASIS_BILLED:
+                cost_color = SAGE
+            elif usage.cost_basis == COST_BASIS_API_EQUIVALENT:
+                cost_color = AMBER
+        await self._decorator.set_pane_title_styling(
+            pane_id,
+            template,
+            fields,
+            field_colors={
+                "role": ROLE_COLORS[role],
+                "role_label": ROLE_COLORS[role],
+                "agent": PRIMARY_TEXT_COLOR,
+                "model": PRIMARY_TEXT_COLOR,
+                "effort": SECONDARY_TEXT_COLOR,
+                "iteration": SECONDARY_TEXT_COLOR,
+                "context": context_color,
+                "cost": cost_color,
+            },
+            field_segments={"flags_text": _flag_segments(task, taken_over=taken_over)},
+        )
         color, glyph = _pane_state(task, role, taken_over=taken_over)
         await self._decorator.set_pane_state(pane_id, color=color, glyph=glyph)
 

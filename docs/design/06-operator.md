@@ -72,7 +72,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 - **Options**, set at the scope tmux gives each one:
   - *Session*: `base-index 0`, `renumber-windows off`, `mouse on`, and the project terminal title. These session-local options keep Home at index 0 and stop a removed Home from shifting a task or operator window into that slot, even when the user's tmux server uses another global base index; the global settings are unchanged. If an unrelated window already occupies index 0, session recovery reports the collision and leaves it intact.
   - *Task window*: `remain-on-exit on`, `allow-rename off`, `automatic-rename off`, `allow-set-title off`, `pane-border-status top`, `pane-border-lines heavy`.
-  - *Home window*: the same lifetime and rename options, with `pane-border-status off`. The top pane-border row is Shikiru's own extra Home chrome; the Home identity row remains, task role labels keep their border row, and tmux's user-configured status line is left alone.
+  - *Home window*: the same lifetime and rename options, with `pane-border-status off`. The top pane-border row is Shikiru's own extra Home chrome; the Home identity row remains and task role labels keep their border row. Project-session status styling is local to that session; server-wide defaults and unrelated sessions remain unchanged (§5.3).
   - A window option set at session scope reaches only the session's current window, so `remain-on-exit` in particular must be set per window: without it a dead pane disappears instead of staying for the guard (§5.2).
 - **Windows**:
   - The permanent home window is `dashboard` (`0:dashboard`), running `shikiru dash --home`. Start and session recovery identify it by its owned pane marker or command, so renaming it does not create a second Home. A restart restores its name and index. When two identified Home windows exist, recovery retains the preferred active Home and removes the duplicate without moving unrelated window identities.
@@ -94,17 +94,17 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 ### 5.3 Titles and decorations
 
 - **Titles** use the `dashboard.titles` templates. Task window names use `dashboard.titles.window` unchanged, without a Shikiru or project prefix. The packaged shell title is `Project folder · {cwd}`; an explicit title override is preserved. Fields:
-  - `task_id`, `title`, `project`, `role`, `glyph`, `agent`, `model`, `effort`
+  - `task_id`, `title`, `project`, `role`, `role_label`, `glyph`, `agent`, `model`, `effort`
   - `iteration`, `step`, `status`
   - `context`, `cost`: preformatted (`42%`, `$1.84`), `–` when the agent reports no value (04 §1)
   - `flags`: glyph-prefixed hold and state words for existing templates; `flags_text`: the same readable words without glyphs, including `operator` while a role is taken over
   - `active`, `queued`, `max_parallel`, `cwd`
 - Packaged Leader and Implementer titles use the role word and `flags_text` without role or state glyph prefixes. The `glyph` and `flags` fields retain their existing values, so an explicit custom template that uses them keeps its chosen glyphs; Shikiru does not rewrite project configuration.
 - **Decorations** follow §6.1:
-  - Task-window pane-border titles use primary text on the graphite surface. Window-status titles use the graphite surface when inactive and the selected graphite surface when current; the current window keeps its bracket and bold distinction. The formats are set on each task window, leaving global tmux styles and unrelated sessions unchanged.
+  - Project-session status uses the graphite background for the full row, including its blank fill and left/right segments. Its clock is local wall time and date with seconds; tmux refreshes the native status at one-second intervals.
+  - Home and task windows show their actual index before their existing name, including `0:dashboard`; current and inactive styles and formats are set on each project window. Task panes keep their unchanged title text in `pane_title`; border-row components use role, agent/model, effort/iteration, context/cost and recorded ownership/state fields with the §6.1 palette. Pane-border styling and its recovery apply to owned Home/task windows only, including the full title row and blank fill. Existing task windows are recognized through their recorded Shikiru state metadata; recovery does not infer ownership from a window name. Operator-created windows retain their pane-border, lifetime and rename settings. Global tmux styles and unrelated sessions remain unchanged.
   - Window options `@shk_state_color` and `@shk_state_glyph` feed the window-status formats; pane options `@shk_color` and `@shk_glyph` remain available to explicit custom formats.
-  - Shikiru leaves the status line and its inherited wall clock unchanged.
-  - `TurnMonitor` and `TaskFlow` update them on change.
+  - `TurnMonitor` and `TaskFlow` update title and state fields when their source facts change; tmux refreshes the wall clock natively.
 
 ### 5.4 Workspace shell and widgets
 

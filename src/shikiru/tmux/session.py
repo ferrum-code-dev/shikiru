@@ -6,6 +6,14 @@ import shlex
 from typing import TYPE_CHECKING
 
 from shikiru.errors import ConfigError
+from shikiru.palette import (
+    BACKGROUND_COLOR,
+    NEUTRAL_BORDER_COLOR,
+    PRIMARY_TEXT_COLOR,
+    SECONDARY_TEXT_COLOR,
+    SELECTED_SURFACE_COLOR,
+    STEEL_BLUE,
+)
 from shikiru.tmux.client import (
     FORMAT_PANE_ID,
     FORMAT_PANE_START_COMMAND,
@@ -15,6 +23,14 @@ from shikiru.tmux.client import (
     HOME_PANE_OPTION,
     HOME_PANE_OPTION_VALUE,
     exact_target,
+)
+from shikiru.tmux.decorator import (
+    HOME_WINDOW_STATUS_CURRENT_FORMAT,
+    HOME_WINDOW_STATUS_FORMAT,
+    PANE_BORDER_FORMAT,
+    WINDOW_STATE_COLOR_OPTION,
+    WINDOW_STATUS_CURRENT_FORMAT,
+    WINDOW_STATUS_FORMAT,
 )
 
 if TYPE_CHECKING:
@@ -53,6 +69,10 @@ _HOME_WINDOW_NAME_FIELD = 2
 _HOME_WINDOW_ACTIVE_FIELD = 3
 _ACTIVE_WINDOW_VALUE = "1"
 _FIELD_SEPARATOR = "\t"
+_STATUS_CLOCK_FORMAT = (
+    f"#[fg={SECONDARY_TEXT_COLOR},bg={BACKGROUND_COLOR}]%H:%M:%S %Y-%m-%d"
+    f"#[fg={PRIMARY_TEXT_COLOR},bg={BACKGROUND_COLOR}]"
+)
 _HOME_PANE_FORMAT = (
     f"{FORMAT_WINDOW_ID}{_FIELD_SEPARATOR}{FORMAT_PANE_ID}{_FIELD_SEPARATOR}"
     f"{FORMAT_WINDOW_NAME}{_FIELD_SEPARATOR}#{{window_active}}{_FIELD_SEPARATOR}"
@@ -65,20 +85,59 @@ _SESSION_SCOPED_OPTIONS: dict[str, str] = {
     "renumber-windows": "off",
     "mouse": "on",
     "set-titles": "on",
+    "status-style": f"fg={PRIMARY_TEXT_COLOR},bg={BACKGROUND_COLOR}",
+    "status-left-style": f"fg={SECONDARY_TEXT_COLOR},bg={BACKGROUND_COLOR}",
+    "status-right-style": f"fg={SECONDARY_TEXT_COLOR},bg={BACKGROUND_COLOR}",
+    "status-left": "",
+    "status-right": _STATUS_CLOCK_FORMAT,
+    "status-interval": "1",
 }
 
-_WINDOW_SCOPED_OPTIONS: dict[str, str] = {
+_OWNED_WINDOW_BEHAVIOR_OPTIONS: dict[str, str] = {
     "remain-on-exit": "on",
     "allow-rename": "off",
     "automatic-rename": "off",
     "allow-set-title": "off",
-    "pane-border-status": "top",
-    "pane-border-lines": "heavy",
 }
 
-_HOME_WINDOW_SCOPED_OPTIONS: dict[str, str] = {
-    **_WINDOW_SCOPED_OPTIONS,
+_PANE_TITLE_OPTIONS: dict[str, str] = {
+    "pane-border-status": "top",
+    "pane-border-lines": "heavy",
+    "pane-border-style": f"fg={NEUTRAL_BORDER_COLOR},bg={BACKGROUND_COLOR}",
+    "pane-active-border-style": f"fg={STEEL_BLUE},bg={BACKGROUND_COLOR}",
+    "pane-border-format": PANE_BORDER_FORMAT,
+}
+
+_WINDOW_STATUS_OPTIONS: dict[str, str] = {
+    "window-status-style": f"fg={SECONDARY_TEXT_COLOR},bg={BACKGROUND_COLOR}",
+    "window-status-current-style": f"fg={PRIMARY_TEXT_COLOR},bg={SELECTED_SURFACE_COLOR},bold",
+    "window-status-format": WINDOW_STATUS_FORMAT,
+    "window-status-current-format": WINDOW_STATUS_CURRENT_FORMAT,
+}
+
+_TASK_WINDOW_OPTIONS: dict[str, str] = {
+    **_OWNED_WINDOW_BEHAVIOR_OPTIONS,
+    **_PANE_TITLE_OPTIONS,
+    **_WINDOW_STATUS_OPTIONS,
+}
+
+_TASK_WINDOW_RECOVERY_OPTIONS: dict[str, str] = {
+    **_OWNED_WINDOW_BEHAVIOR_OPTIONS,
+    **_PANE_TITLE_OPTIONS,
+}
+
+_HOME_WINDOW_OPTIONS: dict[str, str] = {
+    **_TASK_WINDOW_OPTIONS,
     "pane-border-status": "off",
+    "window-status-format": HOME_WINDOW_STATUS_FORMAT,
+    "window-status-current-format": HOME_WINDOW_STATUS_CURRENT_FORMAT,
+}
+
+_HOME_WINDOW_RECOVERY_OPTIONS: dict[str, str] = {
+    **_TASK_WINDOW_RECOVERY_OPTIONS,
+    "pane-border-status": "off",
+    "window-status-format": HOME_WINDOW_STATUS_FORMAT,
+    "window-status-current-format": HOME_WINDOW_STATUS_CURRENT_FORMAT,
 }
 
 
@@ -151,9 +210,10 @@ class SessionView:
         for option, value in _SESSION_SCOPED_OPTIONS.items():
             await self._tmux.set_session_option(target, option, value)
         await self._tmux.set_session_option(target, "set-titles-string", project_name)
-        await self._ensure_home_window(
+        home_window = await self._ensure_home_window(
             target, project_dir, home_command, initial_pane=created_home_pane
         )
+        await self._apply_session_window_options(target, home_window)
         return target
 
     async def create_task_window(self, session_target: str, *, window_name: str, cwd: Path) -> str:
@@ -161,7 +221,7 @@ class SessionView:
         base_pane = await self._tmux.new_window(
             session_target, name=window_name, cwd=cwd, detached=True
         )
-        await self._apply_window_options(await self._tmux.window_id(base_pane))
+        await self._apply_options(await self._tmux.window_id(base_pane), _TASK_WINDOW_OPTIONS)
         return base_pane
 
     async def close_task_window(self, window_target: str) -> None:
@@ -182,7 +242,7 @@ class SessionView:
         home_command: Sequence[str],
         *,
         initial_pane: str | None,
-    ) -> None:
+    ) -> str:
         if initial_pane is not None:
             window_target = await self._tmux.window_id(initial_pane)
             await self._mark_home_pane(initial_pane)
@@ -202,9 +262,21 @@ class SessionView:
             await self._mark_home_pane(pane_id)
         if await self._tmux.display(window_target, FORMAT_WINDOW_NAME) != HOME_WINDOW_NAME:
             await self._tmux.rename_window(window_target, HOME_WINDOW_NAME)
-        await self._apply_home_window_options(window_target)
         await self._ensure_home_index(target, window_target)
         await self._remove_duplicate_home_windows(target, window_target)
+        return window_target
+
+    async def _apply_session_window_options(self, target: str, home_window: str) -> None:
+        for window_target in await self._tmux.list_session_windows(target):
+            await self._apply_options(window_target, _WINDOW_STATUS_OPTIONS)
+            if window_target == home_window:
+                await self._apply_options(window_target, _HOME_WINDOW_RECOVERY_OPTIONS)
+            elif await self._is_task_window(window_target):
+                await self._apply_options(window_target, _TASK_WINDOW_RECOVERY_OPTIONS)
+
+    async def _is_task_window(self, window_target: str) -> bool:
+        state_color_format = f"#{{{WINDOW_STATE_COLOR_OPTION}}}"
+        return bool(await self._tmux.display(window_target, state_color_format))
 
     async def _ensure_home_index(self, target: str, home_window: str) -> None:
         if await self._tmux.display(home_window, FORMAT_WINDOW_INDEX) == _HOME_WINDOW_INDEX:
@@ -231,12 +303,8 @@ class SessionView:
             if duplicate != home_window:
                 await self._tmux.kill_window(duplicate)
 
-    async def _apply_window_options(self, window_target: str) -> None:
-        for option, value in _WINDOW_SCOPED_OPTIONS.items():
-            await self._tmux.set_window_option(window_target, option, value)
-
-    async def _apply_home_window_options(self, window_target: str) -> None:
-        for option, value in _HOME_WINDOW_SCOPED_OPTIONS.items():
+    async def _apply_options(self, window_target: str, options: dict[str, str]) -> None:
+        for option, value in options.items():
             await self._tmux.set_window_option(window_target, option, value)
 
 
