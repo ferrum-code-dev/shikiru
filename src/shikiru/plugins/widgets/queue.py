@@ -415,6 +415,7 @@ class QueuePanel(Vertical):
         self._selection_cleared = False
         self._loaded_page_count = 1
         self._view: TaskBrowserView | None = None
+        self._rendered: tuple[TaskBrowserView, str | None] | None = None
         self._refreshing = False
         self._refresh_lock = asyncio.Lock()
         self._list_render_versions: dict[str, int] = {}
@@ -510,22 +511,20 @@ class QueuePanel(Vertical):
             or not cast("App[object]", self.app).is_running
         ):
             return
-        await self._refresh()
+        await self._refresh(motion=True)
         if not self._render_targets_are_attached():
             return
-        list_views = self._browser_list_views()
-        if not self._widget_context.animations or not self._widget_context.views.engine_up():
-            self._status_bright = False
-            for list_view in list_views:
-                for item in list_view.children:
-                    if isinstance(item, _BrowserListItem):
-                        item.update_status_motion(False)
-            return
-        self._status_bright = not self._status_bright
-        for list_view in list_views:
+        animated = self._widget_context.animations and self._widget_context.views.engine_up()
+        status_bright = not self._status_bright if animated else False
+        if animated or self._status_bright:
+            self._apply_status_motion(status_bright)
+
+    def _apply_status_motion(self, status_bright: bool) -> None:
+        self._status_bright = status_bright
+        for list_view in self._browser_list_views():
             for item in list_view.children:
                 if isinstance(item, _BrowserListItem):
-                    item.update_status_motion(self._status_bright)
+                    item.update_status_motion(status_bright)
 
     async def _refresh_if_current(self) -> None:
         if widget_is_current(self):
@@ -774,6 +773,7 @@ class QueuePanel(Vertical):
         task_filter: TaskBrowserFilter | None = None,
         search: str | None = None,
         reset_pages: bool = False,
+        motion: bool = False,
     ) -> None:
         async with self._refresh_lock:
             if not widget_is_current(self):
@@ -800,10 +800,15 @@ class QueuePanel(Vertical):
                     callback(self._selected_task_id)
                 if not self._render_targets_are_attached():
                     return
+                rendering = (view, self._selected_task_id)
+                if motion and rendering == self._rendered:
+                    return
+                self._rendered = None
                 await self._sync_task_lists(view)
                 if not self._render_targets_are_attached():
                     return
                 self._render_view(view)
+                self._rendered = rendering
             finally:
                 self._refreshing = False
 

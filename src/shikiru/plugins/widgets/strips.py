@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from textual.widget import Widget
 
     from shikiru.dashboard.contract import WidgetContext
+    from shikiru.ui.strip import TaskStripData
 
 
 class StripsPanel(Static):
@@ -28,6 +29,7 @@ class StripsPanel(Static):
         """Hold `context`; nothing here does I/O until `on_mount`."""
         super().__init__()
         self._widget_context = context
+        self._rendered: tuple[list[TaskStripData], int] | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
 
     async def on_mount(self) -> None:
@@ -43,7 +45,7 @@ class StripsPanel(Static):
 
     async def _refresh_while_active(self) -> None:
         if widget_is_current(self) and cast("App[None]", self.app).is_running:
-            await self._refresh()
+            await self._refresh(motion=True)
 
     async def _refresh_if_attached(self) -> None:
         if widget_is_attached(self):
@@ -52,11 +54,17 @@ class StripsPanel(Static):
     async def on_resize(self, event: events.Resize) -> None:
         """Re-render at the new width: a narrower pane switches every strip to its one-line form."""
         del event
-        await self._refresh_while_active()
+        if widget_is_current(self) and cast("App[None]", self.app).is_running:
+            await self._refresh()
 
-    async def _refresh(self) -> None:
+    async def _refresh(self, *, motion: bool = False) -> None:
         width = self.size.width or STRIP_WIDE_MIN_COLUMNS
-        strips = [TaskStrip(data).render(width) for data in self._widget_context.views.strips()]
+        views = self._widget_context.views.strips()
+        rendering = (views, width)
+        if motion and rendering == self._rendered:
+            return
+        self._rendered = rendering
+        strips = [TaskStrip(data).render(width) for data in views]
         if not strips:
             self.update("no active tasks")
             return

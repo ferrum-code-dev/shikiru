@@ -228,6 +228,7 @@ class HeaderPanel(Static):
         """Hold `context`; nothing here does I/O until `on_mount`."""
         super().__init__(id="header")
         self._widget_context = context
+        self._rendered: tuple[HeaderView, WorkspaceSummaryView, bool] | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
 
     async def on_mount(self) -> None:
@@ -241,7 +242,7 @@ class HeaderPanel(Static):
             self._remove_motion_callback()
             self._remove_motion_callback = None
 
-    async def _refresh(self) -> None:
+    async def _refresh(self, *, motion: bool = False) -> None:
         view = await self._widget_context.views.header()
         if not widget_is_attached(self):
             return
@@ -250,15 +251,20 @@ class HeaderPanel(Static):
             self._widget_context.placement is not WidgetPlacement.IDENTITY
             or not self._widget_context.home_attention_present
         )
+        rendering = (view, summary, include_alerts)
+        if motion and rendering == self._rendered:
+            return
+        self._rendered = rendering
         self.update(_HeaderContent(view, summary, include_alerts))
 
     async def on_resize(self, event: events.Resize) -> None:
         del event
-        await self._refresh_if_active()
+        if widget_is_active(self):
+            await self._refresh()
 
     async def _refresh_if_active(self) -> None:
         if widget_is_active(self):
-            await self._refresh()
+            await self._refresh(motion=True)
 
     async def _refresh_if_attached(self) -> None:
         if widget_is_attached(self):

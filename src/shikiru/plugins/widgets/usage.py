@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from textual.app import App
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import AgentUsageView, WidgetContext
+    from shikiru.dashboard.contract import AgentUsageView, RecordedUsageView, WidgetContext
 
 UNKNOWN_VALUE = "\N{EN DASH}"
 ENTER_KEY = "enter"
@@ -48,6 +48,7 @@ class UsagePanel(Static):
         """Hold `context`; usage refreshes after state changes and for live countdowns."""
         super().__init__(id="usage")
         self._widget_context = context
+        self._rendered: tuple[RecordedUsageView, list[AgentUsageView]] | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
 
     async def on_mount(self) -> None:
@@ -78,7 +79,7 @@ class UsagePanel(Static):
             await self._widget_context.open_contextual_view("usage")
             event.stop()
 
-    async def _refresh(self) -> None:
+    async def _refresh(self, *, motion: bool = False) -> None:
         if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
             project_usage = self._widget_context.views.project_usage()
             self.update(ProjectUsageMetric(project_usage, "Project").render(home=True))
@@ -87,6 +88,10 @@ class UsagePanel(Static):
         lines: list[RenderableType] = []
         if self._widget_context.focus_task is None:
             project_usage = self._widget_context.views.project_usage()
+            rendering = (project_usage, usage)
+            if motion and rendering == self._rendered:
+                return
+            self._rendered = rendering
             lines.extend(
                 (
                     ProjectUsageMetric(project_usage, "Project").render(),
@@ -117,9 +122,9 @@ class UsagePanel(Static):
             lines.append(Text("No runs or quota windows recorded."))
         self.update(Group(*lines))
 
-    async def _refresh_if_active(self) -> None:
+    async def _refresh_if_active(self, *, motion: bool = False) -> None:
         if widget_is_current(self) and cast("App[None]", self.app).is_running:
-            await self._refresh()
+            await self._refresh(motion=motion)
 
     async def _refresh_if_attached(self) -> None:
         if widget_is_attached(self):
@@ -127,7 +132,7 @@ class UsagePanel(Static):
 
     async def _refresh_on_motion(self) -> None:
         if self._widget_context.focus_task is None:
-            await self._refresh_if_active()
+            await self._refresh_if_active(motion=True)
 
 
 class UsageWidget:
