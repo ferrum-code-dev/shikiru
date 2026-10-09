@@ -128,7 +128,8 @@ class _BrowserListItem(ListItem):
             if focus_layout
             else _row_text(row)
         )
-        super().__init__(Static(render, markup=False), id=f"task-row-{row.task_id}")
+        self._body = Static(render, markup=False)
+        super().__init__(self._body, id=f"task-row-{row.task_id}")
         self.task_id = row.task_id
         self.row = row
         self.focus_layout = focus_layout
@@ -155,7 +156,7 @@ class _BrowserListItem(ListItem):
             if self.focus_layout
             else _row_text(self.row)
         )
-        self.query_one(Static).update(render)
+        self._body.update(render)
 
 
 class _TaskBrowserListView(ListView):
@@ -324,6 +325,10 @@ def _focus_row_details(
     return details
 
 
+def _all_attached(widgets: Sequence[Widget]) -> bool:
+    return all(widget.is_attached for widget in widgets)
+
+
 class QueuePanel(Vertical):
     """Render task search, filters, selection and a compact retained task preview."""
 
@@ -415,6 +420,36 @@ class QueuePanel(Vertical):
         self._list_render_versions: dict[str, int] = {}
         self._status_bright = False
         self._remove_motion_callback: Callable[[], None] | None = None
+        self._clear_button = Button("Clear", id=CLEAR_BUTTON_ID)
+        self._filter_buttons = {
+            task_filter: Button(label, id=button_id)
+            for task_filter, button_id, label in FILTER_BUTTONS
+        }
+        self._count = Static("", id=COUNT_ID, markup=False)
+        self._empty = Static("", id=EMPTY_ID, markup=False)
+        self._family_context = Static("", id=FAMILY_CONTEXT_ID, markup=False)
+        self._task_list = _TaskBrowserListView(
+            widget_id=TASK_LIST_ID,
+            focus_layout=self._focus_layout,
+            move_selection=self._move_selection,
+            select_task=self.select_task,
+            activate_attention_decision=context.activate_attention_decision,
+        )
+        self._recent_heading = Static(TASK_MARKER_RECENT, id=TASK_RECENT_HEADING_ID, markup=False)
+        self._recent_list = _TaskBrowserListView(
+            widget_id=TASK_RECENT_LIST_ID,
+            focus_layout=self._focus_layout,
+            move_selection=self._move_selection,
+            select_task=self.select_task,
+            activate_attention_decision=context.activate_attention_decision,
+        )
+        self._more_button = Button("Load more", id=MORE_BUTTON_ID)
+        self._preview = Static(
+            "" if self._focus_layout else "Select a task to keep its context here.",
+            id=TASK_PREVIEW_ID,
+            markup=False,
+        )
+        self._reveal_button = Button("Reveal selected task", id=REVEAL_BUTTON_ID)
 
     def compose(self) -> ComposeResult:
         search = Input(placeholder="Search task ID or title", id=SEARCH_INPUT_ID)
@@ -424,53 +459,31 @@ class QueuePanel(Vertical):
         else:
             with Horizontal(id="task-browser-tools"):
                 yield search
-                yield Button("Clear", id=CLEAR_BUTTON_ID)
+                yield self._clear_button
             with HorizontalScroll(id="task-browser-filters"):
-                for _, button_id, label in FILTER_BUTTONS:
-                    yield Button(label, id=button_id)
-        yield Static("", id=COUNT_ID, markup=False)
-        yield Static("", id=EMPTY_ID, markup=False)
-        yield Static("", id=FAMILY_CONTEXT_ID, markup=False)
-        task_list = _TaskBrowserListView(
-            widget_id=TASK_LIST_ID,
-            focus_layout=self._focus_layout,
-            move_selection=self._move_selection,
-            select_task=self.select_task,
-            activate_attention_decision=self._widget_context.activate_attention_decision,
-        )
+                yield from self._filter_buttons.values()
+        yield self._count
+        yield self._empty
+        yield self._family_context
         if self._focus_layout:
-            task_list.add_class(FOCUS_LIST_CLASS)
-        yield task_list
-        recent_heading = Static(TASK_MARKER_RECENT, id=TASK_RECENT_HEADING_ID, markup=False)
-        recent_heading.display = False
-        recent_list = _TaskBrowserListView(
-            widget_id=TASK_RECENT_LIST_ID,
-            focus_layout=self._focus_layout,
-            move_selection=self._move_selection,
-            select_task=self.select_task,
-            activate_attention_decision=self._widget_context.activate_attention_decision,
-        )
-        recent_list.styles.max_height = RECENT_BODY_MAX_ROWS
+            self._task_list.add_class(FOCUS_LIST_CLASS)
+        yield self._task_list
+        self._recent_heading.display = False
+        self._recent_list.styles.max_height = RECENT_BODY_MAX_ROWS
         if self._focus_layout:
-            recent_list.add_class(FOCUS_LIST_CLASS)
-        recent_list.display = False
-        yield recent_heading
-        yield recent_list
-        more = Button("Load more", id=MORE_BUTTON_ID)
+            self._recent_list.add_class(FOCUS_LIST_CLASS)
+        self._recent_list.display = False
+        yield self._recent_heading
+        yield self._recent_list
         if self._focus_layout:
-            more.display = False
-            yield more
-            preview = Static("", id=TASK_PREVIEW_ID, markup=False)
-            preview.display = False
-            yield preview
+            self._more_button.display = False
+            yield self._more_button
+            self._preview.display = False
+            yield self._preview
         else:
-            yield more
-            yield Static(
-                "Select a task to keep its context here.",
-                id=TASK_PREVIEW_ID,
-                markup=False,
-            )
-            yield Button("Reveal selected task", id=REVEAL_BUTTON_ID)
+            yield self._more_button
+            yield self._preview
+            yield self._reveal_button
 
     async def on_mount(self) -> None:
         self._sync_task_row_outline()
@@ -539,28 +552,22 @@ class QueuePanel(Vertical):
     def _sync_focus_task_list_height(self) -> None:
         if not self._focus_layout or not self.is_mounted:
             return
-        active_list = self.query(f"#{TASK_LIST_ID}")
-        recent_heading = self.query(f"#{TASK_RECENT_HEADING_ID}")
-        recent_list = self.query(f"#{TASK_RECENT_LIST_ID}")
-        if not active_list or not recent_heading or not recent_list:
+        if not _all_attached((self._task_list, self._recent_heading, self._recent_list)):
             return
-        active_list_view = cast("ListView", active_list.first())
-        recent_heading_widget = cast("Static", recent_heading.first())
-        recent_list_view = cast("ListView", recent_list.first())
         focus_main = next(
             (ancestor for ancestor in self.ancestors if ancestor.id == FOCUS_MAIN_CONTAINER_ID),
             None,
         )
         if focus_main is None or not focus_main.has_class("wide"):
-            active_list_view.styles.max_height = None
+            self._task_list.styles.max_height = None
             return
         recent_section_height = 0
-        if recent_list_view.display:
+        if self._recent_list.display:
             recent_section_height = max(
                 RECENT_SECTION_MIN_ROWS,
-                recent_heading_widget.region.height + recent_list_view.region.height,
+                self._recent_heading.region.height + self._recent_list.region.height,
             )
-        active_list_view.styles.max_height = max(
+        self._task_list.styles.max_height = max(
             TASK_LIST_MIN_ROWS,
             self.region.height - BROWSER_COUNT_RESERVE_ROWS - recent_section_height,
         )
@@ -707,12 +714,9 @@ class QueuePanel(Vertical):
         self._render_view(self._view)
 
     def _browser_list_views(self) -> tuple[ListView, ...]:
-        list_views = tuple(
-            list_view
-            for list_id in (TASK_LIST_ID, TASK_RECENT_LIST_ID)
-            if (list_view := self.query(f"#{list_id}"))
+        return tuple(
+            list_view for list_view in (self._task_list, self._recent_list) if list_view.is_attached
         )
-        return tuple(cast("ListView", list_view.first()) for list_view in list_views)
 
     def clear_selection(self) -> None:
         """Clear the Home inspector until an operator selects another task."""
@@ -883,9 +887,9 @@ class QueuePanel(Vertical):
         )
         recent_ids = {row.task_id for row in recent_rows}
         active_rows = tuple(row for row in view.rows if row.task_id not in recent_ids)
-        active_list = self.query_one(f"#{TASK_LIST_ID}", ListView)
-        recent_list = self.query_one(f"#{TASK_RECENT_LIST_ID}", ListView)
-        recent_heading = self.query_one(f"#{TASK_RECENT_HEADING_ID}", Static)
+        active_list = self._task_list
+        recent_list = self._recent_list
+        recent_heading = self._recent_heading
         active_list.display = bool(active_rows) or not self._focus_layout
         recent_heading.display = bool(recent_rows)
         recent_list.display = bool(recent_rows)
@@ -1097,14 +1101,14 @@ class QueuePanel(Vertical):
             return
         self._render_count(view)
         if not self._focus_layout:
-            self.query_one(f"#{CLEAR_BUTTON_ID}", Button).disabled = not bool(view.search)
-            for task_filter, button_id, label in FILTER_BUTTONS:
-                button = self.query_one(f"#{button_id}", Button)
+            self._clear_button.disabled = not bool(view.search)
+            for task_filter, button in self._filter_buttons.items():
+                label = FILTER_LABELS[task_filter]
                 button.label = f"> {label}" if task_filter is view.filter else label
-        more = self.query_one(f"#{MORE_BUTTON_ID}", Button)
+        more = self._more_button
         more.disabled = not view.has_more
         more.display = view.has_more if self._focus_layout else True
-        empty = self.query_one(f"#{EMPTY_ID}", Static)
+        empty = self._empty
         empty.display = not view.rows
         if view.rows:
             empty.update("")
@@ -1114,7 +1118,7 @@ class QueuePanel(Vertical):
             empty.update(f"No tasks match {view.search!r} in {FILTER_LABELS[view.filter]}.")
         else:
             empty.update(f"No {FILTER_LABELS[view.filter].lower()} tasks.")
-        context = self.query_one(f"#{FAMILY_CONTEXT_ID}", Static)
+        context = self._family_context
         context.display = bool(view.ancestor_context)
         if view.ancestor_context:
             context.update(
@@ -1131,30 +1135,26 @@ class QueuePanel(Vertical):
             self._render_preview(view)
 
     def _render_targets_are_attached(self) -> bool:
-        target_ids = (
-            COUNT_ID,
-            EMPTY_ID,
-            FAMILY_CONTEXT_ID,
-            MORE_BUTTON_ID,
-            TASK_LIST_ID,
-            TASK_RECENT_HEADING_ID,
-            TASK_RECENT_LIST_ID,
+        return widget_is_current(self) and _all_attached(self._render_targets())
+
+    def _render_targets(self) -> tuple[Widget, ...]:
+        shared = (
+            self._count,
+            self._empty,
+            self._family_context,
+            self._more_button,
+            self._task_list,
+            self._recent_heading,
+            self._recent_list,
+            self._preview,
         )
         if self._focus_layout:
-            target_ids = (
-                *target_ids,
-                TASK_PREVIEW_ID,
-            )
-        else:
-            target_ids = (
-                *target_ids,
-                TASK_PREVIEW_ID,
-                REVEAL_BUTTON_ID,
-                CLEAR_BUTTON_ID,
-                *(button_id for _, button_id, _ in FILTER_BUTTONS),
-            )
-        return widget_is_current(self) and all(
-            self.query(f"#{target_id}") for target_id in target_ids
+            return shared
+        return (
+            *shared,
+            self._reveal_button,
+            self._clear_button,
+            *self._filter_buttons.values(),
         )
 
     def _list_view_is_current(self, list_view: ListView) -> bool:
@@ -1179,11 +1179,11 @@ class QueuePanel(Vertical):
                 count += f" · Search: {view.search}"
             if view.selected_task_missing and view.selected_task is not None:
                 count += f" · selected {view.selected_task.task_id} remains outside this view"
-        self.query_one(f"#{COUNT_ID}", Static).update(count)
+        self._count.update(count)
 
     def _render_preview(self, view: TaskBrowserView) -> None:
-        preview = self.query_one(f"#{TASK_PREVIEW_ID}", Static)
-        reveal = self.query_one(f"#{REVEAL_BUTTON_ID}", Button)
+        preview = self._preview
+        reveal = self._reveal_button
         selected = view.selected_task
         if view.selected_task_missing:
             preview.update(f"{self._selected_task_id} is no longer available.")
