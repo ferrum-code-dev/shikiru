@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from textual.containers import Vertical
+from textual.css.scalar import Unit
+from textual.geometry import Size
+
+from shikiru.ui.screen import widget_is_attached
+
 if TYPE_CHECKING:
+    from textual import events
     from textual.widget import Widget
 
 POPUP_FRAME_CLASS = "popup-frame"
@@ -12,6 +19,161 @@ POPUP_CLOSE_CLASS = "popup-close-control"
 POPUP_RULE_CLASS = "popup-rule"
 POPUP_BODY_CLASS = "popup-body"
 POPUP_SECONDARY_CLASS = "popup-secondary"
+
+
+class PopupFrame(Vertical):
+    """Keep a content-sized popup frame stable when its screen is resized."""
+
+    def __init__(
+        self,
+        *children: Widget,
+        name: str | None = None,
+        widget_id: str | None = None,
+        classes: str | None = None,
+        disabled: bool = False,
+        markup: bool = True,
+    ) -> None:
+        super().__init__(
+            *children,
+            name=name,
+            id=widget_id,
+            classes=classes,
+            disabled=disabled,
+            markup=markup,
+        )
+        self._content_ready = False
+        self._preferred_size: Size | None = None
+
+    def content_ready(self) -> None:
+        """Mark meaningful initial content as ready for preferred-size capture."""
+        if not self.is_mounted or not widget_is_attached(self):
+            return
+        self._content_ready = True
+        self.call_after_refresh(self.update_preferred_size)
+
+    def reset_preferred_size(self) -> None:
+        """Forget the prior measurement when a popup changes content purpose."""
+        self._preferred_size = None
+        self._content_ready = False
+        self.remove_class("stable")
+        self.styles.width = "auto"
+        self.styles.height = "auto"
+
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        self.call_after_refresh(self.update_preferred_size)
+
+    def update_preferred_size(self) -> None:
+        """Capture an unclamped outer size once, then clamp it to the current screen."""
+        if not self.is_mounted or not widget_is_attached(self):
+            return
+        viewport = self.screen.size
+        if self._preferred_size is None:
+            self._remember_preferred_size()
+        if self._preferred_size is not None:
+            self._apply_preferred_size(viewport)
+
+    def _remember_preferred_size(self) -> None:
+        if not self._content_ready:
+            return
+        height = self.styles.height
+        children = tuple(self.children)
+        viewport = self.screen.size
+        natural_width = (
+            max(
+                (child.virtual_size.width + child.styles.margin.width for child in children),
+                default=0,
+            )
+            + self.styles.gutter.width
+        )
+        max_width = self.styles.max_width
+        max_width_cells = max_width.cells if max_width is not None else None
+        preferred_width = max(
+            self.outer_size.width,
+            max_width_cells if max_width_cells is not None else natural_width,
+        )
+        relative_height = height is not None and height.unit in {
+            Unit.PERCENT,
+            Unit.HEIGHT,
+            Unit.VIEW_HEIGHT,
+        }
+        height_clamped = self.outer_size.height >= viewport.height - self.styles.margin.height
+        if relative_height and not height_clamped:
+            natural_height = self.outer_size.height
+        elif relative_height:
+            natural_height = sum(_preferred_child_height(child) for child in children)
+            natural_height += self.styles.gutter.height
+        else:
+            content_width = max(0, preferred_width - self.styles.gutter.width)
+            natural_height = sum(
+                _preferred_child_height_at_width(child, viewport, content_width)
+                for child in children
+            )
+            natural_height += self.styles.gutter.height
+        preferred_height = (
+            natural_height
+            if relative_height and height_clamped
+            else max(self.outer_size.height, natural_height)
+        )
+        self._preferred_size = Size(
+            preferred_width,
+            preferred_height,
+        )
+        self.add_class("stable")
+
+    def _apply_preferred_size(self, viewport: Size) -> None:
+        if self._preferred_size is None:
+            return
+        margin = self.styles.margin
+        minimum_height = sum(_minimum_child_height(child) for child in self.children)
+        minimum_height += self.styles.gutter.height
+        self.styles.width = max(
+            1,
+            min(self._preferred_size.width, viewport.width - margin.width),
+        )
+        self.styles.height = max(
+            1,
+            min(max(self._preferred_size.height, minimum_height), viewport.height - margin.height),
+        )
+
+
+def _preferred_child_height(child: Widget) -> int:
+    if not child.display:
+        height = child.styles.height
+        fixed_height = height.cells if height is not None else None
+        return (fixed_height or 0) + child.styles.margin.height
+    height = child.styles.height
+    fixed_height = height.cells if height is not None else None
+    return (
+        max(child.outer_size.height, child.virtual_size.height, fixed_height or 0)
+        + child.styles.margin.height
+    )
+
+
+def _preferred_child_height_at_width(child: Widget, viewport: Size, width: int) -> int:
+    if not child.display:
+        return _preferred_child_height(child)
+    content_width = max(0, width - child.styles.gutter.width)
+    content_height = child.get_content_height(Size(content_width, 0), viewport, content_width)
+    height = child.styles.height
+    fixed_height = height.cells if height is not None else None
+    return (
+        max(
+            child.outer_size.height,
+            fixed_height or 0,
+            content_height + child.styles.gutter.height,
+        )
+        + child.styles.margin.height
+    )
+
+
+def _minimum_child_height(child: Widget) -> int:
+    if not child.display:
+        return 0
+    height = child.styles.height
+    fixed_height = height.cells if height is not None else None
+    return max(child.outer_size.height, fixed_height or 0) + child.styles.margin.height
+
 
 POPUP_BUTTON_CSS = """
 .popup-frame Button.-style-default {
@@ -74,6 +236,7 @@ POPUP_CSS = (
 .popup-body {
     height: auto; max-height: 1fr; min-height: 0; padding: 0;
 }
+.popup-frame.stable > .popup-body { height: 1fr; }
 .popup-body, .popup-frame #task-detail-body {
     overflow-x: hidden; overflow-y: auto;
     scrollbar-size-horizontal: 0; scrollbar-size-vertical: 1;

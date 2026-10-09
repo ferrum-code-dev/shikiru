@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Label, Rule, Static
 
@@ -18,6 +18,7 @@ from shikiru.ui.popup import (
     POPUP_HEADER_CLASS,
     POPUP_RULE_CLASS,
     POPUP_TITLE_CLASS,
+    PopupFrame,
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached
@@ -39,7 +40,7 @@ class DialogueTextScreen(ModalScreen[None]):
     DEFAULT_CSS = (
         POPUP_CSS
         + """
-    #dialogue-text-scroll { height: auto; max-height: 1fr; min-height: 0; }
+    #dialogue-text-scroll { max-height: 1fr; min-height: 0; }
     #dialogue-full-text {
         background: $surface;
         color: $foreground;
@@ -55,7 +56,7 @@ class DialogueTextScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         """Render the complete bubble text in a scrollable modal."""
-        with Vertical(id="dialogue-text-frame", classes=POPUP_FRAME_CLASS):
+        with PopupFrame(widget_id="dialogue-text-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id="dialogue-text-header", classes=POPUP_HEADER_CLASS):
                 yield Label("Dialogue", id="dialogue-text-title", classes=POPUP_TITLE_CLASS)
                 yield Button(
@@ -66,6 +67,9 @@ class DialogueTextScreen(ModalScreen[None]):
             yield Rule(classes=POPUP_RULE_CLASS)
             with VerticalScroll(id="dialogue-text-scroll", classes=POPUP_BODY_CLASS):
                 yield Static(self._text, markup=False, id="dialogue-full-text")
+
+    def on_mount(self) -> None:
+        self.call_after_refresh(self.query_one("#dialogue-text-frame", PopupFrame).content_ready)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == _DIALOGUE_TEXT_CLOSE_BUTTON:

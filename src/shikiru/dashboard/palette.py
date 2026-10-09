@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import TYPE_CHECKING, cast, get_args
 
-from rich.cells import cell_len
 from rich.text import Text
 from textual.app import App
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -47,9 +46,10 @@ from shikiru.ui.popup import (
     POPUP_HEADER_CLASS,
     POPUP_RULE_CLASS,
     POPUP_TITLE_CLASS,
+    PopupFrame,
     prepare_popup,
 )
-from shikiru.ui.screen import widget_is_on_screen
+from shikiru.ui.screen import widget_is_attached, widget_is_on_screen
 from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
 
@@ -245,6 +245,7 @@ _TASK_PALETTE_ROUTES = {
 _PALETTE_ESCAPE_KEY = "escape"
 _PALETTE_SHORT_PANE_MAX_ROWS = 18
 _PALETTE_SHORT_PANE_MAX_COLUMNS = 40
+_PALETTE_CONTEXT_TITLE_SHORT_LABEL_MAX_COLUMNS = 48
 _PALETTE_TINY_PANE_MAX_ROWS = 8
 _PALETTE_SHORT_OVERLAY_MAX_ROWS = 20
 _PALETTE_SHORT_OVERLAY_MAX_COLUMNS = 48
@@ -356,7 +357,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         POPUP_CSS
         + """
     #palette-frame.tiny { margin: 0; padding: 0 1; }
-    #palette-menu { height: auto; max-height: 1fr; min-height: 0; }
+    #palette-menu { max-height: 1fr; min-height: 0; }
     #palette-menu-primary { height: auto; }
     #palette-menu-context { height: 1; color: $secondary-text; }
     #palette-close {
@@ -384,7 +385,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         color: $primary-text; text-style: reverse;
     }
     #palette-form {
-        height: auto; max-height: 1fr; min-height: 0; margin-top: 0; padding-top: 0;
+        max-height: 1fr; min-height: 0; margin-top: 0; padding-top: 0;
         border-top: none;
     }
     #field-palette-escalation-summary { height: auto; }
@@ -492,7 +493,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
 
     def compose(self) -> ComposeResult:
         """Show one compact form with fields enabled for the selected action."""
-        with Vertical(id="palette-frame", classes=POPUP_FRAME_CLASS):
+        with PopupFrame(widget_id="palette-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id="palette-heading", classes=POPUP_HEADER_CLASS):
                 yield Label("Actions", id="palette-title", classes=POPUP_TITLE_CLASS)
                 yield Button(
@@ -678,13 +679,14 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             parent = parent.parent
 
     def on_resize(self, event: events.Resize) -> None:
-        if not self.is_mounted:
+        if not self.is_mounted or not widget_is_attached(self):
             return
         form = self.query_one("#palette-form", VerticalScroll)
         scroll_y = form.scroll_y
         focused = cast("App[None]", self.app).focused
         self._set_text_area_heights(event.size.width, event.size.height)
         self._show_menu(self._menu_visible)
+        self.call_after_refresh(self.update_popup_geometry)
         self.call_after_refresh(self._restore_form_layout, scroll_y, focused)
 
     async def on_mount(self) -> None:
@@ -695,6 +697,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._initialize_form_state()
         self._refresh_action_availability()
         self._show_menu(self._menu_visible)
+        self.call_after_refresh(self.query_one("#palette-frame", PopupFrame).content_ready)
         if self._menu_visible:
             self.call_after_refresh(self._focus_first_menu_action)
         elif self._contextual_palette:
@@ -800,7 +803,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         ).value = _EXPORT_SIGNALS_EXCLUDE
 
     def _restore_form_layout(self, scroll_y: float, focused: Widget | None) -> None:
-        if not self.is_mounted:
+        if not self.is_mounted or not widget_is_attached(self):
             return
         form = self.query_one("#palette-form", VerticalScroll)
         if focused is not None and widget_is_on_screen(focused, self):
@@ -971,6 +974,10 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self.call_after_refresh(self._focus_first_menu_action)
 
     def _show_menu(self, visible: bool) -> None:
+        state_changed = visible != self._menu_visible
+        frame = self.query_one("#palette-frame", PopupFrame)
+        if state_changed:
+            frame.reset_preferred_size()
         self._menu_visible = visible
         menu = self.query_one(f"#{_PALETTE_MENU_ID}", VerticalScroll)
         form = self.query_one(f"#{_PALETTE_FORM_ID}", VerticalScroll)
@@ -985,7 +992,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             and self.size.height <= _PALETTE_SHORT_OVERLAY_MAX_ROWS
             and self.size.width <= _PALETTE_SHORT_OVERLAY_MAX_COLUMNS
         )
-        frame = self.query_one("#palette-frame")
         frame.styles.max_height = max(
             1,
             self.size.height - (0 if tiny_pane else _PALETTE_FRAME_VERTICAL_MARGIN_ROWS),
@@ -1052,9 +1058,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self.call_after_refresh(self._refresh_context_form_title)
         self.call_after_refresh(self._constrain_menu_to_frame)
         self._refresh_context_menu()
+        if state_changed:
+            self.call_after_refresh(frame.content_ready)
 
     def _constrain_menu_to_frame(self) -> None:
-        if not self.is_mounted or not self._menu_visible:
+        if not self.is_mounted or not widget_is_attached(self) or not self._menu_visible:
             return
         frame = self.query_one("#palette-frame")
         menu = self.query_one(f"#{_PALETTE_MENU_ID}", VerticalScroll)
@@ -1076,16 +1084,13 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 target = f"{escalation_id} · {task_id}"
             label = "Answer decision" if self._answer_resolution_route else "Resolve escalation"
             full_title = f"{label} · {target}"
-            available_cells = self.query_one("#palette-title", Label).region.width
-            if cell_len(full_title) <= available_cells:
-                return full_title
+            if self.size.width <= _PALETTE_SHORT_PANE_MAX_COLUMNS:
+                return f"{task_id} {escalation_id}" if escalation_id is not None else task_id
             short_label = "Answer" if self._answer_resolution_route else "Resolve"
             short_title = f"{short_label} · {target}"
-            if cell_len(short_title) <= available_cells:
+            if self.size.width <= _PALETTE_CONTEXT_TITLE_SHORT_LABEL_MAX_COLUMNS:
                 return short_title
-            if escalation_id is not None:
-                return f"{task_id} {escalation_id}"
-            return task_id
+            return full_title
         if action in _FORM_ROLE_ACTIONS:
             role = self._selected_value(_FIELD_ROLE)
             if role is not None:
@@ -1093,9 +1098,16 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         return f"{label} · {target}"
 
     def _refresh_context_form_title(self) -> None:
-        if not self.is_mounted or self._menu_visible:
+        if not self.is_mounted or not widget_is_attached(self) or self._menu_visible:
             return
         self.query_one("#palette-title", Label).update(self._context_form_title())
+
+    def update_popup_geometry(self) -> None:
+        """Refresh popup geometry after the responsive layout changes."""
+        if not self.is_mounted or not widget_is_attached(self):
+            return
+        self.query_one("#palette-frame", PopupFrame).update_preferred_size()
+        self.call_after_refresh(self._refresh_context_form_title)
 
     def _remember_form_draft(self) -> None:
         task_id = self._initial_context.task_id
@@ -1334,7 +1346,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 return
 
     def _focus_first_menu_action(self) -> None:
-        if not self.is_mounted or not self._menu_visible:
+        if not self.is_mounted or not widget_is_attached(self) or not self._menu_visible:
             return
         button = next(
             (
@@ -1348,7 +1360,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             button.focus()
 
     def _restore_context_form_position(self) -> None:
-        if not self.is_mounted or self._menu_visible:
+        if not self.is_mounted or not widget_is_attached(self) or self._menu_visible:
             return
         form = self.query_one(f"#{_PALETTE_FORM_ID}", VerticalScroll)
         control = self.query_one(f"#{self._form_focus_id}") if self._form_focus_id else None

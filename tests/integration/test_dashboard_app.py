@@ -17,7 +17,7 @@ import psutil
 import pytest
 from fake_agent.turns import FAKE_COMPACT_AT_PCT_ENV_VAR
 from rich.cells import cell_len
-from textual.containers import Grid, Horizontal, VerticalScroll
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.events import MouseScrollDown
 from textual.geometry import Region
 from textual.widgets import (
@@ -176,12 +176,12 @@ _APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
 _COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS = 5
 _COMMAND_FEEDBACK_CLOCK_ADVANCE_SECONDS = 120
+_COMMAND_HISTORY_INITIAL_SIZE = (100, 34)
 _DASHBOARD_DETAIL_VIEW_TIMEOUT_SECONDS = 5
 COMMAND_HISTORY_TEST_LIMIT = 10
 TASK_PAGE_TEST_EVENT_COUNT = 2
 TASK_PAGE_TEST_RELATIONSHIP_COUNT = 25
 TASK_PAGE_TEST_TIMELINE_PAGE_SIZE = 1
-PAGE_BUTTON_CLICK_OFFSET = (2, 1)
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _LATER_EXTERNAL_WIDGET_NAME = "later-widget"
 _WIDE_HOME_SIZE = (120, 40)
@@ -736,7 +736,7 @@ async def _assert_rendered_palette_header_identity(
     assert "Esc \u00d7" in header
 
 
-def _rendered_home_origins(app: DashboardApp) -> tuple[tuple[float, float], ...]:
+def _rendered_visible_home_origins(app: DashboardApp) -> dict[str, tuple[float, float]]:
     elements: list[tuple[str, float, float]] = []
     for attributes, content in re.findall(
         r"<text\b([^>]*)>(.*?)</text>", app.export_screenshot(), re.DOTALL
@@ -747,19 +747,25 @@ def _rendered_home_origins(app: DashboardApp) -> tuple[tuple[float, float], ...]
         if label and x is not None and y is not None:
             elements.append((label, float(x.group(1)), float(y.group(1))))
 
-    def origin(label: str) -> tuple[float, float]:
-        match = next(((x, y) for text, x, y in elements if text == label), None)
-        assert match is not None
-        return match
+    origins: dict[str, tuple[float, float]] = {}
+    for anchor in ("SHIKIRU", "TASKS"):
+        origin = next(((x, y) for text, x, y in elements if text == anchor), None)
+        if origin is not None:
+            origins[anchor] = origin
+    tasks = origins.get("TASKS")
+    if tasks is not None:
+        task_frame = next(
+            ((x, y) for text, x, y in elements if text == "┌" and x == tasks[0] and y > tasks[1]),
+            None,
+        )
+        if task_frame is not None:
+            origins["task_frame"] = task_frame
+    return origins
 
-    identity = origin("SHIKIRU")
-    tasks = origin("TASKS")
-    task_frame = next(
-        ((x, y) for text, x, y in elements if text == "┌" and x == tasks[0] and y > tasks[1]),
-        None,
-    )
-    assert task_frame is not None
-    return identity, tasks, task_frame
+
+def _rendered_home_origins(app: DashboardApp) -> tuple[tuple[float, float], ...]:
+    origins = _rendered_visible_home_origins(app)
+    return origins["SHIKIRU"], origins["TASKS"], origins["task_frame"]
 
 
 def _assert_last_command_history_page(page: Static) -> None:
@@ -773,11 +779,11 @@ async def _assert_popup_close_reachable(
     *,
     close_selector: str,
     frame_selector: str,
-    body_selector: str,
+    body_selector: str | None,
 ) -> None:
     close = screen.query_one(close_selector, Button)
     frame = screen.query_one(frame_selector)
-    body = screen.query_one(body_selector, VerticalScroll)
+    body = screen.query_one(body_selector, VerticalScroll) if body_selector is not None else None
     await wait_until(
         lambda: (
             close.region.width > 0
@@ -785,7 +791,7 @@ async def _assert_popup_close_reachable(
             and frame.region.contains_region(close.region)
             and frame.content_region.contains_region(close.region)
             and screen.region.contains_region(close.region)
-            and not body.scrollable_content_region.contains_region(close.region)
+            and (body is None or not body.scrollable_content_region.contains_region(close.region))
         ),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
@@ -4729,19 +4735,31 @@ async def _assert_command_history_initial_shortcuts(
     page: Static,
     history_copy: Static,
     pending_id: int,
+    *,
+    history_controls: Widget,
+    controls_y: int,
+    history_frame: Widget,
+    preferred_region: Region,
 ) -> None:
     previous_button = app.screen.query_one("#command-history-previous", Button)
     assert previous_button.disabled
     await pilot.press("p")
     assert "page 1" in _rendered_text(page)
     next_button = app.screen.query_one("#command-history-next", Button)
-    await pilot.click(next_button, offset=PAGE_BUTTON_CLICK_OFFSET)
+    await pilot.click(next_button)
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
+    assert history_frame.region == preferred_region
+    assert history_controls.region.y == controls_y
+    _capture_task99(app, "task127-command-history-page2-color.svg")
     next_button.focus()
     await pilot.press("p")
     await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
+    assert history_frame.region == preferred_region
+    assert history_controls.region.y == controls_y
     await pilot.press("n")
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
+    assert history_frame.region == preferred_region
+    assert history_controls.region.y == controls_y
     assert f"#{pending_id} · Pending" not in _rendered_text(history_copy)
 
 
@@ -4751,6 +4769,11 @@ async def _assert_command_history_filter_shortcuts(
     page: Static,
     history_copy: Static,
     applied_id: int,
+    *,
+    history_controls: Widget,
+    controls_y: int,
+    history_frame: Widget,
+    preferred_region: Region,
 ) -> None:
     history_filter = cast("Select[str]", app.screen.query_one("#command-history-filter", Select))
     history_filter.value = "all"
@@ -4770,6 +4793,9 @@ async def _assert_command_history_filter_shortcuts(
     history_filter.focus()
     await pilot.press("enter")
     await wait_until(lambda: history_filter.expanded, timeout=2)
+    _capture_task99(app, "task127-command-history-select-expanded-color.svg")
+    assert history_frame.region == preferred_region
+    assert history_controls.region.y == controls_y
     for shortcut in (COMMAND_HISTORY_PREVIOUS_SHORTCUT, COMMAND_HISTORY_NEXT_SHORTCUT):
         await pilot.press(shortcut)
         assert history_filter.expanded
@@ -4780,11 +4806,22 @@ async def _assert_command_history_filter_shortcuts(
         timeout=2,
     )
     assert "page 1" in _rendered_text(page)
+    history_filter.value = CommandFeedbackStatus.REJECTED.value
+    await wait_until(
+        lambda: history_filter.value == CommandFeedbackStatus.REJECTED.value,
+        timeout=2,
+    )
+    await wait_until(lambda: "No commands recorded." in _rendered_text(history_copy), timeout=2)
+    assert history_frame.region == preferred_region
+    assert history_controls.region.y == controls_y
+    _capture_task99(app, "task127-command-history-empty-color.svg")
     history_filter.value = "all"
     await wait_until(lambda: history_filter.value == "all", timeout=2)
     await wait_until(lambda: f"#{applied_id} · Applied" in _rendered_text(history_copy), timeout=2)
     await wait_until(lambda: not history_filter.expanded, timeout=2)
     assert "page 1" in _rendered_text(page)
+    assert history_frame.region == preferred_region
+    assert history_controls.region.y == controls_y
     await wait_until(
         lambda: (
             "all statuses" in _rendered_text(page)
@@ -4805,13 +4842,17 @@ async def _assert_command_history_last_page_and_refresh(
     home_screen: Widget,
     history_frame: Widget,
     history_controls: Widget,
+    controls_y: int,
     history_scroll: VerticalScroll,
+    preferred_region: Region,
 ) -> None:
     page = app.screen.query_one("#command-history-page", Static)
     history_copy = app.screen.query_one("#command-history-copy", Static)
     app.screen.query_one("#command-history-next", Button).focus()
     await pilot.press("n")
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
+    assert history_frame.region == preferred_region
+    assert history_controls.region.y == controls_y
     next_button = app.screen.query_one("#command-history-next", Button)
     assert not next_button.disabled, _rendered_text(page)
     next_button.focus()
@@ -4821,6 +4862,8 @@ async def _assert_command_history_last_page_and_refresh(
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
     await pilot.press("n")
     await wait_until(lambda: "page 3" in _rendered_text(page), timeout=2)
+    assert history_frame.region == preferred_region
+    assert history_controls.region.y == controls_y
     assert app.screen.query_one("#command-history-next", Button).disabled
     await pilot.press("n")
     assert "page 3" in _rendered_text(page)
@@ -4848,6 +4891,9 @@ async def _assert_command_history_last_page_and_refresh(
     )
     await pilot.pause()
     assert app.focused is focus_before_refresh
+    assert history_frame.region == preferred_region
+    assert history_controls.region.y == controls_y
+    _capture_task99(app, "task127-command-history-refreshed-color.svg")
     assert history_scroll.scroll_y == history_scroll.max_scroll_y
     await _resize_command_history_to_compact_and_close(
         app,
@@ -4856,6 +4902,10 @@ async def _assert_command_history_last_page_and_refresh(
         frame=history_frame,
         controls=history_controls,
         scroll=history_scroll,
+        controls_y=controls_y,
+        preferred_region=preferred_region,
+        reading_position=history_scroll.scroll_y,
+        focused_widget=focus_before_refresh,
     )
 
 
@@ -4877,8 +4927,9 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
 
     try:
         app = _app(reader, project_dir, widget_names=[])
-        async with app.run_test(size=(100, 34)) as pilot:
+        async with app.run_test(size=_COMMAND_HISTORY_INITIAL_SIZE) as pilot:
             home_screen = app.screen
+            _capture_task99(app, "task127-command-history-home-before-color.svg")
             await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
             await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
             history_frame = app.screen.query_one("#command-history-frame")
@@ -4898,13 +4949,33 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             )
             page = app.screen.query_one("#command-history-page", Static)
             await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
+            preferred_region = history_frame.region
+            controls_y = history_controls.region.y
+            _capture_task99(app, "task127-command-history-wide-color.svg")
             assert f"#{pending.id} · Pending" not in _rendered_text(history_copy)
             await _assert_command_history_initial_shortcuts(
-                app, pilot, page, history_copy, pending.id
+                app,
+                pilot,
+                page,
+                history_copy,
+                pending.id,
+                history_controls=history_controls,
+                controls_y=controls_y,
+                history_frame=history_frame,
+                preferred_region=preferred_region,
             )
             await _assert_command_history_filter_shortcuts(
-                app, pilot, page, history_copy, applied.id
+                app,
+                pilot,
+                page,
+                history_copy,
+                applied.id,
+                history_controls=history_controls,
+                controls_y=controls_y,
+                history_frame=history_frame,
+                preferred_region=preferred_region,
             )
+            assert history_frame.region == preferred_region
             await _assert_command_history_last_page_and_refresh(
                 app,
                 pilot,
@@ -4914,10 +4985,276 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
                 home_screen=home_screen,
                 history_frame=history_frame,
                 history_controls=history_controls,
+                controls_y=controls_y,
                 history_scroll=history_scroll,
+                preferred_region=preferred_region,
+            )
+            _capture_task99(app, "task127-command-history-home-after-color.svg")
+        for initial_size in (_TINY_HOME_SIZE, _SHORT_HOME_SIZE):
+            await _assert_initial_command_history_size_restoration(
+                reader,
+                project_dir,
+                connection,
+                clock,
+                initial_size,
             )
     finally:
         reader.close()
+
+
+@pytest.mark.usefixtures("connection")
+async def test_empty_command_history_opened_tiny_restores_fixed_chrome(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=[])
+        async with app.run_test(size=_TINY_HOME_SIZE) as pilot:
+            home_screen = app.screen
+            await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
+            await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
+            screen = app.screen
+            frame = screen.query_one("#command-history-frame")
+            controls = screen.query_one("#command-history-controls")
+            initial_region = frame.region
+            _assert_command_history_controls_reachable(screen, frame, controls)
+            _assert_command_history_title_visible(screen, frame)
+            await _assert_popup_close_reachable(
+                screen,
+                close_selector="#command-history-close",
+                frame_selector="#command-history-frame",
+                body_selector="#command-history-scroll",
+            )
+            _capture_task99(app, "task127-command-history-empty-initial-20x8-color.svg")
+            await pilot.resize_terminal(*_COMMAND_HISTORY_INITIAL_SIZE)
+            history_filter = cast(
+                "Select[str]", screen.query_one("#command-history-filter", Select)
+            )
+            page = screen.query_one("#command-history-page", Static)
+            await wait_until(
+                lambda: (
+                    app.size == _COMMAND_HISTORY_INITIAL_SIZE
+                    and frame.region.width > initial_region.width
+                    and frame.region.height > initial_region.height
+                    and frame.content_region.contains_region(history_filter.region)
+                    and frame.content_region.contains_region(page.region)
+                    and frame.content_region.contains_region(controls.region)
+                ),
+                timeout=2,
+            )
+            _assert_command_history_title_visible(screen, frame)
+            await _assert_popup_close_reachable(
+                screen,
+                close_selector="#command-history-close",
+                frame_selector="#command-history-frame",
+                body_selector="#command-history-scroll",
+            )
+            _capture_task99(app, "task127-command-history-empty-restored-wide-color.svg")
+            assert await pilot.click("#command-history-close")
+            await wait_until(lambda: app.screen is home_screen, timeout=2)
+    finally:
+        reader.close()
+
+
+async def _assert_initial_command_history_size_restoration(
+    reader: StateReader,
+    project_dir: Path,
+    connection: Connection,
+    clock: SystemClock,
+    initial_size: tuple[int, int],
+) -> None:
+    app = _app(reader, project_dir, widget_names=[])
+    queue = CommandQueue(connection, clock)
+    async with app.run_test(size=initial_size) as pilot:
+        home_screen = app.screen
+        await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
+        await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
+        initial_geometry = await _assert_initial_history_pages(app, pilot, initial_size)
+        await _assert_initial_history_empty_size_restoration(
+            app,
+            pilot,
+            initial_size,
+            initial_geometry,
+        )
+        await _assert_initial_history_live_restoration(
+            app,
+            pilot,
+            queue,
+            initial_size,
+            initial_geometry,
+        )
+        assert await pilot.click("#command-history-close")
+        await wait_until(lambda: app.screen is home_screen, timeout=2)
+
+
+async def _assert_initial_history_pages(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    initial_size: tuple[int, int],
+) -> tuple[Region, int, int]:
+    screen = app.screen
+    frame = screen.query_one("#command-history-frame")
+    controls = screen.query_one("#command-history-controls")
+    body = screen.query_one("#command-history-scroll", VerticalScroll)
+    copy = screen.query_one("#command-history-copy", Static)
+    next_page = screen.query_one("#command-history-next", Button)
+    await wait_until(lambda: body.virtual_size.height > 1, timeout=2)
+    _assert_command_history_controls_reachable(screen, frame, controls)
+    _assert_command_history_title_visible(screen, frame)
+    await _assert_popup_close_reachable(
+        screen,
+        close_selector="#command-history-close",
+        frame_selector="#command-history-frame",
+        body_selector="#command-history-scroll",
+    )
+    initial_region = frame.region
+    initial_controls_y = controls.region.y
+    initial_content_height = body.virtual_size.height
+    _capture_task99(
+        app,
+        f"task127-command-history-initial-{initial_size[0]}x{initial_size[1]}-color.svg",
+    )
+    while not next_page.disabled:
+        previous_content = _rendered_text(copy)
+        next_page.focus()
+        await pilot.press("n")
+        await wait_until(
+            lambda previous_content=previous_content: _rendered_text(copy) != previous_content,
+            timeout=2,
+        )
+        assert frame.region == initial_region
+        assert controls.region.y == initial_controls_y
+        _assert_command_history_controls_reachable(screen, frame, controls)
+        _assert_command_history_title_visible(screen, frame)
+    assert body.virtual_size.height < initial_content_height
+    return initial_region, initial_controls_y, initial_content_height
+
+
+async def _assert_initial_history_empty_size_restoration(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    initial_size: tuple[int, int],
+    initial_geometry: tuple[Region, int, int],
+) -> None:
+    screen = app.screen
+    frame = screen.query_one("#command-history-frame")
+    controls = screen.query_one("#command-history-controls")
+    body = screen.query_one("#command-history-scroll", VerticalScroll)
+    next_page = screen.query_one("#command-history-next", Button)
+    initial_region, initial_controls_y, initial_content_height = initial_geometry
+    await pilot.resize_terminal(*_COMMAND_HISTORY_INITIAL_SIZE)
+    await wait_until(
+        lambda: (
+            app.size == _COMMAND_HISTORY_INITIAL_SIZE
+            and frame.region.width > initial_region.width
+            and frame.region.height > initial_region.height
+            and frame.content_region.contains_region(controls.region)
+        ),
+        timeout=2,
+    )
+    preferred_region = frame.region
+    history_filter = cast("Select[str]", screen.query_one("#command-history-filter", Select))
+    history_filter.value = CommandFeedbackStatus.REJECTED.value
+    await wait_until(
+        lambda: (
+            history_filter.value == CommandFeedbackStatus.REJECTED.value
+            and screen.query_one("#command-history-previous", Button).disabled
+            and next_page.disabled
+            and body.virtual_size.height < initial_content_height
+        ),
+        timeout=2,
+    )
+    assert frame.region == preferred_region
+    _assert_command_history_controls_reachable(screen, frame, controls)
+    _assert_command_history_title_visible(screen, frame)
+    _capture_task99(
+        app,
+        f"task127-command-history-empty-{initial_size[0]}x{initial_size[1]}-wide-color.svg",
+    )
+    await pilot.resize_terminal(*initial_size)
+    await wait_until(
+        lambda: (
+            app.size == initial_size
+            and frame.region.width < preferred_region.width
+            and frame.region.height < preferred_region.height
+            and frame.content_region.contains_region(controls.region)
+        ),
+        timeout=2,
+    )
+    assert frame.region == initial_region
+    assert controls.region.y == initial_controls_y
+    _assert_command_history_title_visible(screen, frame)
+    _capture_task99(
+        app,
+        f"task127-command-history-empty-{initial_size[0]}x{initial_size[1]}-color.svg",
+    )
+    await pilot.resize_terminal(*_COMMAND_HISTORY_INITIAL_SIZE)
+    await wait_until(lambda: frame.region == preferred_region, timeout=2)
+
+
+async def _assert_initial_history_live_restoration(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    queue: CommandQueue,
+    initial_size: tuple[int, int],
+    initial_geometry: tuple[Region, int, int],
+) -> None:
+    screen = app.screen
+    frame = screen.query_one("#command-history-frame")
+    controls = screen.query_one("#command-history-controls")
+    body = screen.query_one("#command-history-scroll", VerticalScroll)
+    copy = screen.query_one("#command-history-copy", Static)
+    initial_region, initial_controls_y, _ = initial_geometry
+    preferred_region = frame.region
+    history_filter = cast("Select[str]", screen.query_one("#command-history-filter", Select))
+    next_page = screen.query_one("#command-history-next", Button)
+    history_filter.value = "all"
+    await wait_until(
+        lambda: (
+            history_filter.value == "all"
+            and not next_page.disabled
+            and body.virtual_size.height > 1
+        ),
+        timeout=2,
+    )
+    await pilot.resize_terminal(*initial_size)
+    await wait_until(
+        lambda: (
+            app.size == initial_size
+            and frame.region == initial_region
+            and frame.content_region.contains_region(controls.region)
+        ),
+        timeout=2,
+    )
+    live_entry = queue.append(Stop())
+    await wait_until(
+        lambda: f"#{live_entry.id} · Pending" in _rendered_text(copy),
+        timeout=2,
+    )
+    assert frame.region == initial_region
+    assert controls.region.y == initial_controls_y
+    _assert_command_history_title_visible(screen, frame)
+    _capture_task99(
+        app,
+        f"task127-command-history-live-{initial_size[0]}x{initial_size[1]}-color.svg",
+    )
+    await pilot.resize_terminal(*_COMMAND_HISTORY_INITIAL_SIZE)
+    await wait_until(
+        lambda: (
+            frame.region == preferred_region
+            and f"#{live_entry.id} · Pending" in _rendered_text(copy)
+        ),
+        timeout=2,
+    )
+    _assert_command_history_controls_reachable(screen, frame, controls)
+    _assert_command_history_title_visible(screen, frame)
+    _capture_task99(
+        app,
+        f"task127-command-history-restored-{initial_size[0]}x{initial_size[1]}-color.svg",
+    )
 
 
 async def _assert_task_timeline_page_shortcuts(app: DashboardApp, pilot: Pilot[None]) -> None:
@@ -5065,6 +5402,10 @@ async def _resize_command_history_to_compact_and_close(
     frame: Widget,
     controls: Widget,
     scroll: VerticalScroll,
+    controls_y: int,
+    preferred_region: Region,
+    reading_position: float,
+    focused_widget: Widget | None,
 ) -> None:
     await pilot.resize_terminal(*_COMPACT_HOME_SIZE)
     await wait_until(
@@ -5081,7 +5422,57 @@ async def _resize_command_history_to_compact_and_close(
         frame_selector="#command-history-frame",
         body_selector="#command-history-scroll",
     )
+    assert frame.region.height < preferred_region.height
+    _capture_task99(app, "task127-command-history-compact-color.svg")
     assert scroll.max_scroll_y > 0
+    await pilot.resize_terminal(*_TINY_HOME_SIZE)
+    await wait_until(
+        lambda: (
+            app.size == _TINY_HOME_SIZE
+            and frame.content_region.contains_region(controls.region)
+            and app.screen.region.contains_region(controls.region)
+        ),
+        timeout=2,
+    )
+    await _assert_popup_close_reachable(
+        app.screen,
+        close_selector="#command-history-close",
+        frame_selector="#command-history-frame",
+        body_selector="#command-history-scroll",
+    )
+    previous = app.screen.query_one("#command-history-previous", Button)
+    next_page = app.screen.query_one("#command-history-next", Button)
+    close = app.screen.query_one("#command-history-close", Button)
+    _assert_command_history_title_visible(app.screen, frame)
+    assert frame.content_region.contains_region(close.region)
+    assert previous.is_on_screen
+    assert next_page.is_on_screen
+    assert frame.region.height < preferred_region.height
+    _capture_task99(app, "task127-command-history-20x8-color.svg")
+    assert await pilot.click(previous)
+    await wait_until(
+        lambda: (
+            "#32 · Applied" in _rendered_text(app.screen.query_one("#command-history-copy", Static))
+        ),
+        timeout=2,
+    )
+    assert await pilot.click(next_page)
+    await wait_until(
+        lambda: (
+            "#12 · Applied" in _rendered_text(app.screen.query_one("#command-history-copy", Static))
+        ),
+        timeout=2,
+    )
+    await pilot.resize_terminal(*_COMMAND_HISTORY_INITIAL_SIZE)
+    await wait_until(
+        lambda: app.size == _COMMAND_HISTORY_INITIAL_SIZE and frame.region == preferred_region,
+        timeout=2,
+    )
+    await wait_until(lambda: scroll.scroll_y == reading_position, timeout=2)
+    await wait_until(lambda: app.focused is focused_widget, timeout=2)
+    assert frame.region == preferred_region
+    assert controls.region.y == controls_y
+    _capture_task99(app, "task127-command-history-restored-color.svg")
     assert await pilot.click("#command-history-close")
     await wait_until(lambda: app.screen is home_screen, timeout=2)
 
@@ -5093,6 +5484,15 @@ def _assert_command_history_controls_reachable(
 ) -> None:
     assert frame.content_region.contains_region(controls.region)
     assert screen.region.contains_region(controls.region)
+
+
+def _assert_command_history_title_visible(screen: Widget, frame: Widget) -> None:
+    title = screen.query_one("#command-history-title", Label)
+    header = screen.query_one("#command-history-header", Horizontal)
+    assert title.is_on_screen
+    assert _rendered_widget_lines(title)
+    assert header.region.contains_region(title.region)
+    assert frame.content_region.contains_region(title.region)
 
 
 @pytest.mark.parametrize("size", [(36, 20), (48, 20), (20, 8)])
@@ -5139,11 +5539,24 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
             await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
             await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
             page = cast("Static", app.screen.query_one("#command-history-page"))
-            assert "all statuses" in _rendered_text(page)
+            frame = app.screen.query_one("#command-history-frame")
+            if page.display:
+                assert page.is_on_screen
+                assert frame.content_region.contains_region(page.region)
             history_copy = app.screen.query_one("#command-history-copy", Static)
             await wait_until(
                 lambda: "engine currently stopped" in _rendered_text(history_copy), timeout=2
             )
+            if size == _TINY_HOME_SIZE:
+                controls = app.screen.query_one("#command-history-controls")
+                _assert_command_history_controls_reachable(app.screen, frame, controls)
+                await _assert_popup_close_reachable(
+                    app.screen,
+                    close_selector="#command-history-close",
+                    frame_selector="#command-history-frame",
+                    body_selector="#command-history-scroll",
+                )
+                _capture_task99(app, "task127-command-history-tiny-route-color.svg")
     finally:
         reader.close()
 
@@ -6414,7 +6827,7 @@ async def _open_compact_task_evidence_route(
     views_frame = views.query_one("#task-detail-views-frame")
     choice = cast("Select[str]", views.query_one("#task-detail-view-choice", Select))
     choice.value = TASK_VIEW_EVIDENCE
-    views_content = views.query_one("#task-detail-views-content", VerticalScroll)
+    views_content = views.query_one("#task-detail-views-content", Vertical)
     open_button = views.query_one(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}", Button)
     close_button = views.query_one("#task-detail-views-close", Button)
     await pilot.press("tab")
@@ -6425,7 +6838,8 @@ async def _open_compact_task_evidence_route(
     )
     assert pilot.app.focused is open_button
     assert views_frame.content_region.contains_region(open_button.region)
-    assert views_content.scrollable_content_region.contains_region(open_button.region)
+    assert views_content.region.contains_region(choice.region)
+    assert views_content.region.contains_region(open_button.region)
     assert views.region.contains_region(close_button.region)
     _capture_task99(app, f"task112-task-views-{size[0]}x{size[1]}-color.svg")
     await pilot.press("enter")
@@ -6602,7 +7016,39 @@ async def test_home_help_works_with_keyboard_without_color(
                 body_selector="#workspace-help-scroll",
             )
             assert help_scroll.region.height < help_copy.region.height
-            _capture_task99(app, f"task115-help-{size[0]}x{size[1]}-color.svg")
+            _capture_task99(app, f"task115-help-{size[0]}x{size[1]}-mono.svg")
+            if size == _TINY_HOME_SIZE:
+                await pilot.resize_terminal(*_WIDE_HOME_SIZE)
+                await wait_until(
+                    lambda: (
+                        app.size == _WIDE_HOME_SIZE
+                        and help_screen.query_one("#workspace-help-frame").region.height
+                        > _TINY_HOME_SIZE[1]
+                    ),
+                    timeout=2,
+                )
+                preferred_region = help_screen.query_one("#workspace-help-frame").region
+                assert preferred_region.height < _WIDE_HOME_SIZE[1]
+                _capture_task99(app, "task127-help-initially-tiny-restored-wide-mono.svg")
+                await pilot.resize_terminal(*_TINY_HOME_SIZE)
+                await wait_until(
+                    lambda: (
+                        app.size == _TINY_HOME_SIZE
+                        and help_screen.region.contains_region(
+                            help_screen.query_one("#workspace-help-close").region
+                        )
+                    ),
+                    timeout=2,
+                )
+                await pilot.resize_terminal(*_WIDE_HOME_SIZE)
+                await wait_until(
+                    lambda: (
+                        app.size == _WIDE_HOME_SIZE
+                        and help_screen.query_one("#workspace-help-frame").region
+                        == preferred_region
+                    ),
+                    timeout=2,
+                )
             await pilot.press("escape")
             await pilot.pause()
             await pilot.press("?")
@@ -6689,8 +7135,61 @@ async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
             assert task_list.index == home_selection
             assert task.title in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             _capture_task99(app, "task115-home-after-120x40-color.svg")
+
+            await _assert_compact_home_help_preserves_rendered_origins(app, pilot, task)
     finally:
         reader.close()
+
+
+async def _assert_compact_home_help_preserves_rendered_origins(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task: Task,
+) -> None:
+    home = app.screen
+    identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+    home_root = app.query_one("#focus-root", VerticalScroll)
+    task_list = app.query_one("#task-browser-list", ListView)
+    home_selection = task_list.index
+    await pilot.resize_terminal(*_COMPACT_HOME_SIZE)
+    await wait_until(
+        lambda: (
+            app.size == _COMPACT_HOME_SIZE
+            and task.title in _rendered_text(identity)
+            and task_list.index == home_selection
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    compact_scroll_y = home_root.scroll_y
+    compact_origins = _rendered_visible_home_origins(app)
+    compact_focus = home.focused
+    _capture_task99(app, "task127-home-compact-before-color.svg")
+    await pilot.press("?")
+    await wait_until(
+        lambda: bool(app.screen.query("#workspace-help-close")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    compact_help = app.screen
+    await _assert_popup_close_reachable(
+        compact_help,
+        close_selector="#workspace-help-close",
+        frame_selector="#workspace-help-frame",
+        body_selector="#workspace-help-scroll",
+    )
+    _capture_task99(app, "task127-home-compact-help-color.svg")
+    await pilot.click("#workspace-help-close")
+    await wait_until(
+        lambda: app.screen is home,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await wait_until(
+        lambda: _rendered_visible_home_origins(app) == compact_origins,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    assert home_root.scroll_y == compact_scroll_y
+    assert home.focused is compact_focus
+    assert task_list.index == home_selection
+    _capture_task99(app, "task127-home-compact-after-color.svg")
 
 
 async def _assert_evidence_editor_shortcut_precedence(

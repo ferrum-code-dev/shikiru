@@ -72,6 +72,9 @@ _START = datetime(2026, 1, 1, tzinfo=UTC)
 _POLL_SECONDS = 0.25
 _APP_SIZE = (120, 32)
 _COMPACT_APP_SIZE = (54, 20)
+_FORM_COMPACT_SIZE = (48, 20)
+_FORM_NARROW_SIZE = (36, 14)
+_FORM_TINY_SIZE = (20, 8)
 _FORM_SCROLL_TEST_OFFSET = 8
 _LONG_PACKET_LINES = 80
 _LAST_PACKET_LINE = "This is the final retained packet line."
@@ -575,10 +578,18 @@ async def _resize_recorded_answer_form(
     queue: CommandQueue,
     expected_answer: str,
 ) -> None:
-    for width, height in ((48, 20), (36, 14), (20, 8)):
+    frame = screen.query_one("#palette-frame")
+    preferred_region = frame.region
+    preferred_viewport = (app.size.width, app.size.height)
+    cursor_location = answer.cursor_location
+    _capture_palette(app, "task127-answer-wide-color.svg")
+    for width, height in (
+        _FORM_COMPACT_SIZE,
+        _FORM_NARROW_SIZE,
+        _FORM_TINY_SIZE,
+    ):
         await pilot.resize_terminal(width, height)
         close = screen.query_one("#palette-close", Button)
-        frame = screen.query_one("#palette-frame")
         form = screen.query_one("#palette-form", VerticalScroll)
         await wait_until(
             lambda target_width=width, target_height=height, popup_close=close, popup_frame=frame: (
@@ -596,18 +607,33 @@ async def _resize_recorded_answer_form(
         assert close.region.right <= width
         assert close.region.y >= 0
         assert close.region.bottom <= height
-        assert frame.region.contains_region(close.region)
+        assert frame.content_region.contains_region(close.region)
         assert not form.scrollable_content_region.contains_region(close.region)
         for button_id in ("palette-back-to-menu", "palette-submit"):
             button = screen.query_one(f"#{button_id}", Button)
             assert button.display
             assert frame.content_region.contains_region(button.region)
+            assert screen.region.contains_region(button.region)
+            assert not form.scrollable_content_region.contains_region(button.region)
             assert button.region.right <= width
             assert button.region.bottom < height
         assert answer.text == expected_answer
+        assert answer.cursor_location == cursor_location
         assert queue.pending() == []
+        _capture_palette(app, f"task127-answer-{width}x{height}-color.svg")
         if width == 20:
             _capture_palette(app, "task101-answer-healthy-recorded-packet-20x8-color.svg")
+    await pilot.resize_terminal(*preferred_viewport)
+    await wait_until(
+        lambda: (
+            frame.region == preferred_region
+            and app.focused is answer
+            and answer.text == expected_answer
+            and answer.cursor_location == cursor_location
+        ),
+        timeout=2,
+    )
+    _capture_palette(app, "task127-answer-wide-restored-color.svg")
     assert await pilot.click("#palette-submit")
 
 

@@ -34,16 +34,16 @@ from shikiru.ui.compact import (
 )
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_STALLED
 from shikiru.ui.popup import (
-    POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
     POPUP_CSS,
     POPUP_FRAME_CLASS,
     POPUP_HEADER_CLASS,
     POPUP_RULE_CLASS,
     POPUP_TITLE_CLASS,
+    PopupFrame,
     prepare_popup,
 )
-from shikiru.ui.screen import widget_is_active
+from shikiru.ui.screen import widget_is_active, widget_is_attached
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -117,6 +117,8 @@ TASK_DETAIL_VIEWS_OPEN_BUTTON = "task-detail-views-open"
 TASK_DETAIL_VIEWS_CLOSE_BUTTON = "task-detail-views-close"
 TASK_DETAIL_VIEWS_CONTENT = "task-detail-views-content"
 TASK_DETAIL_TINY_MAX_ROWS = 8
+_TASK_DETAIL_COMPACT_MAX_COLUMNS = 48
+_TASK_DETAIL_COMPACT_MAX_ROWS = 20
 TASK_DETAIL_VIEWS_KEY = "v"
 TASK_DETAIL_VIEWS_ACTION = "open_contextual_views"
 TASK_DETAIL_PREVIOUS_PAGE_KEY = "p"
@@ -340,6 +342,7 @@ class TaskDetailPanel(Vertical):
         embedded: bool = False,
         close_detail: CloseDetail | None = None,
         initial_view: str = TASK_VIEW_SUMMARY,
+        on_initial_content: Callable[[], None] | None = None,
     ) -> None:
         classes = "task-detail-fixed" if fixed else ""
         super().__init__(id="task-detail-panel", classes=classes)
@@ -372,6 +375,8 @@ class TaskDetailPanel(Vertical):
         self._rendered_task_id: str | None = None
         self._active_view = initial_view
         self._view: TaskDetailView | None = None
+        self._on_initial_content = on_initial_content
+        self._initial_content_reported = False
 
     def compose(self) -> ComposeResult:
         with TaskDetailBody(self._pause_timeline_follow):
@@ -1191,6 +1196,9 @@ class TaskDetailPanel(Vertical):
             _sessions_text(view, detailed=self._active_view == TASK_VIEW_USAGE)
         )
         self._apply_view_visibility(blocker_visible=bool(blocker_lines))
+        if self._on_initial_content is not None and not self._initial_content_reported:
+            self._initial_content_reported = True
+            self.call_after_refresh(self._on_initial_content)
         if restore_scroll:
             body.call_after_refresh(
                 self._restore_body_scroll,
@@ -1445,7 +1453,8 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
         POPUP_CSS
         + """
     #task-detail-views-frame Select { width: 100%; }
-    #task-detail-views-content { height: auto; max-height: 1fr; min-height: 0; }
+    #task-detail-views-content { height: auto; }
+    #task-detail-views-frame.compact { margin: 0 1; padding: 0 1; }
     #task-detail-views-open {
         width: 100%; height: auto; min-width: 1; padding: 0; border: none;
     }
@@ -1456,7 +1465,6 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
     #task-detail-views-frame.tiny {
         height: 100%; margin: 0; padding: 0 1;
     }
-    #task-detail-views-frame.tiny #task-detail-views-content { height: 1fr; }
     """
     )
 
@@ -1467,7 +1475,7 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
         self._choices = (*TASK_VIEW_CHOICES, *extra_choices)
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="task-detail-views-frame", classes=POPUP_FRAME_CLASS):
+        with PopupFrame(widget_id="task-detail-views-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id="task-detail-views-heading", classes=POPUP_HEADER_CLASS):
                 yield Static(
                     f"Task views · {self._task_id}",
@@ -1481,19 +1489,31 @@ class TaskDetailViewsScreen(ModalScreen[str | None]):
                     classes=POPUP_CLOSE_CLASS,
                 )
             yield Rule(classes=POPUP_RULE_CLASS)
-            with VerticalScroll(id=TASK_DETAIL_VIEWS_CONTENT, classes=POPUP_BODY_CLASS):
+            with Vertical(id=TASK_DETAIL_VIEWS_CONTENT):
                 yield Select(self._choices, value=TASK_VIEW_USAGE, id="task-detail-view-choice")
                 yield Button("Open", id=TASK_DETAIL_VIEWS_OPEN_BUTTON)
 
     async def on_mount(self) -> None:
-        self._apply_tiny_layout(self.size.height)
+        self._apply_layout(self.size.width, self.size.height)
         self.set_focus(cast("Select[str]", self.query_one("#task-detail-view-choice", Select)))
+        self.call_after_refresh(
+            self.query_one("#task-detail-views-frame", PopupFrame).content_ready
+        )
 
     def on_resize(self, event: events.Resize) -> None:
-        self._apply_tiny_layout(event.size.height)
+        if not self.is_mounted or not widget_is_attached(self):
+            return
+        self._apply_layout(event.size.width, event.size.height)
+        self.call_after_refresh(
+            self.query_one("#task-detail-views-frame", PopupFrame).update_preferred_size
+        )
 
-    def _apply_tiny_layout(self, height: int) -> None:
-        frame = self.query_one("#task-detail-views-frame", Vertical)
+    def _apply_layout(self, width: int, height: int) -> None:
+        frame = self.query_one("#task-detail-views-frame", PopupFrame)
+        compact = (
+            width <= _TASK_DETAIL_COMPACT_MAX_COLUMNS or height <= _TASK_DETAIL_COMPACT_MAX_ROWS
+        )
+        frame.set_class(compact, "compact")
         frame.set_class(height <= TASK_DETAIL_TINY_MAX_ROWS, "tiny")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -1514,6 +1534,7 @@ class TaskDetailScreen(ModalScreen[None]):
         POPUP_CSS
         + """
     #task-detail-popup-frame { min-height: 1; }
+    #task-detail-popup-frame.compact { margin: 0 1; padding: 0 1; }
     #task-detail-popup-frame.tiny {
         height: 100%; margin: 0; padding: 0;
     }
@@ -1540,7 +1561,7 @@ class TaskDetailScreen(ModalScreen[None]):
         self._open_views_on_mount = open_views_on_mount
 
     def compose(self) -> ComposeResult:
-        with Vertical(id=TASK_DETAIL_POPUP_FRAME, classes=POPUP_FRAME_CLASS):
+        with PopupFrame(widget_id=TASK_DETAIL_POPUP_FRAME, classes=POPUP_FRAME_CLASS):
             with Horizontal(id=TASK_DETAIL_POPUP_HEADER, classes=POPUP_HEADER_CLASS):
                 yield Label(
                     self._heading(),
@@ -1559,10 +1580,11 @@ class TaskDetailScreen(ModalScreen[None]):
                 fixed=False,
                 close_detail=self._close,
                 initial_view=self._initial_view,
+                on_initial_content=self.mark_popup_content_ready,
             )
 
     async def on_mount(self) -> None:
-        self._apply_tiny_layout(self.size.height)
+        self._apply_layout(self.size.width, self.size.height)
         panel = self.query_one("#task-detail-panel", TaskDetailPanel)
         target = (
             panel.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}", Button)
@@ -1574,11 +1596,24 @@ class TaskDetailScreen(ModalScreen[None]):
             await panel.open_contextual_views()
 
     def on_resize(self, event: events.Resize) -> None:
-        self._apply_tiny_layout(event.size.height)
+        self._apply_layout(event.size.width, event.size.height)
+        self.call_after_refresh(
+            self.query_one(f"#{TASK_DETAIL_POPUP_FRAME}", PopupFrame).update_preferred_size
+        )
 
-    def _apply_tiny_layout(self, height: int) -> None:
-        frame = self.query_one(f"#{TASK_DETAIL_POPUP_FRAME}", Vertical)
+    def _apply_layout(self, width: int, height: int) -> None:
+        frame = self.query_one(f"#{TASK_DETAIL_POPUP_FRAME}", PopupFrame)
+        compact = (
+            width <= _TASK_DETAIL_COMPACT_MAX_COLUMNS or height <= _TASK_DETAIL_COMPACT_MAX_ROWS
+        )
+        frame.set_class(compact, "compact")
         frame.set_class(height <= TASK_DETAIL_TINY_MAX_ROWS, "tiny")
+
+    def mark_popup_content_ready(self) -> None:
+        """Mark meaningful task content ready for popup sizing."""
+        if not self.is_mounted or not widget_is_attached(self):
+            return
+        self.query_one(f"#{TASK_DETAIL_POPUP_FRAME}", PopupFrame).content_ready()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == TASK_DETAIL_POPUP_CLOSE:

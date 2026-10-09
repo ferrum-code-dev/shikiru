@@ -202,5 +202,5 @@ Third-review scope and evidence: [third real-project review](../docs/tui-feedbac
 - [x] Task 124: Revise the HTML reference for the third review (accepted by root 2026-10-09)
 - [x] Task 125: Style the complete project tmux chrome (accepted by root 2026-10-09)
 - [x] Task 126: Unify popup styling and actual keyboard controls (accepted by root 2026-10-09)
-- [ ] Task 127: Keep popup frames stable through content changes
+- [x] Task 127: Keep popup frames stable through content changes
 - [ ] Task 128: Verify the third review and reconcile Phase 11 evidence

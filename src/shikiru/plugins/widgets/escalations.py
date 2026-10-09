@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.console import Group, RenderableType
 from rich.text import Text
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.geometry import Region
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Rule, Static
@@ -34,6 +34,7 @@ from shikiru.ui.popup import (
     POPUP_HEADER_CLASS,
     POPUP_RULE_CLASS,
     POPUP_TITLE_CLASS,
+    PopupFrame,
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached, widget_is_current
@@ -67,7 +68,7 @@ class PacketScreen(ModalScreen[None]):
     DEFAULT_CSS = (
         POPUP_CSS
         + """
-    #escalation-packet-scroll { height: auto; max-height: 1fr; min-height: 0; }
+    #escalation-packet-scroll { max-height: 1fr; min-height: 0; }
     #escalation-packet {
         background: $surface;
         color: $foreground;
@@ -83,7 +84,7 @@ class PacketScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         """Render the full packet in a scrollable view."""
-        with Vertical(id="escalation-packet-frame", classes=POPUP_FRAME_CLASS):
+        with PopupFrame(widget_id="escalation-packet-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id="escalation-packet-header", classes=POPUP_HEADER_CLASS):
                 yield Label(
                     "Decision evidence",
@@ -98,6 +99,11 @@ class PacketScreen(ModalScreen[None]):
             yield Rule(classes=POPUP_RULE_CLASS)
             with VerticalScroll(id="escalation-packet-scroll", classes=POPUP_BODY_CLASS):
                 yield Static(self._packet, markup=False, id="escalation-packet")
+
+    def on_mount(self) -> None:
+        self.call_after_refresh(
+            self.query_one("#escalation-packet-frame", PopupFrame).content_ready
+        )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == PACKET_CLOSE_BUTTON:

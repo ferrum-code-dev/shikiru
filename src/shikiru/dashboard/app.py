@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 from rich.text import Text
 from textual.app import App
-from textual.containers import Grid, Horizontal, HorizontalScroll, Vertical, VerticalScroll
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Label, ListItem, ListView, Rule, Select, Static
@@ -64,6 +64,7 @@ from shikiru.ui.popup import (
     POPUP_RULE_CLASS,
     POPUP_SECONDARY_CLASS,
     POPUP_TITLE_CLASS,
+    PopupFrame,
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_active, widget_is_attached, widget_is_current
@@ -120,6 +121,9 @@ _COMMAND_HISTORY_NEXT = "command-history-next"
 _COMMAND_HISTORY_PAGE = "command-history-page"
 _COMMAND_HISTORY_HEADER = "command-history-header"
 _COMMAND_HISTORY_PAGE_SIZE = 20
+_COMMAND_HISTORY_COMPACT_MAX_COLUMNS = 32
+_COMMAND_HISTORY_PAGE_COMPACT_MAX_COLUMNS = 48
+_COMMAND_HISTORY_TINY_MAX_ROWS = 8
 _COMMAND_HISTORY_ALL = "all"
 _COMMAND_HISTORY_PREVIOUS_KEY = "left"
 _COMMAND_HISTORY_NEXT_KEY = "right"
@@ -281,10 +285,9 @@ class _ContextViewsScreen(ModalScreen[str]):
     DEFAULT_CSS = (
         POPUP_CSS
         + """
-    #focus-views-list {
-        height: auto; max-height: 1fr; min-height: 0; border: none; background: $surface;
-    }
+    #focus-views-list { max-height: 1fr; min-height: 0; border: none; background: $surface; }
     #context-views-hint { height: 1; }
+    #context-views-frame.compact { margin: 0 1; padding: 0 1; }
     """
     )
 
@@ -296,7 +299,7 @@ class _ContextViewsScreen(ModalScreen[str]):
         }
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="context-views-frame", classes=POPUP_FRAME_CLASS):
+        with PopupFrame(widget_id="context-views-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id=_CONTEXT_VIEWS_HEADER, classes=POPUP_HEADER_CLASS):
                 yield Label("Views", id="context-views-title", classes=POPUP_TITLE_CLASS)
                 yield Button(_POPUP_CLOSE_LABEL, id=_CONTEXT_VIEWS_CLOSE, classes=POPUP_CLOSE_CLASS)
@@ -311,6 +314,24 @@ class _ContextViewsScreen(ModalScreen[str]):
                 id="context-views-hint",
                 classes=POPUP_SECONDARY_CLASS,
             )
+
+    def on_mount(self) -> None:
+        self._apply_compact_layout(self.size.width, self.size.height)
+        self.call_after_refresh(self.query_one("#context-views-frame", PopupFrame).content_ready)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._apply_compact_layout(event.size.width, event.size.height)
+        self.call_after_refresh(
+            self.query_one("#context-views-frame", PopupFrame).update_preferred_size
+        )
+
+    def _apply_compact_layout(self, width: int, height: int) -> None:
+        frame = self.query_one("#context-views-frame", PopupFrame)
+        compact = (
+            width <= _CONTEXT_WIDGET_COMPACT_MAX_COLUMNS
+            or height <= _CONTEXT_WIDGET_COMPACT_MAX_ROWS
+        )
+        frame.set_class(compact, "compact")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         choice_id = event.item.id
@@ -331,7 +352,7 @@ class _ContextWidgetScreen(ModalScreen[None]):
         POPUP_CSS
         + """
     #context-widget-frame.compact { margin: 0 2; padding: 0 2; }
-    #context-widget-content { height: auto; max-height: 1fr; min-height: 0; }
+    #context-widget-content { max-height: 1fr; min-height: 0; }
     """
     )
 
@@ -342,7 +363,7 @@ class _ContextWidgetScreen(ModalScreen[None]):
         self._widget = widget
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="context-widget-frame", classes=POPUP_FRAME_CLASS):
+        with PopupFrame(widget_id="context-widget-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id=_CONTEXT_WIDGET_HEADER, classes=POPUP_HEADER_CLASS):
                 yield Label(self._label, id="context-widget-title", classes=POPUP_TITLE_CLASS)
                 yield Button(
@@ -354,9 +375,13 @@ class _ContextWidgetScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
+        self.call_after_refresh(self.query_one("#context-widget-frame", PopupFrame).content_ready)
 
     def on_resize(self, event: events.Resize) -> None:
         self._apply_compact_layout(event.size.width, event.size.height)
+        self.call_after_refresh(
+            self.query_one("#context-widget-frame", PopupFrame).update_preferred_size
+        )
 
     def _apply_compact_layout(self, width: int, height: int) -> None:
         frame = self.query_one("#context-widget-frame")
@@ -507,8 +532,9 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
     DEFAULT_CSS = (
         POPUP_CSS
         + """
-    #workspace-help-scroll { height: auto; max-height: 1fr; min-height: 0; }
+    #workspace-help-scroll { max-height: 1fr; min-height: 0; }
     #workspace-help-copy { height: auto; color: $primary-text; }
+    #workspace-help-frame.compact { margin: 0 1; padding: 0 1; }
     """
     )
 
@@ -586,13 +612,31 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Existing sessions keep the mode and source recorded when they started",
             )
         )
-        with Vertical(id="workspace-help-frame", classes=POPUP_FRAME_CLASS):
+        with PopupFrame(widget_id="workspace-help-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id="workspace-help-header", classes=POPUP_HEADER_CLASS):
                 yield Label(f"Help · {view}", id=_HELP_CONTEXT, classes=POPUP_TITLE_CLASS)
                 yield Button(_POPUP_CLOSE_LABEL, id=_HELP_CLOSE_BUTTON, classes=POPUP_CLOSE_CLASS)
             yield Rule(classes=POPUP_RULE_CLASS)
             with VerticalScroll(id="workspace-help-scroll", classes=POPUP_BODY_CLASS):
                 yield Static("\n".join(lines), id="workspace-help-copy", markup=False)
+
+    def on_mount(self) -> None:
+        self._apply_compact_layout(self.size.width, self.size.height)
+        self.call_after_refresh(self.query_one("#workspace-help-frame", PopupFrame).content_ready)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._apply_compact_layout(event.size.width, event.size.height)
+        self.call_after_refresh(
+            self.query_one("#workspace-help-frame", PopupFrame).update_preferred_size
+        )
+
+    def _apply_compact_layout(self, width: int, height: int) -> None:
+        frame = self.query_one("#workspace-help-frame", PopupFrame)
+        compact = (
+            width <= _CONTEXT_WIDGET_COMPACT_MAX_COLUMNS
+            or height <= _CONTEXT_WIDGET_COMPACT_MAX_ROWS
+        )
+        frame.set_class(compact, "compact")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Close help when its button is activated."""
@@ -616,10 +660,16 @@ class _CommandHistoryScreen(ModalScreen[None]):
         POPUP_CSS
         + """
     #command-history-filter { width: 100%; height: 3; }
-    #command-history-scroll { height: auto; min-height: 0; }
+    #command-history-scroll { min-height: 0; }
     #command-history-copy { height: auto; padding: 0; }
     #command-history-page { height: 1; }
-    #command-history-controls { height: 3; width: 100%; }
+    #command-history-controls { height: 1; width: 100%; }
+    #command-history-controls Button {
+        width: auto; min-width: 1; height: 1; margin: 0; padding: 0; border: none;
+    }
+    #command-history-frame.compact { margin: 0 1; padding: 0 1; }
+    #command-history-frame.tiny #command-history-filter,
+    #command-history-frame.tiny #command-history-page { display: none; }
     """
     )
 
@@ -634,7 +684,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
         self._change_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="command-history-frame", classes=POPUP_FRAME_CLASS):
+        with PopupFrame(widget_id="command-history-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id=_COMMAND_HISTORY_HEADER, classes=POPUP_HEADER_CLASS):
                 yield Label(
                     "Command history",
@@ -656,19 +706,39 @@ class _CommandHistoryScreen(ModalScreen[None]):
             with VerticalScroll(id=_COMMAND_HISTORY_SCROLL, classes=POPUP_BODY_CLASS):
                 yield Static("Loading command history…", id=_COMMAND_HISTORY_COPY, markup=False)
             yield Label("", id=_COMMAND_HISTORY_PAGE, classes=POPUP_SECONDARY_CLASS)
-            with HorizontalScroll(id="command-history-controls"):
+            with Horizontal(id="command-history-controls"):
                 yield Button("p Previous", id=_COMMAND_HISTORY_PREVIOUS, disabled=True)
                 yield Button("n Next", id=_COMMAND_HISTORY_NEXT, disabled=True)
 
     async def on_mount(self) -> None:
+        self._apply_compact_layout(self.size.width, self.size.height)
         self._display_history()
         self.call_after_refresh(self._limit_history_body, self.size.height)
+        self.call_after_refresh(self.query_one("#command-history-frame", PopupFrame).content_ready)
         self._change_worker = self.run_worker(
             self._on_change(self._refresh), group=_COMMAND_HISTORY_WORKER
         )
 
     def on_resize(self, event: events.Resize) -> None:
+        self._apply_compact_layout(event.size.width, event.size.height)
         self.call_after_refresh(self._limit_history_body, event.size.height)
+        self.call_after_refresh(
+            self.query_one("#command-history-frame", PopupFrame).update_preferred_size
+        )
+
+    def _apply_compact_layout(self, width: int, height: int) -> None:
+        frame = self.query_one("#command-history-frame", PopupFrame)
+        compact = width <= _COMMAND_HISTORY_COMPACT_MAX_COLUMNS
+        tiny = height <= _COMMAND_HISTORY_TINY_MAX_ROWS
+        frame.set_class(compact or tiny, "compact")
+        frame.set_class(tiny, "tiny")
+        self.query_one("#command-history-title", Label).update(
+            "Hist." if compact or tiny else "Command history"
+        )
+        self.query_one(f"#{_COMMAND_HISTORY_PREVIOUS}", Button).label = (
+            "p" if compact else "p Previous"
+        )
+        self.query_one(f"#{_COMMAND_HISTORY_NEXT}", Button).label = "n" if compact else "n Next"
 
     def _limit_history_body(self, viewport_height: int) -> None:
         if not self.is_mounted:
@@ -761,10 +831,12 @@ class _CommandHistoryScreen(ModalScreen[None]):
         end = history.offset + len(history.entries)
         page_number = history.offset // history.limit + 1
         filter_name = history.status.value if history.status is not None else "all statuses"
-        self.query_one(f"#{_COMMAND_HISTORY_PAGE}", Label).update(
-            f"{filter_name} · page {page_number} · {history.limit} per page · "
-            f"rows {start}-{end} of {history.total_count}"
+        page_text = (
+            f"p{page_number} · {end}/{history.total_count}"
+            if self.size.width <= _COMMAND_HISTORY_PAGE_COMPACT_MAX_COLUMNS
+            else f"{filter_name} · page {page_number} · rows {start}-{end} of {history.total_count}"
         )
+        self.query_one(f"#{_COMMAND_HISTORY_PAGE}", Label).update(page_text)
         self.query_one(f"#{_COMMAND_HISTORY_PREVIOUS}", Button).disabled = history.offset == 0
         self.query_one(f"#{_COMMAND_HISTORY_NEXT}", Button).disabled = not history.has_more
         if preserve_scroll:

@@ -49,6 +49,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_TURN,
     TASK_DETAIL_USAGE_INLINE_BUTTON,
     TASK_DETAIL_VIEWS_CLOSE_BUTTON,
+    TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TASK_VIEW_ACTIONS,
     TASK_VIEW_CONTEXT,
     TASK_VIEW_EVIDENCE,
@@ -94,6 +95,7 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import HOME_WINDOW_NAME
+from shikiru.ui.popup import PopupFrame
 from shikiru.view_log import view_log_path
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
 from tests.support.clock import FakeClock
@@ -201,6 +203,7 @@ class _ExtensionEntryPoint:
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from rich.text import Text
@@ -2118,10 +2121,11 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
             app.screen,
             close_id=TASK_DETAIL_VIEWS_CLOSE_BUTTON,
             frame_id="task-detail-views-frame",
-            body_id="task-detail-views-content",
+            body_id=None,
             width=width,
             height=height,
         )
+        _assert_task_detail_views_controls_reachable(cast("TaskDetailViewsScreen", app.screen))
         assert await pilot.click(close_button, offset=(0, 0))
         await wait_until(
             lambda saved_scroll_position=saved_scroll_position: (
@@ -2138,6 +2142,16 @@ async def _close_task_views_preserving_evidence_at_narrow_sizes(
         assert timeline_role.value == Role.LEADER.value
         assert timeline_entry.value == selected_entry
         assert queue.pending() == pending_before
+
+
+def _assert_task_detail_views_controls_reachable(screen: TaskDetailViewsScreen) -> None:
+    frame = screen.query_one("#task-detail-views-frame")
+    view_choice = cast("Select[str]", screen.query_one("#task-detail-view-choice", Select))
+    open_button = screen.query_one(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}", Button)
+    assert frame.content_region.contains_region(view_choice.region)
+    assert frame.content_region.contains_region(open_button.region)
+    assert screen.region.contains_region(view_choice.region)
+    assert screen.region.contains_region(open_button.region)
 
 
 async def _assert_native_views_shortcut_precedence(
@@ -2157,13 +2171,13 @@ async def _assert_popup_close_reachable(
     *,
     close_id: str,
     frame_id: str,
-    body_id: str,
+    body_id: str | None,
     width: int,
     height: int,
 ) -> Button:
     close = screen.query_one(f"#{close_id}", Button)
     frame = screen.query_one(f"#{frame_id}")
-    body = screen.query_one(f"#{body_id}", VerticalScroll)
+    body = screen.query_one(f"#{body_id}", VerticalScroll) if body_id is not None else None
     await wait_until(
         lambda: (
             close.region.width > 0
@@ -2177,8 +2191,73 @@ async def _assert_popup_close_reachable(
     assert close.visible
     assert close.region.right <= width
     assert close.region.bottom <= height
-    assert not body.scrollable_content_region.contains_region(close.region)
+    assert body is None or not body.scrollable_content_region.contains_region(close.region)
     return close
+
+
+async def _replay_detached_popup_callbacks(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    frame: PopupFrame,
+    *screen_callbacks: Callable[[], None],
+) -> None:
+    app.call_after_refresh(frame.content_ready)
+    app.call_after_refresh(frame.update_preferred_size)
+    for callback in screen_callbacks:
+        app.call_after_refresh(callback)
+    await pilot.pause()
+
+
+async def _open_task_actions_palette(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    task_id: str,
+    queue: CommandQueue,
+    pending_before: list[QueuedCommand],
+) -> tuple[PaletteScreen, PopupFrame]:
+    app.set_focus(None)
+    await pilot.press("v")
+    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
+    choice.value = TASK_VIEW_ACTIONS
+    await pilot.click("#task-detail-views-open")
+    await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
+    palette = cast("PaletteScreen", app.screen)
+    frame = palette.query_one("#palette-frame", PopupFrame)
+    assert palette.query_one("#task-id", Input).value == task_id
+    assert cast("Select[str]", palette.query_one("#role", Select)).value == (Role.IMPLEMENTER.value)
+    assert queue.pending() == pending_before
+    return palette, frame
+
+
+async def _open_and_close_task_help(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    *,
+    task_id: str,
+    queue: CommandQueue,
+    pending_before: list[QueuedCommand],
+    task_detail_screen: TaskDetailScreen,
+) -> None:
+    app.set_focus(None)
+    await pilot.press("v")
+    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
+    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
+    choice.value = TASK_VIEW_HELP
+    await pilot.click("#task-detail-views-open")
+    await wait_until(
+        lambda: (
+            bool(app.screen.query("#workspace-help-context"))
+            and task_id in _text(app.screen.query_one("#workspace-help-context", Static))
+        ),
+        timeout=2,
+    )
+    help_frame = app.screen.query_one("#workspace-help-frame", PopupFrame)
+    assert queue.pending() == pending_before
+    await pilot.click("#workspace-help-close")
+    await wait_until(lambda: app.screen is task_detail_screen, timeout=2)
+    await _replay_detached_popup_callbacks(app, pilot, help_frame)
+    assert app.screen is task_detail_screen
 
 
 async def test_task_detail_views_mouse_opens_task_actions_and_help(
@@ -2214,38 +2293,38 @@ async def test_task_detail_views_mouse_opens_task_actions_and_help(
             await _close_task_views_preserving_evidence_at_narrow_sizes(
                 app, pilot, task.id, queue, pending_before
             )
-            task_detail_screen = app.screen
+            task_detail_screen = cast("TaskDetailScreen", app.screen)
+            task_detail_frame = task_detail_screen.query_one("#task-detail-popup-frame", PopupFrame)
             await pilot.resize_terminal(100, 40)
             await pilot.wait_for_scheduled_animations()
-            app.set_focus(None)
-            await pilot.press("v")
-            await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
-            choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-            choice.value = TASK_VIEW_ACTIONS
-            await pilot.click("#task-detail-views-open")
-            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
-            palette = cast("PaletteScreen", app.screen)
-            assert palette.query_one("#task-id", Input).value == task.id
-            assert cast("Select[str]", palette.query_one("#role", Select)).value == (
-                Role.IMPLEMENTER.value
+
+            palette, palette_frame = await _open_task_actions_palette(
+                app, pilot, task.id, queue, pending_before
             )
-            assert queue.pending() == pending_before
 
             await pilot.press("escape")
             await wait_until(lambda: app.screen is task_detail_screen, timeout=2)
-            app.set_focus(None)
-            await pilot.press("v")
-            await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=2)
-            choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-            choice.value = TASK_VIEW_HELP
-            await pilot.click("#task-detail-views-open")
-            await wait_until(
-                lambda: task.id in _text(app.screen.query_one("#workspace-help-context", Static)),
-                timeout=2,
+            await _replay_detached_popup_callbacks(
+                app, pilot, palette_frame, palette.update_popup_geometry
             )
-            assert queue.pending() == pending_before
-            await pilot.click("#workspace-help-close")
-            await wait_until(lambda: app.screen is task_detail_screen, timeout=2)
+            assert app.screen is task_detail_screen
+            await _open_and_close_task_help(
+                app,
+                pilot,
+                task_id=task.id,
+                queue=queue,
+                pending_before=pending_before,
+                task_detail_screen=task_detail_screen,
+            )
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is workspace_screen, timeout=2)
+            await _replay_detached_popup_callbacks(
+                app, pilot, task_detail_frame, task_detail_screen.mark_popup_content_ready
+            )
+            assert app.screen is workspace_screen
+            assert task.id in _text(workspace_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            await pilot.press("?")
+            await wait_until(lambda: bool(app.screen.query("#workspace-help-close")), timeout=2)
             await pilot.press("escape")
             await wait_until(lambda: app.screen is workspace_screen, timeout=2)
     finally:
