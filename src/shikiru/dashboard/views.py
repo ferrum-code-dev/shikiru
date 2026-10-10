@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
@@ -59,7 +59,7 @@ from shikiru.dashboard.contract import (
     WorkspaceSummaryView,
 )
 from shikiru.dashboard.session_history import project_task_sessions
-from shikiru.dashboard.tick import current_tick, tick_now
+from shikiru.dashboard.tick import TickMemo, tick_now
 from shikiru.domain.commands import CommandStatus, ResolutionKind
 from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation_evidence import parse_escalation_packet
@@ -100,7 +100,7 @@ if TYPE_CHECKING:
     from shikiru.dashboard.motion import DashboardMotion
     from shikiru.domain.events import Event
     from shikiru.domain.faults import FaultStreak
-    from shikiru.domain.motion import TaskMotionFrame
+    from shikiru.domain.motion import MotionFrame, TaskMotionFrame
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
     from shikiru.operator.queries import EscalationView, OperatorQueries, ReportRow, UsageView
@@ -189,25 +189,6 @@ class _VersionedCache[K, V]:
         return self._values[key]
 
 
-class _TickMemo:
-    def __init__(self, state: StateReader) -> None:
-        self._state = state
-        self._key: tuple[datetime, int] | None = None
-        self._values: dict[str, object] = {}
-
-    def get[V](self, name: str, load: Callable[[], V]) -> V:
-        tick = current_tick()
-        if tick is None:
-            return load()
-        key = (tick, self._state.data_version())
-        if key != self._key:
-            self._key = key
-            self._values = {}
-        if name not in self._values:
-            self._values[name] = load()
-        return cast("V", self._values[name])
-
-
 class DashboardSources(Protocol):
     """External information composed into dashboard view models."""
 
@@ -276,7 +257,7 @@ class StateDashboardViews:
         self._structured_escalation_cache: dict[str, _StructuredEscalationCache] = {}
         self._fault_version = -1
         self._fault_cache: tuple[FaultStreak, ...] | None = None
-        self._tick_memo = _TickMemo(state)
+        self._tick_memo = TickMemo(state.data_version)
 
     def _now(self) -> datetime:
         return tick_now(self._clock)
@@ -567,14 +548,22 @@ class StateDashboardViews:
         if task_filter in (TaskBrowserFilter.ACTIVE, TaskBrowserFilter.ALL):
             current_turn_tasks = self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES)
             motion_task_ids.update(task.id for task in current_turn_tasks)
-            frames = self._motion.frames(
-                tuple(current_turn_tasks), now, engine_running=self.engine_up()
-            )
+            frames = self._active_turn_frames(now, engine_running=self.engine_up())
             stalled_ids.update(item.task_id for item in frames.tasks if item.stalled)
             agent_processing_ids.update(
                 item.task_id for item in frames.tasks if item.agent_processing
             )
         return motion_task_ids, stalled_ids, tuple(sorted(stalled_ids)), agent_processing_ids
+
+    def _active_turn_frames(self, now: datetime, *, engine_running: bool) -> MotionFrame:
+        return self._tick_memo.get(
+            ("active_turn_frames", engine_running),
+            lambda: self._motion.frames(
+                tuple(self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES)),
+                now,
+                engine_running=engine_running,
+            ),
+        )
 
     def _quota_wait_task_ids(self, now: datetime) -> tuple[str, ...]:
         return tuple(
@@ -839,8 +828,7 @@ class StateDashboardViews:
             if task_id not in decision_order or order < decision_order[task_id]:
                 decision_order[task_id] = order
 
-        active = self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES)
-        frames = self._motion.frames(tuple(active), now)
+        frames = self._active_turn_frames(now, engine_running=True)
         stalled_ids = {item.task_id for item in frames.tasks if item.stalled}
         for task_id in stalled_ids:
             group_reasons.setdefault(task_id, []).append("diagnosed stall")

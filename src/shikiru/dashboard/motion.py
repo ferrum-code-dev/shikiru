@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from shikiru.dashboard.tick import TickMemo
 from shikiru.domain.events import EventKind
 from shikiru.domain.motion import (
     MotionStamp,
@@ -60,6 +61,7 @@ class DashboardMotion:
         self._task_events: dict[str, tuple[Event, ...]] = {}
         self._task_runs: dict[str, tuple[Run, ...]] = {}
         self._merge_events: tuple[Event, ...] = ()
+        self._tick_memo = TickMemo(state.data_version)
 
     def recent_merges(self, now: datetime) -> list[Task]:
         """Return completed tasks whose merge stamp is still within its flash window."""
@@ -92,7 +94,7 @@ class DashboardMotion:
         self._sync_event_cache()
         return motion_frame(
             self._motion_state(
-                tasks=tuple(self._task_motion(task) for task in tasks),
+                tasks=tuple(self._shared_task_motion(task) for task in tasks),
                 quotas=quotas,
                 escalations_open=escalations_open,
                 engine_running=engine_running,
@@ -120,6 +122,9 @@ class DashboardMotion:
                 kinds=(EventKind.TASK_DONE,),
             )
         )
+
+    def _shared_task_motion(self, task: Task) -> TaskMotionState:
+        return self._tick_memo.get(task.id, lambda: self._task_motion(task))
 
     def _task_motion(self, task: Task) -> TaskMotionState:
         events = self._events_for(task)

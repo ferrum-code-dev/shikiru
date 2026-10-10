@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator, Hashable
     from datetime import datetime
 
     from shikiru.clock import Clock
@@ -34,3 +34,26 @@ def pinned_tick(instant: datetime) -> Generator[None]:
         yield
     finally:
         _TICK_INSTANT.reset(token)
+
+
+class TickMemo:
+    """Values built once per tick and data version, never reused outside a tick."""
+
+    def __init__(self, data_version: Callable[[], int]) -> None:
+        """Key the memo on the tick and on the `data_version` it reads."""
+        self._data_version = data_version
+        self._key: tuple[datetime, int] | None = None
+        self._values: dict[Hashable, object] = {}
+
+    def get[V](self, name: Hashable, load: Callable[[], V]) -> V:
+        """Return the value for `name` built by `load` earlier in this tick, else build it."""
+        tick = _TICK_INSTANT.get()
+        if tick is None:
+            return load()
+        key = (tick, self._data_version())
+        if key != self._key:
+            self._key = key
+            self._values = {}
+        if name not in self._values:
+            self._values[name] = load()
+        return cast("V", self._values[name])
