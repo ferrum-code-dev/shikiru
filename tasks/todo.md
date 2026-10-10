@@ -208,7 +208,7 @@ Third-review scope and evidence: [third real-project review](../docs/tui-feedbac
 Fourth-review scope and evidence: [fourth real-project review](../docs/tui-feedback-fourth-review.md). Execute sequentially; the TUI is the source and the HTML reference follows it (Task 139). Preserve earlier acceptance and independently open gates 59/74h/74p.
 
 - [x] Task 129: Popups open with useful focus and share the Tasks-list scrollbar colours
-- [ ] Task 130: Make Tab traverse only visible, fully highlighted dashboard stops
+- [x] Task 130: Make Tab traverse only visible, fully highlighted dashboard stops
 - [ ] Task 131: Escalation bar follows the selected task and reads clearly
 - [ ] Task 132: Align the token usage and resource bars with the operator templates
 - [ ] Task 133: Stabilise task-list geometry and typography

@@ -240,11 +240,14 @@ ACTIVE_STAGE_LABELS = {
 
 
 class TaskDetailBody(VerticalScroll):
-    can_focus = True
-
-    def __init__(self, scroll_away: Callable[[], None]) -> None:
+    def __init__(self, scroll_away: Callable[[], None], *, always_focusable: bool) -> None:
         super().__init__(id="task-detail-body")
         self._scroll_away = scroll_away
+        self._always_focusable = always_focusable
+
+    def allow_focus(self) -> bool:
+        """Join the Tab chain when it is the whole task view or has content to scroll."""
+        return self._always_focusable or self.max_scroll_y > 0
 
     def on_resize(self, event: events.Resize) -> None:
         del event
@@ -380,7 +383,7 @@ class TaskDetailPanel(Vertical):
         self._initial_content_reported = False
 
     def compose(self) -> ComposeResult:
-        with TaskDetailBody(self._pause_timeline_follow):
+        with TaskDetailBody(self._pause_timeline_follow, always_focusable=self._fixed):
             yield GatedStatic("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
             yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
             yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)

@@ -42,11 +42,10 @@ def _agent_block(usage: AgentUsageView) -> Group:
 class UsagePanel(GatedStatic):
     """Show token totals and quota gauges for every known agent."""
 
-    can_focus = True
-
     def __init__(self, context: WidgetContext) -> None:
         """Hold `context`; usage refreshes after state changes and for live countdowns."""
         super().__init__(id="usage")
+        self.can_focus = context.placement is WidgetPlacement.PROJECT_USAGE
         self._widget_context = context
         self._rendered: tuple[RecordedUsageView, list[AgentUsageView]] | None = None
         self._remove_motion_callback: Callable[[], None] | None = None

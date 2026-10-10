@@ -13,7 +13,6 @@ from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached
 
 RESOURCE_ENTER_KEY = "enter"
-RESOURCE_TOP_BORDER_ROWS = 1
 
 if TYPE_CHECKING:
     from textual import events
@@ -87,7 +86,7 @@ class ResourcesPanel(GatedStatic):
         self.update_if_changed(content)
         if self.size.width:
             rendered_lines = content.wrap(Console(), self.size.width)
-            min_height = len(rendered_lines) + RESOURCE_TOP_BORDER_ROWS
+            min_height = len(rendered_lines)
             if min_height != self._applied_min_height:
                 self._applied_min_height = min_height
                 self.styles.min_height = min_height

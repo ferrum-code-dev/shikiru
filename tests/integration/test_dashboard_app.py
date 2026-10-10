@@ -2296,10 +2296,10 @@ async def test_resource_groups_stay_aligned_after_resize_for_observed_process_tr
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
             compact_lines = _rendered_widget_lines(resources)
-            assert compact_lines[1].startswith("Host ")
+            assert compact_lines[0].startswith("Host ")
             compact_shikiru = "Shikiru CPU" if populated else "Shikiru process tree empty"
-            assert compact_shikiru in compact_lines[2]
-            assert "Agents process tree empty" in compact_lines[3]
+            assert compact_shikiru in compact_lines[1]
+            assert "Agents process tree empty" in compact_lines[2]
             assert all(cell_len(line) <= resources.region.width for line in compact_lines)
     finally:
         reader.close()
@@ -2497,7 +2497,7 @@ async def _assert_cached_resource_views(
     expected_resource_rows = len(expected_groups) if size == _COMPACT_HOME_SIZE else 1
     await wait_until(
         lambda: (
-            home_resources.region.height >= expected_resource_rows + 1
+            home_resources.region.height >= expected_resource_rows
             and all(
                 group in "\n".join(_rendered_widget_lines(home_resources))
                 for group in expected_groups
@@ -2509,7 +2509,8 @@ async def _assert_cached_resource_views(
     _capture_task99(app, f"task117-resource-home-{size[0]}x{size[1]}-color.svg")
     if size == _COMPACT_HOME_SIZE:
         readouts = app.query_one("#focus-readouts", VerticalScroll)
-        readouts.focus()
+        assert not readouts.allow_focus()
+        home_resources.focus()
         await pilot.press("pagedown")
         await wait_until(
             lambda: (
@@ -2555,7 +2556,7 @@ async def _assert_cached_resource_views(
         home_screen = app.screen
         command_count_before = reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count
         assert pilot.app.focused is task_list
-        await pilot.press("shift+tab", "shift+tab")
+        await pilot.press("shift+tab")
         await wait_until(
             lambda: pilot.app.focused is home_resources,
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -7717,7 +7718,8 @@ async def test_dashboard_compact_footer_and_persisted_state_are_readable_without
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
             footer = app.query_one("#focus-footer")
-            assert app.focused is footer
+            assert app.focused is not None
+            assert app.focused.parent is footer
             assert footer.region.height >= 2
             assert footer.region.bottom <= app.size.height
             await _choose_focus_view(app, pilot, "Workflow · Strips")

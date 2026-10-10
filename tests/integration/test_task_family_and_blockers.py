@@ -12,7 +12,6 @@ from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, TaskDetailScreen, TaskPaletteRoute
 from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter, TaskTimelineCategory
 from shikiru.dashboard.detail import (
-    TASK_DETAIL_BODY,
     TASK_DETAIL_FEEDBACK,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_MORE_RELATIONSHIPS,
@@ -29,7 +28,6 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_WORKSPACE,
-    TaskDetailBody,
     TaskDetailPanel,
     TaskDetailViewsScreen,
 )
@@ -302,7 +300,7 @@ async def _open_detail_view(
     pilot: Pilot[None],
     view_id: str,
 ) -> TaskDetailPanel:
-    panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).focus()
+    panel.query_one("#task-detail-usage-inline", Button).focus()
     await pilot.press(TASK_DETAIL_VIEWS_KEY)
     await wait_until(lambda: isinstance(pilot.app.screen, TaskDetailViewsScreen), timeout=2)
     choice = cast("Select[str]", pilot.app.screen.query_one("#task-detail-view-choice", Select))

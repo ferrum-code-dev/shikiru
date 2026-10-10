@@ -58,6 +58,7 @@ _OPEN_KEY = "o"
 _RESOLVE_KEY = "r"
 MAX_ESCALATION_PANEL_HEIGHT = 12
 MINIMUM_GROUPED_DECISIONS = 2
+ARMED_CLASS = "armed"
 PACKET_CLOSE_BUTTON = "escalation-packet-close"
 _PACKET_CLOSE_LABEL = "Esc \u00d7"
 
@@ -142,11 +143,16 @@ class EscalationsPanel(Static):
         self._selected_escalation_id: str | None = None
         self._has_rendered = False
         self._keep_empty_visible = False
+        self._focus_requested = False
         self._remove_motion_callback: Callable[[], None] | None = None
+
+    def allow_focus(self) -> bool:
+        """Join the Tab chain only while it holds attention groups or was opened from Views."""
+        return bool(self._attention.groups) or self._focus_requested
 
     def compose(self) -> ComposeResult:
         """Reserve a bounded, scrollable area for home attention groups."""
-        yield VerticalScroll(id="escalation-panels")
+        yield VerticalScroll(id="escalation-panels", can_focus=False)
 
     async def on_mount(self) -> None:
         """Render current attention and refresh on state or motion changes."""
@@ -165,6 +171,7 @@ class EscalationsPanel(Static):
 
     def on_blur(self, event: events.Blur) -> None:
         del event
+        self._focus_requested = False
         if self._focus_row:
             self.display = True
 
@@ -179,6 +186,7 @@ class EscalationsPanel(Static):
     def activate_attention(self) -> None:
         """Show the attention content, retaining its useful empty state while selected."""
         self._keep_empty_visible = True
+        self._focus_requested = True
         self.display = True
         self.focus()
 
@@ -391,6 +399,7 @@ class EscalationsPanel(Static):
         )
 
     async def _render_panels(self, *, reveal_selection: bool = False) -> None:
+        self.set_class(self._focus_row and self._selected_decision() is not None, ARMED_CLASS)
         panels = self.query_one("#escalation-panels", VerticalScroll)
         scroll_x, scroll_y = panels.scroll_x, panels.scroll_y
         if self._focus_row or not self._attention.groups:

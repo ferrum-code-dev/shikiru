@@ -145,6 +145,7 @@ _SEARCH_KEY = "slash"
 _ACTIONS_KEY = "ctrl+p"
 _HOME_FOOTER_CLEAR = "focus-footer-clear"
 _HOME_FOOTER_ACTIONS = "focus-footer-actions"
+_RESOURCES_RULE = "resources-rule"
 _HOME_FOOTER_HELP = "focus-footer-help"
 _HOME_FOOTER_DETACH = "focus-footer-detach"
 _HOME_FOOTER_COMMAND_STATUS = "workspace-command-status"
@@ -927,8 +928,6 @@ class _CommandStatusLine(Button):
 
 
 class _HomeAttentionStatus(Static):
-    can_focus = True
-
     def __init__(self, context: WidgetContext) -> None:
         super().__init__("", id="escalations", markup=False)
         self._widget_context = context
@@ -1000,8 +999,6 @@ class _HomeAttentionStatus(Static):
 
 
 class _HomeFooter(Grid):
-    can_focus = True
-
     def __init__(
         self,
         tmux_detach_hint: str | None,
@@ -1065,12 +1062,15 @@ class DashboardApp(App[None]):
     }
     #header { height: auto; margin-bottom: 0; text-wrap: wrap; text-overflow: clip; }
     #usage { height: auto; margin-bottom: 0; }
-    #resources {
-        height: auto; margin-bottom: 1; border-top: solid $neutral-border;
-    }
+    #resources { height: auto; margin-bottom: 1; }
+    #resources-rule { margin: 0; color: $neutral-border; }
     #escalations {
         width: 100%; height: auto; max-height: 3; padding: 0 1; margin-bottom: 1;
         background: $surface;
+    }
+    #usage:focus, #resources:focus, #escalations:focus, #escalations.armed,
+    #focus-main #task-detail-body:focus {
+        background: $selected-surface;
     }
     #focus-main { height: 1fr; min-height: 3; }
     #focus-main.wide { layout: horizontal; }
@@ -1199,14 +1199,16 @@ class DashboardApp(App[None]):
 
     def _compose_focus(self) -> ComposeResult:
         context = self._widget_context()
-        with VerticalScroll(id="focus-root"):
-            with VerticalScroll(id="focus-readouts"):
+        with VerticalScroll(id="focus-root", can_focus=False):
+            with VerticalScroll(id="focus-readouts", can_focus=False):
                 for placement in (
                     WidgetPlacement.IDENTITY,
                     WidgetPlacement.PROJECT_USAGE,
                     WidgetPlacement.RESOURCES,
                 ):
                     for name in self._widget_names_by_placement.get(placement, ()):
+                        if placement is WidgetPlacement.RESOURCES:
+                            yield Rule(id=_RESOURCES_RULE)
                         widget = self._create_widget(name)
                         self._widget_instances[name] = widget
                         yield widget
@@ -1685,7 +1687,7 @@ class DashboardApp(App[None]):
             elif task_list:
                 self.set_focus(task_list.first())
             else:
-                self.set_focus(self.query_one("#focus-footer", _HomeFooter))
+                self.set_focus(self.query_one(f"#{_HOME_FOOTER_ACTIONS}", Button))
         else:
             self.set_focus(self.query_one("#task-detail-body"))
         if self._motion_interval_seconds is not None:
