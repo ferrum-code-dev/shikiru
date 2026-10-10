@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from rich.console import Console
+from textual.color import Color
 from textual.widgets import ListView
 
 from shikiru.config.loader import load_settings
@@ -18,6 +19,7 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.gated_static import GatedStatic
+from shikiru.ui.tokens import AMBER
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, state_views
@@ -66,6 +68,17 @@ class _Home:
 
     def text(self) -> str:
         return " ".join("".join(segment.text for segment in self.segments()).split())
+
+    def amber_bold_texts(self) -> list[str]:
+        amber = Color.parse(AMBER)
+        return [
+            segment.text
+            for segment in self.segments()
+            if segment.style
+            and segment.style.bold
+            and segment.style.color is not None
+            and Color.from_rich_color(segment.style.color) == amber
+        ]
 
     def bold_texts(self) -> list[str]:
         return [segment.text for segment in self.segments() if segment.style and segment.style.bold]
@@ -167,7 +180,7 @@ async def test_bar_follows_the_selected_task_without_moving_focus_or_writing_com
         assert "Integration blocked" in home.text()
         assert "integration_blocked" not in home.text()
         assert home.bar.has_class("armed")
-        assert home.decisions[home.second.id] in home.bold_texts()
+        assert home.decisions[home.second.id] in home.amber_bold_texts()
         assert home.second.id in home.bold_texts()
         await _select(home, pilot, home.plain)
         await wait_until(lambda: "is not escalated" in home.text(), timeout=_WAIT_SECONDS)

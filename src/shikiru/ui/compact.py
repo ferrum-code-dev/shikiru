@@ -998,7 +998,7 @@ def _attention_group_status(
         headline = display_escalation_headline(group.task_id, decision.headline, decision.reason)
         status = Text.assemble(
             ("! ", AMBER),
-            (decision.escalation_id, _BOLD_PRIMARY),
+            (decision.escalation_id, f"{STYLE_BOLD} {AMBER}"),
             (" · ", PRIMARY_TEXT_COLOR),
             (group.task_id, _BOLD_PRIMARY) if group.task_id else ("Project", PRIMARY_TEXT_COLOR),
             (f" · {headline}", PRIMARY_TEXT_COLOR),
