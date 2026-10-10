@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING, cast
 
 from rich.console import Group, RenderableType
 from rich.text import Text
-from textual.widgets import Static
 
 from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui import Gauge
 from shikiru.ui.compact import ProjectAgentUsageDetails, ProjectUsageDetails, ProjectUsageMetric
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached, widget_is_current
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ def _agent_block(usage: AgentUsageView) -> Group:
     return Group(*lines)
 
 
-class UsagePanel(Static):
+class UsagePanel(GatedStatic):
     """Show token totals and quota gauges for every known agent."""
 
     can_focus = True
@@ -82,7 +82,7 @@ class UsagePanel(Static):
     async def _refresh(self, *, motion: bool = False) -> None:
         if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
             project_usage = self._widget_context.views.project_usage()
-            self.update(ProjectUsageMetric(project_usage, "Project").render(home=True))
+            self.update_if_changed(ProjectUsageMetric(project_usage, "Project").render(home=True))
             return
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
         lines: list[RenderableType] = []
@@ -120,7 +120,7 @@ class UsagePanel(Static):
         lines.extend(_agent_block(item) for item in usage)
         if not usage:
             lines.append(Text("No runs or quota windows recorded."))
-        self.update(Group(*lines))
+        self.update_if_changed(Group(*lines))
 
     async def _refresh_if_active(self, *, motion: bool = False) -> None:
         if widget_is_current(self) and cast("App[None]", self.app).is_running:

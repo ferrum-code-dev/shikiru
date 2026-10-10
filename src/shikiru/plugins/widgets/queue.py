@@ -19,6 +19,7 @@ from shikiru.dashboard.contract import (
     TaskBrowserView,
     WidgetPlacement,
 )
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_current
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -128,7 +129,7 @@ class _BrowserListItem(ListItem):
             if focus_layout
             else _row_text(row)
         )
-        self._body = Static(render, markup=False)
+        self._body = GatedStatic(render, markup=False)
         super().__init__(self._body, id=f"task-row-{row.task_id}")
         self.task_id = row.task_id
         self.row = row
@@ -156,7 +157,7 @@ class _BrowserListItem(ListItem):
             if self.focus_layout
             else _row_text(self.row)
         )
-        self._body.update(render)
+        self._body.update_if_changed(render)
 
 
 class _TaskBrowserListView(ListView):

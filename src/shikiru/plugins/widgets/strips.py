@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
-from textual.widgets import Static
 
 from shikiru.dashboard.contract import WidgetPlacement
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.strip import STRIP_WIDE_MIN_COLUMNS, TaskStrip
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from shikiru.ui.strip import TaskStripData
 
 
-class StripsPanel(Static):
+class StripsPanel(GatedStatic):
     """Renders every active task's strip, in dispatch order, focused task first."""
 
     def __init__(self, context: WidgetContext) -> None:
@@ -66,9 +66,9 @@ class StripsPanel(Static):
         self._rendered = rendering
         strips = [TaskStrip(data).render(width) for data in views]
         if not strips:
-            self.update("no active tasks")
+            self.update_if_changed("no active tasks")
             return
-        self.update(Text("\n\n").join(strips))
+        self.update_if_changed(Text("\n\n").join(strips))
 
 
 class StripsWidget:

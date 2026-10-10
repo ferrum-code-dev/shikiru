@@ -26,6 +26,7 @@ from shikiru.ui.compact import (
     FocusAttentionStatus,
     display_escalation_headline,
 )
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
@@ -397,25 +398,25 @@ class EscalationsPanel(Static):
                 if self._focus_row
                 else "No open decisions, diagnosed stalls or recorded engine faults."
             )
-            children = list(panels.query(Static))
+            children = list(panels.query(GatedStatic))
             if len(children) == 1:
-                children[0].update(status)
+                children[0].update_if_changed(status)
                 return
-            await self._replace_panels(panels, [Static(status, markup=False)])
+            await self._replace_panels(panels, [GatedStatic(status, markup=False)])
             return
-        children = list(panels.query(Static))
+        children = list(panels.query(GatedStatic))
         if len(children) == len(self._attention.groups):
             for index, (card, group) in enumerate(
                 zip(children, self._attention.groups, strict=True)
             ):
-                card.update(self._render_group(index, group))
+                card.update_if_changed(self._render_group(index, group))
             if reveal_selection:
                 self._reveal_selection(panels, children[self._selected])
             else:
                 panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
             return
         cards = [
-            Static(self._render_group(index, group), markup=False)
+            GatedStatic(self._render_group(index, group), markup=False)
             for index, group in enumerate(self._attention.groups)
         ]
         if await self._replace_panels(panels, cards):
@@ -424,7 +425,7 @@ class EscalationsPanel(Static):
             else:
                 panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
 
-    async def _replace_panels(self, panels: VerticalScroll, cards: list[Static]) -> bool:
+    async def _replace_panels(self, panels: VerticalScroll, cards: list[GatedStatic]) -> bool:
         await panels.remove_children()
         if not widget_is_attached(self):
             return False
@@ -446,7 +447,7 @@ class EscalationsPanel(Static):
             selected_escalation_id=self._selected_escalation_id,
         )
 
-    def _reveal_selection(self, panels: VerticalScroll, card: Static) -> None:
+    def _reveal_selection(self, panels: VerticalScroll, card: GatedStatic) -> None:
         decision_id = self._selected_escalation_id
         if decision_id is None:
             panels.scroll_to_widget(card, top=True, animate=False)
