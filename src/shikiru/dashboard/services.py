@@ -243,13 +243,15 @@ class DashboardServices:
         """Sample host usage and classified process trees belonging to this project."""
         try:
             previous = self._resources.latest()
-            pane_rows: list[str] = []
-            if await self._tmux.target_exists(self._session_target):
-                pane_rows = await self._tmux.list_session_panes(
-                    self._session_target, _PANE_RESOURCE_FORMAT
-                )
-            roots = self._resource_roots(pane_rows)
-            snapshot = self._resources.sample_process_roots(roots)
+            snapshot = previous
+            if not self._resources.process_sample_is_fresh():
+                pane_rows: list[str] = []
+                if await self._tmux.target_exists(self._session_target):
+                    pane_rows = await self._tmux.list_session_panes(
+                        self._session_target, _PANE_RESOURCE_FORMAT
+                    )
+                roots = self._resource_roots(pane_rows)
+                snapshot = self._resources.sample_process_roots(roots)
         except (OSError, RuntimeError, ShikiruError, ValueError) as error:
             failed_at = self._clock.now()
             self._resource_failure = (failed_at, str(error))

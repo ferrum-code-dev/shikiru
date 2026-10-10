@@ -1111,18 +1111,16 @@ async def test_process_sampling_failure_retains_the_last_complete_tree_sample(
     assert initial.sampled_at == START
 
     clock.advance(settings.orchestration.resources.sample_seconds)
-    children = psutil.Process.children
+    cpu_percent = psutil.Process.cpu_percent
 
-    def deny_current_process_children(
-        process: psutil.Process,
-        *,
-        recursive: bool = False,
-    ) -> list[psutil.Process]:
+    def deny_current_process_cpu_percent(
+        process: psutil.Process, interval: float | None = None
+    ) -> float:
         if process.pid == os.getpid():
             raise psutil.AccessDenied(pid=process.pid)
-        return children(process, recursive=recursive)
+        return cpu_percent(process, interval)
 
-    monkeypatch.setattr(psutil.Process, "children", deny_current_process_children)
+    monkeypatch.setattr(psutil.Process, "cpu_percent", deny_current_process_cpu_percent)
     stale = await sources.resources()
 
     assert stale.state is DiagnosticSampleState.STALE

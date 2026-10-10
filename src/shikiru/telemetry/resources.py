@@ -18,6 +18,21 @@ if TYPE_CHECKING:
     from shikiru.config.settings import ResourcesConfig
 
 _BYTES_PER_GIB = 1024**3
+_PPID_ATTR = "ppid"
+_CREATE_TIME_ATTR = "create_time"
+
+
+@dataclass(frozen=True, slots=True)
+class _TableEntry:
+    process: psutil.Process
+    ppid: int
+    create_time: float
+
+
+@dataclass(frozen=True, slots=True)
+class _ProcessTable:
+    entries: dict[int, _TableEntry]
+    children: dict[int, list[int]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,21 +142,26 @@ class ResourceSampler:
         self._last_complete = unclassified
         return unclassified
 
+    def process_sample_is_fresh(self) -> bool:
+        """Return whether the latest process-tree sample is younger than the sample cadence."""
+        sampled_at = self._instance_sampled_at
+        return (
+            sampled_at is not None
+            and (self._clock.now() - sampled_at).total_seconds() < self._config.sample_seconds
+        )
+
     def sample_process_roots(self, roots: ResourceProcessRoots) -> ResourceSnapshot:
         """Sample host, Shikiru and agent trees from classified process identities."""
-        now = self._clock.now()
-        sampled_at = self._instance_sampled_at
-        if (
-            sampled_at is not None
-            and (now - sampled_at).total_seconds() < self._config.sample_seconds
-        ):
+        if self.process_sample_is_fresh():
             return self._last_complete
+        now = self._clock.now()
         host_sample = self.sample_if_due()
-        agent_processes = self._process_tree(roots.agents)
+        table = self._process_table()
+        agent_processes = self._process_tree(roots.agents, table)
         agent_identities = set(agent_processes)
         shikiru_processes = {
             identity: process
-            for identity, process in self._process_tree(roots.shikiru).items()
+            for identity, process in self._process_tree(roots.shikiru, table).items()
             if identity not in agent_identities
         }
         all_processes = {**shikiru_processes, **agent_processes}
@@ -189,28 +209,56 @@ class ResourceSampler:
         """Return the latest sample without starting a new observation."""
         return self._last_complete
 
+    def _process_table(self) -> _ProcessTable:
+        entries: dict[int, _TableEntry] = {}
+        children: dict[int, list[int]] = {}
+        for process in psutil.process_iter([_PPID_ATTR, _CREATE_TIME_ATTR]):
+            ppid = process.info[_PPID_ATTR]
+            create_time = process.info[_CREATE_TIME_ATTR]
+            if ppid is None or create_time is None:
+                continue
+            entries[process.pid] = _TableEntry(process, ppid, create_time)
+            children.setdefault(ppid, []).append(process.pid)
+        return _ProcessTable(entries, children)
+
+    @staticmethod
+    def _add_unlisted_root(root_identity: ProcessIdentity, table: _ProcessTable) -> bool:
+        try:
+            process = psutil.Process(root_identity.pid)
+            entry = _TableEntry(process, process.ppid(), process.create_time())
+        except psutil.NoSuchProcess, psutil.ZombieProcess:
+            return False
+        except psutil.Error as error:
+            raise ResourceSampleError(str(error)) from error
+        table.entries[root_identity.pid] = entry
+        table.children.setdefault(entry.ppid, []).append(root_identity.pid)
+        return True
+
     def _process_tree(
-        self, roots: Iterable[ProcessIdentity]
+        self, roots: Iterable[ProcessIdentity], table: _ProcessTable
     ) -> dict[tuple[int, float], psutil.Process]:
         found: dict[tuple[int, float], psutil.Process] = {}
         for root_identity in roots:
-            try:
-                root = psutil.Process(root_identity.pid)
-                if not root_identity.matches(_process_identity(root)):
-                    continue
-                descendants = [root, *root.children(recursive=True)]
-            except psutil.NoSuchProcess, psutil.ZombieProcess:
+            if root_identity.pid not in table.entries and not self._add_unlisted_root(
+                root_identity, table
+            ):
                 continue
-            except psutil.Error as error:
-                raise ResourceSampleError(str(error)) from error
-            for process in descendants:
-                try:
-                    process_key = (process.pid, process.create_time())
-                except psutil.NoSuchProcess, psutil.ZombieProcess:
+            root = table.entries[root_identity.pid]
+            if not root_identity.matches(ProcessIdentity(root_identity.pid, root.create_time)):
+                continue
+            pending = [root_identity.pid]
+            while pending:
+                pid = pending.pop()
+                entry = table.entries[pid]
+                process_key = (pid, entry.create_time)
+                if process_key in found:
                     continue
-                except psutil.Error as error:
-                    raise ResourceSampleError(str(error)) from error
-                found[process_key] = self._processes.get(process_key, process)
+                found[process_key] = self._processes.get(process_key, entry.process)
+                pending.extend(
+                    child
+                    for child in table.children.get(pid, ())
+                    if table.entries[child].create_time >= entry.create_time
+                )
         return found
 
     def _measure_processes(
@@ -227,7 +275,8 @@ class ResourceSampler:
     @staticmethod
     def _measure(process: psutil.Process) -> tuple[float, int] | None:
         try:
-            return process.cpu_percent(interval=None), process.memory_info().rss
+            with process.oneshot():
+                return process.cpu_percent(interval=None), process.memory_info().rss
         except psutil.NoSuchProcess, psutil.ZombieProcess:
             return None
         except psutil.Error as error:
@@ -242,10 +291,6 @@ class ResourceSampler:
 def _average(values: Iterable[float]) -> float:
     sequence = tuple(values)
     return sum(sequence, 0.0) / len(sequence) if sequence else 0.0
-
-
-def _process_identity(process: psutil.Process) -> ProcessIdentity:
-    return ProcessIdentity(process.pid, process.create_time())
 
 
 def _usage(measurements: list[tuple[float, int]]) -> tuple[float | None, float | None]:

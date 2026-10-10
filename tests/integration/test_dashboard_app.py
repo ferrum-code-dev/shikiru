@@ -2751,6 +2751,57 @@ async def test_resource_sampling_rejects_reused_and_exited_agent_identities(
         turn_processes.clear(task_run_dir, Role.IMPLEMENTER)
 
 
+async def test_resource_readings_within_one_interval_reuse_the_sample_and_resample_afterwards(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    settings = load_settings(project_dir)
+    clock = FakeClock(_TEST_START)
+    task = seed_task(connection, clock, title="Share one resource sample")
+    runner, process, turn_processes, task_run_dir, identity = await _start_resource_agent(
+        connection,
+        clock,
+        project_dir,
+        task,
+    )
+    sampler = ResourceSampler(clock, settings.orchestration.resources)
+    services = _resource_services(
+        reader,
+        project_dir,
+        clock,
+        settings=settings,
+        tmux_server=tmux_server,
+        sampler=sampler,
+        runner=runner,
+    )
+    turn_pid = turn_pid_path(task_run_dir, Role.IMPLEMENTER)
+    assert identity.started_at is not None
+    try:
+        first = await services.resources()
+        shifted_identity = replace(
+            identity,
+            started_at=identity.started_at - _RESOURCE_PID_REUSE_SHIFT_SECONDS,
+        )
+        turn_pid.write_text(json.dumps(asdict(shifted_identity)), encoding="utf-8")
+        repeated = await services.resources()
+
+        assert repeated.sampled_at == first.sampled_at
+        assert repeated.agents_process_tree_empty is False
+
+        clock.advance(settings.orchestration.resources.sample_seconds)
+        resampled = await services.resources()
+
+        assert resampled.sampled_at != first.sampled_at
+        assert resampled.agents_process_tree_empty is True
+    finally:
+        if process.returncode is None:
+            await process.stop()
+        turn_processes.clear(task_run_dir, Role.IMPLEMENTER)
+
+
 async def test_resource_sampler_deduplicates_overlapping_recorded_agent_roots(
     connection: Connection,
     tmp_path: Path,
