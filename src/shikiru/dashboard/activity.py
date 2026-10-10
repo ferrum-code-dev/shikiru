@@ -66,8 +66,9 @@ class RoleViewTail:
         state = self._states.get(path)
         if state is None or size < state.offset or state.turn_name != turn_name:
             state = self._initial_state(path, turn_name)
-        chunk, start_offset = self._read_new_bytes(path, state)
-        self._consume(state, chunk, start_offset)
+        if size > state.offset:
+            chunk, start_offset = self._read_new_bytes(path, state)
+            self._consume(state, chunk, start_offset)
         self._states[path] = state
         if state.last_signal_at is None or state.signal_offset is None:
             return None
