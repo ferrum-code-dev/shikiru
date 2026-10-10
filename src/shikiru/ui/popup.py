@@ -240,10 +240,6 @@ POPUP_CSS = (
 .popup-body, .popup-frame #task-detail-body {
     overflow-x: hidden; overflow-y: auto;
     scrollbar-size-horizontal: 0; scrollbar-size-vertical: 1;
-    scrollbar-color: $secondary-text; scrollbar-color-active: $focus;
-    scrollbar-color-hover: $primary-text; scrollbar-background: $surface;
-    scrollbar-background-active: $surface; scrollbar-background-hover: $surface;
-    scrollbar-corner-color: $surface;
 }
 .popup-secondary { color: $secondary-text; }
 """

@@ -7169,7 +7169,8 @@ async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
             _capture_task99(app, "task115-help-120x40-color.svg")
 
             close = help_screen.query_one("#workspace-help-close", Button)
-            close.focus()
+            assert help_screen.focused is help_scroll
+            await pilot.press("tab")
             await wait_until(
                 lambda: help_screen.focused is close,
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,

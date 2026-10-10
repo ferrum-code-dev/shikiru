@@ -69,6 +69,7 @@ class DialogueTextScreen(ModalScreen[None]):
                 yield Static(self._text, markup=False, id="dialogue-full-text")
 
     def on_mount(self) -> None:
+        self.set_focus(self.query_one("#dialogue-text-scroll", VerticalScroll))
         self.call_after_refresh(self.query_one("#dialogue-text-frame", PopupFrame).content_ready)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:

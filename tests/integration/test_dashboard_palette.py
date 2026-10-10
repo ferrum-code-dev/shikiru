@@ -2198,8 +2198,10 @@ async def test_palette_preserves_invalid_and_missing_resolve_routes(
         await pilot.pause()
         screen = _screen(app)
         close = screen.query_one("#palette-close", Button)
-        close.focus()
-        await wait_until(lambda: app.focused is close, timeout=2)
+        await wait_until(
+            lambda: app.focused is screen.query_one("#action-search", Input),
+            timeout=2,
+        )
         assert cast("Content", close.label).plain in _exported_screen_text(app)
         assert screen.query_one("#palette-submit", Button).disabled
         assert expected in _static_text(screen, "#palette-result")

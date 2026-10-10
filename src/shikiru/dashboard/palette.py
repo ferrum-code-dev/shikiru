@@ -702,6 +702,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self.call_after_refresh(self._focus_first_menu_action)
         elif self._contextual_palette:
             self.call_after_refresh(self._restore_context_form_position)
+        else:
+            self.set_focus(self.query_one(f"#{_FIELD_ACTION_SEARCH}", Input))
         self._change_worker = self.run_worker(
             self._on_change(self._refresh_after_database_change),
             group=_PALETTE_STATE_WORKER,

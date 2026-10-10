@@ -326,6 +326,7 @@ class _ContextViewsScreen(ModalScreen[str]):
 
     def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
+        self.set_focus(self.query_one(f"#{FOCUS_VIEWS_LIST}", ListView))
         self.call_after_refresh(self.query_one("#context-views-frame", PopupFrame).content_ready)
 
     def on_resize(self, event: events.Resize) -> None:
@@ -384,6 +385,7 @@ class _ContextWidgetScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
+        self.set_focus(self.query_one("#context-widget-content", VerticalScroll))
         self.call_after_refresh(self.query_one("#context-widget-frame", PopupFrame).content_ready)
 
     def on_resize(self, event: events.Resize) -> None:
@@ -631,6 +633,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
+        self.set_focus(self.query_one("#workspace-help-scroll", VerticalScroll))
         self.call_after_refresh(self.query_one("#workspace-help-frame", PopupFrame).content_ready)
 
     def on_resize(self, event: events.Resize) -> None:
@@ -721,6 +724,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
 
     async def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
+        self.set_focus(cast("Select[str]", self.query_one(f"#{_COMMAND_HISTORY_FILTER}", Select)))
         self._display_history()
         self.call_after_refresh(self._limit_history_body, self.size.height)
         self.call_after_refresh(self.query_one("#command-history-frame", PopupFrame).content_ready)

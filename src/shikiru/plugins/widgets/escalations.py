@@ -102,6 +102,7 @@ class PacketScreen(ModalScreen[None]):
                 yield Static(self._packet, markup=False, id="escalation-packet")
 
     def on_mount(self) -> None:
+        self.set_focus(self.query_one("#escalation-packet-scroll", VerticalScroll))
         self.call_after_refresh(
             self.query_one("#escalation-packet-frame", PopupFrame).content_ready
         )
