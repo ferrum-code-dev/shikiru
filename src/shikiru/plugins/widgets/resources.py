@@ -109,7 +109,8 @@ def _diagnostics_content(sample: ResourceView | None, width: int) -> Text:
     metric = render_resource_metric(sample, width=width)
     age = f"Observed {sample.sampled_ago} ago. " if sample and sample.sampled_ago else ""
     explanation = (
-        f"{age}CPU is percent of host capacity. Host RAM is used/total; Shikiru and Agents RAM "
-        "are process RSS/host total, not a per-process limit. Shikiru excludes agent trees."
+        f"{age}CPU is percent of host capacity. Host RAM is used/total; Shikiru and Agents RSS "
+        "is process resident memory with no denominator, not a per-process limit. Shikiru "
+        "excludes agent trees."
     )
     return Text.assemble(metric, "\n", Text(explanation))

@@ -33,7 +33,8 @@ ENGINE_LOCK_ID = "project-diagnostics-engine-lock"
 ENGINE_FAULTS_ID = "project-diagnostics-engine-faults"
 DOCKER_FACTS_ID = "project-diagnostics-docker"
 RESOURCE_GUIDANCE = (
-    "CPU % of host capacity\nHost RAM used/total\nProcess RSS/host total\nShikiru excludes agents."
+    "CPU % of host capacity\nHost RAM used/total\nShikiru and Agents RSS, no denominator\n"
+    "Shikiru excludes agents."
 )
 RESOURCE_SCOPE = "Scope · current Shikiru project"
 ENGINE_LOCK_HELD = "Engine lock · held"

@@ -45,6 +45,8 @@ if TYPE_CHECKING:
     from shikiru.ui.strip import TaskStripData
 
 _BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
+_BOLD_STEEL = f"{STYLE_BOLD} {STEEL_BLUE}"
+_BOLD_SAGE = f"{STYLE_BOLD} {SAGE}"
 GIB_FORMAT = ".1f"
 BYTES_PER_GIB = 1024**3
 SESSION_COST_FORMAT = ".2f"
@@ -473,11 +475,9 @@ class ProjectUsageMetric:
     usage: _RecordedUsage
     scope: str
 
-    def render(self, *, home: bool = False) -> Group | Text:
-        if home:
-            return _home_project_usage_text(self.usage)
+    def render(self) -> Group:
         usage = self.usage
-        known_token_sessions = usage.reported_sessions + usage.legacy_token_sessions
+        known_token_sessions = _known_token_sessions(usage)
         tokens = (
             f"{_compact_count(usage.input_tokens + usage.output_tokens)} input+output"
             if known_token_sessions
@@ -497,6 +497,10 @@ class ProjectUsageMetric:
         if billing:
             lines.append(Text(billing, style=SECONDARY_TEXT_COLOR))
         return Group(*lines)
+
+    def render_home(self, width: int | None = None) -> Text:
+        """Render the Home token bar, wrapping only between its groups within `width`."""
+        return _home_project_usage_text(self.usage, width)
 
 
 @dataclass(frozen=True)
@@ -596,28 +600,47 @@ def _join_text(parts: list[Text]) -> Text:
     return result
 
 
-def _home_project_usage_text(usage: _RecordedUsage) -> Text:
-    known_token_sessions = usage.reported_sessions + usage.legacy_token_sessions
-    tokens = (
-        f"{_compact_count(usage.input_tokens + usage.output_tokens)} tokens"
-        if known_token_sessions
-        else "tokens unknown"
-    )
-    text = Text(tokens, style=STEEL_BLUE if known_token_sessions else SECONDARY_TEXT_COLOR)
-    if usage.session_count == 0:
-        session_coverage = "0 sessions"
-    elif usage.legacy_token_sessions:
-        session_coverage = (
-            f"{usage.reported_sessions} reported + {usage.legacy_token_sessions} legacy / "
-            f"{usage.session_count} sessions"
+def _known_token_sessions(usage: _RecordedUsage) -> int:
+    return usage.reported_sessions + usage.legacy_token_sessions
+
+
+def _home_project_usage_text(usage: _RecordedUsage, width: int | None) -> Text:
+    groups = [
+        _count_text(usage.session_count, "session", _BOLD_PRIMARY),
+        _home_token_text(usage),
+    ]
+    if usage.api_billed_cost_sessions and usage.api_billed_cost_usd is not None:
+        groups.append(
+            Text.assemble(
+                (f"${usage.api_billed_cost_usd:{SESSION_COST_FORMAT}}", _BOLD_SAGE),
+                (" API", SECONDARY_TEXT_COLOR),
+            )
         )
-    else:
-        session_coverage = f"{usage.reported_sessions}/{usage.session_count} sessions"
-    text.append(f" · {session_coverage}", style=SECONDARY_TEXT_COLOR)
-    billing = _primary_billing_summary(usage, home=True)
-    if billing:
-        text.append(f" · {billing}", style=SECONDARY_TEXT_COLOR)
-    return text
+    groups.extend(_home_coverage_texts(usage))
+    return _wrap_groups(tuple(groups), width)
+
+
+def _home_token_text(usage: _RecordedUsage) -> Text:
+    if not _known_token_sessions(usage):
+        return Text("tokens unknown", style=SECONDARY_TEXT_COLOR)
+    total = _compact_count(usage.input_tokens + usage.output_tokens)
+    if usage.reported_sessions != usage.session_count:
+        return Text(f"{total} tokens", style=SECONDARY_TEXT_COLOR)
+    return Text.assemble((total, _BOLD_STEEL), (" tokens", SECONDARY_TEXT_COLOR))
+
+
+def _home_coverage_texts(usage: _RecordedUsage) -> list[Text]:
+    labels: list[str] = []
+    if _known_token_sessions(usage):
+        if usage.legacy_token_sessions:
+            labels.append(_count_label(usage.legacy_token_sessions, "legacy session"))
+        if usage.unknown_token_sessions:
+            labels.append(f"{_count_label(usage.unknown_token_sessions, 'session')} without tokens")
+    if usage.api_cost_unreported_sessions:
+        labels.append(f"{_count_label(usage.api_cost_unreported_sessions, 'cost')} unreported")
+    if usage.unknown_billing_sessions:
+        labels.append(f"{_count_label(usage.unknown_billing_sessions, 'billing mode')} unknown")
+    return [Text(label, style=SECONDARY_TEXT_COLOR) for label in labels]
 
 
 @dataclass(frozen=True)
@@ -736,7 +759,7 @@ def _unknown_billing_source_lines(usage: _RecordedUsage) -> list[Text]:
     ]
 
 
-def _primary_billing_summary(usage: _RecordedUsage, *, home: bool = False) -> str:
+def _primary_billing_summary(usage: _RecordedUsage) -> str:
     parts: list[str] = []
     all_amount = usage.billed_cost_usd
     api_amount = usage.api_billed_cost_usd
@@ -750,17 +773,11 @@ def _primary_billing_summary(usage: _RecordedUsage, *, home: bool = False) -> st
         )
     if usage.api_billed_cost_sessions and api_amount is not None:
         parts.append(
-            f"API billed ${api_amount:{SESSION_COST_FORMAT}}"
-            if home
-            else f"API billed ${api_amount:{SESSION_COST_FORMAT}} · "
+            f"API billed ${api_amount:{SESSION_COST_FORMAT}} · "
             f"{_session_count(usage.api_billed_cost_sessions)}"
         )
     if usage.api_cost_unreported_sessions:
-        parts.append(
-            f"API unreported {usage.api_cost_unreported_sessions}"
-            if home
-            else f"{_count_label(usage.api_cost_unreported_sessions, 'API charge')} unreported"
-        )
+        parts.append(f"{_count_label(usage.api_cost_unreported_sessions, 'API charge')} unreported")
     if usage.subscription_agents:
         parts.append(f"{_count_label(len(usage.subscription_agents), 'subscription agent')}")
     if usage.unknown_billing_sessions:
@@ -786,8 +803,18 @@ def _session_count(count: int) -> str:
 
 
 def _count_label(count: int, noun: str) -> str:
-    plural = noun if count == 1 else f"{noun}s"
-    return f"{count} {plural}"
+    return f"{count} {_plural(count, noun)}"
+
+
+def _count_text(count: int, noun: str, count_style: str) -> Text:
+    return Text.assemble(
+        (str(count), count_style),
+        (f" {_plural(count, noun)}", SECONDARY_TEXT_COLOR),
+    )
+
+
+def _plural(count: int, noun: str) -> str:
+    return noun if count == 1 else f"{noun}s"
 
 
 @dataclass(frozen=True)
@@ -810,18 +837,16 @@ class ResourceMetric:
                 "Shikiru",
                 self.sample.shikiru_cpu_pct,
                 self.sample.shikiru_rss_gb,
-                self.sample.host_ram_total_bytes,
                 self.sample.shikiru_process_tree_empty,
             ),
             _process_resource_text(
                 "Agents",
                 self.sample.agents_cpu_pct,
                 self.sample.agents_rss_gb,
-                self.sample.host_ram_total_bytes,
                 self.sample.agents_process_tree_empty,
             ),
         )
-        metrics = _wrap_resource_groups(groups, width)
+        metrics = _wrap_groups(groups, width)
         if state == RESOURCE_STALE:
             age = f" · observed {self.sample.sampled_ago} ago" if self.sample.sampled_ago else ""
             error = f" · {self.sample.error}" if self.sample.error else ""
@@ -849,38 +874,46 @@ def _process_resource_text(
     label: str,
     cpu_pct: float | None,
     rss_gb: float | None,
-    host_ram_total_bytes: int | None,
     process_tree_empty: bool | None,
 ) -> Text:
     if cpu_pct is None or rss_gb is None:
         if process_tree_empty:
-            return Text(f"{label} process tree empty", style=SECONDARY_TEXT_COLOR)
-        return Text(f"{label} CPU/RAM unavailable", style=SECONDARY_TEXT_COLOR)
-    if host_ram_total_bytes is None:
-        ram = "RAM used/total unavailable"
-    else:
-        ram = f"RAM {rss_gb:{GIB_FORMAT}}/{host_ram_total_bytes / BYTES_PER_GIB:{GIB_FORMAT}} GiB"
-    return Text.assemble(
-        (f"{label} ", SECONDARY_TEXT_COLOR),
-        (f"CPU {cpu_pct:.0f}% ", STEEL_BLUE),
-        (ram, SECONDARY_TEXT_COLOR),
+            return Text.assemble(
+                (label, _BOLD_PRIMARY),
+                (" process tree is empty", SECONDARY_TEXT_COLOR),
+            )
+        return Text(f"{label} CPU/RSS unavailable", style=SECONDARY_TEXT_COLOR)
+    return _resource_group_text(
+        label,
+        cpu_pct,
+        Text.assemble((" RSS", PRIMARY_TEXT_COLOR), (f" {rss_gb:{GIB_FORMAT}} GiB", STEEL_BLUE)),
     )
 
 
 def _host_resource_text(sample: _ResourceSample) -> Text:
-    return Text.assemble(
-        ("Host ", SECONDARY_TEXT_COLOR),
-        (f"CPU {sample.host_cpu_pct:.0f}% ", STEEL_BLUE),
-        (_host_ram_text(sample), SECONDARY_TEXT_COLOR),
-    )
-
-
-def _host_ram_text(sample: _ResourceSample) -> str:
     used = sample.host_ram_used_bytes
     total = sample.host_ram_total_bytes
     if used is None or total is None:
-        return "RAM used/total unavailable"
-    return f"RAM {used / BYTES_PER_GIB:{GIB_FORMAT}}/{total / BYTES_PER_GIB:{GIB_FORMAT}} GiB"
+        memory = Text(" RAM used/total unavailable", style=SECONDARY_TEXT_COLOR)
+    else:
+        memory = Text.assemble(
+            (" RAM", PRIMARY_TEXT_COLOR),
+            (
+                f" {used / BYTES_PER_GIB:{GIB_FORMAT}}/{total / BYTES_PER_GIB:{GIB_FORMAT}} GiB",
+                STEEL_BLUE,
+            ),
+        )
+    return _resource_group_text("Host", sample.host_cpu_pct, memory)
+
+
+def _resource_group_text(label: str, cpu_pct: float, memory: Text) -> Text:
+    text = Text.assemble(
+        (label, _BOLD_PRIMARY),
+        (" CPU", PRIMARY_TEXT_COLOR),
+        (f" {cpu_pct:.0f}%", STEEL_BLUE),
+    )
+    text.append(memory)
+    return text
 
 
 def render_resource_metric(sample: _ResourceSample | None, *, width: int | None = None) -> Text:
@@ -888,7 +921,7 @@ def render_resource_metric(sample: _ResourceSample | None, *, width: int | None 
     return ResourceMetric(sample).render(width=width)
 
 
-def _wrap_resource_groups(groups: tuple[Text, ...], width: int | None) -> Text:
+def _wrap_groups(groups: tuple[Text, ...], width: int | None) -> Text:
     result = Text()
     line_width = 0
     for group in groups:
@@ -899,7 +932,7 @@ def _wrap_resource_groups(groups: tuple[Text, ...], width: int | None) -> Text:
             result.append("\n")
             line_width = 0
             separator = ""
-        result.append(separator)
+        result.append(separator, style=SECONDARY_TEXT_COLOR)
         result.append(group)
         line_width += cell_len(separator) + group_width
     return result

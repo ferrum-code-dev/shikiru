@@ -2101,14 +2101,14 @@ async def _assert_mixed_home_readouts(app: DashboardApp) -> None:
     attention_text = " ".join(_rendered_widget_lines(attention_rows.query_one(Static)))
     assert "Engine running" in identity_text
     assert "2.7k tokens" in usage_text
-    assert "API billed $0.42" in usage_text
-    assert "API unreported 2" in usage_text
+    assert "$0.42 API" in usage_text
+    assert "2 costs unreported" in usage_text
     assert "API-equiv. est. $0.11" not in usage_text
-    assert "1 subscription agent" in usage_text
+    assert "subscription agent" not in usage_text
     assert all(cell_len(line) <= usage.region.width for line in _rendered_widget_lines(usage))
     assert "Host" in resource_text
-    assert "Shikiru process tree empty" in resource_text
-    assert "Agents process tree empty" in resource_text
+    assert "Shikiru process tree is empty" in resource_text
+    assert "Agents process tree is empty" in resource_text
     assert "Operator owns" in attention_text
 
 
@@ -2264,7 +2264,7 @@ async def test_resource_groups_stay_aligned_after_resize_for_observed_process_tr
         app = _app(reader, project_dir, widget_names=["resources"], services=services)
         async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
             resources = app.query_one("#resources", Static)
-            expected_group = "Shikiru CPU" if populated else "Shikiru process tree empty"
+            expected_group = "Shikiru CPU" if populated else "Shikiru process tree is empty"
             await wait_until(
                 lambda: (
                     expected_group in _rendered_text(resources)
@@ -2295,9 +2295,9 @@ async def test_resource_groups_stay_aligned_after_resize_for_observed_process_tr
             )
             compact_lines = _rendered_widget_lines(resources)
             assert compact_lines[0].startswith("Host ")
-            compact_shikiru = "Shikiru CPU" if populated else "Shikiru process tree empty"
+            compact_shikiru = "Shikiru CPU" if populated else "Shikiru process tree is empty"
             assert compact_shikiru in compact_lines[1]
-            assert "Agents process tree empty" in compact_lines[2]
+            assert "Agents process tree is empty" in compact_lines[2]
             assert all(cell_len(line) <= resources.region.width for line in compact_lines)
     finally:
         reader.close()
@@ -2614,7 +2614,9 @@ async def _assert_project_diagnostics_view(
         assert " · Shikiru CPU " in home_text
         assert " · Agents CPU " in home_text
         await wait_until(
-            lambda: "Process RSS/host total" in plain_text(diagnostic_details.content),
+            lambda: (
+                "Shikiru and Agents RSS, no denominator" in plain_text(diagnostic_details.content)
+            ),
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
     await pilot.pause()
@@ -2623,7 +2625,7 @@ async def _assert_project_diagnostics_view(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     _capture_task99(app, f"task117-project-diagnostics-{size[0]}x{size[1]}-color.svg")
-    explanation = "Process RSS/host total"
+    explanation = "Shikiru and Agents RSS, no denominator"
 
     def diagnostics_text() -> str:
         return " ".join(_exported_screen_text(app).replace("│", " ").split())
@@ -2680,7 +2682,8 @@ async def test_resource_diagnostics_preserves_a_missing_sample(
         await wait_until(
             lambda: (
                 "no sample recorded" in plain_text(diagnostic_resources.content)
-                and "Process RSS/host total" in plain_text(diagnostic_details.content)
+                and "Shikiru and Agents RSS, no denominator"
+                in plain_text(diagnostic_details.content)
             ),
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )

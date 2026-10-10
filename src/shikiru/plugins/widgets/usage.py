@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 UNKNOWN_VALUE = "\N{EN DASH}"
 ENTER_KEY = "enter"
+PROJECT_SCOPE = "Project"
 
 
 def _agent_block(usage: AgentUsageView) -> Group:
@@ -48,6 +49,7 @@ class UsagePanel(GatedStatic):
         self.can_focus = context.placement is WidgetPlacement.PROJECT_USAGE
         self._widget_context = context
         self._rendered: tuple[RecordedUsageView, list[AgentUsageView]] | None = None
+        self._home_usage: RecordedUsageView | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
 
     async def on_mount(self) -> None:
@@ -61,6 +63,11 @@ class UsagePanel(GatedStatic):
         if self._remove_motion_callback is not None:
             self._remove_motion_callback()
             self._remove_motion_callback = None
+
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        if self._home_usage is not None:
+            self._render_home_usage(self._home_usage)
 
     async def on_click(self, event: events.Click) -> None:
         if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
@@ -80,8 +87,8 @@ class UsagePanel(GatedStatic):
 
     async def _refresh(self, *, motion: bool = False) -> None:
         if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
-            project_usage = self._widget_context.views.project_usage()
-            self.update_if_changed(ProjectUsageMetric(project_usage, "Project").render(home=True))
+            self._home_usage = self._widget_context.views.project_usage()
+            self._render_home_usage(self._home_usage)
             return
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
         lines: list[RenderableType] = []
@@ -93,7 +100,7 @@ class UsagePanel(GatedStatic):
             self._rendered = rendering
             lines.extend(
                 (
-                    ProjectUsageMetric(project_usage, "Project").render(),
+                    ProjectUsageMetric(project_usage, PROJECT_SCOPE).render(),
                     ProjectUsageDetails(project_usage).render(),
                 )
             )
@@ -120,6 +127,11 @@ class UsagePanel(GatedStatic):
         if not usage:
             lines.append(Text("No runs or quota windows recorded."))
         self.update_if_changed(Group(*lines))
+
+    def _render_home_usage(self, usage: RecordedUsageView) -> None:
+        self.update_if_changed(
+            ProjectUsageMetric(usage, PROJECT_SCOPE).render_home(width=self.size.width or None)
+        )
 
     async def _refresh_if_active(self, *, motion: bool = False) -> None:
         if widget_is_current(self) and cast("App[None]", self.app).is_running:
