@@ -624,8 +624,6 @@ def _home_token_text(usage: _RecordedUsage) -> Text:
     if not _known_token_sessions(usage):
         return Text("tokens unknown", style=SECONDARY_TEXT_COLOR)
     total = _compact_count(usage.input_tokens + usage.output_tokens)
-    if usage.reported_sessions != usage.session_count:
-        return Text(f"{total} tokens", style=SECONDARY_TEXT_COLOR)
     return Text.assemble((total, _BOLD_STEEL), (" tokens", SECONDARY_TEXT_COLOR))
 
 

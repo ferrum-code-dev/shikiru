@@ -124,6 +124,14 @@ def _seed_partial_coverage(connection: Connection, clock: FakeClock) -> None:
     _record_run(connection, clock, UNKNOWN_BILLING_DECLARATION, _tokens(None, COST_BASIS_UNKNOWN))
 
 
+def _seed_legacy_only(connection: Connection, clock: FakeClock) -> None:
+    task = seed_task(connection, clock, title="Legacy usage")
+    runs = RunStore(connection, clock)
+    run = runs.start(task.id, Role.IMPLEMENTER, _RUNG, billing_declaration=_SUBSCRIPTION)
+    runs.record_usage(run.id, _tokens(None, COST_BASIS_UNKNOWN))
+    connection.execute("UPDATE runs SET usage_reported = NULL WHERE id = ?", (run.id,))
+
+
 def _seed_nothing(connection: Connection, clock: FakeClock) -> None:
     del connection, clock
 
@@ -248,11 +256,21 @@ _TOKEN_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
         [
             _line(
                 _group(("3", _WHITE_BOLD), (" sessions", _GREY)),
-                _group(("3.0k tokens", _GREY)),
+                _group(("3.0k", _CYAN_BOLD), (" tokens", _GREY)),
                 _group(("$4.28", _GREEN_BOLD), (" API", _GREY)),
                 _group(("1 session without tokens", _GREY)),
                 _group(("1 cost unreported", _GREY)),
                 _group(("1 billing mode unknown", _GREY)),
+            )
+        ],
+    ),
+    (
+        _seed_legacy_only,
+        [
+            _line(
+                _group(("1", _WHITE_BOLD), (" session", _GREY)),
+                _group(("1.5k", _CYAN_BOLD), (" tokens", _GREY)),
+                _group(("1 legacy session", _GREY)),
             )
         ],
     ),
@@ -286,7 +304,7 @@ async def test_home_token_bar_wraps_whole_groups_at_narrow_width(
     expected = [
         _line(
             _group(("3", _WHITE_BOLD), (" sessions", _GREY)),
-            _group(("3.0k tokens", _GREY)),
+            _group(("3.0k", _CYAN_BOLD), (" tokens", _GREY)),
             _group(("$4.28", _GREEN_BOLD), (" API", _GREY)),
         ),
         _line(
