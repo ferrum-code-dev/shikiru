@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.text import Text
-from textual.widgets import Static
 
 from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_active, widget_is_attached
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -221,14 +221,13 @@ def _integration_label(value: str) -> str:
     return value
 
 
-class HeaderPanel(Static):
+class HeaderPanel(GatedStatic):
     """Shows project, engine, task counts and checkout identity."""
 
     def __init__(self, context: WidgetContext) -> None:
         """Hold `context`; nothing here does I/O until `on_mount`."""
         super().__init__(id="header")
         self._widget_context = context
-        self._rendered: tuple[HeaderView, WorkspaceSummaryView, bool] | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
 
     async def on_mount(self) -> None:
@@ -242,7 +241,7 @@ class HeaderPanel(Static):
             self._remove_motion_callback()
             self._remove_motion_callback = None
 
-    async def _refresh(self, *, motion: bool = False) -> None:
+    async def _refresh(self) -> None:
         view = await self._widget_context.views.header()
         if not widget_is_attached(self):
             return
@@ -251,11 +250,7 @@ class HeaderPanel(Static):
             self._widget_context.placement is not WidgetPlacement.IDENTITY
             or not self._widget_context.home_attention_present
         )
-        rendering = (view, summary, include_alerts)
-        if motion and rendering == self._rendered:
-            return
-        self._rendered = rendering
-        self.update(_HeaderContent(view, summary, include_alerts))
+        self.update_if_changed(_HeaderContent(view, summary, include_alerts))
 
     async def on_resize(self, event: events.Resize) -> None:
         del event
@@ -264,7 +259,7 @@ class HeaderPanel(Static):
 
     async def _refresh_if_active(self) -> None:
         if widget_is_active(self):
-            await self._refresh(motion=True)
+            await self._refresh()
 
     async def _refresh_if_attached(self) -> None:
         if widget_is_attached(self):

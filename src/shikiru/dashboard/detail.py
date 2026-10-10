@@ -32,6 +32,7 @@ from shikiru.ui.compact import (
     TaskUsageMetric,
     task_signal_text,
 )
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_STALLED
 from shikiru.ui.popup import (
     POPUP_CLOSE_CLASS,
@@ -380,12 +381,14 @@ class TaskDetailPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         with TaskDetailBody(self._pause_timeline_follow):
-            yield Static("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
+            yield GatedStatic("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
             yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
             yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
-            yield Static("", id=TASK_DETAIL_PROGRESS, classes="task-detail-section")
+            yield GatedStatic("", id=TASK_DETAIL_PROGRESS, classes="task-detail-section")
             yield Static("", id=TASK_DETAIL_SITUATION, classes="task-detail-section", markup=False)
-            yield Static("", id=TASK_DETAIL_SIGNAL, classes="task-detail-section", markup=False)
+            yield GatedStatic(
+                "", id=TASK_DETAIL_SIGNAL, classes="task-detail-section", markup=False
+            )
             with Horizontal(id=TASK_DETAIL_SUMMARY_USAGE):
                 yield Static("", id="task-detail-task-usage", markup=False)
                 yield Button("u Details", id=TASK_DETAIL_USAGE_INLINE_BUTTON)
@@ -716,11 +719,15 @@ class TaskDetailPanel(Vertical):
 
     def _render_activity(self, view: TaskDetailView) -> None:
         now = self._widget_context.clock.now()
-        self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(
+        self.query_one(f"#{TASK_DETAIL_IDENTITY}", GatedStatic).update_if_changed(
             f"{view.task_id} · {view.title}\n{_task_state_line(view)}"
         )
-        self.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).update(StageActivity(view).render(now))
-        self.query_one(f"#{TASK_DETAIL_SIGNAL}", Static).update(task_signal_text(view, now))
+        self.query_one(f"#{TASK_DETAIL_PROGRESS}", GatedStatic).update_if_changed(
+            StageActivity(view).render(now)
+        )
+        self.query_one(f"#{TASK_DETAIL_SIGNAL}", GatedStatic).update_if_changed(
+            task_signal_text(view, now)
+        )
 
     async def _refresh_timeline(self) -> None:
         async with self._refresh_lock:
