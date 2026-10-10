@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.text import Text
-from textual.widgets import Static
 
 from shikiru.dashboard.contract import FOCUS_PROJECT_DIAGNOSTICS_VIEW, WidgetPlacement
 from shikiru.ui.compact import render_resource_metric
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached
 
 RESOURCE_ENTER_KEY = "enter"
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import ResourceView, WidgetContext
 
 
-class ResourcesPanel(Static):
+class ResourcesPanel(GatedStatic):
     """Show host use and the engine plus every pane process tree."""
 
     def __init__(self, context: WidgetContext) -> None:
@@ -31,6 +31,7 @@ class ResourcesPanel(Static):
         self.can_focus = context.placement is WidgetPlacement.RESOURCES
         self._widget_context = context
         self._sample: ResourceView | None = None
+        self._applied_min_height: int | None = None
 
     async def on_mount(self) -> None:
         """Render and resample resources at the configured cadence."""
@@ -83,12 +84,15 @@ class ResourcesPanel(Static):
         self._update_content(render_resource_metric(sample, width=self.size.width))
 
     def _update_content(self, content: Text) -> None:
-        self.update(content)
+        self.update_if_changed(content)
         if self.size.width:
             rendered_lines = content.wrap(Console(), self.size.width)
-            self.styles.min_height = len(rendered_lines) + RESOURCE_TOP_BORDER_ROWS
-            if self.parent is not None:
-                self.parent.refresh(layout=True)
+            min_height = len(rendered_lines) + RESOURCE_TOP_BORDER_ROWS
+            if min_height != self._applied_min_height:
+                self._applied_min_height = min_height
+                self.styles.min_height = min_height
+                if self.parent is not None:
+                    self.parent.refresh(layout=True)
 
 
 class ResourcesWidget:
