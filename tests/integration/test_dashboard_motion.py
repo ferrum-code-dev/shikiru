@@ -764,6 +764,54 @@ async def test_slow_motion_callback_does_not_block_or_overlap_other_callbacks(
         reader.close()
 
 
+class _MotionCallbackFailure(Exception):
+    pass
+
+
+async def test_failing_motion_callback_is_surfaced_and_ends_the_app(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(project_dir)
+    task, _ = _seed_dashboard_state(connection, clock)
+    reader = StateReader(database, clock)
+    try:
+
+        async def failing_refresh() -> None:
+            raise _MotionCallbackFailure
+
+        async def open_palette(action: str) -> None:
+            del action
+
+        interval = 1 / settings.dashboard.motion.refresh_hz
+        app = DashboardApp(
+            focus_task=None,
+            views=_build_views(reader, project_dir, settings, clock, task),
+            on_change=reader.watch,
+            clock=clock,
+            motion_interval_seconds=interval,
+            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            open_palette=open_palette,
+            widget_names=settings.dashboard.widgets,
+        )
+        app.register_motion_callback(failing_refresh)
+
+        async def run_until_the_app_ends() -> None:
+            async with app.run_test(size=(100, 35)):
+                await wait_until(clock.has_pending_sleep, timeout=1)
+                clock.advance(interval)
+                await wait_until(lambda: app.return_code is not None, timeout=1)
+
+        with pytest.raises(_MotionCallbackFailure):
+            await run_until_the_app_ends()
+    finally:
+        reader.close()
+
+
 @pytest.mark.parametrize("animations", [True, False], ids=("motion", "static"))
 async def test_home_status_blinks_only_for_a_recorded_active_turn(
     database: Database,

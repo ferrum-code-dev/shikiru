@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -192,13 +193,20 @@ FOCUS_CONTEXT_HELP = "context-help"
 EMPTY_CONTEXT_CHOICE = ""
 TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
 _MAX_CONTEXTUAL_PALETTE_DRAFTS = 16
-_MOTION_CALLBACK_WORKER_GROUP = "dashboard-motion-callback"
 
 
 @dataclass
 class _MotionCallback:
     callback: OnChange
-    worker: Worker[None] | None = None
+    task: asyncio.Future[None] | None = None
+
+    @property
+    def in_flight(self) -> bool:
+        return self.task is not None and not self.task.done()
+
+    def cancel(self) -> None:
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
 
 
 class _TaskBrowserNavigation(Protocol):
@@ -1795,18 +1803,17 @@ class DashboardApp(App[None]):
         while True:
             await self._clock.sleep(interval)
             for registration in tuple(self._motion_callbacks):
-                worker = registration.worker
-                if worker is not None and not worker.is_finished:
+                if registration.in_flight:
                     continue
+                registration.task = asyncio.ensure_future(registration.callback())
+                registration.task.add_done_callback(self._surface_motion_callback_error)
 
-                async def run_callback(callback: OnChange = registration.callback) -> None:
-                    await callback()
-
-                registration.worker = self.run_worker(
-                    run_callback,
-                    group=_MOTION_CALLBACK_WORKER_GROUP,
-                    exclusive=False,
-                )
+    def _surface_motion_callback_error(self, task: asyncio.Future[None]) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if isinstance(error, Exception):
+            self._handle_exception(error)
 
     def register_motion_callback(self, callback: OnChange) -> Callable[[], None]:
         """Register a motion callback and return its cancellation subscription."""
@@ -1817,15 +1824,13 @@ class DashboardApp(App[None]):
             self._motion_callbacks = [
                 item for item in self._motion_callbacks if item is not registration
             ]
-            if registration.worker is not None and not registration.worker.is_finished:
-                registration.worker.cancel()
+            registration.cancel()
 
         return unsubscribe
 
     def on_unmount(self) -> None:
         for registration in self._motion_callbacks:
-            if registration.worker is not None and not registration.worker.is_finished:
-                registration.worker.cancel()
+            registration.cancel()
         self._motion_callbacks.clear()
 
     def _apply_layout(self, width: int, height: int) -> None:
