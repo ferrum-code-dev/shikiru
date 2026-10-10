@@ -92,3 +92,24 @@ async def test_an_unconditional_update_is_shown_even_when_the_output_matches() -
         await pilot.pause()
 
         assert static.update_if_changed(Text(ONE_LINE)) is True
+
+
+async def test_text_that_differs_only_in_styling_is_updated() -> None:
+    static = LayoutCountingStatic(ONE_LINE)
+    async with WidgetHostApp(static).run_test() as pilot:
+        await pilot.pause()
+        static.update_if_changed(Text(ONE_LINE))
+        await pilot.pause()
+
+        assert static.update_if_changed(Text(ONE_LINE, style="bold red")) is True
+
+
+async def test_content_with_an_explicit_key_is_skipped_only_while_its_key_holds() -> None:
+    static = LayoutCountingStatic(ONE_LINE)
+    async with WidgetHostApp(static).run_test() as pilot:
+        await pilot.pause()
+        assert static.update_if_changed(Text(ONE_LINE), key="first") is True
+        await pilot.pause()
+
+        assert static.update_if_changed(Text(SAME_EXTENT_LINE), key="first") is False
+        assert static.update_if_changed(Text(SAME_EXTENT_LINE), key="second") is True

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
@@ -46,6 +46,15 @@ class _HeaderContent:
     view: HeaderView
     summary: WorkspaceSummaryView
     include_alerts: bool
+
+    @property
+    def render_key(self) -> object:
+        return (
+            replace(self.view, engine_uptime_seconds=None, previous_engine_run_seconds=None),
+            self.summary,
+            self.include_alerts,
+            _runtime_label(self.view),
+        )
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         del console
@@ -250,7 +259,8 @@ class HeaderPanel(GatedStatic):
             self._widget_context.placement is not WidgetPlacement.IDENTITY
             or not self._widget_context.home_attention_present
         )
-        self.update_if_changed(_HeaderContent(view, summary, include_alerts))
+        content = _HeaderContent(view, summary, include_alerts)
+        self.update_if_changed(content, key=content.render_key)
 
     async def on_resize(self, event: events.Resize) -> None:
         del event
