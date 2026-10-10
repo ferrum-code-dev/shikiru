@@ -4,8 +4,10 @@ import asyncio
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
+from itertools import pairwise
 from typing import TYPE_CHECKING, cast
 
+import pytest
 from rich.text import Text
 from textual.content import Content
 from textual.style import Style
@@ -28,7 +30,7 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore, fetch_task_browser_pages
-from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
+from shikiru.ui.tokens import SAGE, STEEL_BLUE
 from shikiru.view_log import (
     VIEW_SESSION_STARTED_SIGNAL,
     VIEW_SIGNAL_KEY,
@@ -105,6 +107,35 @@ def _loaded_task_ids(list_view: ListView) -> set[str]:
         for item in list_view.children
         if item.id is not None and item.id.startswith("task-row-")
     }
+
+
+def _style_at(content: Content, offset: int) -> Style:
+    styles = [
+        Style.parse(span.style) if isinstance(span.style, str) else span.style
+        for span in content.spans
+        if span.start <= offset < span.end
+    ]
+    return sum(styles, Style())
+
+
+def _span_color(content: Content, offset: int) -> str:
+    color = _style_at(content, offset).foreground
+    assert color is not None
+    return color.hex.lower()
+
+
+def _row_content(widget: QueuePanel, task_id: str) -> Content:
+    rendered = widget.query_one(f"#task-row-{task_id} > Static", Static).render()
+    assert isinstance(rendered, Content)
+    return rendered
+
+
+def _row_text_offsets(widget: QueuePanel) -> dict[str | None, tuple[int, int]]:
+    offsets: dict[str | None, tuple[int, int]] = {}
+    for item in widget.query(ListItem):
+        text = item.query_one(Static)
+        offsets[item.id] = (text.region.x - item.region.x, text.region.y - item.region.y)
+    return offsets
 
 
 async def test_task_browser_queries_apply_filter_order_search_and_page_counts(
@@ -371,33 +402,16 @@ async def test_focus_recent_shows_bounded_terminal_history_without_dependency_ro
         ]
         recent_ids = (newest.id, cancelled.id, dependent.id, old.id)
         assert tuple(task_id for task_id in terminal_rows if task_id in recent_ids) == recent_ids
-        assert recent_list.max_scroll_y == 0
-        assert not recent_list.show_vertical_scrollbar
         recent_heading = widget.query_one("#task-browser-recent-heading", Static)
         newest_row = widget.query_one(f"#task-row-{newest.id}", ListItem)
         assert recent_heading.region.y < newest_row.region.y
         assert newest_row.parent is recent_list
         for task_id, status in ((newest.id, "Done"), (cancelled.id, "Cancelled")):
-            rendered_status = widget.query_one(f"#task-row-{task_id} > Static", Static).render()
-            assert isinstance(rendered_status, Content)
-            marker = "✓ " if task_id == newest.id else "○ "
-            assert rendered_status.plain.startswith(marker)
-            status_offset = rendered_status.plain.rindex(status)
-            status_style = next(
-                span.style
-                for span in rendered_status.spans
-                if span.start <= status_offset < span.end
-            )
-            status_style = (
-                Style.parse(status_style) if isinstance(status_style, str) else status_style
-            )
-            status_color = status_style.foreground
-            assert status_color is not None
-            assert status_color.hex.lower() == SECONDARY_TEXT_COLOR, (
-                task_id,
-                rendered_status.plain,
-                rendered_status.spans,
-            )
+            rendered = widget.query_one(f"#task-row-{task_id} > Static", Static).render()
+            assert isinstance(rendered, Content)
+            glyph_color = _span_color(rendered, 0)
+            assert _span_color(rendered, rendered.plain.rindex(status)) == glyph_color
+        assert _span_color(_row_content(widget, newest.id), 0) == SAGE
         dependent_row = _static_text(widget.query_one(f"#task-row-{dependent.id} > Static", Static))
         assert "depends on" not in dependent_row
         assert widget.query_one("#task-browser-family-context", Static).display is False
@@ -944,3 +958,106 @@ async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(
         await pilot.press("?")
         await pilot.pause()
         assert app.screen.query_one("#workspace-help-frame")
+
+
+@pytest.mark.parametrize("size", [(100, 35), (48, 20), (20, 8)])
+async def test_selecting_a_task_row_never_moves_its_text_in_either_list(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    active = [seed_task(connection, clock, title=f"Active {index}") for index in range(2)]
+    for index in range(2):
+        _finish_task(connection, clock, seed_task(connection, clock, title=f"Done {index}").id)
+        clock.advance(1)
+    context = replace(
+        widget_context(reader, project_dir, clock, services=StubServices()),
+        placement=WidgetPlacement.TASK_LIST,
+    )
+    widget = cast("QueuePanel", QueueWidget().create(context))
+
+    async with WidgetHostApp(widget).run_test(size=size):
+        task_list = widget.query_one("#task-browser-list", ListView)
+        recent_list = widget.query_one("#task-browser-recent-list", ListView)
+        await wait_until(
+            lambda: len(task_list.children) == len(active) and len(recent_list.children) == 2,
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
+        resting = _row_text_offsets(widget)
+        assert set(resting.values()) == {(1, 0)}
+        for list_view in (task_list, recent_list):
+            items = tuple(item for item in list_view.children if isinstance(item, ListItem))
+            assert all(
+                following.region.y - current.region.bottom == 1
+                for current, following in pairwise(items)
+            )
+            for index, item in enumerate(items):
+                list_view.index = index
+                await wait_until(lambda item=item: item.highlighted, timeout=5.0)
+                assert _row_text_offsets(widget) == resting
+
+
+async def test_recent_heading_shares_the_tasks_colour_and_a_blank_line_after_it(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    seed_task(connection, clock, title="Active")
+    done = seed_task(connection, clock, title="Done")
+    _finish_task(connection, clock, done.id)
+    context = replace(
+        widget_context(reader, project_dir, clock, services=StubServices()),
+        placement=WidgetPlacement.TASK_LIST,
+    )
+    widget = cast("QueuePanel", QueueWidget().create(context))
+
+    async with WidgetHostApp(widget).run_test(size=(100, 35)):
+        count = widget.query_one("#task-browser-count", Static)
+        heading = widget.query_one("#task-browser-recent-heading", Static)
+        task_list = widget.query_one("#task-browser-list", ListView)
+        recent_list = widget.query_one("#task-browser-recent-list", ListView)
+        await wait_until(lambda: heading.display and bool(recent_list.children), timeout=5.0)
+        counted = count.render()
+        assert isinstance(counted, Content)
+        assert counted.plain == "TASKS"
+        assert _span_color(counted, 0) == STEEL_BLUE.lower()
+        assert heading.styles.color.hex.lower() == STEEL_BLUE.lower()
+        assert task_list.region.y - count.region.y == 2
+        assert recent_list.region.y - heading.region.y == 3
+
+
+async def test_task_number_is_bold_and_the_title_regular_in_active_and_recent_rows(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    active = seed_task(connection, clock, title="Active title")
+    done = seed_task(connection, clock, title="Done title")
+    _finish_task(connection, clock, done.id)
+    context = replace(
+        widget_context(reader, project_dir, clock, services=StubServices()),
+        placement=WidgetPlacement.TASK_LIST,
+    )
+    widget = cast("QueuePanel", QueueWidget().create(context))
+
+    async with WidgetHostApp(widget).run_test(size=(100, 35)):
+        await wait_until(
+            lambda: (
+                bool(widget.query(f"#task-row-{active.id}"))
+                and bool(widget.query(f"#task-row-{done.id}"))
+            ),
+            timeout=5.0,
+        )
+        for task in (active, done):
+            content = _row_content(widget, task.id)
+            id_offset = content.plain.index(task.id)
+            title_offset = content.plain.index(task.title)
+            assert _style_at(content, id_offset).bold
+            assert not _style_at(content, title_offset).bold

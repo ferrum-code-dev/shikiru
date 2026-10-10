@@ -211,7 +211,7 @@ Fourth-review scope and evidence: [fourth real-project review](../docs/tui-feedb
 - [x] Task 130: Make Tab traverse only visible, fully highlighted dashboard stops
 - [x] Task 131: Escalation bar follows the selected task and reads clearly
 - [x] Task 132: Align the token usage and resource bars with the operator templates
-- [ ] Task 133: Stabilise task-list geometry and typography
+- [x] Task 133: Stabilise task-list geometry and typography
 - [ ] Task 134: Show Recent as a bottom-aligned three-task window with Later/Earlier
 - [ ] Task 135: Right-align the latest command in the actions bar
 - [ ] Task 136: Colour agent context by usage level

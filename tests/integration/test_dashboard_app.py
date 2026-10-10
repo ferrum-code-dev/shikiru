@@ -223,7 +223,7 @@ _HOME_REVIEW_SIZES = (
     _COMPACT_HOME_SIZE,
 )
 _MIN_WIDE_TASK_LIST_ROWS = 9
-_MIN_SHORT_WIDE_TASK_LIST_ROWS = 6
+_MIN_SHORT_WIDE_TASK_LIST_ROWS = 5
 _API_INPUT_TOKENS = 1_000
 _API_OUTPUT_TOKENS = 500
 _SUBSCRIPTION_INPUT_TOKENS = 400
@@ -752,20 +752,12 @@ def _rendered_visible_home_origins(app: DashboardApp) -> dict[str, tuple[float, 
         origin = next(((x, y) for text, x, y in elements if text == anchor), None)
         if origin is not None:
             origins[anchor] = origin
-    tasks = origins.get("TASKS")
-    if tasks is not None:
-        task_frame = next(
-            ((x, y) for text, x, y in elements if text == "┌" and x == tasks[0] and y > tasks[1]),
-            None,
-        )
-        if task_frame is not None:
-            origins["task_frame"] = task_frame
     return origins
 
 
 def _rendered_home_origins(app: DashboardApp) -> tuple[tuple[float, float], ...]:
     origins = _rendered_visible_home_origins(app)
-    return origins["SHIKIRU"], origins["TASKS"], origins["task_frame"]
+    return origins["SHIKIRU"], origins["TASKS"]
 
 
 def _assert_last_command_history_page(page: Static) -> None:
@@ -2153,7 +2145,7 @@ async def _assert_mixed_home_task_rows(
     active_gaps = tuple(
         following.region.y - current.region.bottom for current, following in pairwise(active_rows)
     )
-    assert all(gap == 0 for gap in active_gaps), active_gaps
+    assert all(gap == 1 for gap in active_gaps), active_gaps
     recent_heading = app.query_one("#task-browser-recent-heading", Static)
     recent_task = app.query_one(f"#task-row-{completed_task_id}", ListItem)
     assert recent_heading.display

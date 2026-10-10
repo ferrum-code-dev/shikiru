@@ -28,12 +28,12 @@ from shikiru.ui.tokens import (
     SAGE,
     SECONDARY_TEXT_COLOR,
     STEEL_BLUE,
+    STYLE_BOLD,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
-    from rich.console import Console, ConsoleOptions, RenderResult
     from textual import events
     from textual.app import App, ComposeResult
     from textual.widget import Widget
@@ -42,18 +42,16 @@ if TYPE_CHECKING:
 
 BROWSER_PAGE_SIZE = 24
 RECENT_TASK_LIMIT = BROWSER_PAGE_SIZE
-TASK_ROW_OUTLINE_MIN_WIDTH = 18
 FOCUS_MAIN_CONTAINER_ID = "focus-main"
 TASK_LIST_MIN_ROWS = 2
 BROWSER_COUNT_RESERVE_ROWS = 2
-RECENT_HEADING_MIN_ROWS = 2
+RECENT_HEADING_MIN_ROWS = 3
 RECENT_BODY_MIN_ROWS = 2
 RECENT_BODY_MAX_ROWS = 8
 RECENT_SECTION_MIN_ROWS = RECENT_HEADING_MIN_ROWS + RECENT_BODY_MIN_ROWS
 TASK_STATE_DECISION_NEEDED = "decision needed"
 WAIT_REASON_DEPENDENCY = "dependency"
 FOCUS_LIST_CLASS = "focus-list"
-NO_TASK_ROW_OUTLINE_CLASS = "no-task-row-outline"
 TASK_STATUS_DONE = "done"
 TASK_STATUS_CANCELLED = "cancelled"
 TASK_HOLD_PAUSED = "paused"
@@ -108,12 +106,6 @@ FILTER_BUTTONS = (
 )
 FILTER_BY_BUTTON_ID = {button_id: task_filter for task_filter, button_id, _ in FILTER_BUTTONS}
 FILTER_LABELS = {task_filter: label for task_filter, _, label in FILTER_BUTTONS}
-
-
-class _FocusTaskCount:
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        del console, options
-        yield Text("TASKS", style=STEEL_BLUE)
 
 
 class _BrowserListItem(ListItem):
@@ -243,7 +235,8 @@ def _focus_row_text(row: TaskBrowserRow, *, status_bright: bool = False) -> Text
         details[0] = (details[0][0], f"{details[0][1]} bold")
     content = Text.assemble(
         (f"{marker} ", marker_style),
-        (f"{row.task_id} · {row.title}", PRIMARY_TEXT_COLOR),
+        (row.task_id, f"{PRIMARY_TEXT_COLOR} {STYLE_BOLD}"),
+        (f" · {row.title}", PRIMARY_TEXT_COLOR),
         "\n  ",
     )
     for index, (detail, style) in enumerate(details):
@@ -303,8 +296,10 @@ def _focus_row_details(
     state: str,
 ) -> list[tuple[str, str]]:
     state_style = (
-        SECONDARY_TEXT_COLOR
-        if row.status in TASK_TERMINAL_STATUSES or row.status == TASK_STATUS_QUEUED
+        _focus_row_marker(row)[1]
+        if row.status in TASK_TERMINAL_STATUSES
+        else SECONDARY_TEXT_COLOR
+        if row.status == TASK_STATUS_QUEUED
         else AMBER
         if row.wait_reason or row.holds or row.open_decision
         else STEEL_BLUE
@@ -355,7 +350,7 @@ class QueuePanel(Vertical):
         height: auto; min-height: 2; margin-bottom: 1; padding: 0;
         border: none; background: $background; color: $primary-text;
     }
-    #task-browser-list.focus-list > ListItem { margin-bottom: 0; }
+    #task-browser-list.focus-list > ListItem { padding: 0 0 0 1; }
     #task-browser-list > ListItem:last-child { margin-bottom: 0; }
     #task-browser-list > ListItem > Static {
         height: auto; padding: 0; color: $primary-text;
@@ -365,36 +360,30 @@ class QueuePanel(Vertical):
         outline: solid $selection-outline; background: $selected-surface; color: $primary-text;
         text-style: none;
     }
-    #task-browser-list.focus-list > ListItem.-highlight {
-        outline: none; border: solid $selection-outline;
-    }
-    #task-browser-list.no-task-row-outline.focus-list > ListItem.-highlight {
-        border: none;
-    }
+    #task-browser-list.focus-list > ListItem.-highlight { outline: none; }
     #task-browser-list > ListItem.-highlight > Static {
         background: $selected-surface; color: $primary-text; text-style: none;
     }
     #task-browser-recent-heading {
-        display: none; height: 2; min-height: 2; margin: 0; border-top: solid $neutral-border;
-        padding: 0; color: $muted-text;
+        display: none; height: 3; min-height: 3; margin: 0; border-top: solid $neutral-border;
+        padding: 0; color: $steel-blue;
     }
     #task-browser-recent-list {
         display: none; height: auto; min-height: 2; border: none;
         padding: 0; background: $background; scrollbar-size-vertical: 1;
     }
     #task-browser-recent-list > ListItem {
-        height: auto; min-height: 2; margin: 0; padding: 0;
+        height: auto; min-height: 2; margin: 0 0 1 0; padding: 0 0 0 1;
         border: none; background: $background; color: $primary-text;
     }
+    #task-browser-recent-list > ListItem:last-child { margin-bottom: 0; }
     #task-browser-recent-list > ListItem > Static {
         height: auto; padding: 0; color: $primary-text;
         text-wrap: wrap; text-overflow: clip;
     }
     #task-browser-recent-list > ListItem.-highlight {
-        outline: none; border: solid $selection-outline;
-        background: $selected-surface; color: $primary-text; text-style: none;
+        outline: none; background: $selected-surface; color: $primary-text; text-style: none;
     }
-    #task-browser-recent-list.no-task-row-outline > ListItem.-highlight { border: none; }
     #task-browser-recent-list > ListItem.-highlight > Static {
         background: $selected-surface; color: $primary-text; text-style: none;
     }
@@ -488,7 +477,7 @@ class QueuePanel(Vertical):
             yield self._reveal_button
 
     async def on_mount(self) -> None:
-        self._sync_task_row_outline()
+        self._sync_focus_task_list_height()
         await self._refresh()
         self.run_worker(
             self._widget_context.on_change(self._refresh_if_current),
@@ -498,7 +487,7 @@ class QueuePanel(Vertical):
 
     def on_resize(self, event: events.Resize) -> None:
         del event
-        self._sync_task_row_outline()
+        self._sync_focus_task_list_height()
 
     def on_unmount(self) -> None:
         if self._remove_motion_callback is not None:
@@ -538,16 +527,6 @@ class QueuePanel(Vertical):
                 group=QUEUE_REFRESH_WORKER,
                 exclusive=True,
             )
-
-    def _sync_task_row_outline(self) -> None:
-        if not self._focus_layout or not self.is_mounted:
-            return
-        for list_view in self._browser_list_views():
-            list_view.set_class(
-                list_view.size.width < TASK_ROW_OUTLINE_MIN_WIDTH,
-                NO_TASK_ROW_OUTLINE_CLASS,
-            )
-        self._sync_focus_task_list_height()
 
     def _sync_focus_task_list_height(self) -> None:
         if not self._focus_layout or not self.is_mounted:
@@ -1171,10 +1150,10 @@ class QueuePanel(Vertical):
             self._focus_layout and view.filter is TaskBrowserFilter.ALL and not view.search
         )
         if is_default_focus and not view.selected_task_missing:
-            count = _FocusTaskCount()
+            count = Text("TASKS", style=STEEL_BLUE)
         else:
             count = Text(
-                "TASKS · Decision first"
+                "TASKS"
                 if is_default_focus
                 else (
                     f"TASKS · {FILTER_LABELS[view.filter]} · "
