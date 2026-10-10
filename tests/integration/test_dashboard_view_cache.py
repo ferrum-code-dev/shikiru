@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import first_step
 from shikiru.domain.tasks import EscalationReason
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 ELAPSED_SECONDS = 7200
+BROWSER_PAGE_LIMIT = 20
 
 
 async def test_queue_and_summary_follow_task_writes_made_on_another_connection(
@@ -81,3 +83,27 @@ async def test_a_decision_opened_on_another_connection_is_counted_on_the_next_ca
     )
 
     assert views.attention().decisions == 1
+
+
+async def test_task_browser_pages_follow_task_writes_made_on_another_connection(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    views = state_views(reader, project_dir, clock, StubServices())
+
+    def browser_task_ids() -> list[str]:
+        (page,) = views.task_browser_pages(
+            task_filter=TaskBrowserFilter.ALL,
+            search="",
+            limit=BROWSER_PAGE_LIMIT,
+            page_count=1,
+            selected_task_id=None,
+        )
+        return [row.task_id for row in page.rows]
+
+    assert browser_task_ids() == []
+
+    task = seed_task(connection, clock, title="Add retry")
+
+    assert browser_task_ids() == [task.id]

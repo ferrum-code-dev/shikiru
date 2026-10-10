@@ -247,6 +247,12 @@ class StateDashboardViews:
         self._task_cache: _VersionedCache[tuple[Status, ...] | None, list[Task]] = _VersionedCache(
             state
         )
+        self._browser_page_cache: _VersionedCache[tuple[object, ...], TaskBrowserPage] = (
+            _VersionedCache(state)
+        )
+        self._browser_pages_cache: _VersionedCache[
+            tuple[object, ...], tuple[TaskBrowserPage, ...]
+        ] = _VersionedCache(state)
         self._structured_escalation_cache: dict[str, _StructuredEscalationCache] = {}
         self._fault_version = -1
         self._fault_cache: tuple[FaultStreak, ...] | None = None
@@ -429,14 +435,25 @@ class StateDashboardViews:
         quota_wait_task_ids = (
             self._quota_wait_task_ids(now) if task_filter is TaskBrowserFilter.WAITING else ()
         )
-        page = self._state.task_browser_page(
-            category=task_filter.value,
-            search=search,
-            limit=limit,
-            offset=offset,
-            selected_task_id=selected_task_id,
-            diagnosed_stall_task_ids=diagnosed_stall_task_ids,
-            quota_wait_task_ids=quota_wait_task_ids,
+        page = self._browser_page_cache.get(
+            (
+                task_filter,
+                search,
+                limit,
+                offset,
+                selected_task_id,
+                diagnosed_stall_task_ids,
+                quota_wait_task_ids,
+            ),
+            lambda: self._state.task_browser_page(
+                category=task_filter.value,
+                search=search,
+                limit=limit,
+                offset=offset,
+                selected_task_id=selected_task_id,
+                diagnosed_stall_task_ids=diagnosed_stall_task_ids,
+                quota_wait_task_ids=quota_wait_task_ids,
+            ),
         )
         selected_task = self._selected_browser_task((page,), selected_task_id)
         return self._task_browser_view(
@@ -472,14 +489,25 @@ class StateDashboardViews:
         quota_wait_task_ids = (
             self._quota_wait_task_ids(now) if task_filter is TaskBrowserFilter.WAITING else ()
         )
-        pages = self._state.task_browser_pages(
-            category=task_filter.value,
-            search=search,
-            limit=limit,
-            page_count=page_count,
-            selected_task_id=selected_task_id,
-            diagnosed_stall_task_ids=diagnosed_stall_task_ids,
-            quota_wait_task_ids=quota_wait_task_ids,
+        pages = self._browser_pages_cache.get(
+            (
+                task_filter,
+                search,
+                limit,
+                page_count,
+                selected_task_id,
+                diagnosed_stall_task_ids,
+                quota_wait_task_ids,
+            ),
+            lambda: self._state.task_browser_pages(
+                category=task_filter.value,
+                search=search,
+                limit=limit,
+                page_count=page_count,
+                selected_task_id=selected_task_id,
+                diagnosed_stall_task_ids=diagnosed_stall_task_ids,
+                quota_wait_task_ids=quota_wait_task_ids,
+            ),
         )
         selected_task = self._selected_browser_task(pages, selected_task_id)
         return tuple(
