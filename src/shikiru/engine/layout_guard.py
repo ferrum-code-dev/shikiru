@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from shikiru.config.settings import LayoutSplit, PaneLeaf
@@ -12,7 +13,14 @@ from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Task
 from shikiru.errors import InvariantError
 from shikiru.paths import task_root
 from shikiru.private import make_private_dir
-from shikiru.tmux.client import FORMAT_PANE_ID, LAYOUT_PANE_OPTION
+from shikiru.tmux.client import (
+    FORMAT_LAYOUT_PANE,
+    FORMAT_PANE_DEAD,
+    FORMAT_PANE_ID,
+    FORMAT_WINDOW_ID,
+    LAYOUT_PANE_OPTION,
+    PANE_DEAD_FLAG,
+)
 from shikiru.tmux.decorator import render_title
 from shikiru.view_log import view_argv
 
@@ -34,7 +42,29 @@ _SHELL_ARGV = ("/bin/sh",)
 _ROLE_PANE_NAMES = frozenset((Role.LEADER.value, Role.IMPLEMENTER.value))
 _SHELL_PANE_NAME = "shell"
 _LAYOUT_PANE_SEPARATOR = "\t"
-_LAYOUT_PANE_FORMAT = f"{FORMAT_PANE_ID}{_LAYOUT_PANE_SEPARATOR}#{{{LAYOUT_PANE_OPTION}}}"
+_LAYOUT_PANE_FORMAT = f"{FORMAT_PANE_ID}{_LAYOUT_PANE_SEPARATOR}{FORMAT_LAYOUT_PANE}"
+_SNAPSHOT_PANE_FORMAT = _LAYOUT_PANE_SEPARATOR.join(
+    (FORMAT_WINDOW_ID, FORMAT_PANE_ID, FORMAT_PANE_DEAD, FORMAT_LAYOUT_PANE)
+)
+_SNAPSHOT_FIELD_COUNT = 4
+
+
+@dataclass(frozen=True)
+class _PaneRow:
+    window_id: str
+    pane_id: str
+    dead: bool
+    layout_name: str
+
+
+def _parse_snapshot(lines: list[str]) -> list[_PaneRow]:
+    rows: list[_PaneRow] = []
+    for line in lines:
+        window_id, pane_id, dead, layout_name = line.split(
+            _LAYOUT_PANE_SEPARATOR, _SNAPSHOT_FIELD_COUNT - 1
+        )
+        rows.append(_PaneRow(window_id, pane_id, dead == PANE_DEAD_FLAG, layout_name))
+    return rows
 
 
 class LayoutGuard:
@@ -104,11 +134,41 @@ class LayoutGuard:
 
         A task that cannot be restored is recorded as an `engine_fault` and skipped (02 §1).
         """
+        snapshot: list[_PaneRow] | None = None
         for task in tasks:
             async with self._faults.isolate("layout restore", task_id=task.id), self._windows:
                 current = self._tasks.get(task.id)
-                if current is not None and current.status in ACTIVE_STATUSES:
-                    await self.ensure(current)
+                if current is None or current.status not in ACTIVE_STATUSES:
+                    continue
+                if snapshot is None:
+                    snapshot = _parse_snapshot(
+                        await self._tmux.list_session_panes(
+                            self._session_target, _SNAPSHOT_PANE_FORMAT
+                        )
+                    )
+                if self._is_healthy(current, snapshot):
+                    continue
+                snapshot = None
+                await self.ensure(current)
+
+    def _is_healthy(self, task: Task, snapshot: list[_PaneRow]) -> bool:
+        if task.window_id is None:
+            return False
+        window_rows = [row for row in snapshot if row.window_id == task.window_id]
+        if not window_rows:
+            return False
+        session_panes = {row.pane_id for row in snapshot}
+        for role in (Role.LEADER, Role.IMPLEMENTER):
+            if task.panes.get(role) not in session_panes:
+                return False
+        window_names = {row.layout_name for row in window_rows}
+        if not all(name in window_names for name in self._special_pane_names):
+            return False
+        managed = set(task.panes.values())
+        managed.update(
+            row.pane_id for row in window_rows if row.layout_name in self._special_pane_names
+        )
+        return not any(row.dead and row.pane_id in managed for row in snapshot)
 
     async def close(self, task: Task) -> None:
         """Close a task window when its task reaches a terminal state."""

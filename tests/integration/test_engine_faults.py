@@ -32,7 +32,7 @@ from shikiru.store.database import Database, OperationalDatabaseError
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
-from shikiru.tmux.client import Tmux, exact_target
+from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
 from shikiru.tmux.session import SessionView, session_name
 from shikiru.workspace.github import GitHub
 from tests.support.clock import FakeClock
@@ -436,7 +436,12 @@ async def test_one_bad_task_window_does_not_starve_other_tasks_and_is_renotified
         await harness.until(lambda: (task := harness.tasks.get(broken)) and task.window_id)
         task = harness.tasks.get(broken)
         assert task is not None
-        tmux.bad_window = task.window_id
+        window_id = task.window_id
+        assert window_id is not None
+        tmux.bad_window = window_id
+        window_panes = await tmux.list_panes(window_id, FORMAT_PANE_ID)
+        stray = next(pane for pane in window_panes if pane not in task.panes.values())
+        await tmux_server.run("kill-pane", "-t", stray)
         harness.queue.append(Submit(title="other", request="other", mode=Mode.IMPLEMENT))
 
         def faults() -> list[Event]:

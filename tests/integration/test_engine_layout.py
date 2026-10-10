@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -15,11 +15,12 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.paths import task_root
+from shikiru.process import ProcessResult, SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
-from shikiru.tmux.client import FORMAT_PANE_ID, exact_target
+from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
 from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
@@ -30,11 +31,11 @@ from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
-    from shikiru.tmux.client import Tmux
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -80,9 +81,10 @@ async def _task_window(
     tmp_path: Path,
     *,
     layout_tree: LayoutSplit = _LAYOUT,
+    tmux: Tmux | None = None,
 ) -> tuple[LayoutGuard, TaskStore, EventLog, str]:
     settings = _settings(layout_tree)
-    tmux = build_tmux(tmux_server)
+    tmux = tmux if tmux is not None else build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     tasks = TaskStore(connection, clock)
     events = EventLog(connection, clock)
@@ -300,3 +302,65 @@ async def test_restore_from_a_stale_snapshot_leaves_a_finished_task_closed(
     )
     assert snapshot.window_id not in windows.stdout.split()
     assert len(windows.stdout.split()) == 1
+
+
+class _CountingRunner(SubprocessRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.invocations = 0
+
+    async def run(self, argv: Sequence[str], **options: Any) -> ProcessResult:
+        self.invocations += 1
+        return await super().run(argv, **options)
+
+
+_ACTIVE_TASK_COUNT = 3
+
+
+async def test_healthy_restore_makes_one_tmux_call_whatever_the_task_count(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    runner = _CountingRunner()
+    tmux = Tmux(runner, socket=tmux_server.socket_name, env=tmux_server.env)
+    layout, tasks, events, first_id = await _task_window(
+        connection, clock, tmux_server, tmp_path, tmux=tmux
+    )
+    queue = CommandQueue(connection, clock)
+    for index in range(_ACTIVE_TASK_COUNT - 1):
+        queued = queue.append(Submit(title=f"extra {index}", request="extra"))
+        assert isinstance(queued.command, Submit)
+        await layout.ensure(tasks.insert_from_submit(queued.command))
+    for task in tasks.list_all():
+        tasks.apply_transition(task.id, Transition.stay(task, step=task.step))
+    active = tasks.list_active()
+    assert len(active) == _ACTIVE_TASK_COUNT
+
+    runner.invocations = 0
+    await layout.restore(active)
+    assert runner.invocations == 1
+
+    victim = tasks.get(first_id)
+    assert victim is not None
+    assert victim.window_id is not None
+    old_leader = victim.panes[Role.LEADER]
+    await tmux_server.run("kill-pane", "-t", old_leader)
+    await layout.restore(tasks.list_active())
+    healed = tasks.get(first_id)
+    assert healed is not None
+    assert healed.panes[Role.LEADER] != old_leader
+    assert await tmux.pane_exists(healed.panes[Role.LEADER])
+
+    other = tasks.list_active()[-1]
+    assert other.window_id is not None
+    await tmux_server.run("kill-window", "-t", other.window_id)
+    await layout.restore(tasks.list_active())
+    recreated = tasks.get(other.id)
+    assert recreated is not None
+    assert recreated.window_id is not None
+    assert await tmux.target_exists(recreated.window_id)
+    assert events.since(0, kinds=[EventKind.PANE_RESTORED], task_id=first_id)
+
+    runner.invocations = 0
+    await layout.restore(tasks.list_active())
+    assert runner.invocations == 1
