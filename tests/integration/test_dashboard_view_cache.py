@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from shikiru.dashboard.contract import TaskBrowserFilter
+from shikiru.dashboard.tick import pinned_tick
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import first_step
 from shikiru.domain.tasks import EscalationReason
@@ -107,3 +108,52 @@ async def test_task_browser_pages_follow_task_writes_made_on_another_connection(
     task = seed_task(connection, clock, title="Add retry")
 
     assert browser_task_ids() == [task.id]
+
+
+def _open_decision(connection: Connection, clock: FakeClock, title: str) -> None:
+    task = seed_task(connection, clock, title=title)
+    EscalationStore(connection, clock).open(
+        task.id,
+        step=None,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline=f"{task.id} · {title}",
+        packet_path=".shikiru/escalations/missing.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+
+
+async def test_widgets_asking_within_one_tick_share_the_built_views(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    _open_decision(connection, clock, "Choose a parser")
+    views = state_views(reader, project_dir, clock, StubServices())
+
+    with pinned_tick(clock.now()):
+        assert views.attention() is views.attention()
+        assert views.workspace_summary() is views.workspace_summary()
+
+    assert views.attention() is not views.attention()
+
+
+async def test_the_next_tick_shows_the_clock_change_and_a_data_change_shows_within_a_tick(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    _open_decision(connection, clock, "Choose a parser")
+    views = state_views(reader, project_dir, clock, StubServices())
+
+    def first_decision_age() -> str:
+        return views.attention().groups[0].escalations[0].age
+
+    with pinned_tick(clock.now()):
+        assert first_decision_age() == "now"
+        clock.advance(ELAPSED_SECONDS)
+        assert first_decision_age() == "now"
+        assert views.attention().decisions == 1
+        _open_decision(connection, clock, "Choose a layout")
+        assert views.attention().decisions == 2
+    with pinned_tick(clock.now()):
+        assert first_decision_age() == "2h"

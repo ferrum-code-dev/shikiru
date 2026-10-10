@@ -53,6 +53,7 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
 from shikiru.dashboard.interaction import native_editor_has_focus
+from shikiru.dashboard.tick import pinned_tick
 from shikiru.errors import ConfigError
 from shikiru.ui.compact import FocusAttentionStatus
 from shikiru.ui.popup import (
@@ -1802,10 +1803,12 @@ class DashboardApp(App[None]):
             return
         while True:
             await self._clock.sleep(interval)
+            tick = self._clock.now()
             for registration in tuple(self._motion_callbacks):
                 if registration.in_flight:
                     continue
-                registration.task = asyncio.ensure_future(registration.callback())
+                with pinned_tick(tick):
+                    registration.task = asyncio.ensure_future(registration.callback())
                 registration.task.add_done_callback(self._surface_motion_callback_error)
 
     def _surface_motion_callback_error(self, task: asyncio.Future[None]) -> None:

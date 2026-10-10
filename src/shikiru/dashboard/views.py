@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
@@ -59,6 +59,7 @@ from shikiru.dashboard.contract import (
     WorkspaceSummaryView,
 )
 from shikiru.dashboard.session_history import project_task_sessions
+from shikiru.dashboard.tick import current_tick, tick_now
 from shikiru.domain.commands import CommandStatus, ResolutionKind
 from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation_evidence import parse_escalation_packet
@@ -188,6 +189,25 @@ class _VersionedCache[K, V]:
         return self._values[key]
 
 
+class _TickMemo:
+    def __init__(self, state: StateReader) -> None:
+        self._state = state
+        self._key: tuple[datetime, int] | None = None
+        self._values: dict[str, object] = {}
+
+    def get[V](self, name: str, load: Callable[[], V]) -> V:
+        tick = current_tick()
+        if tick is None:
+            return load()
+        key = (tick, self._state.data_version())
+        if key != self._key:
+            self._key = key
+            self._values = {}
+        if name not in self._values:
+            self._values[name] = load()
+        return cast("V", self._values[name])
+
+
 class DashboardSources(Protocol):
     """External information composed into dashboard view models."""
 
@@ -256,6 +276,10 @@ class StateDashboardViews:
         self._structured_escalation_cache: dict[str, _StructuredEscalationCache] = {}
         self._fault_version = -1
         self._fault_cache: tuple[FaultStreak, ...] | None = None
+        self._tick_memo = _TickMemo(state)
+
+    def _now(self) -> datetime:
+        return tick_now(self._clock)
 
     def _cached_tasks(self, *, statuses: tuple[Status, ...] | None = None) -> list[Task]:
         return list(
@@ -274,7 +298,7 @@ class StateDashboardViews:
         )
         uptime = project_engine_uptime(
             self._state.latest_events(ENGINE_LIFECYCLE_EVENT_LIMIT, kinds=_ENGINE_LIFECYCLE_EVENTS),
-            now=self._clock.now(),
+            now=self._now(),
             running=engine_up,
             identity=identity,
         )
@@ -303,12 +327,15 @@ class StateDashboardViews:
 
     def workspace_summary(self) -> WorkspaceSummaryView:
         """Count home categories without treating them as disjoint task totals."""
+        return self._tick_memo.get("workspace_summary", self._build_workspace_summary)
+
+    def _build_workspace_summary(self) -> WorkspaceSummaryView:
         attention = self.attention()
         tasks = self._cached_tasks()
         active_tasks = [
             task for task in tasks if task.status not in (Status.DONE, Status.CANCELLED)
         ]
-        now = self._clock.now()
+        now = self._now()
         quota_wait_ids = {
             task.id for task in tasks if self._running_quota_evidence(task, now) is not None
         }
@@ -387,7 +414,10 @@ class StateDashboardViews:
 
     def strips(self) -> list[TaskStripData]:
         """Build the active task strips, placing the focused task first."""
-        now = self._clock.now()
+        return list(self._tick_memo.get("strips", self._build_strips))
+
+    def _build_strips(self) -> list[TaskStripData]:
+        now = self._now()
         tasks = self._cached_tasks(statuses=ACTIVE_STATUSES)
         tasks.sort(key=lambda task: task.id != self._focus_task)
         recent_merges = self._motion.recent_merges(now)
@@ -425,7 +455,7 @@ class StateDashboardViews:
         selected_task_id: str | None,
     ) -> TaskBrowserView:
         """Build one ready-to-render browser page and retain the selected task context."""
-        now = self._clock.now()
+        now = self._now()
         (
             motion_task_ids,
             stalled_ids,
@@ -479,7 +509,7 @@ class StateDashboardViews:
         selected_task_id: str | None,
     ) -> tuple[TaskBrowserView, ...]:
         """Build contiguous bounded browser pages from one state snapshot."""
-        now = self._clock.now()
+        now = self._now()
         (
             motion_task_ids,
             stalled_ids,
@@ -695,7 +725,7 @@ class StateDashboardViews:
 
     def escalations(self) -> list[EscalationPanelView]:
         """Build every durable open decision, retaining its row when evidence is unreadable."""
-        decisions = self._decision_views(self._clock.now(), self._queries.list_escalations())
+        decisions = self._decision_views(self._now(), self._queries.list_escalations())
         return list(decisions.values())
 
     def _decision_views(
@@ -770,7 +800,7 @@ class StateDashboardViews:
         return cached
 
     def _dialogue_view(self, task_id: str | None = None) -> list[DialogueBubbleView]:
-        now = self._clock.now()
+        now = self._now()
         return [
             DialogueBubbleView(
                 role=_event_role(event.kind, event.data),
@@ -788,7 +818,10 @@ class StateDashboardViews:
 
     def attention(self) -> AttentionView:
         """Group durable decisions, existing stall diagnoses and open fault streaks by task."""
-        now = self._clock.now()
+        return self._tick_memo.get("attention", self._build_attention)
+
+    def _build_attention(self) -> AttentionView:
+        now = self._now()
         tasks = {task.id: task for task in self._cached_tasks()}
         escalations = self._queries.list_escalations()
         decision_views = self._decision_views(now, escalations)
@@ -907,7 +940,7 @@ class StateDashboardViews:
             return None
         latest_signal, latest_signal_uncertain = _latest_signal_observation(signal_page)
         task = detail.task
-        now = self._clock.now()
+        now = self._now()
         triage = next(
             (item.data for item in reversed(detail.reports) if isinstance(item.data, TriageReport)),
             None,
@@ -1334,7 +1367,7 @@ class StateDashboardViews:
 
     def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
         """Build project usage or usage recorded for one task."""
-        now = self._clock.now()
+        now = self._now()
         self._refresh_usage_cache_version()
         if task_id is not None:
             usage = self._task_usage_cache.get(task_id)
