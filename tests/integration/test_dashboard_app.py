@@ -830,7 +830,6 @@ async def _capture_task99_home_size(
     clock: FakeClock,
     settings: Settings,
     selected_task_id: str,
-    decision_task_id: str,
     size: tuple[int, int],
 ) -> None:
     widget_names = ["header", "queue", "escalations", "usage", "resources"]
@@ -889,7 +888,7 @@ async def _capture_task99_home_size(
         assert "sonnet" in detail_text
         attention = app.query_one("#escalations", EscalationsPanel)
         attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-        assert decision_task_id in _task99_widget_text(attention_row)
+        assert f"{selected_task_id} is not escalated" in _task99_widget_text(attention_row)
         assert _TASK99_SELECTED_TITLE in _task99_widget_text(identity)
         _capture_task99(app, f"home-selected-{size[0]}x{size[1]}-color.svg")
 
@@ -1090,7 +1089,7 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_TEST_START)
     settings = _task99_settings(project_dir)
-    selected_task_id, decision_task_id, recent_task_id = _record_task99_population(
+    selected_task_id, _, recent_task_id = _record_task99_population(
         connection,
         project_dir,
         clock,
@@ -1111,7 +1110,6 @@ async def test_task99_native_compact_inspector_matches_recorded_workflow(
                 clock=clock,
                 settings=settings,
                 selected_task_id=selected_task_id,
-                decision_task_id=decision_task_id,
                 size=size,
             )
         for size in _DETAIL_REVIEW_COMPACT_SIZES:
@@ -1779,7 +1777,7 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
                 return all(
                     value in visible
                     for value in (
-                        "No decisions needed",
+                        "is not escalated",
                         owned.id,
                         paused.id,
                         "intervention",
@@ -6446,6 +6444,12 @@ async def test_contextual_message_draft_survives_answer_form_for_another_task(
 
             attention = app.query_one("#escalations", EscalationsPanel)
             answer_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
+            app.query_one("#task-browser-search", Input).value = answer_task.title
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{answer_task.id}")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await _select_home_task(app, answer_task.id)
             await wait_until(
                 lambda: escalation.id in _rendered_text(answer_row),
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
@@ -6462,6 +6466,11 @@ async def test_contextual_message_draft_survives_answer_form_for_another_task(
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
 
+            app.query_one("#task-browser-search", Input).value = task.title
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{task.id}")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
             await _select_home_task(app, task.id)
             list_view.focus()
             await pilot.press("ctrl+p")

@@ -752,6 +752,7 @@ class StateDashboardViews:
                     option.label is ResolutionKind.ANSWER for option in escalation.options
                 ),
                 evidence_error="; ".join(evidence_errors) if evidence_errors else None,
+                reason=escalation.reason,
             )
         return result
 

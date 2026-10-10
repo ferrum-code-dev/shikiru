@@ -22,7 +22,8 @@ from shikiru.agents.contracts import (
     COST_BASIS_BILLED,
     COST_BASIS_UNKNOWN,
 )
-from shikiru.domain.tasks import Role, Status
+from shikiru.domain.escalation import escalation_reason_label
+from shikiru.domain.tasks import EscalationReason, Role, Status
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
@@ -33,6 +34,7 @@ from shikiru.ui.tokens import (
     SAGE,
     SECONDARY_TEXT_COLOR,
     STEEL_BLUE,
+    STYLE_BOLD,
 )
 
 if TYPE_CHECKING:
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
 
     from shikiru.ui.strip import TaskStripData
 
+_BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
 GIB_FORMAT = ".1f"
 BYTES_PER_GIB = 1024**3
 SESSION_COST_FORMAT = ".2f"
@@ -255,6 +258,9 @@ class _AttentionDecision(Protocol):
     @property
     def headline(self) -> str: ...
 
+    @property
+    def reason(self) -> EscalationReason | None: ...
+
 
 class _AttentionGroup(Protocol):
     @property
@@ -298,6 +304,9 @@ class _AttentionSummary(Protocol):
 class _Attention(Protocol):
     @property
     def groups(self) -> tuple[_AttentionGroup, ...]: ...
+
+    @property
+    def decisions(self) -> int: ...
 
 
 class _TaskSession(Protocol):
@@ -903,9 +912,20 @@ def attention_status_text(
     action_hint: str,
     selected_group_index: int = 0,
     selected_escalation_id: str | None = None,
+    not_escalated_task_id: str | None = None,
     width: int | None = None,
 ) -> Text:
     """Render the Home status strip from current attention and observed workspace state."""
+    if not_escalated_task_id is not None:
+        status = _not_escalated_status(
+            not_escalated_task_id, attention.decisions, action_hint, width
+        )
+        if attention.groups:
+            _append_engine_state(status, summary)
+            _append_held_task_states(status, summary)
+        else:
+            _append_held_task_states(status, summary, inline=True)
+        return status
     if attention.groups:
         group = attention.groups[selected_group_index]
         status = _attention_group_status(
@@ -922,11 +942,20 @@ def attention_status_text(
     return status
 
 
-def display_escalation_headline(task_id: str | None, headline: str) -> str:
-    """Remove only an already-present leading task identity from a headline."""
-    if task_id is None:
-        return headline
-    return headline.removeprefix(f"{task_id} · ")
+def display_escalation_headline(
+    task_id: str | None,
+    headline: str,
+    reason: EscalationReason | None = None,
+) -> str:
+    """Drop an already-present leading task identity and name the reason in words.
+
+    The stored headline is never changed; only its exact `step · reason:` segment is shown
+    with the reason's Operator-facing label.
+    """
+    shown = headline if task_id is None else headline.removeprefix(f"{task_id} · ")
+    if reason is None:
+        return shown
+    return shown.replace(f" · {reason.value}:", f" · {escalation_reason_label(reason)}:", 1)
 
 
 @dataclass(frozen=True)
@@ -938,6 +967,7 @@ class FocusAttentionStatus:
     action_hint: str
     selected_group_index: int = 0
     selected_escalation_id: str | None = None
+    not_escalated_task_id: str | None = None
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Align the existing status and action hint during Rich's current-width render."""
@@ -948,6 +978,7 @@ class FocusAttentionStatus:
             action_hint=self.action_hint,
             selected_group_index=self.selected_group_index,
             selected_escalation_id=self.selected_escalation_id,
+            not_escalated_task_id=self.not_escalated_task_id,
             width=options.max_width,
         )
 
@@ -964,21 +995,15 @@ def _attention_group_status(
             (item for item in group.escalations if item.escalation_id == selected_escalation_id),
             group.escalations[0],
         )
-        task_id = group.task_id or "Project"
-        headline = display_escalation_headline(group.task_id, decision.headline)
+        headline = display_escalation_headline(group.task_id, decision.headline, decision.reason)
         status = Text.assemble(
             ("! ", AMBER),
-            (decision.escalation_id, AMBER),
-            (f" · {task_id} · {headline}", PRIMARY_TEXT_COLOR),
+            (decision.escalation_id, _BOLD_PRIMARY),
+            (" · ", PRIMARY_TEXT_COLOR),
+            (group.task_id, _BOLD_PRIMARY) if group.task_id else ("Project", PRIMARY_TEXT_COLOR),
+            (f" · {headline}", PRIMARY_TEXT_COLOR),
         )
-        gap = max(
-            width - cell_len(status.plain) - cell_len(action_hint)
-            if width is not None
-            else STATUS_ALIGNMENT_MIN_GAP,
-            STATUS_ALIGNMENT_MIN_GAP,
-        )
-        status.append(" " * gap)
-        status.append(action_hint, style=SECONDARY_TEXT_COLOR)
+        _append_aligned_hint(status, action_hint, width)
     else:
         fault = next(
             (reason for reason in group.reasons if reason.startswith("engine fault")),
@@ -998,6 +1023,31 @@ def _attention_group_status(
                 ),
             )
     return status
+
+
+def _not_escalated_status(
+    task_id: str,
+    other_decisions: int,
+    action_hint: str,
+    width: int | None,
+) -> Text:
+    status = Text.assemble((task_id, _BOLD_PRIMARY), (" is not escalated", PRIMARY_TEXT_COLOR))
+    if other_decisions:
+        noun = "decision" if other_decisions == 1 else "decisions"
+        status.append(f" · {other_decisions} {noun} on other tasks", style=SECONDARY_TEXT_COLOR)
+    _append_aligned_hint(status, action_hint, width)
+    return status
+
+
+def _append_aligned_hint(status: Text, action_hint: str, width: int | None) -> None:
+    gap = max(
+        width - cell_len(status.plain) - cell_len(action_hint)
+        if width is not None
+        else STATUS_ALIGNMENT_MIN_GAP,
+        STATUS_ALIGNMENT_MIN_GAP,
+    )
+    status.append(" " * gap)
+    status.append(action_hint, style=SECONDARY_TEXT_COLOR)
 
 
 def _aligned_line(left: RenderableType, right: RenderableType) -> Table:

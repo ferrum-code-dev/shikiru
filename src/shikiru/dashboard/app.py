@@ -230,6 +230,8 @@ class _AttentionPanelNavigation(Protocol):
 
     async def activate_selected_decision(self) -> bool: ...
 
+    def follow_task(self, task_id: str | None) -> None: ...
+
 
 class WidgetPluginError(ConfigError):
     """A configured dashboard widget name has no matching, loadable entry point."""
@@ -1666,6 +1668,9 @@ class DashboardApp(App[None]):
         queue = self._widget_instances.get(_WIDGET_QUEUE)
         if queue is not None:
             cast("_TaskBrowserNavigation", queue).sync_context_selection(task_id)
+        attention = self._widget_instances.get(_WIDGET_ESCALATIONS)
+        if attention is not None:
+            cast("_AttentionPanelNavigation", attention).follow_task(task_id)
 
     def _clear_home_selection(self) -> None:
         queue = self._widget_instances.get(_WIDGET_QUEUE)

@@ -141,10 +141,23 @@ class EscalationsPanel(Static):
         self._summary: WorkspaceSummaryView | None = None
         self._selected = 0
         self._selected_escalation_id: str | None = None
+        self._followed_task_id: str | None = None
+        self._rendered_selection: tuple[object, ...] | None = None
         self._has_rendered = False
         self._keep_empty_visible = False
         self._focus_requested = False
         self._remove_motion_callback: Callable[[], None] | None = None
+
+    def follow_task(self, task_id: str | None) -> None:
+        """Show the decision of the selected task, or that it has none; `None` clears the follow."""
+        if task_id == self._followed_task_id:
+            return
+        self._followed_task_id = task_id
+        if task_id is None:
+            self._selected = 0
+            self._selected_escalation_id = None
+        if widget_is_attached(self):
+            self.call_later(self._refresh)
 
     def allow_focus(self) -> bool:
         """Join the Tab chain only while it holds attention groups or was opened from Views."""
@@ -231,6 +244,9 @@ class EscalationsPanel(Static):
         if not self._focus_row or not self._attention.groups:
             return
         self.focus()
+        if self._not_escalated_task_id() is not None:
+            event.stop()
+            return
         group = self._attention.groups[self._selected]
         if group.task_id is not None and self._widget_context.on_task_selected is not None:
             self._widget_context.on_task_selected(group.task_id)
@@ -246,8 +262,11 @@ class EscalationsPanel(Static):
         event.stop()
 
     async def _move_group(self, step: int) -> None:
+        if self._not_escalated_task_id() is not None:
+            self._selected = -1 if step > 0 else 0
         self._selected = (self._selected + step) % len(self._attention.groups)
         group = self._attention.groups[self._selected]
+        self._followed_task_id = group.task_id
         self._selected_escalation_id = (
             group.escalations[0].escalation_id if group.escalations else None
         )
@@ -280,6 +299,9 @@ class EscalationsPanel(Static):
             event.stop()
 
     async def _activate_focus_task(self, event: events.Key) -> None:
+        if self._not_escalated_task_id() is not None:
+            event.stop()
+            return
         decision = self._selected_decision()
         if decision is not None:
             await self._resolve_decision(event)
@@ -375,10 +397,41 @@ class EscalationsPanel(Static):
             )
         else:
             self._selected_escalation_id = None
-        if groups_unchanged and current_status == previous_status and self._has_rendered:
+        self._follow_selected_task()
+        unchanged = groups_unchanged and current_status == previous_status
+        if unchanged and self._has_rendered and self._rendered_selection == self._selection_state():
             return
         await self._render_panels()
         self._has_rendered = True
+
+    def _follow_selected_task(self) -> None:
+        followed = self._followed_task_id
+        if followed is None:
+            return
+        groups = self._attention.groups
+        candidates = [index for index, group in enumerate(groups) if group.task_id == followed] or [
+            index for index, group in enumerate(groups) if not group.escalations
+        ]
+        if candidates:
+            self._selected = candidates[0]
+            self._selected_escalation_id = self._escalation_for(groups[candidates[0]])
+
+    def _escalation_for(self, group: AttentionGroupView) -> str | None:
+        if any(item.escalation_id == self._selected_escalation_id for item in group.escalations):
+            return self._selected_escalation_id
+        return group.escalations[0].escalation_id if group.escalations else None
+
+    def _not_escalated_task_id(self) -> str | None:
+        followed = self._followed_task_id
+        if followed is None or not self._focus_row:
+            return None
+        has_row = any(
+            group.task_id == followed or not group.escalations for group in self._attention.groups
+        )
+        return None if has_row else followed
+
+    def _selection_state(self) -> tuple[object, ...]:
+        return (self._selected, self._selected_escalation_id, self._not_escalated_task_id())
 
     def _selected_group_id(self) -> str | None:
         if not self._attention.groups or self._selected >= len(self._attention.groups):
@@ -386,6 +439,8 @@ class EscalationsPanel(Static):
         return self._attention.groups[self._selected].task_id
 
     def _selected_decision(self) -> EscalationPanelView | None:
+        if self._not_escalated_task_id() is not None:
+            return None
         if not self._attention.groups or self._selected >= len(self._attention.groups):
             return None
         group = self._attention.groups[self._selected]
@@ -399,6 +454,7 @@ class EscalationsPanel(Static):
         )
 
     async def _render_panels(self, *, reveal_selection: bool = False) -> None:
+        self._rendered_selection = self._selection_state()
         self.set_class(self._focus_row and self._selected_decision() is not None, ARMED_CLASS)
         panels = self.query_one("#escalation-panels", VerticalScroll)
         scroll_x, scroll_y = panels.scroll_x, panels.scroll_y
@@ -455,6 +511,7 @@ class EscalationsPanel(Static):
             action_hint=action_hint,
             selected_group_index=self._selected,
             selected_escalation_id=self._selected_escalation_id,
+            not_escalated_task_id=self._not_escalated_task_id(),
         )
 
     def _reveal_selection(self, panels: VerticalScroll, card: GatedStatic) -> None:
@@ -482,10 +539,8 @@ class EscalationsPanel(Static):
         lines.extend(f"  {reason}" for reason in group.reasons)
         content: list[RenderableType] = ["\n".join(lines)]
         for item in group.escalations:
-            headline = (
-                f"{item.escalation_id} · "
-                f"{display_escalation_headline(item.task_id, item.headline)} · {item.age}"
-            )
+            shown = display_escalation_headline(item.task_id, item.headline, item.reason)
+            headline = f"{item.escalation_id} · {shown} · {item.age}"
             if index == self._selected and item.escalation_id == self._selected_escalation_id:
                 headline = f"{_SELECTED_MARKER}{headline}"
             content.append(

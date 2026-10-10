@@ -16,6 +16,30 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
 
 
+ESCALATION_REASON_LABELS: dict[EscalationReason, str] = {
+    EscalationReason.DECISION_REQUIRED: "Decision required",
+    EscalationReason.ITERATIONS_EXHAUSTED: "Iterations exhausted",
+    EscalationReason.INTEGRATION_CONFLICT: "Integration conflict",
+    EscalationReason.INTEGRATION_BLOCKED: "Integration blocked",
+    EscalationReason.UNCOMMITTED_WORK: "Uncommitted work",
+    EscalationReason.OFF_TASK_BRANCH: "Off task branch",
+    EscalationReason.PR_CLOSED: "Pull request closed",
+    EscalationReason.AGENT_AUTH: "Agent authentication",
+    EscalationReason.AGENT_ERROR: "Agent error",
+    EscalationReason.AGENT_STUCK: "Agent stuck",
+    EscalationReason.AGENT_PROTOCOL: "Agent protocol error",
+    EscalationReason.LADDER_EXHAUSTED: "Ladder exhausted",
+    EscalationReason.QUOTA_EXHAUSTED: "Quota exhausted",
+    EscalationReason.DEPENDENCY_CANCELLED: "Dependency cancelled",
+    EscalationReason.ENGINE_ERROR: "Engine error",
+}
+
+
+def escalation_reason_label(reason: EscalationReason) -> str:
+    """Return the Operator-facing name of `reason`."""
+    return ESCALATION_REASON_LABELS[reason]
+
+
 @dataclass(frozen=True)
 class EscalationOption:
     """One option `resolve` accepts; exactly one option per reason is `recommended`."""

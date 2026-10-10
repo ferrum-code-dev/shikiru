@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import BillingMode, BillingSource, CostBasis
     from shikiru.clock import Clock
-    from shikiru.domain.tasks import Role
+    from shikiru.domain.tasks import EscalationReason, Role
     from shikiru.ui.strip import TaskStripData
 
 from shikiru.domain.timeline import (
@@ -621,6 +621,7 @@ class EscalationPanelView:
     resolution_actions: tuple[str, ...] = ()
     answer_available: bool = False
     evidence_error: str | None = None
+    reason: EscalationReason | None = None
 
 
 @dataclass(frozen=True)
