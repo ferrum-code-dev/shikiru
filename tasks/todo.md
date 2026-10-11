@@ -218,4 +218,4 @@ Fourth-review scope and evidence: [fourth real-project review](../docs/tui-feedb
 - [x] Task 137: Preserve agent pane titles across session restart
 - [x] Task 138: Document that takeover is not restored after respawn
 - [x] Task 139: Revise the HTML reference to match the TUI
-- [ ] Task 140: Verify the fourth review and reconcile Phase 11 evidence
+- [x] Task 140: Verify the fourth review and reconcile Phase 11 evidence ([record](../docs/release-readiness-2026-10-11-phase11-fourth-review.md))

@@ -1,6 +1,6 @@
 # Phase 11 fourth real-project review
 
-Status: Tasks 129–139 delivered (the HTML reference was revised to the rendered TUI in Task 139); Task 140 verifies. This specification refines Design 05 §3, 06 §5–6 and the accepted Phase 11 behaviour where the requirements below supersede it. **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) is revised after the TUI changes (Task 139) to match what the product renders, not the other way round.
+Status: Tasks 129–140 delivered (the HTML reference was revised to the rendered TUI in Task 139); Task 140's issue-by-issue verification, gates and remaining limits are in the [2026-10-11 release record](release-readiness-2026-10-11-phase11-fourth-review.md). This specification refines Design 05 §3, 06 §5–6 and the accepted Phase 11 behaviour where the requirements below supersede it. **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) is revised after the TUI changes (Task 139) to match what the product renders, not the other way round.
 
 Analysis: ten read-only static analyses (Haiku 5.5 xhigh for template/styling items, Sonnet 5.5 medium for focus, task-list and tmux items) located the code, conflicts and tests. Nothing was run natively; claims marked *unconfirmed* must be reproduced by the implementing task before it changes behaviour.
 

@@ -67,7 +67,8 @@ the task is paused or another role is still taken over. Take over again to conti
 The Phase 11 first-delivery record covers Tasks 105–112; the [2026-10-08 follow-up](docs/release-readiness-2026-10-08-phase11-followup.md)
 records accepted second-review work through Task 121, current matched native captures,
 walkthroughs, test gates and limits. The [2026-10-09 third-review record](docs/release-readiness-2026-10-09-phase11-third-review.md)
-reconciles accepted Tasks 122–128, with Task 128 accepted by root on 2026-10-09.
+reconciles accepted Tasks 122–128, with Task 128 accepted by root on 2026-10-09. The
+[2026-10-11 fourth-review record](docs/release-readiness-2026-10-11-phase11-fourth-review.md) verifies Tasks 129–139 issue by issue with gates, smoke and limits.
 The [Focus specification](docs/tui-focus.md) describes current routes and evidence rules; the
 [parity record](docs/tui-parity.md) preserves the measured Phase 10 audit and its historical artifacts.
 
