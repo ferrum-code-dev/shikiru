@@ -167,6 +167,16 @@ def _seed_unknown_only(connection: Connection, clock: FakeClock) -> None:
     _record_run(connection, clock, "codex", UNKNOWN_BILLING_DECLARATION)
 
 
+def _seed_zero_cost_unknown_mode(connection: Connection, clock: FakeClock) -> None:
+    _record_run(
+        connection, clock, "codex", UNKNOWN_BILLING_DECLARATION, _tokens(0.0, COST_BASIS_BILLED)
+    )
+
+
+def _seed_subscription_spend(connection: Connection, clock: FakeClock) -> None:
+    _record_run(connection, clock, "claude", _SUBSCRIPTION, _tokens(2.5, COST_BASIS_BILLED))
+
+
 def _seed_partial_coverage(connection: Connection, clock: FakeClock) -> None:
     _seed_api_only(connection, clock)
     _record_run(connection, clock, "codex", _API)
@@ -371,6 +381,30 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
                 _row("Billing", _count(1, "unknown")),
             ],
             (_count(1, "run"), _NO_TOKENS, group(("cost unknown", GREY))),
+        ),
+    ),
+    (
+        _seed_zero_cost_unknown_mode,
+        _single_agent_state(
+            "codex",
+            [
+                _row("Totals", _count(1, "session"), _tokens_total("1.5k")),
+                _row("Tokens", _detail("in 1.0k"), _detail("out 500")),
+                _row("Billing", _count(1, "unknown")),
+            ],
+            (_count(1, "run"), _tokens_total("1.5k"), _billed("$0.00")),
+        ),
+    ),
+    (
+        _seed_subscription_spend,
+        _single_agent_state(
+            "claude",
+            [
+                _row("Totals", _count(1, "session"), _tokens_total("1.5k"), _billed("$2.50")),
+                _row("Tokens", _detail("in 1.0k"), _detail("out 500")),
+                _row("Billing", _count(1, "subscription")),
+            ],
+            (_count(1, "run"), _tokens_total("1.5k"), _billed("$2.50")),
         ),
     ),
     (

@@ -686,7 +686,7 @@ def _all_mode_billed_groups(usage: _RecordedUsage) -> list[Text]:
         usage.billed_cost_sessions != usage.api_billed_cost_sessions
         or amount != usage.api_billed_cost_usd
     )
-    if differs and usage.billed_cost_sessions and amount is not None:
+    if differs and usage.billed_cost_sessions and amount:
         return [_billed_total(amount, USAGE_BILLED_WORD)]
     return []
 
