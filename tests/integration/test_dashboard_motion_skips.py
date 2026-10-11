@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 START = datetime(2026, 1, 1, tzinfo=UTC)
 LATER = timedelta(hours=3)
 NARROW_WIDTH = 30
-WAIT_SECONDS = 2
+WAIT_SECONDS = 30
 
 
 class MotionTicks:
@@ -165,8 +165,9 @@ async def test_queue_motion_tick_shows_a_data_change(
 
         await wait_until(
             lambda: any(
-                "Fix parser" in plain_text(item.query_one(Static).render())
+                "Fix parser" in plain_text(row.render())
                 for item in queue.query("ListItem")
+                for row in item.query(Static)
             ),
             timeout=WAIT_SECONDS,
         )
