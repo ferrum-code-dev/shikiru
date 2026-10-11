@@ -878,7 +878,7 @@ async def _capture_task99_home_size(
         assert "sonnet" in detail_text
         attention = app.query_one("#escalations", EscalationsPanel)
         attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-        assert f"{selected_task_id} is not escalated" in _task99_widget_text(attention_row)
+        assert f"{selected_task_id} · No decision needed" in _task99_widget_text(attention_row)
         assert _TASK99_SELECTED_TITLE in _task99_widget_text(identity)
         _capture_task99(app, f"home-selected-{size[0]}x{size[1]}-color.svg")
 
@@ -1767,7 +1767,7 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
                 return all(
                     value in visible
                     for value in (
-                        "is not escalated",
+                        "No decision needed",
                         owned.id,
                         paused.id,
                         "intervention",

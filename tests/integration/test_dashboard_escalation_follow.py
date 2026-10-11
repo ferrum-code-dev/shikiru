@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -19,7 +20,7 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.tokens import AMBER
+from shikiru.ui.tokens import AMBER, PRIMARY_TEXT_COLOR, SECONDARY_TEXT_COLOR
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, state_views
@@ -44,6 +45,7 @@ _MAX_ROWS = 6
 _BAR = "#escalations"
 _TASK_LIST = "#task-browser-list"
 _NO_HINT_ACTIONS = "Ctrl+P actions"
+_OTHER_DECISIONS = re.compile(r"\d+ decisions? on other tasks")
 
 
 @dataclass
@@ -82,6 +84,23 @@ class _Home:
 
     def bold_texts(self) -> list[str]:
         return [segment.text for segment in self.segments() if segment.style and segment.style.bold]
+
+    def styled_text(self, color: str, *, bold: bool) -> str:
+        expected = Color.parse(color)
+        return " ".join(
+            " ".join(
+                segment.text
+                for segment in self.segments()
+                if segment.style
+                and bool(segment.style.bold) is bold
+                and segment.style.color is not None
+                and Color.from_rich_color(segment.style.color) == expected
+            ).split()
+        )
+
+    def other_decisions(self) -> str | None:
+        match = _OTHER_DECISIONS.search(self.styled_text(SECONDARY_TEXT_COLOR, bold=False))
+        return match.group(0) if match else None
 
 
 def _escalate(
@@ -183,9 +202,8 @@ async def test_bar_follows_the_selected_task_without_moving_focus_or_writing_com
         assert home.decisions[home.second.id] in home.amber_bold_texts()
         assert home.second.id in home.bold_texts()
         await _select(home, pilot, home.plain)
-        await wait_until(lambda: "is not escalated" in home.text(), timeout=_WAIT_SECONDS)
-        assert f"{home.plain.id} is not escalated" in home.text()
-        assert "2 decisions on other tasks" in home.text()
+        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
+        assert f"{home.plain.id} · No decision needed" in home.text()
         assert _NO_HINT_ACTIONS in home.text()
         assert not home.bar.has_class("armed")
         assert home.plain.id in home.bold_texts()
@@ -197,6 +215,41 @@ async def test_bar_follows_the_selected_task_without_moving_focus_or_writing_com
         assert "decision_required" not in home.text()
         assert home.app.focused is task_list
         assert len(queue.pending()) == pending
+
+
+@pytest.mark.parametrize("size", [_WIDE, _COMPACT])
+async def test_unescalated_selection_keeps_the_task_bold_and_the_status_white(
+    home: _Home,
+    size: tuple[int, int],
+) -> None:
+    async with home.app.run_test(size=size) as pilot:
+        await _settled(home, pilot)
+        await _select(home, pilot, home.plain)
+        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
+        assert home.styled_text(PRIMARY_TEXT_COLOR, bold=True) == home.plain.id
+        assert home.styled_text(PRIMARY_TEXT_COLOR, bold=False) == "· No decision needed"
+
+
+@pytest.mark.parametrize("size", [_WIDE, _COMPACT])
+@pytest.mark.parametrize(
+    ("resolved", "shown"),
+    [(0, "2 decisions on other tasks"), (1, "1 decision on other tasks"), (2, None)],
+)
+async def test_other_decisions_are_a_grey_count_only_while_any_remain(
+    home: _Home,
+    connection: Connection,
+    size: tuple[int, int],
+    resolved: int,
+    shown: str | None,
+) -> None:
+    escalations = EscalationStore(connection, FakeClock(_START))
+    for escalation_id in list(home.decisions.values())[:resolved]:
+        escalations.resolve(escalation_id, "closed before the bar is shown")
+    async with home.app.run_test(size=size) as pilot:
+        await pilot.pause()
+        await _select(home, pilot, home.plain)
+        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
+        assert home.other_decisions() == shown
 
 
 async def test_enter_on_the_list_opens_the_form_of_the_followed_escalation_only(
@@ -213,7 +266,7 @@ async def test_enter_on_the_list_opens_the_form_of_the_followed_escalation_only(
         assert home.palette_actions == [f"resolve {home.decisions[home.second.id]}"]
         home.palette_actions.clear()
         await _select(home, pilot, home.plain)
-        await wait_until(lambda: "is not escalated" in home.text(), timeout=_WAIT_SECONDS)
+        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
         await pilot.press("enter")
         await pilot.pause()
         assert home.palette_actions == []
@@ -225,9 +278,9 @@ async def test_clicking_a_task_row_and_clearing_the_selection_move_the_bar(
     async with home.app.run_test(size=_WIDE) as pilot:
         await _settled(home, pilot)
         await pilot.click(f"#task-row-{home.plain.id}")
-        await wait_until(lambda: "is not escalated" in home.text(), timeout=_WAIT_SECONDS)
+        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
         await pilot.press("escape")
-        await wait_until(lambda: "is not escalated" not in home.text(), timeout=_WAIT_SECONDS)
+        await wait_until(lambda: "No decision needed" not in home.text(), timeout=_WAIT_SECONDS)
         assert home.bar.has_class("armed")
         assert home.app.focused is home.app.query_one(_TASK_LIST)
 
