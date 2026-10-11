@@ -158,6 +158,7 @@ _HOME_FOOTER_COMMAND_STATUS = "workspace-command-status"
 _CONTEXT_VIEWS_HEADER = "context-views-header"
 _CONTEXT_VIEWS_CLOSE = "context-views-close"
 _CONTEXT_WIDGET_HEADER = "context-widget-header"
+_PROJECT_USAGE_TITLE = "Project usage"
 _CONTEXT_WIDGET_CLOSE = "context-widget-close"
 _CONTEXT_WIDGET_COMPACT_MAX_ROWS = 20
 _CONTEXT_WIDGET_COMPACT_MAX_COLUMNS = 48
@@ -288,6 +289,7 @@ def _contextual_widget_label(name: str, placement: WidgetPlacement) -> str:
 class _ContextChoice:
     choice_id: str
     label: str
+    title: str | None = None
     task_filter: TaskBrowserFilter | None = None
     widget_name: str | None = None
     placement: WidgetPlacement | None = None
@@ -1412,6 +1414,7 @@ class DashboardApp(App[None]):
                     _ContextChoice(
                         FOCUS_USAGE_DETAILS,
                         "Usage details",
+                        title=_PROJECT_USAGE_TITLE,
                         widget_name=name,
                         placement=WidgetPlacement.DETAILED_USAGE,
                     )
@@ -1457,7 +1460,7 @@ class DashboardApp(App[None]):
                 choices.append(
                     _ContextChoice(
                         FOCUS_USAGE_DETAILS,
-                        "Project usage",
+                        _PROJECT_USAGE_TITLE,
                         widget_name=name,
                         placement=WidgetPlacement.DETAILED_USAGE,
                     )
@@ -1662,10 +1665,7 @@ class DashboardApp(App[None]):
             raise WidgetPluginError(message)
         widget = self._create_widget(choice.widget_name, placement=choice.placement)
         await self.push_screen(
-            _ContextWidgetScreen(
-                _contextual_widget_label(choice.widget_name, choice.placement),
-                widget,
-            ),
+            _ContextWidgetScreen(choice.title or choice.label, widget),
             callback=lambda _: self.refresh_task_detail_after_resume(),
         )
 
