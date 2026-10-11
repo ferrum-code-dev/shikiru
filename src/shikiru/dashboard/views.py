@@ -713,12 +713,7 @@ class StateDashboardViews:
             diagnosed_stall=diagnosed_stall,
             requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
             agent_processing=(
-                task.id in agent_processing_ids
-                and task.status in _ACTIVE_TURN_STATUSES
-                and not task.holds
-                and task.wait_reason is None
-                and not open_decision
-                and not diagnosed_stall
+                task.id in agent_processing_ids and not open_decision and not diagnosed_stall
             ),
         )
 
@@ -1044,7 +1039,7 @@ class StateDashboardViews:
             requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
             timeline=timeline_view,
             usage=_recorded_usage(detail.sessions),
-            signal_observed=task_frame.spinner_visible,
+            signal_observed=task_frame.signal_observed,
             quota_observations=quota_observations,
             agent_usage=task_agent_usage,
             priority=task.priority,

@@ -14,7 +14,6 @@ from shikiru.domain.motion import (
     frame,
 )
 from tests.support.clock import FakeClock
-from tests.support.factories import make_settings
 
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _TIMEOUTS = TimeoutsConfig(
@@ -220,24 +219,66 @@ def test_elapsed_time_and_quota_countdown_advance_from_the_injected_clock() -> N
     assert result.quotas[0].remaining_seconds == 9
 
 
-def test_non_stream_activity_does_not_show_a_spinner() -> None:
-    settings = make_settings()
-    clock = FakeClock(_START)
-    task = TaskMotionState("T-1", _START, turn_started_at=_START, turn_active=True)
+@pytest.mark.parametrize(
+    ("turn_active", "engine_driven", "held", "engine_running", "last_signal_at", "expected"),
+    [
+        (True, False, False, True, _START, (True, True)),
+        (True, False, False, True, None, (False, False)),
+        (False, True, False, True, None, (True, False)),
+        (False, False, False, True, None, (False, False)),
+        (True, False, True, True, _START, (False, False)),
+        (False, True, True, True, None, (False, False)),
+        (True, False, False, False, _START, (False, False)),
+        (False, True, False, False, None, (False, False)),
+    ],
+    ids=[
+        "live-turn-with-signal",
+        "live-turn-before-first-signal",
+        "engine-integrating",
+        "idle",
+        "held-turn",
+        "held-integration",
+        "engine-down-turn",
+        "engine-down-integration",
+    ],
+)
+def test_task_animates_for_a_live_turn_or_engine_work_only_when_unheld_and_running(
+    *,
+    turn_active: bool,
+    engine_driven: bool,
+    held: bool,
+    engine_running: bool,
+    last_signal_at: datetime | None,
+    expected: tuple[bool, bool],
+) -> None:
+    task = TaskMotionState(
+        "T-1",
+        _START,
+        last_signal_at=last_signal_at,
+        turn_active=turn_active,
+        engine_driven=engine_driven,
+        held=held,
+    )
 
-    [result] = frame(
-        MotionState(
-            animations=True,
-            timeouts=settings.orchestration.timeouts,
-            refresh_hz=4,
-            stamp_flash_seconds=0.4,
-            escalation_pulse_hz=1,
-            tasks=(task,),
-        ),
-        clock.now(),
-    ).tasks
+    [result] = frame(_state(engine_running=engine_running, tasks=(task,)), _START).tasks
 
-    assert not result.spinner_visible
+    assert (result.spinner_visible, result.signal_observed) == expected
+    assert result.agent_processing is (
+        (turn_active or engine_driven) and not held and engine_running
+    )
+
+
+def test_engine_integration_phase_advances_and_freezes_without_animations() -> None:
+    task = TaskMotionState("T-1", _START, engine_driven=True)
+    later = _START + timedelta(seconds=1)
+
+    [first] = frame(_state(tasks=(task,)), _START).tasks
+    [second] = frame(_state(tasks=(task,)), later).tasks
+    [static] = frame(_state(animations=False, tasks=(task,)), later).tasks
+
+    assert first.spinner_phase != second.spinner_phase
+    assert static.spinner_phase == 0
+    assert static.spinner_visible
 
 
 def test_stopped_engine_keeps_recorded_signal_without_live_motion() -> None:

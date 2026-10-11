@@ -717,7 +717,8 @@ class TaskDetailPanel(Vertical):
         return replace(
             view,
             progress=strip,
-            signal_observed=any(panel.spinner_frame for panel in strip.panels),
+            signal_observed=strip.last_signal_at is not None
+            and any(panel.spinner_frame for panel in strip.panels),
             actual_stage_started_at=strip.actual_step_started_at,
             **signal_values,
         )

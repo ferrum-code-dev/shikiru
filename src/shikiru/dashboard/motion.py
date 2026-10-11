@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from shikiru.store.reader import StateReader
 
 _MILLISECONDS_PER_SECOND = 1000
+_ENGINE_DRIVEN_STEPS = (None, Step.INTEGRATE)
 _TASK_EVENT_KINDS = (
     EventKind.STEP_STARTED,
     EventKind.TURN_STARTED,
@@ -39,6 +40,7 @@ _TASK_EVENT_KINDS = (
     EventKind.TURN_FAILED,
     EventKind.TURN_STOPPED,
     EventKind.VERDICT,
+    EventKind.INTEGRATION_WAITING,
 )
 
 
@@ -141,6 +143,7 @@ class DashboardMotion:
             turn_active,
         ) = self._current_activity(task, turn_active, turn_started_at)
         held = self._is_held(task)
+        engine_driven = self._engine_driven(task, events)
         stamp = self._merge_stamp(task.id, stamp)
         return TaskMotionState(
             task_id=task.id,
@@ -154,10 +157,22 @@ class DashboardMotion:
             last_signal_turn=last_signal_turn,
             tool_running=tool_running,
             turn_active=turn_active,
+            engine_driven=engine_driven,
             held=held,
             ended_at=task.finished_at,
             stamp=stamp,
         )
+
+    @staticmethod
+    def _engine_driven(task: Task, events: tuple[Event, ...]) -> bool:
+        if task.step not in _ENGINE_DRIVEN_STEPS:
+            return False
+        for event in reversed(events):
+            if event.kind is EventKind.INTEGRATION_WAITING:
+                return False
+            if event.kind is EventKind.STEP_STARTED:
+                return True
+        return True
 
     def _events_for(self, task: Task) -> tuple[Event, ...]:
         events = self._task_events.get(task.id)

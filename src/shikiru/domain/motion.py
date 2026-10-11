@@ -49,6 +49,7 @@ class TaskMotionState:
     last_signal_turn: str | None = None
     tool_running: bool = False
     turn_active: bool = False
+    engine_driven: bool = False
     held: bool = False
     ended_at: datetime | None = None
     stamp: MotionStamp | None = None
@@ -85,6 +86,7 @@ class TaskMotionFrame:
     task_id: str
     spinner_phase: int
     spinner_visible: bool
+    signal_observed: bool
     agent_processing: bool
     stalled: bool
     elapsed_seconds: int
@@ -133,6 +135,13 @@ def frame(state: MotionState, now: datetime) -> MotionFrame:
     )
 
 
+def is_in_progress_animated(
+    *, engine_running: bool, held: bool, stalled: bool, turn_active: bool, engine_driven: bool
+) -> bool:
+    """Whether a task is actively progressing: a live turn or the engine's own work, unheld."""
+    return engine_running and not held and not stalled and (turn_active or engine_driven)
+
+
 def _task_frame(task: TaskMotionState, state: MotionState, now: datetime) -> TaskMotionFrame:
     activity_at = task.last_signal_at or task.turn_started_at
     stalled = (
@@ -141,15 +150,16 @@ def _task_frame(task: TaskMotionState, state: MotionState, now: datetime) -> Tas
         and not task.held
         and is_stalled(activity_at, task.tool_running, now, state.timeouts)
     )
+    in_progress = is_in_progress_animated(
+        engine_running=state.engine_running,
+        held=task.held,
+        stalled=stalled,
+        turn_active=task.turn_active,
+        engine_driven=task.engine_driven,
+    )
+    signal_observed = in_progress and task.last_signal_at is not None
     spinner_phase = 0
-    if (
-        activity_at is not None
-        and state.animations
-        and state.engine_running
-        and task.turn_active
-        and not task.held
-        and not stalled
-    ):
+    if in_progress and state.animations:
         spinner_phase = int(now.timestamp() * min(state.refresh_hz, MAX_MOTION_REFRESH_HZ))
     elapsed_end = task.ended_at or now
     elapsed_seconds = max(int((elapsed_end - task.step_started_at).total_seconds()), 0)
@@ -165,16 +175,9 @@ def _task_frame(task: TaskMotionState, state: MotionState, now: datetime) -> Tas
     return TaskMotionFrame(
         task_id=task.task_id,
         spinner_phase=spinner_phase,
-        spinner_visible=(
-            state.engine_running
-            and task.turn_active
-            and not task.held
-            and not stalled
-            and task.last_signal_at is not None
-        ),
-        agent_processing=(
-            state.engine_running and task.turn_active and not task.held and not stalled
-        ),
+        spinner_visible=in_progress and (signal_observed or task.engine_driven),
+        signal_observed=signal_observed,
+        agent_processing=in_progress,
         stalled=stalled,
         elapsed_seconds=elapsed_seconds,
         actual_step_started_at=task.actual_step_started_at,

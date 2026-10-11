@@ -23,6 +23,7 @@ from shikiru.config.loader import load_settings
 from shikiru.config.settings import TimeoutsConfig
 from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import FOCUS_COMMAND_HISTORY, FOCUS_USAGE_DETAILS, DashboardApp
+from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.dashboard.detail import (
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
@@ -38,6 +39,7 @@ from shikiru.domain.reports import (
     REPORT_KIND_FILENAME,
     ReportKind,
 )
+from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.paths import run_dir, turns_dir
@@ -52,7 +54,7 @@ from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.compact import StageActivity
-from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED
+from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
 from shikiru.ui.tokens import STYLE_REVERSE
 from shikiru.view_log import (
@@ -86,6 +88,7 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
 
     from shikiru.config.settings import Settings
+    from shikiru.dashboard.contract import TaskDetailView
     from shikiru.dashboard.views import StateDashboardViews
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
@@ -2163,5 +2166,184 @@ async def test_disabled_animations_keep_countdowns_live_without_animating_frames
                 panel_view.spinner_frame for item in views.strips() for panel_view in item.panels
             )
             assert current_frames == initial_frames
+    finally:
+        reader.close()
+
+
+_MOTION_TICK_SECONDS = 0.25
+_BROWSER_LIMIT = 10
+
+
+def _integrating_task(connection: Connection, clock: FakeClock) -> Task:
+    tasks = TaskStore(connection, clock)
+    task = seed_task(connection, clock, title="Integrating task", mode=Mode.IMPLEMENT)
+    tasks.apply_transition(task.id, first_step(task))
+    started = tasks.get(task.id)
+    assert started is not None
+    tasks.apply_transition(
+        task.id, Transition.stay(started, step=Step.INTEGRATE, status=Status.INTEGRATING)
+    )
+    EventLog(connection, clock).append(
+        EventKind.STEP_STARTED,
+        task_id=task.id,
+        message="integrating",
+        data={"step": Step.INTEGRATE.value, "iteration": started.iteration},
+    )
+    current = tasks.get(task.id)
+    assert current is not None
+    return current
+
+
+def _apply_integration_scenario(
+    connection: Connection, clock: FakeClock, task: Task, scenario: str
+) -> None:
+    tasks = TaskStore(connection, clock)
+    if scenario == "paused":
+        tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
+    elif scenario == "waiting":
+        tasks.set_wait_reason(task.id, WaitReason.PR_OPEN)
+    elif scenario == "escalated":
+        tasks.apply_transition(
+            task.id, Transition.escalate_current(task, EscalationReason.ENGINE_ERROR)
+        )
+    elif scenario == "done":
+        tasks.finish(
+            task.id,
+            Transition.stay(task, step=task.step, status=Status.DONE),
+            EventKind.TASK_DONE,
+            message="merged",
+            data={"summary": "merged"},
+        )
+    elif scenario == "checkout-wait":
+        EventLog(connection, clock).append(
+            EventKind.INTEGRATION_WAITING,
+            task_id=task.id,
+            message="waits to integrate",
+            data={"paths": ["a.txt"]},
+        )
+
+
+@pytest.mark.parametrize("animations", [True, False], ids=["motion", "static"])
+@pytest.mark.parametrize(
+    ("scenario", "engine_running", "cycles"),
+    [
+        ("engine-integrating", True, True),
+        ("paused", True, False),
+        ("waiting", True, False),
+        ("checkout-wait", True, False),
+        ("escalated", True, False),
+        ("done", True, False),
+        ("engine-integrating", False, False),
+    ],
+    ids=[
+        "integrating",
+        "paused",
+        "pr-or-ci-wait",
+        "recorded-integration-wait",
+        "escalated",
+        "terminal",
+        "engine-down",
+    ],
+)
+async def test_integrating_task_cycles_its_detail_marker_only_while_the_engine_integrates(
+    *,
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+    engine_running: bool,
+    cycles: bool,
+    animations: bool,
+) -> None:
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERM", "dumb")
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    base_settings = _motion_settings(project_dir)
+    settings = base_settings.model_copy(
+        update={"dashboard": base_settings.dashboard.model_copy(update={"animations": animations})}
+    )
+    task = _integrating_task(connection, clock)
+    _apply_integration_scenario(connection, clock, task, scenario)
+    reader = StateReader(database, clock)
+    try:
+        views = state_views(
+            reader,
+            project_dir,
+            clock,
+            StubServices(engine_running=engine_running),
+            focus_task=task.id,
+            settings=settings,
+        )
+
+        async def frames() -> tuple[str, str, bool]:
+            first = await views.task_detail(task.id, include_timeline=False)
+            clock.advance(_MOTION_TICK_SECONDS)
+            second = await views.task_detail(task.id, include_timeline=False)
+            assert first is not None
+            assert second is not None
+            return (
+                _detail_marker(first),
+                _detail_marker(second),
+                first.signal_observed or second.signal_observed,
+            )
+
+        first, second, signal_observed = await frames()
+
+        assert (first != second) is (cycles and animations)
+        assert not signal_observed
+        assert (first in SPINNER_FRAMES) is cycles
+        browser = views.task_browser(
+            task_filter=TaskBrowserFilter.ALL,
+            search="",
+            offset=0,
+            limit=_BROWSER_LIMIT,
+            selected_task_id=None,
+        )
+        [row] = [item for item in browser.rows if item.task_id == task.id]
+        assert row.agent_processing is cycles
+    finally:
+        reader.close()
+
+
+def _detail_marker(view: TaskDetailView) -> str:
+    return next(
+        (
+            panel.spinner_frame
+            for panel in view.progress.panels
+            if panel.state in {PanelState.ACTIVE, PanelState.STALLED}
+        ),
+        "",
+    )
+
+
+async def test_starting_task_cycles_the_setup_marker(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Starting task", mode=Mode.IMPLEMENT)
+    TaskStore(connection, clock).apply_transition(
+        task.id, Transition.stay(task, step=None, status=Status.RUNNING)
+    )
+    reader = StateReader(database, clock)
+    try:
+        views = state_views(
+            reader,
+            project_dir,
+            clock,
+            StubServices(engine_running=True),
+            focus_task=task.id,
+            settings=_motion_settings(project_dir),
+        )
+        first = await views.task_detail(task.id, include_timeline=False)
+        clock.advance(_MOTION_TICK_SECONDS)
+        second = await views.task_detail(task.id, include_timeline=False)
+        assert first is not None
+        assert second is not None
+        assert first.progress.panels[0].label == "Starting"
+        assert _detail_marker(first) != _detail_marker(second)
+        assert not second.signal_observed
     finally:
         reader.close()

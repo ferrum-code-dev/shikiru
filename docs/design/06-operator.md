@@ -374,7 +374,7 @@ Motion is driven by real signals, so the dashboard shows how alive the system is
 
 | Motion | Meaning |
 |---|---|
-| Active panel spinner cycles through a recorded live, unheld current turn until it is diagnosed stalled; quiet tools do not freeze it. The signal age remains tied to the last recorded signal. Home task status blinks only while the engine is running and an agent is processing an unheld, non-waiting, non-stalled turn | Working vs waiting vs stalled vs stopped |
+| Active panel spinner cycles while a task is in progress: a recorded live, unheld current turn (once a signal is recorded; quiet tools do not freeze it), or the engine's own work in the `integrate` step and the setup `Starting` phase, where no agent turn or signal exists. It stops when the engine is down, a hold, wait reason (PR/CI/retry), open decision, recorded integration wait or diagnosed stall applies. The signal age remains tied to the last recorded signal; engine-only work never claims one. Home task status blinks under the same predicate | Working vs waiting vs stalled vs stopped |
 | Stamp flash (400 ms reverse video) when a verdict or merge lands | A turn outcome just happened |
 | Escalation border pulses red/dim at 1 Hz while open | Needs attention |
 | Elapsed time, quota countdowns and cost tick live | Live time and spend |
