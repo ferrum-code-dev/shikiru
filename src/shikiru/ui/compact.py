@@ -82,6 +82,10 @@ USAGE_REPORTED_WORD = "reported"
 USAGE_LEGACY_WORD = "legacy"
 USAGE_WITHOUT_TOKENS_WORD = "without tokens"
 USAGE_TOKENS_WORD = "tokens"
+USAGE_TOKENS_IN_LABEL = "in"
+USAGE_TOKENS_OUT_LABEL = "out"
+USAGE_CACHE_READ_LABEL = "cache r"
+USAGE_CACHE_WRITE_LABEL = "w"
 USAGE_TOKENS_UNKNOWN = "tokens unknown"
 USAGE_COST_UNKNOWN = "cost unknown"
 USAGE_RESETS_WORD = "resets"
@@ -694,14 +698,18 @@ def _all_mode_billed_groups(usage: _RecordedUsage) -> list[Text]:
 def _token_detail_groups(usage: _RecordedUsage) -> list[Text]:
     if not _known_token_sessions(usage):
         return []
-    parts = [
-        f"in {_compact_count(usage.input_tokens)}",
-        f"out {_compact_count(usage.output_tokens)}",
+    groups = [
+        _token_amount(USAGE_TOKENS_IN_LABEL, usage.input_tokens),
+        _token_amount(USAGE_TOKENS_OUT_LABEL, usage.output_tokens),
     ]
     if usage.cache_read_tokens or usage.cache_write_tokens:
-        parts.append(f"cache r {_compact_count(usage.cache_read_tokens)}")
-        parts.append(f"w {_compact_count(usage.cache_write_tokens)}")
-    return [Text(part, style=_BOLD_STEEL) for part in parts]
+        groups.append(_token_amount(USAGE_CACHE_READ_LABEL, usage.cache_read_tokens))
+        groups.append(_token_amount(USAGE_CACHE_WRITE_LABEL, usage.cache_write_tokens))
+    return groups
+
+
+def _token_amount(label: str, count: int) -> Text:
+    return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), (_compact_count(count), _BOLD_STEEL))
 
 
 def _coverage_groups(usage: _RecordedUsage) -> list[Text]:

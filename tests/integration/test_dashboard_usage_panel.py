@@ -232,8 +232,8 @@ def _estimate(amount: str, qualifier: str = "") -> tuple[Piece, ...]:
     return group((f"est. {amount}", AMBER_TEXT), (qualifier, GREY))
 
 
-def _detail(text: str) -> tuple[Piece, ...]:
-    return group((text, CYAN_BOLD))
+def _detail(label: str, amount: str) -> tuple[Piece, ...]:
+    return group((f"{label} ", GREY), (amount, CYAN_BOLD))
 
 
 def _gauge(window: str, glyph_and_pct: str, style: Style, resets: str) -> tuple[Piece, ...]:
@@ -257,10 +257,10 @@ _FULL_LAYOUT = [
     ),
     _row(
         "Tokens",
-        _detail("in 1.0M"),
-        _detail("out 501.5k"),
-        _detail("cache r 9.0M"),
-        _detail("w 300.0k"),
+        _detail("in", "1.0M"),
+        _detail("out", "501.5k"),
+        _detail("cache r", "9.0M"),
+        _detail("w", "300.0k"),
     ),
     _row("Coverage", _count(4, "reported"), _count(1, "without tokens")),
     _row(
@@ -341,7 +341,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "claude",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k")),
-                _row("Tokens", _detail("in 1.0k"), _detail("out 500")),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "subscription")),
             ],
             (_count(1, "run"), _tokens_total("1.5k"), group(("cost unknown", GREY))),
@@ -353,7 +353,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "codex",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k"), _api_total("$4.28")),
-                _row("Tokens", _detail("in 1.0k"), _detail("out 500")),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "API billed")),
             ],
             (_count(1, "run"), _tokens_total("1.5k"), _billed("$4.28")),
@@ -365,7 +365,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "codex",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k")),
-                _row("Tokens", _detail("in 1.0k"), _detail("out 500")),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "API unreported")),
                 _row("", _estimate("$0.11", " API-equivalent (1 session)")),
             ],
@@ -389,7 +389,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "codex",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k")),
-                _row("Tokens", _detail("in 1.0k"), _detail("out 500")),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "unknown")),
             ],
             (_count(1, "run"), _tokens_total("1.5k"), _billed("$0.00")),
@@ -401,7 +401,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "claude",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k"), _billed("$2.50")),
-                _row("Tokens", _detail("in 1.0k"), _detail("out 500")),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "subscription")),
             ],
             (_count(1, "run"), _tokens_total("1.5k"), _billed("$2.50")),
@@ -413,7 +413,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "codex",
             [
                 _row("Totals", _count(3, "sessions"), _tokens_total("3.0k"), _api_total("$4.28")),
-                _row("Tokens", _detail("in 2.0k"), _detail("out 1.0k")),
+                _row("Tokens", _detail("in", "2.0k"), _detail("out", "1.0k")),
                 _row("Coverage", _count(2, "reported"), _count(1, "without tokens")),
                 _row(
                     "Billing",
