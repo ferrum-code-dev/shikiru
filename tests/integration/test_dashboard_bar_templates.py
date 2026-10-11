@@ -57,6 +57,7 @@ Style = tuple[bool, str | None]
 Piece = tuple[str, Style]
 Cell = tuple[str, Style]
 
+pytestmark = pytest.mark.usefixtures("colour_terminal")
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _WIDE = (120, 40)
 _NARROW = (48, 20)

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
 
+pytestmark = pytest.mark.usefixtures("colour_terminal")
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _WAIT_SECONDS = 2
 _WIDE = (120, 40)

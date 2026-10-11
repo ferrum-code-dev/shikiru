@@ -36,6 +36,12 @@ def clear_fake_cli_environment(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(name)
 
 
+@pytest.fixture
+def colour_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Textual from monochrome-filtering renders in tests that assert rendered colours."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def private_tmux_directory() -> Iterator[Path]:
     """Keep every tmux the tests reach off the user's default socket; fail if one starts there."""
