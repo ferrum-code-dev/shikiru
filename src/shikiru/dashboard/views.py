@@ -11,9 +11,6 @@ from shikiru.agents.contracts import (
     BILLING_MODE_API,
     BILLING_MODE_SUBSCRIPTION,
     BILLING_MODE_UNKNOWN,
-    BILLING_SOURCE_OPERATOR_CONFIG,
-    BILLING_SOURCE_PROVIDER_REPORTED,
-    BILLING_SOURCE_UNKNOWN,
     COST_BASIS_UNKNOWN,
     FailureKind,
 )
@@ -1414,22 +1411,13 @@ class StateDashboardViews:
                     run_count=item.run_count if item is not None else 0,
                     usage_reported_runs=item.usage_reported_runs if item is not None else 0,
                     legacy_token_runs=item.legacy_token_runs if item is not None else 0,
-                    legacy_unknown_token_runs=(
-                        item.legacy_unknown_token_runs if item is not None else 0
-                    ),
                     billed_cost_usd=item.billed_cost_usd if item is not None else None,
                     billed_cost_runs=item.billed_cost_runs if item is not None else 0,
-                    legacy_billed_cost_runs=(
-                        item.legacy_billed_cost_runs if item is not None else 0
-                    ),
                     api_equivalent_cost_usd=(
                         item.api_equivalent_cost_usd if item is not None else None
                     ),
                     api_equivalent_cost_runs=(
                         item.api_equivalent_cost_runs if item is not None else 0
-                    ),
-                    legacy_api_equivalent_cost_runs=(
-                        item.legacy_api_equivalent_cost_runs if item is not None else 0
                     ),
                     unknown_cost_runs=item.unknown_cost_runs if item is not None else 0,
                 )
@@ -1816,21 +1804,6 @@ def _recorded_usage(runs: Sequence[Run]) -> RecordedUsageView:
         subscription_agents=tuple(
             sorted({run.agent for run in runs if run.billing_mode == BILLING_MODE_SUBSCRIPTION})
         ),
-        unknown_billing_operator_config_sessions=sum(
-            run.billing_mode == BILLING_MODE_UNKNOWN
-            and run.billing_source == BILLING_SOURCE_OPERATOR_CONFIG
-            for run in runs
-        ),
-        unknown_billing_provider_reported_sessions=sum(
-            run.billing_mode == BILLING_MODE_UNKNOWN
-            and run.billing_source == BILLING_SOURCE_PROVIDER_REPORTED
-            for run in runs
-        ),
-        unknown_billing_source_unknown_sessions=sum(
-            run.billing_mode == BILLING_MODE_UNKNOWN
-            and run.billing_source == BILLING_SOURCE_UNKNOWN
-            for run in runs
-        ),
     )
 
 
@@ -1853,13 +1826,10 @@ def _agent_usage(item: UsageView, *, quotas: tuple[QuotaGaugeView, ...]) -> Agen
         run_count=item.run_count,
         usage_reported_runs=item.usage_reported_runs,
         legacy_token_runs=item.legacy_token_runs,
-        legacy_unknown_token_runs=item.legacy_unknown_token_runs,
         billed_cost_usd=item.billed_cost_usd,
         billed_cost_runs=item.billed_cost_runs,
-        legacy_billed_cost_runs=item.legacy_billed_cost_runs,
         api_equivalent_cost_usd=item.api_equivalent_cost_usd,
         api_equivalent_cost_runs=item.api_equivalent_cost_runs,
-        legacy_api_equivalent_cost_runs=item.legacy_api_equivalent_cost_runs,
         unknown_cost_runs=item.unknown_cost_runs,
     )
 

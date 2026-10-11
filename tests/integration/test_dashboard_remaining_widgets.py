@@ -988,9 +988,6 @@ async def test_project_usage_projects_persisted_coverage_without_inventing_api_s
     assert projection.api_equivalent_cost_usd == 1.5
     assert projection.api_equivalent_cost_sessions == 1
     assert projection.unknown_billing_sessions == 5
-    assert projection.unknown_billing_operator_config_sessions == 1
-    assert projection.unknown_billing_provider_reported_sessions == 1
-    assert projection.unknown_billing_source_unknown_sessions == 3
     assert projection.subscription_sessions == 2
     assert projection.subscription_agents == ("claude",)
 
@@ -1011,9 +1008,6 @@ async def _assert_unknown_billing_source_views(
     )
     assert operator_unknown_session.billing_mode == BILLING_MODE_UNKNOWN
     assert operator_unknown_session.billing_source == BILLING_SOURCE_OPERATOR_CONFIG
-    assert task_detail.usage.unknown_billing_operator_config_sessions == 1
-    assert task_detail.usage.unknown_billing_provider_reported_sessions == 1
-    assert task_detail.usage.unknown_billing_source_unknown_sessions == 3
 
     widget = cast("UsagePanel", UsageWidget().create(context))
     async with WidgetHostApp(widget).run_test(size=(COMPACT_READOUT_WIDTH, USAGE_DETAIL_HEIGHT)):

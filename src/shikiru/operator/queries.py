@@ -351,7 +351,6 @@ class UsageView(OperatorView):
     run_count: int = 0
     usage_reported_runs: int = 0
     legacy_token_runs: int = 0
-    legacy_unknown_token_runs: int = 0
     billed_cost_usd: float | None = None
     billed_cost_runs: int = 0
     legacy_billed_cost_runs: int = 0
@@ -1442,10 +1441,6 @@ def aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
                 run_count=len(agent_runs),
                 usage_reported_runs=len(reported_runs),
                 legacy_token_runs=len(legacy_token_runs),
-                legacy_unknown_token_runs=sum(
-                    run.usage_reported is None and not has_positive_token_evidence(run)
-                    for run in agent_runs
-                ),
                 billed_cost_usd=_priced_total(billed_runs),
                 billed_cost_runs=len(billed_runs),
                 legacy_billed_cost_runs=sum(run.usage_reported is None for run in billed_runs),
