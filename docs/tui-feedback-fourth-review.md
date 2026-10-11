@@ -33,7 +33,7 @@ Style notation used by the operator: `62<white bold> sessions<grey>` means the t
 ### Tmux
 - Agent pane titles colour the context percentage: below 40 % green, 40 % up to but not including 60 % yellow, 60 % and above red, using the existing sage/amber/dusty-rose palette tokens. Thresholds are `defaults.toml` tunables with a pure domain classifier and are classified on the displayed rounded value. Dashboard gauges (70/90) are unchanged. Unreported context stays grey.
 - Pane titles survive killing and restarting the Shikiru tmux session: titles are re-applied from stored state whenever panes are created or restored, so a restarted session never shows the tmux default (hostname).
-- Documentation states explicitly that a taken-over pane is **not** restored as taken over after a respawn: the engine records `takeover_lost`, hands the role back, releases the `intervention` hold (unless another role or pause still holds the task) and resumes the same agent session; the Operator must take over again.
+- Documentation states explicitly that a taken-over pane is **not** restored as taken over after a respawn: the engine hands the role back (recording `takeover_lost` when the pane or session was lost, `handed_back` when the Operator left the TUI), releases the `intervention` hold (unless another role or pause still holds the task) and resumes the same agent session; the Operator must take over again.
 
 ## Superseded accepted behaviour
 
