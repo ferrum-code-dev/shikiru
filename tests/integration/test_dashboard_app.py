@@ -201,6 +201,7 @@ _LIST_ONLY_BOUNDARY_HOME_SIZE = (53, 24)
 _COMPACT_HOME_SIZE = (48, 20)
 _NARROW_TASK_SIZE = (36, 20)
 _COMPACT_TASK_SIZES = (_COMPACT_HOME_SIZE, _NARROW_TASK_SIZE)
+_FOOTER_EDGE_WIDTHS = (54, 72, 73, 100, 120, 160)
 _SHORT_HOME_SIZE = (36, 14)
 _COMPACT_SHORT_WIDE_HOME_SIZE = (48, 14)
 _TINY_HOME_SIZE = (20, 8)
@@ -4403,14 +4404,18 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
 def _seed_command_feedback_task(
     connection: Connection,
     clock: SystemClock,
+    status: CommandFeedbackStatus,
 ) -> tuple[Task, int]:
     task = seed_task(connection, clock, title="Footer feedback task")
     queue = CommandQueue(connection, clock)
     for submitted in queue.pending():
         queue.mark_done(submitted.id, {"task_id": task.id})
     prioritize = queue.append(Prioritize(task_id=task.id, priority=4))
-    TaskStore(connection, clock).set_priority(task.id, 4)
-    queue.mark_done(prioritize.id, {"task_id": task.id, "priority": 4})
+    if status is CommandFeedbackStatus.APPLIED:
+        TaskStore(connection, clock).set_priority(task.id, 4)
+        queue.mark_done(prioritize.id, {"task_id": task.id, "priority": 4})
+    elif status is CommandFeedbackStatus.REJECTED:
+        queue.mark_rejected(prioritize.id, {"error": "task T-404 does not exist"})
     return task, prioritize.id
 
 
@@ -4541,7 +4546,7 @@ async def test_durable_command_feedback_footer_matches_home_facts_and_resizes(
         monkeypatch.delenv("FORCE_COLOR", raising=False)
         monkeypatch.setenv("TERM", "xterm-256color")
     clock = SystemClock()
-    task, command_id = _seed_command_feedback_task(connection, clock)
+    task, command_id = _seed_command_feedback_task(connection, clock, CommandFeedbackStatus.APPLIED)
     if mono:
         queue = CommandQueue(connection, clock)
         rejected = queue.append(Prioritize(task_id="T-404", priority=4))
@@ -4559,6 +4564,64 @@ async def test_durable_command_feedback_footer_matches_home_facts_and_resizes(
         async with app.run_test(size=size) as pilot:
             await _select_home_task(app, task.id)
             await _assert_command_feedback_footer(app, pilot, task, command_id, render_case)
+    finally:
+        reader.close()
+
+
+def _last_glyph_column(widget: Widget) -> int:
+    line = widget.render_lines(Region(0, 0, widget.region.width, widget.region.height))[0]
+    return widget.region.x + len(line.text.rstrip()) - 1
+
+
+async def _assert_status_ends_on_footer_edge(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    status_line: Button,
+    footer: Grid,
+    width: int,
+) -> None:
+    await pilot.resize_terminal(width, _WIDE_HOME_SIZE[1])
+    await wait_until(
+        lambda: (
+            app.size.width == width
+            and status_line.size.width > 0
+            and footer.region.contains_region(status_line.region)
+        ),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await pilot.pause()
+    assert _last_glyph_column(status_line) == footer.region.right - 1, (
+        width,
+        _rendered_text(status_line),
+    )
+
+
+@pytest.mark.parametrize("status", list(CommandFeedbackStatus))
+async def test_latest_command_status_ends_on_footer_right_edge_across_widths(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+    status: CommandFeedbackStatus,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    _seed_command_feedback_task(connection, clock, status)
+    reader = StateReader(database, clock)
+
+    try:
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["header", "queue", "usage", "resources", "escalations"],
+            clock=clock,
+            tmux_detach_hint=_GLOBAL_TMUX_PREFIX,
+        )
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            status_line = app.query_one("#workspace-command-status", Button)
+            footer = app.query_one("#focus-footer", Grid)
+            for width in _FOOTER_EDGE_WIDTHS:
+                await _assert_status_ends_on_footer_edge(app, pilot, status_line, footer, width)
+            assert status.value in _rendered_text(status_line)
     finally:
         reader.close()
 

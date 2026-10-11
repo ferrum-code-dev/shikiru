@@ -1122,6 +1122,9 @@ class DashboardApp(App[None]):
     #focus-footer #workspace-command-status {
         width: 1fr; min-width: 0; padding: 0; text-wrap: nowrap;
     }
+    #focus-footer.grouped #workspace-command-status {
+        content-align: right middle; text-align: right;
+    }
     """
     )
 
@@ -1881,6 +1884,7 @@ class DashboardApp(App[None]):
                 else FOCUS_FOOTER_GROUP_COUNT
             )
             footer.styles.grid_size_columns = footer_columns
+            footer.set_class(footer_columns != FOCUS_FOOTER_STACKED_COLUMN_COUNT, "grouped")
             footer.styles.grid_columns = (
                 "auto auto auto auto auto 1fr"
                 if wide
