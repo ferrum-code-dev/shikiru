@@ -182,6 +182,10 @@ class _TaskBrowserListView(ListView):
         self._select_task = select_task
         self._activate_attention_decision = activate_attention_decision
 
+    def is_tab_stop(self) -> bool:
+        """In the Home layout a task list is a Tab stop only while it holds the selection."""
+        return not self._focus_layout or self.highlighted_child is not None
+
     def action_cursor_up(self) -> None:
         if not self._focus_layout:
             super().action_cursor_up()
@@ -741,6 +745,7 @@ class QueuePanel(Vertical):
         """Select a task and update the Home inspector without opening a route."""
         self._selected_task_id = task_id
         self._selection_cleared = False
+        self._sync_selection(self._task_list, self._recent_list)
         callback = self._widget_context.on_task_selected
         if callback is not None:
             callback(task_id)

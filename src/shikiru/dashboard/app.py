@@ -69,7 +69,12 @@ from shikiru.ui.popup import (
     PopupFrame,
     prepare_popup,
 )
-from shikiru.ui.screen import widget_is_active, widget_is_attached, widget_is_current
+from shikiru.ui.screen import (
+    TabStopScreen,
+    widget_is_active,
+    widget_is_attached,
+    widget_is_current,
+)
 from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import AMBER, DUSTY_ROSE, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
 
@@ -79,6 +84,7 @@ if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
     from textual.binding import BindingType
+    from textual.screen import Screen
     from textual.worker import Worker
 
     from shikiru.clock import Clock
@@ -1684,6 +1690,9 @@ class DashboardApp(App[None]):
         browser = cast("_TaskBrowserNavigation", queue)
         browser.clear_selection()
         browser.focus_task_results()
+
+    def get_default_screen(self) -> Screen[object]:
+        return TabStopScreen()
 
     async def on_mount(self) -> None:
         """Focus the task browser or task view and start signal-driven refresh."""

@@ -44,11 +44,14 @@ Connected fake-agent / private-tmux walkthroughs (all passed): `test_workspace_w
 
 Bounded real-agent verification (07 §5): no paid scenario is warranted. Tasks 129–139 changed presentation (bars, task list, Recent, popups, titles), one layout-guard title refresh and test helpers; they changed no execution, recovery, quota or budget behaviour. No paid E1–E6 run was made; earlier E-series results remain historical evidence for their own sources.
 
+## Fixed after verification
+
+- Recent focus tint (fixed in the `fix(dashboard)` commit that carries this note): Tab and Shift+Tab no longer stop on the `Recent` list while the selection is on an active row. A task list is a Tab stop only while it holds the selection; clicking a `Recent` row focuses it and clears the active row's highlight. Covered by `test_dashboard_tab_stops.py` (both-direction Tab sweeps, click, Down into Recent, Esc). Native Textual render (per-cell background) checked at 120×40 for each state; `uv run poe check` is recorded in that commit.
+
 ## Remaining limits
 
 - At 73–80 columns the wide footer hides the latest-command status when tmux detach is unavailable (column budget; found in Task 135, not fixed).
 - A quiet project with a selected task now reads `T-n is not escalated` (with the other-decision count only when N > 0) instead of `✓ No decisions needed`, by Task 131's design; `No decisions needed` shows only with no selection.
-- Tabbing to the Recent list while the selection is on an active row highlights no Recent row; the only focus cue is a faint tint on the blank gap rows between items (`#task-browser-recent-list` lacks the `background-tint: transparent` rule the active list has). Cosmetic, found by the native render; not fixed here.
 - Known timing-sensitive tests, not fixed beyond the waits raised in `2f417b5`: `test_task_evidence_export` palette export (failed once here, as in the third review), `test_dashboard_motion_skips` queue motion, `test_task_family_and_blockers` navigation, the `test_dashboard_app` footer/message-draft tests and `test_engine_daemon` takeover. Each passes alone; re-running the gate resolved the failure.
 - GNU/Linux is unverified; gates 59, 74h and 74p remain open.
 

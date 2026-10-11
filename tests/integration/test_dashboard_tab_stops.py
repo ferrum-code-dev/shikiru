@@ -6,10 +6,11 @@ from typing import TYPE_CHECKING
 import pytest
 from textual.color import Color
 from textual.geometry import Region
-from textual.widgets import ListView
+from textual.widgets import ListView, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
+from shikiru.dashboard.detail import TASK_DETAIL_IDENTITY
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Status
@@ -27,6 +28,7 @@ from tests.support.dashboard import (
     ignore_palette_action,
     state_views,
 )
+from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -54,8 +56,20 @@ _READOUTS = (UsagePanel, ResourcesPanel, EscalationsPanel)
 _SELECTED_SURFACE = Color.parse(SELECTED_SURFACE_COLOR).rgb
 
 
-def _seed_tasks(connection: Connection, clock: FakeClock, *, decision: bool) -> None:
+def _seed_tasks(
+    connection: Connection,
+    clock: FakeClock,
+    *,
+    decision: bool,
+    finished: bool = False,
+) -> None:
     seed_task(connection, clock, title="Idle task", mode=Mode.IMPLEMENT)
+    if finished:
+        done = seed_task(connection, clock, title="Finished task", mode=Mode.IMPLEMENT)
+        TaskStore(connection, clock).apply_transition(
+            done.id,
+            Transition.stay(done, step=None, status=Status.DONE),
+        )
     if not decision:
         return
     task = seed_task(connection, clock, title="Blocked task", mode=Mode.IMPLEMENT)
@@ -80,8 +94,9 @@ def _home(
     clock: FakeClock,
     *,
     decision: bool,
+    finished: bool = False,
 ) -> DashboardApp:
-    _seed_tasks(connection, clock, decision=decision)
+    _seed_tasks(connection, clock, decision=decision, finished=finished)
     settings = load_settings(project_dir)
     return DashboardApp(
         focus_task=None,
@@ -113,6 +128,19 @@ def quiet_home(connection: Connection, reader: StateReader, tmp_path: Path) -> D
     return _home(connection, reader, project_dir, FakeClock(_START), decision=False)
 
 
+@pytest.fixture
+def recent_home(connection: Connection, reader: StateReader, tmp_path: Path) -> DashboardApp:
+    project_dir = write_minimal_project(tmp_path)
+    return _home(
+        connection,
+        reader,
+        project_dir,
+        FakeClock(_START),
+        decision=False,
+        finished=True,
+    )
+
+
 async def _settled(app: DashboardApp, pilot: Pilot[None], *, decision: bool) -> EscalationsPanel:
     bar = app.query_one("#escalations", EscalationsPanel)
     await wait_until(lambda: bar.allow_focus() is decision, timeout=_WAIT_SECONDS)
@@ -134,12 +162,12 @@ def _surface_rows(widget: Widget) -> list[set[tuple[int, int, int] | None]]:
     ]
 
 
-async def _tab_cycle(app: DashboardApp, pilot: Pilot[None]) -> list[Widget]:
+async def _tab_cycle(app: DashboardApp, pilot: Pilot[None], key: str = "tab") -> list[Widget]:
     start = app.focused
     assert start is not None
     stops = [start]
     for _ in range(len(app.screen.focus_chain) + 1):
-        await pilot.press("tab")
+        await pilot.press(key)
         assert app.focused is not None
         if app.focused is start:
             return stops
@@ -233,3 +261,77 @@ async def test_quiet_bar_is_not_a_tab_stop_but_views_attention_still_reaches_it(
         assert bar not in await _tab_cycle(quiet_home, pilot)
         await choose_focus_view(pilot, _ATTENTION_LABEL)
         await wait_until(lambda: quiet_home.focused is bar, timeout=_WAIT_SECONDS)
+
+
+async def _settled_lists(app: DashboardApp, pilot: Pilot[None]) -> tuple[ListView, ListView]:
+    active = app.query_one("#task-browser-list", ListView)
+    recent = app.query_one("#task-browser-recent-list", ListView)
+    await wait_until(
+        lambda: app.focused is active and bool(recent.children),
+        timeout=_WAIT_SECONDS,
+    )
+    await pilot.pause()
+    return active, recent
+
+
+def _unhighlighted_lists(stops: list[Widget], lists: tuple[ListView, ListView]) -> list[Widget]:
+    return [
+        stop
+        for stop in stops
+        if isinstance(stop, ListView) and stop in lists and stop.highlighted_child is None
+    ]
+
+
+@pytest.mark.parametrize("key", ["tab", "shift+tab"])
+async def test_a_tab_sweep_with_the_selection_on_an_active_row_never_stops_on_recent(
+    recent_home: DashboardApp,
+    key: str,
+) -> None:
+    async with recent_home.run_test(size=_WIDE) as pilot:
+        active, recent = await _settled_lists(recent_home, pilot)
+        stops = await _tab_cycle(recent_home, pilot, key)
+        assert recent not in stops
+        assert not _unhighlighted_lists(stops, (active, recent))
+
+
+async def test_clicking_a_recent_row_from_an_active_selection_focuses_and_highlights_it(
+    recent_home: DashboardApp,
+) -> None:
+    async with recent_home.run_test(size=_WIDE) as pilot:
+        active, recent = await _settled_lists(recent_home, pilot)
+        row = recent.children[0]
+        await pilot.click(f"#{row.id}")
+        await wait_until(lambda: recent.highlighted_child is row, timeout=_WAIT_SECONDS)
+        assert recent_home.focused is recent
+        assert active.highlighted_child is None
+        identity = plain_text(recent_home.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
+        assert "Finished task" in identity
+
+
+async def test_down_into_recent_hands_the_tab_stop_to_the_recent_list(
+    recent_home: DashboardApp,
+) -> None:
+    async with recent_home.run_test(size=_WIDE) as pilot:
+        active, recent = await _settled_lists(recent_home, pilot)
+        await pilot.press("down")
+        await wait_until(lambda: recent.highlighted_child is not None, timeout=_WAIT_SECONDS)
+        await pilot.press("tab")
+        assert recent_home.focused is recent
+        stops = await _tab_cycle(recent_home, pilot)
+        assert recent in stops
+        assert active not in stops
+        assert not _unhighlighted_lists(stops, (active, recent))
+
+
+async def test_escape_clears_the_selection_and_the_list_that_held_focus_leaves_no_tab_stop(
+    recent_home: DashboardApp,
+) -> None:
+    async with recent_home.run_test(size=_WIDE) as pilot:
+        active, recent = await _settled_lists(recent_home, pilot)
+        await pilot.press("escape")
+        await wait_until(lambda: active.highlighted_child is None, timeout=_WAIT_SECONDS)
+        assert recent_home.focused is active
+        await pilot.press("tab")
+        stops = await _tab_cycle(recent_home, pilot)
+        assert active not in stops
+        assert recent not in stops

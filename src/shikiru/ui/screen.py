@@ -1,12 +1,34 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from textual.dom import NoScreen
+from textual.screen import Screen
 
 if TYPE_CHECKING:
-    from textual.screen import Screen
     from textual.widget import Widget
+
+
+@runtime_checkable
+class ConditionalTabStop(Protocol):
+    """A widget that Tab and Shift+Tab visit only while `is_tab_stop()` holds."""
+
+    def is_tab_stop(self) -> bool: ...
+
+
+class TabStopScreen(Screen[object]):
+    """Keep widgets that are not stops now out of the Tab order, except the focused widget."""
+
+    @property
+    def focus_chain(self) -> list[Widget]:
+        focused = self.focused
+        return [
+            widget
+            for widget in super().focus_chain
+            if widget is focused
+            or not isinstance(widget, ConditionalTabStop)
+            or widget.is_tab_stop()
+        ]
 
 
 def widget_is_attached(widget: Widget) -> bool:
