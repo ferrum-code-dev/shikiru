@@ -74,6 +74,7 @@ from shikiru.tmux.client import (
     TMUX_ENV_COMMAND,
     Tmux,
 )
+from shikiru.ui.compact import USAGE_BY_AGENT_LABEL, USAGE_LIMITS_LABEL
 from shikiru.ui.tokens import AMBER, DUSTY_ROSE, SAGE
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
@@ -246,19 +247,14 @@ async def _assert_compact_readouts(context: WidgetContext) -> None:
     ):
         usage_lines = _rendered_widget_lines(usage_widget)
         usage_text = "\n".join(usage_lines)
-        assert "210 input+output" in usage_text
-        assert "5 reported" in usage_text
-        assert "1 legacy" in usage_text
-        assert "1 unknown" in usage_text
-        assert "$2.50" in usage_text
-        assert "$0.00" in usage_text
-        assert "API charges" in usage_text
-        assert "unreported" in usage_text
-        assert "API-equivalent estimate" in usage_text
-        assert "$1.50" in usage_text
-        assert "1 subscription agent" in usage_text
-        assert "claude" in usage_text
-        assert "5 billing modes unknown" in usage_text
+        assert "210 tokens" in usage_text
+        assert "5 reported · 1 legacy · 3 without tokens" in usage_text
+        assert "$2.50 billed" in usage_text
+        assert "est. $1.50" in usage_text
+        assert "1 API billed" in usage_text
+        assert "1 API unreported" in usage_text
+        assert "2 subscription" in usage_text
+        assert "5 unknown" in usage_text
         assert all(cell_len(line) <= COMPACT_READOUT_WIDTH for line in usage_lines)
 
     resource_widget = cast("ResourcesPanel", ResourcesWidget().create(context))
@@ -812,30 +808,19 @@ async def test_project_usage_widget_keeps_detailed_monetary_and_token_evidence(
     ) as pilot:
         await pilot.pause()
         text = "\n".join(_rendered_widget_lines(widget))
-        assert "codex" in text
-        assert "Project" in text
-        assert "$0.42" in text
-        assert "API-equivalent estimate" in text
-        assert "$0.00" in text
-        assert "Billed" in text
-        assert "estimate" in text
-        assert "Cost unknown" in text
-        assert "7 billing modes unknown" in text
-        assert "input 1,040" in text
-        assert "weekly" in text
-        assert "reset " in text
-        assert "observed 2h" in text
-        assert "quota-only" in text
-        assert "zero-agent · input 0 · output 0" in text
-        codex_detail = text.split("codex ·", maxsplit=1)[1].split("quota-only", maxsplit=1)[0]
-        assert "Billed $0.00" in codex_detail
-        assert "API-equivalent estimate $0.42" in codex_detail
-        assert "Cost unknown" in codex_detail
-        unknown_agent = text.split("unknown-agent", maxsplit=1)[1].split("zero-agent", maxsplit=1)[
-            0
-        ]
+        by_agent, limits = text.split(USAGE_BY_AGENT_LABEL)[1].split(USAGE_LIMITS_LABEL)
+        assert "est. $0.42" in text
+        assert "$0.00 billed" in text
+        assert "3 cost unknown" in by_agent
+        assert "quota-only" not in by_agent
+        assert "quota-only" in limits
+        assert "weekly" in limits
+        assert "resets" in limits
+        assert "observed 2h ago" in limits
+        assert "zero-agent    1 run · 0 tokens" in by_agent
+        unknown_agent = next(line for line in by_agent.splitlines() if "unknown-agent" in line)
         assert "tokens unknown" in unknown_agent
-        assert "input 0" not in unknown_agent
+        assert "0 tokens" not in unknown_agent
 
 
 _QUOTA_GAUGE_COLOUR_CASES = (
@@ -882,10 +867,10 @@ async def test_task_usage_widget_shows_aggregate_charge_and_unknown_token_state(
     ):
         task_text = "\n".join(_rendered_widget_lines(task_widget))
         assert f"Task {task_id}" in task_text
-        assert "$0.42" in task_text
-        assert "API-equivalent estimate" in task_text
-        assert "unknown" in task_text
-        assert "input 1,040" not in task_text
+        assert "est. $0.42" in task_text
+        assert "cost unknown" in task_text
+        assert USAGE_LIMITS_LABEL not in task_text
+        assert "1,040" not in task_text
 
     unknown_task = seed_task(connection, clock, title="No reported tokens")
     RunStore(connection, clock).start(
@@ -898,8 +883,8 @@ async def test_task_usage_widget_shows_aggregate_charge_and_unknown_token_state(
     ):
         unknown_text = "\n".join(_rendered_widget_lines(unknown_widget))
         assert f"Task {unknown_task.id}" in unknown_text
-        assert "unknown" in unknown_text
-        assert "input 0" not in unknown_text
+        assert "tokens unknown" in unknown_text
+        assert "0 tokens" not in unknown_text
 
 
 async def test_project_usage_projects_persisted_coverage_without_inventing_api_spend(
@@ -1033,11 +1018,11 @@ async def _assert_unknown_billing_source_views(
     widget = cast("UsagePanel", UsageWidget().create(context))
     async with WidgetHostApp(widget).run_test(size=(COMPACT_READOUT_WIDTH, USAGE_DETAIL_HEIGHT)):
         text = " ".join(_rendered_widget_lines(widget))
-        assert "Billing mode unknown · 5 sessions" in text
-        assert "operator_config" in text
-        assert "provider_reported" in text
-        assert "unknown source" in text
-        assert "API charges unreported · 1 session" in text
+        assert "5 unknown" in text
+        assert "1 API unreported" in text
+        assert not any(
+            raw in text for raw in ("operator_config", "provider_reported", "unknown source")
+        )
 
 
 async def test_resource_sampling_failure_is_stale_and_task_navigation_still_works(

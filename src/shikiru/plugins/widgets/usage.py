@@ -8,10 +8,18 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from shikiru.dashboard.contract import WidgetPlacement
-from shikiru.ui import Gauge
-from shikiru.ui.compact import ProjectAgentUsageDetails, ProjectUsageDetails, ProjectUsageMetric
+from shikiru.ui.compact import (
+    USAGE_BY_AGENT_LABEL,
+    USAGE_LIMITS_LABEL,
+    AgentQuotaLimits,
+    AgentUsageRows,
+    ProjectUsageMetric,
+    ProjectUsageTotals,
+    UsageSection,
+)
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached, widget_is_current
+from shikiru.ui.tokens import STYLE_BOLD
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,27 +30,29 @@ if TYPE_CHECKING:
 
     from shikiru.dashboard.contract import AgentUsageView, RecordedUsageView, WidgetContext
 
-UNKNOWN_VALUE = "\N{EN DASH}"
 ENTER_KEY = "enter"
-PROJECT_SCOPE = "Project"
+NO_USAGE_RECORDED = "No runs or quota windows recorded."
+TASK_USAGE_UNAVAILABLE = "Task usage coverage unavailable"
 
 
-def _agent_block(usage: AgentUsageView, context: WidgetContext) -> Group:
-    lines: list[RenderableType] = [ProjectAgentUsageDetails(usage).render()]
-    lines.extend(
-        Text.assemble(
-            "  ",
-            Gauge(
-                quota.name,
-                quota.used_pct,
-                context.quota_warn_pct,
-                context.quota_alert_pct,
-            ).render(),
-            f" · reset {quota.resets_in} · observed {quota.observed_ago}",
-        )
-        for quota in usage.quotas
-    )
-    return Group(*lines)
+def _usage_body(
+    totals: RecordedUsageView,
+    agents: list[AgentUsageView],
+    context: WidgetContext,
+    scope: str | None,
+) -> Group:
+    parts: list[RenderableType] = [] if scope is None else [Text(scope, style=STYLE_BOLD)]
+    parts.append(ProjectUsageTotals(totals))
+    with_runs = [agent for agent in agents if agent.run_count]
+    with_quotas = [agent for agent in agents if agent.quotas]
+    if with_runs:
+        parts.append(UsageSection(USAGE_BY_AGENT_LABEL, AgentUsageRows(with_runs)))
+    if with_quotas:
+        limits = AgentQuotaLimits(with_quotas, context.quota_warn_pct, context.quota_alert_pct)
+        parts.append(UsageSection(USAGE_LIMITS_LABEL, limits))
+    if not agents:
+        parts.append(Text(NO_USAGE_RECORDED))
+    return Group(*parts)
 
 
 class UsagePanel(GatedStatic):
@@ -96,19 +106,13 @@ class UsagePanel(GatedStatic):
             self._render_home_usage(self._home_usage)
             return
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
-        lines: list[RenderableType] = []
         if self._widget_context.focus_task is None:
             project_usage = self._widget_context.views.project_usage()
             rendering = (project_usage, usage)
             if motion and rendering == self._rendered:
                 return
             self._rendered = rendering
-            lines.extend(
-                (
-                    ProjectUsageMetric(project_usage, PROJECT_SCOPE).render(),
-                    ProjectUsageDetails(project_usage).render(),
-                )
-            )
+            body = _usage_body(project_usage, usage, self._widget_context, None)
         else:
             detail = await self._widget_context.views.task_detail(
                 self._widget_context.focus_task,
@@ -117,26 +121,14 @@ class UsagePanel(GatedStatic):
             if not widget_is_attached(self):
                 return
             if detail is None or detail.usage is None:
-                lines.append(Text("Task usage coverage unavailable", style="bold"))
+                body = Group(Text(TASK_USAGE_UNAVAILABLE, style=STYLE_BOLD))
             else:
-                lines.extend(
-                    (
-                        ProjectUsageMetric(
-                            detail.usage,
-                            f"Task {self._widget_context.focus_task}",
-                        ).render(),
-                        ProjectUsageDetails(detail.usage).render(),
-                    )
-                )
-        lines.extend(_agent_block(item, self._widget_context) for item in usage)
-        if not usage:
-            lines.append(Text("No runs or quota windows recorded."))
-        self.update_if_changed(Group(*lines))
+                scope = f"Task {self._widget_context.focus_task}"
+                body = _usage_body(detail.usage, usage, self._widget_context, scope)
+        self.update_if_changed(body)
 
     def _render_home_usage(self, usage: RecordedUsageView) -> None:
-        self.update_if_changed(
-            ProjectUsageMetric(usage, PROJECT_SCOPE).render_home(width=self.size.width or None)
-        )
+        self.update_if_changed(ProjectUsageMetric(usage).render_home(width=self.size.width or None))
 
     async def _refresh_if_active(self, *, motion: bool = False) -> None:
         if widget_is_current(self) and cast("App[None]", self.app).is_running:

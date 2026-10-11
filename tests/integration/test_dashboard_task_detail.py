@@ -856,7 +856,7 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
 
             assert f"Task {task.id}" in sessions_text
             assert "1 legacy" in sessions_text
-            assert "2 unknown" in sessions_text
+            assert "2 without tokens" in sessions_text
             assert "$1.25" in sessions_text
             assert "Billing declaration · unknown · source unknown" in sessions_text
             assert "$0.00" in sessions_text
@@ -869,7 +869,6 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             assert "legacy recorded" in sessions_text
             assert "input 500" in sessions_text
             assert "cache read 0" in sessions_text
-            assert "legacy provenance unknown" in sessions_text
             assert "Cost basis" in sessions_text
             assert "Billing declaration" in sessions_text
             assert "legacy" in sessions_text

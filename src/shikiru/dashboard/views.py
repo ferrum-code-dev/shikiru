@@ -86,7 +86,7 @@ from shikiru.operator.queries import (
     aggregate_usage,
 )
 from shikiru.operator.strip_views import task_strip_data
-from shikiru.ui.age import format_age
+from shikiru.ui.age import AGE_NOW, format_age
 from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 
@@ -1614,7 +1614,7 @@ def _task_relationships_view(relationships: TaskRelationships) -> TaskRelationsh
 def _age(duration: timedelta) -> str:
     seconds = max(int(duration.total_seconds()), 0)
     if seconds < SECONDS_PER_MINUTE:
-        return "now"
+        return AGE_NOW
     minutes = seconds // SECONDS_PER_MINUTE
     if minutes < MINUTES_PER_HOUR:
         return f"{minutes}m"

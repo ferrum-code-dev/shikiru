@@ -14,16 +14,14 @@ from rich.text import Text
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
     BILLING_MODE_SUBSCRIPTION,
-    BILLING_MODE_UNKNOWN,
-    BILLING_SOURCE_OPERATOR_CONFIG,
-    BILLING_SOURCE_PROVIDER_REPORTED,
-    BILLING_SOURCE_UNKNOWN,
     COST_BASIS_API_EQUIVALENT,
     COST_BASIS_BILLED,
     COST_BASIS_UNKNOWN,
 )
 from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.tasks import EscalationReason, Role, Status
+from shikiru.ui.age import AGE_NOW
+from shikiru.ui.gauge import Gauge
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
@@ -38,6 +36,7 @@ from shikiru.ui.tokens import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime, timedelta
 
     from rich.console import Console, ConsoleOptions, RenderResult
@@ -62,6 +61,32 @@ SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR
 HOURS_PER_DAY = 24
 FOCUS_ATTENTION_MAX_HEIGHT = 2
 RESOURCE_GROUP_SEPARATOR = " · "
+USAGE_TOTALS_LABEL = "Totals"
+USAGE_TOKENS_LABEL = "Tokens"
+USAGE_COVERAGE_LABEL = "Coverage"
+USAGE_BILLING_LABEL = "Billing"
+USAGE_LABEL_WIDTH = len(USAGE_COVERAGE_LABEL)
+USAGE_LABEL_GAP = 1
+USAGE_STACKED_BELOW_WIDTH = 32
+USAGE_BY_AGENT_LABEL = "By agent"
+USAGE_LIMITS_LABEL = "Limits"
+USAGE_API_TOTAL_WORD = "API"
+USAGE_BILLED_WORD = "billed"
+USAGE_API_BILLED_WORD = "API billed"
+USAGE_API_UNREPORTED_WORD = "API unreported"
+USAGE_API_EQUIVALENT_WORD = "API-equivalent"
+USAGE_ESTIMATE_PREFIX = "est. "
+USAGE_SUBSCRIPTION_WORD = "subscription"
+USAGE_UNKNOWN_WORD = "unknown"
+USAGE_REPORTED_WORD = "reported"
+USAGE_LEGACY_WORD = "legacy"
+USAGE_WITHOUT_TOKENS_WORD = "without tokens"
+USAGE_TOKENS_WORD = "tokens"
+USAGE_TOKENS_UNKNOWN = "tokens unknown"
+USAGE_COST_UNKNOWN = "cost unknown"
+USAGE_RESETS_WORD = "resets"
+USAGE_OBSERVED_WORD = "observed"
+USAGE_AGO_WORD = "ago"
 RESOURCE_FAILED = "failed"
 RESOURCE_UNAVAILABLE = "unavailable"
 RESOURCE_STALE = "stale"
@@ -141,15 +166,6 @@ class _RecordedUsage(Protocol):
     def unknown_billing_sessions(self) -> int: ...
 
     @property
-    def unknown_billing_operator_config_sessions(self) -> int: ...
-
-    @property
-    def unknown_billing_provider_reported_sessions(self) -> int: ...
-
-    @property
-    def unknown_billing_source_unknown_sessions(self) -> int: ...
-
-    @property
     def subscription_sessions(self) -> int: ...
 
     @property
@@ -182,16 +198,10 @@ class _AgentUsageSummary(Protocol):
     def legacy_token_runs(self) -> int: ...
 
     @property
-    def legacy_unknown_token_runs(self) -> int: ...
-
-    @property
     def billed_cost_usd(self) -> float | None: ...
 
     @property
     def billed_cost_runs(self) -> int: ...
-
-    @property
-    def legacy_billed_cost_runs(self) -> int: ...
 
     @property
     def api_equivalent_cost_usd(self) -> float | None: ...
@@ -200,10 +210,32 @@ class _AgentUsageSummary(Protocol):
     def api_equivalent_cost_runs(self) -> int: ...
 
     @property
-    def legacy_api_equivalent_cost_runs(self) -> int: ...
+    def unknown_cost_runs(self) -> int: ...
+
+
+class _QuotaWindow(Protocol):
+    @property
+    def name(self) -> str: ...
 
     @property
-    def unknown_cost_runs(self) -> int: ...
+    def used_pct(self) -> float: ...
+
+    @property
+    def resets_in(self) -> str: ...
+
+    @property
+    def observed_ago(self) -> str: ...
+
+
+class _AgentQuotas(Protocol):
+    @property
+    def agent(self) -> str: ...
+
+    @property
+    def quotas(self) -> Sequence[_QuotaWindow]: ...
+
+
+_UsageRow = tuple[Text, tuple[Text, ...]]
 
 
 class _ResourceSample(Protocol):
@@ -433,15 +465,6 @@ class _TaskUsage(Protocol):
     def unknown_billing_sessions(self) -> int: ...
 
     @property
-    def unknown_billing_operator_config_sessions(self) -> int: ...
-
-    @property
-    def unknown_billing_provider_reported_sessions(self) -> int: ...
-
-    @property
-    def unknown_billing_source_unknown_sessions(self) -> int: ...
-
-    @property
     def subscription_sessions(self) -> int: ...
 
     @property
@@ -473,33 +496,9 @@ class _TaskSignal(Protocol):
 
 @dataclass(frozen=True)
 class ProjectUsageMetric:
-    """Render compact recorded token and billing coverage."""
+    """Render the Home token bar."""
 
     usage: _RecordedUsage
-    scope: str
-
-    def render(self) -> Group:
-        usage = self.usage
-        known_token_sessions = _known_token_sessions(usage)
-        tokens = (
-            f"{_compact_count(usage.input_tokens + usage.output_tokens)} input+output"
-            if known_token_sessions
-            else "unknown"
-        )
-        token_coverage = _nonzero_coverage(
-            (usage.reported_sessions, "reported"),
-            (usage.legacy_token_sessions, "legacy"),
-            (usage.unknown_token_sessions, "unknown"),
-        )
-        token_suffix = f" · {token_coverage}" if token_coverage else ""
-        lines = [Text.assemble((f"{self.scope} · Tokens ", "bold"), (tokens, STEEL_BLUE))]
-        if token_suffix:
-            lines[0].append(token_suffix, style=SECONDARY_TEXT_COLOR)
-
-        billing = _primary_billing_summary(usage)
-        if billing:
-            lines.append(Text(billing, style=SECONDARY_TEXT_COLOR))
-        return Group(*lines)
 
     def render_home(self, width: int | None = None) -> Text:
         """Render the Home token bar, wrapping only between its groups within `width`."""
@@ -608,19 +607,29 @@ def _known_token_sessions(usage: _RecordedUsage) -> int:
 
 
 def _home_project_usage_text(usage: _RecordedUsage, width: int | None) -> Text:
+    groups = [*_headline_groups(usage), *_home_coverage_texts(usage)]
+    return _wrap_groups(tuple(groups), width)
+
+
+def _headline_groups(usage: _RecordedUsage) -> list[Text]:
     groups = [
         _count_text(usage.session_count, "session", _BOLD_PRIMARY),
         _home_token_text(usage),
     ]
     if usage.api_billed_cost_sessions and usage.api_billed_cost_usd is not None:
-        groups.append(
-            Text.assemble(
-                (f"${usage.api_billed_cost_usd:{SESSION_COST_FORMAT}}", _BOLD_SAGE),
-                (" API", SECONDARY_TEXT_COLOR),
-            )
-        )
-    groups.extend(_home_coverage_texts(usage))
-    return _wrap_groups(tuple(groups), width)
+        groups.append(_billed_total(usage.api_billed_cost_usd, USAGE_API_TOTAL_WORD))
+    return groups
+
+
+def _billed_total(amount: float, word: str) -> Text:
+    return Text.assemble(
+        (_cost_text(amount), _BOLD_SAGE),
+        (f" {word}", SECONDARY_TEXT_COLOR),
+    )
+
+
+def _cost_text(amount: float) -> str:
+    return f"${amount:{SESSION_COST_FORMAT}}"
 
 
 def _home_token_text(usage: _RecordedUsage) -> Text:
@@ -645,149 +654,122 @@ def _home_coverage_texts(usage: _RecordedUsage) -> list[Text]:
 
 
 @dataclass(frozen=True)
-class ProjectUsageDetails:
-    """Render detailed token, cost-basis and billing-mode evidence."""
+class ProjectUsageTotals:
+    """Render recorded usage as labelled Totals, Tokens, Coverage and Billing rows."""
 
     usage: _RecordedUsage
 
-    def render(self) -> Group:
-        usage = self.usage
-        token_known = usage.reported_sessions + usage.legacy_token_sessions > 0
-        if token_known:
-            tokens = Text.assemble(
-                ("Tokens · ", SECONDARY_TEXT_COLOR),
-                f"input {usage.input_tokens:,} · output {usage.output_tokens:,} · "
-                f"cache read {usage.cache_read_tokens:,} · "
-                f"cache write {usage.cache_write_tokens:,}",
-            )
-        else:
-            tokens = Text("Token values unknown")
-        coverage = Text(
-            f"Coverage · {usage.reported_sessions} reported · "
-            f"{usage.legacy_token_sessions} legacy positive · "
-            f"{usage.unknown_token_sessions} unknown / {_session_count(usage.session_count)}",
-            style=SECONDARY_TEXT_COLOR,
-        )
-        lines: list[RenderableType] = [tokens, coverage]
-        if usage.billed_cost_sessions and usage.billed_cost_usd is not None:
-            lines.append(
-                Text(
-                    f"All-mode billed · ${usage.billed_cost_usd:{SESSION_COST_FORMAT}} · "
-                    f"{_session_count(usage.billed_cost_sessions)}",
-                    style=SAGE,
-                )
-            )
-        if usage.api_billed_cost_sessions and usage.api_billed_cost_usd is not None:
-            lines.append(
-                Text(
-                    f"API billed · ${usage.api_billed_cost_usd:{SESSION_COST_FORMAT}} · "
-                    f"{_session_count(usage.api_billed_cost_sessions)}",
-                    style=SAGE,
-                )
-            )
-        if usage.api_cost_unreported_sessions:
-            lines.append(
-                Text(
-                    f"API charges unreported · "
-                    f"{_session_count(usage.api_cost_unreported_sessions)}",
-                    style=SECONDARY_TEXT_COLOR,
-                )
-            )
-        if usage.api_equivalent_cost_sessions and usage.api_equivalent_cost_usd is not None:
-            lines.append(
-                Text(
-                    f"API-equivalent estimate · "
-                    f"${usage.api_equivalent_cost_usd:{SESSION_COST_FORMAT}} · "
-                    f"{_session_count(usage.api_equivalent_cost_sessions)}",
-                    style=AMBER,
-                )
-            )
-        if usage.subscription_sessions:
-            agents = ", ".join(usage.subscription_agents)
-            lines.append(
-                Text(
-                    f"Subscription · {_session_count(usage.subscription_sessions)} · "
-                    f"{_count_label(len(usage.subscription_agents), 'declared agent')} · {agents}",
-                    style=SAGE,
-                )
-            )
-        if usage.unknown_billing_sessions:
-            lines.append(
-                Text(
-                    f"Billing mode unknown · {_session_count(usage.unknown_billing_sessions)}",
-                    style=SECONDARY_TEXT_COLOR,
-                )
-            )
-            lines.extend(_unknown_billing_source_lines(usage))
-        lines.append(
-            Text(
-                f'New sessions: set [agents.<name>.options].billing_mode to "{BILLING_MODE_API}", '
-                f'"{BILLING_MODE_SUBSCRIPTION}" or "{BILLING_MODE_UNKNOWN}".',
-                style=SECONDARY_TEXT_COLOR,
-            )
-        )
-        lines.append(
-            Text("Existing sessions keep their recorded declaration.", style=SECONDARY_TEXT_COLOR)
-        )
-        return Group(*lines)
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Wrap each row at its group separators within the current width."""
+        del console
+        yield _labelled_rows(_totals_rows(self.usage), options.max_width, USAGE_LABEL_WIDTH)
 
 
-def _unknown_billing_source_lines(usage: _RecordedUsage) -> list[Text]:
-    sources = (
-        (
-            usage.unknown_billing_operator_config_sessions,
-            BILLING_SOURCE_OPERATOR_CONFIG,
-            f"explicitly set to {BILLING_MODE_UNKNOWN}",
-        ),
-        (
-            usage.unknown_billing_provider_reported_sessions,
-            BILLING_SOURCE_PROVIDER_REPORTED,
-            f"provider-reported {BILLING_MODE_UNKNOWN}",
-        ),
-        (
-            usage.unknown_billing_source_unknown_sessions,
-            f"{BILLING_SOURCE_UNKNOWN} source",
-            "declaration unavailable/not recorded",
-        ),
-    )
-    return [
-        Text(
-            f"{source} · {_session_count(count)} {description}",
-            style=SECONDARY_TEXT_COLOR,
-        )
-        for count, source, description in sources
-        if count
+def _totals_rows(usage: _RecordedUsage) -> list[_UsageRow]:
+    rows = [
+        (USAGE_TOTALS_LABEL, (*_headline_groups(usage), *_all_mode_billed_groups(usage))),
+        (USAGE_TOKENS_LABEL, tuple(_token_detail_groups(usage))),
+        (USAGE_COVERAGE_LABEL, tuple(_coverage_groups(usage))),
     ]
-
-
-def _primary_billing_summary(usage: _RecordedUsage) -> str:
-    parts: list[str] = []
-    all_amount = usage.billed_cost_usd
-    api_amount = usage.api_billed_cost_usd
-    all_mode_differs = (
-        usage.billed_cost_sessions != usage.api_billed_cost_sessions or all_amount != api_amount
+    billing_lines = [tuple(_billing_groups(usage)), tuple(_estimate_groups(usage))]
+    populated = [groups for groups in billing_lines if groups]
+    rows.extend(
+        (USAGE_BILLING_LABEL if index == 0 else "", groups)
+        for index, groups in enumerate(populated)
     )
-    if all_mode_differs and usage.billed_cost_sessions and all_amount is not None:
-        parts.append(
-            f"All billed ${all_amount:{SESSION_COST_FORMAT}} · "
-            f"{_session_count(usage.billed_cost_sessions)}"
-        )
-    if usage.api_billed_cost_sessions and api_amount is not None:
-        parts.append(
-            f"API billed ${api_amount:{SESSION_COST_FORMAT}} · "
-            f"{_session_count(usage.api_billed_cost_sessions)}"
-        )
-    if usage.api_cost_unreported_sessions:
-        parts.append(f"{_count_label(usage.api_cost_unreported_sessions, 'API charge')} unreported")
-    if usage.subscription_agents:
-        parts.append(f"{_count_label(len(usage.subscription_agents), 'subscription agent')}")
-    if usage.unknown_billing_sessions:
-        parts.append(f"{usage.unknown_billing_sessions} billing modes unknown")
-    return " · ".join(parts)
+    return [(_grey(label), groups) for label, groups in rows if groups]
 
 
-def _nonzero_coverage(*counts: tuple[int, str]) -> str:
-    return " · ".join(f"{count} {label}" for count, label in counts if count)
+def _all_mode_billed_groups(usage: _RecordedUsage) -> list[Text]:
+    amount = usage.billed_cost_usd
+    differs = (
+        usage.billed_cost_sessions != usage.api_billed_cost_sessions
+        or amount != usage.api_billed_cost_usd
+    )
+    if differs and usage.billed_cost_sessions and amount is not None:
+        return [_billed_total(amount, USAGE_BILLED_WORD)]
+    return []
+
+
+def _token_detail_groups(usage: _RecordedUsage) -> list[Text]:
+    if not _known_token_sessions(usage):
+        return []
+    parts = [
+        f"in {_compact_count(usage.input_tokens)}",
+        f"out {_compact_count(usage.output_tokens)}",
+    ]
+    if usage.cache_read_tokens or usage.cache_write_tokens:
+        parts.append(f"cache r {_compact_count(usage.cache_read_tokens)}")
+        parts.append(f"w {_compact_count(usage.cache_write_tokens)}")
+    return [Text(part, style=_BOLD_STEEL) for part in parts]
+
+
+def _coverage_groups(usage: _RecordedUsage) -> list[Text]:
+    partial = usage.legacy_token_sessions or usage.unknown_token_sessions
+    if not _known_token_sessions(usage) or not partial:
+        return []
+    return _counted_groups(
+        (usage.reported_sessions, USAGE_REPORTED_WORD),
+        (usage.legacy_token_sessions, USAGE_LEGACY_WORD),
+        (usage.unknown_token_sessions, USAGE_WITHOUT_TOKENS_WORD),
+    )
+
+
+def _billing_groups(usage: _RecordedUsage) -> list[Text]:
+    return _counted_groups(
+        (usage.subscription_sessions, USAGE_SUBSCRIPTION_WORD),
+        (usage.api_billed_cost_sessions, USAGE_API_BILLED_WORD),
+        (usage.api_cost_unreported_sessions, USAGE_API_UNREPORTED_WORD),
+        (usage.unknown_billing_sessions, USAGE_UNKNOWN_WORD),
+    )
+
+
+def _estimate_groups(usage: _RecordedUsage) -> list[Text]:
+    amount = usage.api_equivalent_cost_usd
+    if not usage.api_equivalent_cost_sessions or amount is None:
+        return []
+    sessions = _count_label(usage.api_equivalent_cost_sessions, "session")
+    return [_estimate_text(amount, f" {USAGE_API_EQUIVALENT_WORD} ({sessions})")]
+
+
+def _estimate_text(amount: float, qualifier: str = "") -> Text:
+    return Text.assemble(
+        (f"{USAGE_ESTIMATE_PREFIX}{_cost_text(amount)}", AMBER),
+        (qualifier, SECONDARY_TEXT_COLOR),
+    )
+
+
+def _counted_groups(*counts: tuple[int, str]) -> list[Text]:
+    return [_counted(count, label) for count, label in counts if count]
+
+
+def _counted(count: int, label: str) -> Text:
+    return Text.assemble((str(count), _BOLD_PRIMARY), (f" {label}", SECONDARY_TEXT_COLOR))
+
+
+def _grey(text: str) -> Text:
+    return Text(text, style=SECONDARY_TEXT_COLOR)
+
+
+def _labelled_rows(rows: list[_UsageRow], width: int, label_width: int) -> RenderableType:
+    if width < USAGE_STACKED_BELOW_WIDTH:
+        return Group(*_stacked_lines(rows, width))
+    value_width = width - label_width - USAGE_LABEL_GAP
+    grid = Table.grid()
+    grid.add_column(width=label_width + USAGE_LABEL_GAP, no_wrap=True)
+    grid.add_column(width=value_width)
+    for label, groups in rows:
+        grid.add_row(label, _wrap_groups(groups, value_width))
+    return grid
+
+
+def _stacked_lines(rows: list[_UsageRow], width: int) -> list[Text]:
+    lines: list[Text] = []
+    for label, groups in rows:
+        if label.plain:
+            lines.append(label)
+        lines.append(_wrap_groups(groups, width))
+    return lines
 
 
 def _compact_count(count: int) -> str:
@@ -796,11 +778,6 @@ def _compact_count(count: int) -> str:
     if count >= COUNT_SHORT_SCALE:
         return f"{count / COUNT_SHORT_SCALE:.{COUNT_SHORT_PRECISION}f}k"
     return f"{count:,}"
-
-
-def _session_count(count: int) -> str:
-    noun = "session" if count == 1 else "sessions"
-    return f"{count} {noun}"
 
 
 def _count_label(count: int, noun: str) -> str:
@@ -1257,68 +1234,104 @@ def _compact_session_charge(session: _TaskSession) -> tuple[str, str]:
 
 
 @dataclass(frozen=True)
-class ProjectAgentUsageDetails:
-    """Render one agent's token and monetary evidence in the detailed usage view."""
+class UsageSection:
+    """Render `body` below a rule and a grey section heading."""
 
-    usage: _AgentUsageSummary
+    title: str
+    body: RenderableType
 
-    def render(self) -> Group:
-        usage = self.usage
-        token_runs = usage.usage_reported_runs + usage.legacy_token_runs
-        lines: list[RenderableType] = [Text(f"{usage.agent} · tokens unknown", style="bold")]
-        if token_runs:
-            lines[0] = Text.assemble(
-                (f"{usage.agent} · ", "bold"),
-                f"input {usage.input_tokens:,} · output {usage.output_tokens:,} · "
-                f"cache read {usage.cache_read_tokens:,} · "
-                f"cache write {usage.cache_write_tokens:,}",
-            )
-        unknown_tokens = usage.run_count - usage.usage_reported_runs - usage.legacy_token_runs
-        lines.append(
-            Text(
-                f"Token coverage · {usage.usage_reported_runs} reported · "
-                f"{usage.legacy_token_runs} legacy positive · "
-                f"{unknown_tokens} unknown / {_count_label(usage.run_count, 'run')}"
-                f"{_legacy_unknown_tokens(usage.legacy_unknown_token_runs)}",
-                style=SECONDARY_TEXT_COLOR,
-            )
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Yield the rule, the heading and the body."""
+        del console, options
+        yield Rule(style=NEUTRAL_BORDER_COLOR)
+        yield _grey(self.title)
+        yield self.body
+
+
+@dataclass(frozen=True)
+class AgentUsageRows:
+    """Render one row of runs, tokens and cost per agent."""
+
+    usages: Sequence[_AgentUsageSummary]
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Wrap each row at its group separators within the current width."""
+        del console
+        rows = [
+            (Text(usage.agent, style=_BOLD_PRIMARY), _agent_groups(usage)) for usage in self.usages
+        ]
+        label_width = max(cell_len(label.plain) for label, _ in rows)
+        yield _labelled_rows(rows, options.max_width, label_width)
+
+
+def _agent_groups(usage: _AgentUsageSummary) -> tuple[Text, ...]:
+    return (
+        _count_text(usage.run_count, "run", _BOLD_PRIMARY),
+        *_agent_token_groups(usage),
+        *_agent_cost_groups(usage),
+    )
+
+
+def _agent_token_groups(usage: _AgentUsageSummary) -> list[Text]:
+    known_runs = usage.usage_reported_runs + usage.legacy_token_runs
+    if not known_runs:
+        return [_grey(USAGE_TOKENS_UNKNOWN)]
+    groups = [
+        Text.assemble(
+            (_compact_count(usage.input_tokens + usage.output_tokens), _BOLD_STEEL),
+            (f" {USAGE_TOKENS_WORD}", SECONDARY_TEXT_COLOR),
         )
-        if usage.billed_cost_runs and usage.billed_cost_usd is not None:
-            legacy = _legacy_count(usage.legacy_billed_cost_runs)
-            lines.append(
-                Text(
-                    f"Billed ${usage.billed_cost_usd:{SESSION_COST_FORMAT}} · "
-                    f"{_count_label(usage.billed_cost_runs, 'run')}{legacy}",
-                    style=SAGE,
-                )
-            )
-        if usage.api_equivalent_cost_runs and usage.api_equivalent_cost_usd is not None:
-            legacy = _legacy_count(usage.legacy_api_equivalent_cost_runs)
-            lines.append(
-                Text(
-                    f"API-equivalent estimate "
-                    f"${usage.api_equivalent_cost_usd:{SESSION_COST_FORMAT}} · "
-                    f"{_count_label(usage.api_equivalent_cost_runs, 'run')}{legacy}",
-                    style=AMBER,
-                )
-            )
-        if usage.unknown_cost_runs:
-            lines.append(
-                Text(
-                    f"Cost unknown · {usage.unknown_cost_runs}/"
-                    f"{_count_label(usage.run_count, 'run')}",
-                    style=SECONDARY_TEXT_COLOR,
-                )
-            )
-        return Group(*lines)
+    ]
+    if usage.run_count > known_runs:
+        groups.append(_grey(f"{usage.run_count - known_runs} {USAGE_WITHOUT_TOKENS_WORD}"))
+    return groups
 
 
-def _legacy_count(count: int) -> str:
-    return f" · {count} legacy" if count else ""
+def _agent_cost_groups(usage: _AgentUsageSummary) -> list[Text]:
+    groups: list[Text] = []
+    if usage.billed_cost_runs and usage.billed_cost_usd is not None:
+        groups.append(_billed_total(usage.billed_cost_usd, USAGE_BILLED_WORD))
+    if usage.api_equivalent_cost_runs and usage.api_equivalent_cost_usd is not None:
+        groups.append(_estimate_text(usage.api_equivalent_cost_usd))
+    if usage.unknown_cost_runs:
+        label = USAGE_COST_UNKNOWN
+        groups.append(_grey(f"{usage.unknown_cost_runs} {label}" if groups else label))
+    return groups
 
 
-def _legacy_unknown_tokens(count: int) -> str:
-    return f" · {count} legacy provenance unknown" if count else ""
+@dataclass(frozen=True)
+class AgentQuotaLimits:
+    """Render each agent's quota windows as gauge rows with their reset countdowns."""
+
+    usages: Sequence[_AgentQuotas]
+    warn_pct: int
+    alert_pct: int
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Wrap each window row within the current width and note a shared observation age."""
+        del console
+        windows = [(usage.agent, quota) for usage in self.usages for quota in usage.quotas]
+        observed = {quota.observed_ago for _, quota in windows}
+        shared = len(observed) == 1
+        rows: list[_UsageRow] = []
+        previous_agent: str | None = None
+        for agent, quota in windows:
+            label = Text(agent, style=_BOLD_PRIMARY) if agent != previous_agent else Text()
+            previous_agent = agent
+            gauge = Gauge(quota.name, quota.used_pct, self.warn_pct, self.alert_pct).render()
+            gauge.append(f" {USAGE_RESETS_WORD} {quota.resets_in}", style=SECONDARY_TEXT_COLOR)
+            if not shared:
+                gauge.append(f" · {_observed_text(quota.observed_ago)}", style=SECONDARY_TEXT_COLOR)
+            rows.append((label, (gauge,)))
+        label_width = max(cell_len(label.plain) for label, _ in rows)
+        yield _labelled_rows(rows, options.max_width, label_width)
+        if shared:
+            yield _grey(_observed_text(next(iter(observed))))
+
+
+def _observed_text(observed_ago: str) -> str:
+    suffix = "" if observed_ago == AGE_NOW else f" {USAGE_AGO_WORD}"
+    return f"{USAGE_OBSERVED_WORD} {observed_ago}{suffix}"
 
 
 @dataclass(frozen=True)

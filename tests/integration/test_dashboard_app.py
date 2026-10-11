@@ -7691,15 +7691,16 @@ async def test_configured_usage_and_docker_views_remain_reachable(
             assert home_screen.is_mounted
             usage = app.screen.query_one("#usage", Static)
             usage_text = plain_text(usage.content)
-            assert "Project" in usage_text
-            assert "API billed" in usage_text
-            assert "Subscription" in usage_text
-            assert "API charges unreported" in usage_text
-            assert "API-equivalent estimate" in usage_text
-            assert "Billing mode unknown · 3 sessions" in usage_text
-            assert "operator_config" in usage_text
-            assert "provider_reported" in usage_text
-            assert "unknown source" in usage_text
+            assert usage_text.startswith("Totals")
+            assert all(
+                fact in usage_text
+                for fact in ("API billed", "subscription", "API unreported", "API-equivalent")
+            )
+            assert "3 unknown" in usage_text
+            assert not any(
+                raw in usage_text
+                for raw in ("operator_config", "provider_reported", "billing_mode")
+            )
             _capture_task99(app, f"task111-project-totals-{size[0]}x{size[1]}-color.svg")
             await pilot.click("#context-widget-close")
             await wait_until(lambda: app.screen is home_screen, timeout=2)

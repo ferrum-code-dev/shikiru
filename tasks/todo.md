@@ -233,5 +233,5 @@ Fifth-review scope and evidence: [fifth real-project review](../docs/tui-feedbac
 Sixth-review scope and evidence: [sixth real-project review](../docs/tui-feedback-sixth-review.md). The operator approved the panel layout (2026-10-12).
 
 - [x] Task 148: Colour subscription-limit gauges at 50 and 90 percent
-- [ ] Task 149: Project usage panel title and layout
+- [x] Task 149: Project usage panel title and layout
 - [ ] Task 150: Verify the sixth review and reconcile Phase 11 evidence

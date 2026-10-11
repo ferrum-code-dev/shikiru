@@ -26,8 +26,8 @@ from shikiru.errors import ShikiruError
 from shikiru.ui.compact import (
     AgentUsageDetails,
     AgentUsageRow,
-    ProjectAgentUsageDetails,
-    ProjectUsageDetails,
+    AgentUsageRows,
+    ProjectUsageTotals,
     StageActivity,
     TaskUsageMetric,
     task_signal_text,
@@ -2113,7 +2113,7 @@ def _sessions_text(view: TaskDetailView, *, detailed: bool) -> Group:
         if view.usage is None:
             lines.append(Text("Task usage coverage unavailable", style="bold"))
         else:
-            lines.append(ProjectUsageDetails(view.usage).render())
+            lines.append(ProjectUsageTotals(view.usage))
     if not view.sessions:
         lines.append(Text("No agent sessions are recorded."))
     sessions = view.sessions if detailed else _summary_sessions(view)
@@ -2126,7 +2126,7 @@ def _sessions_text(view: TaskDetailView, *, detailed: bool) -> Group:
             lines.append(
                 Text("Agent totals · across recorded sessions, not model totals", style="bold")
             )
-            lines.extend(ProjectAgentUsageDetails(item).render() for item in view.agent_usage)
+            lines.append(AgentUsageRows(view.agent_usage))
         lines.extend(_quota_details(view.quota_observations, view.sessions))
     return Group(*lines)
 
