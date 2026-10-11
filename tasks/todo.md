@@ -220,3 +220,12 @@ Fourth-review scope and evidence: [fourth real-project review](../docs/tui-feedb
 - [x] Task 139: Revise the HTML reference to match the TUI
 - [x] Task 140: Verify the fourth review and reconcile Phase 11 evidence ([record](../docs/release-readiness-2026-10-11-phase11-fourth-review.md))
 - [x] Task 141: Count short-lived agent children and show light CPU honestly
+
+Fifth-review scope and evidence: [fifth real-project review](../docs/tui-feedback-fifth-review.md). Execute sequentially; the TUI is the source and the HTML reference follows it (Task 147). Preserve earlier acceptance and independently open gates 59/74h/74p.
+
+- [ ] Task 142: Restore the `No decision needed` wording for a task without an escalation
+- [ ] Task 143: Make Up and Down inert while the escalations bar is focused
+- [ ] Task 144: One-column task-detail scrollbar
+- [ ] Task 145: Animate every in-progress status like Implementing
+- [ ] Task 146: Restore Implementer pane titles after restart
+- [ ] Task 147: Verify the fifth review and reconcile Phase 11 evidence

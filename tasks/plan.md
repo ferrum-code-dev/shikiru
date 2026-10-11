@@ -1430,3 +1430,48 @@ Refs: [fourth-review resource bar](../docs/tui-feedback-fourth-review.md); 05 (r
 | Takeover not restored after respawn (documentation) | 138, 140 |
 | Context colour by level | 136, 139, 140 |
 | Agent pane titles preserved across session restart | 137, 140 |
+
+### Fifth-review follow-up
+
+Scope: [fifth real-project review](../docs/tui-feedback-fifth-review.md), planned from four read-only analyses. Preserve accepted Tasks 105–141 and independently open Tasks 59/74h/74p; replace superseded expectations and their obsolete tests. Execute Tasks 142–147 sequentially with a fresh agent per task, root review and corrections by that agent. **The TUI is the source of truth:** the HTML reference follows in Task 147. Analysis was static; reproduce each reported behaviour natively before changing it.
+
+### Task 142: Restore the `No decision needed` wording for a task without an escalation
+Refs: fifth-review escalations; `ui/compact.py` `_not_escalated_status`/`attention_status_text`, `escalations.py` `_not_escalated_task_id`/`_render_compact_attention`, 06 §5.4, `tui-feedback-fourth-review.md` Dashboard focus; Task 131.
+- [ ] A selected task without an escalation reads `T-12<white bold> · No decision needed<white> · 5 decisions on other tasks<grey>`; the grey segment only when N > 0 (`1 decision on other tasks` for one); the right-aligned hint still falls back to `Ctrl+P actions`; engine-fault, stall, engine-status, no-selection and no-decisions-anywhere states are unchanged.
+- [ ] Update the tests asserting `is not escalated` (`test_dashboard_escalation_follow.py`, `test_dashboard_app.py`) and add style-span assertions for the white/bold and grey parts at wide and compact widths; update 06 and the fourth-review text that quotes the old wording; leave dated release records and the HTML reference to Task 147.
+
+### Task 143: Make Up and Down inert while the escalations bar is focused
+Refs: fifth-review escalations; `plugins/widgets/escalations.py` `on_key`/`_move_group`/scroll branch, `dashboard/app.py` focus and bindings, 06 §5.4; Tasks 107, 118, 130, 131.
+- [ ] Reproduce natively that Up/Down on the focused bar cycle attention groups (or scroll) without moving the task selection. With the bar focused Up and Down do nothing: no group cycling, no scrolling, no selection change, no bubbling. Left/Right keep choosing among the followed task's escalations when it has two or more and otherwise do nothing; Enter, Tab, Esc and the task-list arrows are unchanged; remove the dead cycling code rather than leaving it unused (YAGNI).
+- [ ] Real SQLite/Textual tests: with several escalated tasks and the bar focused, Up/Down leave the bar content, the task selection and the scroll offset unchanged; Left/Right survive refreshes (Task 131 test); the list-focused arrows still cycle tasks and the bar follows. Replace the tests that relied on bar-focused Up/Down cycling.
+
+### Task 144: One-column task-detail scrollbar
+Refs: fifth-review task details; `dashboard/detail.py` `#task-detail-body`, `ui/popup.py` (`POPUP_CSS`, `.popup-frame #task-detail-body`), `plugins/widgets/queue.py` list CSS, `ui/theme.py`, 06 §5; Task 129.
+- [ ] Name the one-column vertical scrollbar width once in `ui/theme.py` (shared CSS) and use it for popup bodies, the Tasks list and the Home/standalone task-detail body (Textual's default is 2); the popup task detail, the Tasks list and the Recent window are unchanged (Recent has no scrollbar). Do not add a global `Widget` rule. Include the popup Select dropdown only if the same constant covers it with no extra rule; otherwise state the deferral.
+- [ ] Mounted test: an overflowing task detail in wide, compact and standalone layouts has a one-column bar (content width = region − padding − 1) and keeps its colours; extend the computed scrollbar style comparison to `#task-detail-body`. Review wrapping at 20×8, wide and compact; correct the Task 129 wording about the Recent list; update 06 §5.
+
+### Task 145: Animate every in-progress status like Implementing
+Refs: fifth-review task details; `domain/motion.py` (`spinner_visible`, `agent_processing`), `dashboard/motion.py`, `dashboard/views.py` `_strip_with_motion`/`_ACTIVE_TURN_STATUSES`/`agent_processing`, `dashboard/detail.py` `_task_state_line`, `strip_views.py`, 06 §6.5; Tasks 113, 113a.
+- [ ] Reproduce natively that Integrating (and the Starting frame) render a static marker. One pure domain predicate decides in-progress animation and replaces the duplicated formulas: animate for RUNNING/INTEGRATING with the engine up, no hold, wait reason, open decision, diagnosed stall or integration wait, and either a live turn or (`INTEGRATE` step with no recorded integration wait); use it for the detail and the list's bold status blink. `signal_observed`/last-signal semantics must not claim a signal that was never observed.
+- [ ] FakeClock/real SQLite/Textual tests: Integrating animates with the phase advancing; it and the other steps stay static when held, waiting, escalated, stalled, terminal, engine down, `animations=false`, `NO_COLOR` and `TERM=dumb` stay readable; a unit table for the predicate. Update the tests that pinned the old rule and 06 §6.5.
+
+### Task 146: Restore Implementer pane titles after restart
+Refs: fifth-review tmux; `engine/layout_guard.py` (`ensure`, `_is_healthy`, `_missing_agent_roles`, `_restore_view_panes`, `_create`), `engine/titles.py`, `tmux/decorator.py`, `tmux/cosmetic_decorator.py`, `engine/takeover.py`, 06 §5.3; Tasks 109, 114, 125, 137.
+- [ ] Reproduce on a private tmux server, with two tasks (stale window/pane ids can collide after a server restart), that after killing the session or server, killing only the Implementer pane, and leaving it dead, the Implementer pane shows the tmux default title or none while the Leader is titled. Record which hypothesis is confirmed: stored pane ids that now resolve to another task's pane or window and pass `_is_healthy`; a dead-pane respawn that skips the title refresh; a swallowed tmux failure; hand back after takeover not refreshing. If nothing reproduces, say so with evidence and report instead of guessing.
+- [ ] Fix the confirmed cause with the smallest change (for example require each stored role pane to belong to the task window; refresh titles once at the end of `ensure` after any restore, including respawned view panes); no new persisted state.
+- [ ] Integration tests with real tmux/SQLite/fake agent assert Leader and Implementer `pane_title` and the rendered border for a session/server kill (two tasks), a single Implementer kill and a dead pane; keep the takeover-loss test green.
+
+### Task 147: Verify the fifth review and reconcile Phase 11 evidence
+Refs: Tasks 142–146; fifth-review specification; 07 §3/§5.
+- [ ] Revise the HTML reference to the delivered TUI (the `No decision needed` bar text, the Integrating/in-progress spinner rule, the focused-bar arrows if drawn); keep the PNG and palette; check it in headless Chrome against native renders. Run connected fake-agent/private-tmux walkthroughs for the bar arrows, wording, one-column detail scrollbar, Integrating motion and Implementer titles.
+- [ ] Complete normal and `TERM=dumb NO_COLOR=1` gates; record each issue's outcome and limits in a fifth-review release record, update the active design/operator docs, mark the spec delivered, and clean only owned processes, sockets and profiles.
+
+### Fifth-review issue coverage
+
+| Reported issue | Implementation / verification |
+|---|---|
+| Arrows disabled while the escalations bar is focused | 143, 147 |
+| `T-12 · No decision needed · N decisions on other tasks` | 142, 147 |
+| Task-detail scrollbar one column | 144, 147 |
+| Integrating and other in-progress statuses circle | 145, 147 |
+| Implementer pane titles restored | 146, 147 |
