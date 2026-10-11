@@ -159,6 +159,7 @@ from shikiru.telemetry.docker import DockerSampler
 from shikiru.telemetry.resources import ResourceProcessRoots, ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target, tmux_key_label
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
+from shikiru.ui.compact import format_cpu_pct
 from shikiru.view_log import view_log_path
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
@@ -2438,9 +2439,9 @@ async def test_headless_agent_resources_are_disjoint_and_diagnostics_reuses_the_
         assert sampler.latest().sampled_at == sample.sampled_at
 
         expected_groups = (
-            f"Host CPU {sample.host_cpu_pct:.0f}%",
-            f"Shikiru CPU {sample.shikiru_cpu_pct:.0f}%",
-            f"Agents CPU {sample.agents_cpu_pct:.0f}%",
+            f"Host CPU {format_cpu_pct(sample.host_cpu_pct)}",
+            f"Shikiru CPU {format_cpu_pct(sample.shikiru_cpu_pct)}",
+            f"Agents CPU {format_cpu_pct(sample.agents_cpu_pct)}",
         )
         app = _app(
             reader,

@@ -48,6 +48,9 @@ _BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
 _BOLD_STEEL = f"{STYLE_BOLD} {STEEL_BLUE}"
 _BOLD_SAGE = f"{STYLE_BOLD} {SAGE}"
 GIB_FORMAT = ".1f"
+CPU_DECIMALS_BELOW_PCT = 10
+CPU_DECIMAL_FORMAT = ".1f"
+CPU_INTEGER_FORMAT = ".0f"
 BYTES_PER_GIB = 1024**3
 SESSION_COST_FORMAT = ".2f"
 COUNT_SHORT_SCALE = 1_000
@@ -904,11 +907,17 @@ def _host_resource_text(sample: _ResourceSample) -> Text:
     return _resource_group_text("Host", sample.host_cpu_pct, memory)
 
 
+def format_cpu_pct(cpu_pct: float) -> str:
+    """Format a CPU percentage with one decimal below ten percent, otherwise as an integer."""
+    number_format = CPU_DECIMAL_FORMAT if cpu_pct < CPU_DECIMALS_BELOW_PCT else CPU_INTEGER_FORMAT
+    return f"{cpu_pct:{number_format}}%"
+
+
 def _resource_group_text(label: str, cpu_pct: float, memory: Text) -> Text:
     text = Text.assemble(
         (label, _BOLD_PRIMARY),
         (" CPU", PRIMARY_TEXT_COLOR),
-        (f" {cpu_pct:.0f}%", STEEL_BLUE),
+        (f" {format_cpu_pct(cpu_pct)}", STEEL_BLUE),
     )
     text.append(memory)
     return text

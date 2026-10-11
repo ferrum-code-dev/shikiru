@@ -336,9 +336,9 @@ _POPULATED_SAMPLE = ResourceView(
     agents_process_tree_empty=False,
 )
 _POPULATED_LINE = _line(
-    _host_group("5%", _host_memory("12.3/24.0 GiB")),
-    _process_group("Shikiru", "1%", "0.4 GiB"),
-    _process_group("Agents", "2%", "1.2 GiB"),
+    _host_group("5.0%", _host_memory("12.3/24.0 GiB")),
+    _process_group("Shikiru", "1.0%", "0.4 GiB"),
+    _process_group("Agents", "2.0%", "1.2 GiB"),
 )
 _RESOURCE_CASES: tuple[tuple[ResourceView, list[list[Cell]]], ...] = (
     (_POPULATED_SAMPLE, [_POPULATED_LINE]),
@@ -351,8 +351,8 @@ _RESOURCE_CASES: tuple[tuple[ResourceView, list[list[Cell]]], ...] = (
         ),
         [
             _line(
-                _host_group("5%", _host_memory("12.3/24.0 GiB")),
-                _process_group("Shikiru", "1%", "0.4 GiB"),
+                _host_group("5.0%", _host_memory("12.3/24.0 GiB")),
+                _process_group("Shikiru", "1.0%", "0.4 GiB"),
                 _group(("Agents", _WHITE_BOLD), (" process tree is empty", _GREY)),
             )
         ],
@@ -361,9 +361,9 @@ _RESOURCE_CASES: tuple[tuple[ResourceView, list[list[Cell]]], ...] = (
         replace(_POPULATED_SAMPLE, shikiru_cpu_pct=None, shikiru_rss_gb=None),
         [
             _line(
-                _host_group("5%", _host_memory("12.3/24.0 GiB")),
+                _host_group("5.0%", _host_memory("12.3/24.0 GiB")),
                 _group(("Shikiru CPU/RSS unavailable", _GREY)),
-                _process_group("Agents", "2%", "1.2 GiB"),
+                _process_group("Agents", "2.0%", "1.2 GiB"),
             )
         ],
     ),
@@ -371,9 +371,9 @@ _RESOURCE_CASES: tuple[tuple[ResourceView, list[list[Cell]]], ...] = (
         replace(_POPULATED_SAMPLE, host_ram_used_bytes=None),
         [
             _line(
-                _host_group("5%", ((" RAM used/total unavailable", _GREY),)),
-                _process_group("Shikiru", "1%", "0.4 GiB"),
-                _process_group("Agents", "2%", "1.2 GiB"),
+                _host_group("5.0%", ((" RAM used/total unavailable", _GREY),)),
+                _process_group("Shikiru", "1.0%", "0.4 GiB"),
+                _process_group("Agents", "2.0%", "1.2 GiB"),
             )
         ],
     ),
@@ -430,9 +430,9 @@ async def test_home_resource_bar_wraps_whole_groups_at_narrow_width(
     services = StubServices()
     services.resource_observation = _POPULATED_SAMPLE
     expected = [
-        _line(_host_group("5%", _host_memory("12.3/24.0 GiB"))),
-        _line(_process_group("Shikiru", "1%", "0.4 GiB")),
-        _line(_process_group("Agents", "2%", "1.2 GiB")),
+        _line(_host_group("5.0%", _host_memory("12.3/24.0 GiB"))),
+        _line(_process_group("Shikiru", "1.0%", "0.4 GiB")),
+        _line(_process_group("Agents", "2.0%", "1.2 GiB")),
     ]
     widget = ResourcesWidget().create(widget_context(reader, project_dir, clock, services=services))
     async with WidgetHostApp(widget).run_test(size=_NARROW):
