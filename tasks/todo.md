@@ -229,3 +229,9 @@ Fifth-review scope and evidence: [fifth real-project review](../docs/tui-feedbac
 - [x] Task 145: Animate every in-progress status like Implementing
 - [x] Task 146: Restore Implementer pane titles after restart (closed: no longer reproduced, no change made)
 - [x] Task 147: Verify the fifth review and reconcile Phase 11 evidence ([record](../docs/release-readiness-2026-10-11-phase11-fifth-review.md))
+
+Sixth-review scope and evidence: [sixth real-project review](../docs/tui-feedback-sixth-review.md). Task 149 waits for the operator to approve the panel layout.
+
+- [ ] Task 148: Colour subscription-limit gauges at 50 and 90 percent
+- [ ] Task 149: Project usage panel title and layout (waits for layout approval)
+- [ ] Task 150: Verify the sixth review and reconcile Phase 11 evidence

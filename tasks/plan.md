@@ -1485,3 +1485,30 @@ Refs: Tasks 142–146; fifth-review specification; 07 §3/§5.
 | Task-detail scrollbar one column | 144, 147 |
 | Integrating and other in-progress statuses circle | 145, 147 |
 | Implementer pane titles restored | 146 (closed: not reproduced, operator confirmed), 147 |
+
+### Sixth-review follow-up
+
+Scope: [sixth real-project review](../docs/tui-feedback-sixth-review.md), planned from two read-only analyses. Execute Tasks 148–150 sequentially, one fresh agent per task, root review by the orchestrator. **Task 149 does not start until the operator approves the panel layout.** The TUI is the source of truth; the HTML reference follows in Task 150.
+
+### Task 148: Colour subscription-limit gauges at 50 and 90 percent
+Refs: sixth-review gauges; `ui/gauge.py`, `ui/tokens.py` (`gauge_color`), `domain/runs.py` (`ContextLevel`, `context_level`, `displayed_context_pct`), `engine/titles.py` `_context_color`, `plugins/widgets/usage.py` (Gauge construction), `dashboard/contract.py` `WidgetContext`, `dashboard/app.py` (WidgetContext wiring), `config/defaults.toml` `[dashboard.titles]`, `config/settings.py` `TitlesConfig`; 05 §3, 06 §5.3/§6.1; Tasks 125, 136.
+- [ ] A `refactor:` commit first: one shared pure level classifier (`used_pct` plus warn/alert thresholds, classified on the displayed rounded value) and one level-to-colour map replace `context_level`/`CONTEXT_LEVEL_COLORS` and `gauge_color`; context pane-title output and tests are unchanged.
+- [ ] `[dashboard.gauges]` `quota_warn_pct = 50` and `quota_alert_pct = 90` in `defaults.toml`, validated `0 < warn < alert <= 100`, delete the `GAUGE_*` constants; `Gauge` receives the thresholds by constructor injection through `WidgetContext` (wiring in `dashboard/app.py`), no module-level settings access.
+- [ ] Quota gauges: below 50 sage, 50–89 amber, 90 and above dusty rose, on the displayed whole percentage (49.4 green, 49.5/49.6/50 amber, 89.4 amber, 89.5/89.6/90 red), 100 and above red showing the reported value; no new grey state; context 40/60 and all other text unchanged.
+- [ ] One classifier table (unit, domain level), the invalid-threshold settings case, and a real Textual/SQLite boundary test of the rendered gauge colour (including the existing fixture's `weekly` at 50.0, now amber); fix the tests that pinned 70/90. Native render of the Project usage popup in colour and `NO_COLOR` at wide and compact. Update 05 (`[dashboard.gauges]`) and 06 §5.3/§5.4/§6.1 (quota gauges 50/90, CPU/RAM text, context 40/60); leave dated release records and the HTML reference to Task 150.
+
+### Task 149: Project usage panel title and layout (WAITS FOR LAYOUT APPROVAL)
+Refs: sixth-review panel; `dashboard/app.py` `_contextual_widget_label`/`_show_context_widget`, `ui/compact.py` (`ProjectUsageMetric`, `ProjectUsageDetails`, `ProjectAgentUsageDetails`, `_primary_billing_summary`, `_unknown_billing_source_lines`), `plugins/widgets/usage.py` `_agent_block`; 05 §3, 06; fourth-review token template; Task 132.
+- [ ] Single `Project usage` title; the approved layout (recorded in the sixth-review spec before work starts) with no duplicated facts, the operator's bold/cyan/green/grey styling, honest unknown/partial/estimate states, wrapping at ` · ` boundaries, usable at 20×8; update the tests that pin the old wording (`test_dashboard_remaining_widgets.py` ~247, `test_dashboard_motion.py` ~1135/2137) and add style-span assertions; native colour/mono renders at wide, compact and 20×8.
+
+### Task 150: Verify the sixth review and reconcile Phase 11 evidence
+Refs: Tasks 148–149; sixth-review specification; 07 §3/§5.
+- [ ] Revise the HTML reference's Project usage popup (title, approved layout, quota gauge colours at 50/90) to the delivered TUI and check it in headless Chrome against native renders; run normal and `TERM=dumb NO_COLOR=1` gates; write a sixth-review release record (outcomes, limits, gate numbers, HTML hash); mark the spec delivered; clean owned processes and sockets.
+
+### Sixth-review issue coverage
+
+| Reported issue | Implementation / verification |
+|---|---|
+| `Usage Usage` duplicated title | 149, 150 |
+| Project usage panel structure and duplication | 149, 150 (after layout approval) |
+| Subscription-limit gauge colours 50/90 | 148, 150 |
