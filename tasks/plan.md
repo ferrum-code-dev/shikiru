@@ -1471,8 +1471,9 @@ Refs: fifth-review tmux; `engine/layout_guard.py` (`ensure`, `_is_healthy`, `_mi
 
 ### Task 147: Verify the fifth review and reconcile Phase 11 evidence
 Refs: Tasks 142–146; fifth-review specification; 07 §3/§5.
-- [ ] Revise the HTML reference to the delivered TUI (the `No decision needed` bar text, the Integrating/in-progress spinner rule, the focused-bar arrows if drawn); keep the PNG and palette; check it in headless Chrome against native renders. Run connected fake-agent/private-tmux walkthroughs for the bar arrows, wording, one-column detail scrollbar, Integrating motion and Implementer titles.
-- [ ] Complete normal and `TERM=dumb NO_COLOR=1` gates; record each issue's outcome and limits in a fifth-review release record, update the active design/operator docs, mark the spec delivered, and clean only owned processes, sockets and profiles.
+- [x] Revise the HTML reference to the delivered TUI (the `No decision needed` bar text, the Integrating/in-progress spinner rule, the focused-bar arrows if drawn); keep the PNG and palette; check it in headless Chrome against native renders. Run connected fake-agent/private-tmux walkthroughs for the bar arrows, wording, one-column detail scrollbar, Integrating motion and Implementer titles.
+- [x] Complete normal and `TERM=dumb NO_COLOR=1` gates; record each issue's outcome and limits in a fifth-review release record, update the active design/operator docs, mark the spec delivered, and clean only owned processes, sockets and profiles.
+  Proof: the HTML was revised for the bar wording, the in-progress rule (list rows keep the marker and bold blink, detail keeps the braille marker) and inert Up/Down on the bar, and checked in headless Chrome at wide and compact, colour and No color, against a native dump; new SHA-256 `59a86418...42772`, PNG and palette untouched. Walkthroughs for the bar arrows, wording, one-column scrollbar and Integrating motion passed through the existing integration tests (141 tests); the Implementer-title walkthrough ran only as Task 137's tests because Task 146 could not be reproduced and **stays open**. Normal and `TERM=dumb NO_COLOR=1` gates green on a rerun (1,484 passed, 90.78% / 90.76%); first runs failed only on known timing-sensitive tests that pass alone ([record](../docs/release-readiness-2026-10-11-phase11-fifth-review.md)).
 
 ### Fifth-review issue coverage
 
@@ -1482,4 +1483,4 @@ Refs: Tasks 142–146; fifth-review specification; 07 §3/§5.
 | `T-12 · No decision needed · N decisions on other tasks` | 142, 147 |
 | Task-detail scrollbar one column | 144, 147 |
 | Integrating and other in-progress statuses circle | 145, 147 |
-| Implementer pane titles restored | 146, 147 |
+| Implementer pane titles restored | 146 (open, not reproduced), 147 |
