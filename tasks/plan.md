@@ -1407,6 +1407,12 @@ Refs: every fourth-review issue, Tasks 129–139; 07 §3/§5; accepted third-rev
 - [x] Reconcile active design/operator/Focus/parity/README and each issue's outcome in a new fourth-review release record, preserving accepted prior evidence, the original PNG and open gates 59/74h/74p; clean only owned processes, sockets, caches and renderer profiles.
   Proof: verified issue by issue in the [fourth-review record](../docs/release-readiness-2026-10-11-phase11-fourth-review.md): 149 targeted tests plus the walkthrough, takeover, stopped/paused and custom-layout selections passed; native colour and `NO_COLOR` Home renders at all six sizes were inspected; normal gate 1,434 passed / 90.71%, monochrome gate 1,434 passed after test fixture `d9edce4` (21 colour-asserting tests had failed under `NO_COLOR`); macOS smoke `clean-install-20261011T014109Z-74832` passed; no paid real-agent run was warranted. Limits recorded: 73–80 column footer, quiet-project wording, Recent focus tint, timing-sensitive tests, GNU/Linux and gates 59/74h/74p.
 
+### Task 141: Count short-lived agent children and show light CPU honestly
+Refs: [fourth-review resource bar](../docs/tui-feedback-fourth-review.md); 05 (resource samples), 06 (Resources widget); `telemetry/resources.py`, `ui/compact.py`.
+- [x] A process first seen by the sampler is credited its lifetime-average CPU (`cpu_times` over its age from the injected clock, floored) instead of 0.0, so short-lived descendants of an agent turn are counted; a real busy-child integration test fails before and passes after.
+- [x] Resource-bar CPU (Host, Shikiru, Agents) shows one decimal below 10% and an integer from 10% through one helper; the design and fourth-review docs and the HTML reference's illustrative values follow.
+  Proof: a real shell-respawned busy child read 0.0% on its first sample before the change and about its duty (100% of a core over the logical CPU count) after; a light agent that rendered `Agents CPU 0%` now renders `0.4%`. Detached (reparented) descendants remain uncounted by design. Gate: `uv run poe check` green (1446 passed, 14 skipped, 90.73%) on the third run; the first two runs failed only unrelated dashboard UI tests that pass alone.
+
 ### Fourth-review issue coverage
 
 | Reported issue | Implementation / verification |
