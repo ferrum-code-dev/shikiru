@@ -1488,7 +1488,7 @@ Refs: Tasks 142–146; fifth-review specification; 07 §3/§5.
 
 ### Sixth-review follow-up
 
-Scope: [sixth real-project review](../docs/tui-feedback-sixth-review.md), planned from two read-only analyses. Execute Tasks 148–150 sequentially, one fresh agent per task, root review by the orchestrator. **Task 149 does not start until the operator approves the panel layout.** The TUI is the source of truth; the HTML reference follows in Task 150.
+Scope: [sixth real-project review](../docs/tui-feedback-sixth-review.md), planned from two read-only analyses. Execute Tasks 148–150 sequentially, one fresh agent per task, root review by the orchestrator. The operator approved the three-section panel layout recorded in the specification (2026-10-12). The TUI is the source of truth; the HTML reference follows in Task 150.
 
 ### Task 148: Colour subscription-limit gauges at 50 and 90 percent
 Refs: sixth-review gauges; `ui/gauge.py`, `ui/tokens.py` (`gauge_color`), `domain/runs.py` (`ContextLevel`, `context_level`, `displayed_context_pct`), `engine/titles.py` `_context_color`, `plugins/widgets/usage.py` (Gauge construction), `dashboard/contract.py` `WidgetContext`, `dashboard/app.py` (WidgetContext wiring), `config/defaults.toml` `[dashboard.titles]`, `config/settings.py` `TitlesConfig`; 05 §3, 06 §5.3/§6.1; Tasks 125, 136.
@@ -1498,9 +1498,9 @@ Refs: sixth-review gauges; `ui/gauge.py`, `ui/tokens.py` (`gauge_color`), `domai
 - [x] One classifier table (unit, domain level), the invalid-threshold settings case, and a real Textual/SQLite boundary test of the rendered gauge colour (including the existing fixture's `weekly` at 50.0, now amber); fix the tests that pinned 70/90. Native render of the Project usage popup in colour and `NO_COLOR` at wide and compact. Update 05 (`[dashboard.gauges]`) and 06 §5.3/§5.4/§6.1 (quota gauges 50/90, CPU/RAM text, context 40/60); leave dated release records and the HTML reference to Task 150.
   Proof: the real `DashboardApp` Usage details popup and `UsagePanel`, rendered natively in colour at 52×30 and 160×50, show sage at 38 %, amber at 50 % and 89 %, and dusty rose at 91 % and 100 %; under `NO_COLOR` Textual greys every gauge, so the level then reads from the number and glyph only, as before. The domain table covers 49.4–90 and context 39/40/59/60, the settings table rejects invalid thresholds, and the integration test asserts the rendered colour at eight percentages; the 70/90 colour table went with `tests/unit/test_ui_tokens.py`. Gate `uv run poe check` green: 1,497 passed, 14 skipped, 90.77 % coverage.
 
-### Task 149: Project usage panel title and layout (WAITS FOR LAYOUT APPROVAL)
+### Task 149: Project usage panel title and layout
 Refs: sixth-review panel; `dashboard/app.py` `_contextual_widget_label`/`_show_context_widget`, `ui/compact.py` (`ProjectUsageMetric`, `ProjectUsageDetails`, `ProjectAgentUsageDetails`, `_primary_billing_summary`, `_unknown_billing_source_lines`), `plugins/widgets/usage.py` `_agent_block`; 05 §3, 06; fourth-review token template; Task 132.
-- [ ] Single `Project usage` title; the approved layout (recorded in the sixth-review spec before work starts) with no duplicated facts, the operator's bold/cyan/green/grey styling, honest unknown/partial/estimate states, wrapping at ` · ` boundaries, usable at 20×8; update the tests that pin the old wording (`test_dashboard_remaining_widgets.py` ~247, `test_dashboard_motion.py` ~1135/2137) and add style-span assertions; native colour/mono renders at wide, compact and 20×8.
+- [ ] Single `Project usage` title; the approved three-section layout (Totals, By agent, Limits; recorded in the sixth-review spec) with no duplicated facts, the operator's bold/cyan/green/grey styling, honest unknown/partial/estimate states, wrapping at ` · ` boundaries, usable at 20×8; update the tests that pin the old wording (`test_dashboard_remaining_widgets.py` ~247, `test_dashboard_motion.py` ~1135/2137) and add style-span assertions; native colour/mono renders at wide, compact and 20×8.
 
 ### Task 150: Verify the sixth review and reconcile Phase 11 evidence
 Refs: Tasks 148–149; sixth-review specification; 07 §3/§5.
