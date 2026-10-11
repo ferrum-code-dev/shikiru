@@ -9,6 +9,7 @@ from textual.widgets import Label, ListItem, ListView
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
+from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView, WidgetContext
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
@@ -165,4 +166,29 @@ def widget_context(
         on_change=reader.watch,
         on_motion=lambda _: lambda: None,
         open_palette=open_palette or ignore_palette_action,
+    )
+
+
+def dashboard_app(
+    reader: StateReader,
+    project_dir: Path,
+    clock: Clock,
+    *,
+    widget_names: list[str],
+    settings: Settings | None = None,
+) -> DashboardApp:
+    """Build the Home dashboard over `reader` with the stub services."""
+    settings = settings or load_settings(project_dir)
+    return DashboardApp(
+        focus_task=None,
+        views=state_views(reader, project_dir, clock, StubServices(), settings=settings),
+        on_change=reader.watch,
+        clock=clock,
+        motion_interval_seconds=None,
+        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        animations=False,
+        open_palette=ignore_palette_action,
+        widget_names=widget_names,
+        timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
     )

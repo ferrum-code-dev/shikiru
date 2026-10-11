@@ -480,6 +480,16 @@ class StateDashboardViews:
             agent_processing_ids=agent_processing_ids,
         )
 
+    @property
+    def recent_task_limit(self) -> int:
+        """Return how many most recent terminal tasks Home Recent can page through."""
+        return self._settings.dashboard.recent_task_limit
+
+    @property
+    def recent_task_window(self) -> int:
+        """Return how many Recent tasks Home shows at once."""
+        return self._settings.dashboard.recent_task_window
+
     def task_browser_pages(
         self,
         *,

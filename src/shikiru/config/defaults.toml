@@ -53,6 +53,8 @@ repo_status_cache_seconds = 10
 timeline_page_size = 20
 timeline_scan_rows = 256
 timeline_refresh_seconds = 1
+recent_task_limit = 30
+recent_task_window = 3
 
 [dashboard.motion]
 refresh_hz = 4

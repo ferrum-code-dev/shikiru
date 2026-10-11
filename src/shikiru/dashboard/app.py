@@ -1083,7 +1083,8 @@ class DashboardApp(App[None]):
     #focus-main.wide #queue {
         width: 100%; min-width: 0; height: 100%;
     }
-    #focus-main.wide #task-browser-list { height: auto; min-height: 2; }
+    #focus-main.wide #task-browser-active { height: 1fr; min-height: 4; }
+    #focus-main.wide #task-browser-list { height: 1fr; min-height: 2; }
     #focus-main.wide #task-detail-panel {
         width: 58%; min-width: 0; height: 100%; padding-left: 2;
         border-left: solid $neutral-border;
@@ -1922,7 +1923,7 @@ class DashboardApp(App[None]):
             )
             task_list = self.query("#task-browser-list")
             if task_list:
-                task_list.first().styles.height = "auto" if wide else FOCUS_COMPACT_TASK_LIST_ROWS
+                task_list.first().styles.height = None if wide else FOCUS_COMPACT_TASK_LIST_ROWS
             if self._home_detail_panel is not None:
                 self._home_detail_panel.display = True
                 self._home_detail_panel.styles.height = "100%" if wide else "auto"

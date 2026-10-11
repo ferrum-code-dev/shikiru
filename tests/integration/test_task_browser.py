@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from rich.text import Text
+from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.style import Style
 from textual.widgets import Button, Input, ListItem, ListView, Static
@@ -329,7 +330,7 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
 
     async with WidgetHostApp(widget).run_test(size=(90, 35)):
         list_view = widget.query_one("#task-browser-list", ListView)
-        recent_heading = widget.query_one("#task-browser-recent-heading", Static)
+        recent_block = widget.query_one("#task-browser-recent", Vertical)
         recent_list = widget.query_one("#task-browser-recent-list", ListView)
         await wait_until(
             lambda: all(
@@ -338,10 +339,8 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
             ),
             timeout=5.0,
         )
-        assert not recent_heading.display
+        assert not recent_block.display
         assert not recent_list.children
-        assert recent_list.max_scroll_y == 0
-        assert not recent_list.show_vertical_scrollbar
         rendered_rows = {
             task_id: _static_text(widget.query_one(f"#task-row-{task_id} > Static", Static))
             for task_id in (implementing.id, verifying.id, waiting.id, queued.id)
@@ -391,7 +390,7 @@ async def test_focus_recent_shows_bounded_terminal_history_without_dependency_ro
         await wait_until(
             lambda: all(
                 widget.query(f"#task-row-{task_id}")
-                for task_id in (old.id, dependent.id, cancelled.id, newest.id)
+                for task_id in (dependent.id, cancelled.id, newest.id)
             ),
             timeout=5.0,
         )
@@ -400,9 +399,10 @@ async def test_focus_recent_shows_bounded_terminal_history_without_dependency_ro
             for item in recent_list.children
             if item.id is not None and item.id.startswith("task-row-")
         ]
-        recent_ids = (newest.id, cancelled.id, dependent.id, old.id)
+        recent_ids = (newest.id, cancelled.id, dependent.id)
+        assert not widget.query(f"#task-row-{old.id}")
         assert tuple(task_id for task_id in terminal_rows if task_id in recent_ids) == recent_ids
-        recent_heading = widget.query_one("#task-browser-recent-heading", Static)
+        recent_heading = widget.query_one("#task-browser-recent-heading", Horizontal)
         newest_row = widget.query_one(f"#task-row-{newest.id}", ListItem)
         assert recent_heading.region.y < newest_row.region.y
         assert newest_row.parent is recent_list
@@ -876,7 +876,7 @@ async def test_nonfocus_refresh_waits_for_recent_targets_after_teardown(
 
     app = WidgetHostApp(widget)
     async with app.run_test(size=(90, 24)):
-        recent_heading = widget.query_one("#task-browser-recent-heading", Static)
+        recent_heading = widget.query_one("#task-browser-recent-heading", Horizontal)
         recent_list = widget.query_one("#task-browser-recent-list", ListView)
         await wait_until(
             lambda: widget.is_mounted and bool(widget.query("#task-browser-list")),
@@ -1018,7 +1018,8 @@ async def test_recent_heading_shares_the_tasks_colour_and_a_blank_line_after_it(
 
     async with WidgetHostApp(widget).run_test(size=(100, 35)):
         count = widget.query_one("#task-browser-count", Static)
-        heading = widget.query_one("#task-browser-recent-heading", Static)
+        heading = widget.query_one("#task-browser-recent-heading", Horizontal)
+        title = widget.query_one("#task-browser-recent-title", Static)
         task_list = widget.query_one("#task-browser-list", ListView)
         recent_list = widget.query_one("#task-browser-recent-list", ListView)
         await wait_until(lambda: heading.display and bool(recent_list.children), timeout=5.0)
@@ -1026,7 +1027,7 @@ async def test_recent_heading_shares_the_tasks_colour_and_a_blank_line_after_it(
         assert isinstance(counted, Content)
         assert counted.plain == "TASKS"
         assert _span_color(counted, 0) == STEEL_BLUE.lower()
-        assert heading.styles.color.hex.lower() == STEEL_BLUE.lower()
+        assert title.styles.color.hex.lower() == STEEL_BLUE.lower()
         assert task_list.region.y - count.region.y == 2
         assert recent_list.region.y - heading.region.y == 3
 

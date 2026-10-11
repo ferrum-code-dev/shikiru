@@ -101,6 +101,8 @@ repo_status_cache_seconds = 10
 timeline_page_size = 20                         # task evidence rows returned per page, maximum 49
 timeline_scan_rows = 256                        # normalized signal rows scanned per role and page, maximum 1024
 timeline_refresh_seconds = 1                    # latest task evidence page refresh interval
+recent_task_limit = 30                          # most recent terminal tasks the Home Recent list can page through (History is unlimited); at least recent_task_window
+recent_task_window = 3                          # Recent tasks shown at once
 layout = { split = "v", panes = [
   { pane = "leader", size = 40 },
   { pane = "implementer", size = 40 },

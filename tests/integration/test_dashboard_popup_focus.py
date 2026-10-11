@@ -247,8 +247,6 @@ async def test_popup_bodies_and_task_lists_share_one_scrollbar_style(
         await pilot.pause()
         home = popup_app.screen
         expected = _scrollbar_style(popup_app.query_one("#task-browser-list", ListView))
-        recent = popup_app.query_one("#task-browser-recent-list", ListView)
-        assert _scrollbar_style(recent) == expected
         await pilot.press("?")
         await wait_until(
             lambda: bool(popup_app.screen.query("#workspace-help-scroll")),

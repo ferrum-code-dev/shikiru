@@ -792,6 +792,16 @@ class DashboardViews(Protocol):
         """Return one bounded browser page and preserve context for a selected task."""
         ...
 
+    @property
+    def recent_task_limit(self) -> int:
+        """Return how many most recent terminal tasks Home Recent can page through."""
+        ...
+
+    @property
+    def recent_task_window(self) -> int:
+        """Return how many Recent tasks Home shows at once."""
+        ...
+
     def task_browser_pages(
         self,
         *,

@@ -199,6 +199,15 @@ class DashboardConfig(ConfigModel):
     timeline_page_size: int = Field(gt=0, le=MAX_TIMELINE_PAGE_SIZE)
     timeline_scan_rows: int = Field(gt=0, le=MAX_TIMELINE_SIGNAL_SCAN_ROWS)
     timeline_refresh_seconds: float = Field(gt=0)
+    recent_task_limit: int = Field(gt=0)
+    recent_task_window: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _recent_limit_covers_window(self) -> DashboardConfig:
+        if self.recent_task_limit < self.recent_task_window:
+            message = "dashboard.recent_task_limit must be at least dashboard.recent_task_window"
+            raise ValueError(message)
+        return self
 
 
 class NotifyConfig(ConfigModel):

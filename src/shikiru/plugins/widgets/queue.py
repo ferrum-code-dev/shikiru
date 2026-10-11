@@ -20,6 +20,7 @@ from shikiru.dashboard.contract import (
     WidgetPlacement,
 )
 from shikiru.ui.gated_static import GatedStatic
+from shikiru.ui.recent_window import RecentWindow, step_selection
 from shikiru.ui.screen import widget_is_current
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -41,14 +42,14 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import WidgetContext
 
 BROWSER_PAGE_SIZE = 24
-RECENT_TASK_LIMIT = BROWSER_PAGE_SIZE
 FOCUS_MAIN_CONTAINER_ID = "focus-main"
-TASK_LIST_MIN_ROWS = 2
-BROWSER_COUNT_RESERVE_ROWS = 2
-RECENT_HEADING_MIN_ROWS = 3
-RECENT_BODY_MIN_ROWS = 2
-RECENT_BODY_MAX_ROWS = 8
-RECENT_SECTION_MIN_ROWS = RECENT_HEADING_MIN_ROWS + RECENT_BODY_MIN_ROWS
+TASK_ROW_LINES = 2
+TASK_ROW_GAP_LINES = 1
+RECENT_LATER_LABEL = "↑ Later"
+RECENT_EARLIER_LABEL = "↓ Earlier"
+RECENT_LATER_COMPACT_LABEL = "↑"
+RECENT_EARLIER_COMPACT_LABEL = "↓"
+RECENT_CONTROL_GAP = 1
 TASK_STATE_DECISION_NEEDED = "decision needed"
 WAIT_REASON_DEPENDENCY = "dependency"
 FOCUS_LIST_CLASS = "focus-list"
@@ -68,7 +69,20 @@ TASK_STATUS_INTEGRATING = "integrating"
 TASK_STATUS_ESCALATED = "escalated"
 TASK_MARKER_STALL = "!"
 TASK_MARKER_RECENT = "Recent"
+RECENT_HEADING_FULL_COLUMNS = (
+    len(TASK_MARKER_RECENT)
+    + RECENT_CONTROL_GAP * 2
+    + len(RECENT_LATER_LABEL)
+    + len(RECENT_EARLIER_LABEL)
+)
+TASK_ACTIVE_BLOCK_ID = "task-browser-active"
+TASK_RECENT_BLOCK_ID = "task-browser-recent"
+RECENT_LATER_ID = "task-browser-recent-later"
+RECENT_EARLIER_ID = "task-browser-recent-earlier"
+RECENT_INACTIVE_CLASS = "-inactive"
 TASK_RECENT_HEADING_ID = "task-browser-recent-heading"
+TASK_RECENT_TITLE_ID = "task-browser-recent-title"
+RECENT_PAGER_CLASS = "recent-pager"
 TASK_RECENT_LIST_ID = "task-browser-recent-list"
 QUEUE_REFRESH_WORKER = "task-browser-refresh"
 STEP_LABELS = {
@@ -325,6 +339,30 @@ def _all_attached(widgets: Sequence[Widget]) -> bool:
     return all(widget.is_attached for widget in widgets)
 
 
+class _RecentPager(Static):
+    def __init__(
+        self,
+        *,
+        widget_id: str,
+        full_label: str,
+        compact_label: str,
+        page: Callable[[], Awaitable[None]],
+    ) -> None:
+        super().__init__(full_label, id=widget_id, markup=False)
+        self._full_label = full_label
+        self._compact_label = compact_label
+        self._page = page
+
+    def show(self, *, enabled: bool, compact: bool) -> None:
+        self.update(self._compact_label if compact else self._full_label)
+        self.set_class(not enabled, RECENT_INACTIVE_CLASS)
+
+    async def on_click(self, event: events.Click) -> None:
+        event.stop()
+        if not self.has_class(RECENT_INACTIVE_CLASS):
+            await self._page()
+
+
 class QueuePanel(Vertical):
     """Render task search, filters, selection and a compact retained task preview."""
 
@@ -364,13 +402,19 @@ class QueuePanel(Vertical):
     #task-browser-list > ListItem.-highlight > Static {
         background: $selected-surface; color: $primary-text; text-style: none;
     }
+    #task-browser-active { height: auto; }
+    #task-browser-recent { display: none; height: auto; }
     #task-browser-recent-heading {
-        display: none; height: 3; min-height: 3; margin: 0; border-top: solid $neutral-border;
-        padding: 0; color: $steel-blue;
+        height: 3; min-height: 3; margin: 0; border-top: solid $neutral-border; padding: 0;
     }
+    #task-browser-recent-title { width: 1fr; height: 1; color: $steel-blue; }
+    .recent-pager { width: auto; height: 1; margin-left: 1; color: $steel-blue; }
+    .recent-pager:hover { text-style: bold; }
+    .recent-pager.-inactive { color: $muted-text; text-style: dim; }
+    .recent-pager.-inactive:hover { text-style: dim; }
     #task-browser-recent-list {
-        display: none; height: auto; min-height: 2; border: none;
-        padding: 0; background: $background; scrollbar-size-vertical: 1;
+        height: auto; min-height: 2; border: none; padding: 0; background: $background;
+        scrollbar-size-vertical: 0;
     }
     #task-browser-recent-list > ListItem {
         height: auto; min-height: 2; margin: 0 0 1 0; padding: 0 0 0 1;
@@ -404,6 +448,9 @@ class QueuePanel(Vertical):
         self._selected_task_id = context.focus_task
         self._selection_cleared = False
         self._loaded_page_count = 1
+        self._recent_offset = 0
+        self._terminal_count: int | None = None
+        self._recent_window = RecentWindow(0, context.views.recent_task_window, 0)
         self._view: TaskBrowserView | None = None
         self._rendered: tuple[TaskBrowserView, str | None] | None = None
         self._refreshing = False
@@ -426,7 +473,28 @@ class QueuePanel(Vertical):
             select_task=self.select_task,
             activate_attention_decision=context.activate_attention_decision,
         )
-        self._recent_heading = Static(TASK_MARKER_RECENT, id=TASK_RECENT_HEADING_ID, markup=False)
+        self._recent_block = Vertical(id=TASK_RECENT_BLOCK_ID)
+        self._active_block = Vertical(id=TASK_ACTIVE_BLOCK_ID)
+        self._later = _RecentPager(
+            widget_id=RECENT_LATER_ID,
+            full_label=RECENT_LATER_LABEL,
+            compact_label=RECENT_LATER_COMPACT_LABEL,
+            page=lambda: self.page_recent(-1),
+        )
+        self._earlier = _RecentPager(
+            widget_id=RECENT_EARLIER_ID,
+            full_label=RECENT_EARLIER_LABEL,
+            compact_label=RECENT_EARLIER_COMPACT_LABEL,
+            page=lambda: self.page_recent(1),
+        )
+        self._recent_heading = Horizontal(
+            Static(TASK_MARKER_RECENT, id=TASK_RECENT_TITLE_ID, markup=False),
+            self._later,
+            self._earlier,
+            id=TASK_RECENT_HEADING_ID,
+        )
+        self._later.add_class(RECENT_PAGER_CLASS)
+        self._earlier.add_class(RECENT_PAGER_CLASS)
         self._recent_list = _TaskBrowserListView(
             widget_id=TASK_RECENT_LIST_ID,
             focus_layout=self._focus_layout,
@@ -453,31 +521,29 @@ class QueuePanel(Vertical):
                 yield self._clear_button
             with HorizontalScroll(id="task-browser-filters"):
                 yield from self._filter_buttons.values()
-        yield self._count
-        yield self._empty
-        yield self._family_context
-        if self._focus_layout:
-            self._task_list.add_class(FOCUS_LIST_CLASS)
-        yield self._task_list
-        self._recent_heading.display = False
-        self._recent_list.styles.max_height = RECENT_BODY_MAX_ROWS
+        with self._active_block:
+            yield self._count
+            yield self._empty
+            yield self._family_context
+            if self._focus_layout:
+                self._task_list.add_class(FOCUS_LIST_CLASS)
+            yield self._task_list
+            if self._focus_layout:
+                self._more_button.display = False
+            yield self._more_button
         if self._focus_layout:
             self._recent_list.add_class(FOCUS_LIST_CLASS)
-        self._recent_list.display = False
-        yield self._recent_heading
-        yield self._recent_list
+        with self._recent_block:
+            yield self._recent_heading
+            yield self._recent_list
         if self._focus_layout:
-            self._more_button.display = False
-            yield self._more_button
             self._preview.display = False
             yield self._preview
         else:
-            yield self._more_button
             yield self._preview
             yield self._reveal_button
 
     async def on_mount(self) -> None:
-        self._sync_focus_task_list_height()
         await self._refresh()
         self.run_worker(
             self._widget_context.on_change(self._refresh_if_current),
@@ -487,7 +553,7 @@ class QueuePanel(Vertical):
 
     def on_resize(self, event: events.Resize) -> None:
         del event
-        self._sync_focus_task_list_height()
+        self._render_recent_pager()
 
     def on_unmount(self) -> None:
         if self._remove_motion_callback is not None:
@@ -527,29 +593,6 @@ class QueuePanel(Vertical):
                 group=QUEUE_REFRESH_WORKER,
                 exclusive=True,
             )
-
-    def _sync_focus_task_list_height(self) -> None:
-        if not self._focus_layout or not self.is_mounted:
-            return
-        if not _all_attached((self._task_list, self._recent_heading, self._recent_list)):
-            return
-        focus_main = next(
-            (ancestor for ancestor in self.ancestors if ancestor.id == FOCUS_MAIN_CONTAINER_ID),
-            None,
-        )
-        if focus_main is None or not focus_main.has_class("wide"):
-            self._task_list.styles.max_height = None
-            return
-        recent_section_height = 0
-        if self._recent_list.display:
-            recent_section_height = max(
-                RECENT_SECTION_MIN_ROWS,
-                self._recent_heading.region.height + self._recent_list.region.height,
-            )
-        self._task_list.styles.max_height = max(
-            TASK_LIST_MIN_ROWS,
-            self.region.height - BROWSER_COUNT_RESERVE_ROWS - recent_section_height,
-        )
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != SEARCH_INPUT_ID:
@@ -644,26 +687,50 @@ class QueuePanel(Vertical):
             return
 
     async def _move_selection(self, step: int) -> None:
-        rows = tuple(
-            item
-            for list_view in self._browser_list_views()
-            for item in list_view.children
-            if isinstance(item, _BrowserListItem)
-        )
+        rows = self._visible_rows()
         if not rows:
             return
+        active_count = len(self._list_items(self._task_list))
         current = next(
             (index for index, item in enumerate(rows) if item.task_id == self._selected_task_id),
             None,
         )
-        next_index = (
-            (len(rows) - 1 if step < 0 else 0) if current is None else (current + step) % len(rows)
-        )
-        item = rows[next_index]
+        target = step_selection(active_count, self._recent_window, current, step)
+        if target.recent_position is not None:
+            self._recent_offset = self._recent_window.at_page_of(target.recent_position).offset
+            await self._refresh()
+            rows = self._visible_rows()
+            active_count = len(self._list_items(self._task_list))
+            visible_index = active_count + target.recent_position - self._recent_window.offset
+        else:
+            visible_index = cast("int", target.visible_index)
+        if visible_index >= len(rows):
+            return
+        item = rows[visible_index]
         self.select_task(item.task_id)
         list_view = cast("ListView", item.parent)
         list_view.index = list_view.children.index(item)
         list_view.scroll_to_widget(item, animate=False, immediate=True)
+        item.scroll_visible(animate=False, immediate=True)
+
+    async def page_recent(self, direction: int) -> None:
+        """Show the older (`1`) or newer (`-1`) Recent window without changing the selection."""
+        window = self._recent_window
+        offset = window.offset + direction * window.size
+        if not 0 <= offset < window.total:
+            return
+        self._recent_offset = offset
+        await self._refresh()
+        self.focus_task_results()
+
+    def _visible_rows(self) -> tuple[_BrowserListItem, ...]:
+        return tuple(
+            item for list_view in self._browser_list_views() for item in self._list_items(list_view)
+        )
+
+    @staticmethod
+    def _list_items(list_view: ListView) -> tuple[_BrowserListItem, ...]:
+        return tuple(item for item in list_view.children if isinstance(item, _BrowserListItem))
 
     async def _open_task(self, task_id: str) -> None:
         open_detail = self._widget_context.open_task_detail
@@ -766,6 +833,7 @@ class QueuePanel(Vertical):
                     self._search = search
                 if reset_pages:
                     self._loaded_page_count = 1
+                    self._recent_offset = 0
                 view = self._load_next_page() if append_page else self._load_pages()
                 if self._selected_task_id is None and view.rows and not self._selection_cleared:
                     self._selected_task_id = view.rows[0].task_id
@@ -814,18 +882,12 @@ class QueuePanel(Vertical):
         is_focus_recent = (
             self._focus_layout and self._filter is TaskBrowserFilter.ALL and not self._search
         )
+        self._recent_window = RecentWindow(0, self._recent_window.size, 0)
         if is_focus_recent:
-            recent_pages = self._widget_context.views.task_browser_pages(
-                task_filter=TaskBrowserFilter.HISTORY,
-                search=self._search,
-                limit=RECENT_TASK_LIMIT,
-                page_count=1,
-                selected_task_id=self._selected_task_id,
-            )
-            recent_page = recent_pages[0]
+            recent_page, self._recent_window = self._load_recent_window()
             recent_rows = tuple(
                 row for row in recent_page.rows if row.status in TASK_TERMINAL_STATUSES
-            )
+            )[: self._recent_window.shown]
             recent_by_id = {row.task_id: row for row in recent_rows}
             matched_ids.update(row.task_id for row in recent_rows)
             active_rows = tuple(
@@ -854,6 +916,33 @@ class QueuePanel(Vertical):
             ancestor_context=() if is_focus_recent else tuple(ancestors.values()),
         )
 
+    def _load_recent_window(self) -> tuple[TaskBrowserView, RecentWindow]:
+        views = self._widget_context.views
+        size = views.recent_task_window
+        page = self._recent_page(self._recent_offset)
+        completed = self._terminal_count is not None and page.matching_count > self._terminal_count
+        self._terminal_count = page.matching_count
+        window = RecentWindow(
+            0 if completed else self._recent_offset,
+            size,
+            min(page.matching_count, views.recent_task_limit),
+        ).clamped()
+        if window.offset != self._recent_offset:
+            page = self._recent_page(window.offset)
+        self._recent_offset = window.offset
+        return page, window
+
+    def _recent_page(self, offset: int) -> TaskBrowserView:
+        views = self._widget_context.views
+        size = views.recent_task_window
+        return views.task_browser_pages(
+            task_filter=TaskBrowserFilter.HISTORY,
+            search=self._search,
+            limit=size,
+            page_count=offset // size + 1,
+            selected_task_id=self._selected_task_id,
+        )[-1]
+
     def _load_next_page(self) -> TaskBrowserView:
         current = self._view
         if (
@@ -874,20 +963,16 @@ class QueuePanel(Vertical):
         active_rows = tuple(row for row in view.rows if row.task_id not in recent_ids)
         active_list = self._task_list
         recent_list = self._recent_list
-        recent_heading = self._recent_heading
         active_list.display = bool(active_rows) or not self._focus_layout
-        recent_heading.display = bool(recent_rows)
-        recent_list.display = bool(recent_rows)
+        self._recent_block.display = bool(recent_rows)
         await self._sync_list_rows(active_list, active_rows)
         await self._sync_list_rows(recent_list, recent_rows)
-        self._sync_focus_task_list_height()
-        if self._focus_layout:
-            self.call_after_refresh(self._sync_focus_task_list_height)
+        self._render_recent_pager()
         if self._list_view_is_current(active_list) and self._list_view_is_current(recent_list):
             self._sync_selection(active_list, recent_list)
             focused = cast("App[object]", self.app).focused
             if (focused is active_list and not active_list.display) or (
-                focused is recent_list and not recent_list.display
+                focused is recent_list and not self._recent_block.display
             ):
                 self.focus_task_results()
 
@@ -1060,6 +1145,28 @@ class QueuePanel(Vertical):
             )
             list_view.refresh(layout=True)
 
+    def _render_recent_pager(self) -> None:
+        window = self._recent_window
+        controls = (self._later, self._earlier)
+        if not _all_attached((*controls, self._recent_list)):
+            return
+        compact = 0 < self.size.width < RECENT_HEADING_FULL_COLUMNS
+        self._later.show(enabled=window.has_later, compact=compact)
+        self._earlier.show(enabled=window.has_earlier, compact=compact)
+        for control in controls:
+            control.display = window.paged
+        self._recent_list.styles.min_height = (
+            TASK_ROW_LINES * window.size + TASK_ROW_GAP_LINES * (window.size - 1)
+            if window.paged and self._is_wide()
+            else None
+        )
+
+    def _is_wide(self) -> bool:
+        return any(
+            ancestor.id == FOCUS_MAIN_CONTAINER_ID and ancestor.has_class("wide")
+            for ancestor in self.ancestors
+        )
+
     def _sync_selection(
         self,
         active_list: ListView,
@@ -1143,7 +1250,7 @@ class QueuePanel(Vertical):
         )
 
     def _list_view_is_current(self, list_view: ListView) -> bool:
-        return widget_is_current(self) and list_view.is_attached and list_view.parent is self
+        return widget_is_current(self) and list_view.is_attached and self in list_view.ancestors
 
     def _render_count(self, view: TaskBrowserView) -> None:
         is_default_focus = (

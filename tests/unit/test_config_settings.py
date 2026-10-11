@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.loader import load_settings
-from shikiru.config.settings import ComplexityLadder, Settings
+from shikiru.config.settings import ComplexityLadder, DashboardConfig, Settings
 from tests.support.config import write_minimal_project
 from tests.support.factories import HELPER_RUNG, make_settings
 
@@ -51,3 +51,12 @@ def test_settings_rejects_a_ladder_agent_with_no_agents_table(
 def test_settings_rejects_multiple_helper_rungs() -> None:
     with pytest.raises(ValidationError):
         make_settings(helper_ladder=[HELPER_RUNG, Rung(agent="codex", model="sol", effort="high")])
+
+
+def test_dashboard_rejects_a_recent_limit_smaller_than_its_window() -> None:
+    dashboard = make_settings().dashboard
+
+    with pytest.raises(ValidationError):
+        DashboardConfig.model_validate(
+            {**dict(dashboard), "recent_task_limit": 2, "recent_task_window": 3}
+        )
