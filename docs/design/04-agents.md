@@ -13,6 +13,8 @@ Rungs select only `{agent, model, effort}`. Agent options are a plugin-owned ext
 
 **Turn model (D1).** Every turn is one agent process running headless on a session: the first turn creates the session, every later turn resumes it, also after a model change, a stall, a quota wait, an operator take-over or an engine restart. The process reads nothing from stdin (it is closed), shows no dialogs, and exits when the turn ends. Its structured output stream is the only signal source: no hooks, no screen.
 
+**Interactive sessions (take over, 03 §9).** `interactive_command` runs the agent's own TUI on the role's session while the Operator has that role taken over; the TUI process lives only in the role's tmux pane. When that pane is lost, or the Operator exits the TUI, the role is handed back and its next headless turn resumes the same session (verified for Claude, §4; Codex's interactive resume is in §5). A taken-over role is never restored as taken over after a respawn: the Operator takes over again to continue interactively.
+
 ```python
 @dataclass(frozen=True)
 class Rung:            agent: str; model: str; effort: str | None

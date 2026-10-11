@@ -59,6 +59,11 @@ task and role context. The binding is session-scoped, so unrelated sessions keep
 hint; at the 20×8 reachability floor, `Ctrl+P`, `?`, Escape and tmux prefix+`d` remain available
 while the footer is hidden. `?` opens contextual help.
 
+A taken-over role is not restored as taken over after its pane is respawned. If the tmux server or
+session is killed, the host reboots, the pane is killed, or the Operator exits the agent's TUI, the
+role returns to its read-only view. The current step then resumes on the same agent session, unless
+the task is paused or another role is still taken over. Take over again to continue interactively.
+
 The Phase 11 first-delivery record covers Tasks 105–112; the [2026-10-08 follow-up](docs/release-readiness-2026-10-08-phase11-followup.md)
 records accepted second-review work through Task 121, current matched native captures,
 walkthroughs, test gates and limits. The [2026-10-09 third-review record](docs/release-readiness-2026-10-09-phase11-third-review.md)

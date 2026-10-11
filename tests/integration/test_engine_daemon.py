@@ -18,6 +18,7 @@ import pytest
 
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.bootstrap import build_engine
+from shikiru.config.loader import validate_project_config_text
 from shikiru.config.settings import (
     LoggingConfig,
     RepoConfig,
@@ -78,6 +79,7 @@ from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.reports import load_turn_report
 from shikiru.workspace.roots import run_dir, task_root
 from tests.support.clock import FakeClock
+from tests.support.config import MINIMAL_PROJECT_CONFIG
 from tests.support.engine import (
     FAKE_RUNG,
     build_raiser,
@@ -1337,8 +1339,14 @@ class _Operator:
         return [run.id for run in self.runs.for_task(task_id)]
 
     async def pane_pid(self, task_id: str, role: Role) -> str:
+        return await self._pane_format(task_id, role, "#{pane_pid}")
+
+    async def pane_title(self, task_id: str, role: Role) -> str:
+        return await self._pane_format(task_id, role, "#{pane_title}")
+
+    async def _pane_format(self, task_id: str, role: Role, format_string: str) -> str:
         pane = self.task(task_id).panes[role]
-        result = await self.tmux_server.run("display-message", "-p", "-t", pane, "#{pane_pid}")
+        result = await self.tmux_server.run("display-message", "-p", "-t", pane, format_string)
         return result.stdout.strip()
 
     async def advance_until(self, condition: Callable[[], bool]) -> None:
@@ -1350,16 +1358,26 @@ class _Operator:
 
 @asynccontextmanager
 async def _operator_session(
-    tmp_path: Path, tmux_server: TmuxServer, *, tmux_override: Tmux | None = None
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    *,
+    tmux_override: Tmux | None = None,
+    titled: bool = False,
 ) -> AsyncGenerator[tuple[_Operator, str, Run]]:
     await init_project_repo(tmp_path)
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}, {"kind": "accept"}])
     clock = FakeClock(TASK_CREATED_AT)
     tmux = tmux_override if tmux_override is not None else build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    if titled:
+        packaged_titles = validate_project_config_text(MINIMAL_PROJECT_CONFIG).dashboard.titles
+        settings = settings.model_copy(
+            update={"dashboard": settings.dashboard.model_copy(update={"titles": packaged_titles})}
+        )
     engine = build_engine(
         tmp_path,
-        engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT),
+        settings,
         clock=clock,
         tmux=tmux,
         registry=build_registry(),
@@ -1465,7 +1483,7 @@ async def test_replaying_a_take_over_never_respawns_its_live_interactive_pane(
 async def test_a_takeover_lost_with_the_tmux_server_is_handed_back_with_a_notified_event(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
-    async with _operator_session(tmp_path, tmux_server) as (operator, task_id, run):
+    async with _operator_session(tmp_path, tmux_server, titled=True) as (operator, task_id, run):
         await operator.send(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
         await tmux_server.run("kill-server", check=False)
 
@@ -1481,6 +1499,15 @@ async def test_a_takeover_lost_with_the_tmux_server_is_handed_back_with_a_notifi
         resumed = operator.runs.get_live(task_id, Role.IMPLEMENTER)
         assert resumed is not None
         assert resumed.id == run.id
+
+        async def retitled() -> bool:
+            title = await operator.pane_title(task_id, Role.IMPLEMENTER)
+            return title.startswith("Implementer") and "operator" not in title
+
+        await wait_until(retitled, timeout=10)
+        title = await operator.pane_title(task_id, Role.IMPLEMENTER)
+        assert title.startswith("Implementer")
+        assert "operator" not in title
 
 
 @pytest.mark.parametrize("paused", [False, True], ids=["running", "paused"])

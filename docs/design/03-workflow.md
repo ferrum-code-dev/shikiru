@@ -358,14 +358,16 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 2. Set the `intervention` hold on **that task**, mark the run `taken_over` and append `taken_over`, in one transaction (§7 replay).
 3. Respawn the role's pane in the task root with the plugin's `interactive_command(session_id, run dir)`, with the turn environment of §4.1. The Operator answers any dialog the TUI shows. With no session yet, take over is rejected.
    If the respawn fails (a tmux error or timeout), the take over is released in one transaction (the run is live again, `intervention` is dropped when no other role of the task is taken over, `takeover_lost` is appended and notified), the step's flow restarts, and the command is rejected with a message that the pane could not be started and that nothing is held: a rejected command never leaves a hold behind. The Operator retries with a new `take_over`.
-- **While held**: no turns start for the task. The pane border turns operator magenta and the title shows `⌨ operator`.
+- **While held**: no turns start for the task. The pane border turns operator magenta and the title shows the `operator` flag (06 §5.3).
 
 **Hand back** (`HandBack(task, role)`, or the taken-over pane's process exits, which `LayoutGuard` turns into a `HandBack`):
 1. Respawn the pane with the view, mark the run active, and clear `intervention` only when no other role of the task remains taken over.
 2. Queue an operator message for that role: "The Operator worked in this session since your last turn; take their changes into account."
 3. Re-run the current step unless a hold remains (another taken-over role, or `pause`); its turn resumes the same session, which already holds the Operator's exchange (verified for Claude).
 
-**Lost interactive pane**: the interactive session lives only in its tmux pane, so when the pane is gone (tmux server killed, host reboot, pane killed) the Operator's session is gone with it. `LayoutGuard`, in its one restore path (window creation and missing-pane restoration), appends `takeover_lost` (notified, 06 §5.7) and queues a `HandBack` for each such role; the hand-back above then restores the view, clears `intervention` and resumes the same session. The role is never left held behind a read-only view pane, and no headless turn ever runs beside a live interactive session (invariant 1).
+**Lost interactive pane**: the interactive session lives only in its tmux pane, so when the pane is gone (tmux server or session killed, host reboot, pane killed) the Operator's interactive process is gone with it. `LayoutGuard`, in its one restore path (window creation and missing-pane restoration), appends `takeover_lost` (notified, 06 §5.7) and queues a `HandBack` for each such role; the hand-back above then restores the view, clears `intervention` unless another role is still taken over, and re-runs the current step unless a hold remains (step 3). The role is never left held behind a read-only view pane, and no headless turn ever runs beside a live interactive session (invariant 1).
+
+**A taken-over role is not restored as taken over.** After a loss, or after the Operator exits the TUI, its pane shows the read-only view with no `operator` flag or glyph (06 §5.3), and only a new `take_over` makes it interactive again. A taken-over pane that is still present but dead (the Operator exited the TUI) gets the `HandBack` alone: it records `handed_back`, not `takeover_lost`.
 
 **`resume` while a role is taken over is rejected** with a message to hand the role back first. There is no implicit hand-back: an interactive pane owns the workspace until every taken-over role is handed back, so no headless turn can run beside the Operator's session (invariant 1).
 
