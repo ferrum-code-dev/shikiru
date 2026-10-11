@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED
+from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED, Usage
 from shikiru.domain.ladder import pick_rung
-from shikiru.domain.runs import NO_USAGE, RunStatus, context_title, cost_title
+from shikiru.domain.runs import NO_USAGE, RunStatus, context_level, context_title, cost_title
 from shikiru.domain.steps import ACTING_ROLE
 from shikiru.domain.tasks import Hold, Role, Status, Step
 from shikiru.ui.glyphs import (
@@ -31,6 +31,7 @@ from shikiru.ui.glyphs import (
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
+    CONTEXT_LEVEL_COLORS,
     ENGINE_COLOR,
     HOLD_COLOR,
     OPERATOR_COLOR,
@@ -38,7 +39,6 @@ from shikiru.ui.tokens import (
     ROLE_COLORS,
     SAGE,
     SECONDARY_TEXT_COLOR,
-    gauge_color,
 )
 
 if TYPE_CHECKING:
@@ -164,11 +164,6 @@ class TaskTitles:
             "flags_text": _flags(task, taken_over=taken_over, include_glyphs=False),
         }
         await self._decorator.set_pane_title(pane_id, template, fields)
-        context_color = (
-            gauge_color(usage.context_used_pct)
-            if usage.context_used_pct is not None and usage_reported is not False
-            else SECONDARY_TEXT_COLOR
-        )
         cost_color = SECONDARY_TEXT_COLOR
         if usage.cost_usd is not None and usage_reported is not False:
             if usage.cost_basis == COST_BASIS_BILLED:
@@ -186,13 +181,24 @@ class TaskTitles:
                 "model": PRIMARY_TEXT_COLOR,
                 "effort": SECONDARY_TEXT_COLOR,
                 "iteration": SECONDARY_TEXT_COLOR,
-                "context": context_color,
+                "context": self._context_color(usage, usage_reported),
                 "cost": cost_color,
             },
             field_segments={"flags_text": _flag_segments(task, taken_over=taken_over)},
         )
         color, glyph = _pane_state(task, role, taken_over=taken_over)
         await self._decorator.set_pane_state(pane_id, color=color, glyph=glyph)
+
+    def _context_color(self, usage: Usage, usage_reported: bool | None) -> str:
+        if usage.context_used_pct is None or usage_reported is False:
+            return SECONDARY_TEXT_COLOR
+        titles = self._settings.dashboard.titles
+        level = context_level(
+            usage.context_used_pct,
+            warn_pct=titles.context_warn_pct,
+            alert_pct=titles.context_alert_pct,
+        )
+        return CONTEXT_LEVEL_COLORS[level]
 
     def _active_run(self, task_id: str, role: Role) -> Run | None:
         live = self._runs.get_live(task_id, role)

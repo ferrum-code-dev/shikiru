@@ -17,7 +17,6 @@ from shikiru.config.settings import (
     RoleConfig,
     RolesConfig,
     Settings,
-    TitlesConfig,
 )
 from shikiru.domain.reports import (
     DECISION_ANSWER,
@@ -123,8 +122,14 @@ def make_settings(
                 update={
                     "widgets": ["header"],
                     "layout": LayoutSplit(split="h", panes=[PaneLeaf(pane="system")]),
-                    "titles": TitlesConfig(
-                        window="", leader="", implementer="", system="", shell=""
+                    "titles": base.dashboard.titles.model_copy(
+                        update={
+                            "window": "",
+                            "leader": "",
+                            "implementer": "",
+                            "system": "",
+                            "shell": "",
+                        }
                     ),
                 }
             ),

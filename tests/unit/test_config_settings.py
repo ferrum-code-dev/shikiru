@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.loader import load_settings
-from shikiru.config.settings import ComplexityLadder, DashboardConfig, Settings
+from shikiru.config.settings import ComplexityLadder, DashboardConfig, Settings, TitlesConfig
 from tests.support.config import write_minimal_project
 from tests.support.factories import HELPER_RUNG, make_settings
 
@@ -59,4 +59,13 @@ def test_dashboard_rejects_a_recent_limit_smaller_than_its_window() -> None:
     with pytest.raises(ValidationError):
         DashboardConfig.model_validate(
             {**dict(dashboard), "recent_task_limit": 2, "recent_task_window": 3}
+        )
+
+
+def test_titles_reject_a_context_warn_threshold_not_below_the_alert_threshold() -> None:
+    titles = make_settings().dashboard.titles
+
+    with pytest.raises(ValidationError):
+        TitlesConfig.model_validate(
+            {**dict(titles), "context_warn_pct": 60, "context_alert_pct": 60}
         )

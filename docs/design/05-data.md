@@ -122,6 +122,8 @@ leader = "{role_label} · {agent}:{model}/{effort} · iter {iteration} · ctx {c
 implementer = "{role_label} · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
 system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
 shell = "Project folder · {cwd}"
+context_warn_pct = 40                           # agent pane-title context turns amber from this whole percentage (06 §5.3)
+context_alert_pct = 60                          # ... dusty rose from this one; must be above context_warn_pct
 
 [notify]
 command = ""                                    # optional; event JSON on stdin for escalation and task_done

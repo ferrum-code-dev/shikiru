@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -32,6 +33,9 @@ _TERMINAL_TYPE = "xterm-256color"
 _NULL_CONFIG_FILE = "/dev/null"
 _ATTACH_SESSION_COMMAND = "attach-session"
 _TARGET_FLAG = "-t"
+_SGR_SEQUENCE = re.compile(rb"\x1b\[([0-9;]*)m")
+_TRUECOLOUR_FOREGROUND = re.compile(r"(?:^|;)38;2;(\d+);(\d+);(\d+)")
+_SGR_RESET_PARAMS = frozenset({"", "0", "39"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +102,22 @@ async def attach_tmux_client(server: TmuxServer, target: str) -> AsyncGenerator[
         yield client
     finally:
         await client.close()
+
+
+def rendered_foreground(output: bytes, text: str) -> str | None:
+    """Return the truecolour foreground an attached client drew where `text` first appears."""
+    start = output.find(text.encode())
+    if start < 0:
+        return None
+    foreground: str | None = None
+    for sequence in _SGR_SEQUENCE.finditer(output, 0, start):
+        params = sequence.group(1).decode()
+        if params in _SGR_RESET_PARAMS:
+            foreground = None
+        colour = _TRUECOLOUR_FOREGROUND.search(params)
+        if colour is not None:
+            foreground = "#" + "".join(f"{int(channel):02x}" for channel in colour.groups())
+    return foreground
 
 
 def _clean_env() -> dict[str, str]:

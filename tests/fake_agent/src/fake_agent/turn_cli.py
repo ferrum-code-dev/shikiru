@@ -125,6 +125,11 @@ def _work(state: SessionState) -> None:
     _emit({"event": _EVENT_TOOL_FINISHED, "name": _WORK_TOOL_NAME})
 
 
+def _apply_scripted_context(state: SessionState, step: TurnStep) -> None:
+    if step.context_used_pct is not None:
+        state["context_used_pct"] = step.context_used_pct
+
+
 def _corrupt_report(current_turn: Path) -> None:
     (current_turn.resolve() / REPORT_FILENAME).write_text("{")
 
@@ -188,6 +193,7 @@ async def _run_turn(session_id: str, prompt: str, compact_at_pct: float | None) 
     )
     step = script.next_step()
     save_script_index(context.script_path, script.index)
+    _apply_scripted_context(state, step)
     if step.quota_windows:
         _emit(
             {

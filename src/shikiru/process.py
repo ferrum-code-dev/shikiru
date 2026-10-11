@@ -239,11 +239,17 @@ class SpawnedTerminalProcess:
         self._loop.add_reader(master_fd, self._drain_terminal)
         self._stop_lock = asyncio.Lock()
         self._terminal_closed = False
+        self._output = bytearray()
 
     @property
     def returncode(self) -> int | None:
         """Return the terminal process's exit code when it has finished."""
         return self._process.returncode
+
+    @property
+    def output(self) -> bytes:
+        """Return every byte the terminal has produced so far."""
+        return bytes(self._output)
 
     async def stop(self, *, grace: float = TURN_STOP_GRACE) -> None:
         """Stop the process group and close the private pseudo-terminal."""
@@ -259,9 +265,11 @@ class SpawnedTerminalProcess:
     def _drain_terminal(self) -> None:
         while True:
             try:
-                if not os.read(self._master_fd, _TERMINAL_READ_SIZE):
+                chunk = os.read(self._master_fd, _TERMINAL_READ_SIZE)
+                if not chunk:
                     self._loop.remove_reader(self._master_fd)
                     return
+                self._output.extend(chunk)
             except BlockingIOError:
                 return
             except OSError as error:

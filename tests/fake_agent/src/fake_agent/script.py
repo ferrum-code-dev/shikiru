@@ -24,6 +24,7 @@ class _StepModel(BaseModel):
 
     quota_windows: list[QuotaWindowStep] = Field(default_factory=list)
     release_fifo: str = ""
+    context_used_pct: float | None = None
 
 
 class NewTaskSpec(_StepModel):

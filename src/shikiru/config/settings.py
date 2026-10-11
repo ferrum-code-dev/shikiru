@@ -18,6 +18,7 @@ GIT_DEFAULT_REMOTE = "origin"
 MAX_MOTION_REFRESH_HZ = 4
 MAX_TIMELINE_PAGE_SIZE = 49
 MAX_TIMELINE_SIGNAL_SCAN_ROWS = 1024
+MAX_CONTEXT_PCT = 100
 
 
 class ConfigModel(BaseModel):
@@ -159,13 +160,24 @@ LayoutNode = LayoutSplit | PaneLeaf
 
 
 class TitlesConfig(ConfigModel):
-    """`[dashboard.titles]` (field templates: 06 §5.3)."""
+    """`[dashboard.titles]` (field templates and context thresholds: 06 §5.3)."""
 
     window: str
     leader: str
     implementer: str
     system: str
     shell: str
+    context_warn_pct: int = Field(gt=0, le=MAX_CONTEXT_PCT)
+    context_alert_pct: int = Field(gt=0, le=MAX_CONTEXT_PCT)
+
+    @model_validator(mode="after")
+    def _context_warn_below_alert(self) -> TitlesConfig:
+        if self.context_warn_pct >= self.context_alert_pct:
+            message = (
+                "dashboard.titles.context_warn_pct must be below dashboard.titles.context_alert_pct"
+            )
+            raise ValueError(message)
+        return self
 
 
 class DashboardMotionConfig(ConfigModel):

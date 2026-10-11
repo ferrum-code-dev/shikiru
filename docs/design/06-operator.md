@@ -97,6 +97,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
   - `task_id`, `title`, `project`, `role`, `role_label`, `glyph`, `agent`, `model`, `effort`
   - `iteration`, `step`, `status`
   - `context`, `cost`: preformatted (`42%`, `$1.84`), `–` when the agent reports no value (04 §1)
+  - `context` colour: classified on the whole percentage the title shows (39.6 shows `40%`, so it is amber): sage below `dashboard.titles.context_warn_pct` (40), amber from there below `context_alert_pct` (60), dusty rose at 60 and above, using the §6.1 palette. Unreported context stays secondary grey with `–`. These pane-title thresholds are separate from the dashboard gauges (70/90, §6.1), which are unchanged.
   - `flags`: glyph-prefixed hold and state words for existing templates; `flags_text`: the same readable words without glyphs, including `operator` while a role is taken over
   - `active`, `queued`, `max_parallel`, `cwd`
 - Packaged Leader and Implementer titles use the role word and `flags_text` without role or state glyph prefixes. The `glyph` and `flags` fields retain their existing values, so an explicit custom template that uses them keeps its chosen glyphs; Shikiru does not rewrite project configuration.
@@ -311,7 +312,7 @@ Every colour, glyph and movement answers one of three questions: *who acts*, *wh
 | `hold` / `amber` | `#dfb16c` | Holds, decisions, subscriptions and estimates |
 | `alert` / `dusty-rose` | `#e3a0a0` | Errors and diagnosed stalls |
 
-Gauges (context, quota, CPU, RAM) use sage below 70%, amber below 90%, and dusty rose from 90% upward. All roles share the quiet steel accent where color helps; text and glyphs identify each role.
+Gauges (context, quota, CPU, RAM) use sage below 70%, amber below 90%, and dusty rose from 90% upward; agent pane-title context uses the §5.3 thresholds (40/60) instead. All roles share the quiet steel accent where color helps; text and glyphs identify each role.
 
 **Glyphs**: one set, registered in `ui.glyphs`. A unit test rejects wide and emoji-presentation characters. Ambiguous-width characters are allowed and drawn one cell wide, as Textual assumes; terminals set to CJK ambiguous-wide are unsupported. Glyphs that have an emoji variant carry U+FE0E (`⚖︎ ⚙︎ ⏸︎ ⚠︎`).
 
