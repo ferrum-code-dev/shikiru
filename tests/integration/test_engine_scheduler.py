@@ -226,19 +226,22 @@ async def scheduler_env(
     quotas = QuotaStore(connection)
     events = EventLog(connection, clock)
     tmux = build_tmux(tmux_server)
+    decorator = PaneDecorator(tmux)
+    runs = RunStore(connection, clock)
     layout = LayoutGuard(
         tmux=tmux,
         view=SessionView(tmux),
         builder=LayoutBuilder(tmux),
-        decorator=PaneDecorator(tmux),
+        decorator=decorator,
         session_target=exact_target(session_name("test")),
         tasks=tasks,
         settings=settings,
         project_root=tmp_path,
         events=events,
-        runs=RunStore(connection, clock),
+        runs=runs,
         commands=CommandQueue(connection, clock),
         faults=build_fault_reporter(events, clock, settings),
+        refresh_titles=TaskTitles(decorator, runs, settings).refresh,
     )
     roots = task_root_builder(
         SubprocessRunner(), tmp_path, settings.repo, trackers=settings.project.trackers

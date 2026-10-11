@@ -87,6 +87,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
   - A dead configured special pane or view pane is respawned.
   - A dead taken-over pane (the Operator exited the TUI) becomes a `HandBack` (03 §9). A taken-over role whose pane is gone (tmux server loss, host reboot, a killed pane) is rebuilt, never as a read-only view of a held role: `LayoutGuard` appends `takeover_lost` and queues the `HandBack` (03 §9).
   - Each restoration emits `pane_restored`.
+  - Whenever role panes are created or rebuilt (a new window, a restarted session, a killed pane), their titles are re-applied from stored task and run state, so a recreated pane never shows the tmux default (§5.3).
 
   There are no global key-binding overrides, so closing a pane has no lasting effect.
 - **Palette key**: one conditional binding uses the effective inherited or session-specific prefix. In a live Home pane, `prefix + Space` sends F12 to the current pane so its mounted `DashboardApp` opens contextual Actions over Home. In other `[shikiru]` panes it opens the standalone `shikiru palette` app in a tmux popup and passes the originating `#{pane_id}` through hidden `--origin-pane`; task and role come from the project's recorded pane mapping rather than popup-inherited `TMUX_PANE`. Unrelated sessions keep tmux's `next-layout` default.
@@ -100,6 +101,7 @@ The CLI gets an Operator into a project, in and out of its session, and back out
   - `context` colour: classified on the whole percentage the title shows (39.6 shows `40%`, so it is amber): sage below `dashboard.titles.context_warn_pct` (40), amber from there below `context_alert_pct` (60), dusty rose at 60 and above, using the §6.1 palette. Unreported context stays secondary grey with `–`. These pane-title thresholds are separate from the dashboard gauges (70/90, §6.1), which are unchanged.
   - `flags`: glyph-prefixed hold and state words for existing templates; `flags_text`: the same readable words without glyphs, including `operator` while a role is taken over
   - `active`, `queued`, `max_parallel`, `cwd`
+- Role pane titles are re-applied from stored state whenever `LayoutGuard` creates or rebuilds panes, without waiting for a usage report or a task transition; no title state is persisted.
 - Packaged Leader and Implementer titles use the role word and `flags_text` without role or state glyph prefixes. The `glyph` and `flags` fields retain their existing values, so an explicit custom template that uses them keeps its chosen glyphs; Shikiru does not rewrite project configuration.
 - **Decorations** follow §6.1:
   - Project-session status uses the graphite background for the full row, including its blank fill and left/right segments. Its clock is local wall time and date with seconds; tmux refreshes the native status at one-second intervals.

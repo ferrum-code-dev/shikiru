@@ -663,6 +663,7 @@ def build_engine(
         runs=runs,
         commands=command_queue,
         faults=fault_reporter,
+        refresh_titles=titles.refresh,
     )
     session_guard = SessionGuard(
         tmux=resolved_tmux,

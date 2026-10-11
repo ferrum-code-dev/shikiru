@@ -25,6 +25,7 @@ from shikiru.tmux.decorator import render_title
 from shikiru.view_log import view_argv
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from shikiru.config.settings import Settings
@@ -85,11 +86,13 @@ class LayoutGuard:
         runs: RunStore,
         commands: CommandQueue,
         faults: FaultReporter,
+        refresh_titles: Callable[[Task], Awaitable[None]],
     ) -> None:
         """Create windows through `tmux`, storing pane ids through `tasks`.
 
         A taken-over role's pane exiting is queued as a `HandBack` on `commands` (03 §9). A task
-        whose restoration fails is recorded through `faults` without stopping the others.
+        whose restoration fails is recorded through `faults` without stopping the others. Role pane
+        titles are re-applied through `refresh_titles` whenever role panes are created or rebuilt.
         """
         self._tmux = tmux
         self._session_target = session_target
@@ -103,6 +106,7 @@ class LayoutGuard:
         self._runs = runs
         self._commands = commands
         self._faults = faults
+        self._refresh_titles = refresh_titles
         self._layout_pane_names = _layout_pane_names(settings.dashboard.layout)
         self._special_pane_names = tuple(
             name for name in self._layout_pane_names if name not in _ROLE_PANE_NAMES
@@ -206,6 +210,7 @@ class LayoutGuard:
         if updated is None:
             message = f"{task.id} vanished while recording its task window"
             raise InvariantError(message)
+        await self._refresh_titles(updated)
         return updated
 
     async def _refresh_cache(self, task_id: str) -> Task:
@@ -280,6 +285,7 @@ class LayoutGuard:
         for role in missing_agents:
             await self.start_view(task.id, role, role_panes[role])
         self._tasks.set_panes(task.id, role_panes)
+        await self._refresh_titles(await self._refresh_cache(task.id))
 
     async def _restore_special_panes(self, task: Task) -> None:
         special = self._special_panes.get(task.id, {})

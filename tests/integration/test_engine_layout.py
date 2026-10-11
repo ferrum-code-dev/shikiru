@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -12,8 +13,9 @@ from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectC
 from shikiru.domain.commands import HandBack, Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Role, Status, Step
+from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.engine.layout_guard import LayoutGuard
+from shikiru.engine.titles import TaskTitles
 from shikiru.paths import task_root
 from shikiru.process import ProcessResult, SubprocessRunner
 from shikiru.store.commands import CommandQueue
@@ -28,6 +30,7 @@ from tests.support.clock import FakeClock
 from tests.support.config import MINIMAL_PROJECT_CONFIG
 from tests.support.engine import build_fault_reporter, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -51,6 +54,11 @@ _LAYOUT = LayoutSplit(
     ],
 )
 _PANE_SIZE_TOLERANCE_PCT = 3
+_STACKED_LAYOUT = LayoutSplit(
+    split="v",
+    panes=[PaneLeaf(pane=name) for name in ("leader", "implementer", "system", "shell")],
+)
+_AGENT_TITLE = "{role} {{agent}}:{{model}} iter {{iteration}} ctx {{context}} {{flags_text}}"
 
 
 def _settings(layout: LayoutSplit = _LAYOUT) -> Settings:
@@ -66,7 +74,11 @@ def _settings(layout: LayoutSplit = _LAYOUT) -> Settings:
                 update={
                     "layout": layout,
                     "titles": settings.dashboard.titles.model_copy(
-                        update={"shell": "Project folder · {cwd}"}
+                        update={
+                            "shell": "Project folder · {cwd}",
+                            "leader": _AGENT_TITLE.format(role="Leader"),
+                            "implementer": _AGENT_TITLE.format(role="Implementer"),
+                        }
                     ),
                 }
             ),
@@ -88,19 +100,22 @@ async def _task_window(
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     tasks = TaskStore(connection, clock)
     events = EventLog(connection, clock)
+    decorator = PaneDecorator(tmux)
+    runs = RunStore(connection, clock)
     layout = LayoutGuard(
         tmux=tmux,
         view=SessionView(tmux),
         builder=LayoutBuilder(tmux),
-        decorator=PaneDecorator(tmux),
+        decorator=decorator,
         session_target=exact_target(session_name("test")),
         tasks=tasks,
         settings=settings,
         project_root=tmp_path,
         events=events,
-        runs=RunStore(connection, clock),
+        runs=runs,
         commands=CommandQueue(connection, clock),
         faults=build_fault_reporter(events, clock, settings),
+        refresh_titles=TaskTitles(decorator, runs, settings).refresh,
     )
     queued = CommandQueue(connection, clock).append(
         Submit(title="restore panes", request="restore panes")
@@ -364,3 +379,82 @@ async def test_healthy_restore_makes_one_tmux_call_whatever_the_task_count(
     runner.invocations = 0
     await layout.restore(tasks.list_active())
     assert runner.invocations == 1
+
+
+_TITLE_FRAGMENTS = ("Leader fake:fake-1 iter ", "Implementer fake:fake-1 iter ", " ctx ")
+_RENDER_TIMEOUT_SECONDS = 20.0
+
+
+async def _rendered_borders(tmux_server: TmuxServer, tmux: Tmux, task: Task) -> bytes:
+    assert task.window_id is not None
+    await tmux.select_window(task.window_id)
+    async with attach_tmux_client(tmux_server, exact_target(session_name("test"))) as client:
+
+        async def drawn() -> bool:
+            return all(fragment.encode() in client.process.output for fragment in _TITLE_FRAGMENTS)
+
+        await wait_until(drawn, timeout=_RENDER_TIMEOUT_SECONDS)
+        return client.process.output
+
+
+async def test_session_restart_redraws_agent_pane_titles_without_a_usage_event(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    layout, tasks, _, task_id = await _task_window(
+        connection, clock, tmux_server, tmp_path, layout_tree=_STACKED_LAYOUT
+    )
+    task = tasks.get(task_id)
+    assert task is not None
+    tasks.apply_transition(task_id, Transition.stay(task, step=Step.IMPLEMENT))
+    task = tasks.get(task_id)
+    assert task is not None
+    tmux = build_tmux(tmux_server)
+    await tmux_server.run("kill-session", "-t", exact_target(session_name("test")))
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+
+    await layout.restore([task])
+
+    restored = tasks.get(task_id)
+    assert restored is not None
+    await _rendered_borders(tmux_server, tmux, restored)
+    for role in (Role.LEADER, Role.IMPLEMENTER):
+        assert socket.gethostname() not in await tmux.display(restored.panes[role], "#{pane_title}")
+
+
+async def test_a_single_restored_agent_pane_is_retitled(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    layout, tasks, _, task_id = await _task_window(connection, clock, tmux_server, tmp_path)
+    task = tasks.get(task_id)
+    assert task is not None
+    tmux = build_tmux(tmux_server)
+    await tmux_server.run("kill-pane", "-t", task.panes[Role.LEADER])
+
+    restored = await layout.ensure(task)
+
+    title = await tmux.display(restored.panes[Role.LEADER], "#{pane_title}")
+    assert title.startswith("Leader")
+    assert socket.gethostname() not in title
+
+
+async def test_a_role_handed_back_before_its_pane_is_rebuilt_is_titled_without_the_operator_flag(
+    connection: Connection, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    layout, tasks, _, task_id = await _task_window(connection, clock, tmux_server, tmp_path)
+    task = tasks.get(task_id)
+    assert task is not None
+    runs = RunStore(connection, clock)
+    run = runs.start(task_id, Role.IMPLEMENTER, _FAKE_RUNG)
+    runs.mark_taken_over(run.id)
+    tmux = build_tmux(tmux_server)
+    await tmux_server.run("kill-pane", "-t", task.panes[Role.IMPLEMENTER])
+    runs.mark_live(run.id)
+
+    restored = await layout.ensure(task)
+
+    title = await tmux.display(restored.panes[Role.IMPLEMENTER], "#{pane_title}")
+    assert title.startswith("Implementer")
+    assert "operator" not in title

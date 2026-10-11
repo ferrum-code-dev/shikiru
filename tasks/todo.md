@@ -215,7 +215,7 @@ Fourth-review scope and evidence: [fourth real-project review](../docs/tui-feedb
 - [x] Task 134: Show Recent as a bottom-aligned three-task window with Later/Earlier
 - [x] Task 135: Right-align the latest command in the actions bar
 - [x] Task 136: Colour agent context by usage level
-- [ ] Task 137: Preserve agent pane titles across session restart
+- [x] Task 137: Preserve agent pane titles across session restart
 - [ ] Task 138: Document that takeover is not restored after respawn
 - [ ] Task 139: Revise the HTML reference to match the TUI
 - [ ] Task 140: Verify the fourth review and reconcile Phase 11 evidence

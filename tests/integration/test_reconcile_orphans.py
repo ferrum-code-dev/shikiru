@@ -12,6 +12,7 @@ from shikiru.config.settings import AgentConfig, ProjectConfig
 from shikiru.domain.tasks import Role
 from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.reconcile import Reconciler
+from shikiru.engine.titles import TaskTitles
 from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.paths import run_dir
 from shikiru.process import SubprocessRunner
@@ -83,19 +84,22 @@ async def _reconciler(
     tasks = _TasksFailingOnce(connection, clock, fail_on_read=fail_on_read)
     events = EventLog(connection, clock)
     faults = build_fault_reporter(events, clock, settings)
+    decorator = PaneDecorator(tmux)
+    runs = RunStore(connection, clock)
     layout = LayoutGuard(
         tmux=tmux,
         view=SessionView(tmux),
         builder=LayoutBuilder(tmux),
-        decorator=PaneDecorator(tmux),
+        decorator=decorator,
         session_target=exact_target(session_name("test")),
         tasks=tasks,
         settings=settings,
         project_root=project,
         events=events,
-        runs=RunStore(connection, clock),
+        runs=runs,
         commands=CommandQueue(connection, clock),
         faults=faults,
+        refresh_titles=TaskTitles(decorator, runs, settings).refresh,
     )
     return Reconciler(
         tasks=tasks,
