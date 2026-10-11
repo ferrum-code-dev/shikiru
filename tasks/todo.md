@@ -225,7 +225,7 @@ Fifth-review scope and evidence: [fifth real-project review](../docs/tui-feedbac
 
 - [x] Task 142: Restore the `No decision needed` wording for a task without an escalation
 - [x] Task 143: Make Up and Down inert while the escalations bar is focused
-- [ ] Task 144: One-column task-detail scrollbar
+- [x] Task 144: One-column task-detail scrollbar
 - [ ] Task 145: Animate every in-progress status like Implementing
 - [ ] Task 146: Restore Implementer pane titles after restart
 - [ ] Task 147: Verify the fifth review and reconcile Phase 11 evidence

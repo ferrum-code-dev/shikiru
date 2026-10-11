@@ -37,6 +37,7 @@ PRIMARY_TEXT = PRIMARY_TEXT_COLOR
 SECONDARY_TEXT = SECONDARY_TEXT_COLOR
 FOCUS = STEEL_BLUE
 THEME_NAME = "shikiru"
+SCROLLBAR_WIDTH = 1
 
 SHIKIRU_THEME = Theme(
     name=THEME_NAME,
@@ -67,6 +68,7 @@ SHIKIRU_THEME = Theme(
         "scrollbar-background-hover": SCROLLBAR_TRACK_COLOR,
         "scrollbar-corner-color": SCROLLBAR_TRACK_COLOR,
         "scrollbar-hover": SCROLLBAR_THUMB_HOVER_COLOR,
+        "scrollbar-width": str(SCROLLBAR_WIDTH),
         "secondary-text": SECONDARY_TEXT,
         "selected-surface": SELECTED_SURFACE_COLOR,
         "selection-outline": SELECTION_OUTLINE_COLOR,

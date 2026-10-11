@@ -295,7 +295,9 @@ class TaskDetailPanel(Vertical):
     #task-detail-context-info { height: auto; color: $primary-text; }
     #task-detail-ownership { height: auto; padding: 0; color: $amber; }
     #task-detail-feedback { height: auto; min-height: 0; color: $secondary-text; }
-    #task-detail-body { height: auto; max-height: 32; padding: 0 1; }
+    #task-detail-body {
+        height: auto; max-height: 32; padding: 0 1; scrollbar-size-vertical: $scrollbar-width;
+    }
     #task-detail-summary-usage {
         width: 100%; height: auto; margin-top: 1; padding-top: 0;
         border-top: solid $neutral-border;

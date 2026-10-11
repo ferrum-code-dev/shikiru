@@ -386,7 +386,7 @@ class QueuePanel(Vertical):
     #task-browser-count { height: 1; margin-bottom: 1; color: $steel-blue; }
     #task-browser-list {
         height: 12; min-height: 2; border: none; padding: 0; background: $background;
-        scrollbar-size-vertical: 1;
+        scrollbar-size-vertical: $scrollbar-width;
     }
     #task-browser-list > ListItem {
         height: auto; min-height: 2; margin-bottom: 1; padding: 0;

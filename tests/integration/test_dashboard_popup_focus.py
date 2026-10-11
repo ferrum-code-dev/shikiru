@@ -4,11 +4,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from textual.color import Color
 from textual.containers import VerticalScroll
-from textual.widgets import Button, DataTable, ListView
+from textual.widgets import Button, DataTable, ListView, Select
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
+from shikiru.dashboard.detail import TASK_DETAIL_BODY, TaskDetailBody
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
@@ -22,6 +24,7 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.popup import POPUP_CLOSE_CLASS
+from shikiru.ui.theme import SCROLLBAR_WIDTH
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, choose_focus_view, state_views
@@ -41,8 +44,19 @@ if TYPE_CHECKING:
 
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SIZE = (120, 40)
+_COMPACT_APP_SIZE = (48, 20)
 _OVERFLOWING_HELP_SIZE = (70, 22)
+_OVERFLOWING_WORDS = 400
 _WAIT_SECONDS = 2
+_SCROLLBAR_COLOUR_VARIABLES = (
+    "scrollbar",
+    "scrollbar-hover",
+    "scrollbar-active",
+    "scrollbar-background",
+    "scrollbar-background-hover",
+    "scrollbar-background-active",
+    "scrollbar-corner-color",
+)
 _PROJECT_NAME = "popup-focus"
 _COMMAND_HISTORY_LABEL = "Command history · Pending, Applied and Rejected"
 _USAGE_DETAILS_LABEL = "Usage details"
@@ -146,6 +160,8 @@ def _dashboard(
     reader: StateReader,
     project_dir: Path,
     clock: FakeClock,
+    *,
+    focus_task: str | None = None,
 ) -> DashboardApp:
     settings = load_settings(project_dir)
     commands = OperatorCommands(CommandQueue(connection, clock), clock, engine_up=lambda: False)
@@ -165,8 +181,15 @@ def _dashboard(
         )
 
     app = DashboardApp(
-        focus_task=None,
-        views=state_views(reader, project_dir, clock, StubServices(), settings=settings),
+        focus_task=focus_task,
+        views=state_views(
+            reader,
+            project_dir,
+            clock,
+            StubServices(),
+            focus_task=focus_task,
+            settings=settings,
+        ),
         on_change=reader.watch,
         clock=clock,
         motion_interval_seconds=None,
@@ -247,6 +270,8 @@ async def test_popup_bodies_and_task_lists_share_one_scrollbar_style(
         await pilot.pause()
         home = popup_app.screen
         expected = _scrollbar_style(popup_app.query_one("#task-browser-list", ListView))
+        detail_body = popup_app.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
+        assert _scrollbar_style(detail_body) == expected
         await pilot.press("?")
         await wait_until(
             lambda: bool(popup_app.screen.query("#workspace-help-scroll")),
@@ -261,6 +286,80 @@ async def test_popup_bodies_and_task_lists_share_one_scrollbar_style(
             timeout=_WAIT_SECONDS,
         )
         assert _scrollbar_style(popup_app.screen.query_one("#focus-views-list")) == expected
+
+
+def _shared_scrollbar_style(app: DashboardApp) -> tuple[object, ...]:
+    variables = app.get_css_variables()
+    colours = tuple(Color.parse(variables[name]) for name in _SCROLLBAR_COLOUR_VARIABLES)
+    return (*colours, SCROLLBAR_WIDTH)
+
+
+def _seed_overflowing_task(connection: Connection, clock: FakeClock) -> str:
+    title = " ".join(f"word{index}" for index in range(_OVERFLOWING_WORDS))
+    return seed_task(connection, clock, title=title, mode=Mode.IMPLEMENT).id
+
+
+_TASK_DETAIL_LAYOUTS = (
+    pytest.param(_APP_SIZE, False, id="home-wide"),
+    pytest.param(_COMPACT_APP_SIZE, False, id="home-compact"),
+    pytest.param(_APP_SIZE, True, id="standalone"),
+)
+
+
+@pytest.mark.parametrize(("size", "standalone"), _TASK_DETAIL_LAYOUTS)
+async def test_overflowing_task_detail_has_one_column_scrollbar_with_shared_colours(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    size: tuple[int, int],
+    standalone: bool,
+) -> None:
+    clock = FakeClock(_START)
+    task_id = _seed_overflowing_task(connection, clock)
+    app = _dashboard(
+        connection,
+        reader,
+        write_minimal_project(tmp_path),
+        clock,
+        focus_task=task_id if standalone else None,
+    )
+    async with app.run_test(size=size) as pilot:
+        body = app.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
+        await wait_until(lambda: body.max_scroll_y > 0, timeout=_WAIT_SECONDS)
+        await pilot.pause()
+        assert body.scrollable_content_region.width == (
+            body.region.width - body.styles.gutter.width - SCROLLBAR_WIDTH
+        )
+        assert _scrollbar_style(body) == _shared_scrollbar_style(app)
+
+
+async def test_task_views_select_dropdown_shares_the_one_column_popup_scrollbar(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task_id = seed_task(connection, clock, title="Views task", mode=Mode.IMPLEMENT).id
+    app = _dashboard(
+        connection,
+        reader,
+        write_minimal_project(tmp_path),
+        clock,
+        focus_task=task_id,
+    )
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        await pilot.press("v")
+        await wait_until(
+            lambda: bool(app.screen.query("#task-detail-view-choice")),
+            timeout=_WAIT_SECONDS,
+        )
+        choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
+        choice.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        dropdown = choice.query_one("SelectOverlay")
+        assert _scrollbar_style(dropdown) == _shared_scrollbar_style(app)
 
 
 async def test_help_body_scrolls_from_its_initial_focus_without_resizing_the_frame(

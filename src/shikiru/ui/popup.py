@@ -210,7 +210,9 @@ POPUP_CONTROL_CSS = """
 .popup-frame Select.-expanded > SelectCurrent {
     border: solid $focus; background: $selected-surface;
 }
-.popup-frame SelectOverlay { border: solid $neutral-border; }
+.popup-frame SelectOverlay {
+    border: solid $neutral-border; scrollbar-size-vertical: $scrollbar-width;
+}
 .popup-frame SelectOverlay:focus { border: solid $focus; }
 .popup-frame Select:disabled > SelectCurrent { color: $secondary-text; }
 .popup-frame Button.popup-close-control {
@@ -239,7 +241,7 @@ POPUP_CSS = (
 .popup-frame.stable > .popup-body { height: 1fr; }
 .popup-body, .popup-frame #task-detail-body {
     overflow-x: hidden; overflow-y: auto;
-    scrollbar-size-horizontal: 0; scrollbar-size-vertical: 1;
+    scrollbar-size-horizontal: 0; scrollbar-size-vertical: $scrollbar-width;
 }
 .popup-secondary { color: $secondary-text; }
 """
