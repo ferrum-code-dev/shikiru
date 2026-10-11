@@ -2028,7 +2028,7 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
         reader.close()
 
 
-async def test_focus_attention_keyboard_selects_late_groups_in_the_compact_row(
+async def test_focus_attention_up_and_down_keep_the_first_group_among_many(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -2074,28 +2074,18 @@ async def test_focus_attention_keyboard_selects_late_groups_in_the_compact_row(
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
         )
-        selected_group = views.attention().groups[8]
-        selected_task_id = selected_group.task_id
-        assert selected_task_id is not None
+        first_escalation_id = views.attention().groups[0].escalations[0].escalation_id
         async with app.run_test(size=(100, 32)) as pilot:
             panel = app.query_one(EscalationsPanel)
             scroll = panel.query_one("#escalation-panels", VerticalScroll)
             panel.focus()
             await pilot.press(*("down" for _ in range(8)))
-            await wait_until(
-                lambda: (
-                    selected_task_id in plain_text(scroll.query_one(Static).content)
-                    and selected_group.escalations[0].escalation_id
-                    in plain_text(scroll.query_one(Static).content)
-                ),
-                timeout=1,
-            )
+            await pilot.pause()
+            assert first_escalation_id in plain_text(scroll.query_one(Static).content)
             panel.focus()
             await pilot.press("enter")
             await wait_until(
-                lambda: (
-                    opened_actions == [f"resolve {selected_group.escalations[0].escalation_id}"]
-                ),
+                lambda: opened_actions == [f"resolve {first_escalation_id}"],
                 timeout=1,
             )
     finally:

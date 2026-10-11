@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from rich.console import Console
 from textual.color import Color
+from textual.containers import VerticalScroll
 from textual.widgets import ListView
 
 from shikiru.config.loader import load_settings
@@ -43,6 +44,7 @@ _WIDE = (120, 40)
 _COMPACT = (48, 20)
 _MAX_ROWS = 6
 _BAR = "#escalations"
+_SCROLLERS = ("#focus-root", "#focus-readouts", "#escalation-panels")
 _TASK_LIST = "#task-browser-list"
 _NO_HINT_ACTIONS = "Ctrl+P actions"
 _OTHER_DECISIONS = re.compile(r"\d+ decisions? on other tasks")
@@ -302,3 +304,53 @@ async def test_a_choice_made_with_left_and_right_survives_refreshes(
         await wait_until(lambda: extra in home.text(), timeout=_WAIT_SECONDS)
         await pilot.pause()
         assert extra in home.text()
+
+
+def _scroll_offsets(app: DashboardApp) -> tuple[float, ...]:
+    return tuple(app.query_one(selector, VerticalScroll).scroll_y for selector in _SCROLLERS)
+
+
+async def test_up_and_down_do_nothing_while_the_bar_has_focus_and_the_list_still_moves(
+    home: _Home,
+) -> None:
+    async with home.app.run_test(size=_COMPACT) as pilot:
+        await _settled(home, pilot)
+        await _select(home, pilot, home.second)
+        await wait_until(
+            lambda: home.decisions[home.second.id] in home.text(), timeout=_WAIT_SECONDS
+        )
+        task_list = home.app.query_one(_TASK_LIST, ListView)
+        highlighted = task_list.highlighted_child
+        shown = home.text()
+        offsets = _scroll_offsets(home.app)
+        home.bar.focus()
+        for key in ("up", "down", "up"):
+            await pilot.press(key)
+            await pilot.pause()
+            assert home.app.focused is home.bar
+            assert home.text() == shown
+            assert task_list.highlighted_child is highlighted
+            assert _scroll_offsets(home.app) == offsets
+        task_list.focus()
+        await _select(home, pilot, home.plain)
+        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
+        assert task_list.highlighted_child is not highlighted
+
+
+@pytest.mark.parametrize("key", ["left", "right"])
+async def test_left_and_right_do_nothing_when_the_followed_task_has_one_decision(
+    home: _Home,
+    key: str,
+) -> None:
+    async with home.app.run_test(size=_WIDE) as pilot:
+        await _settled(home, pilot)
+        await _select(home, pilot, home.second)
+        await wait_until(
+            lambda: home.decisions[home.second.id] in home.text(), timeout=_WAIT_SECONDS
+        )
+        shown = home.text()
+        home.bar.focus()
+        await pilot.press(key)
+        await pilot.pause()
+        assert home.app.focused is home.bar
+        assert home.text() == shown

@@ -213,21 +213,13 @@ class EscalationsPanel(Static):
         return True
 
     async def on_key(self, event: events.Key) -> None:
-        """Select a group, open its task or evidence, or request the first decision's resolution."""
-        if not self._attention.groups:
-            if self._focus_row and event.key in _MOVE_STEPS:
-                panels = self.query_one("#escalation-panels", VerticalScroll)
-                panels.scroll_to(
-                    y=panels.scroll_y + _MOVE_STEPS[event.key],
-                    animate=False,
-                    immediate=True,
-                )
-                event.stop()
-            return
+        """Choose a decision with Left and Right; open its task, evidence or resolution."""
         if event.key in _MOVE_STEPS:
-            await self._move_group(_MOVE_STEPS[event.key])
-            event.stop()
-        elif event.key in _DECISION_MOVE_STEPS:
+            self._handle_vertical_key(event)
+            return
+        if not self._attention.groups:
+            return
+        if event.key in _DECISION_MOVE_STEPS:
             if await self._move_decision(_DECISION_MOVE_STEPS[event.key]):
                 event.stop()
         elif event.key == _OPEN_TASK_KEY:
@@ -261,16 +253,15 @@ class EscalationsPanel(Static):
             await self._open_fault_evidence()
         event.stop()
 
-    async def _move_group(self, step: int) -> None:
-        if self._not_escalated_task_id() is not None:
-            self._selected = -1 if step > 0 else 0
-        self._selected = (self._selected + step) % len(self._attention.groups)
-        group = self._attention.groups[self._selected]
-        self._followed_task_id = group.task_id
-        self._selected_escalation_id = (
-            group.escalations[0].escalation_id if group.escalations else None
-        )
-        await self._render_panels(reveal_selection=True)
+    def _handle_vertical_key(self, event: events.Key) -> None:
+        if self._focus_row and not self._attention.groups:
+            panels = self.query_one("#escalation-panels", VerticalScroll)
+            panels.scroll_to(
+                y=panels.scroll_y + _MOVE_STEPS[event.key],
+                animate=False,
+                immediate=True,
+            )
+        event.stop()
 
     async def _move_decision(self, step: int) -> bool:
         decisions = self._attention.groups[self._selected].escalations
