@@ -1241,14 +1241,15 @@ html&gt;body{padding:0}&lt;/style&gt;
     const task = tasks.find(item =&gt; item.id === id);
     return task ? effective(task) : null;
   };
-  const isAgentProcessing = task =&gt; scene.value !== &#x27;stopped&#x27; &amp;&amp; [&#x27;Implementing&#x27;,&#x27;Verifying&#x27;].includes(task.state);
+  const isAgentProcessing = task =&gt; scene.value !== &#x27;stopped&#x27; &amp;&amp; [&#x27;Starting&#x27;,&#x27;Triaging&#x27;,&#x27;Planning&#x27;,&#x27;Implementing&#x27;,&#x27;Consulting&#x27;,&#x27;Verifying&#x27;,&#x27;Integrating&#x27;].includes(task.state);
   const marker = task =&gt; task.state === &#x27;Done&#x27; ? &#x27;✓&#x27; : task.state === &#x27;Cancelled&#x27; ? &#x27;○&#x27; : task.state.includes(&#x27;Decision&#x27;) ? &#x27;!&#x27; : task.state.includes(&#x27;Paused&#x27;) ? &#x27;=&#x27; : task.state.includes(&#x27;Operator&#x27;) ? &#x27;@&#x27; : task.state === &#x27;Reworking&#x27; ? &#x27;↺&#x27; : isAgentProcessing(task) ? &#x27;●&#x27; : task.step === &#x27;Queued&#x27; ? &#x27;·&#x27; : &#x27;○&#x27;;
   const activeStatusClass = task =&gt; isAgentProcessing(task) ? &#x27;shk-active-status&#x27; : &#x27;&#x27;;
   const markerMarkup = task =&gt; isAgentProcessing(task) ? &#x27;&lt;span class=&quot;shk-active-mark&quot; aria-hidden=&quot;true&quot;&gt;&lt;/span&gt;&#x27; : marker(task);
+  const rowMarker = task =&gt; isAgentProcessing(task) ? &#x27;›&#x27; : marker(task);
   const isTerminal = task =&gt; [&#x27;Done&#x27;,&#x27;Cancelled&#x27;].includes(task.state);
   const stateText = task =&gt; scene.value === &#x27;stopped&#x27; &amp;&amp; [&#x27;T-43&#x27;,&#x27;T-44&#x27;].includes(task.id) ? &#x27;Stopped · resume on engine start&#x27; : task.state;
   const stateClass = task =&gt; scene.value === &#x27;stopped&#x27; &amp;&amp; [&#x27;T-43&#x27;,&#x27;T-44&#x27;].includes(task.id) ? &#x27;wait&#x27; : task.tone;
-  const buttonRow = (task, id) =&gt; `&lt;button type=&quot;button&quot; class=&quot;shk-task-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-row-title&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)}&lt;/span&gt; &lt;span class=&quot;shk-strong&quot;&gt;${task.id}&lt;/span&gt; · ${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-row-state shk-${stateClass(task)} ${activeStatusClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`;
+  const buttonRow = (task, id) =&gt; `&lt;button type=&quot;button&quot; class=&quot;shk-task-row&quot; data-task=&quot;${task.id}&quot; aria-pressed=&quot;${selections[id] === task.id}&quot;&gt;&lt;span class=&quot;shk-row-title&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${rowMarker(task)}&lt;/span&gt; &lt;span class=&quot;shk-strong&quot;&gt;${task.id}&lt;/span&gt; · ${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-row-state shk-${stateClass(task)} ${activeStatusClass(task)}&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`;
   const stages = task =&gt; {
     if (task.step === &#x27;Queued&#x27;) return &#x27;&lt;div class=&quot;shk-stages shk-dim&quot;&gt;Triage · Implement · Verify · Merge&lt;/div&gt;&#x27;;
     return `&lt;div class=&quot;shk-stages&quot;&gt;&lt;span class=&quot;shk-good&quot;&gt;✓ Triage&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Implement&#x27; ? &#x27;shk-accent&#x27; : &#x27;shk-good&#x27;}&quot;&gt;${task.step === &#x27;Implement&#x27; ? &#x27;›&#x27; : &#x27;✓&#x27;} Implement&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Verify&#x27; ? &#x27;shk-accent&#x27; : &#x27;shk-dim&#x27;}&quot;&gt;${task.step === &#x27;Verify&#x27; ? &#x27;›&#x27; : task.step === &#x27;Merged&#x27; ? &#x27;✓&#x27; : &#x27;·&#x27;} Verify&lt;/span&gt;&lt;span class=&quot;${task.step === &#x27;Merged&#x27; ? &#x27;shk-good&#x27; : &#x27;shk-dim&#x27;}&quot;&gt;${task.step === &#x27;Merged&#x27; ? &#x27;✓&#x27; : &#x27;·&#x27;} Merge&lt;/span&gt;&lt;/div&gt;`;
@@ -1261,7 +1262,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     if (hasDecision() &amp;&amp; (!selected || selected === decisionTaskId)) return `&lt;button type=&quot;button&quot; class=&quot;shk-attention is-armed&quot; data-task=&quot;${decisionTaskId}&quot; data-open=&quot;resolve&quot;&gt;&lt;span class=&quot;shk-attention-text&quot;&gt;&lt;span class=&quot;shk-wait&quot;&gt;!&lt;/span&gt; &lt;span class=&quot;shk-wait shk-bold&quot;&gt;${decisionId}&lt;/span&gt; · &lt;span class=&quot;shk-strong&quot;&gt;${decisionTaskId}&lt;/span&gt; · consult · Decision required: Which failures should the parser retry?&lt;/span&gt;&lt;span class=&quot;shk-attention-hint&quot;&gt;Enter answer ↵&lt;/span&gt;${holdLine}&lt;/button&gt;`;
     const others = hasDecision() ? &#x27;&lt;span class=&quot;shk-dim&quot;&gt; · 1 decision on other tasks&lt;/span&gt;&#x27; : &#x27;&#x27;;
     const stop = hasDecision() ? &#x27; tabindex=&quot;0&quot;&#x27; : &#x27;&#x27;;
-    return `&lt;div class=&quot;shk-attention&quot;${stop}&gt;&lt;span class=&quot;shk-attention-text&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;${selected}&lt;/span&gt; is not escalated${others}&lt;/span&gt;&lt;span class=&quot;shk-attention-hint&quot;&gt;Ctrl+P actions&lt;/span&gt;${holdLine}&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-attention&quot;${stop}&gt;&lt;span class=&quot;shk-attention-text&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;${selected}&lt;/span&gt; · No decision needed${others}&lt;/span&gt;&lt;span class=&quot;shk-attention-hint&quot;&gt;Ctrl+P actions&lt;/span&gt;${holdLine}&lt;/div&gt;`;
   };
   const top = () =&gt; {
     const runtime = scene.value === &#x27;stopped&#x27; ? &#x27;&lt;span class=&quot;shk-bad&quot;&gt;○ Engine stopped&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Last 1h 23m&lt;/span&gt;&#x27; : &#x27;&lt;span class=&quot;shk-good&quot;&gt;● Engine running&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Uptime 1h 23m&lt;/span&gt;&#x27;;
@@ -1669,6 +1670,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]) delete overlays[id];
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; selections[id]) selections[id]=null;
     else if (editing) return;
+    else if (!overlays[id] &amp;&amp; [&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;].includes(event.key) &amp;&amp; event.target.closest(&#x27;.shk-attention&#x27;)) {event.preventDefault();return;}
     else if (overlays[id]===&#x27;history&#x27; &amp;&amp; [&#x27;p&#x27;,&#x27;n&#x27;].includes(event.key.toLowerCase())) {
       const rows=historyRows();
       const pageCount=Math.max(1,Math.ceil(rows.length/historyPageSize));
