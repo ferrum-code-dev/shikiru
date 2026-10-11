@@ -243,6 +243,8 @@ class WorkspaceRuntime:
             motion_interval_seconds=None,
             resources_refresh_seconds=self.settings.orchestration.resources.sample_seconds,
             docker_refresh_seconds=self.settings.dashboard.docker_refresh_seconds,
+            quota_warn_pct=self.settings.dashboard.gauges.quota_warn_pct,
+            quota_alert_pct=self.settings.dashboard.gauges.quota_alert_pct,
             timeline_refresh_seconds=self.settings.dashboard.timeline_refresh_seconds,
             open_palette=open_palette,
             open_palette_context=open_palette_context,

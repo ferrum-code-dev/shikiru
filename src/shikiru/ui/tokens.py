@@ -43,23 +43,8 @@ STYLE_REVERSE = "reverse"
 """Attributes paired with every panel colour (06 §6.1): under `NO_COLOR`, Rich keeps the
 attribute and drops the colour, giving the required monochrome bold/dim/reverse."""
 
-GAUGE_WARN_THRESHOLD_PCT = 70
-GAUGE_ALERT_THRESHOLD_PCT = 90
-GAUGE_OK_COLOR = SUCCESS_COLOR
-GAUGE_WARN_COLOR = HOLD_COLOR
-GAUGE_ALERT_COLOR = ALERT_COLOR
-
 USAGE_LEVEL_COLORS: dict[UsageLevel, str] = {
     UsageLevel.OK: SAGE,
     UsageLevel.WARN: AMBER,
     UsageLevel.ALERT: DUSTY_ROSE,
 }
-
-
-def gauge_color(used_pct: float) -> str:
-    """Return the gauge colour for `used_pct`, green below 70%, yellow below 90%, else red."""
-    if used_pct >= GAUGE_ALERT_THRESHOLD_PCT:
-        return GAUGE_ALERT_COLOR
-    if used_pct >= GAUGE_WARN_THRESHOLD_PCT:
-        return GAUGE_WARN_COLOR
-    return GAUGE_OK_COLOR

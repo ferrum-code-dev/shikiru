@@ -1144,6 +1144,8 @@ class DashboardApp(App[None]):
         motion_interval_seconds: float | None,
         resources_refresh_seconds: float,
         docker_refresh_seconds: float,
+        quota_warn_pct: int,
+        quota_alert_pct: int,
         animations: bool = True,
         open_palette: OpenPalette,
         widget_names: Sequence[str],
@@ -1167,6 +1169,8 @@ class DashboardApp(App[None]):
         self._resources_refresh_seconds = resources_refresh_seconds
         self._docker_refresh_seconds = docker_refresh_seconds
         self._timeline_refresh_seconds = timeline_refresh_seconds
+        self._quota_warn_pct = quota_warn_pct
+        self._quota_alert_pct = quota_alert_pct
         self._open_palette = open_palette
         self._open_palette_context = open_palette_context
         self._palette_drafts: dict[tuple[str, str, str | None], PaletteDraft] = {}
@@ -1298,6 +1302,8 @@ class DashboardApp(App[None]):
             resources_refresh_seconds=self._resources_refresh_seconds,
             docker_refresh_seconds=self._docker_refresh_seconds,
             timeline_refresh_seconds=self._timeline_refresh_seconds,
+            quota_warn_pct=self._quota_warn_pct,
+            quota_alert_pct=self._quota_alert_pct,
             clock=self._clock,
             animations=self._animations,
             on_change=self._on_change,

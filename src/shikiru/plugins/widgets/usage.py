@@ -27,12 +27,17 @@ ENTER_KEY = "enter"
 PROJECT_SCOPE = "Project"
 
 
-def _agent_block(usage: AgentUsageView) -> Group:
+def _agent_block(usage: AgentUsageView, context: WidgetContext) -> Group:
     lines: list[RenderableType] = [ProjectAgentUsageDetails(usage).render()]
     lines.extend(
         Text.assemble(
             "  ",
-            Gauge(quota.name, quota.used_pct).render(),
+            Gauge(
+                quota.name,
+                quota.used_pct,
+                context.quota_warn_pct,
+                context.quota_alert_pct,
+            ).render(),
             f" · reset {quota.resets_in} · observed {quota.observed_ago}",
         )
         for quota in usage.quotas
@@ -123,7 +128,7 @@ class UsagePanel(GatedStatic):
                         ProjectUsageDetails(detail.usage).render(),
                     )
                 )
-        lines.extend(_agent_block(item) for item in usage)
+        lines.extend(_agent_block(item, self._widget_context) for item in usage)
         if not usage:
             lines.append(Text("No runs or quota windows recorded."))
         self.update_if_changed(Group(*lines))

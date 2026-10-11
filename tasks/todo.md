@@ -232,6 +232,6 @@ Fifth-review scope and evidence: [fifth real-project review](../docs/tui-feedbac
 
 Sixth-review scope and evidence: [sixth real-project review](../docs/tui-feedback-sixth-review.md). Task 149 waits for the operator to approve the panel layout.
 
-- [ ] Task 148: Colour subscription-limit gauges at 50 and 90 percent
+- [x] Task 148: Colour subscription-limit gauges at 50 and 90 percent
 - [ ] Task 149: Project usage panel title and layout (waits for layout approval)
 - [ ] Task 150: Verify the sixth review and reconcile Phase 11 evidence

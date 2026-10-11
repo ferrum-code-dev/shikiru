@@ -899,6 +899,8 @@ class WidgetContext:
     resources_refresh_seconds: float
     docker_refresh_seconds: float
     timeline_refresh_seconds: float
+    quota_warn_pct: int
+    quota_alert_pct: int
     clock: Clock
     on_change: OnChangeRegistration
     on_motion: MotionRegistration

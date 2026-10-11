@@ -18,7 +18,7 @@ GIT_DEFAULT_REMOTE = "origin"
 MAX_MOTION_REFRESH_HZ = 4
 MAX_TIMELINE_PAGE_SIZE = 49
 MAX_TIMELINE_SIGNAL_SCAN_ROWS = 1024
-MAX_CONTEXT_PCT = 100
+MAX_USAGE_PCT = 100
 
 
 class ConfigModel(BaseModel):
@@ -167,14 +167,30 @@ class TitlesConfig(ConfigModel):
     implementer: str
     system: str
     shell: str
-    context_warn_pct: int = Field(gt=0, le=MAX_CONTEXT_PCT)
-    context_alert_pct: int = Field(gt=0, le=MAX_CONTEXT_PCT)
+    context_warn_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
+    context_alert_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
 
     @model_validator(mode="after")
     def _context_warn_below_alert(self) -> TitlesConfig:
         if self.context_warn_pct >= self.context_alert_pct:
             message = (
                 "dashboard.titles.context_warn_pct must be below dashboard.titles.context_alert_pct"
+            )
+            raise ValueError(message)
+        return self
+
+
+class GaugesConfig(ConfigModel):
+    """`[dashboard.gauges]`: subscription-limit gauge thresholds (06 §5.3, §6.1)."""
+
+    quota_warn_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
+    quota_alert_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
+
+    @model_validator(mode="after")
+    def _quota_warn_below_alert(self) -> GaugesConfig:
+        if self.quota_warn_pct >= self.quota_alert_pct:
+            message = (
+                "dashboard.gauges.quota_warn_pct must be below dashboard.gauges.quota_alert_pct"
             )
             raise ValueError(message)
         return self
@@ -203,6 +219,7 @@ class DashboardConfig(ConfigModel):
     widgets: list[str]
     layout: LayoutSplit
     titles: TitlesConfig
+    gauges: GaugesConfig
     animations: bool
     motion: DashboardMotionConfig
     docker_refresh_seconds: float = Field(gt=0)

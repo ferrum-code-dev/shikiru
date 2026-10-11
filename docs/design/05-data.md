@@ -125,6 +125,10 @@ shell = "Project folder · {cwd}"
 context_warn_pct = 40                           # agent pane-title context turns amber from this whole percentage (06 §5.3)
 context_alert_pct = 60                          # ... dusty rose from this one; must be above context_warn_pct
 
+[dashboard.gauges]                              # subscription-limit (quota) gauges: 06 §5.4, §6.1
+quota_warn_pct = 50                             # amber from this whole percentage
+quota_alert_pct = 90                            # dusty rose from this one; must be above quota_warn_pct
+
 [notify]
 command = ""                                    # optional; event JSON on stdin for escalation and task_done
 timeout_seconds = 30                            # the hook is killed (with its process group) after this

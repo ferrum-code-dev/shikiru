@@ -933,6 +933,8 @@ async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(
         motion_interval_seconds=None,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
+        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         open_palette=ignore_palette_action,
         widget_names=["queue", "usage"],
     )

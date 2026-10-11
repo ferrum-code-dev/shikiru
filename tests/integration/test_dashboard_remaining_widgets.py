@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 import psutil
 import pytest
 from rich.cells import cell_len
+from textual.color import Color
 from textual.containers import Vertical, VerticalGroup, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, DataTable, Label, ListItem, ListView, Static
@@ -73,6 +74,7 @@ from shikiru.tmux.client import (
     TMUX_ENV_COMMAND,
     Tmux,
 )
+from shikiru.ui.tokens import AMBER, DUSTY_ROSE, SAGE
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -276,6 +278,15 @@ async def _assert_compact_readouts(context: WidgetContext) -> None:
 def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
     lines = widget.render_lines(Region(0, 0, widget.region.width, widget.region.height))
     return tuple(line.text.rstrip() for line in lines if line.text.strip())
+
+
+def _quota_gauge_colour(widget: Static, label: str) -> Color:
+    strips = widget.render_lines(Region(0, 0, widget.region.width, widget.region.height))
+    line = next(strip for strip in strips if label in strip.text)
+    percent = next(segment for segment in line if segment.text.endswith("%"))
+    assert percent.style is not None
+    assert percent.style.color is not None
+    return Color.from_rich_color(percent.style.color)
 
 
 def _project_diagnostics_text(screen: Widget) -> str:
@@ -827,6 +838,37 @@ async def test_project_usage_widget_keeps_detailed_monetary_and_token_evidence(
         assert "input 0" not in unknown_agent
 
 
+_QUOTA_GAUGE_COLOUR_CASES = (
+    pytest.param(38.0, SAGE, id="well-below-warn"),
+    pytest.param(49.4, SAGE, id="displayed-49-below-warn"),
+    pytest.param(49.6, AMBER, id="displayed-50-warn"),
+    pytest.param(50.0, AMBER, id="warn-threshold"),
+    pytest.param(89.4, AMBER, id="displayed-89-below-alert"),
+    pytest.param(89.6, DUSTY_ROSE, id="displayed-90-alert"),
+    pytest.param(100.0, DUSTY_ROSE, id="full"),
+    pytest.param(120.0, DUSTY_ROSE, id="above-full"),
+)
+
+
+@pytest.mark.usefixtures("colour_terminal")
+@pytest.mark.parametrize(("used_pct", "colour"), _QUOTA_GAUGE_COLOUR_CASES)
+async def test_quota_gauge_takes_the_colour_of_its_displayed_usage_level(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    used_pct: float,
+    colour: str,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    QuotaStore(connection).record(
+        "codex", QuotaWindow("weekly", used_pct, START + timedelta(hours=3), START)
+    )
+    widget = cast("UsagePanel", UsageWidget().create(widget_context(reader, project_dir, clock)))
+    async with WidgetHostApp(widget).run_test(size=(COMPACT_READOUT_WIDTH, USAGE_DETAIL_HEIGHT)):
+        assert _quota_gauge_colour(widget, "weekly") == Color.parse(colour)
+
+
 async def test_task_usage_widget_shows_aggregate_charge_and_unknown_token_state(
     connection: Connection,
     reader: StateReader,
@@ -1041,6 +1083,8 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         motion_interval_seconds=None,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
+        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         open_palette=open_palette,
         widget_names=["queue", "resources"],
     )
@@ -1213,6 +1257,8 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         motion_interval_seconds=None,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
+        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         open_palette=open_palette,
         widget_names=["queue", "resources", "docker"],
     )

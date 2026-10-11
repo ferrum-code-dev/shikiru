@@ -7,7 +7,13 @@ from pydantic import ValidationError
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.loader import load_settings
-from shikiru.config.settings import ComplexityLadder, DashboardConfig, Settings, TitlesConfig
+from shikiru.config.settings import (
+    ComplexityLadder,
+    DashboardConfig,
+    GaugesConfig,
+    Settings,
+    TitlesConfig,
+)
 from tests.support.config import write_minimal_project
 from tests.support.factories import HELPER_RUNG, make_settings
 
@@ -68,4 +74,19 @@ def test_titles_reject_a_context_warn_threshold_not_below_the_alert_threshold() 
     with pytest.raises(ValidationError):
         TitlesConfig.model_validate(
             {**dict(titles), "context_warn_pct": 60, "context_alert_pct": 60}
+        )
+
+
+@pytest.mark.parametrize(
+    ("warn_pct", "alert_pct"),
+    [(0, 90), (90, 90), (95, 90), (50, 101)],
+)
+def test_gauges_reject_quota_thresholds_outside_zero_below_warn_below_alert_at_most_100(
+    warn_pct: int, alert_pct: int
+) -> None:
+    gauges = make_settings().dashboard.gauges
+
+    with pytest.raises(ValidationError):
+        GaugesConfig.model_validate(
+            {**dict(gauges), "quota_warn_pct": warn_pct, "quota_alert_pct": alert_pct}
         )

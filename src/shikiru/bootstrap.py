@@ -431,6 +431,8 @@ async def run_dashboard(
             motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
             resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
+            quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
             animations=settings.dashboard.animations,
             timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
             open_palette=open_palette,

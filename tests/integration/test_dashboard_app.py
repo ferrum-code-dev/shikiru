@@ -1495,6 +1495,8 @@ def _app(
         ),
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
+        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         animations=settings.dashboard.animations,
         open_palette=open_palette,
         widget_names=widget_names,
