@@ -1,6 +1,6 @@
 # Phase 11 fifth real-project review
 
-Status: Tasks 142–145 delivered, 146 open (not reproduced), 147 verified in the [2026-10-11 record](release-readiness-2026-10-11-phase11-fifth-review.md). This specification refines the [fourth review](tui-feedback-fourth-review.md) and Design 05 §3, 06 §5–6 where the requirements below supersede it. **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 147).
+Status: Tasks 142–145 delivered, 146 closed (not reproduced; the operator confirmed it no longer occurs), 147 verified in the [2026-10-11 record](release-readiness-2026-10-11-phase11-fifth-review.md). This specification refines the [fourth review](tui-feedback-fourth-review.md) and Design 05 §3, 06 §5–6 where the requirements below supersede it. **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 147).
 
 Analysis: four read-only static analyses (Sonnet 5.5 medium for the escalation bar, motion and tmux items, Haiku 5.5 xhigh for the scrollbar). Nothing was run natively; claims marked *unconfirmed* must be reproduced by the implementing task before it changes behaviour.
 

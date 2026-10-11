@@ -227,5 +227,5 @@ Fifth-review scope and evidence: [fifth real-project review](../docs/tui-feedbac
 - [x] Task 143: Make Up and Down inert while the escalations bar is focused
 - [x] Task 144: One-column task-detail scrollbar
 - [x] Task 145: Animate every in-progress status like Implementing
-- [ ] Task 146: Restore Implementer pane titles after restart
-- [x] Task 147: Verify the fifth review and reconcile Phase 11 evidence ([record](../docs/release-readiness-2026-10-11-phase11-fifth-review.md); Task 146 stays open)
+- [x] Task 146: Restore Implementer pane titles after restart (closed: no longer reproduced, no change made)
+- [x] Task 147: Verify the fifth review and reconcile Phase 11 evidence ([record](../docs/release-readiness-2026-10-11-phase11-fifth-review.md))

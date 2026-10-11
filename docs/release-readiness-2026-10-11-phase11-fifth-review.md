@@ -1,6 +1,6 @@
 # Phase 11 fifth-review verification
 
-Status: Task 147 verified Tasks 142–145 on 2026-10-11 against the final source; **Task 146 (Implementer pane titles after restart) was not reproduced and stays open**. Documentation only: no code changed during verification. Earlier accepted evidence, the original PNG and the independently open gates 59, 74h and 74p are unchanged. GNU/Linux remains unverified; everything ran on macOS (Darwin 25.3.0, Python 3.14, Textual 6.3.0). The spec is [`tui-feedback-fifth-review.md`](tui-feedback-fifth-review.md); the preceding record is the [fourth review](release-readiness-2026-10-11-phase11-fourth-review.md).
+Status: Task 147 verified Tasks 142–145 on 2026-10-11 against the final source; **Task 146 (Implementer pane titles after restart) was not reproduced and is closed: the operator confirmed it no longer occurs**. Documentation only: no code changed during verification. Earlier accepted evidence, the original PNG and the independently open gates 59, 74h and 74p are unchanged. GNU/Linux remains unverified; everything ran on macOS (Darwin 25.3.0, Python 3.14, Textual 6.3.0). The spec is [`tui-feedback-fifth-review.md`](tui-feedback-fifth-review.md); the preceding record is the [fourth review](release-readiness-2026-10-11-phase11-fourth-review.md).
 
 Source: `fc1bb18` (Tasks 142–145) plus the HTML commit `docs(reference): align the Focus Steel HTML with the fifth-review TUI`.
 
@@ -12,9 +12,9 @@ Source: `fc1bb18` (Tasks 142–145) plus the HTML commit `docs(reference): align
 | Up/Down inert on the focused escalations bar | `11a43e7` | pass | `test_up_and_down_do_nothing_while_the_bar_has_focus_and_the_list_still_moves`: bar content, selection and scroll offsets unchanged; list arrows still move the selection. HTML: ArrowUp/ArrowDown dispatched on the focused bar leave the selection on T-44 (wide and compact). |
 | One-column task-detail scrollbar | `b1c8972` | pass | `test_dashboard_popup_focus.py` computed-style test for Home wide, compact and standalone (content width and colours); native dumps in Task 144. The HTML draws no scrollbar in the detail pane (its modal bar was already 1ch), so it needed no change. |
 | Integrating and other in-progress statuses animate | `fc1bb18` | pass | `test_dashboard_motion.py` (Integrating and Starting cycle the marker with a FakeClock; static when paused, PR/CI wait, recorded integration wait, escalated, Done, engine down, `animations=false`) and the `is_in_progress_animated` table in `test_domain_motion.py`. HTML: the predicate covers Starting, Triaging, Planning, Implementing, Consulting, Verifying and Integrating, and is static in the Stopped scene; Decision, Waiting, Paused, Operator and Done rows never animate. |
-| Implementer pane titles after restart | none | **open, not reproduced** | See below. |
+| Implementer pane titles after restart | none | **closed, not reproduced** | See below. |
 
-## Task 146 (open)
+## Task 146 (closed)
 
 The executing agent tried: whole-server kill with two and three tasks (stacked and test layouts), a single Implementer pane kill, a dead-pane respawn, and read the hand-back path. Every Leader and Implementer title was correct and no hostname showed. A stale pane id that resolves to another task's pane after a server restart is theoretically possible (`_is_healthy` does not check window membership) but unlikely because windows are recreated in task order; `CosmeticDecorator` swallows tmux failures with a once-per-streak log. No speculative fix was made. Task 137's tests (`test_engine_layout.py` title tests, `test_engine_titles.py`) were run and pass. Questions for the operator: tmux version and `tmux.conf`/`pane-border-format` overrides; which action preceded the missing title (server kill, `Ctrl+B x` on one pane, detach and reattach, hand back after takeover); whether the pane showed the hostname or was empty; whether it recovered after the next usage event; and the engine log around the restart (the cosmetic-failure line).
 
@@ -39,7 +39,7 @@ Skipped on purpose: the macOS clean-install smoke (no packaging or install chang
 
 ## Remaining limits
 
-- Task 146 is unreproduced and open pending the operator details above.
+- Task 146 is closed without a change: unreproduced and confirmed gone by the operator. The window-membership weakness in `_is_healthy` remains a theoretical, unfixed observation.
 - With no attention groups, the compact no-groups bar status still scrolls on Up/Down because it otherwise overflows its two-line strip (Task 143).
 - Integrating waiting on a PR, CI or retry stays static; only the engine's own integration animates.
 - The escalation-panel, wizard and session-picker scrollbars remain two columns (out of scope).
