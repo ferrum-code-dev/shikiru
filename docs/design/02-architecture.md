@@ -149,7 +149,7 @@ pyproject.toml
 src/shikiru/
   bootstrap.py  process.py  clock.py  palette.py  errors.py  paths.py  private.py  view_log.py  __main__.py
   config/       settings.py loader.py defaults.toml
-  domain/       tasks.py steps.py ladder.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py runs.py timeline.py evidence_export.py fencing.py faults.py motion.py
+  domain/       tasks.py steps.py ladder.py levels.py recovery.py scheduling.py escalation.py activity.py commands.py events.py reports.py runs.py timeline.py evidence_export.py fencing.py faults.py motion.py
   store/        database.py migrations/ tasks.py runs.py escalations.py quotas.py events.py commands.py reader.py retention.py notification_cursor.py
   agents/       contracts.py registry.py
     sdk/        turn.py reset_time.py

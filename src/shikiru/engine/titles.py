@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED, Usage
 from shikiru.domain.ladder import pick_rung
-from shikiru.domain.runs import NO_USAGE, RunStatus, context_level, context_title, cost_title
+from shikiru.domain.levels import usage_level
+from shikiru.domain.runs import NO_USAGE, RunStatus, context_title, cost_title
 from shikiru.domain.steps import ACTING_ROLE
 from shikiru.domain.tasks import Hold, Role, Status, Step
 from shikiru.ui.glyphs import (
@@ -31,7 +32,6 @@ from shikiru.ui.glyphs import (
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
-    CONTEXT_LEVEL_COLORS,
     ENGINE_COLOR,
     HOLD_COLOR,
     OPERATOR_COLOR,
@@ -39,6 +39,7 @@ from shikiru.ui.tokens import (
     ROLE_COLORS,
     SAGE,
     SECONDARY_TEXT_COLOR,
+    USAGE_LEVEL_COLORS,
 )
 
 if TYPE_CHECKING:
@@ -193,12 +194,12 @@ class TaskTitles:
         if usage.context_used_pct is None or usage_reported is False:
             return SECONDARY_TEXT_COLOR
         titles = self._settings.dashboard.titles
-        level = context_level(
+        level = usage_level(
             usage.context_used_pct,
             warn_pct=titles.context_warn_pct,
             alert_pct=titles.context_alert_pct,
         )
-        return CONTEXT_LEVEL_COLORS[level]
+        return USAGE_LEVEL_COLORS[level]
 
     def _active_run(self, task_id: str, role: Role) -> Run | None:
         live = self._runs.get_live(task_id, role)

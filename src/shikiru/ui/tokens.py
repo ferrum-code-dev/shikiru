@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from shikiru import palette
-from shikiru.domain.runs import ContextLevel
+from shikiru.domain.levels import UsageLevel
 from shikiru.domain.tasks import Role
 
 BACKGROUND_COLOR = palette.BACKGROUND_COLOR
@@ -49,10 +49,10 @@ GAUGE_OK_COLOR = SUCCESS_COLOR
 GAUGE_WARN_COLOR = HOLD_COLOR
 GAUGE_ALERT_COLOR = ALERT_COLOR
 
-CONTEXT_LEVEL_COLORS: dict[ContextLevel, str] = {
-    ContextLevel.OK: SAGE,
-    ContextLevel.WARN: AMBER,
-    ContextLevel.ALERT: DUSTY_ROSE,
+USAGE_LEVEL_COLORS: dict[UsageLevel, str] = {
+    UsageLevel.OK: SAGE,
+    UsageLevel.WARN: AMBER,
+    UsageLevel.ALERT: DUSTY_ROSE,
 }
 
 

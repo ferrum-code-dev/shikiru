@@ -12,6 +12,7 @@ from shikiru.agents.contracts import (
     BillingSource,
     Usage,
 )
+from shikiru.domain.levels import displayed_pct
 from shikiru.domain.tasks import DomainModel, Role
 
 NO_USAGE = Usage(
@@ -70,34 +71,11 @@ def has_positive_token_evidence(run: Run) -> bool:
 MISSING_TITLE_VALUE = "\N{EN DASH}"
 
 
-class ContextLevel(StrEnum):
-    """How full an agent's context is, against the `dashboard.titles` thresholds (06 §5.3)."""
-
-    OK = auto()
-    WARN = auto()
-    ALERT = auto()
-
-
-def displayed_context_pct(used_pct: float) -> int:
-    """Return the whole percentage a title shows for a context share (`41.6` shows `42`)."""
-    return round(used_pct)
-
-
-def context_level(used_pct: float, *, warn_pct: int, alert_pct: int) -> ContextLevel:
-    """Classify `used_pct` by the whole percentage shown: `alert_pct` and above is ALERT."""
-    shown = displayed_context_pct(used_pct)
-    if shown >= alert_pct:
-        return ContextLevel.ALERT
-    if shown >= warn_pct:
-        return ContextLevel.WARN
-    return ContextLevel.OK
-
-
 def context_title(usage: Usage) -> str:
     """Format `usage`'s context share for a title (`42%`), or a dash if unreported (06 §5.3)."""
     if usage.context_used_pct is None:
         return MISSING_TITLE_VALUE
-    return f"{displayed_context_pct(usage.context_used_pct)}%"
+    return f"{displayed_pct(usage.context_used_pct)}%"
 
 
 def cost_title(usage: Usage) -> str:
