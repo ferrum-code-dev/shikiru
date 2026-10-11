@@ -217,5 +217,5 @@ Fourth-review scope and evidence: [fourth real-project review](../docs/tui-feedb
 - [x] Task 136: Colour agent context by usage level
 - [x] Task 137: Preserve agent pane titles across session restart
 - [x] Task 138: Document that takeover is not restored after respawn
-- [ ] Task 139: Revise the HTML reference to match the TUI
+- [x] Task 139: Revise the HTML reference to match the TUI
 - [ ] Task 140: Verify the fourth review and reconcile Phase 11 evidence
