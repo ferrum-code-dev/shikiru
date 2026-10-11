@@ -7,8 +7,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
-from textual.color import Color
-from textual.geometry import Region
 
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
@@ -27,13 +25,20 @@ from shikiru.domain.tasks import Role
 from shikiru.plugins.widgets.resources import ResourcesWidget
 from shikiru.plugins.widgets.usage import UsageWidget
 from shikiru.store.runs import RunStore
-from shikiru.ui.tokens import (
-    ALERT_COLOR,
-    AMBER,
-    PRIMARY_TEXT_COLOR,
-    SAGE,
-    SECONDARY_TEXT_COLOR,
-    STEEL_BLUE,
+from tests.support.cells import (
+    ALERT_TEXT,
+    AMBER_TEXT,
+    CYAN,
+    CYAN_BOLD,
+    GREEN_BOLD,
+    GREY,
+    WHITE,
+    WHITE_BOLD,
+    Cell,
+    Piece,
+    group,
+    line,
+    rendered_lines,
 )
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -45,17 +50,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from rich.style import Style as RichStyle
-    from textual.widget import Widget
-
     from shikiru.agents.contracts import CostBasis
     from shikiru.dashboard.contract import WidgetContext
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
-
-Style = tuple[bool, str | None]
-Piece = tuple[str, Style]
-Cell = tuple[str, Style]
 
 pytestmark = pytest.mark.usefixtures("colour_terminal")
 _START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -70,16 +68,6 @@ _ESTIMATE_USD = 0.11
 _RUNG = Rung("codex", "gpt-6-luna", "low")
 _API = BillingDeclaration(BILLING_MODE_API, BILLING_SOURCE_OPERATOR_CONFIG)
 _SUBSCRIPTION = BillingDeclaration(BILLING_MODE_SUBSCRIPTION, BILLING_SOURCE_OPERATOR_CONFIG)
-
-_WHITE_BOLD: Style = (True, PRIMARY_TEXT_COLOR)
-_WHITE: Style = (False, PRIMARY_TEXT_COLOR)
-_CYAN_BOLD: Style = (True, STEEL_BLUE)
-_CYAN: Style = (False, STEEL_BLUE)
-_GREEN_BOLD: Style = (True, SAGE)
-_GREY: Style = (False, SECONDARY_TEXT_COLOR)
-_AMBER_TEXT: Style = (False, AMBER)
-_ALERT_TEXT: Style = (False, ALERT_COLOR)
-_SEPARATOR: Piece = (" · ", _GREY)
 
 
 def _record_run(
@@ -137,53 +125,22 @@ def _seed_nothing(connection: Connection, clock: FakeClock) -> None:
     del connection, clock
 
 
-def _group(*pieces: Piece) -> tuple[Piece, ...]:
-    return pieces
-
-
-def _line(*groups: tuple[Piece, ...]) -> list[Cell]:
-    pieces: list[Piece] = []
-    for index, group in enumerate(groups):
-        if index:
-            pieces.append(_SEPARATOR)
-        pieces.extend(group)
-    return [(char, style) for text, style in pieces for char in text]
-
-
 def _host_group(cpu: str, memory: tuple[Piece, ...]) -> tuple[Piece, ...]:
-    return _group(("Host", _WHITE_BOLD), (" CPU", _WHITE), (f" {cpu}", _CYAN), *memory)
+    return group(("Host", WHITE_BOLD), (" CPU", WHITE), (f" {cpu}", CYAN), *memory)
 
 
 def _host_memory(value: str) -> tuple[Piece, ...]:
-    return (" RAM", _WHITE), (f" {value}", _CYAN)
+    return (" RAM", WHITE), (f" {value}", CYAN)
 
 
 def _process_group(label: str, cpu: str, rss: str) -> tuple[Piece, ...]:
-    return _group(
-        (label, _WHITE_BOLD),
-        (" CPU", _WHITE),
-        (f" {cpu}", _CYAN),
-        (" RSS", _WHITE),
-        (f" {rss}", _CYAN),
+    return group(
+        (label, WHITE_BOLD),
+        (" CPU", WHITE),
+        (f" {cpu}", CYAN),
+        (" RSS", WHITE),
+        (f" {rss}", CYAN),
     )
-
-
-def _style_of(style: RichStyle | None) -> Style:
-    if style is None:
-        return (False, None)
-    color = Color.from_rich_color(style.color).hex.lower() if style.color is not None else None
-    return (bool(style.bold), color)
-
-
-def _rendered_lines(widget: Widget) -> list[list[Cell]]:
-    region = Region(0, 0, widget.region.width, widget.region.height)
-    rendered: list[list[Cell]] = []
-    for strip in widget.render_lines(region):
-        cells = [(char, _style_of(segment.style)) for segment in strip for char in segment.text]
-        while cells and cells[-1][0] == " ":
-            cells.pop()
-        rendered.append(cells)
-    return rendered
 
 
 def _usage_context(reader: StateReader, project_dir: Path, clock: FakeClock) -> WidgetContext:
@@ -197,81 +154,81 @@ _TOKEN_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
     (
         _seed_billed,
         [
-            _line(
-                _group(("1", _WHITE_BOLD), (" session", _GREY)),
-                _group(("1.5k", _CYAN_BOLD), (" tokens", _GREY)),
-                _group(("$4.28", _GREEN_BOLD), (" API", _GREY)),
+            line(
+                group(("1", WHITE_BOLD), (" session", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
+                group(("$4.28", GREEN_BOLD), (" API", GREY)),
             )
         ],
     ),
     (
         _seed_zero_billed,
         [
-            _line(
-                _group(("1", _WHITE_BOLD), (" session", _GREY)),
-                _group(("1.5k", _CYAN_BOLD), (" tokens", _GREY)),
-                _group(("$0.00", _GREEN_BOLD), (" API", _GREY)),
+            line(
+                group(("1", WHITE_BOLD), (" session", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
+                group(("$0.00", GREEN_BOLD), (" API", GREY)),
             )
         ],
     ),
     (
         _seed_estimate_only,
         [
-            _line(
-                _group(("1", _WHITE_BOLD), (" session", _GREY)),
-                _group(("1.5k", _CYAN_BOLD), (" tokens", _GREY)),
-                _group(("1 cost unreported", _GREY)),
+            line(
+                group(("1", WHITE_BOLD), (" session", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
+                group(("1 cost unreported", GREY)),
             )
         ],
     ),
     (
         _seed_subscription_only,
         [
-            _line(
-                _group(("1", _WHITE_BOLD), (" session", _GREY)),
-                _group(("1.5k", _CYAN_BOLD), (" tokens", _GREY)),
+            line(
+                group(("1", WHITE_BOLD), (" session", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
             )
         ],
     ),
     (
         _seed_unknown_tokens,
         [
-            _line(
-                _group(("1", _WHITE_BOLD), (" session", _GREY)),
-                _group(("tokens unknown", _GREY)),
-                _group(("1 cost unreported", _GREY)),
+            line(
+                group(("1", WHITE_BOLD), (" session", GREY)),
+                group(("tokens unknown", GREY)),
+                group(("1 cost unreported", GREY)),
             )
         ],
     ),
     (
         _seed_nothing,
         [
-            _line(
-                _group(("0", _WHITE_BOLD), (" sessions", _GREY)),
-                _group(("tokens unknown", _GREY)),
+            line(
+                group(("0", WHITE_BOLD), (" sessions", GREY)),
+                group(("tokens unknown", GREY)),
             )
         ],
     ),
     (
         _seed_partial_coverage,
         [
-            _line(
-                _group(("3", _WHITE_BOLD), (" sessions", _GREY)),
-                _group(("3.0k", _CYAN_BOLD), (" tokens", _GREY)),
-                _group(("$4.28", _GREEN_BOLD), (" API", _GREY)),
-                _group(("1 session without tokens", _GREY)),
-                _group(("1 cost unreported", _GREY)),
-                _group(("1 billing mode unknown", _GREY)),
+            line(
+                group(("3", WHITE_BOLD), (" sessions", GREY)),
+                group(("3.0k", CYAN_BOLD), (" tokens", GREY)),
+                group(("$4.28", GREEN_BOLD), (" API", GREY)),
+                group(("1 session without tokens", GREY)),
+                group(("1 cost unreported", GREY)),
+                group(("1 billing mode unknown", GREY)),
             )
         ],
     ),
     (
         _seed_legacy_only,
         [
-            _line(
-                _group(("1", _WHITE_BOLD), (" session", _GREY)),
-                _group(("1.5k", _CYAN_BOLD), (" tokens", _GREY)),
-                _group(("1 legacy session", _GREY)),
+            line(
+                group(("1", WHITE_BOLD), (" session", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
+                group(("1 legacy session", GREY)),
             )
         ],
     ),
@@ -291,7 +248,7 @@ async def test_home_token_bar_renders_the_template_for_each_recorded_state(
     seed(connection, clock)
     widget = UsageWidget().create(_usage_context(reader, project_dir, clock))
     async with WidgetHostApp(widget).run_test(size=_WIDE):
-        await wait_until(lambda: _rendered_lines(widget) == expected, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: rendered_lines(widget) == expected, timeout=_WAIT_SECONDS)
 
 
 async def test_home_token_bar_wraps_whole_groups_at_narrow_width(
@@ -303,20 +260,20 @@ async def test_home_token_bar_wraps_whole_groups_at_narrow_width(
     clock = FakeClock(_START)
     _seed_partial_coverage(connection, clock)
     expected = [
-        _line(
-            _group(("3", _WHITE_BOLD), (" sessions", _GREY)),
-            _group(("3.0k", _CYAN_BOLD), (" tokens", _GREY)),
-            _group(("$4.28", _GREEN_BOLD), (" API", _GREY)),
+        line(
+            group(("3", WHITE_BOLD), (" sessions", GREY)),
+            group(("3.0k", CYAN_BOLD), (" tokens", GREY)),
+            group(("$4.28", GREEN_BOLD), (" API", GREY)),
         ),
-        _line(
-            _group(("1 session without tokens", _GREY)),
-            _group(("1 cost unreported", _GREY)),
+        line(
+            group(("1 session without tokens", GREY)),
+            group(("1 cost unreported", GREY)),
         ),
-        _line(_group(("1 billing mode unknown", _GREY))),
+        line(group(("1 billing mode unknown", GREY))),
     ]
     widget = UsageWidget().create(_usage_context(reader, project_dir, clock))
     async with WidgetHostApp(widget).run_test(size=_NARROW):
-        await wait_until(lambda: _rendered_lines(widget) == expected, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: rendered_lines(widget) == expected, timeout=_WAIT_SECONDS)
 
 
 _POPULATED_SAMPLE = ResourceView(
@@ -335,7 +292,7 @@ _POPULATED_SAMPLE = ResourceView(
     shikiru_process_tree_empty=False,
     agents_process_tree_empty=False,
 )
-_POPULATED_LINE = _line(
+_POPULATED_LINE = line(
     _host_group("5.0%", _host_memory("12.3/24.0 GiB")),
     _process_group("Shikiru", "1.0%", "0.4 GiB"),
     _process_group("Agents", "2.0%", "1.2 GiB"),
@@ -350,19 +307,19 @@ _RESOURCE_CASES: tuple[tuple[ResourceView, list[list[Cell]]], ...] = (
             agents_process_tree_empty=True,
         ),
         [
-            _line(
+            line(
                 _host_group("5.0%", _host_memory("12.3/24.0 GiB")),
                 _process_group("Shikiru", "1.0%", "0.4 GiB"),
-                _group(("Agents", _WHITE_BOLD), (" process tree is empty", _GREY)),
+                group(("Agents", WHITE_BOLD), (" process tree is empty", GREY)),
             )
         ],
     ),
     (
         replace(_POPULATED_SAMPLE, shikiru_cpu_pct=None, shikiru_rss_gb=None),
         [
-            _line(
+            line(
                 _host_group("5.0%", _host_memory("12.3/24.0 GiB")),
-                _group(("Shikiru CPU/RSS unavailable", _GREY)),
+                group(("Shikiru CPU/RSS unavailable", GREY)),
                 _process_group("Agents", "2.0%", "1.2 GiB"),
             )
         ],
@@ -370,8 +327,8 @@ _RESOURCE_CASES: tuple[tuple[ResourceView, list[list[Cell]]], ...] = (
     (
         replace(_POPULATED_SAMPLE, host_ram_used_bytes=None),
         [
-            _line(
-                _host_group("5.0%", ((" RAM used/total unavailable", _GREY),)),
+            line(
+                _host_group("5.0%", ((" RAM used/total unavailable", GREY),)),
                 _process_group("Shikiru", "1.0%", "0.4 GiB"),
                 _process_group("Agents", "2.0%", "1.2 GiB"),
             )
@@ -385,7 +342,7 @@ _RESOURCE_CASES: tuple[tuple[ResourceView, list[list[Cell]]], ...] = (
             error="CPU unavailable",
         ),
         [
-            _line(_group(("Stale · observed 2s ago · CPU unavailable", _AMBER_TEXT))),
+            line(group(("Stale · observed 2s ago · CPU unavailable", AMBER_TEXT))),
             _POPULATED_LINE,
         ],
     ),
@@ -396,7 +353,7 @@ _RESOURCE_CASES: tuple[tuple[ResourceView, list[list[Cell]]], ...] = (
             sampled_ago="2s",
             error="CPU unavailable",
         ),
-        [_line(_group(("Resources failed · CPU unavailable · observed 2s ago", _ALERT_TEXT)))],
+        [line(group(("Resources failed · CPU unavailable · observed 2s ago", ALERT_TEXT)))],
     ),
 )
 
@@ -416,7 +373,7 @@ async def test_home_resource_bar_renders_the_template_for_each_sample_state(
     services.resource_observation = sample
     widget = ResourcesWidget().create(widget_context(reader, project_dir, clock, services=services))
     async with WidgetHostApp(widget).run_test(size=_WIDE):
-        await wait_until(lambda: _rendered_lines(widget) == expected, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: rendered_lines(widget) == expected, timeout=_WAIT_SECONDS)
 
 
 async def test_home_resource_bar_wraps_whole_groups_at_narrow_width(
@@ -430,10 +387,10 @@ async def test_home_resource_bar_wraps_whole_groups_at_narrow_width(
     services = StubServices()
     services.resource_observation = _POPULATED_SAMPLE
     expected = [
-        _line(_host_group("5.0%", _host_memory("12.3/24.0 GiB"))),
-        _line(_process_group("Shikiru", "1.0%", "0.4 GiB")),
-        _line(_process_group("Agents", "2.0%", "1.2 GiB")),
+        line(_host_group("5.0%", _host_memory("12.3/24.0 GiB"))),
+        line(_process_group("Shikiru", "1.0%", "0.4 GiB")),
+        line(_process_group("Agents", "2.0%", "1.2 GiB")),
     ]
     widget = ResourcesWidget().create(widget_context(reader, project_dir, clock, services=services))
     async with WidgetHostApp(widget).run_test(size=_NARROW):
-        await wait_until(lambda: _rendered_lines(widget) == expected, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: rendered_lines(widget) == expected, timeout=_WAIT_SECONDS)
