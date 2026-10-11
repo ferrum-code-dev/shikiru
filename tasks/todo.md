@@ -234,4 +234,4 @@ Sixth-review scope and evidence: [sixth real-project review](../docs/tui-feedbac
 
 - [x] Task 148: Colour subscription-limit gauges at 50 and 90 percent
 - [x] Task 149: Project usage panel title and layout
-- [ ] Task 150: Verify the sixth review and reconcile Phase 11 evidence
+- [x] Task 150: Verify the sixth review and reconcile Phase 11 evidence

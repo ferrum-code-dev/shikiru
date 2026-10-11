@@ -1,6 +1,6 @@
 # Phase 11 sixth real-project review
 
-Status: Task 148 (gauge colours) delivered; the operator approved the three-section layout below (2026-10-12) and Task 149 implements it. This specification refines the [fourth](tui-feedback-fourth-review.md) and [fifth](tui-feedback-fifth-review.md) reviews. **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 150).
+Status: delivered (Tasks 148–150, 2026-10-12; see the [record](release-readiness-2026-10-12-phase11-sixth-review.md)); the operator approved the three-section layout below. This specification refines the [fourth](tui-feedback-fourth-review.md) and [fifth](tui-feedback-fifth-review.md) reviews. **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 150).
 
 Analysis: two read-only static analyses (Sonnet 5.5 medium for the panel layout, Haiku 5.5 xhigh for the gauge rule). The panel layout was rendered natively with fixture data; nothing else was run.
 

@@ -1505,7 +1505,8 @@ Refs: sixth-review panel; `dashboard/app.py` `_contextual_widget_label`/`_show_c
 
 ### Task 150: Verify the sixth review and reconcile Phase 11 evidence
 Refs: Tasks 148–149; sixth-review specification; 07 §3/§5.
-- [ ] Revise the HTML reference's Project usage popup (title, approved layout, quota gauge colours at 50/90) to the delivered TUI and check it in headless Chrome against native renders; run normal and `TERM=dumb NO_COLOR=1` gates; write a sixth-review release record (outcomes, limits, gate numbers, HTML hash); mark the spec delivered; clean owned processes and sockets.
+- [x] Revise the HTML reference's Project usage popup (title, approved layout, quota gauge colours at 50/90) to the delivered TUI and check it in headless Chrome against native renders; run normal and `TERM=dumb NO_COLOR=1` gates; write a sixth-review release record (outcomes, limits, gate numbers, HTML hash); mark the spec delivered; clean owned processes and sockets.
+  Proof: the HTML popup (commit `b0075a7`, SHA-256 `32944697…ccfa1`) was compared in headless Chrome at wide and compact, colour and No color, with native `UsagePanel` renders at 100 and 48 columns: title, wording, ` · ` wrapping and computed colours match, with gauges sage 38 %, amber 62 %, rose 91 %. The 145 usage, gauge, popup-focus and bar tests passed. Both `uv run poe check` and `TERM=dumb NO_COLOR=1 uv run poe check` were green on the first run (1,513 passed, 14 skipped, 90.78 % and 90.80 %); the record is `docs/release-readiness-2026-10-12-phase11-sixth-review.md`.
 
 ### Sixth-review issue coverage
 
