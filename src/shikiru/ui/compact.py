@@ -807,7 +807,7 @@ class ResourceMetric:
         )
         metrics = wrap_groups(groups, width)
         if state == RESOURCE_STALE:
-            age = f" · observed {self.sample.sampled_ago} ago" if self.sample.sampled_ago else ""
+            age = _observed_suffix(self.sample.sampled_ago)
             error = f" · {self.sample.error}" if self.sample.error else ""
             return Text.assemble(
                 (f"Stale{age}{error}", AMBER),
@@ -822,9 +822,13 @@ class ResourceMetric:
         return metrics
 
 
+def _observed_suffix(sampled_ago: str | None) -> str:
+    return f" · {observed_text(sampled_ago)}" if sampled_ago else ""
+
+
 def _resource_state_line(state: str, sample: _ResourceSample) -> Text:
     error = f" · {sample.error}" if sample.error else ""
-    age = f" · observed {sample.sampled_ago} ago" if sample.sampled_ago else ""
+    age = _observed_suffix(sample.sampled_ago)
     style = ALERT_COLOR if state == RESOURCE_FAILED else SECONDARY_TEXT_COLOR
     return Text(f"Resources {state}{error}{age}", style=style)
 

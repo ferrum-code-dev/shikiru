@@ -45,7 +45,7 @@ from shikiru.tmux.client import (
     TMUX_ENV_UNSET_OPTION_ARGUMENT_COUNT,
 )
 from shikiru.tmux.session import home_window_target
-from shikiru.ui.age import format_age
+from shikiru.ui.age import format_age, format_short_age
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -492,8 +492,8 @@ def _resource_view(
 def _sampled_ago(sampled_at: datetime | None, clock: Clock) -> str | None:
     if sampled_at is None:
         return None
-    age = (clock.now() - sampled_at).total_seconds()
-    return format_age(age) if age >= 0 else None
+    age = clock.now() - sampled_at
+    return format_short_age(age) if age.total_seconds() >= 0 else None
 
 
 def _pane_resource(line: str) -> _PaneResource:

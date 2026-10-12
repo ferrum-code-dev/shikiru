@@ -85,13 +85,13 @@ from shikiru.operator.queries import (
     aggregate_usage,
 )
 from shikiru.operator.strip_views import task_strip_data
-from shikiru.ui.age import AGE_NOW, format_age
+from shikiru.ui.age import format_age
+from shikiru.ui.age import format_short_age as _age
 from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
-    from datetime import timedelta
 
     from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
@@ -111,7 +111,6 @@ DIALOGUE_LINE_LIMIT = 20
 ALERT_TIME_FORMAT = "%H:%M:%S"
 SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
-HOURS_PER_DAY = 24
 TIME_UNKNOWN = "\N{EN DASH}"
 TASK_TIMELINE_READ_ERROR_ID = "timeline-read-error"
 TASK_TIMELINE_READ_ERROR_SUMMARY = "Task evidence could not be read"
@@ -1616,19 +1615,6 @@ def _task_relationships_view(relationships: TaskRelationships) -> TaskRelationsh
         page_size=relationships.page_size,
         has_more=relationships.has_more,
     )
-
-
-def _age(duration: timedelta) -> str:
-    seconds = max(int(duration.total_seconds()), 0)
-    if seconds < SECONDS_PER_MINUTE:
-        return AGE_NOW
-    minutes = seconds // SECONDS_PER_MINUTE
-    if minutes < MINUTES_PER_HOUR:
-        return f"{minutes}m"
-    hours = minutes // MINUTES_PER_HOUR
-    if hours < HOURS_PER_DAY:
-        return f"{hours}h"
-    return f"{hours // HOURS_PER_DAY}d"
 
 
 def _latest_signal_observation(
