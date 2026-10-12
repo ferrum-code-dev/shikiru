@@ -983,7 +983,25 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-group-separator { white-space:pre-wrap; color:var(--shk-dim); }
 #shikiru-focus-steel .shk-strong { color:var(--shk-ink); font-weight:700; }
 #shikiru-focus-steel .shk-bold { font-weight:700; }
-#shikiru-focus-steel .shk-observation { color:var(--shk-dim); margin:0 0 12px; }
+#shikiru-focus-steel .shk-diag-section { min-width:0; }
+#shikiru-focus-steel .shk-diag-rule { border-top:1px solid var(--shk-edge); }
+#shikiru-focus-steel .shk-diag-heading { display:flex; flex-wrap:wrap; justify-content:space-between; gap:0 1ch; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-diag-row { display:grid; grid-template-columns:var(--shk-diag-label,8ch) minmax(0,1fr); }
+#shikiru-focus-steel .shk-diag-label, #shikiru-focus-steel .shk-diag-dim { color:var(--shk-dim); }
+#shikiru-focus-steel .shk-diag-name { color:var(--shk-ink); font-weight:700; }
+#shikiru-focus-steel .shk-diag-ink { color:var(--shk-ink); }
+#shikiru-focus-steel .shk-diag-stamp { white-space:nowrap; }
+#shikiru-focus-steel .shk-diag-num { color:var(--shk-accent); font-weight:700; }
+#shikiru-focus-steel .shk-diag-ok { color:var(--shk-good); }
+#shikiru-focus-steel .shk-diag-warn { color:var(--shk-wait); }
+#shikiru-focus-steel .shk-diag-bad { color:var(--shk-bad); }
+#shikiru-focus-steel .shk-diag-values { display:flex; flex-wrap:wrap; column-gap:3ch; min-width:0; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-diag-group { position:relative; overflow-wrap:normal; }
+#shikiru-focus-steel .shk-diag-group + .shk-diag-group::before { content:&#x27;·&#x27;; position:absolute; left:-2ch; width:1ch; text-align:center; }
+#shikiru-focus-steel .shk-diag-group.shk-diag-line-start::before { display:none; }
+#shikiru-focus-steel .shk-diag-top { display:grid; grid-template-columns:1ch max-content max-content max-content; column-gap:1ch; }
+#shikiru-focus-steel .shk-diag-top .shk-diag-num { justify-self:end; }
+#shikiru-focus-steel .shk-terminal.shk-mono .shk-diag-section { --shk-ink:#e1e1e1; --shk-dim:#a4a4a4; --shk-accent:#b3b3b3; --shk-good:#bcbcbc; --shk-wait:#b6b6b6; --shk-bad:#aeaeae; --shk-edge:#454545; }
 #shikiru-focus-steel .shk-task-usage { margin:10px 0; border-top:1px solid var(--shk-edge); padding-top:7px; }
 #shikiru-focus-steel .shk-agent { margin:5px 0; overflow-wrap:anywhere; }
 #shikiru-focus-steel .shk-agent span { display:block; }
@@ -1218,7 +1236,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   const modalFrames = {
     menu:[460,340], evidence:[460,260], resolve:[460,330], message:[460,330],
     takeover:[460,300], handback:[460,260], usage:[460,360], projectusage:[460,360],
-    commands:[520,390], history:[520,390], diagnostics:[520,390], widgets:[460,300],
+    commands:[520,390], history:[520,390], diagnostics:[452,390], docker:[452,260], disk:[452,220], faults:[452,240], widgets:[460,300],
     views:[460,330], submitted:[420,240], help:[420,290]
   };
   const historyPageSize = 20;
@@ -1310,9 +1328,11 @@ html&gt;body{padding:0}&lt;/style&gt;
     const list = pageRows.length ? pageRows.map(row=&gt;`&lt;div class=&quot;shk-history-row&quot;&gt;&lt;span class=&quot;shk-${row.status===&#x27;Rejected&#x27;?&#x27;bad&#x27;:row.status===&#x27;Pending&#x27;?&#x27;wait&#x27;:&#x27;good&#x27;}&quot;&gt;${row.status} · ${row.time}&lt;/span&gt;&lt;span&gt;${row.action} · ${row.target}&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;) : &#x27;&lt;div class=&quot;shk-history-empty&quot;&gt;No preview outcomes match this filter.&lt;/div&gt;&#x27;;
     return `${heading}&lt;div class=&quot;shk-history-list&quot;&gt;${list}&lt;/div&gt;`;
   };
+  const diagnosticKinds = [&#x27;diagnostics&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;];
   const modalFrame = kind =&gt; {
     const size = modalFrames[kind] || [440,300];
-    return `--shk-frame-width:${size[0]}px;--shk-frame-height:${size[1]}px`;
+    const frameWidth = diagnosticKinds.includes(kind) &amp;&amp; width.value===&#x27;compact&#x27; ? 302 : size[0];
+    return `--shk-frame-width:${frameWidth}px;--shk-frame-height:${size[1]}px`;
   };
   const metadata = () =&gt; `&lt;div class=&quot;shk-summary&quot;&gt;&lt;span&gt;Slots &lt;span class=&quot;shk-accent&quot;&gt;${scene.value === &#x27;quiet&#x27; ? &#x27;4/4&#x27; : &#x27;3/4&#x27;}&lt;/span&gt;&lt;/span&gt;&lt;span&gt;${scene.value === &#x27;stopped&#x27; ? &#x27;Running turns 0&#x27; : scene.value === &#x27;owned&#x27; ? &#x27;Running 1&#x27; : scene.value === &#x27;quiet&#x27; ? &#x27;Running 3&#x27; : &#x27;Running 2&#x27;}&lt;/span&gt;&lt;span&gt;Waiting ${scene.value === &#x27;quiet&#x27; ? &#x27;3&#x27; : scene.value === &#x27;owned&#x27; ? &#x27;5&#x27; : &#x27;4&#x27;}&lt;/span&gt;&lt;/div&gt;`;
   const sampleUsage = {
@@ -1342,13 +1362,12 @@ html&gt;body{padding:0}&lt;/style&gt;
   };
   const joinGroups = groups =&gt; groups.map(group=&gt;`&lt;span class=&quot;shk-group&quot;&gt;${group}&lt;/span&gt;`).join(&#x27;&lt;span class=&quot;shk-group-separator&quot;&gt; · &lt;/span&gt;&#x27;);
   const projectUsage = () =&gt; `&lt;button type=&quot;button&quot; class=&quot;shk-usage-bar&quot; data-open=&quot;projectusage&quot; aria-label=&quot;Inspect project usage&quot;&gt;${joinGroups([&#x27;&lt;span class=&quot;shk-strong&quot;&gt;14&lt;/span&gt; sessions&#x27;,&#x27;&lt;span class=&quot;shk-accent shk-bold&quot;&gt;412k&lt;/span&gt; tokens&#x27;,&#x27;&lt;span class=&quot;shk-good shk-bold&quot;&gt;$4.82&lt;/span&gt; API&#x27;,&#x27;2 sessions without tokens&#x27;,&#x27;2 costs unreported&#x27;])}&lt;/button&gt;`;
-  const resourceMetrics = (inDiagnostics=false) =&gt; {
+  const resourceMetrics = () =&gt; {
     const stopped=scene.value===&#x27;stopped&#x27;;
     const own=scene.value===&#x27;owned&#x27;;
     const process = (label, cpu, rss) =&gt; `&lt;span class=&quot;shk-strong&quot;&gt;${label}&lt;/span&gt; CPU &lt;span class=&quot;shk-accent&quot;&gt;${cpu}&lt;/span&gt; RSS &lt;span class=&quot;shk-accent&quot;&gt;${rss} GiB&lt;/span&gt;`;
     const agents = stopped ? &#x27;&lt;span class=&quot;shk-strong&quot;&gt;Agents&lt;/span&gt; process tree is empty&#x27; : process(&#x27;Agents&#x27;, own?&#x27;9.0%&#x27;:&#x27;8.0%&#x27;, own?&#x27;0.5&#x27;:&#x27;0.7&#x27;);
     const groups = joinGroups([&#x27;&lt;span class=&quot;shk-strong&quot;&gt;Host&lt;/span&gt; CPU &lt;span class=&quot;shk-accent&quot;&gt;22%&lt;/span&gt; RAM &lt;span class=&quot;shk-accent&quot;&gt;5.1/16.0 GiB&lt;/span&gt;&#x27;, process(&#x27;Shikiru&#x27;, stopped?&#x27;0.0%&#x27;:own?&#x27;3.0%&#x27;:&#x27;4.0%&#x27;, stopped?&#x27;0.2&#x27;:own?&#x27;0.6&#x27;:&#x27;0.7&#x27;), agents]);
-    if (inDiagnostics) return `&lt;div class=&quot;shk-resources&quot;&gt;${groups}&lt;/div&gt;`;
     return `&lt;div class=&quot;shk-resources-rule&quot;&gt;&lt;/div&gt;&lt;button type=&quot;button&quot; class=&quot;shk-resources&quot; data-open=&quot;diagnostics&quot; aria-label=&quot;Inspect host, Shikiru, and agent resource usage&quot;&gt;${groups}&lt;/button&gt;`;
   };
   const focusedDetail = task =&gt; task ? `&lt;div class=&quot;shk-heading&quot;&gt;${task.id} · ${esc(task.title)}&lt;/div&gt;&lt;div class=&quot;shk-${stateClass(task)} ${activeStatusClass(task)}&quot;&gt;${markerMarkup(task)} ${esc(stateText(task))}&lt;/div&gt;${stages(task)}&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${esc(task.role)} · ${esc(task.step)} · ${esc(task.age)}&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;${esc(task.detail)}&lt;/div&gt;&lt;div class=&quot;shk-signal&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;›&lt;/span&gt;&lt;span&gt;${esc(task.note)}&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id === &#x27;T-43&#x27; ? &#x27;Last recorded signal · just now&#x27; : &#x27;Evidence available in detail&#x27;}&lt;/div&gt;${taskUsage(task)}` : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No task selected · use ↑↓ to select a task&lt;/div&gt;&#x27;;
@@ -1422,20 +1441,65 @@ html&gt;body{padding:0}&lt;/style&gt;
     if (task &amp;&amp; task.id === &#x27;T-43&#x27; &amp;&amp; scene.value === &#x27;owned&#x27;) items.push([&#x27;Hand back Leader&#x27;,&#x27;handback&#x27;,&#x27;Release this role; remaining holds apply&#x27;]);
     else if (task &amp;&amp; ![&#x27;Queued&#x27;,&#x27;Merged&#x27;].includes(task.step)) items.push([&#x27;Take over a role&#x27;,&#x27;takeover&#x27;,&#x27;Stop the turn; hold this task&#x27;]);
     if (task) items.push([&#x27;Usage&#x27;,&#x27;usage&#x27;,&#x27;Recorded session values&#x27;]);
-    items.push([&#x27;Commands&#x27;,&#x27;history&#x27;,&#x27;Paginated preview outcomes&#x27;],[&#x27;Project diagnostics&#x27;,&#x27;diagnostics&#x27;,&#x27;Secondary observations&#x27;],[&#x27;Views&#x27;,&#x27;views&#x27;,&#x27;History and configured widgets&#x27;]);
+    items.push([&#x27;Commands&#x27;,&#x27;history&#x27;,&#x27;Paginated preview outcomes&#x27;]);
+    if (task) items.push([&#x27;Project diagnostics&#x27;,&#x27;diagnostics&#x27;,&#x27;Secondary observations&#x27;]);
+    items.push([&#x27;Views and extensions&#x27;,&#x27;views&#x27;,&#x27;Secondary views and extensions&#x27;]);
     return `&lt;div&gt;${items.map(([label,action,meaning])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-menu-item&quot; data-open=&quot;${action}&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;› ${label}&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;${meaning}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
   };
   const views = () =&gt; `&lt;div&gt;${[
-    [&#x27;Command history&#x27;,&#x27;history&#x27;,&#x27;All statuses · preview pages&#x27;],
-    [&#x27;Project usage&#x27;,&#x27;projectusage&#x27;,&#x27;Recorded totals · sample values&#x27;],
-    [&#x27;Project diagnostics&#x27;,&#x27;diagnostics&#x27;,&#x27;Resource sample · illustrative&#x27;],
-    [&#x27;Configured widgets&#x27;,&#x27;widgets&#x27;,&#x27;Widget routes · sample configuration&#x27;],
-    [&#x27;Open task window&#x27;,&#x27;taskwindow&#x27;,&#x27;Explicitly select 1:&#x27;+getTask(&#x27;T-43&#x27;).id+&#x27; &#x27;+getTask(&#x27;T-43&#x27;).title]
-  ].map(([label,action,description])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-menu-item&quot; data-open=&quot;${action}&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;${label}&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;${description}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
+    [&#x27;Command history · Pending, Applied and Rejected&#x27;,&#x27;history&#x27;],
+    [&#x27;Usage details&#x27;,&#x27;projectusage&#x27;],
+    [&#x27;Diagnostics · Docker&#x27;,&#x27;docker&#x27;],
+    [&#x27;Diagnostics · Disk&#x27;,&#x27;disk&#x27;],
+    [&#x27;Diagnostics · Faults&#x27;,&#x27;faults&#x27;]
+  ].map(([label,action])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-menu-item&quot; data-open=&quot;${action}&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;${label}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;shk-dim&quot;&gt;Project diagnostics opens from the Resources bar (Enter or click) and the task Actions menu.&lt;/div&gt;&lt;/div&gt;`;
+  const diagGroups = groups =&gt; groups.map(group=&gt;`&lt;span class=&quot;shk-diag-group&quot;&gt;${group}&lt;/span&gt;`).join(&#x27;&#x27;);
+  const diagFlow = groups =&gt; `&lt;div class=&quot;shk-diag-values&quot;&gt;${diagGroups(groups)}&lt;/div&gt;`;
+  const diagRow = (label, width, groups, labelClass=&#x27;shk-diag-label&#x27;) =&gt; `&lt;div class=&quot;shk-diag-row&quot; style=&quot;--shk-diag-label:${width}ch&quot;&gt;&lt;span class=&quot;${labelClass}&quot;&gt;${label}&lt;/span&gt;${diagFlow(groups)}&lt;/div&gt;`;
+  const diagSection = (title, observed, body) =&gt; `&lt;section class=&quot;shk-diag-section&quot;&gt;&lt;div class=&quot;shk-diag-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-diag-heading&quot;&gt;&lt;span&gt;${title}&lt;/span&gt;${observed?`&lt;span&gt;${observed}&lt;/span&gt;`:&#x27;&#x27;}&lt;/div&gt;${body}&lt;/section&gt;`;
+  const diagFigure = (label, value) =&gt; `&lt;span class=&quot;shk-diag-dim&quot;&gt;${label} &lt;/span&gt;&lt;span class=&quot;shk-diag-num&quot;&gt;${value}&lt;/span&gt;`;
+  const diagRam = (used, total) =&gt; `&lt;span class=&quot;shk-diag-dim&quot;&gt;RAM &lt;/span&gt;&lt;span class=&quot;shk-diag-num&quot;&gt;${used}&lt;/span&gt;&lt;span class=&quot;shk-diag-dim&quot;&gt; / &lt;/span&gt;&lt;span class=&quot;shk-diag-num&quot;&gt;${total}&lt;/span&gt;`;
+  const diagProblem = (name, reason, tone) =&gt; `&lt;span class=&quot;shk-diag-name&quot;&gt;${name}&lt;/span&gt; &lt;span class=&quot;shk-diag-${tone}&quot;&gt;${reason}&lt;/span&gt;`;
+  const diagFault = (task, scope, error, recoverable, repeats, first, latest) =&gt; diagFlow([`&lt;span class=&quot;shk-diag-name&quot;&gt;${task}&lt;/span&gt;`, `&lt;span class=&quot;shk-diag-ink&quot;&gt;${scope}&lt;/span&gt;`, `&lt;span class=&quot;shk-diag-ink&quot;&gt;${error}&lt;/span&gt;`, `&lt;span class=&quot;shk-diag-dim&quot;&gt;${recoverable}&lt;/span&gt;`, `&lt;span class=&quot;shk-diag-num&quot;&gt;×${repeats}&lt;/span&gt;`]) + diagFlow([`&lt;span class=&quot;shk-diag-dim&quot;&gt;first &lt;/span&gt;&lt;span class=&quot;shk-diag-ink shk-diag-stamp&quot;&gt;${first}&lt;/span&gt;`, `&lt;span class=&quot;shk-diag-dim&quot;&gt;latest &lt;/span&gt;&lt;span class=&quot;shk-diag-ink shk-diag-stamp&quot;&gt;${latest}&lt;/span&gt;`]);
+  const dockerTop = rows =&gt; `&lt;div class=&quot;shk-diag-dim&quot;&gt;Top 5 by CPU&lt;/div&gt;&lt;div class=&quot;shk-diag-top&quot;&gt;${rows.map(([name,cpu,memory])=&gt;`&lt;span&gt;&lt;/span&gt;&lt;span class=&quot;shk-diag-name&quot;&gt;${name}&lt;/span&gt;&lt;span class=&quot;shk-diag-num&quot;&gt;${cpu}&lt;/span&gt;&lt;span class=&quot;shk-diag-num&quot;&gt;${memory}&lt;/span&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
+  const resourcesSection = stopped =&gt; diagSection(&#x27;Resources&#x27;, &#x27;observed now&#x27;, [
+    diagRow(&#x27;Host&#x27;, 8, [diagFigure(&#x27;CPU&#x27;,&#x27;12%&#x27;), diagRam(&#x27;12.3&#x27;,&#x27;24.0 GiB&#x27;)], &#x27;shk-diag-name&#x27;),
+    diagRow(&#x27;Shikiru&#x27;, 8, [diagFigure(&#x27;CPU&#x27;,&#x27;1.2%&#x27;), diagFigure(&#x27;RSS&#x27;,&#x27;0.4 GiB&#x27;)], &#x27;shk-diag-name&#x27;),
+    stopped ? diagRow(&#x27;Agents&#x27;, 8, [&#x27;&lt;span class=&quot;shk-diag-dim&quot;&gt;process tree is empty&lt;/span&gt;&#x27;], &#x27;shk-diag-name&#x27;) : diagRow(&#x27;Agents&#x27;, 8, [diagFigure(&#x27;CPU&#x27;,&#x27;2.3%&#x27;), diagFigure(&#x27;RSS&#x27;,&#x27;1.2 GiB&#x27;)], &#x27;shk-diag-name&#x27;)
+  ].join(&#x27;&#x27;));
+  const engineSection = (stopped, faultsOpen) =&gt; diagSection(&#x27;Engine&#x27;, &#x27;&#x27;, [
+    diagRow(&#x27;Status&#x27;, 7, stopped ? [&#x27;&lt;span class=&quot;shk-diag-bad&quot;&gt;Not running&lt;/span&gt;&#x27;] : [&#x27;&lt;span class=&quot;shk-diag-ok&quot;&gt;Running&lt;/span&gt;&#x27;, &#x27;&lt;span class=&quot;shk-diag-dim&quot;&gt;up 3h 12m&lt;/span&gt;&#x27;]),
+    diagRow(&#x27;Faults&#x27;, 7, faultsOpen ? [&#x27;&lt;span class=&quot;shk-diag-warn&quot;&gt;2 open&lt;/span&gt;&#x27;] : [&#x27;&lt;span class=&quot;shk-diag-dim&quot;&gt;None open&lt;/span&gt;&#x27;])
+  ].join(&#x27;&#x27;));
+  const dockerSection = () =&gt; diagSection(&#x27;Docker&#x27;, &#x27;observed now&#x27;, [
+    diagRow(&#x27;Running&#x27;, 10, [&#x27;&lt;span class=&quot;shk-diag-num&quot;&gt;6&lt;/span&gt;&lt;span class=&quot;shk-diag-dim&quot;&gt; of &lt;/span&gt;&lt;span class=&quot;shk-diag-num&quot;&gt;8&lt;/span&gt;&#x27;, diagFigure(&#x27;CPU&#x27;,&#x27;47%&#x27;), diagFigure(&#x27;RAM&#x27;,&#x27;1.8 GiB&#x27;)]),
+    diagRow(&#x27;Problems&#x27;, 10, [diagProblem(&#x27;web&#x27;,&#x27;unhealthy&#x27;,&#x27;warn&#x27;), diagProblem(&#x27;worker&#x27;,&#x27;exited (1)&#x27;,&#x27;bad&#x27;)]),
+    dockerTop([[&#x27;api&#x27;,&#x27;38%&#x27;,&#x27;410 MiB&#x27;],[&#x27;web&#x27;,&#x27;5.0%&#x27;,&#x27;1.2 GiB&#x27;],[&#x27;cache&#x27;,&#x27;2.0%&#x27;,&#x27;96 MiB&#x27;],[&#x27;job-a&#x27;,&#x27;1.0%&#x27;,&#x27;50 MiB&#x27;],[&#x27;job-b&#x27;,&#x27;0.5%&#x27;,&#x27;30 MiB&#x27;]]),
+    diagRow(&#x27;Elsewhere&#x27;, 10, [&#x27;&lt;span class=&quot;shk-diag-num&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;shk-diag-dim&quot;&gt; running&lt;/span&gt;&#x27;, diagFigure(&#x27;CPU&#x27;,&#x27;3.0%&#x27;), diagFigure(&#x27;RAM&#x27;,&#x27;300 MiB&#x27;)])
+  ].join(&#x27;&#x27;));
+  const diskSection = () =&gt; diagSection(&#x27;Disk&#x27;, &#x27;observed now&#x27;, [
+    diagRow(&#x27;Free&#x27;, 5, [&#x27;&lt;span class=&quot;shk-diag-num&quot;&gt;120.0 GiB&lt;/span&gt;&lt;span class=&quot;shk-diag-dim&quot;&gt; of &lt;/span&gt;&lt;span class=&quot;shk-diag-num&quot;&gt;500.0 GiB&lt;/span&gt;&#x27;]),
+    diagRow(&#x27;Runs&#x27;, 5, [&#x27;&lt;span class=&quot;shk-diag-num&quot;&gt;1.2 GiB&lt;/span&gt;&#x27;])
+  ].join(&#x27;&#x27;));
+  const faultsSection = faultsOpen =&gt; faultsOpen ? diagSection(&#x27;Faults&#x27;, &#x27;&#x27;, [
+    diagFault(&#x27;T-42&#x27;,&#x27;merge&#x27;,&#x27;timeout&#x27;,&#x27;recoverable&#x27;,3,&#x27;2026-10-12T21:13:17.778036+00:00&#x27;,&#x27;2026-10-12T21:13:17.778036+00:00&#x27;),
+    diagFault(&#x27;project&#x27;,&#x27;resource sample&#x27;,&#x27;timeout&#x27;,&#x27;unrecoverable&#x27;,1,&#x27;2026-10-12T21:14:02.115903+00:00&#x27;,&#x27;2026-10-12T21:14:58.402117+00:00&#x27;)
+  ].join(&#x27;&#x27;)) : &#x27;&#x27;;
+  const diagnosticsPopup = () =&gt; {
+    const stopped = scene.value === &#x27;stopped&#x27;;
+    const faultsOpen = scene.value === &#x27;decision&#x27;;
+    return resourcesSection(stopped) + engineSection(stopped, faultsOpen) + dockerSection() + diskSection() + faultsSection(faultsOpen);
+  };
+  const markDiagnosticLines = () =&gt; root.querySelectorAll(&#x27;.shk-diag-values&#x27;).forEach(values =&gt; {
+    const groups = [...values.children];
+    groups.forEach((group, index) =&gt; group.classList.toggle(&#x27;shk-diag-line-start&#x27;, index &gt; 0 &amp;&amp; group.offsetTop !== groups[index - 1].offsetTop));
+  });
+  new MutationObserver(markDiagnosticLines).observe(root, {childList:true, subtree:true});
+  window.addEventListener(&#x27;resize&#x27;, markDiagnosticLines);
   const modal = (id, task) =&gt; {
     const kind=overlays[id];
     if (!kind) return &#x27;&#x27;;
-    const headings={menu:&#x27;Actions&#x27;,views:&#x27;Views&#x27;,widgets:&#x27;Configured widgets&#x27;,evidence:&#x27;Evidence and reports&#x27;,resolve:&#x27;Answer decision · E-7&#x27;,message:&#x27;Message a role&#x27;,takeover:&#x27;Take over a role&#x27;,handback:&#x27;Hand back a role&#x27;,usage:&#x27;Task usage&#x27;,projectusage:&#x27;Project usage&#x27;,commands:&#x27;Command history&#x27;,history:&#x27;Command history&#x27;,diagnostics:&#x27;Project diagnostics&#x27;,submitted:&#x27;Preview result&#x27;,help:&#x27;Help&#x27;};
+    const headings={menu:&#x27;Actions&#x27;,views:&#x27;Views&#x27;,widgets:&#x27;Configured widgets&#x27;,evidence:&#x27;Evidence and reports&#x27;,resolve:&#x27;Answer decision · E-7&#x27;,message:&#x27;Message a role&#x27;,takeover:&#x27;Take over a role&#x27;,handback:&#x27;Hand back a role&#x27;,usage:&#x27;Task usage&#x27;,projectusage:&#x27;Project usage&#x27;,commands:&#x27;Command history&#x27;,history:&#x27;Command history&#x27;,diagnostics:&#x27;Project Diagnostics&#x27;,docker:&#x27;Diagnostics · Docker&#x27;,disk:&#x27;Diagnostics · Disk&#x27;,faults:&#x27;Diagnostics · Faults&#x27;,submitted:&#x27;Preview result&#x27;,help:&#x27;Help&#x27;};
     let content=&#x27;&#x27;;
     let footer=&#x27;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · Esc&lt;/button&gt;&#x27;;
     if (kind===&#x27;menu&#x27;) content=menu(task);
@@ -1466,10 +1530,13 @@ html&gt;body{padding:0}&lt;/style&gt;
       const pageCount=Math.max(1,Math.ceil(rows.length/historyPageSize));
       footer=`&lt;label class=&quot;shk-history-controls&quot;&gt;Status &lt;select aria-label=&quot;Filter command status&quot; data-draft=&quot;historyFilter&quot;&gt;&lt;option value=&quot;all&quot;${historyFilter===&#x27;all&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;All&lt;/option&gt;&lt;option value=&quot;pending&quot;${historyFilter===&#x27;pending&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;Pending&lt;/option&gt;&lt;option value=&quot;applied&quot;${historyFilter===&#x27;applied&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;Applied&lt;/option&gt;&lt;option value=&quot;rejected&quot;${historyFilter===&#x27;rejected&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;Rejected&lt;/option&gt;&lt;/select&gt;&lt;/label&gt;&lt;button type=&quot;button&quot; data-page=&quot;prev&quot; aria-label=&quot;p Previous page&quot;${historyPage&lt;=0?&#x27; disabled&#x27;:&#x27;&#x27;}&gt;p Previous&lt;/button&gt;&lt;span&gt;Page ${rows.length?historyPage+1:0} of ${rows.length?pageCount:0}&lt;/span&gt;&lt;button type=&quot;button&quot; data-page=&quot;next&quot; aria-label=&quot;n Next page&quot;${historyPage&gt;=pageCount-1?&#x27; disabled&#x27;:&#x27;&#x27;}&gt;n Next&lt;/button&gt;&lt;button type=&quot;button&quot; data-history-update=&quot;true&quot;&gt;Preview update&lt;/button&gt;`;
     }
-    if (kind===&#x27;diagnostics&#x27;) content=resourceMetrics(true)+&#x27;&lt;div class=&quot;shk-observation&quot;&gt;Observed 4s ago. CPU is percent of host capacity. Host RAM is used/total; Shikiru and Agents RSS is process resident memory with no denominator, not a per-process limit. Shikiru excludes agent trees.&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Engine lock&lt;/span&gt;&lt;span class=&quot;shk-space&quot;&gt;&#x27;+(scene.value===&#x27;stopped&#x27;?&#x27;Not held&#x27;:&#x27;Held&#x27;)+&#x27;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Open engine faults&lt;/span&gt;&lt;span class=&quot;shk-space&quot;&gt;0 recorded&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Docker plugin&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Unavailable&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Sample split: Shikiru excludes agent trees; Agents includes all instance agent trees.&lt;/div&gt;&#x27;;
+    if (kind===&#x27;diagnostics&#x27;) content=diagnosticsPopup();
+    if (kind===&#x27;docker&#x27;) content=dockerSection();
+    if (kind===&#x27;disk&#x27;) content=diskSection();
+    if (kind===&#x27;faults&#x27;) content=faultsSection(scene.value===&#x27;decision&#x27;);
     if (kind===&#x27;submitted&#x27;) { content=&#x27;&lt;div class=&quot;shk-feedback&quot;&gt;Preview action complete&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;A real command result appears as Pending, Applied or Rejected.&lt;/div&gt;&#x27;; footer=&#x27;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · Esc&lt;/button&gt;&#x27;; }
     if (kind===&#x27;help&#x27;) content=&#x27;&lt;div&gt;Up / Down Select a task&lt;/div&gt;&lt;div&gt;Esc Close popup · Esc clear selection&lt;/div&gt;&lt;div&gt;Ctrl+P Actions · v Views&lt;/div&gt;&lt;div&gt;e Evidence · u Usage · ? Help&lt;/div&gt;&lt;div&gt;History: p Previous · n Next&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Page controls disable at their ends. Input and TextArea keep p, n and Enter as entered keys.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Native Select: first Esc collapses options; next Esc closes the popup.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;New task windows remain in the background until explicitly selected.&lt;/div&gt;&#x27;;
-    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; style=&quot;${modalFrame(kind)}&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]}${task &amp;&amp; ![&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;,&#x27;history&#x27;,&#x27;help&#x27;,&#x27;views&#x27;,&#x27;widgets&#x27;,&#x27;submitted&#x27;].includes(kind)?` · ${task.id}`:&#x27;&#x27;}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;Esc ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scroll&quot;&gt;&lt;div class=&quot;shk-modal-body&quot; tabindex=&quot;0&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scrollbar&quot; aria-hidden=&quot;true&quot;&gt;&lt;div class=&quot;shk-modal-scroll-thumb&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-footer&quot;&gt;${footer}&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; style=&quot;${modalFrame(kind)}&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]}${task &amp;&amp; ![&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;,&#x27;history&#x27;,&#x27;help&#x27;,&#x27;views&#x27;,&#x27;widgets&#x27;,&#x27;submitted&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;].includes(kind)?` · ${task.id}`:&#x27;&#x27;}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;Esc ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scroll&quot;&gt;&lt;div class=&quot;shk-modal-body&quot; tabindex=&quot;0&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scrollbar&quot; aria-hidden=&quot;true&quot;&gt;&lt;div class=&quot;shk-modal-scroll-thumb&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-footer&quot;&gt;${footer}&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;`;
   };
   const storeModalSelection = (field,id) =&gt; {
     if (field.tagName !== &#x27;TEXTAREA&#x27;) return;
