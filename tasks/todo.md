@@ -235,3 +235,11 @@ Sixth-review scope and evidence: [sixth real-project review](../docs/tui-feedbac
 - [x] Task 148: Colour subscription-limit gauges at 50 and 90 percent
 - [x] Task 149: Project usage panel title and layout
 - [x] Task 150: Verify the sixth review and reconcile Phase 11 evidence
+
+Seventh-review scope and evidence: [seventh real-project review](../docs/tui-feedback-seventh-review.md). The operator approved the panel layout (2026-10-12).
+
+- [ ] Task 151: Docker sampler with numeric model, project scope, top five and problems
+- [ ] Task 152: Diagnostics section primitives and the Docker section
+- [ ] Task 153: Disk section
+- [ ] Task 154: Project diagnostics panel restructure and timer refresh
+- [ ] Task 155: Verify the seventh review and reconcile Phase 11 evidence

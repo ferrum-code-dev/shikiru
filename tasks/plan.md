@@ -1515,3 +1515,43 @@ Refs: Tasks 148–149; sixth-review specification; 07 §3/§5.
 | `Usage Usage` duplicated title | 149, 150 |
 | Project usage panel structure and duplication | 149, 150 (after layout approval) |
 | Subscription-limit gauge colours 50/90 | 148, 150 |
+
+### Seventh-review follow-up
+
+Scope: [seventh real-project review](../docs/tui-feedback-seventh-review.md), planned from two read-only analyses. Execute Tasks 151–155 sequentially, one fresh agent per task, root review by the orchestrator. The operator approved the section layout, the Docker project scope, the Disk section and disappearing disabled sections (2026-10-12). The TUI is the source of truth; the HTML reference follows in Task 155.
+
+### Task 151: Docker sampler with numeric model, project scope, top five and problems
+Refs: seventh-review Docker; `telemetry/docker.py`, `dashboard/services.py` `containers()`, `dashboard/contract.py` (`DockerView`, `ContainerView`, `DiagnosticSampleState`), `bootstrap.py`, `config/defaults.toml` `[dashboard]`, `config/settings.py`; 05 §5, 06 §5.4.
+- [ ] A pure domain parser (`CPUPerc`, `MemUsage` units, `ps` `Status`/`State`/`Labels`) and one ranking rule; the sampler runs `docker ps -a` and `docker stats --no-stream` (JSON) concurrently through `SubprocessRunner`, joins by container id, and keeps the existing unavailable / failed / stale / empty semantics; `ps` ok and `stats` failing still yields counts and problems with usage marked unavailable.
+- [ ] `DockerView` carries running and total counts, total CPU and memory, problems, the top five by CPU (ties memory, then name) and the `Elsewhere` totals; `[dashboard] docker_scope` (`project`/`all`, validated, default `project`) with the project root and worktrees recognised by compose working directory; no `docker inspect`.
+- [ ] Unit table for the parsers and the ranking; integration tests with a fake `docker` script (the repo pattern) for scope, problems, `stats` failure, timeout and invalid JSON; update the existing Docker tests and the real-daemon test.
+
+### Task 152: Diagnostics section primitives and the Docker section
+Refs: seventh-review layout; `ui/compact.py` (`UsageSection`, `_labelled_rows`, `_observed_text`), `plugins/widgets/docker.py`, `dashboard/diagnostics.py`; Task 149 styling.
+- [ ] One shared section renderer in `ui` (rule, grey title, `observed … ago` on the heading, labelled rows) reused by the Usage panel where it already does the same, with no behaviour change there.
+- [ ] The Docker section in the approved layout and styling (Running, Problems amber/red, Top 5 by CPU, Elsewhere), honest unavailable / failed / stale / empty / `usage unavailable` states, wrapping at ` · ` and usable at 20×8; refreshed at `docker_refresh_seconds`.
+- [ ] Style-span and boundary tests for the states; native colour and `NO_COLOR` renders at wide, compact and 20×8.
+
+### Task 153: Disk section
+Refs: seventh-review Disk; `telemetry/disk.py`, `bootstrap.py`, `config/defaults.toml`, plugin entry points in `pyproject.toml`, `plugins/widgets/`; 06 §5.4.
+- [ ] A `disk` sampler (free and total of the project filesystem, run and evidence directory size via `directory_usage`, walk cached for `disk_refresh_seconds`), a `DiskView` contract, and a default-on `disk` `DIAGNOSTICS` widget plugin rendered with the Task 152 section primitives; unavailable and failed states are honest.
+- [ ] Tests: real filesystem boundary for the sampler (tmp project), cache cadence with `FakeClock`, widget states; `disk_refresh_seconds` tunable.
+
+### Task 154: Project diagnostics panel restructure and timer refresh
+Refs: seventh-review layout and refresh; `dashboard/diagnostics.py`, `dashboard/app.py` (`_show_project_diagnostics`, `_context_choices`), `plugins/widgets/{resources,faults}.py`, `dashboard/contract.py`, `config/defaults.toml` `[dashboard].widgets`; 06 §5.4/§5.5.
+- [ ] Permanent Resources and Engine sections (Status `Running · up …`/`Not running` red, Faults `None open`/`N open` amber) in the approved layout; every configured `DIAGNOSTICS` plugin is rendered generically in widget order (Docker, Disk, Faults), a disabled one disappears, the Faults section lists open faults and is empty-free; remove the scope row, the explanation, the lone lock row, the hard-wired `docker` argument and the duplicate `Diagnostics · Resources` popup.
+- [ ] Resources, Engine and Faults refresh on `resources_refresh_seconds` from the cache (never sampling, 06 §5.4), re-rendering only on change; unified state wording; usable at 20×8.
+- [ ] Update the tests that pin the old rows (`test_dashboard_remaining_widgets.py`, `test_dashboard_app.py` diagnostics helpers); add boundary tests for timer refresh without a commit (`FakeClock`, `wait_until`), a disabled plugin vanishing, and the permanent sections' states; native renders in colour and `NO_COLOR`.
+
+### Task 155: Verify the seventh review and reconcile Phase 11 evidence
+Refs: Tasks 151–154; seventh-review specification; 07 §3/§5.
+- [ ] Revise the HTML reference's Project diagnostics popup and Views menu to the delivered TUI and check it in headless Chrome against native renders; update 05/06 (diagnostics sections, Docker facts and scope, Disk, refresh) and the READMEs; run normal and `TERM=dumb NO_COLOR=1` gates; write a seventh-review release record; mark the spec delivered; clean owned processes and sockets.
+
+### Seventh-review issue coverage
+
+| Requested | Implementation / verification |
+|---|---|
+| Well-structured diagnostics layout without duplicates or unnecessary details | 152, 154, 155 (after layout approval) |
+| Refresh like the resource usage bar | 154, 155 |
+| CPU/RAM permanent, the rest pluggable and default-on | 153, 154 |
+| Docker essentials: running count, top five by CPU, problems | 151, 152, 155 |
