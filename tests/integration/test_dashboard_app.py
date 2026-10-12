@@ -2385,6 +2385,7 @@ def _resource_services(
             clock,
             refresh_seconds=settings.dashboard.docker_refresh_seconds,
             timeout_seconds=settings.dashboard.docker_timeout_seconds,
+            project_roots=None,
         ),
     )
 

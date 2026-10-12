@@ -49,6 +49,7 @@ widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "res
 animations = true
 docker_refresh_seconds = 5
 docker_timeout_seconds = 5
+docker_scope = "project"
 repo_status_cache_seconds = 10
 timeline_page_size = 20
 timeline_scan_rows = 256

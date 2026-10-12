@@ -708,11 +708,43 @@ class ResourceView:
 
 @dataclass(frozen=True)
 class ContainerView:
-    """One Docker container's current CPU and memory readings."""
+    """One running container's CPU and memory as numbers."""
 
     name: str
-    cpu_pct: str
-    memory: str
+    cpu_pct: float
+    memory_bytes: int
+
+
+@dataclass(frozen=True)
+class ContainerProblemView:
+    """One unhealthy, restarting or non-zero-exited container."""
+
+    name: str
+    reason: str
+    exit_code: int | None = None
+
+
+@dataclass(frozen=True)
+class ElsewhereView:
+    """Running containers outside the project; usage is `None` when unavailable."""
+
+    running: int
+    cpu_pct: float | None
+    memory_bytes: int | None
+
+
+@dataclass(frozen=True)
+class DockerSummaryView:
+    """Scoped container counts, usage totals, problems, top five by CPU and the rest."""
+
+    running: int
+    total: int
+    cpu_pct: float | None
+    memory_bytes: int | None
+    problems: tuple[ContainerProblemView, ...]
+    top: tuple[ContainerView, ...]
+    elsewhere: ElsewhereView
+    usage_available: bool
 
 
 @dataclass(frozen=True)
@@ -720,7 +752,7 @@ class DockerView:
     """Docker sampling state, including stale or failed observations."""
 
     available: bool
-    containers: tuple[ContainerView, ...]
+    summary: DockerSummaryView | None = None
     state: DiagnosticSampleState | None = None
     sampled_ago: str | None = None
     error: str | None = None

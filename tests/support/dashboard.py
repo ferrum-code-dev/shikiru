@@ -69,7 +69,7 @@ class StubServices:
         return self.resource_observation
 
     async def containers(self) -> DockerView:
-        return DockerView(available=False, containers=())
+        return DockerView(available=False)
 
 
 class WidgetHostApp(App[None]):

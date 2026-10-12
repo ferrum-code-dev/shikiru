@@ -12,9 +12,12 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from shikiru.dashboard.contract import (
+    ContainerProblemView,
     ContainerView,
     DiagnosticSampleState,
+    DockerSummaryView,
     DockerView,
+    ElsewhereView,
     RepoStatus,
     ResourceView,
 )
@@ -50,6 +53,7 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.config.settings import RepoConfig
+    from shikiru.domain.docker import DockerSummary
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
     from shikiru.operator.queries import OperatorQueries
@@ -325,7 +329,7 @@ class DashboardServices:
             )
         elif not snapshot.available:
             state = DiagnosticSampleState.UNAVAILABLE
-        elif not snapshot.containers:
+        elif snapshot.summary is not None and snapshot.summary.is_empty:
             state = DiagnosticSampleState.EMPTY
         else:
             state = DiagnosticSampleState.AVAILABLE
@@ -334,15 +338,30 @@ class DashboardServices:
             state=state,
             sampled_ago=_sampled_ago(snapshot.sampled_at, self._clock),
             error=snapshot.error,
-            containers=tuple(
-                ContainerView(
-                    name=container.name,
-                    cpu_pct=container.cpu_pct,
-                    memory=container.memory,
-                )
-                for container in snapshot.containers
-            ),
+            summary=_docker_summary_view(snapshot.summary),
         )
+
+
+def _docker_summary_view(summary: DockerSummary | None) -> DockerSummaryView | None:
+    if summary is None:
+        return None
+    return DockerSummaryView(
+        running=summary.running,
+        total=summary.total,
+        cpu_pct=summary.cpu_pct,
+        memory_bytes=summary.memory_bytes,
+        problems=tuple(
+            ContainerProblemView(problem.name, problem.kind.value, problem.exit_code)
+            for problem in summary.problems
+        ),
+        top=tuple(
+            ContainerView(usage.name, usage.cpu_pct, usage.memory_bytes) for usage in summary.top
+        ),
+        elsewhere=ElsewhereView(
+            summary.elsewhere.running, summary.elsewhere.cpu_pct, summary.elsewhere.memory_bytes
+        ),
+        usage_available=summary.usage_available,
+    )
 
 
 class TaskNavigation:

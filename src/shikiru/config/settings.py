@@ -13,6 +13,8 @@ MERGE_INTEGRATION = "merge"
 PULL_REQUEST_INTEGRATION = "pr"
 IntegrationStrategy = Literal["merge", "pr"]
 LayoutSplitAxis = Literal["h", "v"]
+DOCKER_SCOPE_ALL = "all"
+DockerScope = Literal["project", "all"]
 PaneName = Literal["system", "leader", "implementer", "shell"]
 GIT_DEFAULT_REMOTE = "origin"
 MAX_MOTION_REFRESH_HZ = 4
@@ -224,6 +226,7 @@ class DashboardConfig(ConfigModel):
     motion: DashboardMotionConfig
     docker_refresh_seconds: float = Field(gt=0)
     docker_timeout_seconds: float = Field(gt=0)
+    docker_scope: DockerScope
     repo_status_cache_seconds: float = Field(gt=0)
     timeline_page_size: int = Field(gt=0, le=MAX_TIMELINE_PAGE_SIZE)
     timeline_scan_rows: int = Field(gt=0, le=MAX_TIMELINE_SIGNAL_SCAN_ROWS)

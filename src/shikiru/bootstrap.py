@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_default_orchestration, load_session_settings, load_settings
-from shikiru.config.settings import PULL_REQUEST_INTEGRATION
+from shikiru.config.settings import DOCKER_SCOPE_ALL, PULL_REQUEST_INTEGRATION
 from shikiru.domain.tasks import Role
 from shikiru.engine.acceptance import AcceptanceGuard
 from shikiru.engine.agents import AgentPool
@@ -365,6 +365,9 @@ async def run_dashboard(
                 clock,
                 refresh_seconds=settings.dashboard.docker_refresh_seconds,
                 timeout_seconds=settings.dashboard.docker_timeout_seconds,
+                project_roots=(
+                    None if settings.dashboard.docker_scope == DOCKER_SCOPE_ALL else (project_root,)
+                ),
             ),
         )
         motion = dashboard_motion_module.DashboardMotion(

@@ -58,11 +58,11 @@ from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.docker import (
+    DOCKER_ALL_FLAG,
     DOCKER_BINARY,
     DOCKER_FORMAT_FLAG,
     DOCKER_JSON_FORMAT,
-    DOCKER_NO_STREAM_FLAG,
-    DOCKER_STATS_SUBCOMMAND,
+    DOCKER_PS_SUBCOMMAND,
     DockerSampler,
 )
 from shikiru.telemetry.resources import ResourceSampler
@@ -106,8 +106,6 @@ BYTES_PER_GIB = 1024**3
 OBSERVABLE_PANE_MEMORY_BYTES = 64 * 1024**2
 MINIMUM_PANE_MEMORY_BYTES = 48 * 1024**2
 CPU_WORK_ITERATIONS = 10_000_000
-CPU_PERCENT_MINIMUM_TOLERANCE = 5.0
-CPU_PERCENT_RELATIVE_TOLERANCE = 0.25
 EXECUTABLE_MODE = 0o755
 UNUSED_SESSION_TARGET = "=shikiru-task84-test"
 RESOURCE_SAMPLE_FAILURE = "CPU unavailable"
@@ -169,6 +167,7 @@ def _dashboard_services(
             clock,
             refresh_seconds=settings.dashboard.docker_refresh_seconds,
             timeout_seconds=settings.dashboard.docker_timeout_seconds,
+            project_roots=None,
         ),
     )
     return services, settings
@@ -1439,6 +1438,7 @@ async def test_resources_service_excludes_panes_from_other_projects(
             clock,
             refresh_seconds=settings.dashboard.docker_refresh_seconds,
             timeout_seconds=settings.dashboard.docker_timeout_seconds,
+            project_roots=None,
         ),
     )
 
@@ -1498,48 +1498,37 @@ def test_resource_sampler_measures_a_real_process_tree() -> None:
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed")
-async def test_docker_sampler_reads_a_real_docker_stats_sample() -> None:
+async def test_docker_sampler_counts_match_a_real_docker_listing() -> None:
     runner = SubprocessRunner()
+    settings = make_settings()
     direct = await runner.run(
         [
             DOCKER_BINARY,
-            DOCKER_STATS_SUBCOMMAND,
-            DOCKER_NO_STREAM_FLAG,
+            DOCKER_PS_SUBCOMMAND,
+            DOCKER_ALL_FLAG,
             DOCKER_FORMAT_FLAG,
             DOCKER_JSON_FORMAT,
         ],
-        timeout=make_settings().dashboard.docker_timeout_seconds,
+        timeout=settings.dashboard.docker_timeout_seconds,
         check=False,
     )
     if direct.returncode != 0:
         pytest.skip("Docker daemon is unavailable")
-    raw = [json.loads(line) for line in direct.stdout.splitlines()]
-    settings = make_settings()
+    listed = [json.loads(line) for line in direct.stdout.splitlines()]
     sampler = DockerSampler(
         runner,
         FakeClock(START),
         refresh_seconds=settings.dashboard.docker_refresh_seconds,
         timeout_seconds=settings.dashboard.docker_timeout_seconds,
+        project_roots=None,
     )
 
     snapshot = await sampler.sample()
 
     if not snapshot.available:
         pytest.skip("Docker daemon is unavailable")
-    cached = await sampler.sample_if_due()
-    assert cached is snapshot
-    expected_by_name = {record["Name"]: record for record in raw}
-    assert {container.name for container in snapshot.containers} == set(expected_by_name)
-    for container in snapshot.containers:
-        expected = expected_by_name[container.name]
-        sampled_cpu = float(container.cpu_pct.removesuffix("%"))
-        direct_cpu = float(expected["CPUPerc"].removesuffix("%"))
-        tolerance = max(
-            CPU_PERCENT_MINIMUM_TOLERANCE,
-            direct_cpu * CPU_PERCENT_RELATIVE_TOLERANCE,
-        )
-        assert abs(sampled_cpu - direct_cpu) <= tolerance
-        assert (
-            container.memory.partition("/")[2].strip()
-            == expected["MemUsage"].partition("/")[2].strip()
-        )
+    assert await sampler.sample_if_due() is snapshot
+    assert snapshot.summary is not None
+    assert snapshot.summary.total == len(listed)
+    assert snapshot.summary.running == sum(record["State"] == "running" for record in listed)
+    assert snapshot.summary.elsewhere.running == 0
