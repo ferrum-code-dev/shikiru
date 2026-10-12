@@ -197,6 +197,15 @@ class RepoStatus:
 
 
 @dataclass(frozen=True)
+class EngineStatusView:
+    """Whether the engine runs, and how long the live or previous run lasted."""
+
+    up: bool
+    uptime_seconds: float | None = None
+    previous_run_seconds: float | None = None
+
+
+@dataclass(frozen=True)
 class HeaderView:
     """Project and engine summary rendered by the header widget."""
 
@@ -794,6 +803,10 @@ class DashboardViews(Protocol):
 
     def engine_up(self) -> bool:
         """Return current engine lock liveness for active-turn presentation."""
+        ...
+
+    def engine_status(self) -> EngineStatusView:
+        """Return engine liveness with its recorded run duration."""
         ...
 
     def project_usage(self) -> RecordedUsageView:

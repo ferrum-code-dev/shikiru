@@ -26,6 +26,7 @@ from shikiru.dashboard.contract import (
     DiskView,
     DockerView,
     EngineFaultView,
+    EngineStatusView,
     EscalationPanelView,
     GlobalAttentionView,
     HeaderView,
@@ -272,6 +273,21 @@ class StateDashboardViews:
     async def header(self) -> HeaderView:
         """Build the project, engine, slot and repository summary."""
         tasks = self._cached_tasks()
+        engine = self.engine_status()
+        return HeaderView(
+            project=self._settings.project.name,
+            engine_up=engine.up,
+            occupied_slots=len(occupied_slot_ids(tasks)),
+            maximum_slots=self._settings.orchestration.max_parallel,
+            repo=await self._sources.repo_status(),
+            alerts=self._alerts(),
+            integration_mode=self._settings.orchestration.integration,
+            engine_uptime_seconds=engine.uptime_seconds,
+            previous_engine_run_seconds=engine.previous_run_seconds,
+        )
+
+    def engine_status(self) -> EngineStatusView:
+        """Return the lock liveness with the recorded duration of the live or previous run."""
         engine_up = self.engine_up()
         process_identity = self._sources.engine_identity()
         identity = (
@@ -285,16 +301,10 @@ class StateDashboardViews:
             running=engine_up,
             identity=identity,
         )
-        return HeaderView(
-            project=self._settings.project.name,
-            engine_up=engine_up,
-            occupied_slots=len(occupied_slot_ids(tasks)),
-            maximum_slots=self._settings.orchestration.max_parallel,
-            repo=await self._sources.repo_status(),
-            alerts=self._alerts(),
-            integration_mode=self._settings.orchestration.integration,
-            engine_uptime_seconds=uptime.running_seconds,
-            previous_engine_run_seconds=uptime.previous_run_seconds,
+        return EngineStatusView(
+            up=engine_up,
+            uptime_seconds=uptime.running_seconds,
+            previous_run_seconds=uptime.previous_run_seconds,
         )
 
     def project_usage(self) -> RecordedUsageView:
