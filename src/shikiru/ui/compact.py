@@ -849,7 +849,7 @@ def _process_resource_text(
     return _resource_group_text(
         label,
         cpu_pct,
-        Text.assemble((" RSS", PRIMARY_TEXT_COLOR), (f" {rss_gb:{GIB_FORMAT}} GiB", STEEL_BLUE)),
+        Text.assemble((" RSS", PRIMARY_TEXT_COLOR), (f" {format_gib(rss_gb)} GiB", STEEL_BLUE)),
     )
 
 
@@ -862,17 +862,22 @@ def _host_resource_text(sample: _ResourceSample) -> Text:
         memory = Text.assemble(
             (" RAM", PRIMARY_TEXT_COLOR),
             (
-                f" {used / BYTES_PER_GIB:{GIB_FORMAT}}/{total / BYTES_PER_GIB:{GIB_FORMAT}} GiB",
+                f" {format_gib(used / BYTES_PER_GIB)}/{format_gib(total / BYTES_PER_GIB)} GiB",
                 STEEL_BLUE,
             ),
         )
     return _resource_group_text("Host", sample.host_cpu_pct, memory)
 
 
+def format_gib(gib: float) -> str:
+    """Format a GiB amount with one decimal and no unit."""
+    return f"{gib:{GIB_FORMAT}}"
+
+
 def format_memory(memory_bytes: int) -> str:
     """Format bytes as GiB with one decimal from one GiB up, otherwise as whole MiB."""
     if memory_bytes >= BYTES_PER_GIB:
-        return f"{memory_bytes / BYTES_PER_GIB:{GIB_FORMAT}} GiB"
+        return f"{format_gib(memory_bytes / BYTES_PER_GIB)} GiB"
     return f"{memory_bytes / BYTES_PER_MIB:{MIB_FORMAT}} MiB"
 
 

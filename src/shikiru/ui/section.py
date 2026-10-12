@@ -15,6 +15,7 @@ from shikiru.ui.age import AGE_NOW
 from shikiru.ui.tokens import (
     AMBER,
     NEUTRAL_BORDER_COLOR,
+    PRIMARY_TEXT_COLOR,
     SECONDARY_TEXT_COLOR,
     STEEL_BLUE,
     STYLE_BOLD,
@@ -34,6 +35,7 @@ STALE_WORD = "stale"
 FAILED_WORD = "failed"
 UNAVAILABLE_WORD = "unavailable"
 _BOLD_CYAN = f"{STYLE_BOLD} {STEEL_BLUE}"
+BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
 
 Row = tuple[Text, tuple[Text, ...]]
 
@@ -41,6 +43,11 @@ Row = tuple[Text, tuple[Text, ...]]
 def grey(text: str) -> Text:
     """Return `text` in the secondary grey."""
     return Text(text, style=SECONDARY_TEXT_COLOR)
+
+
+def row_name(text: str) -> Text:
+    """Return `text` as a bold white row name."""
+    return Text(text, style=BOLD_PRIMARY)
 
 
 def number(value: str) -> Text:

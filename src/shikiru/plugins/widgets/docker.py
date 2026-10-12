@@ -15,6 +15,7 @@ from shikiru.ui.compact import format_cpu_pct, format_memory
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached
 from shikiru.ui.section import (
+    BOLD_PRIMARY,
     FAILED_WORD,
     GROUP_SEPARATOR,
     UNAVAILABLE_WORD,
@@ -30,9 +31,7 @@ from shikiru.ui.section import (
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
-    PRIMARY_TEXT_COLOR,
     SECONDARY_TEXT_COLOR,
-    STYLE_BOLD,
 )
 
 if TYPE_CHECKING:
@@ -66,7 +65,6 @@ USAGE_UNAVAILABLE = "usage unavailable"
 NO_CONTAINERS = "No containers"
 PROBLEM_UNHEALTHY = "unhealthy"
 PROBLEM_RESTARTING = "restarting"
-_BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
 _WARNING_REASONS = frozenset({PROBLEM_UNHEALTHY, PROBLEM_RESTARTING})
 
 
@@ -97,7 +95,7 @@ def _problem_group(problem: ContainerProblemView) -> Text:
     reason = (
         problem.reason if problem.exit_code is None else f"{problem.reason} ({problem.exit_code})"
     )
-    return Text.assemble((problem.name, _BOLD_PRIMARY), " ", (reason, colour))
+    return Text.assemble((problem.name, BOLD_PRIMARY), " ", (reason, colour))
 
 
 def _elsewhere_groups(summary: DockerSummaryView) -> list[Text]:
@@ -130,7 +128,7 @@ class _TopContainers:
         grid.add_column(justify=RIGHT, width=cpu_width)
         grid.add_column(justify=RIGHT, width=memory_width)
         for container, cpu, memory in zip(self.containers, cpus, memories, strict=True):
-            name = Text(container.name, style=_BOLD_PRIMARY, no_wrap=True)
+            name = Text(container.name, style=BOLD_PRIMARY, no_wrap=True)
             name.truncate(name_width, overflow=ELLIPSIS)
             grid.add_row("", name, number(cpu), number(memory))
         yield grid
