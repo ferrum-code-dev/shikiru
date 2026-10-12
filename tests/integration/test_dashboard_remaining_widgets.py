@@ -401,7 +401,10 @@ async def _assert_diagnostics_refresh_after_commit(
     )
     clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
     await wait_until(
-        lambda: "Faults 2 open" in " ".join(_project_diagnostics_text(app.screen).split()),
+        lambda: all(
+            text in " ".join(_project_diagnostics_text(app.screen).split())
+            for text in ("Faults 2 open", "fault after resize")
+        ),
         timeout=2,
     )
     diagnostics = _assert_project_diagnostics_facts(
