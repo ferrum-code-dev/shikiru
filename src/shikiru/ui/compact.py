@@ -20,9 +20,9 @@ from shikiru.agents.contracts import (
 )
 from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.tasks import EscalationReason, Role, Status
-from shikiru.ui.age import AGE_NOW
 from shikiru.ui.gauge import Gauge
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE
+from shikiru.ui.section import Row, grey, labelled_rows, observed_text, wrap_groups
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -60,14 +60,11 @@ MINUTES_PER_HOUR = 60
 SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR
 HOURS_PER_DAY = 24
 FOCUS_ATTENTION_MAX_HEIGHT = 2
-RESOURCE_GROUP_SEPARATOR = " · "
 USAGE_TOTALS_LABEL = "Totals"
 USAGE_TOKENS_LABEL = "Tokens"
 USAGE_COVERAGE_LABEL = "Coverage"
 USAGE_BILLING_LABEL = "Billing"
 USAGE_LABEL_WIDTH = len(USAGE_COVERAGE_LABEL)
-USAGE_LABEL_GAP = 1
-USAGE_STACKED_BELOW_WIDTH = 32
 USAGE_BY_AGENT_LABEL = "By agent"
 USAGE_LIMITS_LABEL = "Limits"
 USAGE_API_TOTAL_WORD = "API"
@@ -89,8 +86,6 @@ USAGE_CACHE_WRITE_LABEL = "w"
 USAGE_TOKENS_UNKNOWN = "tokens unknown"
 USAGE_COST_UNKNOWN = "cost unknown"
 USAGE_RESETS_WORD = "resets"
-USAGE_OBSERVED_WORD = "observed"
-USAGE_AGO_WORD = "ago"
 RESOURCE_FAILED = "failed"
 RESOURCE_UNAVAILABLE = "unavailable"
 RESOURCE_STALE = "stale"
@@ -237,9 +232,6 @@ class _AgentQuotas(Protocol):
 
     @property
     def quotas(self) -> Sequence[_QuotaWindow]: ...
-
-
-_UsageRow = tuple[Text, tuple[Text, ...]]
 
 
 class _ResourceSample(Protocol):
@@ -612,7 +604,7 @@ def _known_token_sessions(usage: _RecordedUsage) -> int:
 
 def _home_project_usage_text(usage: _RecordedUsage, width: int | None) -> Text:
     groups = [*_headline_groups(usage), *_home_coverage_texts(usage)]
-    return _wrap_groups(tuple(groups), width)
+    return wrap_groups(tuple(groups), width)
 
 
 def _headline_groups(usage: _RecordedUsage) -> list[Text]:
@@ -666,10 +658,10 @@ class ProjectUsageTotals:
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Wrap each row at its group separators within the current width."""
         del console
-        yield _labelled_rows(_totals_rows(self.usage), options.max_width, USAGE_LABEL_WIDTH)
+        yield labelled_rows(_totals_rows(self.usage), options.max_width, USAGE_LABEL_WIDTH)
 
 
-def _totals_rows(usage: _RecordedUsage) -> list[_UsageRow]:
+def _totals_rows(usage: _RecordedUsage) -> list[Row]:
     rows = [
         (USAGE_TOTALS_LABEL, (*_headline_groups(usage), *_all_mode_billed_groups(usage))),
         (USAGE_TOKENS_LABEL, tuple(_token_detail_groups(usage))),
@@ -681,7 +673,7 @@ def _totals_rows(usage: _RecordedUsage) -> list[_UsageRow]:
         (USAGE_BILLING_LABEL if index == 0 else "", groups)
         for index, groups in enumerate(populated)
     )
-    return [(_grey(label), groups) for label, groups in rows if groups]
+    return [(grey(label), groups) for label, groups in rows if groups]
 
 
 def _all_mode_billed_groups(usage: _RecordedUsage) -> list[Text]:
@@ -755,31 +747,6 @@ def _counted(count: int, label: str) -> Text:
     return Text.assemble((str(count), _BOLD_PRIMARY), (f" {label}", SECONDARY_TEXT_COLOR))
 
 
-def _grey(text: str) -> Text:
-    return Text(text, style=SECONDARY_TEXT_COLOR)
-
-
-def _labelled_rows(rows: list[_UsageRow], width: int, label_width: int) -> RenderableType:
-    if width < USAGE_STACKED_BELOW_WIDTH:
-        return Group(*_stacked_lines(rows, width))
-    value_width = width - label_width - USAGE_LABEL_GAP
-    grid = Table.grid()
-    grid.add_column(width=label_width + USAGE_LABEL_GAP, no_wrap=True)
-    grid.add_column(width=value_width)
-    for label, groups in rows:
-        grid.add_row(label, _wrap_groups(groups, value_width))
-    return grid
-
-
-def _stacked_lines(rows: list[_UsageRow], width: int) -> list[Text]:
-    lines: list[Text] = []
-    for label, groups in rows:
-        if label.plain:
-            lines.append(label)
-        lines.append(_wrap_groups(groups, width))
-    return lines
-
-
 def _compact_count(count: int) -> str:
     if count >= COUNT_SHORT_MILLION:
         return f"{count / COUNT_SHORT_MILLION:.{COUNT_SHORT_PRECISION}f}M"
@@ -832,7 +799,7 @@ class ResourceMetric:
                 self.sample.agents_process_tree_empty,
             ),
         )
-        metrics = _wrap_groups(groups, width)
+        metrics = wrap_groups(groups, width)
         if state == RESOURCE_STALE:
             age = f" · observed {self.sample.sampled_ago} ago" if self.sample.sampled_ago else ""
             error = f" · {self.sample.error}" if self.sample.error else ""
@@ -911,23 +878,6 @@ def _resource_group_text(label: str, cpu_pct: float, memory: Text) -> Text:
 def render_resource_metric(sample: _ResourceSample | None, *, width: int | None = None) -> Text:
     """Render `sample` without starting another resource observation."""
     return ResourceMetric(sample).render(width=width)
-
-
-def _wrap_groups(groups: tuple[Text, ...], width: int | None) -> Text:
-    result = Text()
-    line_width = 0
-    for group in groups:
-        separator = RESOURCE_GROUP_SEPARATOR if line_width else ""
-        group_width = cell_len(group.plain)
-        exceeds_width = line_width + cell_len(separator) + group_width > width if width else False
-        if width is not None and line_width and exceeds_width:
-            result.append("\n")
-            line_width = 0
-            separator = ""
-        result.append(separator, style=SECONDARY_TEXT_COLOR)
-        result.append(group)
-        line_width += cell_len(separator) + group_width
-    return result
 
 
 def attention_status_text(
@@ -1242,21 +1192,6 @@ def _compact_session_charge(session: _TaskSession) -> tuple[str, str]:
 
 
 @dataclass(frozen=True)
-class UsageSection:
-    """Render `body` below a rule and a grey section heading."""
-
-    title: str
-    body: RenderableType
-
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        """Yield the rule, the heading and the body."""
-        del console, options
-        yield Rule(style=NEUTRAL_BORDER_COLOR)
-        yield _grey(self.title)
-        yield self.body
-
-
-@dataclass(frozen=True)
 class AgentUsageRows:
     """Render one row of runs, tokens and cost per agent."""
 
@@ -1269,7 +1204,7 @@ class AgentUsageRows:
             (Text(usage.agent, style=_BOLD_PRIMARY), _agent_groups(usage)) for usage in self.usages
         ]
         label_width = max(cell_len(label.plain) for label, _ in rows)
-        yield _labelled_rows(rows, options.max_width, label_width)
+        yield labelled_rows(rows, options.max_width, label_width)
 
 
 def _agent_groups(usage: _AgentUsageSummary) -> tuple[Text, ...]:
@@ -1283,7 +1218,7 @@ def _agent_groups(usage: _AgentUsageSummary) -> tuple[Text, ...]:
 def _agent_token_groups(usage: _AgentUsageSummary) -> list[Text]:
     known_runs = usage.usage_reported_runs + usage.legacy_token_runs
     if not known_runs:
-        return [_grey(USAGE_TOKENS_UNKNOWN)]
+        return [grey(USAGE_TOKENS_UNKNOWN)]
     groups = [
         Text.assemble(
             (_compact_count(usage.input_tokens + usage.output_tokens), _BOLD_STEEL),
@@ -1291,7 +1226,7 @@ def _agent_token_groups(usage: _AgentUsageSummary) -> list[Text]:
         )
     ]
     if usage.run_count > known_runs:
-        groups.append(_grey(f"{usage.run_count - known_runs} {USAGE_WITHOUT_TOKENS_WORD}"))
+        groups.append(grey(f"{usage.run_count - known_runs} {USAGE_WITHOUT_TOKENS_WORD}"))
     return groups
 
 
@@ -1303,7 +1238,7 @@ def _agent_cost_groups(usage: _AgentUsageSummary) -> list[Text]:
         groups.append(_estimate_text(usage.api_equivalent_cost_usd))
     if usage.unknown_cost_runs:
         label = USAGE_COST_UNKNOWN
-        groups.append(_grey(f"{usage.unknown_cost_runs} {label}" if groups else label))
+        groups.append(grey(f"{usage.unknown_cost_runs} {label}" if groups else label))
     return groups
 
 
@@ -1321,7 +1256,7 @@ class AgentQuotaLimits:
         windows = [(usage.agent, quota) for usage in self.usages for quota in usage.quotas]
         observed = {quota.observed_ago for _, quota in windows}
         shared = len(observed) == 1
-        rows: list[_UsageRow] = []
+        rows: list[Row] = []
         previous_agent: str | None = None
         for agent, quota in windows:
             label = Text(agent, style=_BOLD_PRIMARY) if agent != previous_agent else Text()
@@ -1329,17 +1264,12 @@ class AgentQuotaLimits:
             gauge = Gauge(quota.name, quota.used_pct, self.warn_pct, self.alert_pct).render()
             gauge.append(f" {USAGE_RESETS_WORD} {quota.resets_in}", style=SECONDARY_TEXT_COLOR)
             if not shared:
-                gauge.append(f" · {_observed_text(quota.observed_ago)}", style=SECONDARY_TEXT_COLOR)
+                gauge.append(f" · {observed_text(quota.observed_ago)}", style=SECONDARY_TEXT_COLOR)
             rows.append((label, (gauge,)))
         label_width = max(cell_len(label.plain) for label, _ in rows)
-        yield _labelled_rows(rows, options.max_width, label_width)
+        yield labelled_rows(rows, options.max_width, label_width)
         if shared:
-            yield _grey(_observed_text(next(iter(observed))))
-
-
-def _observed_text(observed_ago: str) -> str:
-    suffix = "" if observed_ago == AGE_NOW else f" {USAGE_AGO_WORD}"
-    return f"{USAGE_OBSERVED_WORD} {observed_ago}{suffix}"
+            yield grey(observed_text(next(iter(observed))))
 
 
 @dataclass(frozen=True)

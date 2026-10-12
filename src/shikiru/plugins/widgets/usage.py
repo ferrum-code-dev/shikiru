@@ -15,10 +15,10 @@ from shikiru.ui.compact import (
     AgentUsageRows,
     ProjectUsageMetric,
     ProjectUsageTotals,
-    UsageSection,
 )
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached, widget_is_current
+from shikiru.ui.section import Section
 from shikiru.ui.tokens import STYLE_BOLD
 
 if TYPE_CHECKING:
@@ -46,10 +46,10 @@ def _usage_body(
     with_runs = [agent for agent in agents if agent.run_count]
     with_quotas = [agent for agent in agents if agent.quotas]
     if with_runs:
-        parts.append(UsageSection(USAGE_BY_AGENT_LABEL, AgentUsageRows(with_runs)))
+        parts.append(Section(USAGE_BY_AGENT_LABEL, AgentUsageRows(with_runs)))
     if with_quotas:
         limits = AgentQuotaLimits(with_quotas, context.quota_warn_pct, context.quota_alert_pct)
-        parts.append(UsageSection(USAGE_LIMITS_LABEL, limits))
+        parts.append(Section(USAGE_LIMITS_LABEL, limits))
     if not agents:
         parts.append(Text(NO_USAGE_RECORDED))
     return Group(*parts)
