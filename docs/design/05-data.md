@@ -93,10 +93,14 @@ ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
 # `roles.helper.ladder` must contain exactly one rung until helper fallback is implemented.
 
 [dashboard]
-widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker", "faults"]
+widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker", "disk", "faults"]
 animations = true                               # false renders static frames (06 §6.5)
 docker_refresh_seconds = 5
 docker_timeout_seconds = 5
+docker_scope = "project"                        # "project" counts containers in the project root or its worktrees (06 §5.4); "all" counts every container
+disk_refresh_seconds = 60                       # Disk section sample cadence; the run directory walk is cached for this long (06 §5.4)
+disk_warn_free_pct = 10                         # free space below this percentage is amber
+disk_alert_free_pct = 5                         # free space below this percentage is red
 repo_status_cache_seconds = 10
 timeline_page_size = 20                         # task evidence rows returned per page, maximum 49
 timeline_scan_rows = 256                        # normalized signal rows scanned per role and page, maximum 1024
@@ -203,6 +207,7 @@ The dashboard keeps this refresh cadence when `animations = false` and under `NO
 | Resource sample cadence / CPU averaging window | 2 s / 30 s |
 | Header git data cache | 10 s |
 | Docker sample cadence / command timeout | 5 s / 5 s |
+| Disk sample cadence (`dashboard.disk_refresh_seconds`) / free-space thresholds (`disk_warn_free_pct`, `disk_alert_free_pct`) | 60 s / amber below 10 % free, red below 5 % free |
 | Notification hook timeout (`notify.timeout_seconds`) / informational queue | 30 s / 64 events (urgent events are never dropped, 06 §5.7) |
 | Engine shutdown bound (`orchestration.shutdown_seconds`) | 15 s: the time SIGTERM, SIGINT or `shikiru stop` get to end turns and release the engine lock before the engine is ended by force (03 §7) |
 | Failed-tick retry backoff (`orchestration.faults`) | 2 s doubling to 60 s; 10 consecutive unexpected faults stop the engine; final notification 30 s; one `engine_fault` event per fault per 300 s (`repeat_notify_seconds`) |

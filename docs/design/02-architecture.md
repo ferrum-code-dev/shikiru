@@ -83,7 +83,7 @@ plugins.widgets.* → dashboard.contract, ui only (all data arrives as view mode
 | `prompts` | Jinja2 templates (packaged, overridable) | `PromptRenderer` |
 | `helper` | Joshu calls | `Helper` |
 | `ui` | Semantic role/state mapping, Textual theme and Rich renderables shared by CLI, dashboard and view | `ui.tokens`, `ui.theme`, `ui.glyphs`, `ui.compact`, `TaskStrip`, `SpeechBubble`, `SplashPanel`, `Gauge`, `StreamLine` |
-| `telemetry` | Host/process and Docker sampling | `ResourceSampler`, `DockerSampler` |
+| `telemetry` | Host/process, Docker and disk sampling | `ResourceSampler`, `DockerSampler`, `DiskSampler` |
 | `engine` | Orchestration (below) | — |
 | `operator` | Use cases for interfaces; current task-action and escalation-resolution applicability and disabled reasons; bounded task-target search, command history/status and task-evidence pages over SQL events and recorded normalized signal files; paginated read-only evidence export with an injected atomic local file writer; project detection shared by `init --yes` and the wizard | `OperatorQueries`, `OperatorCommands`, `TaskEvidenceExporter`, `LocalEvidenceWriter`, `EventFeed`, `detectors` |
 | `cli` / `mcp` / `dashboard` | Typer app (incl. `shikiru view`, the read-only live view of a role's turns); FastMCP stdio server; Textual apps and widget contract. `DashboardApp` composes configured placements into compact Focus Home readouts and a task-list/inspector, and opens shared detail, contextual views and the shared palette; palette and history screens observe durable command outcomes while mounted, and paginated history reads bounded pages through `StateReader` and operator queries; the Focus actions footer shows a focusable latest-command summary with recorded effect, cause or pending queue timestamp and opens full history; additive `WidgetContext` callbacks carry palette context, browser selection, contextual view access and Home navigation while existing callback fields remain available; `dashboard.views` composes bounded browser/detail data, retained task history, timestamped resource samples, verified-lock uptime, project/task usage coverage and task-session history through `session_history`, plus timeline filters/pages, labelled family context, recorded relationships and blocker evidence; serialized timeline reads preserve the selected evidence identity, isolate unreadable sources and pause latest-follow when the Operator scrolls away; task detail routes its local evidence export action into the contextual palette without creating a workflow command; `TaskNavigation` selects current existing tmux targets. The operator layer prepares action availability, while the engine remains authoritative for command acceptance | `app`, `build_server()`, `DashboardApp`, `TaskDetailScreen`, `TaskNavigation`, `PaletteApp`, `DashboardWidget`, `TaskBrowserView`, `TaskDetailView`, `TaskTimelinePageView` |
@@ -174,7 +174,7 @@ src/shikiru/
   plugins/
     agents/claude/  agent.py turn.py headless.py options.py context.py hook.py
     agents/codex/   agent.py turn.py headless.py options.py home.py quota.py usage.py sandbox.py sandbox_probe.py
-    widgets/        header.py strips.py escalations.py queue.py dialogue.py usage.py resources.py docker.py faults.py
+    widgets/        header.py strips.py escalations.py queue.py dialogue.py usage.py resources.py docker.py disk.py faults.py
 tests/  unit/ integration/ e2e/ support/ (tmux fixture, fake clock, wait_until) fixtures/ (sample-project, agent samples)
   fake_agent/   test-only package (uv dev dependency) with its own `shikiru.agents` entry point `fake`
 ```
@@ -191,7 +191,7 @@ claude = "shikiru.plugins.agents.claude.agent:create"
 codex  = "shikiru.plugins.agents.codex.agent:create"
 [project.entry-points."shikiru.widgets"]     # target: DashboardWidget class (06 §5.4)
 strips = "shikiru.plugins.widgets.strips:StripsWidget"
-# … header, escalations, queue, dialogue, usage, resources, docker
+# … header, escalations, queue, dialogue, usage, resources, docker, disk, faults
 ```
 
 A plugin that is missing or broken fails `start` and `doctor` with its name and error.
@@ -200,7 +200,7 @@ Home uses explicit widget placement from the `dashboard.contract` capability whi
 
 The task-focused window puts the shared detail first in Workspace, scopes configured Activity and Usage to the focused task, and omits project-wide header, queue, escalation, strip and diagnostic widgets. Configured third-party widgets remain in Extensions in their relative order. Task detail reads blockers and paged task relationships through `StateReader` in one read snapshot; dependency, dependent, parent and recorded replacement links remain distinct. Family context is overlaid on ordered SQL matches without changing match counts or queue order. Related-task navigation reuses the existing detail callback without changing Home's selected identity. Resource evidence uses the dashboard sampler's recorded sample time and remains separate from the scheduler's stored wait reason. Detail navigation reads current task state at activation and selects existing tmux targets without creating windows, sessions or worktrees.
 
-Tasks 93–94 shipped this Focus Home placement and its shared task-detail conversion. `strips` remains reachable as a secondary workflow view, `dialogue` is in Activity, `docker` and `faults` are in Diagnostics, and detailed usage and command history are reachable from the contextual Views menu. Every configured third-party widget remains in Extensions in configured relative order. Plugins without a placement capability default to Extensions, and missing or broken configured plugins fail validation by name. The task-focused shell uses the shared compact detail and retains task-scoped contextual views. The widget names, entry points, callbacks and configured order remain compatible; see Focus §8 for the complete built-in and extension placement contract and the [Phase 11 second-review record](../release-readiness-2026-10-08-phase11-followup.md) for current verification.
+Tasks 93–94 shipped this Focus Home placement and its shared task-detail conversion. `strips` remains reachable as a secondary workflow view, `dialogue` is in Activity, `docker`, `disk` and `faults` are in Diagnostics, as sections of the Project Diagnostics popup and as standalone Views entries, and detailed usage and command history are reachable from the contextual Views menu. Every configured third-party widget remains in Extensions in configured relative order. Plugins without a placement capability default to Extensions, and missing or broken configured plugins fail validation by name. The task-focused shell uses the shared compact detail and retains task-scoped contextual views. The widget names, entry points, callbacks and configured order remain compatible; see Focus §8 for the complete built-in and extension placement contract and the [Phase 11 second-review record](../release-readiness-2026-10-08-phase11-followup.md) for current verification.
 
 ## 5. Runtime layout on disk
 
