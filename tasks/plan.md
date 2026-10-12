@@ -1550,7 +1550,8 @@ Refs: seventh-review layout and refresh; `dashboard/diagnostics.py`, `dashboard/
 
 ### Task 155: Verify the seventh review and reconcile Phase 11 evidence
 Refs: Tasks 151–154; seventh-review specification; 07 §3/§5.
-- [ ] Revise the HTML reference's Project diagnostics popup and Views menu to the delivered TUI and check it in headless Chrome against native renders; update 05/06 (diagnostics sections, Docker facts and scope, Disk, refresh) and the READMEs; run normal and `TERM=dumb NO_COLOR=1` gates; write a seventh-review release record; mark the spec delivered; clean owned processes and sockets.
+- [x] Revise the HTML reference's Project diagnostics popup and Views menu to the delivered TUI and check it in headless Chrome against native renders; update 05/06 (diagnostics sections, Docker facts and scope, Disk, refresh) and the READMEs; run normal and `TERM=dumb NO_COLOR=1` gates; write a seventh-review release record; mark the spec delivered; clean owned processes and sockets.
+  Proof: native popup renders (wide 100×50 and compact 48×30, colour and `NO_COLOR`, Docker, Disk and Faults enabled, the standalone views and 20×8) match the revised HTML reference (SHA-256 `1a71524a…a0d8`) token for token in headless Chrome, except the illustrative Agents and Status samples of the decision scene. Design 05, 06 and 02 and the spec, README and design README describe the delivered sections, Docker scope, Disk, refresh and Views placement, with the known limits in the [2026-10-12 record](../docs/release-readiness-2026-10-12-phase11-seventh-review.md). Gates: `PYTEST_ADDOPTS='-n 2 --dist=loadfile' uv run poe check` (1,644 passed, 14 skipped, 91.20 %) and the `TERM=dumb NO_COLOR=1` run (1,644 passed, 14 skipped, 91.21 %) were green. The default ten-worker run was red on a different timing-sensitive test in four runs on this host, recorded in the record.
 
 ### Seventh-review issue coverage
 

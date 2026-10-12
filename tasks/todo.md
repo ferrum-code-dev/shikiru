@@ -242,4 +242,4 @@ Seventh-review scope and evidence: [seventh real-project review](../docs/tui-fee
 - [x] Task 152: Diagnostics section primitives and the Docker section
 - [x] Task 153: Disk section
 - [x] Task 154: Project diagnostics panel restructure and timer refresh
-- [ ] Task 155: Verify the seventh review and reconcile Phase 11 evidence
+- [x] Task 155: Verify the seventh review and reconcile Phase 11 evidence

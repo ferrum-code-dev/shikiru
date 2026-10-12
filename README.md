@@ -71,6 +71,7 @@ reconciles accepted Tasks 122–128, with Task 128 accepted by root on 2026-10-0
 [2026-10-11 fourth-review record](docs/release-readiness-2026-10-11-phase11-fourth-review.md) verifies Tasks 129–139 issue by issue with gates, smoke and limits.
 The [2026-10-11 fifth-review record](docs/release-readiness-2026-10-11-phase11-fifth-review.md) verifies Tasks 142–145; Task 146 (Implementer pane titles) is closed as not reproduced.
 The [2026-10-12 sixth-review record](docs/release-readiness-2026-10-12-phase11-sixth-review.md) verifies Tasks 148–149 (50/90 quota gauge colours, `Project usage` title and layout) and the HTML reference.
+The [2026-10-12 seventh-review record](docs/release-readiness-2026-10-12-phase11-seventh-review.md) verifies Tasks 151–155 (Project Diagnostics sections, Docker essentials and scope, the Disk section, timer refresh) and the HTML reference.
 The [Focus specification](docs/tui-focus.md) describes current routes and evidence rules; the
 [parity record](docs/tui-parity.md) preserves the measured Phase 10 audit and its historical artifacts.
 

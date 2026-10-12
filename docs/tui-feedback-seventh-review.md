@@ -1,6 +1,6 @@
 # Phase 11 seventh real-project review
 
-Status: planned (Tasks 151–155, 2026-10-12); the operator approved the section layout, the Docker scope, the Disk section and the disappearing of disabled sections below. This specification refines the [sixth review](tui-feedback-sixth-review.md) and Design 05 §3, 06 §5.4 and §6 where the requirements below supersede it. **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 155).
+Status: delivered (Tasks 151–155, 2026-10-12; see the [record](release-readiness-2026-10-12-phase11-seventh-review.md)); the operator approved the section layout, the Docker scope, the Disk section and the disappearing of disabled sections below. This specification refines the [sixth review](tui-feedback-sixth-review.md) and Design 05 §3, 06 §5.4 and §6 where the requirements below supersede it. **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 155).
 
 Analysis: two read-only static analyses (Sonnet 5.5 medium for the panel structure and refresh, Sonnet 5.5 medium for the Docker facts, with a read-only look at the local Docker CLI). Nothing else was run.
 
