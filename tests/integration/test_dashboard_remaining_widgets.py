@@ -44,7 +44,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Role, Status
 from shikiru.operator.lifecycle import task_dashboard_command
 from shikiru.operator.queries import OperatorQueries
-from shikiru.paths import run_dir, state_db_path
+from shikiru.paths import run_dir, runs_root, state_db_path
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
 from shikiru.plugins.widgets.docker import DockerPanel
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
@@ -58,6 +58,7 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.telemetry.disk import DiskSampler
 from shikiru.telemetry.docker import (
     DOCKER_ALL_FLAG,
     DOCKER_BINARY,
@@ -104,6 +105,7 @@ if TYPE_CHECKING:
 
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
+_RUN_FILE_BYTES = 2048
 BYTES_PER_GIB = 1024**3
 OBSERVABLE_PANE_MEMORY_BYTES = 64 * 1024**2
 MINIMUM_PANE_MEMORY_BYTES = 48 * 1024**2
@@ -164,6 +166,9 @@ def _dashboard_services(
         tmux=tmux,
         session_target=UNUSED_SESSION_TARGET,
         resources=ResourceSampler(clock, settings.orchestration.resources),
+        disk=DiskSampler(
+            clock, project_dir, refresh_seconds=settings.dashboard.disk_refresh_seconds
+        ),
         docker=DockerSampler(
             runner,
             clock,
@@ -1063,6 +1068,7 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         motion_interval_seconds=None,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         open_palette=open_palette,
@@ -1192,6 +1198,29 @@ async def test_resource_failure_without_a_prior_sample_remains_failed(
     assert retained.error == failure.error
 
 
+async def test_the_disk_sample_reaches_the_views_with_its_run_size_and_free_level(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
+    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
+    run = runs_root(project_dir) / "T-1"
+    run.mkdir(parents=True)
+    (run / "view.jsonl").write_bytes(b"x" * _RUN_FILE_BYTES)
+    views = _dashboard_views(reader, project_dir, clock, settings, sources)
+
+    disk = await views.disk()
+
+    assert disk.state is DiagnosticSampleState.AVAILABLE
+    assert disk.runs_bytes == _RUN_FILE_BYTES
+    assert disk.free_level is not None
+
+
 async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navigable(
     connection: Connection,
     reader: StateReader,
@@ -1237,6 +1266,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         motion_interval_seconds=None,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         open_palette=open_palette,
@@ -1495,6 +1525,9 @@ async def test_resources_service_excludes_panes_from_other_projects(
         tmux=tmux,
         session_target=f"={RESOURCE_PROJECT_SESSION}",
         resources=sampler,
+        disk=DiskSampler(
+            clock, project_dir, refresh_seconds=settings.dashboard.disk_refresh_seconds
+        ),
         docker=DockerSampler(
             SubprocessRunner(),
             clock,

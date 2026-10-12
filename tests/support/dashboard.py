@@ -10,7 +10,14 @@ from textual.widgets import Label, ListItem, ListView
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp
-from shikiru.dashboard.contract import DockerView, RepoStatus, ResourceView, WidgetContext
+from shikiru.dashboard.contract import (
+    DiagnosticSampleState,
+    DiskView,
+    DockerView,
+    RepoStatus,
+    ResourceView,
+    WidgetContext,
+)
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.operator.queries import OperatorQueries
@@ -70,6 +77,9 @@ class StubServices:
 
     async def containers(self) -> DockerView:
         return DockerView(available=False)
+
+    async def disk(self) -> DiskView:
+        return DiskView(state=DiagnosticSampleState.UNAVAILABLE)
 
 
 class WidgetHostApp(App[None]):
@@ -160,6 +170,7 @@ def widget_context(
         focus_task=focus_task,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
         timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
@@ -189,6 +200,7 @@ def dashboard_app(
         motion_interval_seconds=None,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         animations=False,

@@ -19,10 +19,12 @@ from shikiru.agents.contracts import (
     COST_BASIS_UNKNOWN,
 )
 from shikiru.domain.escalation import escalation_reason_label
+from shikiru.domain.levels import UsageLevel
 from shikiru.domain.tasks import EscalationReason, Role, Status
 from shikiru.ui.gauge import Gauge
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE
 from shikiru.ui.section import Row, grey, labelled_rows, observed_text, wrap_groups
+from shikiru.ui.size import format_size
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -46,6 +48,8 @@ if TYPE_CHECKING:
 _BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
 _BOLD_STEEL = f"{STYLE_BOLD} {STEEL_BLUE}"
 _BOLD_SAGE = f"{STYLE_BOLD} {SAGE}"
+_BOLD_AMBER = f"{STYLE_BOLD} {AMBER}"
+_BOLD_ALERT = f"{STYLE_BOLD} {ALERT_COLOR}"
 GIB_FORMAT = ".1f"
 CPU_DECIMALS_BELOW_PCT = 10
 CPU_DECIMAL_FORMAT = ".1f"
@@ -866,6 +870,23 @@ def format_memory(memory_bytes: int) -> str:
     if memory_bytes >= BYTES_PER_GIB:
         return f"{memory_bytes / BYTES_PER_GIB:{GIB_FORMAT}} GiB"
     return f"{memory_bytes / BYTES_PER_MIB:{MIB_FORMAT}} MiB"
+
+
+def free_space_text(free_bytes: int, total_bytes: int, level: UsageLevel | None) -> Text:
+    """Render `free of total` as sizes, the free figure amber at warn and red at alert."""
+    return Text.assemble(
+        (format_size(free_bytes), _free_space_style(level)),
+        (" of ", SECONDARY_TEXT_COLOR),
+        (format_size(total_bytes), _BOLD_STEEL),
+    )
+
+
+def _free_space_style(level: UsageLevel | None) -> str:
+    if level is UsageLevel.ALERT:
+        return _BOLD_ALERT
+    if level is UsageLevel.WARN:
+        return _BOLD_AMBER
+    return _BOLD_STEEL
 
 
 def format_cpu_pct(cpu_pct: float) -> str:

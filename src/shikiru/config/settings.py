@@ -227,6 +227,9 @@ class DashboardConfig(ConfigModel):
     docker_refresh_seconds: float = Field(gt=0)
     docker_timeout_seconds: float = Field(gt=0)
     docker_scope: DockerScope
+    disk_refresh_seconds: float = Field(gt=0)
+    disk_warn_free_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
+    disk_alert_free_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
     repo_status_cache_seconds: float = Field(gt=0)
     timeline_page_size: int = Field(gt=0, le=MAX_TIMELINE_PAGE_SIZE)
     timeline_scan_rows: int = Field(gt=0, le=MAX_TIMELINE_SIGNAL_SCAN_ROWS)
@@ -238,6 +241,13 @@ class DashboardConfig(ConfigModel):
     def _recent_limit_covers_window(self) -> DashboardConfig:
         if self.recent_task_limit < self.recent_task_window:
             message = "dashboard.recent_task_limit must be at least dashboard.recent_task_window"
+            raise ValueError(message)
+        return self
+
+    @model_validator(mode="after")
+    def _disk_alert_below_warn(self) -> DashboardConfig:
+        if self.disk_alert_free_pct >= self.disk_warn_free_pct:
+            message = "dashboard.disk_alert_free_pct must be below dashboard.disk_warn_free_pct"
             raise ValueError(message)
         return self
 

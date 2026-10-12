@@ -1536,8 +1536,9 @@ Refs: seventh-review layout; `ui/compact.py` (`UsageSection`, `_labelled_rows`, 
 
 ### Task 153: Disk section
 Refs: seventh-review Disk; `telemetry/disk.py`, `bootstrap.py`, `config/defaults.toml`, plugin entry points in `pyproject.toml`, `plugins/widgets/`; 06 §5.4.
-- [ ] A `disk` sampler (free and total of the project filesystem, run and evidence directory size via `directory_usage`, walk cached for `disk_refresh_seconds`), a `DiskView` contract, and a default-on `disk` `DIAGNOSTICS` widget plugin rendered with the Task 152 section primitives; unavailable and failed states are honest.
-- [ ] Tests: real filesystem boundary for the sampler (tmp project), cache cadence with `FakeClock`, widget states; `disk_refresh_seconds` tunable.
+- [x] A `disk` sampler (free and total of the project filesystem, run and evidence directory size via `directory_usage`, walk cached for `disk_refresh_seconds`), a `DiskView` contract, and a default-on `disk` `DIAGNOSTICS` widget plugin rendered with the Task 152 section primitives; unavailable and failed states are honest.
+- [x] Tests: real filesystem boundary for the sampler (tmp project), cache cadence with `FakeClock`, widget states; `disk_refresh_seconds` tunable.
+  Proof: `telemetry/disk.py` samples `shutil.disk_usage` and `directory_usage(runs_root)` off the loop through `asyncio.to_thread`, cached for `[dashboard] disk_refresh_seconds` on `Clock`; a missing project is unavailable, an unreadable run directory is failed, and both keep the last observation as stale. The `disk` DIAGNOSTICS widget renders Free (amber below 10 %, red below 5 %, both validated `[dashboard]` tunables) and Runs in the approved section at wide, 30×20 and 20×8. Tests: real-filesystem sampler table, FakeClock cadence, per-character style tables for every state, the free-space rule table and services-to-views boundary. Gate `uv run poe check` green (1611 passed, 14 skipped).
 
 ### Task 154: Project diagnostics panel restructure and timer refresh
 Refs: seventh-review layout and refresh; `dashboard/diagnostics.py`, `dashboard/app.py` (`_show_project_diagnostics`, `_context_choices`), `plugins/widgets/{resources,faults}.py`, `dashboard/contract.py`, `config/defaults.toml` `[dashboard].widgets`; 06 §5.4/§5.5.

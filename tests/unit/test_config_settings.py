@@ -90,3 +90,18 @@ def test_gauges_reject_quota_thresholds_outside_zero_below_warn_below_alert_at_m
         GaugesConfig.model_validate(
             {**dict(gauges), "quota_warn_pct": warn_pct, "quota_alert_pct": alert_pct}
         )
+
+
+@pytest.mark.parametrize(
+    ("warn_pct", "alert_pct"),
+    [(10, 10), (5, 10), (10, 0), (101, 5)],
+)
+def test_dashboard_rejects_disk_thresholds_outside_alert_below_warn_at_most_100(
+    warn_pct: int, alert_pct: int
+) -> None:
+    dashboard = make_settings().dashboard
+
+    with pytest.raises(ValidationError):
+        DashboardConfig.model_validate(
+            {**dict(dashboard), "disk_warn_free_pct": warn_pct, "disk_alert_free_pct": alert_pct}
+        )

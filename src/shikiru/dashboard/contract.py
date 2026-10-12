@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import BillingMode, BillingSource, CostBasis
     from shikiru.clock import Clock
+    from shikiru.domain.levels import UsageLevel
     from shikiru.domain.tasks import EscalationReason, Role
     from shikiru.ui.strip import TaskStripData
 
@@ -759,6 +760,19 @@ class DockerView:
 
 
 @dataclass(frozen=True)
+class DiskView:
+    """Free and total bytes of the project filesystem, the run directory size and sampling state."""
+
+    state: DiagnosticSampleState
+    free_bytes: int | None = None
+    total_bytes: int | None = None
+    runs_bytes: int | None = None
+    free_level: UsageLevel | None = None
+    sampled_ago: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class EngineFaultView:
     """One open recorded engine fault streak for Diagnostics."""
 
@@ -905,6 +919,10 @@ class DashboardViews(Protocol):
         """Return the current Docker sample and whether Docker is available."""
         ...
 
+    async def disk(self) -> DiskView:
+        """Return the cached disk sample with its free-space level."""
+        ...
+
 
 class DashboardWidget(Protocol):
     """A system-pane panel plugin, registered under `WIDGET_ENTRY_POINT_GROUP` (06 §5.4)."""
@@ -924,6 +942,7 @@ class WidgetContext:
     focus_task: str | None
     resources_refresh_seconds: float
     docker_refresh_seconds: float
+    disk_refresh_seconds: float
     timeline_refresh_seconds: float
     quota_warn_pct: int
     quota_alert_pct: int

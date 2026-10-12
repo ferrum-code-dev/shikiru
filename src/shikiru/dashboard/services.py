@@ -15,6 +15,7 @@ from shikiru.dashboard.contract import (
     ContainerProblemView,
     ContainerView,
     DiagnosticSampleState,
+    DiskView,
     DockerSummaryView,
     DockerView,
     ElsewhereView,
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from shikiru.operator.queries import OperatorQueries
     from shikiru.store.reader import StateReader
+    from shikiru.telemetry.disk import DiskSampler, DiskSnapshot
     from shikiru.telemetry.docker import DockerSampler
     from shikiru.telemetry.resources import ResourceSampler, ResourceSnapshot
     from shikiru.tmux.client import Tmux
@@ -216,6 +218,7 @@ class DashboardServices:
         session_target: str,
         resources: ResourceSampler,
         docker: DockerSampler,
+        disk: DiskSampler,
     ) -> None:
         """Delegate source reads and sampling through injected process boundaries."""
         self._repo_status_service = repo_status_service
@@ -229,6 +232,7 @@ class DashboardServices:
         self._session_target = session_target
         self._resources = resources
         self._docker = docker
+        self._disk = disk
         self._resource_failure: tuple[datetime, str] | None = None
 
     async def repo_status(self) -> RepoStatus:
@@ -340,6 +344,26 @@ class DashboardServices:
             error=snapshot.error,
             summary=_docker_summary_view(snapshot.summary),
         )
+
+    async def disk(self) -> DiskView:
+        """Return the disk sample in the stable dashboard contract shape."""
+        snapshot = await self._disk.sample_if_due()
+        return DiskView(
+            state=_disk_state(snapshot),
+            free_bytes=snapshot.free_bytes,
+            total_bytes=snapshot.total_bytes,
+            runs_bytes=snapshot.runs_bytes,
+            sampled_ago=_sampled_ago(snapshot.sampled_at, self._clock),
+            error=snapshot.error,
+        )
+
+
+def _disk_state(snapshot: DiskSnapshot) -> DiagnosticSampleState:
+    if snapshot.error is None:
+        return DiagnosticSampleState.AVAILABLE
+    if snapshot.sampled_at is not None:
+        return DiagnosticSampleState.STALE
+    return DiagnosticSampleState.FAILED if snapshot.failed else DiagnosticSampleState.UNAVAILABLE
 
 
 def _docker_summary_view(summary: DockerSummary | None) -> DockerSummaryView | None:

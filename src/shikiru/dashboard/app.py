@@ -1146,6 +1146,7 @@ class DashboardApp(App[None]):
         motion_interval_seconds: float | None,
         resources_refresh_seconds: float,
         docker_refresh_seconds: float,
+        disk_refresh_seconds: float,
         quota_warn_pct: int,
         quota_alert_pct: int,
         animations: bool = True,
@@ -1170,6 +1171,7 @@ class DashboardApp(App[None]):
         self._animations = animations
         self._resources_refresh_seconds = resources_refresh_seconds
         self._docker_refresh_seconds = docker_refresh_seconds
+        self._disk_refresh_seconds = disk_refresh_seconds
         self._timeline_refresh_seconds = timeline_refresh_seconds
         self._quota_warn_pct = quota_warn_pct
         self._quota_alert_pct = quota_alert_pct
@@ -1303,6 +1305,7 @@ class DashboardApp(App[None]):
             focus_task=self._focus_task,
             resources_refresh_seconds=self._resources_refresh_seconds,
             docker_refresh_seconds=self._docker_refresh_seconds,
+            disk_refresh_seconds=self._disk_refresh_seconds,
             timeline_refresh_seconds=self._timeline_refresh_seconds,
             quota_warn_pct=self._quota_warn_pct,
             quota_alert_pct=self._quota_alert_pct,

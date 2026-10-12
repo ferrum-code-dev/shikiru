@@ -113,6 +113,7 @@ from shikiru.store.reader import StateReader
 from shikiru.store.retention import StateRetention
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.telemetry.disk import DiskSampler
 from shikiru.telemetry.docker import DockerSampler
 from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import FORMAT_SESSION_NAME, Tmux, exact_target, tmux_key_label
@@ -369,6 +370,11 @@ async def run_dashboard(
                     None if settings.dashboard.docker_scope == DOCKER_SCOPE_ALL else (project_root,)
                 ),
             ),
+            disk=DiskSampler(
+                clock,
+                project_root,
+                refresh_seconds=settings.dashboard.disk_refresh_seconds,
+            ),
         )
         motion = dashboard_motion_module.DashboardMotion(
             services.reader,
@@ -434,6 +440,7 @@ async def run_dashboard(
             motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
             resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
             quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
             quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
             animations=settings.dashboard.animations,

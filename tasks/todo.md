@@ -240,6 +240,6 @@ Seventh-review scope and evidence: [seventh real-project review](../docs/tui-fee
 
 - [x] Task 151: Docker sampler with numeric model, project scope, top five and problems
 - [x] Task 152: Diagnostics section primitives and the Docker section
-- [ ] Task 153: Disk section
+- [x] Task 153: Disk section
 - [ ] Task 154: Project diagnostics panel restructure and timer refresh
 - [ ] Task 155: Verify the seventh review and reconcile Phase 11 evidence

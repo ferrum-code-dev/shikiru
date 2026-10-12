@@ -23,6 +23,7 @@ from shikiru.dashboard.contract import (
     CommandFeedbackStatus,
     CommandHistoryView,
     DialogueBubbleView,
+    DiskView,
     DockerView,
     EngineFaultView,
     EscalationPanelView,
@@ -62,6 +63,7 @@ from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
+from shikiru.domain.levels import free_space_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.reports import (
     ConsultAnswer,
@@ -207,6 +209,10 @@ class DashboardSources(Protocol):
 
     async def containers(self) -> DockerView:
         """Return the current Docker sample."""
+        ...
+
+    async def disk(self) -> DiskView:
+        """Return the current disk sample."""
         ...
 
     def resource_sample(self) -> ResourceView | None:
@@ -1481,6 +1487,19 @@ class StateDashboardViews:
     async def containers(self) -> DockerView:
         """Return the current Docker sample."""
         return await self._sources.containers()
+
+    async def disk(self) -> DiskView:
+        """Return the disk sample with its free-space level under the configured thresholds."""
+        view = await self._sources.disk()
+        if view.free_bytes is None or view.total_bytes is None:
+            return view
+        level = free_space_level(
+            view.free_bytes,
+            view.total_bytes,
+            warn_pct=self._settings.dashboard.disk_warn_free_pct,
+            alert_pct=self._settings.dashboard.disk_alert_free_pct,
+        )
+        return replace(view, free_level=level)
 
     def _strip_with_motion(
         self, task: Task, motion: TaskMotionFrame, cost_usd: float | None

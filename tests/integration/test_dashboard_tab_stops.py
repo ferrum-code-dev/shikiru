@@ -106,6 +106,7 @@ def _home(
         motion_interval_seconds=None,
         resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
+        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         animations=False,
