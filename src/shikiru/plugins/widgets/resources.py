@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from rich.console import Console
-from rich.text import Text
 
 from shikiru.dashboard.contract import FOCUS_PROJECT_DIAGNOSTICS_VIEW, WidgetPlacement
 from shikiru.ui.compact import render_resource_metric
@@ -15,6 +14,7 @@ from shikiru.ui.screen import widget_is_attached
 RESOURCE_ENTER_KEY = "enter"
 
 if TYPE_CHECKING:
+    from rich.text import Text
     from textual import events
     from textual.widget import Widget
 
@@ -63,10 +63,6 @@ class ResourcesPanel(GatedStatic):
     async def _refresh(self) -> None:
         if not widget_is_attached(self):
             return
-        if self._widget_context.placement is WidgetPlacement.DIAGNOSTICS:
-            self._sample = self._widget_context.views.resource_sample()
-            self._render_sample_at_current_width()
-            return
         sample = await self._widget_context.views.resources()
         if not widget_is_attached(self):
             return
@@ -75,9 +71,6 @@ class ResourcesPanel(GatedStatic):
 
     def _render_sample_at_current_width(self) -> None:
         sample = self._sample
-        if self._widget_context.placement is WidgetPlacement.DIAGNOSTICS:
-            self._update_content(_diagnostics_content(sample, self.size.width))
-            return
         if sample is None:
             return
         self._update_content(render_resource_metric(sample, width=self.size.width))
@@ -103,14 +96,3 @@ class ResourcesWidget:
     def create(self, context: WidgetContext) -> Widget:
         """Build the resource panel for `context`."""
         return ResourcesPanel(context)
-
-
-def _diagnostics_content(sample: ResourceView | None, width: int) -> Text:
-    metric = render_resource_metric(sample, width=width)
-    age = f"Observed {sample.sampled_ago} ago. " if sample and sample.sampled_ago else ""
-    explanation = (
-        f"{age}CPU is percent of host capacity. Host RAM is used/total; Shikiru and Agents RSS "
-        "is process resident memory with no denominator, not a per-process limit. Shikiru "
-        "excludes agent trees."
-    )
-    return Text.assemble(metric, "\n", Text(explanation))

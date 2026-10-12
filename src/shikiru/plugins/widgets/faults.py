@@ -2,56 +2,89 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from rich.console import Group
 from rich.text import Text
-from textual.widgets import Static
 
 from shikiru.dashboard.contract import WidgetPlacement
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached
+from shikiru.ui.section import Section, grey, number, row_name, wrap_groups
 
 if TYPE_CHECKING:
+    from rich.console import Console, ConsoleOptions, RenderResult
     from textual.widget import Widget
 
     from shikiru.dashboard.contract import EngineFaultView, WidgetContext
 
+SECTION_TITLE = "Faults"
+PROJECT_TARGET = "project"
+RECOVERABLE_WORD = "recoverable"
+UNRECOVERABLE_WORD = "unrecoverable"
+REPEAT_SIGN = "\N{MULTIPLICATION SIGN}"
+FIRST_WORD = "first"
+LATEST_WORD = "latest"
 
-def _fault_group(fault: EngineFaultView) -> Group:
-    target = fault.task_id or "project"
-    recoverability = "recoverable" if fault.recoverable else "unrecoverable"
-    return Group(
-        Text(
-            f"{target} · {fault.scope} · {fault.error} · {recoverability} · repeats {fault.repeats}"
-        ),
-        Text(f"First recorded {fault.first_seen} · latest {fault.last_seen}"),
+
+def _fault_headline(fault: EngineFaultView) -> tuple[Text, ...]:
+    recoverability = RECOVERABLE_WORD if fault.recoverable else UNRECOVERABLE_WORD
+    return (
+        row_name(fault.task_id or PROJECT_TARGET),
+        Text(fault.scope),
+        Text(fault.error),
+        grey(recoverability),
+        number(f"{REPEAT_SIGN}{fault.repeats}"),
     )
 
 
-class FaultsPanel(Static):
-    """Show recorded engine faults that have not recovered."""
+def _fault_timeline(fault: EngineFaultView) -> tuple[Text, ...]:
+    return (
+        Text.assemble(grey(f"{FIRST_WORD} "), Text(fault.first_seen)),
+        Text.assemble(grey(f"{LATEST_WORD} "), Text(fault.last_seen)),
+    )
+
+
+@dataclass(frozen=True)
+class _FaultLines:
+    faults: tuple[EngineFaultView, ...]
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        del console
+        for fault in self.faults:
+            yield wrap_groups(_fault_headline(fault), options.max_width)
+            yield wrap_groups(_fault_timeline(fault), options.max_width)
+
+
+def faults_section(faults: tuple[EngineFaultView, ...]) -> Group | Section:
+    """Render open `faults` as the Faults section, and nothing when none is open."""
+    return Section(SECTION_TITLE, _FaultLines(faults)) if faults else Group()
+
+
+class FaultsPanel(GatedStatic):
+    """Show open engine fault streaks and take no room while there are none."""
 
     def __init__(self, context: WidgetContext) -> None:
         """Hold the read-only dashboard view and its state-change subscription."""
         super().__init__(id="faults")
         self._widget_context = context
 
-    async def on_mount(self) -> None:
-        """Render current fault streaks and refresh after durable state changes."""
-        await self._refresh()
+    def on_mount(self) -> None:
+        """Render current fault streaks and refresh on a timer and after durable changes."""
+        self._refresh()
+        self.set_interval(self._widget_context.resources_refresh_seconds, self._refresh)
         self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
 
     async def _refresh_if_attached(self) -> None:
-        if widget_is_attached(self):
-            await self._refresh()
+        self._refresh()
 
-    async def _refresh(self) -> None:
+    def _refresh(self) -> None:
+        if not widget_is_attached(self):
+            return
         faults = self._widget_context.views.engine_faults()
-        self.update(
-            Group(*(_fault_group(fault) for fault in faults))
-            if faults
-            else "No open engine fault streaks."
-        )
+        self.display = bool(faults)
+        self.update_if_changed(faults_section(faults), key=faults)
 
 
 class FaultsWidget:

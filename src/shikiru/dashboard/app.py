@@ -28,7 +28,6 @@ from shikiru.dashboard.contract import (
     DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
     FOCUS_FAULTS_VIEW,
     FOCUS_PROJECT_DIAGNOSTICS_VIEW,
-    FOCUS_RESOURCES_VIEW,
     WIDGET_ENTRY_POINT_GROUP,
     CommandFeedbackEntryView,
     CommandFeedbackStatus,
@@ -103,10 +102,8 @@ if TYPE_CHECKING:
 
 _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
 _WIDGET_DIALOGUE = "dialogue"
-_WIDGET_DOCKER = "docker"
 _WIDGET_ESCALATIONS = "escalations"
 _WIDGET_QUEUE = "queue"
-_WIDGET_RESOURCES = "resources"
 _TASK_VIEW_OMITTED_PLACEMENTS = frozenset(
     {
         WidgetPlacement.IDENTITY,
@@ -1422,15 +1419,6 @@ class DashboardApp(App[None]):
                         placement=WidgetPlacement.DETAILED_USAGE,
                     )
                 )
-            elif placement is WidgetPlacement.RESOURCES:
-                choices.append(
-                    _ContextChoice(
-                        FOCUS_RESOURCES_VIEW if name == _WIDGET_RESOURCES else f"widget-{name}",
-                        _contextual_widget_label(name, WidgetPlacement.DIAGNOSTICS),
-                        widget_name=name,
-                        placement=WidgetPlacement.DIAGNOSTICS,
-                    )
-                )
             elif placement in {
                 WidgetPlacement.ACTIVITY,
                 WidgetPlacement.DETAILED_USAGE,
@@ -1498,15 +1486,14 @@ class DashboardApp(App[None]):
         await self._run_context_choice(choice)
 
     async def _show_project_diagnostics(self) -> None:
-        docker_widget = (
-            self._create_widget(_WIDGET_DOCKER, placement=WidgetPlacement.DIAGNOSTICS)
-            if _WIDGET_DOCKER in self._widget_plugins
-            else None
-        )
         panel = ProjectDiagnosticsPanel(
             self._views,
             self._on_change,
-            docker_widget,
+            self._resources_refresh_seconds,
+            tuple(
+                self._create_widget(name, placement=WidgetPlacement.DIAGNOSTICS)
+                for name in self._widget_names_by_placement.get(WidgetPlacement.DIAGNOSTICS, ())
+            ),
         )
         await self.push_screen(
             _ContextWidgetScreen("Project Diagnostics", panel),

@@ -40,7 +40,6 @@ from shikiru.domain.timeline import (
 
 WIDGET_ENTRY_POINT_GROUP = "shikiru.widgets"
 FOCUS_FAULTS_VIEW = "widget-faults"
-FOCUS_RESOURCES_VIEW = "widget-resources"
 FOCUS_PROJECT_DIAGNOSTICS_VIEW = "project-diagnostics"
 TASK_STATUS_QUEUED = "queued"
 TASK_TERMINAL_STATUSES = frozenset({"done", "cancelled"})

@@ -189,16 +189,22 @@ def dashboard_app(
     *,
     widget_names: list[str],
     settings: Settings | None = None,
+    services: StubServices | None = None,
+    resources_refresh_seconds: float | None = None,
 ) -> DashboardApp:
     """Build the Home dashboard over `reader` with the stub services."""
     settings = settings or load_settings(project_dir)
     return DashboardApp(
         focus_task=None,
-        views=state_views(reader, project_dir, clock, StubServices(), settings=settings),
+        views=state_views(
+            reader, project_dir, clock, services or StubServices(), settings=settings
+        ),
         on_change=reader.watch,
         clock=clock,
         motion_interval_seconds=None,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
+        resources_refresh_seconds=(
+            resources_refresh_seconds or settings.orchestration.resources.sample_seconds
+        ),
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,

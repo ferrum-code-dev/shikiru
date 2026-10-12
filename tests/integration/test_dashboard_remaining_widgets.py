@@ -14,7 +14,7 @@ import psutil
 import pytest
 from rich.cells import cell_len
 from textual.color import Color
-from textual.containers import Vertical, VerticalGroup, VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, DataTable, Label, ListItem, ListView, Static
 
@@ -291,24 +291,22 @@ def _quota_gauge_colour(widget: Static, label: str) -> Color:
     return Color.from_rich_color(percent.style.color)
 
 
+_DIAGNOSTICS_SECTION_IDS = (
+    "project-diagnostics-resources",
+    "project-diagnostics-engine",
+    "faults",
+    "docker",
+    "disk",
+)
+
+
 def _project_diagnostics_text(screen: Widget) -> str:
-    widget_ids = (
-        "project-diagnostics-scope",
-        "resources",
-        "project-diagnostics-resource-details",
-        "project-diagnostics-engine-lock",
-        "project-diagnostics-engine-faults",
+    return "\n".join(
+        " ".join(_rendered_widget_lines(section))
+        for section_id in _DIAGNOSTICS_SECTION_IDS
+        for section in screen.query(f"#{section_id}")
+        if isinstance(section, Static)
     )
-    content = "\n".join(
-        plain_text(screen.query_one(f"#{widget_id}", Static).content) for widget_id in widget_ids
-    )
-    docker_panel = screen.query("#docker")
-    docker = (
-        plain_text(screen.query_one("#docker", Static).content)
-        if docker_panel
-        else plain_text(screen.query_one("#project-diagnostics-docker", Static).content)
-    )
-    return f"{content}\n{docker}"
 
 
 def _assert_project_diagnostics_facts(
@@ -316,19 +314,21 @@ def _assert_project_diagnostics_facts(
     *,
     fault_count: int,
     fault_error: str,
-    docker_state: str,
+    docker_state: str | None,
     resource_error: str | None = None,
     docker_error: str | None = None,
 ) -> str:
-    diagnostics = _project_diagnostics_text(screen)
+    diagnostics = " ".join(_project_diagnostics_text(screen).split())
     assert plain_text(screen.query_one("#context-widget-title", Static).render()) == (
         "Project Diagnostics"
     )
-    assert "Scope · current Shikiru project" in diagnostics
-    assert "Engine lock · not held" in diagnostics
-    assert f"Open engine faults · {fault_count} recorded" in diagnostics
+    assert "Status Not running" in diagnostics
+    assert f"Faults {fault_count} open" in diagnostics
     assert fault_error in diagnostics
-    assert docker_state in diagnostics
+    if docker_state is None:
+        assert "Docker" not in diagnostics
+    else:
+        assert docker_state in diagnostics
     if resource_error is not None:
         assert resource_error in diagnostics
     if docker_error is not None:
@@ -378,7 +378,7 @@ def _assert_resource_sample_retained(sources: DashboardSources, expected: Resour
     assert retained.sampled_at == expected.sampled_at
 
 
-async def _assert_diagnostics_refresh_after_child_recompose(
+async def _assert_diagnostics_refresh_after_commit(
     app: DashboardApp,
     pilot: Pilot[None],
     *,
@@ -388,54 +388,30 @@ async def _assert_diagnostics_refresh_after_child_recompose(
     sources: DashboardSources,
     initial: ResourceView,
 ) -> None:
-    diagnostics_panel = app.screen.query_one("#project-diagnostics", VerticalGroup)
     await wait_until(clock.has_pending_sleep, timeout=2)
-    await diagnostics_panel.query_one("#project-diagnostics-engine-lock", Static).remove()
     await pilot.resize_terminal(99, 50)
     await wait_until(lambda: app.size.width == 99, timeout=2)
     _record_open_engine_fault(
         connection,
         clock,
         task_id,
-        scope="diagnostics teardown",
-        error="fault while diagnostics child is absent",
-        repeats=1,
-    )
-    clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
-    await pilot.pause()
-
-    await diagnostics_panel.recompose()
-    await wait_until(
-        lambda: bool(diagnostics_panel.query("#project-diagnostics-engine-lock")),
-        timeout=2,
-    )
-    _record_open_engine_fault(
-        connection,
-        clock,
-        task_id,
         scope="diagnostics restored",
-        error="fault after diagnostics remount",
+        error="fault after resize",
         repeats=1,
     )
-    await wait_until(clock.has_pending_sleep, timeout=2)
     clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
     await wait_until(
-        lambda: (
-            "Open engine faults · 3 recorded" in _project_diagnostics_text(app.screen)
-            and "fault while diagnostics child is absent" in _project_diagnostics_text(app.screen)
-            and "fault after diagnostics remount" in _project_diagnostics_text(app.screen)
-        ),
+        lambda: "Faults 2 open" in " ".join(_project_diagnostics_text(app.screen).split()),
         timeout=2,
     )
     diagnostics = _assert_project_diagnostics_facts(
         app.screen,
-        fault_count=3,
-        fault_error="recorded diagnostic failure",
-        docker_state="Docker · not configured",
+        fault_count=2,
+        fault_error="fault after resize",
+        docker_state=None,
         resource_error=RESOURCE_SAMPLE_FAILURE,
     )
-    assert "fault while diagnostics child is absent" in diagnostics
-    assert "fault after diagnostics remount" in diagnostics
+    assert "recorded diagnostic failure" in diagnostics
     _assert_resource_sample_retained(sources, initial)
 
 
@@ -1072,7 +1048,7 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         open_palette=open_palette,
-        widget_names=["queue", "resources"],
+        widget_names=["queue", "resources", "faults"],
     )
     async with app.run_test(size=(100, 50)) as pilot:
         resource_panel = app.query_one("#resources", Static)
@@ -1098,12 +1074,12 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
             app.screen,
             fault_count=1,
             fault_error="recorded diagnostic failure",
-            docker_state="Docker · not configured",
+            docker_state=None,
             resource_error=RESOURCE_SAMPLE_FAILURE,
         )
         assert task.id in diagnostics
         _assert_resource_sample_retained(sources, initial)
-        await _assert_diagnostics_refresh_after_child_recompose(
+        await _assert_diagnostics_refresh_after_commit(
             app,
             pilot,
             connection=connection,
@@ -1270,7 +1246,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         open_palette=open_palette,
-        widget_names=["queue", "resources", "docker"],
+        widget_names=["queue", "resources", "docker", "faults"],
     )
     async with app.run_test(size=(100, 50)) as pilot:
         home_screen = app.screen
@@ -1305,7 +1281,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
             app.screen,
             fault_count=1,
             fault_error="recorded docker diagnostic failure",
-            docker_state="Docker failed",
+            docker_state="failed",
             docker_error="invalid JSON",
         )
         assert "Host CPU" in diagnostics
