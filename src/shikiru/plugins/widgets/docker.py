@@ -14,13 +14,24 @@ from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
 from shikiru.ui.compact import format_cpu_pct, format_memory
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached
-from shikiru.ui.section import Row, Section, grey, labelled_rows, observed_text
+from shikiru.ui.section import (
+    FAILED_WORD,
+    GROUP_SEPARATOR,
+    UNAVAILABLE_WORD,
+    UNKNOWN_AGE,
+    Row,
+    Section,
+    grey,
+    labelled_rows,
+    number,
+    observation,
+    state_line,
+)
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
     PRIMARY_TEXT_COLOR,
     SECONDARY_TEXT_COLOR,
-    STEEL_BLUE,
     STYLE_BOLD,
 )
 
@@ -37,7 +48,6 @@ if TYPE_CHECKING:
     )
 
 SECTION_TITLE = "Docker"
-UNKNOWN_AGE = "\N{EN DASH}"
 LABEL_RUNNING = "Running"
 LABEL_PROBLEMS = "Problems"
 LABEL_ELSEWHERE = "Elsewhere"
@@ -54,23 +64,14 @@ OF_WORD = "of"
 RUNNING_WORD = "running"
 USAGE_UNAVAILABLE = "usage unavailable"
 NO_CONTAINERS = "No containers"
-STALE_WORD = "stale"
-FAILED_WORD = "failed"
-UNAVAILABLE_WORD = "unavailable"
-STATE_DETAIL_SEPARATOR = " · "
 PROBLEM_UNHEALTHY = "unhealthy"
 PROBLEM_RESTARTING = "restarting"
 _BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
-_BOLD_CYAN = f"{STYLE_BOLD} {STEEL_BLUE}"
 _WARNING_REASONS = frozenset({PROBLEM_UNHEALTHY, PROBLEM_RESTARTING})
 
 
-def _number(value: str) -> Text:
-    return Text(value, style=_BOLD_CYAN)
-
-
 def _measure(label: str, value: str) -> Text:
-    return Text.assemble(grey(f"{label} "), _number(value))
+    return Text.assemble(grey(f"{label} "), number(value))
 
 
 def _usage_groups(cpu_pct: float | None, memory_bytes: int | None) -> list[Text]:
@@ -84,7 +85,7 @@ def _usage_groups(cpu_pct: float | None, memory_bytes: int | None) -> list[Text]
 
 def _running_groups(summary: DockerSummaryView) -> list[Text]:
     counts = Text.assemble(
-        _number(str(summary.running)), grey(f" {OF_WORD} "), _number(str(summary.total))
+        number(str(summary.running)), grey(f" {OF_WORD} "), number(str(summary.total))
     )
     if not summary.usage_available:
         return [counts, Text(USAGE_UNAVAILABLE, style=AMBER)]
@@ -101,7 +102,7 @@ def _problem_group(problem: ContainerProblemView) -> Text:
 
 def _elsewhere_groups(summary: DockerSummaryView) -> list[Text]:
     elsewhere = summary.elsewhere
-    count = Text.assemble(_number(str(elsewhere.running)), grey(f" {RUNNING_WORD}"))
+    count = Text.assemble(number(str(elsewhere.running)), grey(f" {RUNNING_WORD}"))
     return [count, *_usage_groups(elsewhere.cpu_pct, elsewhere.memory_bytes)]
 
 
@@ -131,7 +132,7 @@ class _TopContainers:
         for container, cpu, memory in zip(self.containers, cpus, memories, strict=True):
             name = Text(container.name, style=_BOLD_PRIMARY, no_wrap=True)
             name.truncate(name_width, overflow=ELLIPSIS)
-            grid.add_row("", name, _number(cpu), _number(memory))
+            grid.add_row("", name, number(cpu), number(memory))
         yield grid
 
 
@@ -148,9 +149,7 @@ class _SummaryBody:
             problems = tuple(_problem_group(problem) for problem in summary.problems)
             head.append((grey(LABEL_PROBLEMS), problems))
         if self.refresh_error is not None:
-            failure = Text(
-                f"{FAILED_WORD}{STATE_DETAIL_SEPARATOR}{self.refresh_error}", style=AMBER
-            )
+            failure = Text(f"{FAILED_WORD}{GROUP_SEPARATOR}{self.refresh_error}", style=AMBER)
             head.append((grey(LABEL_REFRESH), (failure,)))
         tail: list[Row] = []
         if summary.elsewhere.running:
@@ -164,11 +163,6 @@ class _SummaryBody:
             yield labelled_rows(tail, options.max_width, label_width)
 
 
-def _state_line(word: str, colour: str, error: str | None) -> Text:
-    detail = f"{STATE_DETAIL_SEPARATOR}{error}" if error else ""
-    return Text(f"{word}{detail}", style=colour)
-
-
 def docker_section(snapshot: DockerView) -> Section:
     """Render `snapshot` as the Docker section in every state."""
     state = snapshot.state or (
@@ -177,20 +171,17 @@ def docker_section(snapshot: DockerView) -> Section:
     ago = snapshot.sampled_ago or UNKNOWN_AGE
     if state is DiagnosticSampleState.UNAVAILABLE:
         return Section(
-            SECTION_TITLE, _state_line(UNAVAILABLE_WORD, SECONDARY_TEXT_COLOR, snapshot.error)
+            SECTION_TITLE, state_line(UNAVAILABLE_WORD, SECONDARY_TEXT_COLOR, snapshot.error)
         )
     if state is DiagnosticSampleState.FAILED:
-        return Section(SECTION_TITLE, _state_line(FAILED_WORD, ALERT_COLOR, snapshot.error))
-    observed = grey(observed_text(ago))
+        return Section(SECTION_TITLE, state_line(FAILED_WORD, ALERT_COLOR, snapshot.error))
     if state is DiagnosticSampleState.EMPTY:
-        return Section(SECTION_TITLE, grey(NO_CONTAINERS), observed)
+        return Section(SECTION_TITLE, grey(NO_CONTAINERS), observation(ago))
+    stale = state is DiagnosticSampleState.STALE
     body: RenderableType = Group()
     if snapshot.summary is not None:
-        stale_error = snapshot.error if state is DiagnosticSampleState.STALE else None
-        body = _SummaryBody(snapshot.summary, stale_error)
-    if state is DiagnosticSampleState.STALE:
-        observed = Text(f"{STALE_WORD}{STATE_DETAIL_SEPARATOR}{observed_text(ago)}", style=AMBER)
-    return Section(SECTION_TITLE, body, observed)
+        body = _SummaryBody(snapshot.summary, snapshot.error if stale else None)
+    return Section(SECTION_TITLE, body, observation(ago, stale=stale))
 
 
 class DockerPanel(GatedStatic):

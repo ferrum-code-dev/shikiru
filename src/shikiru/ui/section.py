@@ -12,7 +12,13 @@ from rich.table import Table
 from rich.text import Text
 
 from shikiru.ui.age import AGE_NOW
-from shikiru.ui.tokens import NEUTRAL_BORDER_COLOR, SECONDARY_TEXT_COLOR
+from shikiru.ui.tokens import (
+    AMBER,
+    NEUTRAL_BORDER_COLOR,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+    STYLE_BOLD,
+)
 
 if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderResult
@@ -23,6 +29,11 @@ HEADING_MIN_GAP = 1
 STACKED_BELOW_WIDTH = 32
 OBSERVED_WORD = "observed"
 AGO_WORD = "ago"
+UNKNOWN_AGE = "\N{EN DASH}"
+STALE_WORD = "stale"
+FAILED_WORD = "failed"
+UNAVAILABLE_WORD = "unavailable"
+_BOLD_CYAN = f"{STYLE_BOLD} {STEEL_BLUE}"
 
 Row = tuple[Text, tuple[Text, ...]]
 
@@ -32,10 +43,28 @@ def grey(text: str) -> Text:
     return Text(text, style=SECONDARY_TEXT_COLOR)
 
 
+def number(value: str) -> Text:
+    """Return `value` as a bold cyan figure."""
+    return Text(value, style=_BOLD_CYAN)
+
+
 def observed_text(observed_ago: str) -> str:
     """Return `observed <age> ago`, or `observed now`."""
     suffix = "" if observed_ago == AGE_NOW else f" {AGO_WORD}"
     return f"{OBSERVED_WORD} {observed_ago}{suffix}"
+
+
+def observation(observed_ago: str, *, stale: bool = False) -> Text:
+    """Return the heading's observation note, amber and prefixed `stale` when kept from earlier."""
+    if stale:
+        return Text(f"{STALE_WORD}{GROUP_SEPARATOR}{observed_text(observed_ago)}", style=AMBER)
+    return grey(observed_text(observed_ago))
+
+
+def state_line(word: str, colour: str, error: str | None) -> Text:
+    """Return a sampling state `word` in `colour`, with any recorded `error` after it."""
+    detail = f"{GROUP_SEPARATOR}{error}" if error else ""
+    return Text(f"{word}{detail}", style=colour)
 
 
 def wrap_groups(groups: tuple[Text, ...], width: int | None) -> Text:
