@@ -51,6 +51,8 @@ CPU_DECIMALS_BELOW_PCT = 10
 CPU_DECIMAL_FORMAT = ".1f"
 CPU_INTEGER_FORMAT = ".0f"
 BYTES_PER_GIB = 1024**3
+BYTES_PER_MIB = 1024**2
+MIB_FORMAT = ".0f"
 SESSION_COST_FORMAT = ".2f"
 COUNT_SHORT_SCALE = 1_000
 COUNT_SHORT_MILLION = COUNT_SHORT_SCALE * COUNT_SHORT_SCALE
@@ -857,6 +859,13 @@ def _host_resource_text(sample: _ResourceSample) -> Text:
             ),
         )
     return _resource_group_text("Host", sample.host_cpu_pct, memory)
+
+
+def format_memory(memory_bytes: int) -> str:
+    """Format bytes as GiB with one decimal from one GiB up, otherwise as whole MiB."""
+    if memory_bytes >= BYTES_PER_GIB:
+        return f"{memory_bytes / BYTES_PER_GIB:{GIB_FORMAT}} GiB"
+    return f"{memory_bytes / BYTES_PER_MIB:{MIB_FORMAT}} MiB"
 
 
 def format_cpu_pct(cpu_pct: float) -> str:

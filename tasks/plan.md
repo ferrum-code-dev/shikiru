@@ -1529,9 +1529,10 @@ Refs: seventh-review Docker; `telemetry/docker.py`, `dashboard/services.py` `con
 
 ### Task 152: Diagnostics section primitives and the Docker section
 Refs: seventh-review layout; `ui/compact.py` (`UsageSection`, `_labelled_rows`, `_observed_text`), `plugins/widgets/docker.py`, `dashboard/diagnostics.py`; Task 149 styling.
-- [ ] One shared section renderer in `ui` (rule, grey title, `observed … ago` on the heading, labelled rows) reused by the Usage panel where it already does the same, with no behaviour change there.
-- [ ] The Docker section in the approved layout and styling (Running, Problems amber/red, Top 5 by CPU, Elsewhere), honest unavailable / failed / stale / empty / `usage unavailable` states, wrapping at ` · ` and usable at 20×8; refreshed at `docker_refresh_seconds`.
-- [ ] Style-span and boundary tests for the states; native colour and `NO_COLOR` renders at wide, compact and 20×8.
+- [x] One shared section renderer in `ui` (rule, grey title, `observed … ago` on the heading, labelled rows) reused by the Usage panel where it already does the same, with no behaviour change there.
+- [x] The Docker section in the approved layout and styling (Running, Problems amber/red, Top 5 by CPU, Elsewhere), honest unavailable / failed / stale / empty / `usage unavailable` states, wrapping at ` · ` and usable at 20×8; refreshed at `docker_refresh_seconds`.
+- [x] Style-span and boundary tests for the states; native colour and `NO_COLOR` renders at wide, compact and 20×8.
+  Proof: `ui/section.py` now holds the rule, grey heading with right-aligned trailing observation, labelled rows and ` · ` wrapping, and the Usage panel was switched to it in an earlier refactor commit with its tests unchanged. The Docker section renders Running, Problems (amber or red), Top 5 by CPU, Elsewhere and the unavailable, failed, stale, empty and `usage unavailable` states, covered by per-character style tests at the real widget (wide, compact, 20x8), a refresh-interval test and a fake-`docker` script boundary test; native colour and `NO_COLOR` renders were checked. Gate `uv run poe check` green.
 
 ### Task 153: Disk section
 Refs: seventh-review Disk; `telemetry/disk.py`, `bootstrap.py`, `config/defaults.toml`, plugin entry points in `pyproject.toml`, `plugins/widgets/`; 06 §5.4.

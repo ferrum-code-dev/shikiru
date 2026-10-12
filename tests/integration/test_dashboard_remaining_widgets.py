@@ -6,7 +6,7 @@ import os
 import shlex
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
@@ -46,6 +46,7 @@ from shikiru.operator.lifecycle import task_dashboard_command
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import run_dir, state_db_path
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
+from shikiru.plugins.widgets.docker import DockerPanel
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
 from shikiru.plugins.widgets.resources import ResourcesPanel, ResourcesWidget
 from shikiru.plugins.widgets.usage import UsagePanel, UsageWidget
@@ -77,6 +78,7 @@ from shikiru.tmux.client import (
 from shikiru.ui.compact import USAGE_BY_AGENT_LABEL, USAGE_LIMITS_LABEL
 from shikiru.ui.tokens import AMBER, DUSTY_ROSE, SAGE
 from shikiru.workspace.git import Git
+from tests.support.cells import rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import WidgetHostApp, widget_context
@@ -1282,6 +1284,66 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         await pilot.press("escape")
         await wait_until(lambda: app.screen is home_screen, timeout=2)
         await _assert_home_task_opens(app, pilot, home_screen, task.id, task.title)
+
+
+async def test_docker_section_shows_what_the_fake_docker_reports(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
+    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / DOCKER_BINARY
+    ps_rows = [
+        {"ID": "a1", "Names": "api", "State": "running", "Status": "Up 1 hour", "Labels": ""},
+        {
+            "ID": "b2",
+            "Names": "db",
+            "State": "running",
+            "Status": "Up 1 hour (unhealthy)",
+            "Labels": "",
+        },
+        {
+            "ID": "c3",
+            "Names": "job",
+            "State": "exited",
+            "Status": "Exited (2) 1m ago",
+            "Labels": "",
+        },
+    ]
+    stat_rows = [
+        {"ID": "a1", "Name": "api", "CPUPerc": "38.0%", "MemUsage": "410MiB / 2GiB"},
+        {"ID": "b2", "Name": "db", "CPUPerc": "7.0%", "MemUsage": "1GiB / 2GiB"},
+    ]
+    docker.write_text(
+        '#!/bin/sh\ncase "$1" in\n'
+        f"ps) printf '%s\\n' {shlex.quote(chr(10).join(json.dumps(r) for r in ps_rows))};;\n"
+        f"stats) printf '%s\\n' {shlex.quote(chr(10).join(json.dumps(r) for r in stat_rows))};;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker.chmod(EXECUTABLE_MODE)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    views = _dashboard_views(reader, project_dir, clock, settings, sources)
+    panel = DockerPanel(replace(widget_context(reader, project_dir, clock), views=views))
+
+    async with WidgetHostApp(panel).run_test(size=(60, 20)):
+
+        def shown_text() -> str:
+            return "\n".join("".join(char for char, _ in cells) for cells in rendered_lines(panel))
+
+        await wait_until(lambda: "Running" in shown_text(), timeout=5)
+        shown = shown_text()
+        assert "Running  2 of 3 · CPU 45% · RAM 1.4 GiB" in shown
+        assert "Problems db unhealthy · job exited (2)" in shown
+        assert shown.index("api") < shown.index("db  ")
 
 
 async def _start_resource_test_panes(

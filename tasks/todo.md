@@ -239,7 +239,7 @@ Sixth-review scope and evidence: [sixth real-project review](../docs/tui-feedbac
 Seventh-review scope and evidence: [seventh real-project review](../docs/tui-feedback-seventh-review.md). The operator approved the panel layout (2026-10-12).
 
 - [x] Task 151: Docker sampler with numeric model, project scope, top five and problems
-- [ ] Task 152: Diagnostics section primitives and the Docker section
+- [x] Task 152: Diagnostics section primitives and the Docker section
 - [ ] Task 153: Disk section
 - [ ] Task 154: Project diagnostics panel restructure and timer refresh
 - [ ] Task 155: Verify the seventh review and reconcile Phase 11 evidence

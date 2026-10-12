@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 GROUP_SEPARATOR = " · "
 LABEL_GAP = 1
+HEADING_MIN_GAP = 1
 STACKED_BELOW_WIDTH = 32
 OBSERVED_WORD = "observed"
 AGO_WORD = "ago"
@@ -79,14 +80,26 @@ def _stacked_lines(rows: list[Row], width: int) -> list[Text]:
 
 @dataclass(frozen=True)
 class Section:
-    """Render `body` below a rule and a grey heading."""
+    """Render `body` below a rule and a grey heading with an optional right-aligned `trailing`."""
 
     title: str
     body: RenderableType
+    trailing: Text | None = None
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Yield the rule, the heading and the body."""
-        del console, options
+        del console
         yield Rule(style=NEUTRAL_BORDER_COLOR)
-        yield grey(self.title)
+        yield self._heading(options.max_width)
         yield self.body
+
+    def _heading(self, width: int) -> RenderableType:
+        title = grey(self.title)
+        if self.trailing is None:
+            return title
+        gap = width - cell_len(title.plain) - cell_len(self.trailing.plain)
+        if gap < HEADING_MIN_GAP:
+            return Group(title, self.trailing)
+        title.append(" " * gap)
+        title.append(self.trailing)
+        return title
