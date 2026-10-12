@@ -9,6 +9,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
+from shikiru.ui.age import format_duration
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_active, widget_is_attached
 from shikiru.ui.tokens import (
@@ -30,9 +31,6 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import HeaderView, WidgetContext, WorkspaceSummaryView
 
 
-SECONDS_PER_MINUTE = 60
-MINUTES_PER_HOUR = 60
-SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR
 MIN_HEADER_GAP = 2
 RUNTIME_SEPARATOR_WIDTH = 3
 ENGINE_RUNNING_MARKER = "●"
@@ -64,17 +62,6 @@ class _HeaderContent:
             include_alerts=self.include_alerts,
             width=options.max_width,
         )
-
-
-def _duration_text(seconds: float) -> str:
-    total_seconds = int(seconds)
-    hours, remainder = divmod(total_seconds, SECONDS_PER_HOUR)
-    minutes, remainder = divmod(remainder, SECONDS_PER_MINUTE)
-    if hours:
-        return f"{hours}h {minutes}m"
-    if minutes:
-        return f"{minutes}m"
-    return f"{remainder}s"
 
 
 def _home_header_text(
@@ -176,10 +163,10 @@ def _runtime_label(view: HeaderView) -> str:
     if view.engine_up:
         if view.engine_uptime_seconds is None:
             return "Uptime unavailable"
-        return f"Uptime {_duration_text(view.engine_uptime_seconds)}"
+        return f"Uptime {format_duration(view.engine_uptime_seconds)}"
     if view.previous_engine_run_seconds is None:
         return "Last unavailable"
-    return f"Last {_duration_text(view.previous_engine_run_seconds)}"
+    return f"Last {format_duration(view.previous_engine_run_seconds)}"
 
 
 def _checkout_text(view: HeaderView) -> Text:
