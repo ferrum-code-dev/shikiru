@@ -43,6 +43,7 @@ _COMPACT = (30, 20)
 _TINY = (20, 8)
 _WAIT_SECONDS = 5
 _REFRESH_SECONDS = 0.05
+_SLOW_SECONDS = 3600
 _GIB = 1024**3
 _TOTAL_BYTES = 500 * _GIB
 _SHIKIRU_BYTES = int(1.2 * _GIB)
@@ -206,6 +207,24 @@ async def test_a_new_sample_replaces_the_rendering_at_the_refresh_interval(
         await wait_until(lambda: "120.0 GiB" in "\n".join(_plain(panel)), timeout=_WAIT_SECONDS)
         services.view = _view(45 * _GIB)
         await wait_until(lambda: "45.0 GiB" in "\n".join(_plain(panel)), timeout=_WAIT_SECONDS)
+
+
+async def test_an_unmeasured_size_is_re_read_on_the_short_cadence_not_the_disk_one(
+    reader: StateReader, tmp_path: Path
+) -> None:
+    services = _Services(replace(_view(120 * _GIB), shikiru_bytes=None))
+    base = widget_context(
+        reader, write_minimal_project(tmp_path), FakeClock(_START), services=services
+    )
+    panel = DiskPanel(
+        replace(
+            base, disk_refresh_seconds=_SLOW_SECONDS, resources_refresh_seconds=_REFRESH_SECONDS
+        )
+    )
+    async with WidgetHostApp(panel).run_test(size=_WIDE):
+        await wait_until(lambda: "measuring" in "\n".join(_plain(panel)), timeout=_WAIT_SECONDS)
+        services.view = _view(120 * _GIB)
+        await wait_until(lambda: "1.2 GiB" in "\n".join(_plain(panel)), timeout=_WAIT_SECONDS)
 
 
 _COMPACT_LAYOUT = [

@@ -98,6 +98,8 @@ class DiskPanel(GatedStatic):
         view = await self._widget_context.views.disk()
         if not widget_is_attached(self):
             return
+        if view.shikiru_bytes is None and view.state is DiagnosticSampleState.AVAILABLE:
+            self.set_timer(self._widget_context.resources_refresh_seconds, self._refresh)
         ruled = not is_first_child(self)
         self.update_if_changed(disk_section(view).with_ruled(ruled=ruled), key=(view, ruled))
 
