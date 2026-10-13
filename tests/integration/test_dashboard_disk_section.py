@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.dashboard.contract import DiagnosticSampleState, DiskView
+from shikiru.domain.levels import UsageLevel
 from shikiru.plugins.widgets.disk import DiskPanel
-from shikiru.ui.tokens import ALERT_COLOR, AMBER, NEUTRAL_BORDER_COLOR
+from shikiru.ui.tokens import ALERT_COLOR, AMBER
 from tests.support.cells import (
     ALERT_TEXT,
     AMBER_TEXT,
@@ -45,11 +46,9 @@ _REFRESH_SECONDS = 0.05
 _GIB = 1024**3
 _TOTAL_BYTES = 500 * _GIB
 _RUN_BYTES = int(1.2 * _GIB)
-_RULE_CHARACTER = "─"
-_RULE_STYLE: Style = (False, NEUTRAL_BORDER_COLOR)
 _AMBER_BOLD: Style = (True, AMBER)
 _ALERT_BOLD: Style = (True, ALERT_COLOR)
-_RULE = [(_RULE_CHARACTER, _RULE_STYLE)] * _WIDE[0]
+_MARKER = "\N{DOUBLE EXCLAMATION MARK}"
 
 
 def _view(
@@ -92,26 +91,25 @@ def _heading(trailing: Piece | None = None) -> list[Cell]:
     return _ink(cells)
 
 
-def _free_row(free: str, free_style: Style) -> list[Cell]:
-    return _row("Free", group((free, free_style), (" of ", GREY), ("500.0 GiB", CYAN_BOLD)))
+def _free_row(free: str, free_style: Style, *, marker: bool = False) -> list[Cell]:
+    pieces = [(free, free_style), (" of ", GREY), ("500.0 GiB", CYAN_BOLD)]
+    if marker:
+        pieces.append((f" {_MARKER}", free_style))
+    return _row("Free", group(*pieces))
 
 
 _RUNS_ROW = _row("Runs", group(("1.2 GiB", CYAN_BOLD)))
 _REFRESH_ROW = _row("Refresh", group(("failed · project vanished", AMBER_TEXT)))
 
-_AVAILABLE_LINES = [_RULE, _heading(), _free_row("120.0 GiB", CYAN_BOLD), _RUNS_ROW]
-_WARN_LINES = [_RULE, _heading(), _free_row("45.0 GiB", _AMBER_BOLD), _RUNS_ROW]
-_ALERT_LINES = [_RULE, _heading(), _free_row("20.0 GiB", _ALERT_BOLD), _RUNS_ROW]
+_AVAILABLE_LINES = [_heading(), _free_row("120.0 GiB", CYAN_BOLD), _RUNS_ROW]
 _STALE_LINES = [
-    _RULE,
     _heading(("stale · observed 3s ago", AMBER_TEXT)),
     _free_row("120.0 GiB", CYAN_BOLD),
     _RUNS_ROW,
     _REFRESH_ROW,
 ]
-_UNAVAILABLE_LINES = [_RULE, _heading(), _row("unavailable · project is missing")]
+_UNAVAILABLE_LINES = [_heading(), _row("unavailable · project is missing")]
 _FAILED_LINES = [
-    _RULE,
     _heading(),
     _ink([(char, ALERT_TEXT) for char in "failed · project is unreadable"]),
 ]
@@ -119,8 +117,6 @@ _FAILED_LINES = [
 _AVAILABLE = DiagnosticSampleState.AVAILABLE
 _WIDE_CASES = [
     pytest.param(_view(120 * _GIB), _AVAILABLE_LINES, id="available"),
-    pytest.param(_view(45 * _GIB), _WARN_LINES, id="free-below-ten-percent-is-amber"),
-    pytest.param(_view(20 * _GIB), _ALERT_LINES, id="free-below-five-percent-is-red"),
     pytest.param(
         _view(120 * _GIB, DiagnosticSampleState.STALE, error="project vanished"),
         _STALE_LINES,
@@ -140,6 +136,31 @@ _WIDE_CASES = [
         id="failed",
     ),
 ]
+
+
+@pytest.mark.parametrize(
+    ("free_gib", "level", "expected"),
+    [
+        pytest.param(120, None, _free_row("120.0 GiB", CYAN_BOLD), id="none"),
+        pytest.param(
+            45, UsageLevel.WARN, _free_row("45.0 GiB", _AMBER_BOLD, marker=True), id="warn"
+        ),
+        pytest.param(
+            20, UsageLevel.ALERT, _free_row("20.0 GiB", _ALERT_BOLD, marker=True), id="alert"
+        ),
+    ],
+)
+async def test_low_free_space_ends_with_a_marker_in_the_level_colour(
+    reader: StateReader,
+    tmp_path: Path,
+    free_gib: int,
+    level: UsageLevel | None,
+    expected: list[Cell],
+) -> None:
+    view = replace(_view(free_gib * _GIB), free_level=level)
+    panel = _panel(reader, tmp_path, view)
+    async with WidgetHostApp(panel).run_test(size=_WIDE):
+        assert (await _settled(panel))[1] == expected
 
 
 def _panel(reader: StateReader, tmp_path: Path, view: DiskView, **context: float) -> DiskPanel:
@@ -182,7 +203,6 @@ async def test_a_new_sample_replaces_the_rendering_at_the_refresh_interval(
 
 
 _COMPACT_LAYOUT = [
-    "─" * _COMPACT[0],
     "Disk",
     "Free",
     "120.0 GiB of 500.0 GiB",
@@ -190,7 +210,6 @@ _COMPACT_LAYOUT = [
     "1.2 GiB",
 ]
 _TINY_LAYOUT = [
-    "─" * _TINY[0],
     "Disk",
     "Free",
     "120.0 GiB of 500.0",

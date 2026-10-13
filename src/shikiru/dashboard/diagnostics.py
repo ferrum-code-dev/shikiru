@@ -27,10 +27,6 @@ ENGINE_SECTION_ID = "project-diagnostics-engine"
 class ProjectDiagnosticsPanel(VerticalGroup):
     """Show the cached Resources and Engine sections above every configured diagnostics widget."""
 
-    DEFAULT_CSS = """
-    ProjectDiagnosticsPanel { margin-top: 1; }
-    """
-
     def __init__(
         self,
         views: DashboardViews,

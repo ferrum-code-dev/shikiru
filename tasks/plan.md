@@ -1604,8 +1604,9 @@ Refs: eighth-review refresh and header; `dashboard/contract.py`/`views.py` (`res
 
 ### Task 162: No leading rule or blank above Resources; `‼` marker for low disk space
 Refs: eighth-review layout and Disk marker; `ui/section.py` (`Section`), `dashboard/diagnostics.py`, `dashboard/diagnostics_sections.py`, `plugins/widgets/{docker,disk,faults}.py`, `ui/compact.py` `free_space_text`, `ui/glyphs.py` `GLYPH_ESCALATED`.
-- [ ] Remove the panel margin; the first section of the popup (and of each standalone diagnostics popup) is drawn without a rule; Disk free text ends with ` ‼` bold amber below the warn level and dusty rose below the alert level, none otherwise.
-- [ ] Style-span tests for the marker levels (one table) and first-section rule absence in the composite and standalone popups; native colour and `NO_COLOR` renders.
+- [x] Remove the panel margin; the first section of the popup (and of each standalone diagnostics popup) is drawn without a rule; Disk free text ends with ` ‼` bold amber below the warn level and dusty rose below the alert level, none otherwise.
+- [x] Style-span tests for the marker levels (one table) and first-section rule absence in the composite and standalone popups; native colour and `NO_COLOR` renders.
+  - Proof: before, the popup showed a blank line and a double rule above Resources; now the popup header rule is the only one, later sections keep theirs, and a `‼` marker in the level colour shows in the native colour and `NO_COLOR` renders at 100, 50 and 20 columns. Gate green.
 
 ### Task 163: Disk `.shikiru` size
 Refs: eighth-review Disk; `telemetry/disk.py`, `dashboard/contract.py` `DiskView`, `dashboard/services.py`, `plugins/widgets/disk.py`, `config/defaults.toml`/`settings.py`; 05, 06 §5.4.

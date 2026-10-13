@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
@@ -116,16 +116,22 @@ def _stacked_lines(rows: list[Row], width: int) -> list[Text]:
 
 @dataclass(frozen=True)
 class Section:
-    """Render `body` below a rule and a grey heading with an optional right-aligned `trailing`."""
+    """Render `body` below an optional rule and a grey heading, with an optional `trailing`."""
 
     title: str
     body: RenderableType
     trailing: Text | None = None
+    ruled: bool = True
+
+    def with_ruled(self, *, ruled: bool) -> Section:
+        """Return this section drawn with or without its leading rule."""
+        return replace(self, ruled=ruled)
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        """Yield the rule, the heading and the body."""
+        """Yield the rule when ruled, the heading and the body."""
         del console
-        yield Rule(style=NEUTRAL_BORDER_COLOR)
+        if self.ruled:
+            yield Rule(style=NEUTRAL_BORDER_COLOR)
         yield self._heading(options.max_width)
         yield self.body
 

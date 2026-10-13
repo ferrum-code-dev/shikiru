@@ -22,7 +22,7 @@ from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.levels import UsageLevel
 from shikiru.domain.tasks import EscalationReason, Role, Status
 from shikiru.ui.gauge import Gauge
-from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE
+from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_ESCALATED
 from shikiru.ui.section import Row, grey, labelled_rows, observed_text, wrap_groups
 from shikiru.ui.size import format_size
 from shikiru.ui.strip import PanelState
@@ -50,6 +50,7 @@ _BOLD_STEEL = f"{STYLE_BOLD} {STEEL_BLUE}"
 _BOLD_SAGE = f"{STYLE_BOLD} {SAGE}"
 _BOLD_AMBER = f"{STYLE_BOLD} {AMBER}"
 _BOLD_ALERT = f"{STYLE_BOLD} {ALERT_COLOR}"
+_FREE_SPACE_STYLES = {UsageLevel.WARN: _BOLD_AMBER, UsageLevel.ALERT: _BOLD_ALERT}
 GIB_FORMAT = ".1f"
 CPU_DECIMALS_BELOW_PCT = 10
 CPU_DECIMAL_FORMAT = ".1f"
@@ -882,20 +883,16 @@ def format_memory(memory_bytes: int) -> str:
 
 
 def free_space_text(free_bytes: int, total_bytes: int, level: UsageLevel | None) -> Text:
-    """Render `free of total` as sizes, the free figure amber at warn and red at alert."""
-    return Text.assemble(
-        (format_size(free_bytes), _free_space_style(level)),
+    """Render `free of total` as sizes, coloured by `level` and ending in `‼` at warn and alert."""
+    style = _FREE_SPACE_STYLES.get(level) if level else None
+    text = Text.assemble(
+        (format_size(free_bytes), style or _BOLD_STEEL),
         (" of ", SECONDARY_TEXT_COLOR),
         (format_size(total_bytes), _BOLD_STEEL),
     )
-
-
-def _free_space_style(level: UsageLevel | None) -> str:
-    if level is UsageLevel.ALERT:
-        return _BOLD_ALERT
-    if level is UsageLevel.WARN:
-        return _BOLD_AMBER
-    return _BOLD_STEEL
+    if style:
+        text.append(f" {GLYPH_ESCALATED}", style=style)
+    return text
 
 
 def format_cpu_pct(cpu_pct: float) -> str:

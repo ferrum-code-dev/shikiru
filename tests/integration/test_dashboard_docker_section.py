@@ -17,7 +17,6 @@ from shikiru.dashboard.contract import (
     ElsewhereView,
 )
 from shikiru.plugins.widgets.docker import DockerPanel
-from shikiru.ui.tokens import NEUTRAL_BORDER_COLOR
 from tests.support.cells import (
     ALERT_TEXT,
     AMBER_TEXT,
@@ -27,7 +26,6 @@ from tests.support.cells import (
     WHITE_BOLD,
     Cell,
     Piece,
-    Style,
     group,
     line,
     rendered_lines,
@@ -48,13 +46,10 @@ _START = datetime(2026, 1, 1, tzinfo=UTC)
 _WIDE = (60, 20)
 _COMPACT = (30, 20)
 _TINY = (20, 8)
-_TINY_TEXT_WIDTH = 18
 _WAIT_SECONDS = 5
 _REFRESH_SECONDS = 0.05
 _GIB = 1024**3
 _MIB = 1024**2
-_RULE_CHARACTER = "─"
-_RULE_STYLE: Style = (False, NEUTRAL_BORDER_COLOR)
 
 _TOP = (
     ContainerView("api", 38.0, 410 * _MIB),
@@ -128,7 +123,6 @@ def _heading(trailing: Piece | None = None) -> list[Cell]:
 _TOP_NAME_WIDTH = 5
 _TOP_CPU_WIDTH = 4
 _TOP_MEMORY_WIDTH = 7
-_RULE = [(_RULE_CHARACTER, _RULE_STYLE)] * _WIDE[0]
 
 
 def _measure(word: str, value: str) -> tuple[Piece, ...]:
@@ -159,7 +153,6 @@ _RESTARTING_LINE = _row(
 )
 
 _FULL_LINES = [
-    _RULE,
     _heading(),
     _row(
         "Running",
@@ -180,7 +173,6 @@ _FULL_LINES = [
     ),
 ]
 _QUIET_LINES = [
-    _RULE,
     _heading(),
     _row(
         "Running",
@@ -190,7 +182,6 @@ _QUIET_LINES = [
     ),
 ]
 _NO_USAGE_LINES = [
-    _RULE,
     _heading(),
     _row(
         "Running",
@@ -201,15 +192,13 @@ _NO_USAGE_LINES = [
     _row("Elsewhere", group(("2", CYAN_BOLD), (" running", GREY))),
 ]
 _STALE_LINES = [
-    _RULE,
     _heading(("stale · observed 3s ago", AMBER_TEXT)),
-    *_QUIET_LINES[2:],
+    *_QUIET_LINES[1:],
     _row("Refresh", group(("failed · docker timed out", AMBER_TEXT))),
 ]
-_EMPTY_LINES = [_RULE, _heading(), _row("No containers")]
-_UNAVAILABLE_LINES = [_RULE, _heading(), _row("unavailable")]
+_EMPTY_LINES = [_heading(), _row("No containers")]
+_UNAVAILABLE_LINES = [_heading(), _row("unavailable")]
 _FAILED_LINES = [
-    _RULE,
     _heading(),
     _ink([(char, ALERT_TEXT) for char in "failed · invalid JSON"]),
 ]
@@ -265,7 +254,6 @@ async def test_each_state_renders_the_approved_rows_and_styles(
 
 
 _COMPACT_LAYOUT = [
-    "\u2500" * _COMPACT[0],
     "Docker",
     "Running",
     "3 of 5 \u00b7 CPU 45% \u00b7 RAM 1.9 GiB",
@@ -281,7 +269,6 @@ _COMPACT_LAYOUT = [
     "RAM 300 MiB",
 ]
 _TINY_LAYOUT = [
-    "\u2500" * _TINY_TEXT_WIDTH,
     "Docker",
     "Running",
     "3 of 5 \u00b7 CPU 45%",

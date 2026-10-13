@@ -10,7 +10,7 @@ from rich.text import Text
 
 from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.screen import widget_is_attached
+from shikiru.ui.screen import is_first_child, widget_is_attached
 from shikiru.ui.section import Section, grey, number, row_name, wrap_groups
 
 if TYPE_CHECKING:
@@ -59,9 +59,9 @@ class _FaultLines:
             yield wrap_groups(_fault_timeline(fault), options.max_width)
 
 
-def faults_section(faults: tuple[EngineFaultView, ...]) -> Group | Section:
+def faults_section(faults: tuple[EngineFaultView, ...], *, ruled: bool) -> Group | Section:
     """Render open `faults` as the Faults section, and nothing when none is open."""
-    return Section(SECTION_TITLE, _FaultLines(faults)) if faults else Group()
+    return Section(SECTION_TITLE, _FaultLines(faults), ruled=ruled) if faults else Group()
 
 
 class FaultsPanel(GatedStatic):
@@ -94,7 +94,8 @@ class FaultsPanel(GatedStatic):
             return
         faults = self._widget_context.views.engine_faults()
         self.display = bool(faults)
-        self.update_if_changed(faults_section(faults), key=faults)
+        ruled = not is_first_child(self)
+        self.update_if_changed(faults_section(faults, ruled=ruled), key=(faults, ruled))
 
 
 class FaultsWidget:

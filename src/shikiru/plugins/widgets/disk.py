@@ -11,7 +11,7 @@ from rich.text import Text
 from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
 from shikiru.ui.compact import free_space_text
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.screen import widget_is_attached
+from shikiru.ui.screen import is_first_child, widget_is_attached
 from shikiru.ui.section import (
     FAILED_WORD,
     GROUP_SEPARATOR,
@@ -95,7 +95,8 @@ class DiskPanel(GatedStatic):
         view = await self._widget_context.views.disk()
         if not widget_is_attached(self):
             return
-        self.update_if_changed(disk_section(view), key=view)
+        ruled = not is_first_child(self)
+        self.update_if_changed(disk_section(view).with_ruled(ruled=ruled), key=(view, ruled))
 
 
 class DiskWidget:

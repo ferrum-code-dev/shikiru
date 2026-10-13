@@ -13,7 +13,7 @@ from rich.text import Text
 from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
 from shikiru.ui.compact import format_cpu_pct, format_memory
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.screen import widget_is_attached
+from shikiru.ui.screen import is_first_child, widget_is_attached
 from shikiru.ui.section import (
     BOLD_PRIMARY,
     FAILED_WORD,
@@ -201,7 +201,10 @@ class DockerPanel(GatedStatic):
         snapshot = await self._widget_context.views.containers()
         if not widget_is_attached(self):
             return
-        self.update_if_changed(docker_section(snapshot), key=snapshot)
+        ruled = not is_first_child(self)
+        self.update_if_changed(
+            docker_section(snapshot).with_ruled(ruled=ruled), key=(snapshot, ruled)
+        )
 
 
 class DockerWidget:

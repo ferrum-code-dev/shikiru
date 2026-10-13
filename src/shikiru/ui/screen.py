@@ -31,6 +31,10 @@ class TabStopScreen(Screen[object]):
         ]
 
 
+def is_first_child(widget: Widget) -> bool:
+    return widget.parent is not None and widget.parent.children[0] is widget
+
+
 def widget_is_attached(widget: Widget) -> bool:
     return _screen_for(widget) is not None
 

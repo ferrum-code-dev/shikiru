@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from textual.pilot import Pilot
+    from textual.screen import Screen
 
     from shikiru.dashboard.app import DashboardApp
     from shikiru.dashboard.views import StateDashboardViews
@@ -150,7 +151,7 @@ _RULE: list[Cell] = [("─", _RULE_STYLE)] * _WIDE[0]
 
 
 def _resource_lines(*rows: list[Cell]) -> list[list[Cell]]:
-    return [_RULE, _heading("Resources"), *rows]
+    return [_heading("Resources"), *rows]
 
 
 _STALE_REFRESH = _grey_row("Refresh", group(("failed · cpu probe failed", AMBER_TEXT)))
@@ -425,6 +426,35 @@ async def test_every_configured_diagnostics_widget_is_rendered_in_configured_ord
         screen_text = _exported_text(app)
         assert ("Docker" in screen_text) is ("docker" in expected_ids)
         assert "not configured" not in screen_text
+
+
+async def test_only_the_first_section_of_the_popup_goes_without_a_rule(
+    reader: StateReader, tmp_path: Path
+) -> None:
+    app = dashboard_app(
+        reader,
+        write_minimal_project(tmp_path),
+        FakeClock(_START),
+        widget_names=["queue", "resources", "disk"],
+        services=_Services(_SAMPLE),
+    )
+    async with app.run_test(size=_POPUP) as pilot:
+        await _open_popup(app, pilot)
+        screen = app.screen
+        await wait_until(lambda: len(_section_lines(screen, "disk")) > 1, timeout=_WAIT_SECONDS)
+        content = screen.query_one("#context-widget-content")
+        assert screen.query_one(f"#{RESOURCES_SECTION_ID}").region.y == content.region.y
+        first_lines = {
+            section_id: _section_lines(screen, section_id)[0]
+            for section_id in (RESOURCES_SECTION_ID, ENGINE_SECTION_ID, "disk")
+        }
+        assert first_lines[RESOURCES_SECTION_ID] == "Resources"
+        assert set(first_lines[ENGINE_SECTION_ID]) == set(first_lines["disk"]) == {"─"}
+
+
+def _section_lines(screen: Screen[object], section_id: str) -> list[str]:
+    widget = screen.query_one(f"#{section_id}")
+    return [_text(_ink(row)) for row in rendered_lines(widget) if _ink(row)]
 
 
 async def test_the_faults_section_takes_no_room_until_a_fault_is_open(

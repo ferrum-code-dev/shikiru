@@ -124,23 +124,29 @@ class _ResourceRows:
 
 
 def resources_section(sample: ResourceView | None) -> Section:
-    """Render `sample` as the Resources section in every state, with no age hint."""
+    """Render `sample` as the unruled first Resources section in every state, with no age hint."""
     if sample is None:
         return Section(
-            RESOURCES_TITLE, state_line(UNAVAILABLE_WORD, SECONDARY_TEXT_COLOR, NO_SAMPLE_RECORDED)
+            RESOURCES_TITLE,
+            state_line(UNAVAILABLE_WORD, SECONDARY_TEXT_COLOR, NO_SAMPLE_RECORDED),
+            ruled=False,
         )
     if sample.state is DiagnosticSampleState.FAILED:
-        return Section(RESOURCES_TITLE, state_line(FAILED_WORD, ALERT_COLOR, sample.error))
+        return Section(
+            RESOURCES_TITLE, state_line(FAILED_WORD, ALERT_COLOR, sample.error), ruled=False
+        )
     if sample.state is DiagnosticSampleState.UNAVAILABLE:
         return Section(
-            RESOURCES_TITLE, state_line(UNAVAILABLE_WORD, SECONDARY_TEXT_COLOR, sample.error)
+            RESOURCES_TITLE,
+            state_line(UNAVAILABLE_WORD, SECONDARY_TEXT_COLOR, sample.error),
+            ruled=False,
         )
     stale = sample.state is DiagnosticSampleState.STALE
     rows = _ResourceRows(sample, sample.error if stale else None)
     body: RenderableType = rows
     if not stale and sample.state not in _OBSERVED_STATES:
         body = Group(grey(RESOURCE_STATE_UNKNOWN), rows)
-    return Section(RESOURCES_TITLE, body)
+    return Section(RESOURCES_TITLE, body, ruled=False)
 
 
 def _status_groups(status: EngineStatusView) -> tuple[Text, ...]:
