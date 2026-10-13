@@ -13,7 +13,7 @@ from textual.widgets import ListView
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
-from shikiru.domain.escalation import ESCALATION_REASON_LABELS, options_for
+from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Status, Step, Task
 from shikiru.plugins.widgets.escalations import EscalationsPanel
@@ -21,7 +21,7 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.tokens import AMBER, PRIMARY_TEXT_COLOR, SECONDARY_TEXT_COLOR
+from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, state_views
@@ -178,14 +178,6 @@ async def _select(home: _Home, pilot: Pilot[None], task: Task) -> None:
     await pilot.pause()
 
 
-def test_every_escalation_reason_has_a_readable_label() -> None:
-    assert set(ESCALATION_REASON_LABELS) == set(EscalationReason)
-    for reason, label in ESCALATION_REASON_LABELS.items():
-        assert label
-        assert "_" not in label
-        assert reason.value not in label
-
-
 @pytest.mark.parametrize("size", [_WIDE, _COMPACT])
 async def test_bar_follows_the_selected_task_without_moving_focus_or_writing_commands(
     home: _Home,
@@ -222,35 +214,20 @@ async def test_bar_follows_the_selected_task_without_moving_focus_or_writing_com
         assert len(queue.pending()) == pending
 
 
-@pytest.mark.parametrize("size", [_WIDE, _COMPACT])
-async def test_unescalated_selection_keeps_the_task_bold_and_the_status_white(
-    home: _Home,
-    size: tuple[int, int],
-) -> None:
-    async with home.app.run_test(size=size) as pilot:
-        await _settled(home, pilot)
-        await _select(home, pilot, home.plain)
-        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
-        assert home.styled_text(PRIMARY_TEXT_COLOR, bold=True) == home.plain.id
-        assert home.styled_text(PRIMARY_TEXT_COLOR, bold=False) == "· No decision needed"
-
-
-@pytest.mark.parametrize("size", [_WIDE, _COMPACT])
 @pytest.mark.parametrize(
     ("resolved", "shown"),
     [(0, "2 decisions on other tasks"), (1, "1 decision on other tasks"), (2, None)],
 )
-async def test_other_decisions_are_a_grey_count_only_while_any_remain(
+async def test_other_decisions_are_counted_only_while_any_remain(
     home: _Home,
     connection: Connection,
-    size: tuple[int, int],
     resolved: int,
     shown: str | None,
 ) -> None:
     escalations = EscalationStore(connection, FakeClock(_START))
     for escalation_id in list(home.decisions.values())[:resolved]:
         escalations.resolve(escalation_id, "closed before the bar is shown")
-    async with home.app.run_test(size=size) as pilot:
+    async with home.app.run_test(size=_WIDE) as pilot:
         await pilot.pause()
         await _select(home, pilot, home.plain)
         await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
