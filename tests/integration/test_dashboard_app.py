@@ -79,6 +79,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_SITUATION,
     TASK_DETAIL_TIMELINE_NEWER,
     TASK_DETAIL_TIMELINE_OLDER,
+    TASK_DETAIL_USAGE_INLINE_BUTTON,
     TASK_DETAIL_VERDICT,
     TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TASK_DETAIL_WORKSPACE,
@@ -5537,6 +5538,47 @@ async def test_stopped_project_attention_without_rows_opens_command_history(
             assert queue.pending() == []
     finally:
         reader.close()
+
+
+@pytest.mark.parametrize(
+    ("button_id", "view"),
+    [
+        (TASK_DETAIL_USAGE_INLINE_BUTTON, TASK_VIEW_USAGE),
+        (TASK_DETAIL_EVIDENCE_INLINE_BUTTON, TASK_VIEW_EVIDENCE),
+    ],
+)
+async def test_compact_home_inline_detail_buttons_open_their_view_and_escape_returns(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    button_id: str,
+    view: str,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    task = seed_task(connection, SystemClock(), title="Inline detail route")
+    app = _app(reader, project_dir, widget_names=["queue"])
+    async with app.run_test(size=_COMPACT_HOME_SIZE) as pilot:
+        home = app.screen
+        await wait_until(
+            lambda: bool(app.query(f"#task-row-{task.id}")),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        await _select_home_task(app, task.id)
+        button = app.query_one(f"#{button_id}", Button)
+        button.focus()
+        await wait_until(
+            lambda: button.region.bottom <= app.size.height,
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        await pilot.press("enter")
+        await wait_until(
+            lambda: isinstance(app.screen, TaskDetailScreen),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        await wait_until(lambda: panel.active_view == view, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+        await pilot.press("escape")
+        await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
 
 
 async def _assert_home_inline_secondary_routes(
