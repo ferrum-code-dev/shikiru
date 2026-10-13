@@ -7,13 +7,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
+from shikiru.domain.briefing import one_line
 from shikiru.view_log import (
+    VIEW_MESSAGE_SIGNAL,
+    VIEW_MESSAGE_TEXT_KEY,
     VIEW_SESSION_STARTED_SIGNAL,
     VIEW_SIGNAL_KEY,
     VIEW_TIME_KEY,
     VIEW_TOOL_FINISHED_SIGNAL,
     VIEW_TOOL_STARTED_SIGNAL,
     VIEW_TURN_ENDED_SIGNAL,
+    VIEW_TURN_ENDED_TEXT_KEY,
     VIEW_TURN_FAILED_SIGNAL,
     VIEW_TURN_KEY,
 )
@@ -34,6 +38,7 @@ class TurnActivity:
     identity_offset: int
     tool_running: bool
     ended: bool
+    last_words: str | None = None
 
 
 @dataclass
@@ -48,6 +53,8 @@ class _TailState:
     signal_offset: int | None = None
     tool_running: bool = False
     ended: bool = False
+    message_words: str | None = None
+    ended_words: str | None = None
 
 
 class RoleViewTail:
@@ -79,6 +86,7 @@ class RoleViewTail:
             state.signal_offset,
             state.tool_running,
             state.ended,
+            state.message_words or state.ended_words,
         )
 
     @staticmethod
@@ -139,6 +147,14 @@ class RoleViewTail:
         state.last_signal = signal
         state.signal_turn = row_turn
         state.signal_offset = row_offset
+        if signal == VIEW_MESSAGE_SIGNAL:
+            state.message_words = (
+                RoleViewTail._words(typed_row, VIEW_MESSAGE_TEXT_KEY) or state.message_words
+            )
+        elif signal == VIEW_TURN_ENDED_SIGNAL:
+            state.ended_words = (
+                RoleViewTail._words(typed_row, VIEW_TURN_ENDED_TEXT_KEY) or state.ended_words
+            )
         if signal == VIEW_SESSION_STARTED_SIGNAL:
             state.ended = False
             state.tool_running = False
@@ -147,3 +163,8 @@ class RoleViewTail:
         elif signal == VIEW_TOOL_FINISHED_SIGNAL:
             state.tool_running = False
         state.ended = state.ended or signal in (VIEW_TURN_ENDED_SIGNAL, VIEW_TURN_FAILED_SIGNAL)
+
+    @staticmethod
+    def _words(row: dict[str, object], key: str) -> str | None:
+        text = row.get(key)
+        return one_line(text) if isinstance(text, str) else None

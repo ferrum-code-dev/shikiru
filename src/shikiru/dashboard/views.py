@@ -60,11 +60,18 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.dashboard.session_history import project_task_sessions
 from shikiru.dashboard.tick import TickMemo, tick_now
+from shikiru.domain.briefing import (
+    escalation_remaining,
+    parse_produced,
+    pull_request_line,
+    reported_tests,
+    verdict_counts,
+)
 from shikiru.domain.commands import CommandStatus, ResolutionKind
 from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
-from shikiru.domain.ladder import pick_rung
+from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.levels import free_space_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.reports import (
@@ -99,6 +106,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.motion import DashboardMotion
+    from shikiru.domain.briefing import PullRequestLine
     from shikiru.domain.events import Event
     from shikiru.domain.faults import FaultStreak
     from shikiru.domain.motion import MotionFrame, TaskMotionFrame
@@ -997,6 +1005,19 @@ class StateDashboardViews:
             item for item in self.usage() if item.agent in task_agents and item.quotas
         )
         task_frame = self._motion.frames((task,), now, engine_running=self.engine_up()).tasks[0]
+        latest_verdict = next(
+            (item.data for item in reversed(detail.reports) if isinstance(item.data, Verdict)),
+            None,
+        )
+        implementation = next(
+            (
+                item.data
+                for item in reversed(detail.reports)
+                if item.source == AGENT_REPORT_SOURCE
+                and isinstance(item.data, ImplementationReport)
+            ),
+            None,
+        )
         workflow = _task_workflow(task, detail.events, detail.reports)
         return TaskDetailView(
             task_id=task.id,
@@ -1078,6 +1099,20 @@ class StateDashboardViews:
             latest_signal_incomplete=(
                 latest_signal.incomplete if latest_signal is not None else False
             ),
+            max_iterations=self._settings.orchestration.max_iterations,
+            started_at=task.started_at,
+            escalation_remaining=escalation_remaining(
+                task.counters.rejections_on_rung,
+                self._settings.roles.implementer.escalate_after,
+                can_escalate=move_up(task, Role.IMPLEMENTER, self._settings) is not None,
+            ),
+            verdict_counts=(verdict_counts(latest_verdict) if latest_verdict is not None else None),
+            produced=parse_produced(detail.recorded_facts),
+            reported_tests=(
+                reported_tests(implementation.tests) if implementation is not None else None
+            ),
+            pull_request=self._pull_request_line(task.id),
+            last_words=task_frame.last_words,
         )
 
     async def task_timeline(
@@ -1344,6 +1379,14 @@ class StateDashboardViews:
                     f"observed {_age(now - window.observed_at)} ago"
                 )
         return lines
+
+    def _pull_request_line(self, task_id: str) -> PullRequestLine | None:
+        events = self._state.latest_events(
+            1,
+            kinds=(EventKind.PR_OPENED, EventKind.PR_WITHDRAWN),
+            task_id=task_id,
+        )
+        return pull_request_line(events[0].data) if events else None
 
     def _pull_request_evidence(self, task_id: str) -> list[str]:
         events = self._state.latest_events(

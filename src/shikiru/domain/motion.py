@@ -47,6 +47,7 @@ class TaskMotionState:
     last_signal_identity: str | None = None
     last_signal_role: str | None = None
     last_signal_turn: str | None = None
+    last_words: str | None = None
     tool_running: bool = False
     turn_active: bool = False
     engine_driven: bool = False
@@ -96,6 +97,7 @@ class TaskMotionFrame:
     last_signal_identity: str | None
     last_signal_role: str | None
     last_signal_turn: str | None
+    last_words: str | None
     stamp_kind: MotionStampKind | None
     stamp_detail: str
     stamp_flash: bool
@@ -185,6 +187,7 @@ def _task_frame(task: TaskMotionState, state: MotionState, now: datetime) -> Tas
         last_signal=task.last_signal,
         last_signal_identity=task.last_signal_identity,
         last_signal_role=task.last_signal_role,
+        last_words=task.last_words,
         last_signal_turn=task.last_signal_turn,
         stamp_kind=stamp_kind,
         stamp_detail=stamp_detail,

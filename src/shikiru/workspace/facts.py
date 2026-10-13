@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from shikiru.domain.briefing import (
+    FACTS_COMMITS_HEADING,
+    FACTS_DIFF_STAT_HEADING,
+    FACTS_NONE_MARKER,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
@@ -47,10 +53,10 @@ def render_facts(facts: WorkspaceFacts) -> str:
     These facts outrank the Implementer's claims, so they carry no interpretation, only the
     raw `git` output `GitFacts.collect` gathered.
     """
-    lines = ["### Commits (base..HEAD)"]
-    lines.append("\n".join(facts.commits) if facts.commits else "(none)")
-    lines.append("### Diff stat (base...HEAD)")
-    lines.append(facts.diff_stat or "(none)")
+    lines = [FACTS_COMMITS_HEADING]
+    lines.append("\n".join(facts.commits) if facts.commits else FACTS_NONE_MARKER)
+    lines.append(FACTS_DIFF_STAT_HEADING)
+    lines.append(facts.diff_stat or FACTS_NONE_MARKER)
     lines.append("### git status --porcelain")
     lines.append("\n".join(facts.status) if facts.status else "(clean)")
     lines.append("### Changed trackers")

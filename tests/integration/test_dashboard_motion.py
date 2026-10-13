@@ -31,6 +31,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TaskDetailViewsScreen,
 )
+from shikiru.domain.briefing import LAST_WORDS_LIMIT
 from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -59,12 +60,15 @@ from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED, SPIN
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
 from shikiru.ui.tokens import STYLE_REVERSE
 from shikiru.view_log import (
+    VIEW_MESSAGE_SIGNAL,
+    VIEW_MESSAGE_TEXT_KEY,
     VIEW_SESSION_STARTED_SIGNAL,
     VIEW_SIGNAL_KEY,
     VIEW_TIME_KEY,
     VIEW_TOOL_FINISHED_SIGNAL,
     VIEW_TOOL_STARTED_SIGNAL,
     VIEW_TURN_ENDED_SIGNAL,
+    VIEW_TURN_ENDED_TEXT_KEY,
     VIEW_TURN_KEY,
     view_log_path,
 )
@@ -140,6 +144,12 @@ class _StageTimingCase:
 
 def _row(at: datetime, turn: str, signal: str) -> str:
     return json.dumps({VIEW_TIME_KEY: at.isoformat(), VIEW_TURN_KEY: turn, VIEW_SIGNAL_KEY: signal})
+
+
+def _append_message(path: Path, text: str) -> None:
+    row = {**json.loads(_row(_START, _TURN_NAME, VIEW_MESSAGE_SIGNAL)), VIEW_MESSAGE_TEXT_KEY: text}
+    with path.open("a") as handle:
+        handle.write(json.dumps(row) + "\n")
 
 
 def _motion_settings(project_dir: Path) -> Settings:
@@ -555,6 +565,42 @@ def test_role_view_tail_keeps_terminal_state_until_a_new_session_signal(tmp_path
     assert activity is not None
     assert not activity.ended
     assert not activity.tool_running
+
+
+def test_role_view_tail_reports_the_agents_last_words(tmp_path: Path) -> None:
+    def row(signal: str, **fields: str) -> str:
+        return json.dumps({**json.loads(_row(_START, _TURN_NAME, signal)), **fields})
+
+    message = row(VIEW_MESSAGE_SIGNAL, **{VIEW_MESSAGE_TEXT_KEY: "  Running\n the   tests  "})
+    later_message = row(VIEW_MESSAGE_SIGNAL, **{VIEW_MESSAGE_TEXT_KEY: "Fixed it"})
+    ended = row(VIEW_TURN_ENDED_SIGNAL, **{VIEW_TURN_ENDED_TEXT_KEY: "All done"})
+    tool = row(VIEW_TOOL_STARTED_SIGNAL)
+    blank = row(VIEW_MESSAGE_SIGNAL, **{VIEW_MESSAGE_TEXT_KEY: " \n "})
+    long = row(VIEW_MESSAGE_SIGNAL, **{VIEW_MESSAGE_TEXT_KEY: "word " * 200})
+    cases: tuple[tuple[str, str | None], ...] = (
+        (f"{tool}\n", None),
+        (f"{message}\n{tool}\n", "Running the tests"),
+        (f"{message}\n{blank}\n", "Running the tests"),
+        (f"{message}\n{later_message}\n", "Fixed it"),
+        (f"{ended}\n", "All done"),
+        (f"{message}\n{ended}\n", "Running the tests"),
+        (f"{message}\n{later_message[:10]}", "Running the tests"),
+    )
+    for index, (content, expected) in enumerate(cases):
+        path = tmp_path / f"{index}.jsonl"
+        path.write_text(content)
+        activity = RoleViewTail().read(path, _TURN_NAME)
+        assert activity is not None
+        assert activity.last_words == expected
+
+    path = tmp_path / "long.jsonl"
+    path.write_text(f"{long}\n")
+    bounded = RoleViewTail().read(path, _TURN_NAME)
+    assert bounded is not None
+    assert bounded.last_words is not None
+    assert len(bounded.last_words) == LAST_WORDS_LIMIT
+    assert "\n" not in bounded.last_words
+    assert RoleViewTail().read(tmp_path / "missing.jsonl", _TURN_NAME) is None
 
 
 async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_db_changes(
@@ -1511,13 +1557,15 @@ async def test_task_activity_claims_a_signal_only_for_a_running_current_turn(
     ],
 ) -> None:
     connection, project_dir, clock, settings, task, reader, views = task_activity_environment
-    _write_current_turn_log(project_dir, task, views)
+    log_path = _write_current_turn_log(project_dir, task, views)
+    _append_message(log_path, "Running the parser tests")
     observed = await views.task_detail(task.id, include_timeline=False)
     assert observed is not None
     assert observed.signal_observed
     assert observed.latest_signal_at == _START
     assert observed.latest_signal_role == Role.IMPLEMENTER.value
     assert observed.latest_signal_turn == _TURN_NAME
+    assert observed.last_words == "Running the parser tests"
 
     static_settings = settings.model_copy(
         update={"dashboard": settings.dashboard.model_copy(update={"animations": False})}

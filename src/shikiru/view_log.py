@@ -6,6 +6,7 @@ import os
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import (
+    Message,
     SessionStarted,
     ToolFinished,
     ToolStarted,
@@ -24,6 +25,9 @@ VIEW_TIME_KEY = "ts"
 VIEW_TURN_KEY = "turn"
 VIEW_RUNG_KEY = "rung"
 VIEW_SIGNAL_KEY = "signal"
+VIEW_MESSAGE_SIGNAL = Message.__name__
+VIEW_MESSAGE_TEXT_KEY = "text"
+VIEW_TURN_ENDED_TEXT_KEY = "last_message"
 VIEW_SESSION_STARTED_SIGNAL = SessionStarted.__name__
 VIEW_TOOL_STARTED_SIGNAL = ToolStarted.__name__
 VIEW_TOOL_FINISHED_SIGNAL = ToolFinished.__name__

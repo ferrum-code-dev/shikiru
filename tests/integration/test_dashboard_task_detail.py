@@ -63,6 +63,7 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.services import TaskNavigation
+from shikiru.domain.briefing import ProducedNumbers, PullRequestLine, ReportedTests, VerdictCounts
 from shikiru.domain.commands import HandBack, Resume
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
@@ -97,6 +98,7 @@ from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import HOME_WINDOW_NAME
 from shikiru.ui.popup import PopupFrame
 from shikiru.view_log import view_log_path
+from shikiru.workspace.facts import WorkspaceFacts, render_facts
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -209,6 +211,7 @@ if TYPE_CHECKING:
     from textual.widget import Widget
 
     from shikiru.clock import Clock
+    from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import (
         NavigateHome,
         NavigateRolePane,
@@ -707,11 +710,17 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     (implementation_dir / REPORT_KIND_FILENAME).write_text("implementation")
     (implementation_dir / REPORT_FILENAME).write_text(implementation.model_dump_json())
     (implementation_dir / ENGINE_VERDICT_FILENAME).write_text(
-        Verdict(decision="accept", summary="Latest engine verdict").model_dump_json()
+        Verdict(
+            decision="changes_requested",
+            summary="Latest engine verdict",
+            issues=[
+                Issue(severity="major", description="first"),
+                Issue(severity="major", description="second"),
+                Issue(severity="minor", description="third"),
+            ],
+        ).model_dump_json()
     )
-    (implementation_dir / FACTS_FILENAME).write_text(
-        "branch shikiru/T-1-detail\nworking tree clean\n"
-    )
+    facts = _record_briefing_evidence(connection, clock, task.id, implementation_dir)
     (invalid_dir / REPORT_KIND_FILENAME).write_text("invalid report kind")
     signal_path = run_dir(project_root, task.id) / "implementer" / "view.jsonl"
     signal_path.parent.mkdir(parents=True)
@@ -736,7 +745,7 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     assert detail.latest_verdict.role == Role.LEADER.value
     assert detail.latest_verdict.provenance == "engine"
     assert detail.latest_verdict.summary == "Latest engine verdict"
-    assert detail.recorded_facts == "branch shikiru/T-1-detail\nworking tree clean\n"
+    _assert_briefing_data(detail, load_settings(project_root), facts)
     assert detail.facts_turn == "02-implement-i1"
     assert detail.signals[0].role == Role.IMPLEMENTER.value
     assert detail.sessions[0].session_id == "session-current"
@@ -747,6 +756,38 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     assert detail.evidence_errors
 
     await _assert_billing_details_are_visible(reader, project_root, task.id, clock)
+
+
+def _record_briefing_evidence(
+    connection: Connection, clock: Clock, task_id: str, turn_dir: Path
+) -> str:
+    facts = render_facts(
+        WorkspaceFacts(
+            commits=("abc1234 first", "def5678 second"),
+            diff_stat=" a.py | 3 ++-\n 1 file changed, 2 insertions(+), 1 deletion(-)\n",
+        )
+    )
+    (turn_dir / FACTS_FILENAME).write_text(facts)
+    EventLog(connection, clock).append(
+        EventKind.PR_OPENED,
+        task_id=task_id,
+        message="PR opened",
+        data={"url": "https://example.test/o/r/pull/41", "branch": "b", "commits": []},
+    )
+    return facts
+
+
+def _assert_briefing_data(detail: TaskDetailView, settings: Settings, facts: str) -> None:
+    assert detail.recorded_facts == facts
+    assert detail.produced == ProducedNumbers(commits=2, files=1, insertions=2, deletions=1)
+    assert detail.verdict_counts == VerdictCounts("changes_requested", 0, 2, 1)
+    assert detail.reported_tests == ReportedTests(passed=1, failed=0, skipped=0)
+    assert detail.pull_request == PullRequestLine(
+        "OPEN", "https://example.test/o/r/pull/41", 41, None, None
+    )
+    assert detail.max_iterations == settings.orchestration.max_iterations
+    assert detail.started_at is None
+    assert detail.escalation_remaining is None
 
 
 def _record_subscribed_session(connection: Connection, clock: Clock, task_id: str) -> None:

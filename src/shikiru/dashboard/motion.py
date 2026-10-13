@@ -141,6 +141,7 @@ class DashboardMotion:
             last_signal_turn,
             tool_running,
             turn_active,
+            last_words,
         ) = self._current_activity(task, turn_active, turn_started_at)
         held = self._is_held(task)
         engine_driven = self._engine_driven(task, events)
@@ -155,6 +156,7 @@ class DashboardMotion:
             last_signal_identity=last_signal_identity,
             last_signal_role=last_signal_role,
             last_signal_turn=last_signal_turn,
+            last_words=last_words,
             tool_running=tool_running,
             turn_active=turn_active,
             engine_driven=engine_driven,
@@ -244,7 +246,9 @@ class DashboardMotion:
 
     def _current_activity(
         self, task: Task, turn_active: bool, turn_started_at: datetime | None
-    ) -> tuple[datetime | None, str | None, str | None, str | None, str | None, bool, bool]:
+    ) -> tuple[
+        datetime | None, str | None, str | None, str | None, str | None, bool, bool, str | None
+    ]:
         role = ACTING_ROLE.get(task.step) if task.step is not None else None
         last_signal_at = None
         last_signal = None
@@ -252,6 +256,7 @@ class DashboardMotion:
         last_signal_role = None
         last_signal_turn = None
         tool_running = False
+        last_words = None
         if role is None:
             return (
                 last_signal_at,
@@ -261,6 +266,7 @@ class DashboardMotion:
                 last_signal_turn,
                 tool_running,
                 False,
+                last_words,
             )
         turn_name = self._current_turn_name(task)
         if turn_name is None:
@@ -272,6 +278,7 @@ class DashboardMotion:
                 last_signal_turn,
                 tool_running,
                 turn_active,
+                last_words,
             )
         activity = self._role_view_tail.read(
             view_log_path(run_dir(self._project_root, task.id), role.value), turn_name
@@ -287,6 +294,7 @@ class DashboardMotion:
                 last_signal_turn,
                 tool_running,
                 turn_active,
+                last_words,
             )
         last_signal_at = activity.last_signal_at
         last_signal = activity.last_signal
@@ -294,6 +302,7 @@ class DashboardMotion:
         last_signal_role = role.value
         last_signal_turn = activity.turn
         tool_running = activity.tool_running
+        last_words = activity.last_words
         turn_active = turn_active and not activity.ended
         return (
             last_signal_at,
@@ -303,6 +312,7 @@ class DashboardMotion:
             last_signal_turn,
             tool_running,
             turn_active,
+            last_words,
         )
 
     def _is_held(self, task: Task) -> bool:
