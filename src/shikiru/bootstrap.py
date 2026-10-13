@@ -373,6 +373,7 @@ async def run_dashboard(
                 clock,
                 project_root,
                 refresh_seconds=settings.dashboard.disk_refresh_seconds,
+                size_refresh_seconds=settings.dashboard.disk_size_refresh_seconds,
             ),
         )
         motion = dashboard_motion_module.DashboardMotion(

@@ -51,6 +51,7 @@ docker_refresh_seconds = 5
 docker_timeout_seconds = 5
 docker_scope = "project"
 disk_refresh_seconds = 60
+disk_size_refresh_seconds = 300
 disk_warn_free_pct = 10
 disk_alert_free_pct = 5
 repo_status_cache_seconds = 10

@@ -1610,8 +1610,9 @@ Refs: eighth-review layout and Disk marker; `ui/section.py` (`Section`), `dashbo
 
 ### Task 163: Disk `.shikiru` size
 Refs: eighth-review Disk; `telemetry/disk.py`, `dashboard/contract.py` `DiskView`, `dashboard/services.py`, `plugins/widgets/disk.py`, `config/defaults.toml`/`settings.py`; 05, 06 §5.4.
-- [ ] A tree-size function for the project's `.shikiru` folder (lstat, no symlink following, hard links counted once, unreadable subtree is a failure) used by `DiskSampler` on `disk_size_refresh_seconds` (300, validated) under the existing single flight; free space keeps `disk_refresh_seconds`; the CLI status run-directory size keeps `directory_usage`; row `.shikiru` replaces `Runs`.
-- [ ] Real-filesystem tests: symlinked directory not followed, hard link once, missing folder is zero, unreadable subtree fails, size cadence slower than free space.
+- [x] A tree-size function for the project's `.shikiru` folder (lstat, no symlink following, hard links counted once, unreadable subtree is a failure) used by `DiskSampler` on `disk_size_refresh_seconds` (300, validated) under the existing single flight; free space keeps `disk_refresh_seconds`; the CLI status run-directory size keeps `directory_usage`; row `.shikiru` replaces `Runs`.
+- [x] Real-filesystem tests: symlinked directory not followed, hard link once, missing folder is zero, unreadable subtree fails, size cadence slower than free space.
+  - Proof: the row is `.shikiru`, measured by a lstat tree walk (symlinks not followed, hard links once, unreadable subtree a failure kept as stale) on `disk_size_refresh_seconds` in its own background flight, and reads `measuring…` until the first walk ends. Real-filesystem tests cover the walk rules and the slower cadence; native colour and NO_COLOR renders at wide, compact and 20x8 over a worktree-like tmp project showed `.shikiru 30.5 MiB` with the symlinked directory not double counted. Gate green (1582 passed).
 
 ### Task 164: Sentence-case titles everywhere
 Refs: eighth-review title case; title audit (`dashboard/app.py`, `dashboard/palette.py`, `operator/queries.py`, `dashboard/detail.py`, `dashboard/wizard.py`, help copy); 06 §6.1.

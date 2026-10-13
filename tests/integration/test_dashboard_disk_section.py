@@ -45,7 +45,7 @@ _WAIT_SECONDS = 5
 _REFRESH_SECONDS = 0.05
 _GIB = 1024**3
 _TOTAL_BYTES = 500 * _GIB
-_RUN_BYTES = int(1.2 * _GIB)
+_SHIKIRU_BYTES = int(1.2 * _GIB)
 _AMBER_BOLD: Style = (True, AMBER)
 _ALERT_BOLD: Style = (True, ALERT_COLOR)
 _MARKER = "\N{DOUBLE EXCLAMATION MARK}"
@@ -61,7 +61,7 @@ def _view(
         state=state,
         free_bytes=free_bytes,
         total_bytes=_TOTAL_BYTES,
-        runs_bytes=_RUN_BYTES,
+        shikiru_bytes=_SHIKIRU_BYTES,
         sampled_ago="3s",
         error=error,
     )
@@ -98,14 +98,15 @@ def _free_row(free: str, free_style: Style, *, marker: bool = False) -> list[Cel
     return _row("Free", group(*pieces))
 
 
-_RUNS_ROW = _row("Runs", group(("1.2 GiB", CYAN_BOLD)))
+_SHIKIRU_ROW = _row(".shikiru", group(("1.2 GiB", CYAN_BOLD)))
+_MEASURING_ROW = _row(".shikiru", group(("measuring…", GREY)))
 _REFRESH_ROW = _row("Refresh", group(("failed · project vanished", AMBER_TEXT)))
 
-_AVAILABLE_LINES = [_heading(), _free_row("120.0 GiB", CYAN_BOLD), _RUNS_ROW]
+_AVAILABLE_LINES = [_heading(), _free_row("120.0 GiB", CYAN_BOLD), _SHIKIRU_ROW]
 _STALE_LINES = [
     _heading(("stale · observed 3s ago", AMBER_TEXT)),
     _free_row("120.0 GiB", CYAN_BOLD),
-    _RUNS_ROW,
+    _SHIKIRU_ROW,
     _REFRESH_ROW,
 ]
 _UNAVAILABLE_LINES = [_heading(), _row("unavailable · project is missing")]
@@ -117,6 +118,11 @@ _FAILED_LINES = [
 _AVAILABLE = DiagnosticSampleState.AVAILABLE
 _WIDE_CASES = [
     pytest.param(_view(120 * _GIB), _AVAILABLE_LINES, id="available"),
+    pytest.param(
+        replace(_view(120 * _GIB), shikiru_bytes=None),
+        [_heading(), _free_row("120.0 GiB", CYAN_BOLD), _MEASURING_ROW],
+        id="size-not-yet-measured",
+    ),
     pytest.param(
         _view(120 * _GIB, DiagnosticSampleState.STALE, error="project vanished"),
         _STALE_LINES,
@@ -206,7 +212,7 @@ _COMPACT_LAYOUT = [
     "Disk",
     "Free",
     "120.0 GiB of 500.0 GiB",
-    "Runs",
+    ".shikiru",
     "1.2 GiB",
 ]
 _TINY_LAYOUT = [
@@ -214,7 +220,7 @@ _TINY_LAYOUT = [
     "Free",
     "120.0 GiB of 500.0",
     "GiB",
-    "Runs",
+    ".shikiru",
     "1.2 GiB",
 ]
 

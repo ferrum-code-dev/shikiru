@@ -228,6 +228,7 @@ class DashboardConfig(ConfigModel):
     docker_timeout_seconds: float = Field(gt=0)
     docker_scope: DockerScope
     disk_refresh_seconds: float = Field(gt=0)
+    disk_size_refresh_seconds: float = Field(gt=0)
     disk_warn_free_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
     disk_alert_free_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
     repo_status_cache_seconds: float = Field(gt=0)

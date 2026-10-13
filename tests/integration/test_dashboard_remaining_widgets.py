@@ -45,7 +45,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Role, Status
 from shikiru.operator.lifecycle import task_dashboard_command
 from shikiru.operator.queries import OperatorQueries
-from shikiru.paths import run_dir, runs_root, state_db_path
+from shikiru.paths import project_state_dir, run_dir, state_db_path
 from shikiru.plugins.widgets.dialogue import DialoguePanel, DialogueWidget
 from shikiru.plugins.widgets.docker import DockerPanel
 from shikiru.plugins.widgets.escalations import EscalationsPanel, EscalationsWidget
@@ -103,7 +103,7 @@ if TYPE_CHECKING:
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 _PAST_INTERVAL_FACTOR = 5
-_RUN_FILE_BYTES = 2048
+_SHIKIRU_FILE_BYTES = 2048
 BYTES_PER_GIB = 1024**3
 OBSERVABLE_PANE_MEMORY_BYTES = 64 * 1024**2
 MINIMUM_PANE_MEMORY_BYTES = 48 * 1024**2
@@ -175,7 +175,10 @@ def _dashboard_services(
         session_target=UNUSED_SESSION_TARGET,
         resources=ResourceSampler(clock, settings.orchestration.resources),
         disk=DiskSampler(
-            clock, project_dir, refresh_seconds=settings.dashboard.disk_refresh_seconds
+            clock,
+            project_dir,
+            refresh_seconds=settings.dashboard.disk_refresh_seconds,
+            size_refresh_seconds=settings.dashboard.disk_size_refresh_seconds,
         ),
         docker=DockerSampler(
             runner,
@@ -1214,15 +1217,20 @@ async def test_the_disk_sample_reaches_the_views_with_its_run_size_and_free_leve
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     sources, settings = _dashboard_services(project_dir, clock, idle_tmux, reader)
-    run = runs_root(project_dir) / "T-1"
-    run.mkdir(parents=True)
-    (run / "view.jsonl").write_bytes(b"x" * _RUN_FILE_BYTES)
+    state_dir = project_state_dir(project_dir)
+    state_dir.mkdir(exist_ok=True)
+    (state_dir / "marker.bin").write_bytes(b"x" * _SHIKIRU_FILE_BYTES)
     views = _dashboard_views(reader, project_dir, clock, settings, sources)
 
+    async def measured() -> bool:
+        return (await views.disk()).shikiru_bytes is not None
+
+    await wait_until(measured, timeout=2)
     disk = await views.disk()
 
     assert disk.state is DiagnosticSampleState.AVAILABLE
-    assert disk.runs_bytes == _RUN_FILE_BYTES
+    assert disk.shikiru_bytes is not None
+    assert disk.shikiru_bytes >= _SHIKIRU_FILE_BYTES
     assert disk.free_level is not None
 
 
@@ -1528,7 +1536,10 @@ async def test_resources_service_excludes_panes_from_other_projects(
         session_target=f"={RESOURCE_PROJECT_SESSION}",
         resources=sampler,
         disk=DiskSampler(
-            clock, project_dir, refresh_seconds=settings.dashboard.disk_refresh_seconds
+            clock,
+            project_dir,
+            refresh_seconds=settings.dashboard.disk_refresh_seconds,
+            size_refresh_seconds=settings.dashboard.disk_size_refresh_seconds,
         ),
         docker=DockerSampler(
             SubprocessRunner(),

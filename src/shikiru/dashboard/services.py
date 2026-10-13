@@ -344,7 +344,7 @@ class DashboardServices:
             state=_disk_state(snapshot),
             free_bytes=snapshot.free_bytes,
             total_bytes=snapshot.total_bytes,
-            runs_bytes=snapshot.runs_bytes,
+            shikiru_bytes=snapshot.shikiru_bytes,
             sampled_ago=_sampled_ago(snapshot.sampled_at, self._clock),
             error=snapshot.error,
         )

@@ -769,12 +769,12 @@ class DockerView:
 
 @dataclass(frozen=True)
 class DiskView:
-    """Free and total bytes of the project filesystem, the run directory size and sampling state."""
+    """Free and total bytes of the project filesystem, the `.shikiru` size and sampling state."""
 
     state: DiagnosticSampleState
     free_bytes: int | None = None
     total_bytes: int | None = None
-    runs_bytes: int | None = None
+    shikiru_bytes: int | None = None
     free_level: UsageLevel | None = None
     sampled_ago: str | None = None
     error: str | None = None

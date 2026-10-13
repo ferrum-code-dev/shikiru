@@ -253,7 +253,7 @@ Eighth-review scope and evidence: [eighth real-project review](../docs/tui-feedb
 - [x] Task 160: Stale only after a failure; age hint only when stale
 - [x] Task 161: One refresh moment for the bar and the popup; header keeps ticking
 - [x] Task 162: No leading rule or blank above Resources; `‼` marker for low disk space
-- [ ] Task 163: Disk `.shikiru` size
+- [x] Task 163: Disk `.shikiru` size
 - [ ] Task 164: Sentence-case titles everywhere
 - [ ] Task 165: Verify the eighth review
 - [ ] Task 166: Reconcile the HTML reference, design docs and release record

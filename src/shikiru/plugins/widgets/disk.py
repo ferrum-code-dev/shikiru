@@ -1,4 +1,4 @@
-"""The `disk` widget: free space of the project filesystem and the run directory size (06 §5.4)."""
+"""The `disk` widget: free space of the project filesystem and the `.shikiru` size (06 §5.4)."""
 
 from __future__ import annotations
 
@@ -36,7 +36,8 @@ if TYPE_CHECKING:
 
 SECTION_TITLE = "Disk"
 LABEL_FREE = "Free"
-LABEL_RUNS = "Runs"
+LABEL_SHIKIRU = ".shikiru"
+MEASURING_WORD = "measuring…"
 LABEL_REFRESH = "Refresh"
 
 
@@ -52,8 +53,10 @@ class _DiskBody:
         if view.free_bytes is not None and view.total_bytes is not None:
             free = free_space_text(view.free_bytes, view.total_bytes, view.free_level)
             rows.append((grey(LABEL_FREE), (free,)))
-        if view.runs_bytes is not None:
-            rows.append((grey(LABEL_RUNS), (number(format_size(view.runs_bytes)),)))
+        if view.shikiru_bytes is not None:
+            rows.append((grey(LABEL_SHIKIRU), (number(format_size(view.shikiru_bytes)),)))
+        elif self.refresh_error is None:
+            rows.append((grey(LABEL_SHIKIRU), (grey(MEASURING_WORD),)))
         if self.refresh_error is not None:
             failure = Text(f"{FAILED_WORD}{GROUP_SEPARATOR}{self.refresh_error}", style=AMBER)
             rows.append((grey(LABEL_REFRESH), (failure,)))
