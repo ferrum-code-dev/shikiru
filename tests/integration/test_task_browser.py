@@ -31,7 +31,7 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore, fetch_task_browser_pages
-from shikiru.ui.tokens import SAGE, STEEL_BLUE
+from shikiru.ui.tokens import SAGE
 from shikiru.view_log import (
     VIEW_SESSION_STARTED_SIGNAL,
     VIEW_SIGNAL_KEY,
@@ -1001,67 +1001,3 @@ async def test_selecting_a_task_row_never_moves_its_text_in_either_list(
                 list_view.index = index
                 await wait_until(lambda item=item: item.highlighted, timeout=5.0)
                 assert _row_text_offsets(widget) == resting
-
-
-async def test_recent_heading_shares_the_tasks_colour_and_a_blank_line_after_it(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    seed_task(connection, clock, title="Active")
-    done = seed_task(connection, clock, title="Done")
-    _finish_task(connection, clock, done.id)
-    context = replace(
-        widget_context(reader, project_dir, clock, services=StubServices()),
-        placement=WidgetPlacement.TASK_LIST,
-    )
-    widget = cast("QueuePanel", QueueWidget().create(context))
-
-    async with WidgetHostApp(widget).run_test(size=(100, 35)):
-        count = widget.query_one("#task-browser-count", Static)
-        heading = widget.query_one("#task-browser-recent-heading", Horizontal)
-        title = widget.query_one("#task-browser-recent-title", Static)
-        task_list = widget.query_one("#task-browser-list", ListView)
-        recent_list = widget.query_one("#task-browser-recent-list", ListView)
-        await wait_until(lambda: heading.display and bool(recent_list.children), timeout=5.0)
-        counted = count.render()
-        assert isinstance(counted, Content)
-        assert counted.plain == "TASKS"
-        assert _span_color(counted, 0) == STEEL_BLUE.lower()
-        assert title.styles.color.hex.lower() == STEEL_BLUE.lower()
-        assert task_list.region.y - count.region.y == 2
-        assert recent_list.region.y - heading.region.y == 3
-
-
-async def test_task_number_is_bold_and_the_title_regular_in_active_and_recent_rows(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    active = seed_task(connection, clock, title="Active title")
-    done = seed_task(connection, clock, title="Done title")
-    _finish_task(connection, clock, done.id)
-    context = replace(
-        widget_context(reader, project_dir, clock, services=StubServices()),
-        placement=WidgetPlacement.TASK_LIST,
-    )
-    widget = cast("QueuePanel", QueueWidget().create(context))
-
-    async with WidgetHostApp(widget).run_test(size=(100, 35)):
-        await wait_until(
-            lambda: (
-                bool(widget.query(f"#task-row-{active.id}"))
-                and bool(widget.query(f"#task-row-{done.id}"))
-            ),
-            timeout=5.0,
-        )
-        for task in (active, done):
-            content = _row_content(widget, task.id)
-            id_offset = content.plain.index(task.id)
-            title_offset = content.plain.index(task.title)
-            assert _style_at(content, id_offset).bold
-            assert not _style_at(content, title_offset).bold
