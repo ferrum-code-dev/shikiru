@@ -243,3 +243,17 @@ Seventh-review scope and evidence: [seventh real-project review](../docs/tui-fee
 - [x] Task 153: Disk section
 - [x] Task 154: Project diagnostics panel restructure and timer refresh
 - [x] Task 155: Verify the seventh review and reconcile Phase 11 evidence
+
+Eighth-review scope and evidence: [eighth real-project review](../docs/tui-feedback-eighth-review.md).
+
+- [ ] Task 156: Remove screenshot-capture side effects and task-numbered test names
+- [ ] Task 157: Fold and simplify `test_dashboard_app.py`
+- [ ] Task 158: Fold the rest of the dashboard-family integration tests
+- [ ] Task 159: Trim unit tables and fold tmux/workspace/config tests
+- [ ] Task 160: Stale only after a failure; age hint only when stale
+- [ ] Task 161: One refresh moment for the bar and the popup; header keeps ticking
+- [ ] Task 162: No leading rule or blank above Resources; `‼` marker for low disk space
+- [ ] Task 163: Disk `.shikiru` size
+- [ ] Task 164: Sentence-case titles everywhere
+- [ ] Task 165: Verify the eighth review
+- [ ] Task 166: Reconcile the HTML reference, design docs and release record

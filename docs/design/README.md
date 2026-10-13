@@ -26,3 +26,5 @@ The [fifth real-project review](../tui-feedback-fifth-review.md) (Tasks 142–14
 The [sixth real-project review](../tui-feedback-sixth-review.md) (Tasks 148–150) colours subscription-limit gauges sage, amber and dusty rose at 50 and 90 percent, titles the popup `Project usage` and restructures it into Totals, By agent and Limits; the HTML reference follows. See the [2026-10-12 record](../release-readiness-2026-10-12-phase11-sixth-review.md).
 
 The [seventh real-project review](../tui-feedback-seventh-review.md) (Tasks 151–155, delivered) restructures Project diagnostics into Resources and Engine plus default-on Docker, Disk and Faults sections that refresh like the Resources bar; the HTML reference follows the TUI. See the [2026-10-12 record](../release-readiness-2026-10-12-phase11-seventh-review.md).
+
+The [eighth real-project review](../tui-feedback-eighth-review.md) (Tasks 156–166, planned) trims the test suite, drops the age hints and refresh drift from Project diagnostics, measures `.shikiru` on Disk, marks low free space with `‼` and aligns titles to sentence case.

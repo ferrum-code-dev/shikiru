@@ -1561,3 +1561,74 @@ Refs: Tasks 151–154; seventh-review specification; 07 §3/§5.
 | Refresh like the resource usage bar | 154, 155 |
 | CPU/RAM permanent, the rest pluggable and default-on | 153, 154 |
 | Docker essentials: running count, top five by CPU, problems | 151, 152, 155 |
+
+### Eighth-review follow-up
+
+Scope: [eighth real-project review](../docs/tui-feedback-eighth-review.md), planned from four read-only analyses. Execute Tasks 156–166 sequentially, one fresh agent per task, root review by the orchestrator. Test hygiene (156–159) precedes the product findings (160–165); the HTML reference follows in Task 166. Every cleanup task reports collected cases and lines before and after, keeps coverage above 80 %, and never removes the only coverage of an operator-found regression.
+
+### Task 156: Remove screenshot-capture side effects and task-numbered test names
+Refs: `tests/integration/test_dashboard_app.py` (`_capture_task99*`, `test_task99_native_compact_inspector_matches_recorded_workflow`, `_record_task99_population`, `_home_review_services`, 73 `_capture_task99(...)` calls), `test_dashboard_palette.py` (`_capture_palette`, `task101-*`, `task127-*`), `test_dashboard_motion.py` (`_capture_home_status`); AGENTS.md "Test value".
+- [ ] Delete the capture generator test and every capture helper and call whose only effect is writing SVGs (`SHIKIRU_NATIVE_VISUAL_REVIEW_DIR`); delete fixtures used only by them; rename any remaining `test_taskNN_*` by behaviour; the assertions of the surviving tests are unchanged.
+- [ ] `uv run poe check` green; report functions, collected cases and lines before and after.
+
+### Task 157: Fold and simplify `test_dashboard_app.py`
+Refs: integration-test audit (help, NO_COLOR, attention-answer, contextual-draft, widget-config, default-widgets groups; the five largest layout tests); keep the regressions listed there (in-flight report discard, rejected-command recovery, pending/palette races, draft preservation, popup Esc/close reachability, resize selection/focus, reorder reading position).
+- [ ] Move the four sampler tests that need no Textual app next to the sampler tests; move invalid-widget-config cases to a parametrised registry-level table (delete the duplicate ambiguity test); merge the help, NO_COLOR, attention-entry and draft groups into parametrised tests (one rule per table, at most two sizes unless the size is the rule); simplify the monster layout tests to reachability, focus and selection outcomes instead of per-size wording.
+- [ ] `uv run poe check` green; report before and after.
+
+### Task 158: Fold the rest of the dashboard-family integration tests
+Refs: audit verdicts for `test_dashboard_palette.py`, `test_dashboard_task_detail.py`, `test_task_browser.py`, `test_dashboard_tab_stops.py`, `test_dashboard_popup_focus.py`, `test_dashboard_escalation_follow.py`, `test_dashboard_motion.py`, `test_dashboard_remaining_widgets.py` (quota-gauge cases to one per level, resource-failure group, no real-daemon duplicates), `test_dashboard_usage_panel.py`.
+- [ ] Apply the MERGE/DELETE/SIMPLIFY verdicts the orchestrator confirmed (takeover, submit, load-more, legacy-usage, palette-context, hold-set, tab-stop, scrollbar, activity-signal, teardown groups; style-only wording tests deleted); keep the three Up/Down/Left/Right-inert escalation tests, the motion teardown/overlap tests and the one-column scrollbar assertion.
+- [ ] `uv run poe check` green; report before and after.
+
+### Task 159: Trim unit tables and fold tmux/workspace/config tests
+Refs: unit-test audit (`test_domain_docker.py`, `test_domain_steps.py`, `test_domain_levels.py`, `test_domain_runs.py`, `test_ui_glyphs.py`, `test_ui_age.py`/`size`/`cpu_format`, `test_config_settings.py`, `test_config_loader.py`), `test_tmux_session.py`, `test_workspace_roots.py`.
+- [ ] Merge malformed-input, first-step, verify-ladder and integrate-conflict tests into tables; trim repeated boundary cases to one pair per threshold; delete the redundant packaged-defaults and project-overrides tests; move `slugify` to unit; merge the two exclude tests and the two session-option tests.
+- [ ] `uv run poe check` green; report before and after.
+
+### Task 160: Stale only after a failure; age hint only when stale
+Refs: eighth-review hints; `dashboard/services.py` `resource_sample`, `dashboard/diagnostics_sections.py`, `ui/section.py` `observation`, `plugins/widgets/{docker,disk}.py`; 06 §5.4.
+- [ ] `resource_sample()` reports STALE only after a sampling failure kept the last good sample (remove the age branch and its now-unused interval parameter); Resources shows no age hint, its failure states stay; `observation()` returns nothing unless stale; Docker and Disk headings show an age only when stale.
+- [ ] Lean tests: one state table per section; a resource view stays available past `sample_seconds` without a failure; native render before/after (no more `stale`/`observed now` flicker).
+
+### Task 161: One refresh moment for the bar and the popup; header keeps ticking
+Refs: eighth-review refresh and header; `dashboard/contract.py`/`views.py` (`resources()`), `dashboard/diagnostics.py`, `plugins/widgets/{faults,header}.py`, `dashboard/app.py` `_HomeAttentionStatus`, `ui/screen.py` (`widget_is_active`/`widget_is_current`).
+- [ ] `views.resources()` notifies subscribers after every call (sampled, skipped or failed); the popup and the Faults section subscribe on mount, unsubscribe on unmount and drop their own timers (the popup never samples); header and attention status use `widget_is_current`.
+- [ ] Invert `test_focus_header_motion_waits_for_home_when_modal_opens_and_closes` to assert the header ticks under a pushed popup; add the notification and no-sampling tests; native check that Uptime advances with the popup open.
+
+### Task 162: No leading rule or blank above Resources; `‼` marker for low disk space
+Refs: eighth-review layout and Disk marker; `ui/section.py` (`Section`), `dashboard/diagnostics.py`, `dashboard/diagnostics_sections.py`, `plugins/widgets/{docker,disk,faults}.py`, `ui/compact.py` `free_space_text`, `ui/glyphs.py` `GLYPH_ESCALATED`.
+- [ ] Remove the panel margin; the first section of the popup (and of each standalone diagnostics popup) is drawn without a rule; Disk free text ends with ` ‼` bold amber below the warn level and dusty rose below the alert level, none otherwise.
+- [ ] Style-span tests for the marker levels (one table) and first-section rule absence in the composite and standalone popups; native colour and `NO_COLOR` renders.
+
+### Task 163: Disk `.shikiru` size
+Refs: eighth-review Disk; `telemetry/disk.py`, `dashboard/contract.py` `DiskView`, `dashboard/services.py`, `plugins/widgets/disk.py`, `config/defaults.toml`/`settings.py`; 05, 06 §5.4.
+- [ ] A tree-size function for the project's `.shikiru` folder (lstat, no symlink following, hard links counted once, unreadable subtree is a failure) used by `DiskSampler` on `disk_size_refresh_seconds` (300, validated) under the existing single flight; free space keeps `disk_refresh_seconds`; the CLI status run-directory size keeps `directory_usage`; row `.shikiru` replaces `Runs`.
+- [ ] Real-filesystem tests: symlinked directory not followed, hard link once, missing folder is zero, unreadable subtree fails, size cadence slower than free space.
+
+### Task 164: Sentence-case titles everywhere
+Refs: eighth-review title case; title audit (`dashboard/app.py`, `dashboard/palette.py`, `operator/queries.py`, `dashboard/detail.py`, `dashboard/wizard.py`, help copy); 06 §6.1.
+- [ ] Apply the pattern in the spec to every outlier (popup titles, ` · ` segments, after-key labels, action names, help copy); keep `SHIKIRU` and `TASKS` and document the exception in 06 §6.1; update the tests that pin the old strings.
+- [ ] A scan (script in the record, not a test) shows no remaining Title Case title; native check of Views, help and command history.
+
+### Task 165: Verify the eighth review
+Refs: Tasks 156–164.
+- [ ] Native check of every finding on the real popup (before/after where reproducible), normal and `TERM=dumb NO_COLOR=1` gates, collected-case and line counts before the cleanup and now.
+
+### Task 166: Reconcile the HTML reference, design docs and release record
+Refs: Tasks 160–165; eighth-review specification.
+- [ ] Revise the HTML reference (Project diagnostics: no leading rule, no age hints, `.shikiru` row, `‼` marker, sentence-case titles throughout), update 05/06 and tui-parity, write the eighth-review record, mark the spec delivered, clean owned processes and sockets.
+
+### Eighth-review issue coverage
+
+| Finding | Implementation / verification |
+|---|---|
+| 1 blank line and rule above Resources | 162, 165, 166 |
+| 2 Resources `observed`/`stale` every 2 s | 160, 165 |
+| 3 Docker and Disk always `observed now` | 160, 165 |
+| 4 Disk `Runs` unclear → `.shikiru` | 163, 166 |
+| 5 title case | 164, 166 |
+| 6 panel refresh in step with the bar | 161, 165 |
+| 7 low free space marker | 162, 166 |
+| 8 header uptime frozen under the popup | 161, 165 |
+| Test count / value | 156–159 |
