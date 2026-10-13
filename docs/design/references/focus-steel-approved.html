@@ -963,7 +963,7 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-top-branch { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 10px; }
 #shikiru-focus-steel .shk-clean { color:var(--shk-ink); }
 #shikiru-focus-steel .shk-dirty { color:var(--shk-wait); }
-#shikiru-focus-steel .shk-brand { color:var(--shk-accent); font-weight:500; letter-spacing:1px; }
+#shikiru-focus-steel .shk-brand { color:var(--shk-accent); font-weight:700; letter-spacing:1px; }
 #shikiru-focus-steel .shk-dim { color:var(--shk-dim); }
 #shikiru-focus-steel .shk-accent { color:var(--shk-accent); }
 #shikiru-focus-steel .shk-good { color:var(--shk-good); }
@@ -1173,8 +1173,11 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-pane-copy .shk-ink { color:var(--shk-ink); }
 #shikiru-focus-steel .shk-pane-copy .shk-good { color:var(--shk-good); }
 #shikiru-focus-steel .shk-pane-copy .shk-wait { color:var(--shk-wait); }
-#shikiru-focus-steel .shk-history-row { display:grid; grid-template-columns:74px minmax(0,1fr); gap:4px 10px; padding:5px 0; border-bottom:1px solid var(--shk-edge); }
-#shikiru-focus-steel .shk-history-row:last-child { border-bottom:0; }
+#shikiru-focus-steel .shk-history-row { padding:2px 0; }
+#shikiru-focus-steel .shk-history-row .shk-ink { color:var(--shk-ink); }
+#shikiru-focus-steel .shk-status { font-weight:700; }
+#shikiru-focus-steel .shk-modal-footer button:disabled .shk-key { opacity:0.6; }
+#shikiru-focus-steel .shk-compact .shk-page-word, #shikiru-focus-steel .shk-tiny .shk-page-word { display:none; }
 #shikiru-focus-steel .shk-history-empty { padding:8px 0; color:var(--shk-dim); }
 #shikiru-focus-steel .shk-history-count { color:var(--shk-dim); }
 #shikiru-focus-steel .shk-history-controls { display:contents; }
@@ -1186,8 +1189,7 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-tiny .shk-modal-footer { min-height:22px; gap:2px 4px; padding:2px 5px; font-size:10px; }
 #shikiru-focus-steel .shk-tiny .shk-modal-footer button { padding:1px 3px; }
 #shikiru-focus-steel .shk-tiny .shk-modal-footer select { min-width:64px; padding:0 2px; font-size:10px; }
-#shikiru-focus-steel .shk-tiny .shk-history-row { grid-template-columns:1fr; gap:0; padding:2px 0; }
-#shikiru-focus-steel .shk-tiny .shk-history-row &gt; span:first-child { color:var(--shk-dim); }
+#shikiru-focus-steel .shk-tiny .shk-history-row { padding:0; }
 @media (max-height:700px) {
   #shikiru-focus-steel .shk-terminal:not(.shk-tiny) .shk-modal-wrap { position:fixed; inset:0; }
 }
@@ -1242,10 +1244,11 @@ html&gt;body{padding:0}&lt;/style&gt;
   };
   const historyPageSize = 20;
   const previewHistory = Array.from({length:21},(_,index)=&gt;({
+    id:44-index,
     status:index%3===0?&#x27;Rejected&#x27;:&#x27;Applied&#x27;,
     action:[&#x27;Answer&#x27;,&#x27;Message&#x27;,&#x27;Pause&#x27;,&#x27;Resume&#x27;][index%4],
     target:`T-${47-index%8}`,
-    time:`${index+1}m ago`
+    detail:index%3===0?(index%2===0?&#x27;task T-404 does not exist&#x27;:&#x27;engine rejected the command&#x27;):[&#x27;decision answered&#x27;,&#x27;guidance queued for the selected role\&#x27;s next turn&#x27;,&#x27;task paused&#x27;,&#x27;task resumed&#x27;][index%4]
   }));
   let historyFilter = &#x27;all&#x27;;
   let historyPage = 0;
@@ -1318,7 +1321,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   };
   const historyRows = () =&gt; {
     const rows = [...previewHistory];
-    for (let index=0; index&lt;previewUpdateCount; index++) rows.unshift({status:&#x27;Pending&#x27;,action:&#x27;Message&#x27;,target:&#x27;T-43 Leader&#x27;,time:&#x27;just now&#x27;});
+    for (let index=0; index&lt;previewUpdateCount; index++) rows.unshift({id:45+index,status:&#x27;Pending&#x27;,action:&#x27;Message&#x27;,target:&#x27;T-43&#x27;,detail:&#x27;queued 10/13 12:34Z; engine currently running; original acknowledgement wait context unknown&#x27;});
     return rows.filter(row=&gt;historyFilter===&#x27;all&#x27;||row.status.toLowerCase()===historyFilter);
   };
   const historyContent = () =&gt; {
@@ -1326,7 +1329,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     const pageCount = Math.max(1,Math.ceil(rows.length/historyPageSize));
     const pageRows = rows.slice(historyPage*historyPageSize,(historyPage+1)*historyPageSize);
     const heading = `&lt;div class=&quot;shk-history-count&quot;&gt;${rows.length} illustrative preview outcomes · ${pageRows.length} on this page&lt;/div&gt;`;
-    const list = pageRows.length ? pageRows.map(row=&gt;`&lt;div class=&quot;shk-history-row&quot;&gt;&lt;span class=&quot;shk-${row.status===&#x27;Rejected&#x27;?&#x27;bad&#x27;:row.status===&#x27;Pending&#x27;?&#x27;wait&#x27;:&#x27;good&#x27;}&quot;&gt;${row.status} · ${row.time}&lt;/span&gt;&lt;span&gt;${row.action} · ${row.target}&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;) : &#x27;&lt;div class=&quot;shk-history-empty&quot;&gt;No preview outcomes match this filter.&lt;/div&gt;&#x27;;
+    const list = pageRows.length ? pageRows.map(row=&gt;`&lt;div class=&quot;shk-history-row&quot;&gt;&lt;span class=&quot;shk-dim&quot;&gt;#${row.id} · &lt;/span&gt;&lt;span class=&quot;shk-status shk-${row.status===&#x27;Rejected&#x27;?&#x27;bad&#x27;:row.status===&#x27;Pending&#x27;?&#x27;wait&#x27;:&#x27;good&#x27;}&quot;&gt;${row.status}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt; · &lt;/span&gt;&lt;span class=&quot;shk-ink&quot;&gt;${row.action}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt; · &lt;/span&gt;&lt;span class=&quot;shk-strong&quot;&gt;${row.target}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt; · ${esc(row.detail)}&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;) : &#x27;&lt;div class=&quot;shk-history-empty&quot;&gt;No preview outcomes match this filter.&lt;/div&gt;&#x27;;
     return `${heading}&lt;div class=&quot;shk-history-list&quot;&gt;${list}&lt;/div&gt;`;
   };
   const diagnosticKinds = [&#x27;diagnostics&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;];
@@ -1411,7 +1414,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     const view = recentView();
     const activeRows = activeTasks().map(task=&gt;buttonRow(getTask(task.id),id)).join(&#x27;&#x27;);
     const recentRows = view.shown.map(task=&gt;buttonRow(getTask(task.id),id)).join(&#x27;&#x27;);
-    return `&lt;div class=&quot;shk-focus-grid&quot;&gt;&lt;div class=&quot;shk-focus-list&quot;&gt;&lt;div class=&quot;shk-heading shk-task-heading&quot;&gt;TASKS&lt;/div&gt;&lt;div class=&quot;shk-task-list&quot;&gt;${activeRows}&lt;/div&gt;&lt;section class=&quot;shk-recent&quot;&gt;&lt;div class=&quot;shk-recent-heading&quot;&gt;&lt;span class=&quot;shk-heading&quot;&gt;Recent&lt;/span&gt;${pagerButton(-1,&#x27;Later&#x27;,&#x27;↑&#x27;,view.hasLater,view.paged)}${pagerButton(1,&#x27;Earlier&#x27;,&#x27;↓&#x27;,view.hasEarlier,view.paged)}&lt;/div&gt;&lt;div class=&quot;shk-recent-body${view.paged?&#x27; is-paged&#x27;:&#x27;&#x27;}&quot; role=&quot;region&quot; aria-label=&quot;Recent tasks&quot;&gt;${recentRows}&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;&lt;div class=&quot;shk-focus-detail&quot;&gt;${focusedDetail(selected)}${selected?&#x27;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;button class=&quot;shk-inline-action&quot; type=&quot;button&quot; data-open=&quot;evidence&quot;&gt;e evidence&lt;/button&gt;&#x27;:&#x27;&#x27;}&lt;/div&gt;&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-focus-grid&quot;&gt;&lt;div class=&quot;shk-focus-list&quot;&gt;&lt;div class=&quot;shk-heading shk-task-heading&quot;&gt;Tasks&lt;/div&gt;&lt;div class=&quot;shk-task-list&quot;&gt;${activeRows}&lt;/div&gt;&lt;section class=&quot;shk-recent&quot;&gt;&lt;div class=&quot;shk-recent-heading&quot;&gt;&lt;span class=&quot;shk-heading&quot;&gt;Recent&lt;/span&gt;${pagerButton(-1,&#x27;Later&#x27;,&#x27;↑&#x27;,view.hasLater,view.paged)}${pagerButton(1,&#x27;Earlier&#x27;,&#x27;↓&#x27;,view.hasEarlier,view.paged)}&lt;/div&gt;&lt;div class=&quot;shk-recent-body${view.paged?&#x27; is-paged&#x27;:&#x27;&#x27;}&quot; role=&quot;region&quot; aria-label=&quot;Recent tasks&quot;&gt;${recentRows}&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;&lt;div class=&quot;shk-focus-detail&quot;&gt;${focusedDetail(selected)}${selected?&#x27;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;button class=&quot;shk-inline-action&quot; type=&quot;button&quot; data-open=&quot;evidence&quot;&gt;e evidence&lt;/button&gt;&#x27;:&#x27;&#x27;}&lt;/div&gt;&lt;/div&gt;`;
   };
   const stream = id =&gt; {
     const selected = getTask(selections[id]);
@@ -1535,14 +1538,14 @@ html&gt;body{padding:0}&lt;/style&gt;
       content=historyContent();
       const rows=historyRows();
       const pageCount=Math.max(1,Math.ceil(rows.length/historyPageSize));
-      footer=`&lt;label class=&quot;shk-history-controls&quot;&gt;Status &lt;select aria-label=&quot;Filter command status&quot; data-draft=&quot;historyFilter&quot;&gt;&lt;option value=&quot;all&quot;${historyFilter===&#x27;all&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;All statuses&lt;/option&gt;&lt;option value=&quot;pending&quot;${historyFilter===&#x27;pending&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;pending&lt;/option&gt;&lt;option value=&quot;applied&quot;${historyFilter===&#x27;applied&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;applied&lt;/option&gt;&lt;option value=&quot;rejected&quot;${historyFilter===&#x27;rejected&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;rejected&lt;/option&gt;&lt;/select&gt;&lt;/label&gt;&lt;button type=&quot;button&quot; data-page=&quot;prev&quot; aria-label=&quot;p previous page&quot;${historyPage&lt;=0?&#x27; disabled&#x27;:&#x27;&#x27;}&gt;p previous&lt;/button&gt;&lt;span&gt;Page ${rows.length?historyPage+1:0} of ${rows.length?pageCount:0}&lt;/span&gt;&lt;button type=&quot;button&quot; data-page=&quot;next&quot; aria-label=&quot;n next page&quot;${historyPage&gt;=pageCount-1?&#x27; disabled&#x27;:&#x27;&#x27;}&gt;n next&lt;/button&gt;&lt;button type=&quot;button&quot; data-history-update=&quot;true&quot;&gt;Preview update&lt;/button&gt;`;
+      footer=`&lt;label class=&quot;shk-history-controls&quot;&gt;Status &lt;select aria-label=&quot;Filter command status&quot; data-draft=&quot;historyFilter&quot;&gt;&lt;option value=&quot;all&quot;${historyFilter===&#x27;all&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;All statuses&lt;/option&gt;&lt;option value=&quot;pending&quot;${historyFilter===&#x27;pending&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;pending&lt;/option&gt;&lt;option value=&quot;applied&quot;${historyFilter===&#x27;applied&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;applied&lt;/option&gt;&lt;option value=&quot;rejected&quot;${historyFilter===&#x27;rejected&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;rejected&lt;/option&gt;&lt;/select&gt;&lt;/label&gt;&lt;button type=&quot;button&quot; data-page=&quot;prev&quot; aria-label=&quot;Newer page&quot;${historyPage&lt;=0?&#x27; disabled&#x27;:&#x27;&#x27;}&gt;&lt;span class=&quot;shk-key&quot;&gt;←&lt;/span&gt;&lt;span class=&quot;shk-page-word&quot;&gt; newer&lt;/span&gt;&lt;/button&gt;&lt;span&gt;Page ${rows.length?historyPage+1:0} of ${rows.length?pageCount:0}&lt;/span&gt;&lt;button type=&quot;button&quot; data-page=&quot;next&quot; aria-label=&quot;Older page&quot;${historyPage&gt;=pageCount-1?&#x27; disabled&#x27;:&#x27;&#x27;}&gt;&lt;span class=&quot;shk-key&quot;&gt;→&lt;/span&gt;&lt;span class=&quot;shk-page-word&quot;&gt; older&lt;/span&gt;&lt;/button&gt;&lt;button type=&quot;button&quot; data-history-update=&quot;true&quot;&gt;Preview update&lt;/button&gt;`;
     }
     if (kind===&#x27;diagnostics&#x27;) content=diagnosticsPopup();
     if (kind===&#x27;docker&#x27;) content=dockerSection(false);
     if (kind===&#x27;disk&#x27;) content=diskSection(false);
     if (kind===&#x27;faults&#x27;) content=faultsSection(scene.value===&#x27;decision&#x27;, false);
     if (kind===&#x27;submitted&#x27;) { content=&#x27;&lt;div class=&quot;shk-feedback&quot;&gt;Preview action complete&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;A real command result appears as Pending, Applied or Rejected.&lt;/div&gt;&#x27;; footer=&#x27;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · Esc&lt;/button&gt;&#x27;; }
-    if (kind===&#x27;help&#x27;) content=&#x27;&lt;div&gt;Up / Down select a task&lt;/div&gt;&lt;div&gt;Esc close popup · Esc clear selection&lt;/div&gt;&lt;div&gt;Ctrl+P actions · v views&lt;/div&gt;&lt;div&gt;e evidence · u usage · ? help&lt;/div&gt;&lt;div&gt;History: p previous · n next&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Page controls disable at their ends. Input and TextArea keep p, n and Enter as entered keys.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Native Select: first Esc collapses options; next Esc closes the popup.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;New task windows remain in the background until explicitly selected.&lt;/div&gt;&#x27;;
+    if (kind===&#x27;help&#x27;) content=&#x27;&lt;div&gt;Up / Down select a task&lt;/div&gt;&lt;div&gt;Esc close popup · Esc clear selection&lt;/div&gt;&lt;div&gt;Ctrl+P actions · v views&lt;/div&gt;&lt;div&gt;e evidence · u usage · ? help&lt;/div&gt;&lt;div&gt;History: ← newer · → older&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Page controls disable at their ends. The arrows page only while the status filter is collapsed.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Native Select: first Esc collapses options; next Esc closes the popup.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;New task windows remain in the background until explicitly selected.&lt;/div&gt;&#x27;;
     return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; style=&quot;${modalFrame(kind)}&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]}${task &amp;&amp; ![&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;,&#x27;history&#x27;,&#x27;help&#x27;,&#x27;views&#x27;,&#x27;widgets&#x27;,&#x27;submitted&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;].includes(kind)?` · ${task.id}`:&#x27;&#x27;}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;Esc ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scroll&quot;&gt;&lt;div class=&quot;shk-modal-body&quot; tabindex=&quot;0&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scrollbar&quot; aria-hidden=&quot;true&quot;&gt;&lt;div class=&quot;shk-modal-scroll-thumb&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-footer&quot;&gt;${footer}&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;`;
   };
   const storeModalSelection = (field,id) =&gt; {
@@ -1747,19 +1750,18 @@ html&gt;body{padding:0}&lt;/style&gt;
     const id=concept.dataset.concept;
     const editing=[&#x27;INPUT&#x27;,&#x27;TEXTAREA&#x27;,&#x27;SELECT&#x27;].includes(event.target.tagName);
     let handled=true;
-    let historyKey=&#x27;&#x27;;
     if (event.key===&#x27;Escape&#x27; &amp;&amp; event.target.tagName===&#x27;SELECT&#x27; &amp;&amp; overlays[id] &amp;&amp; event.target.matches(&#x27;:open&#x27;)) return;
     if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]) delete overlays[id];
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; selections[id]) selections[id]=null;
-    else if (editing) return;
-    else if (!overlays[id] &amp;&amp; [&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;].includes(event.key) &amp;&amp; event.target.closest(&#x27;.shk-attention&#x27;)) {event.preventDefault();return;}
-    else if (overlays[id]===&#x27;history&#x27; &amp;&amp; [&#x27;p&#x27;,&#x27;n&#x27;].includes(event.key.toLowerCase())) {
+    else if (overlays[id]===&#x27;history&#x27; &amp;&amp; [&#x27;ArrowLeft&#x27;,&#x27;ArrowRight&#x27;].includes(event.key) &amp;&amp; !(event.target.tagName===&#x27;SELECT&#x27; &amp;&amp; event.target.matches(&#x27;:open&#x27;))) {
       const rows=historyRows();
       const pageCount=Math.max(1,Math.ceil(rows.length/historyPageSize));
-      const nextPage=historyPage+(event.key.toLowerCase()===&#x27;n&#x27;?1:-1);
+      const nextPage=historyPage+(event.key===&#x27;ArrowRight&#x27;?1:-1);
       if (nextPage&lt;0 || nextPage&gt;=pageCount) handled=false;
-      else { historyPage=nextPage; historyKey=event.key.toLowerCase()===&#x27;n&#x27;?&#x27;next&#x27;:&#x27;prev&#x27;; }
+      else historyPage=nextPage;
     }
+    else if (editing) return;
+    else if (!overlays[id] &amp;&amp; [&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;].includes(event.key) &amp;&amp; event.target.closest(&#x27;.shk-attention&#x27;)) {event.preventDefault();return;}
     else if (event.key===&#x27;Enter&#x27; &amp;&amp; !overlays[id] &amp;&amp; hasDecision() &amp;&amp; !event.target.closest(&#x27;button[data-open]&#x27;) &amp;&amp; (!selections[id] || selections[id]===decisionTaskId)) {selections[id]=decisionTaskId;overlays[id]=&#x27;resolve&#x27;;}
     else if (!overlays[id] &amp;&amp; event.ctrlKey &amp;&amp; event.key.toLowerCase()===&#x27;p&#x27;) overlays[id]=&#x27;menu&#x27;;
     else if (!overlays[id] &amp;&amp; event.key.toLowerCase()===&#x27;e&#x27; &amp;&amp; selections[id]) overlays[id]=&#x27;evidence&#x27;;
@@ -1777,7 +1779,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     event.preventDefault();
     render();
     const updated=root.querySelector(`[data-concept=&quot;${id}&quot;]`);
-    const target=historyKey?updated.querySelector(`[data-page=&quot;${historyKey}&quot;]:not(:disabled)`)||updated.querySelector(&#x27;[data-page]:not(:disabled)&#x27;):overlays[id]===&#x27;history&#x27;?updated.querySelector(&#x27;.shk-modal [data-draft=&quot;historyFilter&quot;]&#x27;):overlays[id]?modalTarget(updated):taskTarget(updated,id);
+    const target=overlays[id]===&#x27;history&#x27;?updated.querySelector(&#x27;.shk-modal [data-draft=&quot;historyFilter&quot;]&#x27;):overlays[id]?modalTarget(updated):taskTarget(updated,id);
     focusElement(target,id);
   });
   scene.addEventListener(&#x27;change&#x27;,()=&gt;{for(const id of Object.keys(overlays))delete overlays[id];render();});
