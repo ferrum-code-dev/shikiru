@@ -1689,8 +1689,10 @@ Refs: `dashboard/app.py` `_CommandHistoryScreen` (`BINDINGS`, `check_action`, co
 
 ### Task 173: Coloured rows, no raw result
 Refs: `dashboard/app.py` `_command_history_text`, the status map of `_command_summary_text`, the rejection reason helpers; `dashboard/palette.py` `_show_ack`, `_show_stored_command`, `_applied_result`, `_returned_result*`; 06 §5 and tui-focus (full result stays in history).
-- [ ] Rows are styled per the spec (the status map is shared with the footer summary, not duplicated); `; returned …` is removed from rows and the palette; rejected commands show the engine's `error` text, else the fixed fallback; Pending shows the recorded queue time through the existing helper; the two design sentences are amended.
-- [ ] Merge the two wording-based pending-history tests into one on queue time and status; delete the raw-JSON assertions; fix the palette fixture whose rejected result is not the engine shape. Native colour and `NO_COLOR` renders; collected cases do not grow.
+- [x] Rows are styled per the spec (the status map is shared with the footer summary, not duplicated); `; returned …` is removed from rows and the palette; rejected commands show the engine's `error` text, else the fixed fallback; Pending shows the recorded queue time through the existing helper; the two design sentences are amended.
+- [x] Merge the two wording-based pending-history tests into one on queue time and status; delete the raw-JSON assertions; fix the palette fixture whose rejected result is not the engine shape. Native colour and `NO_COLOR` renders; collected cases do not grow.
+
+Proof: rows render as styled Text (grey id and separators, bold amber/sage/dusty-rose status from the map shared with the footer, white action, bold white target, grey detail) and `NO_COLOR` keeps the bold status word; `returned` is gone from rows and the palette, and rejections show `error` else `engine rejected the command` through one domain helper. Collected cases 1607 to 1606; `uv run poe check` green.
 
 ### Task 174: Verify the ninth review, reconcile reference, docs and AGENTS.md
 Refs: Tasks 167–173; HTML reference (`.shk-brand` weight, `Tasks`, history footer arrows and their keydown); AGENTS.md "Test value".

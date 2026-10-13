@@ -2976,108 +2976,7 @@ async def test_attention_non_answer_route_keeps_an_earlier_answer_draft_on_its_t
         reader.close()
 
 
-async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    reader = StateReader(database, clock)
-    settings = load_settings(project_dir)
-    services = StubServices()
-    queue = CommandQueue(connection, clock)
-    commands = OperatorCommands(queue, clock, engine_up=services.engine_up)
-    queries = OperatorQueries(
-        reader,
-        project=settings.project.name,
-        project_root=project_dir,
-        engine_up=services.engine_up,
-        max_parallel=settings.orchestration.max_parallel,
-        clock=clock,
-    )
-    active_apps: list[DashboardApp] = []
-
-    async def open_palette_context(request: PaletteRequest) -> None:
-        del request
-        await active_apps[0].push_screen(
-            PaletteScreen(
-                commands,
-                queries,
-                _unexpected_pane_selection,
-                on_change=reader.watch,
-                initial_context=PaletteRequest(action="stop"),
-            )
-        )
-
-    try:
-        first_app = _app(
-            reader,
-            project_dir,
-            widget_names=[],
-            open_palette_context=open_palette_context,
-        )
-        active_apps[:] = [first_app]
-        async with first_app.run_test(size=(120, 40)) as pilot:
-            dashboard_screen = first_app.screen
-            await pilot.press("ctrl+p")
-            await wait_until(
-                lambda: isinstance(first_app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS
-            )
-            palette = cast("PaletteScreen", first_app.screen)
-            await pilot.click("#palette-submit")
-            await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
-            pending_id = queue.pending()[0].id
-            await wait_until(
-                lambda: (
-                    f"Pending · command {pending_id}"
-                    in _rendered_text(palette.query_one("#palette-result", Static))
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            assert isinstance(queue.pending()[0].command, Stop)
-            queued_at = reader.command_history(limit=1).entries[0].ts
-            queued_time = datetime.fromisoformat(queued_at)
-            summary_time = f"queued {queued_time.month}/{queued_time.day} {queued_time:%H:%M}Z"
-            await pilot.press("escape")
-            await wait_until(lambda: first_app.screen is dashboard_screen, timeout=UI_WAIT_SECONDS)
-            status = first_app.query_one("#workspace-command-status", Button)
-            await wait_until(
-                lambda: (
-                    status.display
-                    and "Pending: Stop " in _rendered_text(status)
-                    and summary_time in _rendered_text(status)
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await pilot.click(status)
-            await wait_until(
-                lambda: bool(first_app.screen.query("#command-history-page")),
-                timeout=UI_WAIT_SECONDS,
-            )
-            history_screen = first_app.screen
-            history_copy = history_screen.query_one("#command-history-copy", Static)
-            await pilot.pause()
-            assert "Loading" not in _rendered_text(history_copy), type(history_screen).__name__
-            assert f"#{pending_id} · Pending" in _rendered_text(history_copy)
-            assert f"queued at {queued_at}" in _rendered_text(history_copy)
-            assert "engine currently stopped" in _rendered_text(history_copy)
-            assert "original acknowledgement wait context unknown" in _rendered_text(history_copy)
-            await pilot.press("escape")
-            await wait_until(lambda: first_app.screen is dashboard_screen, timeout=UI_WAIT_SECONDS)
-            queue.mark_done(pending_id, {"stopping": True})
-            await wait_until(
-                lambda: (
-                    "Applied: Stop " in _rendered_text(status)
-                    and "shutdown requested" in _rendered_text(status)
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-    finally:
-        reader.close()
-
-
-async def test_pending_feedback_keeps_recorded_queue_time_when_clock_advances_without_writes(
+async def test_pending_history_keeps_recorded_queue_time_and_status_when_clock_advances(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -3087,7 +2986,6 @@ async def test_pending_feedback_keeps_recorded_queue_time_when_clock_advances_wi
     queue = CommandQueue(connection, clock)
     queue.append(Stop())
     reader = StateReader(database, clock)
-    queued_at = reader.command_history(limit=1).entries[0].ts
     summary_time = f"queued {_TEST_START.month}/{_TEST_START.day} {_TEST_START:%H:%M}Z"
     data_version = reader.data_version()
 
@@ -3120,10 +3018,10 @@ async def test_pending_feedback_keeps_recorded_queue_time_when_clock_advances_wi
             )
             history = app.screen.query_one("#command-history-copy", Static)
             await wait_until(
-                lambda: f"queued at {queued_at}" in _rendered_text(history), timeout=UI_WAIT_SECONDS
+                lambda: summary_time in _rendered_text(history), timeout=UI_WAIT_SECONDS
             )
+            assert "Pending" in _rendered_text(history)
             assert "ago" not in _rendered_text(history)
-            assert "original acknowledgement wait context unknown" in _rendered_text(history)
             assert reader.data_version() == data_version
     finally:
         reader.close()
@@ -3665,7 +3563,6 @@ async def _assert_command_history_last_page_and_refresh(
         lambda: (
             f"#{pending_id} · Applied" in _rendered_text(history_copy)
             and "applied once" in _rendered_text(history_copy)
-            and '"effect": "applied once"' in _rendered_text(history_copy)
         ),
         timeout=UI_WAIT_SECONDS,
     )

@@ -17,7 +17,13 @@ from textual.widgets import Button, Collapsible, Input, Label, Rule, Select, Sta
 from shikiru.agents.contracts import parse_rung
 from shikiru.config.settings import ComplexityName
 from shikiru.dashboard.contract import PaletteDraft, PaletteRequest, TaskPaletteRoute
-from shikiru.domain.commands import CommandKind, CommandStatus, ResolutionKind
+from shikiru.domain.commands import (
+    COMMAND_REJECTED_FALLBACK,
+    CommandKind,
+    CommandStatus,
+    ResolutionKind,
+    command_rejection_cause,
+)
 from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.escalation_evidence import EscalationPacket, parse_escalation_packet
 from shikiru.domain.tasks import Mode, Role
@@ -2172,13 +2178,10 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 details = "waiting for engine acknowledgement"
         elif ack.status is AckStatus.DONE:
             label = "Applied"
-            details = self._applied_result(ack)
+            details = self._applied_text()
         else:
             label = "Rejected"
-            details = ack.message or "engine rejected the command"
-            returned = self._returned_result(ack)
-            if returned is not None:
-                details = f"{details}\nReturned result · {returned}"
+            details = ack.message or COMMAND_REJECTED_FALLBACK
         message = f"{label} · command {ack.id} · {target}\n{details}"
         if additional_detail is not None:
             message = f"{message}\n{additional_detail}"
@@ -2192,12 +2195,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 if entry.action == CommandKind.SAY.value.capitalize()
                 else "engine applied the command effect"
             )
-            returned = self._returned_result_value(entry.result)
-            if returned is not None:
-                details = f"{details}\nReturned result · {returned}"
         elif entry.status is CommandStatus.REJECTED:
             label = "Rejected"
-            details = self._returned_result_value(entry.result) or "engine rejected the command"
+            details = command_rejection_cause(entry.result)
         else:
             label = "Pending"
             engine_state = "running" if self._queries.command_history().engine_up else "stopped"
@@ -2207,24 +2207,14 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             )
         self._show_result(f"{label} · command {entry.id} · {entry.target}\n{details}")
 
-    def _applied_result(self, ack: Ack) -> str:
+    def _applied_text(self) -> str:
         if self._command_action == _ACTION_MESSAGE:
             details = "guidance queued for the selected role's next turn"
         elif self._command_action == _ACTION_RUNG:
             details = "selected rung applies to this role's next turn"
         else:
             details = "engine applied the command effect"
-        returned = self._returned_result(ack)
-        return f"{details}\nReturned result · {returned}" if returned is not None else details
-
-    def _returned_result(self, ack: Ack) -> str | None:
-        return self._returned_result_value(ack.result)
-
-    @staticmethod
-    def _returned_result_value(result: dict[str, object] | None) -> str | None:
-        return (
-            json.dumps(result, ensure_ascii=False, sort_keys=True) if result is not None else None
-        )
+        return details
 
     def _show_result(self, text: str) -> None:
         if self._is_current_screen():

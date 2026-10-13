@@ -53,6 +53,7 @@ from shikiru.dashboard.detail import (
 from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.dashboard.tick import pinned_tick
+from shikiru.domain.commands import command_rejection_cause
 from shikiru.errors import ConfigError
 from shikiru.ui.compact import FocusAttentionStatus
 from shikiru.ui.popup import (
@@ -73,8 +74,16 @@ from shikiru.ui.screen import (
     widget_is_attached,
     widget_is_current,
 )
+from shikiru.ui.section import GROUP_SEPARATOR, grey, row_name
 from shikiru.ui.theme import install_theme
-from shikiru.ui.tokens import AMBER, DUSTY_ROSE, SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
+from shikiru.ui.tokens import (
+    AMBER,
+    DUSTY_ROSE,
+    PRIMARY_TEXT_COLOR,
+    SAGE,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -426,10 +435,10 @@ _COMMAND_STATUS_STYLES = {
 }
 
 
-def _command_history_text(history: CommandHistoryView) -> str:
+def _command_history_text(history: CommandHistoryView) -> Text:
     if not history.entries:
-        return "No commands recorded."
-    return "\n".join(
+        return Text("No commands recorded.")
+    return Text("\n").join(
         _command_entry_text(entry, engine_up=history.engine_up) for entry in history.entries
     )
 
@@ -447,25 +456,30 @@ def _command_queue_time(timestamp: str | None) -> str | None:
     return f"{queued_at.month}/{queued_at.day} {queued_at:%H:%M}Z"
 
 
-def _command_entry_text(entry: CommandFeedbackEntryView, *, engine_up: bool) -> str:
+def _command_entry_text(entry: CommandFeedbackEntryView, *, engine_up: bool) -> Text:
     result = _command_result_data(entry)
     if entry.status is CommandFeedbackStatus.PENDING:
         engine_state = "running" if engine_up else "stopped"
-        queued_at = f"queued at {entry.queued_at}; " if entry.queued_at is not None else ""
+        queued_at = _command_queue_time(entry.queued_at)
+        queued = f"queued {queued_at}; " if queued_at is not None else ""
         detail = (
-            f"{queued_at}engine currently {engine_state}; "
+            f"{queued}engine currently {engine_state}; "
             "original acknowledgement wait context unknown"
         )
     elif entry.status is CommandFeedbackStatus.APPLIED:
         detail = _command_applied_effect(entry, result)
-        if entry.result is not None:
-            detail = f"{detail}; returned {entry.result}"
     else:
-        detail = _command_rejection_cause(entry, result)
-        if result is not None and isinstance(result.get("error"), str):
-            detail = f"{detail}; returned {entry.result}"
-    return (
-        f"#{entry.command_id} · {entry.status.value} · {entry.action} · {entry.target} · {detail}"
+        detail = command_rejection_cause(result)
+    return Text.assemble(
+        grey(f"#{entry.command_id}"),
+        grey(GROUP_SEPARATOR),
+        Text(entry.status.value, style=_COMMAND_STATUS_STYLES[entry.status]),
+        grey(GROUP_SEPARATOR),
+        Text(entry.action, style=PRIMARY_TEXT_COLOR),
+        grey(GROUP_SEPARATOR),
+        row_name(entry.target),
+        grey(GROUP_SEPARATOR),
+        grey(detail),
     )
 
 
@@ -513,18 +527,6 @@ def _task_command_effect(result: dict[str, object], task_id: str, target: str) -
     return None
 
 
-def _command_rejection_cause(
-    entry: CommandFeedbackEntryView,
-    result: dict[str, object] | None,
-) -> str:
-    if result is None:
-        return entry.result or "engine rejected the command without a returned result"
-    error = result.get("error")
-    if isinstance(error, str):
-        return error
-    return entry.result or "engine rejected the command without a returned result"
-
-
 def _command_summary_text(history: CommandHistoryView) -> Text:
     entry = history.entries[0]
     summary = Text()
@@ -538,7 +540,7 @@ def _command_summary_text(history: CommandHistoryView) -> Text:
         detail = f"{detail}: {_command_applied_effect(entry, result)}"
     else:
         result = _command_result_data(entry)
-        detail = f"{detail}: {_command_rejection_cause(entry, result)}"
+        detail = f"{detail}: {command_rejection_cause(result)}"
     summary.append(f": {detail}", style=SECONDARY_TEXT_COLOR)
     return summary
 

@@ -13,6 +13,8 @@ from shikiru.domain.tasks import DomainModel, Mode, Role
 
 COMMAND_ID_KEY = "command_id"
 COMMAND_POLL_SECONDS = 0.25
+COMMAND_RESULT_ERROR_KEY = "error"
+COMMAND_REJECTED_FALLBACK = "engine rejected the command"
 
 
 class CommandStatus(StrEnum):
@@ -208,3 +210,9 @@ Command = Annotated[
     | Stop,
     Field(discriminator="kind"),
 ]
+
+
+def command_rejection_cause(result: dict[str, object] | None) -> str:
+    """Return the engine's `error` text from a rejected command's result, else a fixed phrase."""
+    error = None if result is None else result.get(COMMAND_RESULT_ERROR_KEY)
+    return error if isinstance(error, str) else COMMAND_REJECTED_FALLBACK

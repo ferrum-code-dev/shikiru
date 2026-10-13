@@ -731,7 +731,7 @@ async def test_contextual_project_actions_queue_only_after_explicit_submission(
                 await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
 
 
-async def test_applied_message_feedback_keeps_next_turn_guidance_and_engine_result(
+async def test_applied_message_feedback_keeps_next_turn_guidance(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -773,8 +773,6 @@ async def test_applied_message_feedback_keeps_next_turn_guidance_and_engine_resu
         assert f"command {queued.id}" in feedback
         assert f"{task.id} · implementer" in feedback
         assert "guidance queued for the selected role's next turn" in feedback
-        assert "Returned result" in feedback
-        assert "queued_for_next_turn" in feedback
 
 
 async def test_palette_target_follows_search_choice_and_stays_manually_editable(
@@ -1907,7 +1905,7 @@ async def test_palette_takeover_queues_a_task_role_command_and_selects_the_pane_
             task_id=task.id, role=Role.LEADER, command_id=queued[0].id
         )
         if outcome == "rejected":
-            queue.mark_rejected(queued[0].id, {"message": "take over unavailable"})
+            queue.mark_rejected(queued[0].id, {"error": "take over unavailable"})
         elif outcome == "done":
             queue.mark_done(queued[0].id, {"task_id": task.id})
         if outcome:
