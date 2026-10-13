@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import psutil
 
-from shikiru.process import ProcessIdentity, identify_pid
+from shikiru.process import ProcessIdentity
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -121,28 +121,6 @@ class ResourceSampler:
             sample.host_cpu_pct < config.max_cpu_pct
             and sample.free_ram_gb >= config.min_free_ram_gb
         )
-
-    def sample_process_trees(
-        self, engine_pid: int | None, pane_pids: Iterable[int]
-    ) -> ResourceSnapshot:
-        """Sample a legacy aggregate for the engine and selected pane process trees."""
-        root_pids = list(pane_pids)
-        if engine_pid is not None:
-            root_pids.append(engine_pid)
-        identities = [identity for pid in root_pids if (identity := identify_pid(pid)) is not None]
-        snapshot = self.sample_process_roots(ResourceProcessRoots(tuple(identities), ()))
-        unclassified = replace(
-            snapshot,
-            shikiru_cpu_pct=None,
-            shikiru_rss_gb=None,
-            agents_cpu_pct=None,
-            agents_rss_gb=None,
-            shikiru_process_tree_empty=None,
-            agents_process_tree_empty=None,
-        )
-        self._last = unclassified
-        self._last_complete = unclassified
-        return unclassified
 
     def process_sample_is_fresh(self) -> bool:
         """Return whether the latest process-tree sample is younger than the sample cadence."""
