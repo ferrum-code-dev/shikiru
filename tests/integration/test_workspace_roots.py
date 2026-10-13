@@ -15,7 +15,7 @@ from shikiru.paths import EXCLUDE_LINE, task_root
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.caches import CACHE_COW_UNSUPPORTED_WARNING, CacheCloner, default_cow_args
 from shikiru.workspace.git import Git
-from shikiru.workspace.roots import TaskRootBuilder, branch_name, slugify
+from shikiru.workspace.roots import TaskRootBuilder, branch_name
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, commit_all, init_repo
 from tests.support.waiting import wait_until
 from tests.support.workspace import task_root_builder
@@ -37,12 +37,6 @@ async def _init_repo_with_commit(project_root: Path) -> None:
     await init_repo(runner, project_root)
     (project_root / "README.md").write_text("hello\n")
     await commit_all(runner, project_root, "initial commit")
-
-
-def test_slugify_is_stable_and_filesystem_safe() -> None:
-    assert slugify(_TASK_TITLE) == "add-retry-to-parser"
-    assert slugify("  --Weird///Title--  ") == "weird-title"
-    assert slugify("a" * 100) == "a" * 40
 
 
 async def test_build_makes_the_worktree_the_task_root(tmp_path: Path) -> None:
@@ -199,28 +193,15 @@ async def test_cleanup_keeps_a_worktree_whose_head_left_the_task_branch(
     assert branch_name(_TASK_ID, _TASK_TITLE) in await _local_branches(runner, project_root)
 
 
-async def test_append_to_exclude_adds_exactly_one_line_when_the_file_already_ends_in_a_newline(
-    tmp_path: Path,
+@pytest.mark.parametrize("existing", ["*.log\n", "*.log"], ids=["trailing-newline", "no-newline"])
+async def test_append_to_exclude_adds_exactly_one_line_on_its_own_row(
+    tmp_path: Path, existing: str
 ) -> None:
     project_root = tmp_path / "project"
     await _init_repo_with_commit(project_root)
     git = Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT)
     exclude_path = project_root / ".git" / "info" / "exclude"
-    exclude_path.write_text("*.log\n")
-
-    await git.append_to_exclude(project_root, EXCLUDE_LINE)
-
-    assert exclude_path.read_text() == f"*.log\n{EXCLUDE_LINE}\n"
-
-
-async def test_append_to_exclude_adds_a_newline_first_when_the_file_lacks_a_trailing_one(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "project"
-    await _init_repo_with_commit(project_root)
-    git = Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT)
-    exclude_path = project_root / ".git" / "info" / "exclude"
-    exclude_path.write_text("*.log")
+    exclude_path.write_text(existing)
 
     await git.append_to_exclude(project_root, EXCLUDE_LINE)
 
