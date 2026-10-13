@@ -16,6 +16,7 @@ from shikiru.agents.contracts import (
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from textual.screen import ModalScreen
     from textual.widget import Widget
 
     from shikiru.agents.contracts import BillingMode, BillingSource, CostBasis
@@ -110,6 +111,8 @@ class PaletteRequest:
 
 OpenPalette = Callable[[str], Awaitable[None]]
 OpenPaletteContext = Callable[[PaletteRequest], Awaitable[None]]
+OpenResolution = Callable[[str], Awaitable[None]]
+ResolutionScreenFactory = Callable[[str], "ModalScreen[bool]"]
 SelectTaskContext = Callable[[str | None], None]
 OpenTaskDetail = Callable[[str], Awaitable[None]]
 OpenTaskDetailView = Callable[[str, str], Awaitable[None]]
@@ -967,6 +970,7 @@ class WidgetContext:
     on_motion: MotionRegistration
     open_palette: OpenPalette
     open_palette_context: OpenPaletteContext | None = None
+    open_resolution: OpenResolution | None = None
     open_task_detail: OpenTaskDetail | None = None
     open_task_detail_view: OpenTaskDetailView | None = None
     navigate_task_window: NavigateTaskWindow | None = None

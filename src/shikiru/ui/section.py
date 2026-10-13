@@ -34,7 +34,7 @@ UNKNOWN_AGE = "\N{EN DASH}"
 STALE_WORD = "stale"
 FAILED_WORD = "failed"
 UNAVAILABLE_WORD = "unavailable"
-_BOLD_CYAN = f"{STYLE_BOLD} {STEEL_BLUE}"
+BOLD_STEEL = f"{STYLE_BOLD} {STEEL_BLUE}"
 BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
 
 Row = tuple[Text, tuple[Text, ...]]
@@ -52,7 +52,7 @@ def row_name(text: str) -> Text:
 
 def number(value: str) -> Text:
     """Return `value` as a bold cyan figure."""
-    return Text(value, style=_BOLD_CYAN)
+    return Text(value, style=BOLD_STEEL)
 
 
 def observed_text(observed_ago: str) -> str:
@@ -116,12 +116,13 @@ def _stacked_lines(rows: list[Row], width: int) -> list[Text]:
 
 @dataclass(frozen=True)
 class Section:
-    """Render `body` below an optional rule and a grey heading, with an optional `trailing`."""
+    """Render `body` below an optional rule and a heading, with an optional `trailing`."""
 
     title: str
     body: RenderableType
     trailing: Text | None = None
     ruled: bool = True
+    title_style: str = SECONDARY_TEXT_COLOR
 
     def with_ruled(self, *, ruled: bool) -> Section:
         """Return this section drawn with or without its leading rule."""
@@ -136,7 +137,8 @@ class Section:
         yield self.body
 
     def _heading(self, width: int) -> RenderableType:
-        title = grey(self.title)
+        title = Text()
+        title.append(self.title, style=self.title_style)
         if self.trailing is None:
             return title
         gap = width - cell_len(title.plain) - cell_len(self.trailing.plain)
