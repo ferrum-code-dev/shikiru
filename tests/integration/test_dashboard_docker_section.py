@@ -118,14 +118,13 @@ def _row(label: str, *groups: tuple[Piece, ...]) -> list[Cell]:
     return _ink([(char, GREY) for char in label] + line(*groups))
 
 
-def _heading(trailing: Piece | None) -> list[Cell]:
+def _heading(trailing: Piece | None = None) -> list[Cell]:
     cells = [(char, GREY) for char in "Docker"]
     if trailing is not None:
         cells += [(char, trailing[1]) for char in trailing[0]]
     return _ink(cells)
 
 
-_OBSERVED: Piece = ("observed 3s ago", GREY)
 _TOP_NAME_WIDTH = 5
 _TOP_CPU_WIDTH = 4
 _TOP_MEMORY_WIDTH = 7
@@ -161,7 +160,7 @@ _RESTARTING_LINE = _row(
 
 _FULL_LINES = [
     _RULE,
-    _heading(_OBSERVED),
+    _heading(),
     _row(
         "Running",
         group(("3", CYAN_BOLD), (" of ", GREY), ("5", CYAN_BOLD)),
@@ -182,7 +181,7 @@ _FULL_LINES = [
 ]
 _QUIET_LINES = [
     _RULE,
-    _heading(_OBSERVED),
+    _heading(),
     _row(
         "Running",
         group(("3", CYAN_BOLD), (" of ", GREY), ("5", CYAN_BOLD)),
@@ -192,7 +191,7 @@ _QUIET_LINES = [
 ]
 _NO_USAGE_LINES = [
     _RULE,
-    _heading(_OBSERVED),
+    _heading(),
     _row(
         "Running",
         group(("3", CYAN_BOLD), (" of ", GREY), ("5", CYAN_BOLD)),
@@ -207,11 +206,11 @@ _STALE_LINES = [
     *_QUIET_LINES[2:],
     _row("Refresh", group(("failed · docker timed out", AMBER_TEXT))),
 ]
-_EMPTY_LINES = [_RULE, _heading(_OBSERVED), _row("No containers")]
-_UNAVAILABLE_LINES = [_RULE, _heading(None), _row("unavailable")]
+_EMPTY_LINES = [_RULE, _heading(), _row("No containers")]
+_UNAVAILABLE_LINES = [_RULE, _heading(), _row("unavailable")]
 _FAILED_LINES = [
     _RULE,
-    _heading(None),
+    _heading(),
     _ink([(char, ALERT_TEXT) for char in "failed · invalid JSON"]),
 ]
 
@@ -267,7 +266,7 @@ async def test_each_state_renders_the_approved_rows_and_styles(
 
 _COMPACT_LAYOUT = [
     "\u2500" * _COMPACT[0],
-    "Docker         observed 3s ago",
+    "Docker",
     "Running",
     "3 of 5 \u00b7 CPU 45% \u00b7 RAM 1.9 GiB",
     "Problems",
@@ -284,7 +283,6 @@ _COMPACT_LAYOUT = [
 _TINY_LAYOUT = [
     "\u2500" * _TINY_TEXT_WIDTH,
     "Docker",
-    "observed 3s ago",
     "Running",
     "3 of 5 \u00b7 CPU 45%",
     "RAM 1.9 GiB",

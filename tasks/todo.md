@@ -250,7 +250,7 @@ Eighth-review scope and evidence: [eighth real-project review](../docs/tui-feedb
 - [x] Task 157: Fold and simplify `test_dashboard_app.py`
 - [x] Task 158: Fold the rest of the dashboard-family integration tests
 - [x] Task 159: Trim unit tables and fold tmux/workspace/config tests
-- [ ] Task 160: Stale only after a failure; age hint only when stale
+- [x] Task 160: Stale only after a failure; age hint only when stale
 - [ ] Task 161: One refresh moment for the bar and the popup; header keeps ticking
 - [ ] Task 162: No leading rule or blank above Resources; `‼` marker for low disk space
 - [ ] Task 163: Disk `.shikiru` size

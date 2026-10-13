@@ -174,7 +174,7 @@ def docker_section(snapshot: DockerView) -> Section:
     if state is DiagnosticSampleState.FAILED:
         return Section(SECTION_TITLE, state_line(FAILED_WORD, ALERT_COLOR, snapshot.error))
     if state is DiagnosticSampleState.EMPTY:
-        return Section(SECTION_TITLE, grey(NO_CONTAINERS), observation(ago))
+        return Section(SECTION_TITLE, grey(NO_CONTAINERS), observation(ago, stale=False))
     stale = state is DiagnosticSampleState.STALE
     body: RenderableType = Group()
     if snapshot.summary is not None:

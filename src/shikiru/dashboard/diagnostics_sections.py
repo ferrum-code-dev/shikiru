@@ -16,13 +16,11 @@ from shikiru.ui.section import (
     FAILED_WORD,
     GROUP_SEPARATOR,
     UNAVAILABLE_WORD,
-    UNKNOWN_AGE,
     Row,
     Section,
     grey,
     labelled_rows,
     number,
-    observation,
     row_name,
     state_line,
 )
@@ -126,30 +124,23 @@ class _ResourceRows:
 
 
 def resources_section(sample: ResourceView | None) -> Section:
-    """Render `sample` as the Resources section in every state, with one observation note."""
+    """Render `sample` as the Resources section in every state, with no age hint."""
     if sample is None:
         return Section(
             RESOURCES_TITLE, state_line(UNAVAILABLE_WORD, SECONDARY_TEXT_COLOR, NO_SAMPLE_RECORDED)
         )
-    ago = sample.sampled_ago or UNKNOWN_AGE
     if sample.state is DiagnosticSampleState.FAILED:
-        return Section(
-            RESOURCES_TITLE,
-            state_line(FAILED_WORD, ALERT_COLOR, sample.error),
-            observation(ago) if sample.sampled_ago else None,
-        )
+        return Section(RESOURCES_TITLE, state_line(FAILED_WORD, ALERT_COLOR, sample.error))
     if sample.state is DiagnosticSampleState.UNAVAILABLE:
         return Section(
-            RESOURCES_TITLE,
-            state_line(UNAVAILABLE_WORD, SECONDARY_TEXT_COLOR, sample.error),
-            observation(ago) if sample.sampled_ago else None,
+            RESOURCES_TITLE, state_line(UNAVAILABLE_WORD, SECONDARY_TEXT_COLOR, sample.error)
         )
     stale = sample.state is DiagnosticSampleState.STALE
     rows = _ResourceRows(sample, sample.error if stale else None)
     body: RenderableType = rows
     if not stale and sample.state not in _OBSERVED_STATES:
         body = Group(grey(RESOURCE_STATE_UNKNOWN), rows)
-    return Section(RESOURCES_TITLE, body, observation(ago, stale=stale))
+    return Section(RESOURCES_TITLE, body)
 
 
 def _status_groups(status: EngineStatusView) -> tuple[Text, ...]:

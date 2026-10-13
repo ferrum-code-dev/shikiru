@@ -209,7 +209,6 @@ class DashboardServices:
         repo_status_service: GitRepoStatusService,
         *,
         clock: Clock,
-        resources_refresh_seconds: float,
         engine_up: Callable[[], bool],
         engine_identity: Callable[[], ProcessIdentity | None],
         project_root: Path,
@@ -223,7 +222,6 @@ class DashboardServices:
         """Delegate source reads and sampling through injected process boundaries."""
         self._repo_status_service = repo_status_service
         self._clock = clock
-        self._resources_refresh_seconds = resources_refresh_seconds
         self._engine_up = engine_up
         self._engine_identity = engine_identity
         self._project_root = project_root
@@ -312,13 +310,7 @@ class DashboardServices:
             return _resource_view(snapshot, self._clock, state=state, error=failure[1])
         if snapshot.sampled_at is None:
             return None
-        age = (self._clock.now() - snapshot.sampled_at).total_seconds()
-        state = (
-            DiagnosticSampleState.STALE
-            if age >= self._resources_refresh_seconds
-            else DiagnosticSampleState.AVAILABLE
-        )
-        return _resource_view(snapshot, self._clock, state=state)
+        return _resource_view(snapshot, self._clock, state=DiagnosticSampleState.AVAILABLE)
 
     async def containers(self) -> DockerView:
         """Return Docker stats in the stable dashboard contract shape."""

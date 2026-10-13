@@ -130,11 +130,8 @@ def _grey_row(label: str, *groups: tuple[Piece, ...]) -> list[Cell]:
     return _ink(_styled(label, GREY) + line(*groups))
 
 
-def _heading(title: str, trailing: Piece | None = None) -> list[Cell]:
-    cells = _styled(title, GREY)
-    if trailing is not None:
-        cells += _styled(*trailing)
-    return _ink(cells)
+def _heading(title: str) -> list[Cell]:
+    return _ink(_styled(title, GREY))
 
 
 def _measure(word: str, value: str) -> tuple[Piece, ...]:
@@ -148,12 +145,11 @@ _HOST = _name_row(
 )
 _SHIKIRU = _name_row("Shikiru", group(*_measure("CPU", "1.2%")), group(*_measure("RSS", "0.4 GiB")))
 _AGENTS = _name_row("Agents", group(*_measure("CPU", "2.3%")), group(*_measure("RSS", "1.2 GiB")))
-_OBSERVED: Piece = ("observed 2s ago", GREY)
 _RULE: list[Cell] = [("─", _RULE_STYLE)] * _WIDE[0]
 
 
-def _resource_lines(*rows: list[Cell], trailing: Piece | None = _OBSERVED) -> list[list[Cell]]:
-    return [_RULE, _heading("Resources", trailing), *rows]
+def _resource_lines(*rows: list[Cell]) -> list[list[Cell]]:
+    return [_RULE, _heading("Resources"), *rows]
 
 
 _STALE_REFRESH = _grey_row("Refresh", group(("failed · cpu probe failed", AMBER_TEXT)))
@@ -165,13 +161,7 @@ _RESOURCE_CASES = [
     ),
     pytest.param(
         replace(_SAMPLE, state=DiagnosticSampleState.STALE, error="cpu probe failed"),
-        _resource_lines(
-            _HOST,
-            _SHIKIRU,
-            _AGENTS,
-            _STALE_REFRESH,
-            trailing=("stale · observed 2s ago", AMBER_TEXT),
-        ),
+        _resource_lines(_HOST, _SHIKIRU, _AGENTS, _STALE_REFRESH),
         id="stale-keeps-the-last-observation",
     ),
     pytest.param(
@@ -203,7 +193,7 @@ _RESOURCE_CASES = [
         replace(
             _SAMPLE, state=DiagnosticSampleState.FAILED, error="cpu probe failed", sampled_ago=None
         ),
-        _resource_lines(_ink(_styled("failed · cpu probe failed", ALERT_TEXT)), trailing=None),
+        _resource_lines(_ink(_styled("failed · cpu probe failed", ALERT_TEXT))),
         id="failed",
     ),
     pytest.param(
@@ -213,7 +203,7 @@ _RESOURCE_CASES = [
     ),
     pytest.param(
         None,
-        _resource_lines(_grey_row("unavailable · no sample recorded"), trailing=None),
+        _resource_lines(_grey_row("unavailable · no sample recorded")),
         id="no-sample",
     ),
 ]
@@ -342,7 +332,6 @@ async def test_values_follow_the_cache_on_the_timer_without_any_commit_or_new_sa
         await wait_until(
             lambda: (
                 "42%" in _text_of(panel, RESOURCES_SECTION_ID)
-                and "observed1mago" in _text_of(panel, RESOURCES_SECTION_ID)
                 and "Running" in _text_of(panel, ENGINE_SECTION_ID)
             ),
             timeout=_WAIT_SECONDS,

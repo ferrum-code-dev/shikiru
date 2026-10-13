@@ -102,6 +102,7 @@ if TYPE_CHECKING:
 
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
+_PAST_INTERVAL_FACTOR = 5
 _RUN_FILE_BYTES = 2048
 BYTES_PER_GIB = 1024**3
 OBSERVABLE_PANE_MEMORY_BYTES = 64 * 1024**2
@@ -166,7 +167,6 @@ def _dashboard_services(
             cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
         ),
         clock=clock,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         engine_up=lambda: False,
         engine_identity=lambda: None,
         project_root=project_dir,
@@ -1173,6 +1173,37 @@ async def test_resource_sampling_failure_is_stale_only_after_a_prior_sample(
         assert failure.sampled_ago is not None
 
 
+async def test_a_resource_sample_stays_available_past_the_interval_until_a_failure(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    idle_tmux: Tmux,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del connection
+    clock = FakeClock(START)
+    sources, settings = _dashboard_services(
+        write_minimal_project(tmp_path), clock, idle_tmux, reader
+    )
+    try:
+        await sources.resources()
+    except psutil.AccessDenied, PermissionError:
+        pytest.skip("host process enumeration is restricted")
+    clock.advance(settings.orchestration.resources.sample_seconds * _PAST_INTERVAL_FACTOR)
+
+    aged = sources.resource_sample()
+
+    assert aged is not None
+    assert aged.state is DiagnosticSampleState.AVAILABLE
+    assert aged.sampled_ago
+    _deny_current_process_cpu(monkeypatch)
+    await sources.resources()
+    failed = sources.resource_sample()
+    assert failed is not None
+    assert failed.state is DiagnosticSampleState.STALE
+    assert failed.sampled_at == aged.sampled_at
+
+
 async def test_the_disk_sample_reaches_the_views_with_its_run_size_and_free_level(
     connection: Connection,
     reader: StateReader,
@@ -1489,7 +1520,6 @@ async def test_resources_service_excludes_panes_from_other_projects(
             cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
         ),
         clock=clock,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         engine_up=lambda: False,
         engine_identity=lambda: None,
         project_root=project_dir,

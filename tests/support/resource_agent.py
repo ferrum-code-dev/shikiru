@@ -140,7 +140,6 @@ def resource_services(
             cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
         ),
         clock=clock,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
         engine_up=lambda: False,
         engine_identity=lambda: None,
         project_root=project_dir,

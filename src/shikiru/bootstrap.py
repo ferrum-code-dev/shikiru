@@ -353,7 +353,6 @@ async def run_dashboard(
                 cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
             ),
             clock=clock,
-            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             engine_up=lambda: engine_is_running(lock_path),
             engine_identity=lambda: EngineLock.identity_if_running(lock_path),
             project_root=project_root,

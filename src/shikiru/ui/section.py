@@ -61,11 +61,11 @@ def observed_text(observed_ago: str) -> str:
     return f"{OBSERVED_WORD} {observed_ago}{suffix}"
 
 
-def observation(observed_ago: str, *, stale: bool = False) -> Text:
-    """Return the heading's observation note, amber and prefixed `stale` when kept from earlier."""
-    if stale:
-        return Text(f"{STALE_WORD}{GROUP_SEPARATOR}{observed_text(observed_ago)}", style=AMBER)
-    return grey(observed_text(observed_ago))
+def observation(observed_ago: str, *, stale: bool) -> Text | None:
+    """Return the amber `stale · observed <age> ago` heading note, or nothing unless `stale`."""
+    if not stale:
+        return None
+    return Text(f"{STALE_WORD}{GROUP_SEPARATOR}{observed_text(observed_ago)}", style=AMBER)
 
 
 def state_line(word: str, colour: str, error: str | None) -> Text:

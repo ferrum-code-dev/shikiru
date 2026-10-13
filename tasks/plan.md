@@ -1592,8 +1592,9 @@ Refs: unit-test audit (`test_domain_docker.py`, `test_domain_steps.py`, `test_do
 
 ### Task 160: Stale only after a failure; age hint only when stale
 Refs: eighth-review hints; `dashboard/services.py` `resource_sample`, `dashboard/diagnostics_sections.py`, `ui/section.py` `observation`, `plugins/widgets/{docker,disk}.py`; 06 §5.4.
-- [ ] `resource_sample()` reports STALE only after a sampling failure kept the last good sample (remove the age branch and its now-unused interval parameter); Resources shows no age hint, its failure states stay; `observation()` returns nothing unless stale; Docker and Disk headings show an age only when stale.
-- [ ] Lean tests: one state table per section; a resource view stays available past `sample_seconds` without a failure; native render before/after (no more `stale`/`observed now` flicker).
+- [x] `resource_sample()` reports STALE only after a sampling failure kept the last good sample (remove the age branch and its now-unused interval parameter); Resources shows no age hint, its failure states stay; `observation()` returns nothing unless stale; Docker and Disk headings show an age only when stale.
+- [x] Lean tests: one state table per section; a resource view stays available past `sample_seconds` without a failure; native render before/after (no more `stale`/`observed now` flicker).
+  Proof: `resource_sample()` is STALE only after a failure that kept the last good sample (age branch and `resources_refresh_seconds` removed from `DashboardServices`); `observation()` returns None unless stale, so Resources, Docker and Disk headings show an age only as `stale · observed X ago` (Resources shows none). A new test keeps a sample AVAILABLE five intervals old and STALE only after a failure; a native colour render of the Resources section before showed `observed now`/`stale · observed now` and after shows a bare heading with the `Refresh  failed` row for stale. `uv run poe check` green (1575 passed, 91 %); collected cases 1595 to 1596.
 
 ### Task 161: One refresh moment for the bar and the popup; header keeps ticking
 Refs: eighth-review refresh and header; `dashboard/contract.py`/`views.py` (`resources()`), `dashboard/diagnostics.py`, `plugins/widgets/{faults,header}.py`, `dashboard/app.py` `_HomeAttentionStatus`, `ui/screen.py` (`widget_is_active`/`widget_is_current`).

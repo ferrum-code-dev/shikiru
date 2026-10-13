@@ -49,7 +49,6 @@ _RULE_CHARACTER = "─"
 _RULE_STYLE: Style = (False, NEUTRAL_BORDER_COLOR)
 _AMBER_BOLD: Style = (True, AMBER)
 _ALERT_BOLD: Style = (True, ALERT_COLOR)
-_OBSERVED: Piece = ("observed 3s ago", GREY)
 _RULE = [(_RULE_CHARACTER, _RULE_STYLE)] * _WIDE[0]
 
 
@@ -86,7 +85,7 @@ def _row(label: str, *groups: tuple[Piece, ...]) -> list[Cell]:
     return _ink([(char, GREY) for char in label] + line(*groups))
 
 
-def _heading(trailing: Piece | None) -> list[Cell]:
+def _heading(trailing: Piece | None = None) -> list[Cell]:
     cells = [(char, GREY) for char in "Disk"]
     if trailing is not None:
         cells += [(char, trailing[1]) for char in trailing[0]]
@@ -100,9 +99,9 @@ def _free_row(free: str, free_style: Style) -> list[Cell]:
 _RUNS_ROW = _row("Runs", group(("1.2 GiB", CYAN_BOLD)))
 _REFRESH_ROW = _row("Refresh", group(("failed · project vanished", AMBER_TEXT)))
 
-_AVAILABLE_LINES = [_RULE, _heading(_OBSERVED), _free_row("120.0 GiB", CYAN_BOLD), _RUNS_ROW]
-_WARN_LINES = [_RULE, _heading(_OBSERVED), _free_row("45.0 GiB", _AMBER_BOLD), _RUNS_ROW]
-_ALERT_LINES = [_RULE, _heading(_OBSERVED), _free_row("20.0 GiB", _ALERT_BOLD), _RUNS_ROW]
+_AVAILABLE_LINES = [_RULE, _heading(), _free_row("120.0 GiB", CYAN_BOLD), _RUNS_ROW]
+_WARN_LINES = [_RULE, _heading(), _free_row("45.0 GiB", _AMBER_BOLD), _RUNS_ROW]
+_ALERT_LINES = [_RULE, _heading(), _free_row("20.0 GiB", _ALERT_BOLD), _RUNS_ROW]
 _STALE_LINES = [
     _RULE,
     _heading(("stale · observed 3s ago", AMBER_TEXT)),
@@ -110,10 +109,10 @@ _STALE_LINES = [
     _RUNS_ROW,
     _REFRESH_ROW,
 ]
-_UNAVAILABLE_LINES = [_RULE, _heading(None), _row("unavailable · project is missing")]
+_UNAVAILABLE_LINES = [_RULE, _heading(), _row("unavailable · project is missing")]
 _FAILED_LINES = [
     _RULE,
-    _heading(None),
+    _heading(),
     _ink([(char, ALERT_TEXT) for char in "failed · project is unreadable"]),
 ]
 
@@ -184,7 +183,7 @@ async def test_a_new_sample_replaces_the_rendering_at_the_refresh_interval(
 
 _COMPACT_LAYOUT = [
     "─" * _COMPACT[0],
-    "Disk           observed 3s ago",
+    "Disk",
     "Free",
     "120.0 GiB of 500.0 GiB",
     "Runs",
@@ -192,7 +191,7 @@ _COMPACT_LAYOUT = [
 ]
 _TINY_LAYOUT = [
     "─" * _TINY[0],
-    "Disk observed 3s ago",
+    "Disk",
     "Free",
     "120.0 GiB of 500.0",
     "GiB",
