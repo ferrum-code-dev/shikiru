@@ -114,6 +114,9 @@ _READ_ONLY_DIRECTORY = 0o500
 _WRITABLE_DIRECTORY = 0o700
 _SECOND_RUNG = Rung(agent="fake", model="fake-2", effort=None)
 _FAILED_REPORT_EXIT_CODE = 2
+_PANE_COMMAND_FORMAT = "#{pane_current_command}"
+_FAKE_REPL_PROCESS = "python"
+_TAKEOVER_REPL_WAIT_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -1015,6 +1018,14 @@ async def _wait_for_session(runs: RunStore, clock: FakeClock, task_id: str) -> R
     return run
 
 
+async def _wait_for_repl(tmux_server: TmuxServer, pane: str) -> None:
+    async def repl_running() -> bool:
+        shown = await tmux_server.run("display-message", "-p", "-t", pane, _PANE_COMMAND_FORMAT)
+        return shown.stdout.strip().lower().startswith(_FAKE_REPL_PROCESS)
+
+    await wait_until(repl_running, _TAKEOVER_REPL_WAIT_SECONDS)
+
+
 async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
@@ -1065,6 +1076,7 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
         ) == (held, taken_run)
 
         pane = _required_task(tasks, task_id).panes[Role.IMPLEMENTER]
+        await _wait_for_repl(tmux_server, pane)
         await tmux_server.run("send-keys", "-t", pane, "/exit", "Enter")
 
         async def handed_back_and_advanced() -> bool:

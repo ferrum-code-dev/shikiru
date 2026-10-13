@@ -19,9 +19,9 @@ if TYPE_CHECKING:
 
 BURN_SOURCE = "while True: pass"
 RESPAWNING_WRAPPER = f'while :; do "{sys.executable}" -c "{BURN_SOURCE}"; done'
-MIN_BURNED_SECONDS = 0.3
-WAIT_SECONDS = 15.0
-MAX_DUTY_FRACTION = 1.2
+MIN_BURNED_SECONDS = 1.0
+WAIT_SECONDS = 30.0
+MAX_DUTY_FRACTION = 1.5
 SAMPLE_CADENCE_SECONDS = 0.05
 RESOURCES = ResourcesConfig(
     max_cpu_pct=85, min_free_ram_gb=4, sample_seconds=SAMPLE_CADENCE_SECONDS, cpu_window_seconds=30
@@ -49,8 +49,13 @@ async def wrapper_pid(tmux_server: TmuxServer) -> int:
 
 
 def _burner(wrapper_pid: int) -> psutil.Process | None:
-    children = psutil.Process(wrapper_pid).children()
-    return children[0] if children else None
+    for child in psutil.Process(wrapper_pid).children():
+        try:
+            if BURN_SOURCE in child.cmdline():
+                return child
+        except psutil.Error:
+            continue
+    return None
 
 
 def _has_burned(process: psutil.Process | None) -> bool:

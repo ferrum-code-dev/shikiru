@@ -1676,7 +1676,8 @@ Refs: offenders `test_task_family_and_blockers.py` (`_exercise_paged_relationshi
 
 ### Task 171: Harden the CPU and take-over tests
 Refs: `tests/integration/test_resource_sampler_cpu.py` (`MIN_BURNED_SECONDS`, `MAX_DUTY_FRACTION`, `children[0]`), `src/shikiru/telemetry/resources.py` lifetime CPU, `tests/integration/test_engine_daemon.py::test_take_over_holds_only_that_task_and_hand_back_resumes_its_session`.
-- [ ] CPU test: longer burn, a duty bound whose headroom covers create-time skew, the burner chosen by its command line; the product code only changes if the measurement itself is wrong (reproduce first).
+- [x] CPU test: longer burn, a duty bound whose headroom covers create-time skew, the burner chosen by its command line; the product code only changes if the measurement itself is wrong (reproduce first).
+  Proof: product measurement unchanged; burn 1.0 s CPU, duty bound 1.5, burner found by its `-c` script, `psutil.Error` skipped. Baseline 15 parallel copies under 8 `yes` hogs passed (no reproduction), after-change run hit an AccessDenied on `cmdline()` which is now skipped; later 20 copies and the gate (1586 passed, 14 skipped, 1607 collected) were green.
 - [ ] Take-over test: wait for the agent prompt in the pane before `/exit`, wait for the taken-over record; both tests pass 30 rounds of 10 parallel copies with a CPU hog (`yes > /dev/null`, one per core, killed afterwards).
 
 ### Task 172: Command history pages with the arrow keys
