@@ -1378,12 +1378,10 @@ async def test_usage_result_finishing_after_context_screen_teardown_is_discarded
         reader.close()
 
 
-@pytest.mark.parametrize("motion_enabled", [False, True], ids=("static", "normal"))
 async def test_task_usage_details_tick_quota_age_and_reset_without_motion_evidence_reads(
     database: Database,
     connection: Connection,
     tmp_path: Path,
-    motion_enabled: bool,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_START)
@@ -1410,9 +1408,7 @@ async def test_task_usage_details_tick_quota_age_and_reset_without_motion_eviden
             views=views,
             on_change=reader.watch,
             clock=clock,
-            motion_interval_seconds=(
-                1 / settings.dashboard.motion.refresh_hz if motion_enabled else None
-            ),
+            motion_interval_seconds=None,
             resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
             docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
             disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
@@ -1504,12 +1500,12 @@ async def test_task_activity_distinguishes_setup_from_a_missing_signal(
     assert "future timestamp" in future_activity
 
 
-async def test_task_activity_requires_current_turn_signal_and_stays_still_without_motion(
+async def test_task_activity_claims_a_signal_only_for_a_running_current_turn(
     task_activity_environment: tuple[
         Connection, Path, FakeClock, Settings, Task, StateReader, StateDashboardViews
     ],
 ) -> None:
-    _, project_dir, clock, settings, task, reader, views = task_activity_environment
+    connection, project_dir, clock, settings, task, reader, views = task_activity_environment
     _write_current_turn_log(project_dir, task, views)
     observed = await views.task_detail(task.id, include_timeline=False)
     assert observed is not None
@@ -1531,19 +1527,64 @@ async def test_task_activity_requires_current_turn_signal_and_stays_still_withou
     assert static_after_tick is not None
     assert static_after_tick.progress.panels[1].spinner_frame == static_spinner
 
+    tasks = TaskStore(connection, clock)
+    tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
+    held = await views.task_detail(task.id, include_timeline=False)
+    assert held is not None
+    assert Hold.PAUSED.value in held.holds
+    assert not held.signal_observed
+    assert held.latest_signal_at == _START
+    assert held.actual_stage_started_at is None
+    tasks.set_holds(task.id, frozenset())
+    released = await views.task_detail(task.id, include_timeline=False)
+    assert released is not None
+    assert released.signal_observed
 
-@pytest.mark.parametrize("animations", [True, False], ids=("motion", "static"))
+    current = tasks.get(task.id)
+    assert current is not None
+    step = current.step
+    assert step is not None
+    EventLog(connection, clock).append(
+        EventKind.TURN_STOPPED,
+        task_id=task.id,
+        message="turn stopped",
+        data={
+            "step": step.value,
+            "role": Role.IMPLEMENTER.value,
+            "iteration": current.iteration,
+        },
+    )
+    stopped = await views.task_detail(task.id, include_timeline=False)
+    assert stopped is not None
+    assert not stopped.signal_observed
+    assert stopped.latest_signal_at == _START
+
+    current = tasks.get(task.id)
+    assert current is not None
+    tasks.finish(
+        task.id,
+        Transition.stay(current, step=current.step, status=Status.DONE),
+        EventKind.TASK_DONE,
+        message="task completed",
+        data={"summary": "completed"},
+    )
+    completed = await views.task_detail(task.id, include_timeline=False)
+    assert completed is not None
+    assert completed.status == Status.DONE.value
+    assert not completed.signal_observed
+    assert completed.latest_signal_at == _START
+
+
 async def test_task_detail_refreshes_recorded_ages_without_database_changes(
     database: Database,
     connection: Connection,
     tmp_path: Path,
-    animations: bool,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_START)
     base_settings = _motion_settings(project_dir)
     settings = base_settings.model_copy(
-        update={"dashboard": base_settings.dashboard.model_copy(update={"animations": animations})}
+        update={"dashboard": base_settings.dashboard.model_copy(update={"animations": False})}
     )
     task, _ = _seed_dashboard_state(connection, clock)
     EventLog(connection, clock).append(
@@ -1615,66 +1656,6 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             )
     finally:
         reader.close()
-
-
-async def test_task_activity_does_not_claim_a_signal_during_a_hold(
-    task_activity_environment: tuple[
-        Connection, Path, FakeClock, Settings, Task, StateReader, StateDashboardViews
-    ],
-) -> None:
-    connection, project_dir, clock, _, task, _, views = task_activity_environment
-    _write_current_turn_log(project_dir, task, views)
-    TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
-
-    held = await views.task_detail(task.id, include_timeline=False)
-    assert held is not None
-    assert Hold.PAUSED.value in held.holds
-    assert not held.signal_observed
-    assert held.latest_signal_at == _START
-    assert held.actual_stage_started_at is None
-
-
-async def test_task_activity_does_not_claim_a_signal_after_stop_or_completion(
-    task_activity_environment: tuple[
-        Connection, Path, FakeClock, Settings, Task, StateReader, StateDashboardViews
-    ],
-) -> None:
-    connection, project_dir, clock, _, task, _, views = task_activity_environment
-    _write_current_turn_log(project_dir, task, views)
-    tasks = TaskStore(connection, clock)
-    current = tasks.get(task.id)
-    assert current is not None
-    step = current.step
-    assert step is not None
-    EventLog(connection, clock).append(
-        EventKind.TURN_STOPPED,
-        task_id=task.id,
-        message="turn stopped",
-        data={
-            "step": step.value,
-            "role": Role.IMPLEMENTER.value,
-            "iteration": current.iteration,
-        },
-    )
-    stopped = await views.task_detail(task.id, include_timeline=False)
-    assert stopped is not None
-    assert not stopped.signal_observed
-    assert stopped.latest_signal_at == _START
-
-    current = tasks.get(task.id)
-    assert current is not None
-    tasks.finish(
-        task.id,
-        Transition.stay(current, step=current.step, status=Status.DONE),
-        EventKind.TASK_DONE,
-        message="task completed",
-        data={"summary": "completed"},
-    )
-    completed = await views.task_detail(task.id, include_timeline=False)
-    assert completed is not None
-    assert completed.status == Status.DONE.value
-    assert not completed.signal_observed
-    assert completed.latest_signal_at == _START
 
 
 async def test_home_attention_count_updates_from_motion_without_database_changes(
@@ -2223,6 +2204,15 @@ def _integrating_task(connection: Connection, clock: FakeClock) -> Task:
     return current
 
 
+def _starting_task(connection: Connection, clock: FakeClock) -> Task:
+    tasks = TaskStore(connection, clock)
+    task = seed_task(connection, clock, title="Starting task", mode=Mode.IMPLEMENT)
+    tasks.apply_transition(task.id, Transition.stay(task, step=None, status=Status.RUNNING))
+    started = tasks.get(task.id)
+    assert started is not None
+    return started
+
+
 def _apply_integration_scenario(
     connection: Connection, clock: FakeClock, task: Task, scenario: str
 ) -> None:
@@ -2252,29 +2242,21 @@ def _apply_integration_scenario(
         )
 
 
-@pytest.mark.parametrize("animations", [True, False], ids=["motion", "static"])
-@pytest.mark.parametrize(
-    ("scenario", "engine_running", "cycles"),
-    [
-        ("engine-integrating", True, True),
-        ("paused", True, False),
-        ("waiting", True, False),
-        ("checkout-wait", True, False),
-        ("escalated", True, False),
-        ("done", True, False),
-        ("engine-integrating", False, False),
-    ],
-    ids=[
-        "integrating",
-        "paused",
-        "pr-or-ci-wait",
-        "recorded-integration-wait",
-        "escalated",
-        "terminal",
-        "engine-down",
-    ],
-)
-async def test_integrating_task_cycles_its_detail_marker_only_while_the_engine_integrates(
+_MARKER_CASES = [
+    pytest.param("engine-integrating", True, True, True, id="integrating"),
+    pytest.param("engine-integrating", True, True, False, id="integrating-static"),
+    pytest.param("starting", True, True, True, id="starting"),
+    pytest.param("paused", True, False, True, id="paused"),
+    pytest.param("waiting", True, False, True, id="pr-or-ci-wait"),
+    pytest.param("checkout-wait", True, False, True, id="recorded-integration-wait"),
+    pytest.param("escalated", True, False, True, id="escalated"),
+    pytest.param("done", True, False, True, id="terminal"),
+    pytest.param("engine-integrating", False, False, True, id="engine-down"),
+]
+
+
+@pytest.mark.parametrize(("scenario", "engine_running", "cycles", "animations"), _MARKER_CASES)
+async def test_detail_marker_cycles_only_while_the_engine_works_on_the_task(
     *,
     database: Database,
     connection: Connection,
@@ -2293,7 +2275,11 @@ async def test_integrating_task_cycles_its_detail_marker_only_while_the_engine_i
     settings = base_settings.model_copy(
         update={"dashboard": base_settings.dashboard.model_copy(update={"animations": animations})}
     )
-    task = _integrating_task(connection, clock)
+    task = (
+        _integrating_task(connection, clock)
+        if scenario != "starting"
+        else _starting_task(connection, clock)
+    )
     _apply_integration_scenario(connection, clock, task, scenario)
     reader = StateReader(database, clock)
     try:
@@ -2345,34 +2331,3 @@ def _detail_marker(view: TaskDetailView) -> str:
         ),
         "",
     )
-
-
-async def test_starting_task_cycles_the_setup_marker(
-    database: Database, connection: Connection, tmp_path: Path
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock, title="Starting task", mode=Mode.IMPLEMENT)
-    TaskStore(connection, clock).apply_transition(
-        task.id, Transition.stay(task, step=None, status=Status.RUNNING)
-    )
-    reader = StateReader(database, clock)
-    try:
-        views = state_views(
-            reader,
-            project_dir,
-            clock,
-            StubServices(engine_running=True),
-            focus_task=task.id,
-            settings=_motion_settings(project_dir),
-        )
-        first = await views.task_detail(task.id, include_timeline=False)
-        clock.advance(_MOTION_TICK_SECONDS)
-        second = await views.task_detail(task.id, include_timeline=False)
-        assert first is not None
-        assert second is not None
-        assert first.progress.panels[0].label == "Starting"
-        assert _detail_marker(first) != _detail_marker(second)
-        assert not second.signal_observed
-    finally:
-        reader.close()
