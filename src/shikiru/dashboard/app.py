@@ -131,8 +131,6 @@ _COMMAND_HISTORY_TINY_MAX_ROWS = 8
 _COMMAND_HISTORY_ALL = "all"
 _COMMAND_HISTORY_PREVIOUS_KEY = "left"
 _COMMAND_HISTORY_NEXT_KEY = "right"
-COMMAND_HISTORY_PREVIOUS_SHORTCUT = "p"
-COMMAND_HISTORY_NEXT_SHORTCUT = "n"
 _COMMAND_HISTORY_PREVIOUS_ACTION = "previous_page"
 _COMMAND_HISTORY_NEXT_ACTION = "next_page"
 COMMAND_ACTION_SAY = "Say"
@@ -429,6 +427,12 @@ def _command_history_text(history: CommandHistoryView) -> str:
     )
 
 
+def _command_history_page_label(arrow: str, word: str, *, compact: bool = False) -> Text:
+    if compact:
+        return Text(arrow, style=STEEL_BLUE)
+    return Text.assemble((arrow, STEEL_BLUE), f" {word}")
+
+
 def _command_queue_time(timestamp: str | None) -> str | None:
     if timestamp is None:
         return None
@@ -590,7 +594,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Ctrl+P: open contextual operator actions",
                 "/: search task ID or title",
                 "v: open filters, history and configured secondary views",
-                "History: p previous · n next",
+                "History: ← newer · → older",
                 "Mouse: select a task; use its detail controls for views and actions",
                 "?: show this help",
             ]
@@ -672,8 +676,6 @@ class _CommandHistoryScreen(ModalScreen[None]):
         ("escape", "close", "Back"),
         (_COMMAND_HISTORY_PREVIOUS_KEY, _COMMAND_HISTORY_PREVIOUS_ACTION, "Newer history"),
         (_COMMAND_HISTORY_NEXT_KEY, _COMMAND_HISTORY_NEXT_ACTION, "Older history"),
-        (COMMAND_HISTORY_PREVIOUS_SHORTCUT, _COMMAND_HISTORY_PREVIOUS_ACTION, "Previous page"),
-        (COMMAND_HISTORY_NEXT_SHORTCUT, _COMMAND_HISTORY_NEXT_ACTION, "Next page"),
     ]
     DEFAULT_CSS = (
         POPUP_CSS
@@ -726,8 +728,16 @@ class _CommandHistoryScreen(ModalScreen[None]):
                 yield Static("Loading command history…", id=_COMMAND_HISTORY_COPY, markup=False)
             yield Label("", id=_COMMAND_HISTORY_PAGE, classes=POPUP_SECONDARY_CLASS)
             with Horizontal(id="command-history-controls"):
-                yield Button("p previous", id=_COMMAND_HISTORY_PREVIOUS, disabled=True)
-                yield Button("n next", id=_COMMAND_HISTORY_NEXT, disabled=True)
+                yield Button(
+                    _command_history_page_label("←", "newer"),
+                    id=_COMMAND_HISTORY_PREVIOUS,
+                    disabled=True,
+                )
+                yield Button(
+                    _command_history_page_label("→", "older"),
+                    id=_COMMAND_HISTORY_NEXT,
+                    disabled=True,
+                )
 
     async def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
@@ -755,10 +765,12 @@ class _CommandHistoryScreen(ModalScreen[None]):
         self.query_one("#command-history-title", Label).update(
             "Hist." if compact or tiny else "Command history"
         )
-        self.query_one(f"#{_COMMAND_HISTORY_PREVIOUS}", Button).label = (
-            "p" if compact else "p previous"
+        self.query_one(f"#{_COMMAND_HISTORY_PREVIOUS}", Button).label = _command_history_page_label(
+            "←", "newer", compact=compact
         )
-        self.query_one(f"#{_COMMAND_HISTORY_NEXT}", Button).label = "n" if compact else "n next"
+        self.query_one(f"#{_COMMAND_HISTORY_NEXT}", Button).label = _command_history_page_label(
+            "→", "older", compact=compact
+        )
 
     def _limit_history_body(self, viewport_height: int) -> None:
         if not self.is_mounted:
@@ -780,16 +792,20 @@ class _CommandHistoryScreen(ModalScreen[None]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
-        if action in {
-            _COMMAND_HISTORY_PREVIOUS_ACTION,
-            _COMMAND_HISTORY_NEXT_ACTION,
-        } and native_editor_has_focus(self.focused):
+        pages = action in {_COMMAND_HISTORY_PREVIOUS_ACTION, _COMMAND_HISTORY_NEXT_ACTION}
+        if pages and not self._arrow_paging_available():
             return None
         if action == _COMMAND_HISTORY_PREVIOUS_ACTION:
             return self._offset > 0
         if action == _COMMAND_HISTORY_NEXT_ACTION:
             return self._has_more
         return True
+
+    def _arrow_paging_available(self) -> bool:
+        filter_select = cast("Select[str]", self.query_one(f"#{_COMMAND_HISTORY_FILTER}", Select))
+        if filter_select.expanded:
+            return False
+        return self.focused is filter_select or not native_editor_has_focus(self.focused)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == _COMMAND_HISTORY_CLOSE:
@@ -852,7 +868,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
         page_number = history.offset // history.limit + 1
         filter_name = history.status.value if history.status is not None else "all statuses"
         page_text = (
-            f"p{page_number} · {end}/{history.total_count}"
+            f"{page_number} · {end}/{history.total_count}"
             if self.size.width <= _COMMAND_HISTORY_PAGE_COMPACT_MAX_COLUMNS
             else f"{filter_name} · page {page_number} · rows {start}-{end} of {history.total_count}"
         )

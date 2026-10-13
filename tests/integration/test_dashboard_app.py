@@ -44,8 +44,6 @@ from shikiru.bootstrap import dashboard_tmux_binding
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import (
-    COMMAND_HISTORY_NEXT_SHORTCUT,
-    COMMAND_HISTORY_PREVIOUS_SHORTCUT,
     DashboardApp,
     WidgetPluginError,
 )
@@ -3519,19 +3517,21 @@ async def _assert_command_history_initial_shortcuts(
 ) -> None:
     previous_button = app.screen.query_one("#command-history-previous", Button)
     assert previous_button.disabled
-    await pilot.press("p")
-    assert "page 1" in _rendered_text(page)
+    await pilot.press("right")
+    await wait_until(lambda: "page 2" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
+    await pilot.press("left")
+    await wait_until(lambda: "page 1" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     next_button = app.screen.query_one("#command-history-next", Button)
     await pilot.click(next_button)
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
     next_button.focus()
-    await pilot.press("p")
+    await pilot.press("left")
     await wait_until(lambda: "page 1" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
-    await pilot.press("n")
+    await pilot.press("right")
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
@@ -3555,7 +3555,7 @@ async def _assert_command_history_filter_shortcuts(
     await wait_until(lambda: history_filter.value == "all", timeout=UI_WAIT_SECONDS)
     previous_button = app.screen.query_one("#command-history-previous", Button)
     previous_button.focus()
-    await pilot.press(COMMAND_HISTORY_PREVIOUS_SHORTCUT)
+    await pilot.press("left")
     await wait_until(lambda: "page 1" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     await wait_until(
         lambda: f"#{applied_id} · Applied" in _rendered_text(history_copy), timeout=UI_WAIT_SECONDS
@@ -3572,10 +3572,11 @@ async def _assert_command_history_filter_shortcuts(
     await wait_until(lambda: history_filter.expanded, timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
-    for shortcut in (COMMAND_HISTORY_PREVIOUS_SHORTCUT, COMMAND_HISTORY_NEXT_SHORTCUT):
-        await pilot.press(shortcut)
+    for key in ("left", "right"):
+        await pilot.press(key)
         assert history_filter.expanded
         assert "page 1" in _rendered_text(page)
+    await pilot.press("down")
     await pilot.press("enter")
     await wait_until(
         lambda: history_filter.value == CommandFeedbackStatus.PENDING.value,
@@ -3628,23 +3629,23 @@ async def _assert_command_history_last_page_and_refresh(
     page = app.screen.query_one("#command-history-page", Static)
     history_copy = app.screen.query_one("#command-history-copy", Static)
     app.screen.query_one("#command-history-next", Button).focus()
-    await pilot.press("n")
+    await pilot.press("right")
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
     next_button = app.screen.query_one("#command-history-next", Button)
     assert not next_button.disabled, _rendered_text(page)
     next_button.focus()
-    await pilot.press("p")
+    await pilot.press("left")
     await wait_until(lambda: "page 1" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
-    await pilot.press("n")
+    await pilot.press("right")
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
-    await pilot.press("n")
+    await pilot.press("right")
     await wait_until(lambda: "page 3" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
     assert app.screen.query_one("#command-history-next", Button).disabled
-    await pilot.press("n")
+    await pilot.press("right")
     assert "page 3" in _rendered_text(page)
     assert f"#{pending_id} · Pending" in _rendered_text(history_copy), (
         _rendered_text(page),
@@ -3838,7 +3839,7 @@ async def _assert_initial_history_pages(
     while not next_page.disabled:
         previous_content = _rendered_text(copy)
         next_page.focus()
-        await pilot.press("n")
+        await pilot.press("right")
         await wait_until(
             lambda previous_content=previous_content: _rendered_text(copy) != previous_content,
             timeout=UI_WAIT_SECONDS,
