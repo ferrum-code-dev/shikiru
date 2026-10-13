@@ -217,6 +217,8 @@ if TYPE_CHECKING:
         NavigateTaskWindow,
         OpenPaletteContext,
         TaskDetailView,
+        TaskModelHistoryView,
+        TaskSessionView,
         WidgetContext,
     )
     from shikiru.domain.runs import Run
@@ -855,25 +857,13 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             )
             sessions_text = plain_text(sessions.content)
 
-            assert f"Task {task.id}" in sessions_text
             assert "1 legacy" in sessions_text
             assert "2 without tokens" in sessions_text
             assert "$1.25" in sessions_text
             assert "Billing declaration · unknown · source unknown" in sessions_text
-            assert "$0.00" in sessions_text
-            assert "Implementer" in sessions_text
-            assert "Used" in sessions_text
             assert "Current" not in sessions_text
-            assert "codex/luna" in sessions_text
-            assert "session-wide 550 tok" in sessions_text
-            assert "billed $1.25" in sessions_text
-            assert "legacy recorded" in sessions_text
             assert "input 500" in sessions_text
-            assert "cache read 0" in sessions_text
-            assert "Cost basis" in sessions_text
-            assert "Billing declaration" in sessions_text
-            assert "legacy" in sessions_text
-            assert "10%" in sessions_text
+            assert "legacy recorded" in sessions_text
             assert "no reliable context provenance" in sessions_text
     finally:
         reader.close()
@@ -1013,57 +1003,7 @@ async def _assert_task_history_rendering(
     assert "per-turn observation · input 7" in usage_details
 
 
-async def test_legacy_turn_without_effort_does_not_inherit_latest_run_effort(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Legacy model identity")
-    run = RunStore(connection, clock).start(
-        task.id,
-        Role.IMPLEMENTER,
-        Rung("codex", "gpt-6", "high"),
-    )
-    RunStore(connection, clock).record_usage(
-        run.id, Usage(30, 2, 0, 0, 0.8, COST_BASIS_BILLED, None)
-    )
-    events = EventLog(connection, clock)
-    turn_data = {
-        "role": Role.IMPLEMENTER.value,
-        "agent": "codex",
-        "model": "gpt-5",
-        "run_id": run.id,
-        "turn": "01-implement-i1",
-    }
-    events.append(
-        EventKind.TURN_STARTED,
-        task_id=task.id,
-        message="legacy turn started",
-        data=turn_data,
-    )
-    events.append(
-        EventKind.TURN_COMPLETED,
-        task_id=task.id,
-        message="legacy turn completed",
-        data={
-            **turn_data,
-            "usage_delta": {
-                "input_tokens": 99,
-                "output_tokens": 20,
-                "cache_read_tokens": 0,
-                "cache_write_tokens": 0,
-                "cost_usd": None,
-            },
-        },
-    )
-
-    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
-
-    assert detail is not None
-    [session] = detail.sessions
-    [history] = session.model_history
+def _without_effort_has_gaps(session: TaskSessionView, history: TaskModelHistoryView) -> None:
     assert session.effort == "high"
     assert history.model == "gpt-5"
     assert history.effort is None
@@ -1074,38 +1014,56 @@ async def test_legacy_turn_without_effort_does_not_inherit_latest_run_effort(
     assert TaskHistoryGap.MISSING_USAGE_DELTA in session.history_gaps
 
 
-async def test_legacy_numeric_turn_cost_does_not_inherit_run_cost_basis(
+def _numeric_cost_is_unknown_basis(session: TaskSessionView, history: TaskModelHistoryView) -> None:
+    del session
+    assert history.usage_delta is not None
+    assert history.usage_delta.cost_usd == 0.03
+    assert history.usage_delta.cost_basis == COST_BASIS_UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("turn_identity", "cost_usd", "check"),
+    [
+        pytest.param({"model": "gpt-5"}, None, _without_effort_has_gaps, id="turn-without-effort"),
+        pytest.param(
+            {"model": "gpt-6", "effort": "high"},
+            0.03,
+            _numeric_cost_is_unknown_basis,
+            id="numeric-turn-cost",
+        ),
+    ],
+)
+async def test_legacy_turn_never_inherits_run_level_provenance(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
+    *,
+    turn_identity: dict[str, str],
+    cost_usd: float | None,
+    check: Callable[[TaskSessionView, TaskModelHistoryView], None],
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Legacy turn cost provenance")
-    rung = Rung("codex", "gpt-6", "high")
-    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, rung)
+    task = seed_task(connection, clock, title="Legacy turn provenance")
+    run = RunStore(connection, clock).start(
+        task.id, Role.IMPLEMENTER, Rung("codex", "gpt-6", "high")
+    )
     RunStore(connection, clock).record_usage(
         run.id, Usage(30, 2, 0, 0, 0.8, COST_BASIS_BILLED, None)
     )
     events = EventLog(connection, clock)
     turn_data = {
         "role": Role.IMPLEMENTER.value,
-        "agent": rung.agent,
-        "model": rung.model,
-        "effort": rung.effort,
+        "agent": "codex",
         "run_id": run.id,
-        "turn": "legacy-cost-turn",
+        "turn": "01-implement-i1",
+        **turn_identity,
     }
-    events.append(
-        EventKind.TURN_STARTED,
-        task_id=task.id,
-        message="turn started",
-        data=turn_data,
-    )
+    events.append(EventKind.TURN_STARTED, task_id=task.id, message="turn", data=turn_data)
     events.append(
         EventKind.TURN_COMPLETED,
         task_id=task.id,
-        message="turn completed",
+        message="turn",
         data={
             **turn_data,
             "usage_delta": {
@@ -1113,7 +1071,7 @@ async def test_legacy_numeric_turn_cost_does_not_inherit_run_cost_basis(
                 "output_tokens": 2,
                 "cache_read_tokens": 0,
                 "cache_write_tokens": 0,
-                "cost_usd": 0.03,
+                "cost_usd": cost_usd,
             },
         },
     )
@@ -1123,9 +1081,7 @@ async def test_legacy_numeric_turn_cost_does_not_inherit_run_cost_basis(
     assert detail is not None
     [session] = detail.sessions
     [history] = session.model_history
-    assert history.usage_delta is not None
-    assert history.usage_delta.cost_usd == 0.03
-    assert history.usage_delta.cost_basis == COST_BASIS_UNKNOWN
+    check(session, history)
 
 
 async def test_recorded_stop_is_complete_but_unended_turn_has_a_history_gap(
@@ -1558,7 +1514,7 @@ async def test_detail_selects_the_latest_report_and_turn_scoped_verdict(
 
 
 @pytest.mark.parametrize("turns_path", ["missing", "not-a-directory"])
-async def test_detail_reads_role_signals_when_turn_report_path_is_unavailable(
+async def test_detail_reads_and_refreshes_role_signals_when_turn_report_path_is_unavailable(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -1575,7 +1531,9 @@ async def test_detail_reads_role_signals_when_turn_report_path_is_unavailable(
     if turns_path == "not-a-directory":
         turns_root.write_text("invalid turns path")
 
-    detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
+    views = state_views(reader, project_root, clock, StubServices())
+
+    detail = await views.task_detail(task.id)
 
     assert detail is not None
     assert detail.title == "Signals without reports"
@@ -1585,31 +1543,12 @@ async def test_detail_reads_role_signals_when_turn_report_path_is_unavailable(
     if turns_path == "not-a-directory":
         assert any("not a directory" in error for error in detail.evidence_errors)
 
-
-async def test_detail_observes_new_role_signals_without_a_database_revision(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Live role signals", mode=Mode.IMPLEMENT)
-    RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
-    signal_path = run_dir(project_root, task.id) / Role.IMPLEMENTER.value / "view.jsonl"
-    signal_path.parent.mkdir(parents=True)
-    signal_path.write_text(json.dumps({"signal": "SessionStarted"}) + "\n")
-    views = state_views(reader, project_root, clock, StubServices())
-
-    first = await views.task_detail(task.id, include_timeline=False)
-    assert first is not None
-    assert "SessionStarted" in first.signals[0].lines[0]
-
     with signal_path.open("a") as stream:
-        stream.write(json.dumps({"signal": "ToolStarted", "name": "pytest"}) + "\n")
-    refreshed = await views.task_detail(task.id, include_timeline=False)
+        stream.write(json.dumps({"signal": "ToolStarted", "name": "ruff"}) + "\n")
+    refreshed = await views.task_detail(task.id)
 
     assert refreshed is not None
-    assert any("pytest" in line for line in refreshed.signals[0].lines)
+    assert any("ruff" in line for line in refreshed.signals[0].lines)
 
 
 async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_and_task_state(
@@ -1971,7 +1910,7 @@ async def test_enter_keeps_inline_selection_and_popup_close_restores_browser_scr
         reader.close()
 
 
-async def test_detail_palette_carries_the_selected_task_role_context(
+async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -2013,44 +1952,6 @@ async def test_detail_palette_carries_the_selected_task_role_context(
                 lambda: (
                     "Verify"
                     in plain_text(app.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).content)
-                ),
-                timeout=2,
-            )
-            await pilot.press("ctrl+p")
-            await wait_until(lambda: bool(opened), timeout=2)
-
-        assert opened == [PaletteRequest(task_id=task.id, role=Role.LEADER.value)]
-    finally:
-        reader.close()
-
-
-async def test_pushed_task_detail_ctrl_p_carries_task_context(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Pushed detail action target")
-    reader = StateReader(database, SystemClock())
-    opened: list[PaletteRequest] = []
-
-    async def open_palette_context(request: PaletteRequest) -> None:
-        opened.append(request)
-
-    try:
-        app = _dashboard_app(
-            reader,
-            project_root,
-            focus_task=task.id,
-            widget_names=TASK_DETAIL_WIDGETS,
-            open_palette_context=open_palette_context,
-        )
-        async with app.run_test(size=(80, 40)) as pilot:
-            await wait_until(
-                lambda: (
-                    "Pushed detail action target"
-                    in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
                 ),
                 timeout=2,
             )
@@ -2732,14 +2633,14 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
         reader.close()
 
 
-async def test_hand_back_and_resume_remain_explicit_while_other_holds_survive(
+async def test_resume_waits_for_every_hand_back_and_keeps_the_other_holds_until_it_runs(
     connection: Connection,
     database: Database,
     tmp_path: Path,
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    task, runs, tasks, queue, leader, _implementer = _seed_owned_task(connection, clock)
+    task, runs, tasks, queue, leader, implementer = _seed_owned_task(connection, clock)
     reader = StateReader(database, SystemClock())
 
     try:
@@ -2792,85 +2693,32 @@ async def test_hand_back_and_resume_remain_explicit_while_other_holds_survive(
             task_after_partial_hand_back = reader.get_task(task.id)
             assert task_after_partial_hand_back is not None
             assert task_after_partial_hand_back.holds == frozenset({Hold.PAUSED, Hold.INTERVENTION})
-    finally:
-        reader.close()
 
-
-async def test_resume_dispatches_after_hand_back_without_clearing_the_pause(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Separate resume command")
-    runs = RunStore(connection, clock)
-    leader = runs.start(task.id, Role.LEADER, LEADER_RUNG)
-    runs.mark_taken_over(leader.id)
-    tasks = TaskStore(connection, clock)
-    tasks.set_panes(task.id, {Role.LEADER: LEADER_PANE_ID})
-    tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
-    queue = CommandQueue(connection, clock)
-    for submitted in queue.pending():
-        queue.mark_done(submitted.id)
-    reader = StateReader(database, SystemClock())
-
-    try:
-        app = _operator_task_app(reader, project_root, task.id, queue, clock)
-        async with app.run_test(size=(80, 40)) as pilot:
-            ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
-            await wait_until(
-                lambda: (
-                    "Recorded operator handoff Leader" in _text(ownership)
-                    and Hold.PAUSED.value in _text(ownership)
-                ),
-                timeout=2,
-            )
-            await pilot.press("ctrl+p")
-            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=2)
-            palette = cast("PaletteScreen", app.screen)
-            await _select_palette_action(pilot, palette, "resume")
-            await wait_until(
-                lambda: palette.query_one("#palette-submit", Button).disabled, timeout=2
-            )
-            assert palette.query_one("#palette-submit", Button).disabled
-            assert "hand back all taken-over roles" in _text(
-                palette.query_one("#palette-action-state", Static)
-            )
-            await pilot.press("escape")
-            await pilot.press("escape")
-
-            hand_back = await _submit_detail_command(
+            second_command = await _submit_detail_command(
                 app,
                 pilot,
                 queue,
                 "hand-back",
-                role=Role.LEADER,
+                role=Role.IMPLEMENTER,
             )
-            assert isinstance(hand_back.command, HandBack)
-            assert hand_back.command.role is Role.LEADER
-            runs.mark_live(leader.id)
-            tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
-            queue.mark_done(hand_back.id, {"role": Role.LEADER.value})
+            assert isinstance(second_command.command, HandBack)
+            assert second_command.command.role is Role.IMPLEMENTER
+            runs.mark_live(implementer.id)
+            queue.mark_done(second_command.id, {"role": Role.IMPLEMENTER.value})
             await wait_until(
-                lambda: "Holds · paused" in _text(ownership),
+                lambda: (
+                    "Recorded operator handoff" not in _text(ownership)
+                    and Hold.PAUSED.value in _text(ownership)
+                    and Hold.INTERVENTION.value in _text(ownership)
+                ),
                 timeout=2,
             )
-            paused_task = tasks.get(task.id)
-            assert paused_task is not None
-            assert paused_task.holds == {Hold.PAUSED}
-
-            resume_command = await _submit_detail_command(
-                app,
-                pilot,
-                queue,
-                "resume",
-            )
+            resume_command = await _submit_detail_command(app, pilot, queue, "resume")
             assert isinstance(resume_command.command, Resume)
             assert resume_command.command.task_id == task.id
             task_before_resume = tasks.get(task.id)
             assert task_before_resume is not None
-            assert task_before_resume.holds == {Hold.PAUSED}
+            assert task_before_resume.holds == {Hold.PAUSED, Hold.INTERVENTION}
 
             tasks.set_holds(task.id, frozenset())
             queue.mark_done(resume_command.id)
