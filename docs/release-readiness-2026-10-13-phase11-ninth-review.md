@@ -74,7 +74,7 @@ The net two added cases come from the header brand table (colour and `NO_COLOR`,
 - (a) The pause-then-assert sweep was descoped by the operator: 70 `pilot.pause()`-then-assert sites remain, most deliberate negative checks. AGENTS.md therefore words the last sentence for new tests and does not claim the suite is clean.
 - (b) Task 171 verification was reduced (the baseline did not reproduce; four after rounds). The take-over fix is a process-readiness check, not a proven fix of the observed timeout.
 - (c) The gate can still show occasional single flakes under extreme load; two of Task 174's runs did not.
-- (d) Evidence export: `_reveal_result` leaves the form scrolled one row short because the reveal runs before the result layout settles. Found in Task 170, a real minor product defect, not fixed.
+- (d) Evidence export: `_reveal_result` leaves the form scrolled one row short because the reveal runs before the result layout settles. Found in Task 170; closed in 24e0684 (the reveal now scrolls to the end after layout).
 - (e) A Textual `NoMatches` inside a worker was seen twice in `test_home_attention_tracks_owned_held_and_engine_state_changes`; not reproduced. Probably a refresh worker querying during teardown; the product cause is unverified.
 - (f) The command history page label is not recomputed when an open popup is resized (pre-existing).
 - (g) The palette's stored-command text was driven through `_show_stored_command` on a mounted palette, not through a submitted-then-completed form.
