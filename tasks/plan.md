@@ -1716,3 +1716,28 @@ Refs: `dashboard/palette.py` `_reveal_result` (runs before the result `Static`'s
 - [x] `uv run poe check` green; native check at the sizes the test uses; update the ninth-review record's open-limit line (the limit is closed).
 
 Proof: reproduced under 10 `yes` hogs on the unchanged code (form scroll stuck short, 2 of 12 runs failed the unchanged-product expectation); `_reveal_result` now uses `form.scroll_end(animate=False)`, which Textual defers until after layout. 20 of 20 loaded runs and 10 of 10 quiet runs of the test pass without compensating scrolls; `poe check` green (1586 passed, 14 skipped, 1607 collected).
+
+
+## Escalation resolution panel (tenth review)
+
+Scope: [tenth review](../docs/tui-feedback-tenth-review.md); the operator approved both layouts. Execute Tasks 176–179 sequentially, one fresh agent per task, root review by the orchestrator.
+
+### Task 176: Resolution view model
+Refs: `operator/queries.py` (`EscalationView`, `escalation_resolution_disabled_reason`), `domain/escalation.py` (`options_for`), `domain/escalation_evidence.py` (`parse_escalation_packet`, `agent_request`), `engine/escalations.py` (`_CONSEQUENCES`, headline sentences), `ui/compact.py` (`display_escalation_headline`, `escalation_reason_label`), `ui/age.py`.
+- [ ] A pure builder (place it where the boundaries allow, a domain function plus a dashboard projection if needed) turns an escalation and its parsed packet into the panel model: task id and title, readable reason and the engine's one-sentence cause, question, age, ordered choices (each Leader alternative with its consequence and recommended flag, "own answer" when an answer is allowed, Retry/Accept/Cancel with the engine consequence, which choice is preselected), the optional `What was tried` text, and the disabled reason. No rendering, no Textual.
+- [ ] One unit table over the reason kinds and packet shapes (Leader alternatives present/absent, answer allowed or not, accept allowed, degraded or missing packet, stale/resolved); no wording-only assertions beyond the data the operator reads.
+
+### Task 177: Escalation resolution screen
+Refs: spec "Rules"; `plugins/widgets/escalations.py` `_open_resolution`, `dashboard/app.py` `_HomeAttentionStatus`, `dashboard/palette.py` (current resolve form, `_answer_resolution_route`, `PaletteDraft`, `prepare_palette_resolution`, `_show_ack`), `ui/section.py`.
+- [ ] A new screen in its own module renders the approved layouts from the Task 176 model with `Section`s: Decision, Choose (selectable list: ↑↓, Enter or click sends; own-answer text box; Cancel needs a second Enter), collapsed `What was tried`; width variants per spec; opened for one concrete escalation from the bar (Enter/click), the Home strip, the task menu answer action and `Ctrl+P` Resolve escalation. Sending uses the existing `OperatorCommands` resolution path; success closes the panel, rejection stays open with the engine's reason, a resolved/stale/missing decision disables the choices with its reason, the answer draft is kept per escalation.
+- [ ] Native colour and `NO_COLOR` renders at wide, 48, 40 columns and tiny for both layouts, plus the three sending paths; the old palette resolve form is no longer reachable.
+
+### Task 178: Remove the old resolve form
+Refs: `dashboard/palette.py` (resolve fields, evidence collapsibles, summary, guidance, rung, selects and their drafts), the tests listed in the analysis (`test_context_menu_answers_the_recorded_question_without_a_target_picker`, `test_palette_routes_structured_escalation_to_validated_resolution`, `test_resolution_target_keeps_task_identity_once_when_headline_has_a_prefix`, `test_palette_original_packet_scrolls_to_its_last_line`, the degraded-packet and race tests, the attention-route tests and their widget-id helpers in `test_dashboard_app.py`).
+- [ ] Delete the dead palette code and move or delete its tests: keep the behaviour (open without dispatch, one engine command per send, race with another client, draft kept, degraded packet, the real fake-agent end-to-end), delete wording, shape and widget-id assertions; collected cases must not grow and should fall.
+- [ ] `uv run poe check` green; report lines of `palette.py` and test cases before and after.
+
+### Task 179: Verify the tenth review, reconcile the reference and docs
+Refs: Tasks 176–178; design 06 §5.5, `tui-workspace.md`, `tui-focus.md`, `tui-parity.md`, the HTML reference resolve modal.
+- [ ] Native check of both layouts and every entry route (colour, `NO_COLOR`, wide to tiny) with before/after against the commit that planned this review; plain and `TERM=dumb NO_COLOR=1` gates; collected cases, functions and lines compared with the start.
+- [ ] HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-13-phase11-tenth-review.md`; README links; plan and todo ticked.
