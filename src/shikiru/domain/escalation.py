@@ -35,6 +35,41 @@ ESCALATION_REASON_LABELS: dict[EscalationReason, str] = {
 }
 
 
+ESCALATION_CAUSES: dict[EscalationReason, str] = {
+    EscalationReason.DECISION_REQUIRED: "The Leader needs an Operator decision to continue.",
+    EscalationReason.ITERATIONS_EXHAUSTED: "The final review round still requested changes.",
+    EscalationReason.INTEGRATION_CONFLICT: "Rebase conflicts could not be resolved automatically.",
+    EscalationReason.INTEGRATION_BLOCKED: "Integration is blocked: see the question.",
+    EscalationReason.UNCOMMITTED_WORK: (
+        "The task workspace has uncommitted changes; commit or discard them, then retry."
+    ),
+    EscalationReason.OFF_TASK_BRANCH: (
+        "The task workspace is not on its task branch; move its work onto the branch, then retry."
+    ),
+    EscalationReason.PR_CLOSED: "The pull request was closed without merging.",
+    EscalationReason.AGENT_AUTH: (
+        "The agent cannot access its provider; check credentials, billing, or account status."
+    ),
+    EscalationReason.AGENT_ERROR: "The agent kept failing after every automatic retry.",
+    EscalationReason.AGENT_STUCK: "The agent's screen stayed stuck after every automatic recovery.",
+    EscalationReason.AGENT_PROTOCOL: "The turn never produced a report, even with a Helper rebuild",
+    EscalationReason.LADDER_EXHAUSTED: "Every rung on the ladder was tried without success.",
+    EscalationReason.QUOTA_EXHAUSTED: "The agent's quota stayed exhausted past the wait budget.",
+    EscalationReason.DEPENDENCY_CANCELLED: "A dependency of this task was cancelled.",
+    EscalationReason.ENGINE_ERROR: "The engine hit an unexpected error while running this task.",
+}
+
+RESOLUTION_CONSEQUENCES: dict[ResolutionKind, str] = {
+    ResolutionKind.ANSWER: "Give the Leader guidance; the task continues from a consult turn.",
+    ResolutionKind.RETRY: "Re-run the step that raised this escalation.",
+    ResolutionKind.ACCEPT: "Integrate the work as it stands.",
+    ResolutionKind.CANCEL: (
+        "Cancel the task and keep its branch; preserve its worktree when uncommitted work remains "
+        "or it is off its task branch."
+    ),
+}
+
+
 def escalation_reason_label(reason: EscalationReason) -> str:
     """Return the Operator-facing name of `reason`."""
     return ESCALATION_REASON_LABELS[reason]

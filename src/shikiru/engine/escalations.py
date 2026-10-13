@@ -15,8 +15,12 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from shikiru.domain.commands import ResolutionKind
-from shikiru.domain.escalation import EscalationOption, options_for
+from shikiru.domain.escalation import (
+    ESCALATION_CAUSES,
+    RESOLUTION_CONSEQUENCES,
+    EscalationOption,
+    options_for,
+)
 from shikiru.domain.escalation_evidence import NO_AGENT_PROPOSAL
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -60,40 +64,6 @@ _REPORT_DECISION_KEY = "decision"
 _VERDICT_SUMMARY_KEY = "summary"
 _CONSULT_ANSWER_KEY = "answer"
 
-_HEADLINE_SENTENCES: dict[EscalationReason, str] = {
-    EscalationReason.DECISION_REQUIRED: "The Leader needs an Operator decision to continue.",
-    EscalationReason.ITERATIONS_EXHAUSTED: "The final review round still requested changes.",
-    EscalationReason.INTEGRATION_CONFLICT: "Rebase conflicts could not be resolved automatically.",
-    EscalationReason.INTEGRATION_BLOCKED: "Integration is blocked: see the question.",
-    EscalationReason.UNCOMMITTED_WORK: (
-        "The task workspace has uncommitted changes; commit or discard them, then retry."
-    ),
-    EscalationReason.OFF_TASK_BRANCH: (
-        "The task workspace is not on its task branch; move its work onto the branch, then retry."
-    ),
-    EscalationReason.PR_CLOSED: "The pull request was closed without merging.",
-    EscalationReason.AGENT_AUTH: (
-        "The agent cannot access its provider; check credentials, billing, or account status."
-    ),
-    EscalationReason.AGENT_ERROR: "The agent kept failing after every automatic retry.",
-    EscalationReason.AGENT_STUCK: "The agent's screen stayed stuck after every automatic recovery.",
-    EscalationReason.AGENT_PROTOCOL: "The turn never produced a report, even with a Helper rebuild",
-    EscalationReason.LADDER_EXHAUSTED: "Every rung on the ladder was tried without success.",
-    EscalationReason.QUOTA_EXHAUSTED: "The agent's quota stayed exhausted past the wait budget.",
-    EscalationReason.DEPENDENCY_CANCELLED: "A dependency of this task was cancelled.",
-    EscalationReason.ENGINE_ERROR: "The engine hit an unexpected error while running this task.",
-}
-
-_CONSEQUENCES: dict[ResolutionKind, str] = {
-    ResolutionKind.ANSWER: "Give the Leader guidance; the task continues from a consult turn.",
-    ResolutionKind.RETRY: "Re-run the step that raised this escalation.",
-    ResolutionKind.ACCEPT: "Integrate the work as it stands.",
-    ResolutionKind.CANCEL: (
-        "Cancel the task and keep its branch; preserve its worktree when uncommitted work remains "
-        "or it is off its task branch."
-    ),
-}
-
 
 @dataclass(frozen=True)
 class PacketContext:
@@ -115,7 +85,7 @@ class PacketContext:
 
 def _headline(context: PacketContext) -> str:
     step_label = context.step.value if context.step is not None else "no step"
-    sentence = _HEADLINE_SENTENCES[context.reason]
+    sentence = ESCALATION_CAUSES[context.reason]
     return f"{context.task_id} · {step_label} · {context.reason.value}: {sentence}"
 
 
@@ -123,7 +93,7 @@ def _options_section(options: tuple[EscalationOption, ...]) -> str:
     lines: list[str] = []
     for option in options:
         marker = " ★" if option.recommended else ""
-        lines.append(f"- `{option.label.value}`{marker}: {_CONSEQUENCES[option.label]}")
+        lines.append(f"- `{option.label.value}`{marker}: {RESOLUTION_CONSEQUENCES[option.label]}")
     return "\n".join(lines)
 
 
