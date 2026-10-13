@@ -62,17 +62,17 @@ The summary area contains:
 
 The Running count describes workflow state, not CPU activity or a guarantee that a process is executing at that instant. Waiting includes tasks whose status is still `running` while paused. Attention and Waiting can overlap; label their categories and do not present the cards as an additive total. Slots continue to follow the domain's slot accounting, including paused tasks and PR waits.
 
-Attention counts grouped task/project rows; reasons for one task share one row. Open decisions lead in creation-time/ID order. A missing or unreadable packet leaves its durable escalation ID, task, headline and allowed actions visible beside the evidence error. Opening evidence never creates a packet or changes the decision. The shell refreshes from durable state, including another client's resolution, without moving focus or opening a modal. Existing diagnosed stall and unrecovered engine-fault evidence is shown alongside decisions. Retries, quota waits, expected rework, and deliberate pauses remain informational workflow states. Engine-lock liveness, fault records and agent signals are distinct observations; attention adds no heartbeat, long-wait classifier or notification policy.
+Attention counts grouped task/project rows; reasons for one task share one row. Open decisions lead in creation-time/ID order. A missing or unreadable packet leaves its durable escalation ID, task, headline and allowed actions reachable: the resolution screen still opens with the engine's choices and without the Leader alternatives. Opening it never creates a packet or changes the decision. The shell refreshes from durable state, including another client's resolution, without moving focus or opening a modal. Existing diagnosed stall and unrecovered engine-fault evidence is shown alongside decisions. Retries, quota waits, expected rework, and deliberate pauses remain informational workflow states. Engine-lock liveness, fault records and agent signals are distinct observations; attention adds no heartbeat, long-wait classifier or notification policy.
 
 Use compact cards when space permits and one summary line in a narrow or short pane. Large branding, charts and diagnostics must not push attention or task navigation out of reach.
 
 ### 4.2 Attention
 
-Put open escalation decisions first, ordered by creation time with ID as the tie-breaker. Each entry names its escalation and task, headline, age and next available action. A task with several signals of trouble appears once with its reasons grouped.
+Put open escalation decisions first, ordered by creation time with ID as the tie-breaker. Each entry names its escalation and task, headline, age and next available action; Enter or a click opens the resolution screen for that escalation. A task with several signals of trouble appears once with its reasons grouped.
 
 Separate actionable decisions from informational recovery events. A normal quota wait, an expected rework round or an intentionally paused task is not an emergency. Include the existing stall and engine-fault evidence without adding a new alert classifier, heartbeat or long-wait escalation policy.
 
-An escalation remains visible until durable state says it is resolved. When its packet is temporarily unavailable, show the durable headline and allowed actions alongside the evidence error. Opening the view does not manufacture a packet or change escalation state.
+An escalation remains visible until durable state says it is resolved. When its packet is temporarily unavailable, the resolution screen still shows the durable reason and allowed choices. Opening it does not manufacture a packet or change escalation state.
 
 ### 4.3 Main body
 
@@ -197,7 +197,7 @@ Applicable actions and their disabled reasons are prepared by the operator layer
 | Change rung | Applies to the selected role's next invocation; does not change the model of an in-flight process. |
 | Take over | Stops automation for this task and opens the selected role's native session. Other tasks continue. |
 | Hand back | Returns this role to automation; other taken-over roles and holds may still prevent progress. |
-| Resolve | Applies one of this escalation's allowed resolutions with its recorded consequences. |
+| Resolve | Sent from the resolution screen's choice list: a Leader alternative or typed answer, Retry, Accept or Cancel task, each with its recorded consequence beneath; Cancel needs a second Enter. |
 | Retry | Requests the workflow's retry behaviour; does not bypass holds or prerequisites. |
 | Cancel / stop | Shows the affected task or project, work-preservation policy and scope of the action before submission. |
 
@@ -225,11 +225,11 @@ Hand back issues the existing role command; View holds opens the task's hold det
 
 ### 10.1 Escalation decisions
 
-Resolution presents the question, the recommended agent alternative with its consequences, and the engine's allowed resolution kinds with their consequences. The engine kinds come from the durable escalation row; answer requires guidance and retry may include a valid rung. Keep the full original packet accessible under Evidence, with timeline, reports, git facts, sessions and stream tails separately expandable when their structure is available.
+Resolution is one screen for one concrete escalation ([tenth review](tui-feedback-tenth-review.md)). It shows the task, the readable reason or the Leader's question and the age, then one Choose list: every Leader alternative with its consequence (the recommended one starred and preselected), `Write your own answer…` and the engine's allowed kinds (Retry, Accept, Cancel task) with their consequences. The kinds come from the durable escalation row; a Leader alternative sends its label as the answer. `What was tried` is the only collapsible evidence; the full original packet stays in the Decision evidence popup (`o`), and timeline, reports, git facts, sessions and stream tails live in the task detail and the Leader's terminal.
 
-Preserve the packet's full original text and the distinction between an agent's decision alternatives and the engine's allowed resolution kinds. Do not infer a command from option wording. Map selections through the existing validated resolution contract and keep the recommended marker visible.
+Preserve the packet's full original text and the distinction between an agent's decision alternatives and the engine's allowed resolution kinds. Do not infer a command from option wording. Map selections through the existing validated resolution contract and keep the recommended star visible; the retry rung stays a separate Set rung action.
 
-If another Operator resolves or cancels the task while the form is open, show its new state, disable stale submission and retain entered guidance for copying. A race after submission is handled by the engine's rejection; refresh the form without submitting a replacement command.
+If another Operator resolves or cancels the task while the screen is open, show its new state on one line, disable the choices and retain entered guidance for copying. A race after submission is handled by the engine's rejection, shown on one line while the screen stays open; no replacement command is submitted.
 
 ### 10.2 Blocker explanations
 
@@ -350,7 +350,7 @@ Required walkthroughs cover:
 
 1. Find a task by title, inspect its latest verdict, message its role and observe the durable command outcome without typing its ID.
 2. Keep task identity, focus and reading position while another task changes state, a list reorders and the pane resizes.
-3. Resolve an escalation with evidence and consequences; handle another Operator resolving it while the form is open.
+3. Resolve an escalation with evidence and consequences; handle another Operator resolving it while the screen is open.
 4. Follow dependencies and a decomposed family without treating the plan parent's completion as completion of its children.
 5. Take over one role, verify that another task progresses, hand back and explain any remaining pause or ownership.
 6. Queue a command with the engine stopped, close the dashboard, restart both and observe one applied effect.
